@@ -1,14 +1,17 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { OrganizationTable, SsoConnectionTable } from "@openwork-ee/den-db/schema"
+import { OrganizationTable, ScimProviderTable, SsoConnectionTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
 import { db } from "../../db.js"
+import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
-import { jsonValidator, queryValidator, requireUserMiddleware, resolveMemberTeamsMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
-import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { findEnterpriseAuthRequirementForEmail } from "../../enterprise-auth-requirement.js"
+import { authenticatedRoute, jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator, resolveMemberTeamsMiddleware } from "../../middleware/index.js"
+import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
@@ -148,7 +151,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         403: jsonResponse("API keys cannot create organizations.", forbiddenSchema),
       },
     }),
-    requireUserMiddleware,
+    authenticatedRoute(),
     jsonValidator(createOrganizationSchema),
     async (c) => {
     if (c.get("apiKey")) {
@@ -190,6 +193,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         404: jsonResponse("The invitation could not be found.", notFoundSchema),
       },
     }),
+    publicRoute,
     queryValidator(invitationPreviewQuerySchema),
     async (c) => {
     const query = c.req.valid("query")
@@ -218,7 +222,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         404: jsonResponse("The invitation could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
+    authenticatedRoute(),
     jsonValidator(acceptInvitationSchema),
     async (c) => {
     if (c.get("apiKey")) {
@@ -286,12 +290,12 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         200: jsonResponse("Organization updated successfully.", organizationResponseSchema),
         400: jsonResponse("The organization update request body was invalid or contained malformed email domains.", invalidEmailDomainSchema),
         401: jsonResponse("The caller must be signed in to update an organization.", unauthorizedSchema),
+        402: jsonResponse("Enabling enforced SSO or desktop version controls requires an Enterprise plan.", enterprisePlanRequiredSchema),
         403: jsonResponse("Only workspace owners can update the organization.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgRoleRoute(["owner"]),
     jsonValidator(updateOrganizationSchema),
     async (c) => {
       const permission = ensureOwner(c)
@@ -312,6 +316,16 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           message: "Enter valid email domains like company.com.",
           invalidDomains: normalizedDomains.invalidDomains,
         }, 400)
+      }
+
+      const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
+      const enablesRequireSso = input.requireSso === true && currentMetadata.requireSso !== true
+      const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
+      if (enablesRequireSso || enablesVersionPinning) {
+        const entitlement = checkEntitlement(payload.organization.metadata, "orgControls")
+        if (!entitlement.ok) {
+          return c.json(entitlement.response, entitlement.status)
+        }
       }
 
       const updated = await updateOrganizationSettings({
@@ -335,43 +349,28 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     describeRoute({
       tags: ["Organizations"],
       hide: true,
-      summary: "Resolve organization SSO by email",
-      description: "Returns the org SSO entry URL for an email address when the matching organization requires SSO.",
+      summary: "Resolve required organization SSO by email",
+      description: "Returns the org SSO entry URL when the email belongs to a member of any organization with SSO or SCIM configured.",
       responses: {
         200: jsonResponse("Organization SSO resolution returned successfully.", resolveSsoByEmailResponseSchema),
-        204: { description: "No enforced organization SSO route matched this email." },
+        204: { description: "No organization SSO or SCIM requirement matched this email." },
         400: jsonResponse("The SSO resolution query parameters were invalid.", invalidRequestSchema),
       },
     }),
+    publicRoute,
     queryValidator(resolveSsoByEmailQuerySchema),
     async (c) => {
       const query = c.req.valid("query")
-      const domain = query.email.slice(query.email.lastIndexOf("@") + 1).toLowerCase()
-      const matches = await db
-        .select({
-          slug: OrganizationTable.slug,
-          metadata: OrganizationTable.metadata,
-          signInPath: SsoConnectionTable.signInPath,
-          domain: SsoConnectionTable.domain,
-        })
-        .from(OrganizationTable)
-        .innerJoin(SsoConnectionTable, eq(OrganizationTable.id, SsoConnectionTable.organizationId))
-        .where(eq(SsoConnectionTable.domain, domain))
-
-      const match = matches.find((row) => {
-        const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {}
-        return metadata.requireSso === true
-      })
-
-      if (!match) {
+      const requirement = await findEnterpriseAuthRequirementForEmail(query.email)
+      if (!requirement) {
         return c.body(null, 204)
       }
 
       return c.json({
         requireSso: true,
-        organizationSlug: match.slug,
-        signInPath: match.signInPath,
-        signInUrl: new URL(match.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
+        organizationSlug: requirement.organizationSlug,
+        signInPath: requirement.signInPath,
+        signInUrl: new URL(requirement.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
       })
     },
   )
@@ -388,12 +387,23 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     resolveMemberTeamsMiddleware,
-    (c) => {
+    async (c) => {
       const payload = c.get("organizationContext")
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
+      const [ssoRows, scimRows] = await Promise.all([
+        db
+          .select({ id: SsoConnectionTable.id })
+          .from(SsoConnectionTable)
+          .where(eq(SsoConnectionTable.organizationId, payload.organization.id))
+          .limit(1),
+        db
+          .select({ id: ScimProviderTable.id })
+          .from(ScimProviderTable)
+          .where(eq(ScimProviderTable.organizationId, payload.organization.id))
+          .limit(1),
+      ])
 
       return c.json({
         ...payload,
@@ -410,6 +420,12 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
             : null,
         },
         currentMemberTeams: c.get("memberTeams") ?? [],
+        plan: parseOrganizationPlan(payload.organization.metadata),
+        entitlements: getOrganizationEntitlements(payload.organization.metadata),
+        authMethods: {
+          sso: Boolean(ssoRows[0]),
+          scim: Boolean(scimRows[0]),
+        },
       })
     },
   )

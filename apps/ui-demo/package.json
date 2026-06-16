@@ -4,10 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "pnpm --dir ../../packages/ui build && vite --host 0.0.0.0 --port 3333 --strictPort",
-    "build": "pnpm --dir ../../packages/ui build && vite build",
+    "dev": "vite --host 0.0.0.0 --port 3333 --strictPort",
+    "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 3333 --strictPort",
-    "typecheck": "pnpm --dir ../../packages/ui build && tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@openwork/ui": "workspace:*",

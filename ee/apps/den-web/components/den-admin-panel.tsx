@@ -1,11 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Copy, Pencil } from "lucide-react";
 
 type AccessState = "loading" | "ready" | "signed-out" | "forbidden" | "error";
 type WorkerFilter = "all" | "with-workers" | "without-workers";
 type BillingFilter = "all" | "paid" | "unpaid" | "unavailable";
-type ViewMode = "users" | "companies";
+type ViewMode = "users" | "companies" | "organizations";
+type ActivityFilter = "all" | "active-7d" | "active-30d" | "recurring" | "inactive-30d";
+type SortMode = "newest" | "recently-active" | "most-sign-ins" | "most-active-days" | "fastest-invite";
+
+const DEFAULT_FREE_SEAT_COUNT = 5;
 
 type AdminBillingStatus = {
   status: "paid" | "unpaid" | "unavailable";
@@ -17,9 +22,24 @@ type AdminBillingStatus = {
   note: string | null;
 };
 
+type AdminUserOrganization = {
+  id: string;
+  name: string;
+  role: string;
+  memberCount: number;
+  joinedAt: string | null;
+};
+
 type AdminEntry = {
   email: string;
   note: string | null;
+};
+
+type ActivityPoint = {
+  day: string;
+  activeUsers: number;
+  realActiveUsers: number;
+  signups: number;
 };
 
 type AdminSummary = {
@@ -37,6 +57,16 @@ type AdminSummary = {
   billingUnavailableUsers: number | null;
   adminCount: number;
   billingLoaded: boolean;
+  activeUsers1d: number;
+  activeUsers7d: number;
+  activeUsers30d: number;
+  realActiveUsers1d: number;
+  realActiveUsers7d: number;
+  realActiveUsers30d: number;
+  recurringUsers: number;
+  inviters: number;
+  medianHoursToFirstInvite: number | null;
+  activitySeries: ActivityPoint[];
 };
 
 type AdminUser = {
@@ -48,12 +78,36 @@ type AdminUser = {
   updatedAt: string | null;
   lastSeenAt: string | null;
   sessionCount: number;
+  activeDayCount: number;
+  isRecurring: boolean;
+  lastActiveAt: string | null;
+  invitesSent: number;
+  firstInviteAt: string | null;
+  hoursToFirstInvite: number | null;
   authProviders: string[];
   workerCount: number;
   cloudWorkerCount: number;
   localWorkerCount: number;
   latestWorkerCreatedAt: string | null;
   billing: AdminBillingStatus | null;
+  organizations: AdminUserOrganization[];
+};
+
+type AdminOrganization = {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  memberCount: number;
+  plan: {
+    tier: "free" | "team" | "enterprise";
+    source: string;
+  };
+  seatLimit: number;
+  freeSeatCount: number;
+  seatsFreeAdditional: number;
+  billableSeatCount: number;
 };
 
 type AdminPayload = {
@@ -65,6 +119,7 @@ type AdminPayload = {
   admins: AdminEntry[];
   summary: AdminSummary;
   users: AdminUser[];
+  organizations: AdminOrganization[];
   generatedAt: string | null;
 };
 
@@ -107,6 +162,33 @@ function parseBillingStatus(value: unknown): AdminBillingStatus | null {
   };
 }
 
+function parseActivitySeries(value: unknown): ActivityPoint[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const points: ActivityPoint[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+
+    const day = toStringValue(entry.day);
+    if (!day) {
+      continue;
+    }
+
+    points.push({
+      day,
+      activeUsers: toNumberValue(entry.activeUsers),
+      realActiveUsers: toNumberValue(entry.realActiveUsers),
+      signups: toNumberValue(entry.signups)
+    });
+  }
+
+  return points;
+}
+
 function parseAdminPayload(payload: unknown): AdminPayload | null {
   if (!isRecord(payload) || !isRecord(payload.summary) || !Array.isArray(payload.users) || !Array.isArray(payload.admins)) {
     return null;
@@ -125,6 +207,24 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
         ? value.authProviders.filter((provider): provider is string => typeof provider === "string")
         : [];
 
+      const organizations: AdminUserOrganization[] = Array.isArray(value.organizations)
+        ? value.organizations
+          .map((organization) => {
+            if (!isRecord(organization) || typeof organization.id !== "string" || typeof organization.name !== "string" || typeof organization.role !== "string") {
+              return null;
+            }
+
+            return {
+              id: organization.id,
+              name: organization.name,
+              role: organization.role,
+              memberCount: toNumberValue(organization.memberCount),
+              joinedAt: toStringValue(organization.joinedAt)
+            };
+          })
+          .filter((organization): organization is AdminUserOrganization => organization !== null)
+        : [];
+
       return {
         id: value.id,
         name: toStringValue(value.name),
@@ -134,12 +234,19 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
         updatedAt: toStringValue(value.updatedAt),
         lastSeenAt: toStringValue(value.lastSeenAt),
         sessionCount: toNumberValue(value.sessionCount),
+        activeDayCount: toNumberValue(value.activeDayCount),
+        isRecurring: value.isRecurring === true,
+        lastActiveAt: toStringValue(value.lastActiveAt),
+        invitesSent: toNumberValue(value.invitesSent),
+        firstInviteAt: toStringValue(value.firstInviteAt),
+        hoursToFirstInvite: toNullableNumberValue(value.hoursToFirstInvite),
         authProviders,
         workerCount: toNumberValue(value.workerCount),
         cloudWorkerCount: toNumberValue(value.cloudWorkerCount),
         localWorkerCount: toNumberValue(value.localWorkerCount),
         latestWorkerCreatedAt: toStringValue(value.latestWorkerCreatedAt),
-        billing: parseBillingStatus(value.billing)
+        billing: parseBillingStatus(value.billing),
+        organizations
       };
     })
     .filter((value): value is AdminUser => value !== null);
@@ -156,6 +263,36 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
       };
     })
     .filter((value): value is AdminEntry => value !== null);
+
+  const organizations: AdminOrganization[] = Array.isArray(payload.organizations)
+    ? payload.organizations
+      .map((value) => {
+        if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string" || typeof value.slug !== "string") {
+          return null;
+        }
+
+        const plan = isRecord(value.plan) ? value.plan : {};
+        const tier = plan.tier === "team" || plan.tier === "enterprise" ? plan.tier : "free";
+
+        return {
+          id: value.id,
+          name: value.name,
+          slug: value.slug,
+          createdAt: toStringValue(value.createdAt),
+          updatedAt: toStringValue(value.updatedAt),
+          memberCount: toNumberValue(value.memberCount),
+          plan: {
+            tier,
+            source: toStringValue(plan.source) ?? "default"
+          },
+          seatLimit: toNumberValue(value.seatLimit),
+          freeSeatCount: toNumberValue(value.freeSeatCount) || DEFAULT_FREE_SEAT_COUNT,
+          seatsFreeAdditional: toNumberValue(value.seatsFreeAdditional),
+          billableSeatCount: toNumberValue(value.billableSeatCount)
+        };
+      })
+      .filter((value): value is AdminOrganization => value !== null)
+    : [];
 
   return {
     viewer: {
@@ -178,9 +315,20 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
       unpaidUsers: toNullableNumberValue(summary.unpaidUsers),
       billingUnavailableUsers: toNullableNumberValue(summary.billingUnavailableUsers),
       adminCount: toNumberValue(summary.adminCount),
-      billingLoaded: summary.billingLoaded === true
+      billingLoaded: summary.billingLoaded === true,
+      activeUsers1d: toNumberValue(summary.activeUsers1d),
+      activeUsers7d: toNumberValue(summary.activeUsers7d),
+      activeUsers30d: toNumberValue(summary.activeUsers30d),
+      realActiveUsers1d: toNumberValue(summary.realActiveUsers1d),
+      realActiveUsers7d: toNumberValue(summary.realActiveUsers7d),
+      realActiveUsers30d: toNumberValue(summary.realActiveUsers30d),
+      recurringUsers: toNumberValue(summary.recurringUsers),
+      inviters: toNumberValue(summary.inviters),
+      medianHoursToFirstInvite: toNullableNumberValue(summary.medianHoursToFirstInvite),
+      activitySeries: parseActivitySeries(summary.activitySeries)
     },
     users,
+    organizations,
     generatedAt: toStringValue(payload.generatedAt)
   };
 }
@@ -255,6 +403,31 @@ async function requestJson(path: string) {
   return { response, payload };
 }
 
+async function patchJson(path: string, body: unknown) {
+  const response = await fetch(`/api/den${path}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+
+  const text = await response.text();
+  let payload: unknown = null;
+
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
+    }
+  }
+
+  return { response, payload };
+}
+
 function formatDateTime(value: string | null): string {
   if (!value) {
     return "-";
@@ -306,6 +479,35 @@ function formatRelativeTime(value: string | null): string {
   }
 
   return `${Math.floor(diffMonths / 12)}y ago`;
+}
+
+function isWithinDays(value: string | null, days: number): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+
+  return Date.now() - date.getTime() <= days * 24 * 60 * 60 * 1000;
+}
+
+function formatHours(hours: number | null): string {
+  if (hours === null) {
+    return "-";
+  }
+
+  if (hours < 1) {
+    return "<1h";
+  }
+
+  if (hours < 48) {
+    return `${Math.round(hours)}h`;
+  }
+
+  return `${Math.round(hours / 24)}d`;
 }
 
 function formatProvider(provider: string): string {
@@ -362,6 +564,7 @@ type DomainGroup = {
   users: AdminUser[];
   verifiedCount: number;
   workerCount: number;
+  activeCount7d: number;
   latestSignupAt: string | null;
   isPersonal: boolean;
 };
@@ -376,6 +579,7 @@ function buildDomainGroups(users: AdminUser[]): DomainGroup[] {
       users: [],
       verifiedCount: 0,
       workerCount: 0,
+      activeCount7d: 0,
       latestSignupAt: null,
       isPersonal: PERSONAL_EMAIL_DOMAINS.has(domain)
     };
@@ -383,6 +587,9 @@ function buildDomainGroups(users: AdminUser[]): DomainGroup[] {
     group.users.push(user);
     if (user.emailVerified) {
       group.verifiedCount += 1;
+    }
+    if (isWithinDays(user.lastActiveAt, 7)) {
+      group.activeCount7d += 1;
     }
     group.workerCount += user.workerCount;
     if (user.createdAt && (!group.latestSignupAt || user.createdAt > group.latestSignupAt)) {
@@ -456,6 +663,51 @@ function StatCard({ label, value, detail }: { label: string; value: string; deta
   );
 }
 
+function ActivityChart({ series }: { series: ActivityPoint[] }) {
+  if (series.length === 0) {
+    return null;
+  }
+
+  const maxActive = Math.max(1, ...series.map((point) => point.activeUsers));
+
+  return (
+    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">Active users · last 30 days</p>
+        <p className="text-xs text-slate-500">
+          <span className="mr-3 inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-slate-900/80" />Any activity</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-500" />Real DAU (ran a task)</span>
+        </p>
+      </div>
+      <div className="mt-3 flex h-16 items-end gap-[3px]">
+        {series.map((point) => (
+          <div
+            key={point.day}
+            title={`${point.day}: ${point.activeUsers} active · ${point.realActiveUsers} ran a task · ${point.signups} signup${point.signups === 1 ? "" : "s"}`}
+            className="relative flex-1"
+            style={{ height: "100%" }}
+          >
+            <div
+              className={`absolute inset-x-0 bottom-0 rounded-t transition ${point.activeUsers > 0 ? "bg-slate-900/30 hover:bg-slate-900/45" : "bg-slate-200"}`}
+              style={{ height: `${point.activeUsers > 0 ? Math.max(8, Math.round((point.activeUsers / maxActive) * 100)) : 4}%` }}
+            />
+            {point.realActiveUsers > 0 ? (
+              <div
+                className="absolute inset-x-0 bottom-0 rounded-t bg-violet-500"
+                style={{ height: `${Math.max(8, Math.round((point.realActiveUsers / maxActive) * 100))}%` }}
+              />
+            ) : null}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex justify-between text-[0.66rem] text-slate-400">
+        <span>{series[0].day}</span>
+        <span>{series[series.length - 1].day}</span>
+      </div>
+    </div>
+  );
+}
+
 function MetaCell({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -488,6 +740,20 @@ function BillingPill({ billing }: { billing: AdminBillingStatus | null }) {
   );
 }
 
+function PlanPill({ tier }: { tier: AdminOrganization["plan"]["tier"] }) {
+  const palette = tier === "enterprise"
+    ? "border-violet-200 bg-violet-50 text-violet-700"
+    : tier === "team"
+      ? "border-sky-200 bg-sky-50 text-sky-700"
+      : "border-slate-200 bg-slate-100 text-slate-600";
+
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] ${palette}`}>
+      {tier}
+    </span>
+  );
+}
+
 export function DenAdminPanel() {
   const [accessState, setAccessState] = useState<AccessState>("loading");
   const [payload, setPayload] = useState<AdminPayload | null>(null);
@@ -496,10 +762,17 @@ export function DenAdminPanel() {
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("users");
   const [hidePersonalDomains, setHidePersonalDomains] = useState(true);
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
+  const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [workerFilter, setWorkerFilter] = useState<WorkerFilter>("all");
   const [billingFilter, setBillingFilter] = useState<BillingFilter>("all");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [copiedOrgId, setCopiedOrgId] = useState<string | null>(null);
   const [includeBilling, setIncludeBilling] = useState(false);
+  const [orgDrafts, setOrgDrafts] = useState<Record<string, { tier: AdminOrganization["plan"]["tier"]; seatLimit: string }>>({});
+  const [savingOrgId, setSavingOrgId] = useState<string | null>(null);
+  const [freeSeatsDialog, setFreeSeatsDialog] = useState<{ org: AdminOrganization; totalFreeSeats: string } | null>(null);
+  const [savingFreeSeatsOrgId, setSavingFreeSeatsOrgId] = useState<string | null>(null);
 
   const loadOverview = useCallback(async (loadBilling: boolean) => {
     setRefreshing(true);
@@ -552,18 +825,52 @@ export function DenAdminPanel() {
     void loadOverview(false);
   }, [loadOverview]);
 
+  useEffect(() => {
+    if (!copiedOrgId) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setCopiedOrgId(null), 1500);
+    return () => window.clearTimeout(timeout);
+  }, [copiedOrgId]);
+
+  const copyOrgId = useCallback(async (orgId: string) => {
+    try {
+      await navigator.clipboard.writeText(orgId);
+      setCopiedOrgId(orgId);
+    } catch {
+      setError("Could not copy the organization ID to the clipboard.");
+    }
+  }, []);
+
   const filteredUsers = useMemo(() => {
     if (!payload) {
       return [] as AdminUser[];
     }
 
     const normalizedQuery = query.trim().toLowerCase();
-    return payload.users.filter((user) => {
+    const matches = payload.users.filter((user) => {
       if (workerFilter === "with-workers" && user.workerCount === 0) {
         return false;
       }
 
       if (workerFilter === "without-workers" && user.workerCount > 0) {
+        return false;
+      }
+
+      if (activityFilter === "active-7d" && !isWithinDays(user.lastActiveAt, 7)) {
+        return false;
+      }
+
+      if (activityFilter === "active-30d" && !isWithinDays(user.lastActiveAt, 30)) {
+        return false;
+      }
+
+      if (activityFilter === "recurring" && !user.isRecurring) {
+        return false;
+      }
+
+      if (activityFilter === "inactive-30d" && isWithinDays(user.lastActiveAt, 30)) {
         return false;
       }
 
@@ -577,10 +884,39 @@ export function DenAdminPanel() {
         return true;
       }
 
-      const haystack = [user.name ?? "", user.email, user.id, ...user.authProviders].join(" ").toLowerCase();
+      const haystack = [
+        user.name ?? "",
+        user.email,
+        user.id,
+        ...user.authProviders,
+        ...user.organizations.flatMap((org) => [org.name, org.id, org.role])
+      ].join(" ").toLowerCase();
       return haystack.includes(normalizedQuery);
     });
-  }, [billingFilter, payload, query, workerFilter]);
+
+    if (sortMode === "newest") {
+      return matches;
+    }
+
+    // Server timestamps are ISO 8601, so lexicographic order is chronological.
+    return [...matches].sort((a, b) => {
+      if (sortMode === "recently-active") {
+        return (b.lastActiveAt ?? "").localeCompare(a.lastActiveAt ?? "");
+      }
+
+      if (sortMode === "most-sign-ins") {
+        return b.sessionCount - a.sessionCount;
+      }
+
+      if (sortMode === "most-active-days") {
+        return b.activeDayCount - a.activeDayCount;
+      }
+
+      const aHours = a.hoursToFirstInvite ?? Number.POSITIVE_INFINITY;
+      const bHours = b.hoursToFirstInvite ?? Number.POSITIVE_INFINITY;
+      return aHours - bHours;
+    });
+  }, [activityFilter, billingFilter, payload, query, sortMode, workerFilter]);
 
   const domainGroups = useMemo(() => {
     return payload ? buildDomainGroups(payload.users) : [];
@@ -609,15 +945,129 @@ export function DenAdminPanel() {
     });
   }, [domainGroups, hidePersonalDomains, query]);
 
+  const filteredOrganizations = useMemo(() => {
+    if (!payload) {
+      return [] as AdminOrganization[];
+    }
+
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return payload.organizations;
+    }
+
+    return payload.organizations.filter((org) => `${org.name} ${org.slug} ${org.id}`.toLowerCase().includes(normalizedQuery));
+  }, [payload, query]);
+
+  useEffect(() => {
+    if (!payload) {
+      setOrgDrafts({});
+      return;
+    }
+
+    const drafts: Record<string, { tier: AdminOrganization["plan"]["tier"]; seatLimit: string }> = {};
+    for (const org of payload.organizations) {
+      drafts[org.id] = { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
+    }
+    setOrgDrafts(drafts);
+  }, [payload]);
+
+  const saveOrganizationPlan = useCallback(async (org: AdminOrganization) => {
+    const draft = orgDrafts[org.id];
+    if (!draft) {
+      return;
+    }
+
+    const seatLimit = Number(draft.seatLimit);
+    if (!Number.isInteger(seatLimit) || seatLimit < 1) {
+      setError("Seat limit must be a positive whole number.");
+      return;
+    }
+
+    setSavingOrgId(org.id);
+    setError(null);
+
+    try {
+      const { response, payload: nextPayload } = await patchJson(`/v1/admin/organizations/${org.id}/plan`, {
+        tier: draft.tier,
+        seatLimit
+      });
+
+      if (!response.ok) {
+        setError(getErrorMessage(nextPayload, `Could not update ${org.name}.`));
+        return;
+      }
+
+      await loadOverview(includeBilling);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
+    } finally {
+      setSavingOrgId(null);
+    }
+  }, [includeBilling, loadOverview, orgDrafts]);
+
+  const saveOrganizationFreeSeats = useCallback(async () => {
+    if (!freeSeatsDialog) {
+      return;
+    }
+
+    const totalFreeSeats = Number(freeSeatsDialog.totalFreeSeats);
+    if (!Number.isInteger(totalFreeSeats) || totalFreeSeats < DEFAULT_FREE_SEAT_COUNT) {
+      setError(`Free seats must be a whole number at least ${DEFAULT_FREE_SEAT_COUNT}.`);
+      return;
+    }
+
+    setSavingFreeSeatsOrgId(freeSeatsDialog.org.id);
+    setError(null);
+
+    try {
+      const { response, payload: nextPayload } = await patchJson(`/v1/admin/organizations/${freeSeatsDialog.org.id}/free-seats`, {
+        totalFreeSeats
+      });
+
+      if (!response.ok) {
+        setError(getErrorMessage(nextPayload, `Could not update free seats for ${freeSeatsDialog.org.name}.`));
+        return;
+      }
+
+      setFreeSeatsDialog(null);
+      await loadOverview(includeBilling);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
+    } finally {
+      setSavingFreeSeatsOrgId(null);
+    }
+  }, [freeSeatsDialog, includeBilling, loadOverview]);
+
   const exportCsv = useCallback(() => {
     const date = new Date().toISOString().slice(0, 10);
 
+    if (viewMode === "organizations") {
+      downloadCsv(`den-organizations-${date}.csv`, [
+        ["id", "name", "slug", "plan", "plan_source", "seat_limit", "free_seats", "additional_free_seats", "chargeable_seats", "members", "created_at"],
+        ...filteredOrganizations.map((org) => [
+          org.id,
+          org.name,
+          org.slug,
+          org.plan.tier,
+          org.plan.source,
+          String(org.seatLimit),
+          String(org.freeSeatCount),
+          String(org.seatsFreeAdditional),
+          String(org.billableSeatCount),
+          String(org.memberCount),
+          org.createdAt ?? ""
+        ])
+      ]);
+      return;
+    }
+
     if (viewMode === "companies") {
       downloadCsv(`den-companies-${date}.csv`, [
-        ["domain", "users", "verified", "workers", "latest_signup", "personal", "emails"],
+        ["domain", "users", "active_7d", "verified", "workers", "latest_signup", "personal", "emails"],
         ...filteredDomains.map((group) => [
           group.domain,
           String(group.users.length),
+          String(group.activeCount7d),
           String(group.verifiedCount),
           String(group.workerCount),
           group.latestSignupAt ?? "",
@@ -629,20 +1079,25 @@ export function DenAdminPanel() {
     }
 
     downloadCsv(`den-users-${date}.csv`, [
-      ["email", "name", "domain", "verified", "signed_up", "last_seen", "sessions", "workers", "providers"],
+      ["email", "name", "domain", "verified", "signed_up", "last_active", "sign_ins", "active_days", "recurring", "invites_sent", "hours_to_first_invite", "workers", "providers", "organizations"],
       ...filteredUsers.map((user) => [
         user.email,
         user.name ?? "",
         getEmailDomain(user.email),
         user.emailVerified ? "yes" : "no",
         user.createdAt ?? "",
-        user.lastSeenAt ?? "",
+        user.lastActiveAt ?? "",
         String(user.sessionCount),
+        String(user.activeDayCount),
+        user.isRecurring ? "yes" : "no",
+        String(user.invitesSent),
+        user.hoursToFirstInvite === null ? "" : String(user.hoursToFirstInvite),
         String(user.workerCount),
-        user.authProviders.join("; ")
+        user.authProviders.join("; "),
+        user.organizations.map((org) => `${org.name} (${org.id}, ${org.role})`).join("; ")
       ])
     ]);
-  }, [filteredDomains, filteredUsers, viewMode]);
+  }, [filteredDomains, filteredOrganizations, filteredUsers, viewMode]);
 
   useEffect(() => {
     if (!payload) {
@@ -748,12 +1203,18 @@ export function DenAdminPanel() {
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <StatCard label="Users" value={String(payload.summary.totalUsers)} detail={`${payload.summary.recentUsers7d} new in 7d`} />
+          <StatCard label="Active today" value={String(payload.summary.activeUsers1d)} detail={`${payload.summary.activeUsers7d} in 7d · ${payload.summary.activeUsers30d} in 30d`} />
+          <StatCard label="Real DAU" value={String(payload.summary.realActiveUsers1d)} detail={`Ran a task · ${payload.summary.realActiveUsers7d} in 7d · ${payload.summary.realActiveUsers30d} in 30d`} />
+          <StatCard label="Recurring" value={String(payload.summary.recurringUsers)} detail="Active on 2+ days" />
+          <StatCard label="Inviters" value={String(payload.summary.inviters)} detail={`Median time to invite ${formatHours(payload.summary.medianHoursToFirstInvite)}`} />
           <StatCard label="Verified" value={String(payload.summary.verifiedUsers)} detail={`${payload.summary.totalUsers - payload.summary.verifiedUsers} still unverified`} />
           <StatCard label="Worker creators" value={String(payload.summary.usersWithWorkers)} detail={`${payload.summary.usersWithoutWorkers} without workers`} />
           <StatCard label="Workers" value={String(payload.summary.totalWorkers)} detail={`${payload.summary.cloudWorkers} cloud / ${payload.summary.localWorkers} local`} />
           <StatCard label="Billing" value={payload.summary.billingLoaded ? String(payload.summary.paidUsers ?? 0) : "On demand"} detail={billingDetail} />
           <StatCard label="Admins" value={String(payload.summary.adminCount)} detail="Whitelisted operator accounts" />
         </div>
+
+        <ActivityChart series={payload.summary.activitySeries} />
 
         <div className="mt-5 flex flex-wrap gap-2">
           {payload.admins.map((admin) => (
@@ -781,19 +1242,44 @@ export function DenAdminPanel() {
             >
               Companies ({companyDomainCount})
             </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("organizations")}
+              className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${viewMode === "organizations" ? "bg-slate-950 text-white" : "text-slate-600 hover:text-slate-900"}`}
+            >
+              Organizations ({payload.organizations.length})
+            </button>
           </div>
 
           <button
             type="button"
             onClick={exportCsv}
-            disabled={viewMode === "companies" ? filteredDomains.length === 0 : filteredUsers.length === 0}
+            disabled={viewMode === "organizations" ? filteredOrganizations.length === 0 : viewMode === "companies" ? filteredDomains.length === 0 : filteredUsers.length === 0}
             className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Export CSV
           </button>
         </div>
 
-        {viewMode === "companies" ? (
+        {error ? (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+            {error}
+          </div>
+        ) : null}
+
+        {viewMode === "organizations" ? (
+          <div className="mt-4">
+            <label className="grid w-full max-w-xl gap-2">
+              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search organizations</span>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Org name, slug, or id"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+              />
+            </label>
+          </div>
+        ) : viewMode === "companies" ? (
           <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <label className="grid w-full max-w-xl gap-2">
               <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search companies</span>
@@ -817,7 +1303,7 @@ export function DenAdminPanel() {
           </div>
         ) : (
         <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_13rem_13rem]">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_10.5rem_11.5rem_10.5rem_10.5rem]">
             <label className="grid gap-2">
               <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search users</span>
               <input
@@ -826,6 +1312,36 @@ export function DenAdminPanel() {
                 placeholder="Email, name, user id, provider"
                 className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
               />
+            </label>
+
+            <label className="grid gap-2">
+              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Activity</span>
+              <select
+                value={activityFilter}
+                onChange={(event) => setActivityFilter(event.target.value as ActivityFilter)}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+              >
+                <option value="all">All users</option>
+                <option value="active-7d">Active in 7d</option>
+                <option value="active-30d">Active in 30d</option>
+                <option value="recurring">Recurring</option>
+                <option value="inactive-30d">Inactive 30d+</option>
+              </select>
+            </label>
+
+            <label className="grid gap-2">
+              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Sort</span>
+              <select
+                value={sortMode}
+                onChange={(event) => setSortMode(event.target.value as SortMode)}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+              >
+                <option value="newest">Newest signup</option>
+                <option value="recently-active">Recently active</option>
+                <option value="most-sign-ins">Most sign-ins</option>
+                <option value="most-active-days">Most active days</option>
+                <option value="fastest-invite">Fastest to invite</option>
+              </select>
             </label>
 
             <label className="grid gap-2">
@@ -875,7 +1391,106 @@ export function DenAdminPanel() {
         )}
 
         <div className="mt-6 grid gap-3">
-          {viewMode === "companies" ? (
+          {viewMode === "organizations" ? (
+            filteredOrganizations.length > 0 ? filteredOrganizations.map((org) => {
+              const draft = orgDrafts[org.id] ?? { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
+              const changed = draft.tier !== org.plan.tier || draft.seatLimit !== String(org.seatLimit);
+
+              return (
+                <div key={org.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-base font-semibold text-slate-950">{org.name}</p>
+                        <PlanPill tier={org.plan.tier} />
+                      </div>
+                      <p className="mt-1 truncate text-sm text-slate-500">/{org.slug} · {org.id}</p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                        {org.memberCount} / {org.seatLimit} seats
+                      </span>
+                      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                        {org.freeSeatCount} free
+                      </span>
+                      <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                        {org.billableSeatCount} chargeable
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                    <MetaCell label="Created" value={formatDateTime(org.createdAt)} />
+                    <MetaCell label="Plan source" value={formatProvider(org.plan.source)} />
+                    <MetaCell label="Members" value={String(org.memberCount)} />
+                    <div>
+                      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Free seats</p>
+                      <div className="mt-1 flex items-center gap-2">
+                        <p className="text-sm text-slate-700">{org.freeSeatCount}</p>
+                        <button
+                          type="button"
+                          aria-label={`Edit free seats for ${org.name}`}
+                          onClick={() => setFreeSeatsDialog({ org, totalFreeSeats: String(org.freeSeatCount) })}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                        >
+                          <Pencil size={13} aria-hidden="true" />
+                        </button>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {org.seatsFreeAdditional > 0 ? `${org.seatsFreeAdditional} additional` : "Default included"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-[12rem_10rem_auto] lg:items-end">
+                    <label className="grid gap-2">
+                      <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Plan</span>
+                      <select
+                        value={draft.tier}
+                        onChange={(event) => {
+                          const tier = event.target.value === "enterprise" || event.target.value === "team" ? event.target.value : "free";
+                          setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, tier } }));
+                        }}
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                      >
+                        <option value="free">Free</option>
+                        <option value="team">Team</option>
+                        <option value="enterprise">Enterprise</option>
+                      </select>
+                    </label>
+
+                    <label className="grid gap-2">
+                      <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Seats</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={draft.seatLimit}
+                        onChange={(event) => setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, seatLimit: event.target.value } }))}
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void saveOrganizationPlan(org);
+                      }}
+                      disabled={!changed || savingOrgId === org.id}
+                      className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {savingOrgId === org.id ? "Saving..." : "Save access"}
+                    </button>
+                  </div>
+                </div>
+              );
+            }) : (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+                <p className="text-base font-semibold text-slate-950">No organizations match</p>
+                <p className="mt-2 text-sm leading-7 text-slate-500">Try a different search.</p>
+              </div>
+            )
+          ) : viewMode === "companies" ? (
             filteredDomains.length > 0 ? filteredDomains.map((group) => (
               <div key={group.domain} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -911,8 +1526,9 @@ export function DenAdminPanel() {
                   </div>
                 </div>
 
-                <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <MetaCell label="Latest signup" value={group.latestSignupAt ? `${formatRelativeTime(group.latestSignupAt)} · ${formatDateTime(group.latestSignupAt)}` : "-"} />
+                  <MetaCell label="Active 7d" value={`${group.activeCount7d} of ${group.users.length}`} />
                   <MetaCell label="Verified" value={`${group.verifiedCount} of ${group.users.length}`} />
                   <MetaCell label="Workers" value={String(group.workerCount)} />
                 </div>
@@ -927,39 +1543,49 @@ export function DenAdminPanel() {
             const isSelected = user.id === selectedUser?.id;
 
             return (
-              <button
+              <div
                 key={user.id}
-                type="button"
-                onClick={() => setSelectedUserId(user.id)}
-                className={`rounded-2xl border px-4 py-4 text-left transition ${isSelected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70"}`}
+                className={`rounded-2xl border px-4 py-4 transition ${isSelected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70"}`}
               >
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="truncate text-base font-semibold text-slate-950">{user.name?.trim() || user.email}</p>
-                      {user.emailVerified ? (
-                        <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-emerald-700">
-                          Verified
-                        </span>
-                      ) : null}
+                <button type="button" onClick={() => setSelectedUserId(user.id)} className="block w-full text-left">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-base font-semibold text-slate-950">{user.name?.trim() || user.email}</p>
+                        {user.emailVerified ? (
+                          <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                            Verified
+                          </span>
+                        ) : null}
+                        {user.isRecurring ? (
+                          <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-sky-700">
+                            Recurring
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 truncate text-sm text-slate-500">{user.email}</p>
                     </div>
-                    <p className="mt-1 truncate text-sm text-slate-500">{user.email}</p>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <BillingPill billing={user.billing} />
+                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                        {user.workerCount} workers
+                      </span>
+                      <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-violet-700">
+                        {user.organizations.length} {user.organizations.length === 1 ? "org" : "orgs"}
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <BillingPill billing={user.billing} />
-                    <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
-                      {user.workerCount} workers
-                    </span>
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+                    <MetaCell label="Signed up" value={formatDateTime(user.createdAt)} />
+                    <MetaCell label="Last active" value={formatRelativeTime(user.lastActiveAt)} />
+                    <MetaCell label="Sign-ins" value={String(user.sessionCount)} />
+                    <MetaCell label="Active days" value={String(user.activeDayCount)} />
+                    <MetaCell label="Invites" value={user.invitesSent > 0 ? `${user.invitesSent} · first after ${formatHours(user.hoursToFirstInvite)}` : "None"} />
+                    <MetaCell label="Workers" value={`${user.cloudWorkerCount} cloud / ${user.localWorkerCount} local`} />
                   </div>
-                </div>
-
-                <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <MetaCell label="Signed up" value={formatDateTime(user.createdAt)} />
-                  <MetaCell label="Last seen" value={user.lastSeenAt ? `${formatRelativeTime(user.lastSeenAt)} · ${formatDateTime(user.lastSeenAt)}` : "No sessions yet"} />
-                  <MetaCell label="Sessions" value={String(user.sessionCount)} />
-                  <MetaCell label="Workers" value={`${user.cloudWorkerCount} cloud / ${user.localWorkerCount} local`} />
-                </div>
+                </button>
 
                 {isSelected ? (
                   <div className="mt-4 grid gap-4 border-t border-slate-200 pt-4 lg:grid-cols-2">
@@ -993,9 +1619,71 @@ export function DenAdminPanel() {
                         </div>
                       )}
                     </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 lg:col-span-2">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Organizations</p>
+                          <p className="mt-1 text-sm text-slate-600">
+                            {user.organizations.length > 0
+                              ? `${user.email} is a member of ${user.organizations.length} organization${user.organizations.length === 1 ? "" : "s"}.`
+                              : `${user.email} is not an active member of any organization.`}
+                          </p>
+                        </div>
+                        {user.organizations.length > 0 ? (
+                          <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-violet-700">
+                            {user.organizations.length} total
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {user.organizations.length > 0 ? (
+                        <div className="mt-3 grid gap-2">
+                          {user.organizations.map((org) => (
+                            <div key={org.id} className="rounded-2xl border border-slate-200 bg-slate-50/70 px-3 py-3">
+                              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-slate-950">{org.name}</p>
+                                  <p className="mt-1 truncate font-mono text-xs text-slate-500">{org.id}</p>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                                    {formatProvider(org.role)}
+                                  </span>
+                                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                                    {org.memberCount} {org.memberCount === 1 ? "member" : "members"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void copyOrgId(org.id);
+                                    }}
+                                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                                  >
+                                    <Copy size={13} aria-hidden="true" />
+                                    {copiedOrgId === org.id ? "Copied" : "Copy ID"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setQuery(org.id);
+                                      setViewMode("organizations");
+                                    }}
+                                    className="inline-flex items-center justify-center rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white"
+                                  >
+                                    View org
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
-              </button>
+              </div>
             );
           }) : (
             <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
@@ -1007,6 +1695,61 @@ export function DenAdminPanel() {
 
         <p className="mt-6 text-xs leading-6 text-slate-500">Snapshot generated {formatDateTime(payload.generatedAt)}.</p>
       </div>
+
+      {freeSeatsDialog ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="free-seats-dialog-title"
+          onClick={() => setFreeSeatsDialog(null)}
+        >
+          <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Organization billing</p>
+            <h2 id="free-seats-dialog-title" className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950">
+              Edit free seats
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Set the total number of free seats for {freeSeatsDialog.org.name}. The default {DEFAULT_FREE_SEAT_COUNT} seats stay included; OpenWork saves only the additional seats in organization metadata.
+            </p>
+
+            <label className="mt-5 grid gap-2">
+              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Total free seats</span>
+              <input
+                type="number"
+                min={DEFAULT_FREE_SEAT_COUNT}
+                value={freeSeatsDialog.totalFreeSeats}
+                onChange={(event) => setFreeSeatsDialog({ ...freeSeatsDialog, totalFreeSeats: event.target.value })}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+              />
+            </label>
+
+            <p className="mt-3 rounded-2xl bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
+              Additional metadata value to save: {Math.max(0, Number(freeSeatsDialog.totalFreeSeats) - DEFAULT_FREE_SEAT_COUNT) || 0}
+            </p>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setFreeSeatsDialog(null)}
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void saveOrganizationFreeSeats();
+                }}
+                disabled={savingFreeSeatsOrgId === freeSeatsDialog.org.id}
+                className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingFreeSeatsOrgId === freeSeatsDialog.org.id ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

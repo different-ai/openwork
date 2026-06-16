@@ -5,6 +5,8 @@ import { z } from "zod"
 import { auth } from "./auth.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { SSO_IDENTITY_EXTRA_FIELDS } from "./sso-jit.js"
+import { ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED } from "./sso-saml-policy.js"
 
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type OrganizationId = SsoConnection["organizationId"]
@@ -16,7 +18,6 @@ type SamlRegistrationInput = {
   entryPoint: string
   cert: string
   audience?: string | null
-  wantAssertionsSigned?: boolean | null
 }
 
 type OidcRegistrationInput = {
@@ -145,17 +146,13 @@ async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationI
           cert: input.cert,
           callbackUrl: getSsoAcsUrl(providerId),
           audience: input.audience || env.betterAuthUrl,
-          wantAssertionsSigned: input.wantAssertionsSigned ?? true,
+          wantAssertionsSigned: ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED,
           spMetadata: {},
           mapping: {
             id: "nameID",
             email: "email",
             name: "displayName",
-            extraFields: {
-              department: "department",
-              role: "role",
-              groups: "groups",
-            },
+            extraFields: SSO_IDENTITY_EXTRA_FIELDS,
           },
         },
       },
@@ -179,11 +176,7 @@ async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationI
           emailVerified: "email_verified",
           name: "name",
           image: "picture",
-          extraFields: {
-            department: "department",
-            role: "role",
-            groups: "groups",
-          },
+          extraFields: SSO_IDENTITY_EXTRA_FIELDS,
         },
       },
     },

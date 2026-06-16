@@ -84,6 +84,7 @@ type DenFlowContextValue = {
   desktopRedirectUrl: string | null;
   desktopRedirectBusy: boolean;
   showAuthFeedback: boolean;
+  continueSignInWithEmail: () => Promise<boolean>;
   submitAuth: (event: FormEvent<HTMLFormElement>) => Promise<AuthNavigationResult>;
   submitVerificationCode: (event: FormEvent<HTMLFormElement>) => Promise<AuthNavigationResult>;
   resendVerificationCode: () => Promise<void>;
@@ -365,6 +366,38 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     nextUrl.searchParams.set("loginHint", trimmedEmail);
     window.location.assign(nextUrl.toString());
     return true;
+  }
+
+  async function continueSignInWithEmail() {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setAuthError("Enter your email to continue.");
+      return false;
+    }
+
+    setAuthBusy(true);
+    setAuthError(null);
+    setAuthInfo("Checking your workspace sign-in settings...");
+    trackPosthogEvent("den_auth_submitted", {
+      mode: "sign-in",
+      method: "email_next",
+      email_domain: getEmailDomain(trimmedEmail),
+    });
+
+    try {
+      if (await redirectToRequiredSso(trimmedEmail)) {
+        return false;
+      }
+
+      setAuthInfo("Enter your password to finish signing in.");
+      return true;
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Could not check workspace sign-in settings.");
+      setAuthInfo(getAuthInfoForMode("sign-in"));
+      return false;
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   async function finalizeEmailPasswordSignIn(
@@ -1986,6 +2019,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     desktopRedirectUrl,
     desktopRedirectBusy,
     showAuthFeedback,
+    continueSignInWithEmail,
     submitAuth,
     submitVerificationCode,
     resendVerificationCode,

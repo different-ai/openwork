@@ -2,7 +2,10 @@ import type { Hono } from "hono"
 import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
+import { enterprisePlanRequiredSchema } from "../../openapi.js"
 import {
   deleteOrganizationSsoConnection,
   getOrganizationSsoConnection,
@@ -13,9 +16,9 @@ import {
   getSsoProviderForConnection,
   registerOrganizationSsoConnection,
 } from "../../sso.js"
-import { requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { orgMemberRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureSsoManager } from "./shared.js"
+import { ensureSsoManager, orgAccessFailureStatus } from "./shared.js"
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -34,7 +37,8 @@ const organizationNotFoundSchema = z.object({
 }).meta({ ref: "SsoOrganizationNotFoundError" })
 
 const forbiddenSchema = z.object({
-  error: z.literal("forbidden"),
+  error: z.enum(["forbidden", "reauth"]),
+  reason: z.string().optional(),
   message: z.string(),
 }).meta({ ref: "SsoForbiddenError" })
 
@@ -47,7 +51,6 @@ const samlRegistrationSchema = baseRegistrationSchema.extend({
   entryPoint: z.string().url(),
   cert: z.string().min(1),
   audience: z.string().url().optional(),
-  wantAssertionsSigned: z.boolean().optional(),
 }).meta({ ref: "RegisterOrganizationSamlSsoBody" })
 
 const oidcRegistrationSchema = baseRegistrationSchema.extend({
@@ -233,16 +236,15 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         200: { description: "Organization SSO configuration", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -268,16 +270,21 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         201: { description: "Organization SSO connection created", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
+      }
+
+      const entitlement = checkEntitlement(c.get("organizationContext").organization.metadata, "sso")
+      if (!entitlement.ok) {
+        return c.json(entitlement.response, entitlement.status)
       }
 
       const parsed = samlRegistrationSchema.safeParse(await c.req.json())
@@ -298,6 +305,19 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       })
       const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
 
+      await recordOrganizationAuditEvent({
+        organizationId: payload.organization.id,
+        actorUserId: payload.currentMember.userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered,
+        payload: {
+          ssoConnectionId: connection.id,
+          providerId: connection.providerId,
+          kind: connection.kind,
+          issuer: connection.issuer,
+          domain: connection.domain,
+        },
+      })
+
       return c.json({ connection: await buildConnectionPayload(connection, c.req.url), domainVerificationToken }, 201)
     },
   )
@@ -313,16 +333,21 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         201: { description: "Organization SSO connection created", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
+      }
+
+      const entitlement = checkEntitlement(c.get("organizationContext").organization.metadata, "sso")
+      if (!entitlement.ok) {
+        return c.json(entitlement.response, entitlement.status)
       }
 
       const parsed = oidcRegistrationSchema.safeParse(await c.req.json())
@@ -343,6 +368,19 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       })
       const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
 
+      await recordOrganizationAuditEvent({
+        organizationId: payload.organization.id,
+        actorUserId: payload.currentMember.userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered,
+        payload: {
+          ssoConnectionId: connection.id,
+          providerId: connection.providerId,
+          kind: connection.kind,
+          issuer: connection.issuer,
+          domain: connection.domain,
+        },
+      })
+
       return c.json({ connection: await buildConnectionPayload(connection, c.req.url), domainVerificationToken }, 201)
     },
   )
@@ -358,20 +396,34 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         204: { description: "Organization SSO connection deleted" },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
-      await deleteOrganizationSsoConnection(payload.organization.id)
+      const connection = await getOrganizationSsoConnection(payload.organization.id)
+      const deleted = await deleteOrganizationSsoConnection(payload.organization.id)
+      if (deleted && connection) {
+        await recordOrganizationAuditEvent({
+          organizationId: payload.organization.id,
+          actorUserId: payload.currentMember.userId,
+          action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted,
+          payload: {
+            ssoConnectionId: connection.id,
+            providerId: connection.providerId,
+            kind: connection.kind,
+            issuer: connection.issuer,
+            domain: connection.domain,
+          },
+        })
+      }
       return c.body(null, 204)
     },
   )
@@ -387,16 +439,15 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         200: { description: "SAML metadata document" },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const parsed = metadataQuerySchema.safeParse(c.req.query())
@@ -435,19 +486,24 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         201: { description: "Domain verification token returned", content: { "application/json": { schema: resolver(domainVerificationResponseSchema) } } },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
+      const entitlement = checkEntitlement(payload.organization.metadata, "sso")
+      if (!entitlement.ok) {
+        return c.json(entitlement.response, entitlement.status)
+      }
+
       const connection = await getOrganizationSsoConnection(payload.organization.id)
       if (!connection) {
         return c.json({ error: "organization_not_found" }, 404)
@@ -488,19 +544,24 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         204: { description: "Organization SSO domain verified" },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
+      const entitlement = checkEntitlement(payload.organization.metadata, "sso")
+      if (!entitlement.ok) {
+        return c.json(entitlement.response, entitlement.status)
+      }
+
       const connection = await getOrganizationSsoConnection(payload.organization.id)
       if (!connection) {
         return c.json({ error: "organization_not_found" }, 404)

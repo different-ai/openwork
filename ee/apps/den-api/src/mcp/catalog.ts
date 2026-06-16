@@ -145,7 +145,7 @@ function buildInputGuidance(input: McpToolOperation) {
   }
 
   if (hasJsonRequestBody(input.operation)) {
-    sections.push("Request body: put JSON body fields under `body`. Do not wrap them in `requestBody`.")
+    sections.push("Request body: put JSON body fields under `body` as a JSON object (not a JSON-encoded string). Do not wrap them in `requestBody`.")
   }
 
   if (sections.length === 0) {

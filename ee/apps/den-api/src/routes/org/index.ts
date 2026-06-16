@@ -1,4 +1,5 @@
 import type { Hono } from "hono"
+import { delegatedRoute } from "../../middleware/index.js"
 import { registerOrgApiKeyRoutes } from "./api-keys.js"
 import { registerOrgBillingRoutes } from "./billing.js"
 import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
@@ -60,7 +61,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(ap
   registerOrgSkillRoutes(app)
   registerOrgTeamRoutes(app)
 
-  app.all("/v1/orgs/:orgId/*", async (c) => {
+  app.all("/v1/orgs/:orgId/*", delegatedRoute, async (c) => {
     const url = new URL(c.req.raw.url)
     const target = extractLegacyOrgProxyTarget(url.pathname)
     if (!target) {
@@ -75,6 +76,6 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(ap
 
     const proxiedRequest = new Request(new Request(proxiedUrl, c.req.raw), { headers })
 
-    return app.fetch(proxiedRequest, c.env)
+    return app.fetch(proxiedRequest)
   })
 }

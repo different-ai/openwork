@@ -61,7 +61,7 @@ display needed. See [`daytona-flows.md`](./daytona-flows.md) for full details.
 Quick start:
 
 ```bash
-daytona organization use "Different AI"
+daytona organization use "<org-name>"
 bash .devcontainer/test-on-daytona.sh [branch-or-commit]
 # Use the printed Electron CDP URL with browser_* tools.
 ```

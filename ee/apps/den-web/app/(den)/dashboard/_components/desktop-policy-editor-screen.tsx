@@ -21,6 +21,7 @@ import {
   type DenDesktopPolicy,
   type DesktopPolicyPayload,
 } from "./desktop-policy-data";
+import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
 type PolicyDraft = {
   policyName: string;
@@ -64,7 +65,7 @@ function policyToAssignmentPayload(policy: DenDesktopPolicy) {
 
 export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId?: string }) {
   const router = useRouter();
-  const { orgId, orgSlug, orgContext } = useOrgDashboard();
+  const { orgId, orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
   const { definitions, desktopPolicies, busy, error, reloadPolicies } = useOrgDesktopPolicies(orgId);
 
   const policy = useMemo(() => {
@@ -101,46 +102,51 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
       setPageError("Policy name is required.");
       return;
     }
-    setSaving(true);
     setPageError(null);
     try {
-      const payload: DesktopPolicyPayload = {
-        policyName,
-        policy: draft.policy,
-        memberIds: isDefault ? [] : draft.memberIds,
-        teamIds: isDefault ? [] : draft.teamIds,
-      };
-      if (isEditing && desktopPolicyId) {
-        // Preserve the current enabled state when saving form edits; the
-        // dedicated Enable/Disable button is the only way to flip it.
-        payload.isEnabled = policy?.isEnabled ?? true;
-        await updateDesktopPolicy(desktopPolicyId, payload);
-      } else {
-        payload.isEnabled = true;
-        await createDesktopPolicy(payload);
-      }
-      await reloadPolicies();
-      router.push(listRoute);
+      await runReauthableAction("save-desktop-policy", async () => {
+        setSaving(true);
+        const payload: DesktopPolicyPayload = {
+          policyName,
+          policy: draft.policy,
+          memberIds: isDefault ? [] : draft.memberIds,
+          teamIds: isDefault ? [] : draft.teamIds,
+        };
+        if (isEditing && desktopPolicyId) {
+          // Preserve the current enabled state when saving form edits; the
+          // dedicated Enable/Disable button is the only way to flip it.
+          payload.isEnabled = policy?.isEnabled ?? true;
+          await updateDesktopPolicy(desktopPolicyId, payload);
+        } else {
+          payload.isEnabled = true;
+          await createDesktopPolicy(payload);
+        }
+        await reloadPolicies();
+        router.push(listRoute);
+      });
     } catch (saveError) {
       setPageError(saveError instanceof Error ? saveError.message : "Failed to save desktop policy.");
+    } finally {
       setSaving(false);
     }
   };
 
   const handleToggleEnabled = async () => {
     if (!policy || !desktopPolicyId || isDefault) return;
-    setTogglingEnabled(true);
     setPageError(null);
     try {
-      const { memberIds, teamIds } = policyToAssignmentPayload(policy);
-      await updateDesktopPolicy(desktopPolicyId, {
-        policyName: policy.policyName,
-        policy: policy.policy,
-        isEnabled: !policy.isEnabled,
-        memberIds,
-        teamIds,
+      await runReauthableAction("toggle-desktop-policy", async () => {
+        setTogglingEnabled(true);
+        const { memberIds, teamIds } = policyToAssignmentPayload(policy);
+        await updateDesktopPolicy(desktopPolicyId, {
+          policyName: policy.policyName,
+          policy: policy.policy,
+          isEnabled: !policy.isEnabled,
+          memberIds,
+          teamIds,
+        });
+        await reloadPolicies();
       });
-      await reloadPolicies();
     } catch (toggleError) {
       setPageError(toggleError instanceof Error ? toggleError.message : "Failed to update desktop policy.");
     } finally {
@@ -165,6 +171,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
         </Link>
       </div>
 
+      {orgContext && !orgContext.entitlements.desktopPolicies ? <EnterprisePlanNotice feature="Desktop policy management" /> : null}
       {pageError ? (
         <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">{pageError}</div>
       ) : null}

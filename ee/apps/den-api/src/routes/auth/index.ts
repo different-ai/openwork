@@ -1,12 +1,19 @@
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { OAuthClientTable } from "@openwork-ee/den-db/schema"
 import { oauthProviderAuthServerMetadata, oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { auth } from "../../auth.js"
-import { db } from "../../db.js"
+import {
+  getBreachedPasswordResponse,
+  getEmailPasswordLockoutResponse,
+  readEmailPasswordSignInAttempt,
+  recordEmailPasswordSignInResult,
+} from "../../auth-protection.js"
 import { env } from "../../env.js"
+import { getInvalidMcpOAuthRedirectUris } from "../../mcp/oauth-client-policy.js"
+import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
+import { publicRoute, tokenRoute } from "../../middleware/index.js"
 import { emptyResponse } from "../../openapi.js"
+import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import type { AuthContextVariables } from "../../session.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
 import { registerScimAuthRoutes } from "./scim.js"
@@ -15,6 +22,17 @@ function rewriteAuthRequest(request: Request, path: string) {
   const url = new URL(request.url)
   url.pathname = path
   return new Request(url, request)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function oauthRegistrationError(status: number, error: string, errorDescription: string) {
+  return new Response(JSON.stringify({ error, error_description: errorDescription }), {
+    status,
+    headers: { "content-type": "application/json" },
+  })
 }
 
 async function rewriteMcpClientRegistrationRequest(request: Request, path: string) {
@@ -27,13 +45,33 @@ async function rewriteMcpClientRegistrationRequest(request: Request, path: strin
     return new Request(url, request)
   }
 
-  const body = await request.json() as Record<string, unknown>
-  const scope = typeof body.scope === "string" ? body.scope : ""
-  const scopes = new Set(scope.split(/\s+/).filter(Boolean))
-  if (scopes.has("mcp:read") || scopes.has("mcp:write")) {
-    scopes.add("mcp:read")
-    scopes.add("mcp:write")
-    body.scope = Array.from(scopes).join(" ")
+  let parsedBody: unknown
+  try {
+    parsedBody = await request.json()
+  } catch {
+    return oauthRegistrationError(400, "invalid_client_metadata", "Registration request body must be valid JSON.")
+  }
+
+  if (!isRecord(parsedBody)) {
+    return oauthRegistrationError(400, "invalid_client_metadata", "Registration request body must be a JSON object.")
+  }
+
+  const body = parsedBody
+  const invalidRedirectUris = [
+    ...getInvalidMcpOAuthRedirectUris(body.redirect_uris),
+    ...getInvalidMcpOAuthRedirectUris(body.post_logout_redirect_uris),
+  ]
+  if (invalidRedirectUris.length > 0) {
+    return oauthRegistrationError(
+      400,
+      "invalid_redirect_uri",
+      "MCP OAuth redirect URIs must use loopback HTTP(S) or a private-use custom scheme.",
+    )
+  }
+
+  const normalizedScope = normalizeMcpOAuthClientScope(body.scope)
+  if (normalizedScope) {
+    body.scope = normalizedScope
   }
 
   headers.set("content-type", "application/json")
@@ -44,6 +82,11 @@ async function rewriteMcpClientRegistrationRequest(request: Request, path: strin
     headers,
     body: JSON.stringify(body),
   })
+}
+
+async function handleMcpClientRegistrationRequest(request: Request, path: string) {
+  const rewritten = await rewriteMcpClientRegistrationRequest(request, path)
+  return rewritten instanceof Response ? rewritten : auth.handler(rewritten)
 }
 
 async function rewriteMetadataOrigin(response: Response, origin: string) {
@@ -68,72 +111,40 @@ function requestOrigin(request: Request) {
   return new URL(request.url).origin
 }
 
-function readStoredClientScopes(scopes: string | null) {
-  if (!scopes) {
-    return []
+async function handleAuthRequest(request: Request) {
+  const emailPasswordAttempt = await readEmailPasswordSignInAttempt(request)
+  if (emailPasswordAttempt) {
+    const lockoutResponse = await getEmailPasswordLockoutResponse(emailPasswordAttempt)
+    if (lockoutResponse) {
+      return lockoutResponse
+    }
   }
 
-  try {
-    const parsed = JSON.parse(scopes) as unknown
-    if (Array.isArray(parsed)) return parsed.filter((entry): entry is string => typeof entry === "string")
-  } catch {}
-
-  return scopes.split(/\s+/).filter(Boolean)
-}
-
-async function ensureMcpClientScopes(request: Request) {
-  const url = new URL(request.url)
-  const requestedScopes = new Set((url.searchParams.get("scope") ?? "").split(/\s+/).filter(Boolean))
-  if (!requestedScopes.has("mcp:read") && !requestedScopes.has("mcp:write")) {
-    return
+  const breachedPasswordResponse = await getBreachedPasswordResponse(request)
+  if (breachedPasswordResponse) {
+    return breachedPasswordResponse
   }
 
-  const clientId = url.searchParams.get("client_id")
-  if (!clientId) {
-    return
+  const response = await auth.handler(request)
+  if (emailPasswordAttempt) {
+    await recordEmailPasswordSignInResult(emailPasswordAttempt, response)
   }
-
-  const [client] = await db
-    .select({ scopes: OAuthClientTable.scopes })
-    .from(OAuthClientTable)
-    .where(eq(OAuthClientTable.clientId, clientId))
-    .limit(1)
-  if (!client) {
-    return
-  }
-
-  const scopes = new Set(readStoredClientScopes(client.scopes))
-  const hasMcpRead = scopes.has("mcp:read")
-  const hasMcpWrite = scopes.has("mcp:write")
-  if (!hasMcpRead && !hasMcpWrite) {
-    return
-  }
-  if (hasMcpRead && hasMcpWrite) {
-    return
-  }
-
-  scopes.add("mcp:read")
-  scopes.add("mcp:write")
-  await db
-    .update(OAuthClientTable)
-    .set({ scopes: JSON.stringify(Array.from(scopes)) })
-    .where(eq(OAuthClientTable.clientId, clientId))
+  return response
 }
 
 export function registerAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   registerScimAuthRoutes(app)
-  app.get("/api/auth/.well-known/oauth-authorization-server", async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/api/auth/.well-known/openid-configuration", async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/.well-known/oauth-authorization-server/api/auth", async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/.well-known/openid-configuration/api/auth", async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/.well-known/oauth-authorization-server", async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/oauth-authorization-server")), requestOrigin(c.req.raw)))
-  app.get("/.well-known/openid-configuration", async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/openid-configuration")), requestOrigin(c.req.raw)))
-  app.post("/register", async (c) => auth.handler(await rewriteMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register")))
-  app.post("/api/auth/oauth2/register", async (c) => auth.handler(await rewriteMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register")))
-  app.get("/api/auth/oauth2/authorize", async (c) => {
-    await ensureMcpClientScopes(c.req.raw)
-    return auth.handler(c.req.raw)
-  })
+  app.use("/api/auth/sso/saml2/callback/*", samlResponsePolicyMiddleware)
+  app.use("/api/auth/sso/saml2/sp/acs/*", samlResponsePolicyMiddleware)
+  app.get("/api/auth/.well-known/oauth-authorization-server", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
+  app.get("/api/auth/.well-known/openid-configuration", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
+  app.get("/.well-known/oauth-authorization-server/api/auth", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
+  app.get("/.well-known/openid-configuration/api/auth", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
+  app.get("/.well-known/oauth-authorization-server", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/oauth-authorization-server")), requestOrigin(c.req.raw)))
+  app.get("/.well-known/openid-configuration", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/openid-configuration")), requestOrigin(c.req.raw)))
+  app.post("/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
+  app.post("/api/auth/oauth2/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
+  app.get("/api/auth/oauth2/authorize", tokenRoute, (c) => auth.handler(c.req.raw))
 
   app.on(
     ["GET", "POST", "PUT", "PATCH", "DELETE"],
@@ -150,7 +161,8 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
         401: emptyResponse("Better Auth rejected the request because authentication failed."),
       },
     }),
-    (c) => auth.handler(c.req.raw),
+    publicRoute,
+    (c) => handleAuthRequest(c.req.raw),
   )
   registerDesktopAuthRoutes(app)
 }

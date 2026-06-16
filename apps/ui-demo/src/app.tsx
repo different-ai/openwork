@@ -115,7 +115,6 @@ export function App() {
           <span className="eyebrow muted">Import paths</span>
           <div className="pill-stack">
             <code className="import-pill">@openwork/ui/react</code>
-            <code className="import-pill">@openwork/ui/solid</code>
           </div>
           <pre>{`import { PaperMeshGradient, PaperGrainGradient } from "@openwork/ui/react"
 

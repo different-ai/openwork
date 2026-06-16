@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect } from "react";
 
-import { publishInspectorSlice, recordInspectorEvent } from "./app-inspector";
+import { publishInspectorSlice, recordInspectorEvent } from "../../app/lib/app-inspector";
 import { recordDebugLog } from "./debug-logger";
 
 type RenderWatchdogDetails = Record<string, unknown>;

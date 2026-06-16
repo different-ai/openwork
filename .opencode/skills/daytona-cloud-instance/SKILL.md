@@ -13,10 +13,10 @@ Start the Den cloud stack in Daytona, confirm it is reachable, and return the UR
 
 ## Fast Path
 
-From the repo root, prefer the existing Daytona helper when available:
+From the repo root, prefer the existing Daytona server helper when available:
 
 ```bash
-bash .devcontainer/test-on-daytona.sh $(git rev-parse --abbrev-ref HEAD) --server-only --artifacts-volume
+bash .devcontainer/test-server-on-daytona.sh $(git rev-parse --abbrev-ref HEAD)
 ```
 
 If the branch is local-only, push it first or apply the local diff manually in the sandbox before validating.

@@ -23,6 +23,7 @@ import { db } from "../src/db.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "../src/desktop-policies.js"
 import { env } from "../src/env.js"
 import { seedDefaultOrganizationRoles } from "../src/orgs.js"
+import { calculateOrganizationSeatBillingCounts } from "../src/stripe-billing.js"
 
 const RESET_MODE = process.argv.includes("--reset")
 
@@ -415,6 +416,7 @@ async function ensureTeamMember(teamId: TeamId, orgMembershipId: MemberId) {
 async function ensureDemoSeatSubscription(input: { createdByOrgMembershipId: MemberId; memberCount: number; organizationId: OrganizationId }) {
   const now = new Date()
   const currentPeriodEnd = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30)
+  const quantity = calculateOrganizationSeatBillingCounts({ memberCount: input.memberCount }).chargeable
   await db.insert(OrgSubscriptionTable).values({
     cancel_at_period_end: false,
     canceled_at: null,
@@ -426,7 +428,7 @@ async function ensureDemoSeatSubscription(input: { createdByOrgMembershipId: Mem
     id: createDenTypeId("orgSubscription"),
     last_event_id: "demo-seed-seat-subscription",
     organization_id: input.organizationId,
-    quantity: Math.max(0, input.memberCount - 5),
+    quantity,
     status: "active",
     stripe_customer_id: `cus_demo_${input.organizationId}`,
     stripe_price_id: "price_demo_seats",
@@ -443,7 +445,7 @@ async function ensureDemoSeatSubscription(input: { createdByOrgMembershipId: Mem
       current_period_start: now,
       ended_at: null,
       last_event_id: "demo-seed-seat-subscription",
-      quantity: Math.max(0, input.memberCount - 5),
+      quantity,
       status: "active",
       stripe_customer_id: `cus_demo_${input.organizationId}`,
       stripe_price_id: "price_demo_seats",
@@ -494,6 +496,7 @@ async function ensureInvitation(input: {
 async function ensureMarketplace(input: { createdByOrgMembershipId: MemberId; organizationId: OrganizationId }): Promise<MarketplaceId> {
   const name = "Anthropic Knowledge Work Plugins"
   const description = `Demo marketplace seeded from ${GITHUB_REPO}. Plugins are imported into Den DB for local demos; no external integrations are connected.`
+  const logoUrl = "https://cdn.simpleicons.org/anthropic"
   const existing = await db
     .select()
     .from(MarketplaceTable)
@@ -503,7 +506,7 @@ async function ensureMarketplace(input: { createdByOrgMembershipId: MemberId; or
   if (existing[0]) {
     await db
       .update(MarketplaceTable)
-      .set({ createdByOrgMembershipId: input.createdByOrgMembershipId, deletedAt: null, description, status: "active", updatedAt: new Date() })
+      .set({ createdByOrgMembershipId: input.createdByOrgMembershipId, deletedAt: null, description, logoUrl, status: "active", updatedAt: new Date() })
       .where(eq(MarketplaceTable.id, existing[0].id))
     await ensureMarketplaceAccessGrant({ ...input, marketplaceId: existing[0].id, role: "viewer" })
     return existing[0].id
@@ -515,6 +518,7 @@ async function ensureMarketplace(input: { createdByOrgMembershipId: MemberId; or
     deletedAt: null,
     description,
     id,
+    logoUrl,
     name,
     organizationId: input.organizationId,
     status: "active",

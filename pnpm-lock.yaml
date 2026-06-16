@@ -245,6 +245,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       electron:
         specifier: ^35.0.0
         version: 35.7.5
@@ -301,10 +304,10 @@ importers:
         specifier: 0.1.77
         version: 0.1.77(solid-js@1.9.9)(stage-js@1.0.0-alpha.17)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       opencode-router:
-        specifier: 0.16.2
+        specifier: 0.17.0
         version: link:../opencode-router
       openwork-server:
-        specifier: 0.16.2
+        specifier: 0.17.0
         version: link:../server
       solid-js:
         specifier: 1.9.9
@@ -359,6 +362,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -465,12 +471,18 @@ importers:
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1
+      fast-xml-parser:
+        specifier: 5.8.0
+        version: 5.8.0
       hono:
         specifier: ^4.7.2
         version: 4.12.8
       hono-openapi:
         specifier: ^1.3.0
         version: 1.3.0(@hono/standard-validator@0.2.2(@standard-schema/spec@1.1.0)(hono@4.12.8))(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.25.2(zod@4.3.6))(zod@4.3.6))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.25.2(zod@4.3.6))(zod@4.3.6))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.3.6))(@types/json-schema@7.0.15)(hono@4.12.8)(openapi-types@12.1.3)
+      jsonc-parser:
+        specifier: ^3.2.1
+        version: 3.3.1
       nanoid:
         specifier: ^5.1.11
         version: 5.1.11
@@ -669,6 +681,18 @@ importers:
         specifier: 5.4.5
         version: 5.4.5
 
+  ee/packages/den-admin-mcp:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@3.25.76)
+      mysql2:
+        specifier: ^3.11.3
+        version: 3.17.4
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+
   ee/packages/den-db:
     dependencies:
       '@openwork-ee/utils':
@@ -806,9 +830,6 @@ importers:
       react:
         specifier: ^18 || ^19
         version: 19.2.4
-      solid-js:
-        specifier: ^1.9.0
-        version: 1.9.9
     devDependencies:
       '@types/react':
         specifier: ^19.2.14
@@ -1393,6 +1414,7 @@ packages:
 
   '@daytonaio/sdk@0.173.0':
     resolution: {integrity: sha512-/eaP3YMhyhkZrmjEYT1pgTWyN0soBqi98+xSEa7lFhI0jc8E83eGv8yOS7DrzDIkc7cZqTmWKHOqn4dZmcfw1A==}
+    deprecated: 'Moved to @daytona/sdk, same API, no breaking changes. Please update: npm uninstall @daytonaio/sdk && npm i @daytona/sdk'
 
   '@develar/schema-utils@2.6.5':
     resolution: {integrity: sha512-0cp4PsWQ/9avqTVMCtZ+GirikIA36ikvjtHweU4/j8yLtgObI0+JUPhYFScgwlteveGB1rt3Cm8UhN04XayDig==}

@@ -3,7 +3,6 @@ import { createDenClient, readDenSettings, writeDenSettings } from "./den";
 export async function saveInstalledSkillToOpenWorkOrg(input: {
   skillText: string;
   shared?: "org" | "public" | null;
-  skillHubId?: string | null;
 }): Promise<{ skillId: string; orgId: string; orgName: string }> {
   const settings = readDenSettings();
   const token = settings.authToken?.trim() ?? "";
@@ -41,11 +40,6 @@ export async function saveInstalledSkillToOpenWorkOrg(input: {
     skillText: input.skillText,
     shared: input.shared === undefined ? null : input.shared,
   });
-
-  const hubId = input.skillHubId?.trim() ?? "";
-  if (hubId) {
-    await cloudClient.addOrgSkillToHub(orgId, hubId, created.id);
-  }
 
   return { skillId: created.id, orgId, orgName };
 }

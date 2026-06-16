@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto"
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { OAuthAccessTokenTable } from "@openwork-ee/den-db/schema"
+import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
+import { AuthSessionTable, MemberTable, OAuthAccessTokenTable } from "@openwork-ee/den-db/schema"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { verifyJwsAccessToken } from "better-auth/oauth2"
 import {
   auth,
@@ -21,10 +22,22 @@ export type McpPrincipal = {
   payload: Record<string, unknown>
 }
 
+type McpJwtVerifyOptions = Parameters<typeof verifyJwsAccessToken>[1]["verifyOptions"]
+
+const MCP_JWT_SIGNING_ALGORITHMS = ["EdDSA"]
+
 export function getMcpResourceUrl(request: Request) {
   const url = new URL(request.url)
   const requestResource = `${url.origin}/mcp`
   return DEN_MCP_RESOURCES.includes(requestResource) ? requestResource : DEN_MCP_RESOURCE
+}
+
+export function getMcpJwtVerifyOptions(): McpJwtVerifyOptions {
+  return {
+    issuer: `${env.betterAuthUrl}/api/auth`,
+    audience: DEN_MCP_RESOURCES,
+    algorithms: MCP_JWT_SIGNING_ALGORITHMS,
+  }
 }
 
 function readBearerToken(headers: Headers) {
@@ -66,6 +79,55 @@ function readStringClaim(payload: Record<string, unknown>, claim: string) {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
+function normalizeMcpPrincipal(input: { userId: string; organizationId: string }) {
+  try {
+    return {
+      userId: normalizeDenTypeId("user", input.userId),
+      organizationId: normalizeDenTypeId("organization", input.organizationId),
+    }
+  } catch {
+    return null
+  }
+}
+
+export async function hasActiveMcpMembership(input: { userId: string; organizationId: string }) {
+  const principal = normalizeMcpPrincipal(input)
+  if (!principal) {
+    return false
+  }
+
+  const rows = await db
+    .select({ id: MemberTable.id })
+    .from(MemberTable)
+    .where(and(
+      eq(MemberTable.userId, principal.userId),
+      eq(MemberTable.organizationId, principal.organizationId),
+      isNull(MemberTable.removedAt),
+    ))
+    .limit(1)
+
+  return rows.length > 0
+}
+
+export async function hasActiveMcpSession(sessionId: string) {
+  try {
+    const normalizedSessionId = normalizeDenTypeId("session", sessionId)
+
+    const rows = await db
+      .select({ id: AuthSessionTable.id })
+      .from(AuthSessionTable)
+      .where(and(
+        eq(AuthSessionTable.id, normalizedSessionId),
+        gt(AuthSessionTable.expiresAt, new Date()),
+      ))
+      .limit(1)
+
+    return rows.length > 0
+  } catch {
+    return false
+  }
+}
+
 async function getJwks() {
   const response = await auth.handler(new Request(`${env.betterAuthUrl}/api/auth/jwks`))
   if (!response.ok) {
@@ -77,10 +139,7 @@ async function getJwks() {
 async function verifyJwtMcpToken(token: string) {
   const payload = await verifyJwsAccessToken(token, {
     jwksFetch: getJwks,
-    verifyOptions: {
-      issuer: `${env.betterAuthUrl}/api/auth`,
-      audience: DEN_MCP_RESOURCES,
-    },
+    verifyOptions: getMcpJwtVerifyOptions(),
   })
   return payload as Record<string, unknown>
 }
@@ -110,6 +169,7 @@ async function verifyOpaqueMcpToken(token: string) {
     iat: Math.floor(accessToken.createdAt.getTime() / 1000),
     [DEN_MCP_TOKEN_USE_CLAIM]: "mcp",
     [DEN_MCP_RESOURCE_CLAIM]: DEN_MCP_RESOURCE,
+    ...(accessToken.sessionId ? { sid: accessToken.sessionId } : {}),
     ...(accessToken.referenceId ? { [DEN_MCP_ORG_ID_CLAIM]: accessToken.referenceId } : {}),
   }
 }
@@ -163,6 +223,28 @@ export async function verifyMcpRequest(headers: Headers, resourceUrl = DEN_MCP_R
   const organizationId = readStringClaim(payload, DEN_MCP_ORG_ID_CLAIM)
   if (!userId || !organizationId) {
     return new Response(JSON.stringify({ error: "missing_mcp_principal" }), {
+      status: 403,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  const sessionId = readStringClaim(payload, "sid")
+  if (!sessionId) {
+    return new Response(JSON.stringify({ error: "mcp_session_required" }), {
+      status: 403,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  if (!(await hasActiveMcpSession(sessionId))) {
+    return new Response(JSON.stringify({ error: "mcp_session_revoked" }), {
+      status: 403,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  if (!(await hasActiveMcpMembership({ userId, organizationId }))) {
+    return new Response(JSON.stringify({ error: "mcp_membership_revoked" }), {
       status: 403,
       headers: { "content-type": "application/json" },
     })

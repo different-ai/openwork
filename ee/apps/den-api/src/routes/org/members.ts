@@ -1,15 +1,18 @@
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { eq } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { revokeOrganizationApiKeysForMember } from "../../api-keys.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { revokeMembershipSessionCredentials } from "../../credential-revocation.js"
 import { db } from "../../db.js"
-import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
-import { listAssignableRoles, removeOrganizationMember, roleIncludesOwner } from "../../orgs.js"
+import { listAssignableRoles, removeOrganizationMember, validateOrganizationMemberRoleUpdate } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureMemberRemover, ensureOwner, idParamSchema, normalizeRoleName } from "./shared.js"
+import { ensureMemberRemover, ensureOwner, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
 
 const updateMemberRoleSchema = z.object({
   role: z.string().trim().min(1).max(64),
@@ -33,9 +36,8 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         404: jsonResponse("The member or organization could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
+    orgRoleRoute(["owner"]),
     paramValidator(orgMemberParamsSchema),
-    resolveOrganizationContextMiddleware,
     jsonValidator(updateMemberRoleSchema),
     async (c) => {
     const permission = ensureOwner(c)
@@ -54,28 +56,48 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       return c.json({ error: "member_not_found" }, 404)
     }
 
-    const memberRows = await db
-      .select()
-      .from(MemberTable)
-      .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.removedAt)))
-      .limit(1)
-
-    const member = memberRows[0]
-    if (!member) {
-      return c.json({ error: "member_not_found" }, 404)
-    }
-
-    if (roleIncludesOwner(member.role)) {
-      return c.json({ error: "owner_role_locked", message: "The organization owner role cannot be changed." }, 400)
-    }
-
     const role = normalizeRoleName(input.role)
     const availableRoles = await listAssignableRoles(payload.organization.id)
     if (!availableRoles.has(role)) {
       return c.json({ error: "invalid_role", message: "Choose one of the existing organization roles." }, 400)
     }
 
-    await db.update(MemberTable).set({ role }).where(eq(MemberTable.id, member.id))
+    const validation = await validateOrganizationMemberRoleUpdate({
+      organizationId: payload.organization.id,
+      memberId,
+      nextRole: role,
+    })
+    if (!validation.ok) {
+      if (validation.error === "member_not_found") {
+        return c.json({ error: validation.error, message: validation.message }, 404)
+      }
+      return c.json({ error: validation.error, message: validation.message }, 400)
+    }
+
+    if (validation.member.role !== role) {
+      await db.update(MemberTable).set({ role }).where(eq(MemberTable.id, validation.member.id))
+      await revokeOrganizationApiKeysForMember({
+        organizationId: payload.organization.id,
+        orgMembershipId: validation.member.id,
+        userId: validation.member.userId,
+      })
+      await revokeMembershipSessionCredentials({
+        organizationId: payload.organization.id,
+        userId: validation.member.userId,
+      })
+      await recordOrganizationAuditEvent({
+        organizationId: payload.organization.id,
+        actorUserId: payload.currentMember.userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.memberRoleUpdated,
+        payload: {
+          targetOrgMembershipId: validation.member.id,
+          targetUserId: validation.member.userId,
+          previousRole: validation.member.role,
+          nextRole: role,
+        },
+      })
+    }
+
     return c.json({ success: true })
     },
   )
@@ -94,13 +116,12 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         404: jsonResponse("The member or organization could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
+    orgRoleRoute(["admin"]),
     paramValidator(orgMemberParamsSchema),
-    resolveOrganizationContextMiddleware,
     async (c) => {
     const permission = ensureMemberRemover(c)
     if (!permission.ok) {
-      return c.json(permission.response, permission.response.error === "forbidden" ? 403 : 404)
+      return c.json(permission.response, orgAccessFailureStatus(permission.response))
     }
 
     const payload = c.get("organizationContext")
@@ -112,26 +133,29 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       return c.json({ error: "member_not_found" }, 404)
     }
 
-    const memberRows = await db
-      .select()
-      .from(MemberTable)
-      .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.removedAt)))
-      .limit(1)
-
-    const member = memberRows[0]
-    if (!member) {
-      return c.json({ error: "member_not_found" }, 404)
-    }
-
-    if (roleIncludesOwner(member.role)) {
-      return c.json({ error: "owner_role_locked", message: "The organization owner cannot be removed." }, 400)
-    }
-
-    await removeOrganizationMember({
+    const removed = await removeOrganizationMember({
       organizationId: payload.organization.id,
-      memberId: member.id,
+      memberId,
       removedByOrgMemberId: payload.currentMember.id,
     })
+    if (!removed.ok) {
+      if (removed.error === "member_not_found") {
+        return c.json({ error: removed.error, message: removed.message }, 404)
+      }
+      return c.json({ error: removed.error, message: removed.message }, 400)
+    }
+
+    await recordOrganizationAuditEvent({
+      organizationId: payload.organization.id,
+      actorUserId: payload.currentMember.userId,
+      action: ORGANIZATION_AUDIT_ACTIONS.memberRemoved,
+      payload: {
+        targetOrgMembershipId: removed.member.id,
+        targetUserId: removed.member.userId,
+        previousRole: removed.member.role,
+      },
+    })
+
     return c.body(null, 204)
     },
   )

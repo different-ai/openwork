@@ -118,6 +118,7 @@ export function AuthPanel({
     desktopRedirectUrl,
     desktopRedirectBusy,
     showAuthFeedback,
+    continueSignInWithEmail,
     submitAuth,
     submitVerificationCode,
     resendVerificationCode,
@@ -125,6 +126,7 @@ export function AuthPanel({
     beginSocialAuth,
     resolveUserLandingRoute,
   } = useDenFlow();
+  const [signInEmailConfirmed, setSignInEmailConfirmed] = useState(false);
 
   const resolvedSignUpContent: PanelContent = {
     title: "Get started.",
@@ -159,11 +161,19 @@ export function AuthPanel({
 
   const desktopGrant = getDesktopGrant(desktopRedirectUrl);
   const isPasswordResetRequest = authMode === "sign-in" && passwordResetRequested && !verificationRequired;
+  const isEmailFirstSignIn = authMode === "sign-in" && !verificationRequired && !isPasswordResetRequest && !hideEmailField;
+  const isSignInEmailStep = isEmailFirstSignIn && !signInEmailConfirmed;
   const formBusy = isPasswordResetRequest ? passwordResetBusy : authBusy || desktopRedirectBusy;
   const activeContent = verificationRequired
     ? resolvedVerificationContent
     : isPasswordResetRequest
       ? passwordResetContent
+      : isSignInEmailStep
+      ? {
+          ...resolvedSignInContent,
+          copy: "Enter your email and we’ll send you to the right sign-in method.",
+          submitLabel: "Next",
+        }
       : authMode === "sign-in"
       ? resolvedSignInContent
       : resolvedSignUpContent;
@@ -180,6 +190,7 @@ export function AuthPanel({
     setEmail(prefilledEmail?.trim() ?? "");
     setPassword("");
     setVerificationCode("");
+    setSignInEmailConfirmed(false);
   }, [initialMode, prefillKey, prefilledEmail, setAuthMode, setEmail, setPassword, setVerificationCode]);
 
   const copyDesktopValue = async (field: "link" | "code", value: string | null) => {
@@ -323,6 +334,15 @@ export function AuthPanel({
             return;
           }
 
+          if (isSignInEmailStep) {
+            event.preventDefault();
+            const shouldContinue = await continueSignInWithEmail();
+            if (shouldContinue) {
+              setSignInEmailConfirmed(true);
+            }
+            return;
+          }
+
           const next = verificationRequired
             ? await submitVerificationCode(event)
             : await submitAuth(event);
@@ -341,13 +361,15 @@ export function AuthPanel({
       >
         {!verificationRequired && !isPasswordResetRequest && !hideSocialAuth ? (
           <>
-            <SocialButton
-              onClick={() => void beginSocialAuth("github")}
-              disabled={authBusy || desktopRedirectBusy}
-            >
-              <GitHubLogo />
-              <span>Continue with GitHub</span>
-            </SocialButton>
+            {authMode !== "sign-in" ? (
+              <SocialButton
+                onClick={() => void beginSocialAuth("github")}
+                disabled={authBusy || desktopRedirectBusy}
+              >
+                <GitHubLogo />
+                <span>Continue with GitHub</span>
+              </SocialButton>
+            ) : null}
 
             <SocialButton
               onClick={() => void beginSocialAuth("google")}
@@ -377,7 +399,12 @@ export function AuthPanel({
               className="den-input disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500"
               type="email"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                if (authMode === "sign-in") {
+                  setSignInEmailConfirmed(false);
+                }
+              }}
               autoComplete="email"
               readOnly={lockEmail}
               disabled={lockEmail}
@@ -386,7 +413,7 @@ export function AuthPanel({
           </label>
         ) : null}
 
-        {!verificationRequired && !isPasswordResetRequest ? (
+        {!verificationRequired && !isPasswordResetRequest && !isSignInEmailStep ? (
           <label className="grid gap-2">
             <span className="den-label">Password</span>
             <input
@@ -398,7 +425,7 @@ export function AuthPanel({
               required
             />
           </label>
-        ) : isPasswordResetRequest ? null : (
+        ) : verificationRequired ? (
           <label className="grid gap-2">
             <span className="den-label">Verification code</span>
             <input
@@ -414,9 +441,9 @@ export function AuthPanel({
               required
             />
           </label>
-        )}
+        ) : null}
 
-        {authMode === "sign-in" && !verificationRequired && !isPasswordResetRequest && !hideEmailField ? (
+        {authMode === "sign-in" && !verificationRequired && !isPasswordResetRequest && !isSignInEmailStep && !hideEmailField ? (
           <div className="-mt-2 flex justify-end">
             <button
               type="button"
@@ -455,7 +482,10 @@ export function AuthPanel({
             <button
               type="button"
               className="den-button-secondary w-full"
-              onClick={() => cancelVerification()}
+              onClick={() => {
+                setSignInEmailConfirmed(false);
+                cancelVerification();
+              }}
               disabled={authBusy || desktopRedirectBusy}
             >
               Change email
@@ -474,6 +504,7 @@ export function AuthPanel({
               setPasswordResetRequested(false);
               setPasswordResetInfo("");
               setPasswordResetError(null);
+              setSignInEmailConfirmed(false);
               setAuthMode("sign-in");
             }}
           >
@@ -494,6 +525,7 @@ export function AuthPanel({
               setPasswordResetRequested(false);
               setPasswordResetInfo("");
               setPasswordResetError(null);
+              setSignInEmailConfirmed(false);
               setAuthMode(authMode === "sign-in" ? "sign-up" : "sign-in");
             }}
           >

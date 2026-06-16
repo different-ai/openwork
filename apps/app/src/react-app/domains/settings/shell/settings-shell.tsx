@@ -18,6 +18,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { t } from "../../../../i18n";
+import { NotificationBell } from "../../../shell/notification-center";
 import type { SettingsTab } from "../../../../app/types";
 import {
   CLOUD_SETTINGS_TABS,
@@ -68,16 +69,19 @@ export function SettingsShell(props: SettingsShellProps) {
               onSelectWorkspace={props.onSelectWorkspace}
             />
           </div>
-          <Button
-            variant="ghost"
-            type="button"
-            className="flex size-8 shrink-0 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text mac:titlebar-no-drag"
-            onClick={props.onClose}
-            title={t("dashboard.close_settings")}
-            aria-label={t("dashboard.close_settings")}
-          >
-            <X size={17} />
-          </Button>
+          <div className="flex shrink-0 items-center gap-1 mac:titlebar-no-drag">
+            <NotificationBell />
+            <Button
+              variant="ghost"
+              type="button"
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
+              onClick={props.onClose}
+              title={t("dashboard.close_settings")}
+              aria-label={t("dashboard.close_settings")}
+            >
+              <X size={17} />
+            </Button>
+          </div>
         </header>
 
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -128,11 +132,12 @@ export function SettingsShell(props: SettingsShellProps) {
                   </span>
                 ) : null}
               </div>
-              <div className="flex items-center text-gray-10 mac:titlebar-no-drag md:hidden">
+              <div className="flex items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+                <NotificationBell />
                 <Button
                   variant="ghost"
                   type="button"
-                  className="flex size-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
+                  className="flex size-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:hidden"
                   onClick={props.onClose}
                   title={t("dashboard.close_settings")}
                   aria-label={t("dashboard.close_settings")}

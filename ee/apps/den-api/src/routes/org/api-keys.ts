@@ -8,11 +8,12 @@ import {
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
   listOrganizationApiKeys,
 } from "../../api-keys.js"
-import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { jsonValidator, orgMemberRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import { auth } from "../../auth.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureApiKeyManager, idParamSchema } from "./shared.js"
+import { ensureApiKeyManager, idParamSchema, orgAccessFailureStatus } from "./shared.js"
 
 const createOrganizationApiKeySchema = z.object({
   name: z.string().trim().min(2).max(64),
@@ -37,7 +38,8 @@ const organizationNotFoundSchema = z.object({
 }).meta({ ref: "OrganizationNotFoundError" })
 
 const forbiddenApiKeyManagerSchema = z.object({
-  error: z.literal("forbidden"),
+  error: z.enum(["forbidden", "reauth"]),
+  reason: z.string().optional(),
   message: z.string(),
 }).meta({ ref: "OrganizationApiKeyForbiddenError" })
 
@@ -83,6 +85,7 @@ const createdOrganizationApiKeySchema = z.object({
   rateLimitEnabled: z.boolean(),
   rateLimitMax: z.number().int().nullable(),
   rateLimitTimeWindow: z.number().int().nullable(),
+  expiresAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).meta({ ref: "CreatedOrganizationApiKey" })
@@ -129,7 +132,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners and admins can list API keys.",
+          description: "Only workspace owners or members with security configuration permission can list API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -146,12 +149,11 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
         },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const access = ensureApiKeyManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -194,7 +196,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners and admins can create API keys.",
+          description: "Only workspace owners or members with security configuration permission can create API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -211,13 +213,12 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
         },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     jsonValidator(createOrganizationApiKeySchema),
     async (c) => {
       const access = ensureApiKeyManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -238,6 +239,18 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
         },
       })
 
+      await recordOrganizationAuditEvent({
+        organizationId: payload.organization.id,
+        actorUserId: payload.currentMember.userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.apiKeyCreated,
+        payload: {
+          apiKeyId: created.id,
+          orgMembershipId: payload.currentMember.id,
+          name: created.name,
+          prefix: created.prefix,
+        },
+      })
+
       return c.json({
         apiKey: {
           id: created.id,
@@ -248,6 +261,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           rateLimitEnabled: created.rateLimitEnabled,
           rateLimitMax: created.rateLimitMax,
           rateLimitTimeWindow: created.rateLimitTimeWindow,
+          expiresAt: created.expiresAt,
           createdAt: created.createdAt,
           updatedAt: created.updatedAt,
         },
@@ -285,7 +299,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners and admins can delete API keys.",
+          description: "Only workspace owners or members with security configuration permission can delete API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -302,13 +316,12 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
         },
       },
     }),
-    requireUserMiddleware,
+    orgMemberRoute(),
     paramValidator(apiKeyIdParamSchema),
-    resolveOrganizationContextMiddleware,
     async (c) => {
       const access = ensureApiKeyManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -321,6 +334,19 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
       if (!deleted) {
         return c.json({ error: "api_key_not_found" }, 404)
       }
+
+      await recordOrganizationAuditEvent({
+        organizationId: payload.organization.id,
+        actorUserId: payload.currentMember.userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.apiKeyDeleted,
+        payload: {
+          apiKeyId: deleted.id,
+          ownerUserId: deleted.owner.userId,
+          ownerOrgMembershipId: deleted.owner.memberId,
+          name: deleted.name,
+          prefix: deleted.prefix,
+        },
+      })
 
       return c.body(null, 204)
     },
