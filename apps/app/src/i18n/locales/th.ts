@@ -75,6 +75,7 @@ export default {
   "common.something_went_wrong": "เกิดข้อผิดพลาด",
   "common.submit": "ส่ง",
   "common.unknown": "ไม่ทราบ",
+  "composer.agent_general_purpose": "Agent อเนกประสงค์",
   "composer.agent_label": "Agent",
   "composer.any_file_type_supported": "รองรับไฟล์ทุกประเภท",
   "composer.attach_files": "แนบไฟล์",

@@ -78,6 +78,7 @@ export default {
   "common.something_went_wrong": "出了点问题",
   "common.submit": "提交",
   "common.unknown": "未知",
+  "composer.agent_general_purpose": "通用智能体",
   "composer.agent_label": "智能体",
   "composer.any_file_type_supported": "支持任何文件类型。",
   "composer.attach_files": "附加文件",

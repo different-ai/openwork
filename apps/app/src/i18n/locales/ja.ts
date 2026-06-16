@@ -74,6 +74,7 @@ export default {
   "common.something_went_wrong": "エラーが発生しました",
   "common.submit": "送信",
   "common.unknown": "不明",
+  "composer.agent_general_purpose": "汎用エージェント",
   "composer.agent_label": "エージェント",
   "composer.any_file_type_supported": "すべてのファイル形式に対応しています。",
   "composer.attach_files": "ファイルを添付",

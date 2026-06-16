@@ -76,6 +76,7 @@ export default {
   "common.something_went_wrong": "Что-то пошло не так",
   "common.submit": "Отправить",
   "common.unknown": "Неизвестно",
+  "composer.agent_general_purpose": "Универсальный агент",
   "composer.agent_label": "Агент",
   "composer.any_file_type_supported": "Поддерживаются файлы любого типа.",
   "composer.attach_files": "Прикрепить файлы",

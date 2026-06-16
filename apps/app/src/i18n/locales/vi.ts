@@ -75,6 +75,7 @@ export default {
   "common.something_went_wrong": "Đã xảy ra lỗi",
   "common.submit": "Gửi",
   "common.unknown": "Không rõ",
+  "composer.agent_general_purpose": "Agent đa năng",
   "composer.agent_label": "Agent",
   "composer.any_file_type_supported": "Hỗ trợ mọi loại tệp.",
   "composer.attach_files": "Đính kèm tệp",

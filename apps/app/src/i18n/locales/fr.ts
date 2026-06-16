@@ -75,6 +75,7 @@ export default {
   "common.something_went_wrong": "Un problème est survenu",
   "common.submit": "Envoyer",
   "common.unknown": "Inconnu",
+  "composer.agent_general_purpose": "Agent polyvalent",
   "composer.agent_label": "Agent",
   "composer.any_file_type_supported": "Tous les types de fichiers sont pris en charge.",
   "composer.attach_files": "Joindre des fichiers",

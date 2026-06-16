@@ -75,6 +75,7 @@ export default {
   "common.something_went_wrong": "Hi ha hagut un problema",
   "common.submit": "Envia",
   "common.unknown": "Desconegut",
+  "composer.agent_general_purpose": "Agent de propòsit general",
   "composer.agent_label": "Agent",
   "composer.any_file_type_supported": "S'admet qualsevol tipus de fitxer.",
   "composer.attach_files": "Adjuntar fitxers",

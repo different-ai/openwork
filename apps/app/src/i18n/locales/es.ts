@@ -75,6 +75,7 @@ export default {
   "common.something_went_wrong": "Algo salió mal",
   "common.submit": "Enviar",
   "common.unknown": "Desconocido",
+  "composer.agent_general_purpose": "Agente de propósito general",
   "composer.agent_label": "Agente",
   "composer.any_file_type_supported": "Se admite cualquier tipo de archivo.",
   "composer.attach_files": "Adjuntar archivos",
