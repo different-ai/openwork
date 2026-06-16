@@ -60,6 +60,7 @@ const EnvSchema = z.object({
   VERCEL_TEAM_SLUG: z.string().optional(),
   VERCEL_DNS_DOMAIN: z.string().optional(),
   DEN_PLAN_GATING_ENABLED: z.string().optional(),
+  SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
   POLAR_API_BASE: z.string().optional(),
   POLAR_ACCESS_TOKEN: z.string().optional(),
@@ -196,6 +197,7 @@ export const env = {
   webAppHosts: splitCsv(parsed.DEN_WEB_APP_HOSTS).map((host) => host.toLowerCase()),
   devMode,
   planGatingEnabled,
+  scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   requireEmailVerification,
   github: {
     clientId: optionalString(parsed.GITHUB_CLIENT_ID),

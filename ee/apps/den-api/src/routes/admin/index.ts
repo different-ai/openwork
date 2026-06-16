@@ -6,6 +6,7 @@ import {
   InvitationTable,
   MemberTable,
   OrganizationTable,
+  OrgSubscriptionTable,
   TelemetryEventTable,
   WorkerTable,
   AdminAllowlistTable,
@@ -13,16 +14,28 @@ import {
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { getCloudWorkerAdminBillingStatus } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { parseOrganizationPlan, type PlanTier } from "../../entitlements.js"
-import { queryValidator, requireAdminMiddleware } from "../../middleware/index.js"
+import { adminRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../../organization-limits.js"
 import type { AuthContextVariables } from "../../session.js"
+import { calculateOrganizationSeatBillingCounts, getOrganizationSeatBillingCounts, refreshOrgSubscriptionFromStripe, syncSeatSubscriptionQuantityAfterMemberChange } from "../../stripe-billing.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
 type OrganizationId = typeof OrganizationTable.$inferSelect.id
+
+type AdminBillingStatus = {
+  status: "paid" | "unpaid" | "unavailable"
+  featureGateEnabled: boolean
+  subscriptionId: string | null
+  subscriptionStatus: string | null
+  currentPeriodEnd: Date | string | null
+  source: "benefit" | "subscription" | "unavailable"
+  note: string | null
+}
+
+const DEFAULT_ORGANIZATION_FREE_SEAT_COUNT = calculateOrganizationSeatBillingCounts({ memberCount: 0 }).includedFree
 
 const overviewQuerySchema = z.object({
   includeBilling: z.string().optional(),
@@ -31,6 +44,10 @@ const overviewQuerySchema = z.object({
 const updateOrganizationPlanSchema = z.object({
   tier: z.enum(["free", "team", "enterprise"]),
   seatLimit: z.number().int().min(1).max(100000),
+})
+
+const updateOrganizationFreeSeatsSchema = z.object({
+  totalFreeSeats: z.number().int().min(DEFAULT_ORGANIZATION_FREE_SEAT_COUNT).max(100000),
 })
 
 const adminOverviewResponseSchema = z.object({
@@ -42,6 +59,7 @@ const adminOverviewResponseSchema = z.object({
   admins: z.array(z.object({}).passthrough()),
   summary: z.object({}).passthrough(),
   users: z.array(z.object({}).passthrough()),
+  organizations: z.array(z.object({}).passthrough()),
   generatedAt: z.string().datetime(),
 }).meta({ ref: "AdminOverviewResponse" })
 
@@ -181,10 +199,34 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item
   return results
 }
 
+function isPaidSubscriptionStatus(value: string | null) {
+  return value === "active" || value === "trialing"
+}
+
+function billingTime(value: Date | string | null) {
+  if (!value) {
+    return 0
+  }
+
+  return value instanceof Date ? value.getTime() : new Date(value).getTime()
+}
+
+function shouldReplaceBillingStatus(current: AdminBillingStatus, candidate: AdminBillingStatus) {
+  if (candidate.status === "paid" && current.status !== "paid") {
+    return true
+  }
+
+  if (candidate.status !== current.status) {
+    return false
+  }
+
+  return billingTime(candidate.currentPeriodEnd) > billingTime(current.currentPeriodEnd)
+}
+
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   app.patch(
     "/v1/admin/organizations/:organizationId/plan",
-    requireAdminMiddleware,
+    adminRoute(),
     async (c) => {
       const body = updateOrganizationPlanSchema.safeParse(await c.req.json().catch(() => null))
       if (!body.success) {
@@ -225,6 +267,58 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     },
   )
 
+  app.patch(
+    "/v1/admin/organizations/:organizationId/free-seats",
+    adminRoute(),
+    async (c) => {
+      const body = updateOrganizationFreeSeatsSchema.safeParse(await c.req.json().catch(() => null))
+      if (!body.success) {
+        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid organization free seats request." }, 400)
+      }
+
+      const organizationId = c.req.param("organizationId")
+      if (!isOrganizationId(organizationId)) {
+        return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
+      }
+
+      const rows = await db
+        .select({ id: OrganizationTable.id, metadata: OrganizationTable.metadata })
+        .from(OrganizationTable)
+        .where(eq(OrganizationTable.id, organizationId))
+        .limit(1)
+
+      const organization = rows[0]
+      if (!organization) {
+        return c.json({ error: "not_found", message: "Organization not found." }, 404)
+      }
+
+      const seatsFreeAdditional = body.data.totalFreeSeats - DEFAULT_ORGANIZATION_FREE_SEAT_COUNT
+      const metadata = {
+        ...normalizeOrganizationMetadata(organization.metadata).metadata,
+        seatsFreeAdditional,
+      }
+
+      await db
+        .update(OrganizationTable)
+        .set({ metadata })
+        .where(eq(OrganizationTable.id, organizationId))
+
+      const seatCounts = await getOrganizationSeatBillingCounts({ organizationId })
+      await syncSeatSubscriptionQuantityAfterMemberChange({ organizationId, memberCount: seatCounts.total })
+
+      return c.json({
+        ok: true,
+        organization: {
+          id: organizationId,
+          memberCount: seatCounts.total,
+          freeSeatCount: seatCounts.free,
+          seatsFreeAdditional: seatCounts.additionalFree,
+          billableSeatCount: seatCounts.chargeable,
+        },
+      })
+    },
+  )
+
   app.get(
     "/v1/admin/overview",
     describeRoute({
@@ -237,7 +331,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         401: jsonResponse("The caller must be an authenticated admin.", unauthorizedSchema),
       },
     }),
-    requireAdminMiddleware,
+    adminRoute(),
     queryValidator(overviewQuerySchema),
     async (c) => {
     const user = c.get("user")
@@ -251,7 +345,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     const sessionDayExpr = sql<string>`date_format(${AuthSessionTable.createdAt}, '%Y-%m-%d')`
     const telemetryDayExpr = sql<string>`date_format(${TelemetryEventTable.event_timestamp}, '%Y-%m-%d')`
 
-    const [admins, organizations, orgMemberStatsRows, users, workerStatsRows, sessionStatsRows, accountRows, sessionDayRows, telemetryDayRows, taskDayRows, inviteStatsRows] = await Promise.all([
+    const [admins, organizations, orgMemberStatsRows, orgMembershipRows, users, workerStatsRows, sessionStatsRows, accountRows, sessionDayRows, telemetryDayRows, taskDayRows, inviteStatsRows] = await Promise.all([
       db
         .select({
           email: AdminAllowlistTable.email,
@@ -269,6 +363,17 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         .from(MemberTable)
         .where(isNull(MemberTable.removedAt))
         .groupBy(MemberTable.organizationId),
+      db
+        .select({
+          userId: MemberTable.userId,
+          organizationId: MemberTable.organizationId,
+          organizationName: OrganizationTable.name,
+          role: MemberTable.role,
+          joinedAt: MemberTable.joinedAt,
+        })
+        .from(MemberTable)
+        .innerJoin(OrganizationTable, eq(MemberTable.organizationId, OrganizationTable.id))
+        .where(and(isNotNull(MemberTable.userId), isNull(MemberTable.removedAt))),
       db.select().from(AuthUserTable).orderBy(desc(AuthUserTable.createdAt)),
       db
         .select({
@@ -366,10 +471,43 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       memberCountByOrg.set(row.organizationId, toNumber(row.memberCount))
     }
 
+    type UserOrganizationMembership = {
+      id: OrganizationId
+      name: string
+      role: string
+      memberCount: number
+      joinedAt: Date | string | null
+    }
+
+    const membershipsByUser = new Map<UserId, UserOrganizationMembership[]>()
+    for (const row of orgMembershipRows) {
+      if (!row.userId || !isOrganizationId(row.organizationId)) {
+        continue
+      }
+
+      const memberships = membershipsByUser.get(row.userId) ?? []
+      memberships.push({
+        id: row.organizationId,
+        name: row.organizationName,
+        role: row.role,
+        memberCount: memberCountByOrg.get(row.organizationId) ?? 0,
+        joinedAt: row.joinedAt,
+      })
+      membershipsByUser.set(row.userId, memberships)
+    }
+
+    for (const memberships of membershipsByUser.values()) {
+      memberships.sort((a, b) => a.name.localeCompare(b.name))
+    }
+
     const organizationRows = organizations.map((entry) => {
       const metadata = normalizeOrganizationMetadata(entry.metadata).metadata
       const plan = parseOrganizationPlan(metadata)
       const seatLimit = metadata.limits.members ?? DEFAULT_ORGANIZATION_LIMITS.members
+      const seatCounts = calculateOrganizationSeatBillingCounts({
+        memberCount: memberCountByOrg.get(entry.id) ?? 0,
+        metadata,
+      })
 
       return {
         id: entry.id,
@@ -377,9 +515,12 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         slug: entry.slug,
         createdAt: entry.createdAt,
         updatedAt: entry.updatedAt,
-        memberCount: memberCountByOrg.get(entry.id) ?? 0,
+        memberCount: seatCounts.total,
         plan,
         seatLimit,
+        freeSeatCount: seatCounts.free,
+        seatsFreeAdditional: seatCounts.additionalFree,
+        billableSeatCount: seatCounts.chargeable,
       }
     })
 
@@ -522,28 +663,72 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     const activeUsers1d = todayKey ? (activeUsersByDay.get(todayKey)?.size ?? 0) : 0
     const realActiveUsers1d = todayKey ? (realActiveUsersByDay.get(todayKey)?.size ?? 0) : 0
 
-    const defaultBilling = {
-      status: "unavailable" as const,
+    const defaultBilling: AdminBillingStatus = {
+      status: "unpaid",
       featureGateEnabled: false,
       subscriptionId: null,
       subscriptionStatus: null,
       currentPeriodEnd: null,
-      source: "unavailable" as const,
-      note: "Billing lookup unavailable.",
+      source: "subscription",
+      note: "No cached Stripe organization subscription covers this user.",
     }
 
-    const billingRows = includeBilling
-      ? await mapWithConcurrency(users, 4, async (entry) => ({
-          userId: entry.id,
-          billing: await getCloudWorkerAdminBillingStatus({
-            userId: entry.id,
-            email: entry.email,
-            name: entry.name ?? entry.email,
-          }),
-        }))
+    const subscriptionRows = includeBilling
+      ? await db
+          .select({
+            userId: MemberTable.userId,
+            subscriptionId: OrgSubscriptionTable.stripe_subscription_id,
+            subscriptionStatus: OrgSubscriptionTable.status,
+            currentPeriodEnd: OrgSubscriptionTable.current_period_end,
+          })
+          .from(OrgSubscriptionTable)
+          .innerJoin(MemberTable, eq(OrgSubscriptionTable.organization_id, MemberTable.organizationId))
+          .where(and(isNull(MemberTable.removedAt), eq(OrgSubscriptionTable.type, "inference")))
       : []
 
-    const billingByUser = new Map(billingRows.map((row) => [row.userId, row.billing]))
+    const subscriptionIds = Array.from(new Set(subscriptionRows.map((row) => row.subscriptionId)))
+    const refreshedRows = await mapWithConcurrency(subscriptionIds, 4, async (subscriptionId) => {
+      try {
+        return await refreshOrgSubscriptionFromStripe(subscriptionId)
+      } catch (error) {
+        console.warn("[admin] failed to refresh Stripe subscription", subscriptionId, error)
+        return null
+      }
+    })
+    const refreshedBySubscriptionId = new Map<string, NonNullable<(typeof refreshedRows)[number]>>()
+    for (const row of refreshedRows) {
+      if (row) {
+        refreshedBySubscriptionId.set(row.stripe_subscription_id, row)
+      }
+    }
+
+    const billingByUser = new Map<UserId, AdminBillingStatus>()
+    for (const row of subscriptionRows) {
+      if (!row.userId) {
+        continue
+      }
+
+      const refreshed = refreshedBySubscriptionId.get(row.subscriptionId)
+      const subscriptionStatus = refreshed?.status ?? row.subscriptionStatus
+      const subscriptionId = refreshed?.stripe_subscription_id ?? row.subscriptionId
+      const currentPeriodEnd = refreshed?.current_period_end ?? row.currentPeriodEnd
+      const paid = isPaidSubscriptionStatus(subscriptionStatus)
+      const billing: AdminBillingStatus = {
+        status: paid ? "paid" : "unpaid",
+        featureGateEnabled: false,
+        subscriptionId,
+        subscriptionStatus,
+        currentPeriodEnd,
+        source: "subscription",
+        note: paid
+          ? "Covered by an active Stripe organization subscription."
+          : "Stripe organization subscription is not active.",
+      }
+      const current = billingByUser.get(row.userId)
+      if (!current || shouldReplaceBillingStatus(current, billing)) {
+        billingByUser.set(row.userId, billing)
+      }
+    }
 
     const userRows = users.map((entry) => {
       const workerStats = workerStatsByUser.get(entry.id) ?? {
@@ -597,6 +782,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         localWorkerCount: workerStats.localWorkerCount,
         latestWorkerCreatedAt: workerStats.latestWorkerCreatedAt,
         billing: includeBilling ? billingByUser.get(entry.id) ?? defaultBilling : null,
+        organizations: membershipsByUser.get(entry.id) ?? [],
       }
     })
 

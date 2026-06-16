@@ -6,6 +6,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { db } from "../db.js"
 import { isAdminEmailAllowed } from "../middleware/admin.js"
+import { tokenRoute } from "../middleware/index.js"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { DEN_ADMIN_MCP_VERSION, registerAdminMcpTools } from "./admin-tools.js"
 
@@ -23,7 +24,7 @@ import { DEN_ADMIN_MCP_VERSION, registerAdminMcpTools } from "./admin-tools.js"
  * /mcp exposure policy keeps blocking everything tagged Admin.
  */
 export function registerAdminMcpRoutes<T extends { Variables: Record<string, unknown> }>(app: Hono<T>) {
-  app.all("/mcp/admin", async (c) => {
+  app.all("/mcp/admin", tokenRoute, async (c) => {
     const principal = await verifyMcpRequest(c.req.raw.headers, getMcpResourceUrl(c.req.raw))
     if (principal instanceof Response) {
       return principal

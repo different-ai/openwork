@@ -784,7 +784,7 @@ export function ManageMembersScreen() {
                                 Cancel invite
                               </button>
                             ) : null}
-                            {!isInvited && access.canRemoveMembers ? (
+                            {!isInvited && access.canManageMembers ? (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -799,7 +799,7 @@ export function ManageMembersScreen() {
                                 Edit role
                               </button>
                             ) : null}
-                            {!isInvited && access.canManageMembers ? (
+                            {!isInvited && access.canRemoveMembers ? (
                               <button
                                 type="button"
                                 onClick={async () => {

@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto"
-import { and, eq } from "drizzle-orm"
-import { InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable } from "@openwork-ee/den-db"
+import { and, eq, isNull } from "drizzle-orm"
+import { InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable } from "@openwork-ee/den-db"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 
@@ -15,11 +15,21 @@ export function constantTimeEquals(a: string, b: string) {
 }
 
 export async function findActiveInferenceKey(rawKey: string) {
-  const [row] = await db.select().from(InferenceKeyTable).where(eq(InferenceKeyTable.key_hash, sha256(rawKey))).limit(1)
-  if (!row || row.status !== "active") {
+  const [row] = await db
+    .select({ inferenceKey: InferenceKeyTable })
+    .from(InferenceKeyTable)
+    .innerJoin(MemberTable, eq(InferenceKeyTable.org_membership_id, MemberTable.id))
+    .where(and(
+      eq(InferenceKeyTable.key_hash, sha256(rawKey)),
+      eq(InferenceKeyTable.status, "active"),
+      eq(MemberTable.organizationId, InferenceKeyTable.organization_id),
+      isNull(MemberTable.removedAt),
+    ))
+    .limit(1)
+  if (!row) {
     return null
   }
-  return row
+  return row.inferenceKey
 }
 
 export async function getOpenRouterProviderKey(organizationId: string) {

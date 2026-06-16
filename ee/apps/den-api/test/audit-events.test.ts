@@ -144,6 +144,24 @@ test("organization audit events support SCIM management actions", () => {
     scimProviderId,
     providerId: "openwork-scim-org_id",
   })
+
+  const reconciliationEvent = buildOrganizationAuditEvent({
+    organizationId: createDenTypeId("organization"),
+    actorUserId: createDenTypeId("user"),
+    action: ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun,
+    payload: {
+      checked: 3,
+      repaired: 1,
+      failures: 0,
+    },
+  })
+
+  expect(reconciliationEvent.action).toBe("organization.scim.reconciliation_run")
+  expect(reconciliationEvent.payload).toEqual({
+    checked: 3,
+    repaired: 1,
+    failures: 0,
+  })
 })
 
 test("organization audit events support SSO management actions", () => {

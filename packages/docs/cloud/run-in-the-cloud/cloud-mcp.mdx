@@ -82,6 +82,23 @@ If your client expects the server map directly, use just the server entry:
 
 The token is scoped to the organization you select during OAuth. If you need to switch organizations, remove the stored MCP auth token in your client and run the auth flow again.
 
+## OAuth security controls
+
+OpenWork Cloud's MCP OAuth flow is hardened for public MCP clients:
+
+- PKCE is required for dynamically registered/public clients. Only the `S256`
+  code challenge method is supported.
+- Redirect URIs are restricted to loopback HTTP(S) callbacks, such as
+  `http://127.0.0.1:<port>/callback`, or private-use custom schemes. Public web
+  redirects and dangerous schemes such as `javascript:`, `file:`, and `data:`
+  are rejected.
+- MCP OAuth access tokens expire after 15 minutes.
+- MCP OAuth refresh tokens expire after 7 days, rotate on refresh, and are
+  revocable. Reusing a revoked refresh token invalidates the token family.
+- Access is rechecked against the user's active OpenWork Cloud session and
+  organization membership, so removing a member or revoking their session also
+  cuts off MCP access.
+
 ## What the server exposes
 
 The hosted MCP server exposes OpenWork Cloud API tools for normal product resources, including config objects, connectors, plugins, marketplaces, skills, workers, members, roles, teams, and LLM providers.

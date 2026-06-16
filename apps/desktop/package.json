@@ -1,7 +1,7 @@
 {
   "name": "@openwork/desktop",
   "private": true,
-  "version": "0.16.4",
+  "version": "0.17.0",
   "description": "OpenWork desktop shell",
   "author": {
     "name": "OpenWork",
@@ -40,5 +40,5 @@
     "electron-devtools-installer": "^4.0.0"
   },
   "packageManager": "pnpm@10.27.0",
-  "opencodeRouterVersion": "0.16.4"
+  "opencodeRouterVersion": "0.17.0"
 }
