@@ -3,6 +3,7 @@ import { db } from "./db.js";
 import { isEntraSsoEnabled, mapEntraProfileToUser, normalizeEntraTenantId } from "./entra-sso.js";
 import { env } from "./env.js";
 import { deriveDenMcpResource } from "./mcp/resource.js";
+import { getDenAuthIssuer, getDenJwtOptions } from "./mcp/jwt-policy.js";
 import {
   DEN_MCP_DEFAULT_CLIENT_SCOPES,
   DEN_MCP_SCOPES,
@@ -41,7 +42,13 @@ import {
   ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
   ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
 } from "./sso-saml-policy.js";
-import { ensureEntraSsoMembershipForAccount, getOrganizationContextForUser, seedDefaultOrganizationRoles } from "./orgs.js";
+import {
+  ensureEntraSsoMembershipForAccount,
+  getOrganizationContextForUser,
+  seedDefaultOrganizationRoles,
+  validateOrganizationMemberRemovalForHook,
+  validateOrganizationMemberRoleUpdate,
+} from "./orgs.js";
 import {
   findEnterpriseAuthRequirementForEmail,
   findEnterpriseAuthRequirementForUserId,
@@ -92,6 +99,8 @@ export const DEN_MCP_ORG_ID_CLAIM = "https://openworklabs.com/org_id";
 export const DEN_MCP_RESOURCE_CLAIM = "https://openworklabs.com/resource";
 export const DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX = "ow_mcp_at_";
 export { DEN_MCP_SCOPES } from "./mcp/scopes.js";
+
+type AuthMemberHookRow = typeof schema.MemberTable.$inferSelect;
 
 const socialProviders = {
   ...(env.github.clientId && env.github.clientSecret
@@ -188,6 +197,10 @@ async function revokeOrganizationMemberCredentials(input: {
   });
 }
 
+function throwMemberLifecycleError(message: string): never {
+  throw new APIError("BAD_REQUEST", { message });
+}
+
 function getBodyEmail(body: unknown) {
   if (!body || typeof body !== "object") {
     return null;
@@ -250,6 +263,25 @@ export const auth = betterAuth({
               userId: normalizeDenTypeId("user", account.userId),
             });
           }
+        },
+      },
+    },
+    member: {
+      delete: {
+        before: async (member: AuthMemberHookRow) => {
+          const validation = await validateOrganizationMemberRemovalForHook({
+            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            memberId: normalizeDenTypeId("member", member.id),
+          });
+          if (!validation.ok) {
+            throwMemberLifecycleError(validation.message);
+          }
+
+          await revokeOrganizationMemberCredentials({
+            organizationId: member.organizationId,
+            orgMembershipId: member.id,
+            userId: member.userId,
+          });
         },
       },
     },
@@ -419,7 +451,7 @@ export const auth = betterAuth({
     },
   },
   plugins: [
-    jwt(),
+    jwt(getDenJwtOptions({ issuer: getDenAuthIssuer(env.betterAuthUrl) })),
     emailOTP({
       overrideDefaultEmailVerification: true,
       otpLength: 6,
@@ -467,10 +499,12 @@ export const auth = betterAuth({
           );
         },
         beforeRemoveMember: async ({ member }) => {
-          if (hasRole(member.role, "owner")) {
-            throw new APIError("BAD_REQUEST", {
-              message: "The organization owner cannot be removed.",
-            });
+          const validation = await validateOrganizationMemberRemovalForHook({
+            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            memberId: normalizeDenTypeId("member", member.id),
+          });
+          if (!validation.ok) {
+            throwMemberLifecycleError(validation.message);
           }
 
           await revokeOrganizationMemberCredentials({
@@ -491,6 +525,15 @@ export const auth = betterAuth({
               message:
                 "Owner can only be assigned during organization creation.",
             });
+          }
+
+          const validation = await validateOrganizationMemberRoleUpdate({
+            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            memberId: normalizeDenTypeId("member", member.id),
+            nextRole: newRole,
+          });
+          if (!validation.ok) {
+            throwMemberLifecycleError(validation.message);
           }
 
           if (member.role !== newRole) {

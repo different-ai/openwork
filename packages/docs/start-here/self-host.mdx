@@ -22,6 +22,8 @@ If you only need one private remote workspace, deploy the worker runtime. If you
 
 Our hosted deployment uses Render for long-running services and worker provisioning. Render gives us service deploys, env vars, health checks, logs, and worker builds without asking us to operate raw AWS services directly. If you want to run closer to AWS yourself, use the same service boundaries on ECS/Fargate, EC2, Kubernetes, or another container platform.
 
+In production, hosted OpenWork runs the Cloud app and Den controller as scaled Render services with at least two instances. Render load balances traffic across healthy instances, removes failing instances from routing, and restarts failed instances. Den controller application instances are stateless replicas; shared control-plane state is stored in PlanetScale.
+
 The production shape is straightforward:
 
 - Put HTTPS in front of every public service.
@@ -36,7 +38,17 @@ For a containerized worker runtime, start from the [Docker packaging](https://gi
 
 - Worker runtimes use filesystem state and opencode SQLite data inside the mounted workspace/data paths.
 - The Den control plane uses a MySQL-compatible database. Local Docker uses MySQL 8.4; production can use standard MySQL or PlanetScale-compatible credentials.
+- Hosted OpenWork uses PlanetScale for Den control-plane state. PlanetScale production clusters provide one primary and at least two replicas across three availability zones, managed failover, and automated backups.
 - Postgres is not required by the current Den deployment path.
+
+For production, configure encryption explicitly:
+
+- Enable encryption at rest for the MySQL-compatible database, database backups, object storage, worker volumes, and logs that may contain operational metadata.
+- Require TLS for application-to-database traffic. PlanetScale connections require TLS. For standard MySQL, include a certificate-verifying SSL mode in `DATABASE_URL`, such as `?sslmode=require`, `?sslmode=verify-ca`, or `?sslmode=verify-full`.
+- Keep the local Docker MySQL URL (`mysql://root:password@127.0.0.1:3306/openwork_den`) for development only; it is not a production security posture.
+- Set a unique `DEN_DB_ENCRYPTION_KEY` of at least 32 characters. OpenWork uses it to encrypt selected sensitive database columns, but it does not replace infrastructure-level encryption at rest.
+
+For a self-hosted production deployment, use a managed MySQL-compatible database with automated failover and backups, or provide equivalent redundancy yourself. Document the restore process, backup retention, recovery time objective, recovery point objective, and the person or team responsible for failover and restore.
 
 ## Auth and SSO
 

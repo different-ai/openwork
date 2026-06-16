@@ -93,6 +93,13 @@ OpenWork Cloud's MCP OAuth flow is hardened for public MCP clients:
   redirects and dangerous schemes such as `javascript:`, `file:`, and `data:`
   are rejected.
 - MCP OAuth access tokens expire after 15 minutes.
+- JWT access tokens are signed with EdDSA only. The MCP verifier pins that
+  signing algorithm, validates the issuer as the OpenWork Cloud auth server,
+  and validates the audience against the MCP resource URLs advertised by the
+  protected-resource metadata.
+- JWKS signing keys rotate every 24 hours. Previous public keys remain in the
+  JWKS for a 1-hour overlap, which is longer than the MCP access-token
+  lifetime, so in-flight tokens can expire naturally during rotation.
 - MCP OAuth refresh tokens expire after 7 days, rotate on refresh, and are
   revocable. Reusing a revoked refresh token invalidates the token family.
 - Access is rechecked against the user's active OpenWork Cloud session and

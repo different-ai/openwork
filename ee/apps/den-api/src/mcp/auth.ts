@@ -14,6 +14,7 @@ import {
 } from "../auth.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { DEN_JWT_SIGNING_ALGORITHM, getDenAuthIssuer } from "./jwt-policy.js"
 
 export type McpPrincipal = {
   userId: string
@@ -24,7 +25,7 @@ export type McpPrincipal = {
 
 type McpJwtVerifyOptions = Parameters<typeof verifyJwsAccessToken>[1]["verifyOptions"]
 
-const MCP_JWT_SIGNING_ALGORITHMS = ["EdDSA"]
+const MCP_JWT_SIGNING_ALGORITHMS = [DEN_JWT_SIGNING_ALGORITHM]
 
 export function getMcpResourceUrl(request: Request) {
   const url = new URL(request.url)
@@ -34,7 +35,7 @@ export function getMcpResourceUrl(request: Request) {
 
 export function getMcpJwtVerifyOptions(): McpJwtVerifyOptions {
   return {
-    issuer: `${env.betterAuthUrl}/api/auth`,
+    issuer: getDenAuthIssuer(env.betterAuthUrl),
     audience: DEN_MCP_RESOURCES,
     algorithms: MCP_JWT_SIGNING_ALGORITHMS,
   }

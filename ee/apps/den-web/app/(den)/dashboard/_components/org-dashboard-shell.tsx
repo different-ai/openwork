@@ -21,6 +21,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Store,
+  type LucideIcon,
   Users,
   X,
 } from "lucide-react";
@@ -48,6 +49,13 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
+
+type DashboardNavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  badge?: string;
+};
 
 function OrgMark({ name }: { name: string }) {
   const initials = useMemo(() => {
@@ -171,6 +179,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
+    orgContext?.roles,
   );
 
   const pageTitle = getDashboardPageTitle(pathname, activeOrg?.slug ?? null);
@@ -179,99 +188,109 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     orgSlug: activeOrg?.slug,
   });
 
-  const navItems = [
+  const adminNavItems: DashboardNavItem[] = access.isAdmin
+    ? [
+        {
+          href: activeOrg ? getAnalyticsRoute(activeOrg.slug) : "#",
+          label: "Analytics",
+          icon: BarChart3,
+          badge: "New",
+        },
+        // NOTE: Shared Workspace soft-disabled — uncomment to re-enable
+        // {
+        //   href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#",
+        //   label: "Shared Workspace",
+        //   icon: Bot,
+        //   badge: "Alpha",
+        // },
+        {
+          href: activeOrg ? getInferenceRoute(activeOrg.slug) : "#",
+          label: "OpenWork Models",
+          icon: Sparkles,
+          badge: "Beta",
+        },
+        {
+          href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
+          label: "LLM Providers",
+          icon: Cpu,
+        },
+        {
+          href: activeOrg ? getDesktopPoliciesRoute(activeOrg.slug) : "#",
+          label: "Desktop Policies",
+          icon: Laptop,
+        },
+        {
+          href: activeOrg ? getIntegrationsRoute(activeOrg.slug) : "#",
+          label: "Integrations",
+          icon: Cable,
+          badge: "New",
+        },
+        {
+          href: activeOrg ? getMarketplacesRoute(activeOrg.slug) : "#",
+          label: "Marketplaces",
+          icon: Store,
+          badge: "New",
+        },
+        {
+          href: activeOrg ? getPluginsRoute(activeOrg.slug) : "#",
+          label: "Plugins",
+          icon: Puzzle,
+          badge: "New",
+        },
+        {
+          href: activeOrg ? getMembersRoute(activeOrg.slug) : "#",
+          label: "Members",
+          icon: Users,
+        },
+      ]
+    : [];
+  const securityNavItems: DashboardNavItem[] = [
+    ...(access.canManageApiKeys
+      ? [{
+          href: activeOrg ? getApiKeysRoute(activeOrg.slug) : "#",
+          label: "API Keys",
+          icon: KeyRound,
+        }]
+      : []),
+    ...(access.canManageScim
+      ? [{
+          href: activeOrg ? getScimRoute(activeOrg.slug) : "#",
+          label: "SCIM",
+          icon: Shield,
+        }]
+      : []),
+    ...(access.canManageSso
+      ? [{
+          href: activeOrg ? getSsoRoute(activeOrg.slug) : "#",
+          label: "SSO",
+          icon: Shield,
+        }]
+      : []),
+  ];
+  const ownerAdminNavItems: DashboardNavItem[] = access.isAdmin
+    ? [
+        {
+          href: getBillingRoute(activeOrg?.slug),
+          label: "Billing",
+          icon: CreditCard,
+        },
+        {
+          href: activeOrg ? getOrgSettingsRoute(activeOrg.slug) : "#",
+          label: "Org Settings",
+          icon: SlidersHorizontal,
+        },
+      ]
+    : [];
+
+  const navItems: DashboardNavItem[] = [
     {
       href: activeOrg ? getOrgDashboardRoute(activeOrg.slug) : "#",
       label: "Dashboard",
       icon: Home,
     },
-    ...(access.isAdmin
-      ? [
-          {
-            href: activeOrg ? getAnalyticsRoute(activeOrg.slug) : "#",
-            label: "Analytics",
-            icon: BarChart3,
-            badge: "New",
-          },
-          // NOTE: Shared Workspace soft-disabled — uncomment to re-enable
-          // {
-          //   href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#",
-          //   label: "Shared Workspace",
-          //   icon: Bot,
-          //   badge: "Alpha",
-          // },
-          {
-            href: activeOrg ? getInferenceRoute(activeOrg.slug) : "#",
-            label: "OpenWork Models",
-            icon: Sparkles,
-            badge: "Beta",
-          },
-          {
-            href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
-            label: "LLM Providers",
-            icon: Cpu,
-          },
-          {
-            href: activeOrg ? getDesktopPoliciesRoute(activeOrg.slug) : "#",
-            label: "Desktop Policies",
-            icon: Laptop,
-          },
-          {
-            href: activeOrg ? getIntegrationsRoute(activeOrg.slug) : "#",
-            label: "Integrations",
-            icon: Cable,
-            badge: "New",
-          },
-          {
-            href: activeOrg ? getMarketplacesRoute(activeOrg.slug) : "#",
-            label: "Marketplaces",
-            icon: Store,
-            badge: "New",
-          },
-          {
-            href: activeOrg ? getPluginsRoute(activeOrg.slug) : "#",
-            label: "Plugins",
-            icon: Puzzle,
-            badge: "New",
-          },
-          {
-            href: activeOrg ? getMembersRoute(activeOrg.slug) : "#",
-            label: "Members",
-            icon: Users,
-          },
-          ...(access.canManageApiKeys
-            ? [{
-                href: activeOrg ? getApiKeysRoute(activeOrg.slug) : "#",
-                label: "API Keys",
-                icon: KeyRound,
-              }]
-            : []),
-          ...(access.canManageScim
-            ? [{
-                href: activeOrg ? getScimRoute(activeOrg.slug) : "#",
-                label: "SCIM",
-                icon: Shield,
-              }]
-            : []),
-          ...(access.canManageSso
-            ? [{
-                href: activeOrg ? getSsoRoute(activeOrg.slug) : "#",
-                label: "SSO",
-                icon: Shield,
-              }]
-            : []),
-          {
-            href: getBillingRoute(activeOrg?.slug),
-            label: "Billing",
-            icon: CreditCard,
-          },
-          {
-            href: activeOrg ? getOrgSettingsRoute(activeOrg.slug) : "#",
-            label: "Org Settings",
-            icon: SlidersHorizontal,
-          },
-        ]
-      : []),
+    ...adminNavItems,
+    ...securityNavItems,
+    ...ownerAdminNavItems,
   ];
 
   const orgSwitcher = (
