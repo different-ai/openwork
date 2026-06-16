@@ -40,7 +40,14 @@ describe("cloud managed provider import identity", () => {
       id: "lpr_nvidia",
       providerId: "nvidia",
       credentialKind: "api_key",
-    }))).toBe("lpr_nvidia");
+    }))).toBe("nvidia");
+
+    expect(getCloudManagedProviderId(provider({
+      id: "lpr_custom",
+      providerId: "custom-source",
+      credentialKind: "api_key",
+      providerConfig: { id: "custom-runtime" },
+    }))).toBe("custom-runtime");
   });
 
   test("remote sync only records providers identified as applied by Den", () => {

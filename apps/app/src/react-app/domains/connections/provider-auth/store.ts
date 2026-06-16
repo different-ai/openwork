@@ -134,11 +134,13 @@ type MutableState = {
 export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
 
 export const getCloudManagedProviderId = (
-  provider: Pick<DenOrgLlmProvider, "id" | "providerId" | "source" | "credentialKind">,
+  provider: Pick<DenOrgLlmProvider, "id" | "providerId" | "source" | "providerConfig">,
 ) => {
   if (provider.source === "openwork") return "openwork";
-  if (provider.credentialKind === "opencode_oauth") return provider.providerId.trim();
-  return provider.id.trim();
+  const configId = typeof provider.providerConfig.id === "string"
+    ? provider.providerConfig.id.trim()
+    : "";
+  return configId || provider.providerId.trim() || provider.id.trim();
 };
 
 export function resolveAppliedManagedProvidersFromSyncResult(
