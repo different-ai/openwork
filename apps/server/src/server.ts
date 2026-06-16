@@ -861,8 +861,6 @@ async function filterManagedProviderListResponse(workspaceRoot: string, response
   } catch {
     return proxyJsonResponse(response, data);
   }
-  if (policy.allowedModelsByProvider.size === 0 && policy.revokedProviderIds.size === 0) return proxyJsonResponse(response, data);
-
   return proxyJsonResponse(response, filterProviderListModels(data, policy));
 }
 

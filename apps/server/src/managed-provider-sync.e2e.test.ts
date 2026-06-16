@@ -208,6 +208,16 @@ afterEach(async () => {
 });
 
 describe("managed provider sync runtime route", () => {
+  test("keeps OpenCode Zen connected without managed provider policy", async () => {
+    const { base } = await boot({ omitConnected: true, includeOpencodeZen: true });
+
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: clientAuth() });
+    expect(response.status).toBe(200);
+    const body = await response.json() as ProviderListTestBody & { connected?: string[] };
+
+    expect(body.connected).toEqual(["opencode"]);
+  });
+
   test("requires host token and rejects client bearer tokens", async () => {
     const { base } = await boot();
     const unauthenticated = await fetch(`${base}/managed-providers/sync`, { method: "POST", body: JSON.stringify(providerPayload()) });
