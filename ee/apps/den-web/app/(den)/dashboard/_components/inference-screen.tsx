@@ -6,7 +6,7 @@ import { Check, Sparkles } from "lucide-react";
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { getBillingRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -226,7 +226,7 @@ function ModelsValueProp(props: {
 
 export function InferenceScreen() {
   const router = useRouter();
-  const { activeOrg, orgContext, refreshOrgData } = useOrgDashboard();
+  const { activeOrg, orgContext, refreshOrgData, runReauthableAction } = useOrgDashboard();
   const [status, setStatus] = useState<InferenceStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -263,22 +263,24 @@ export function InferenceScreen() {
   // instead of bouncing the user to the billing page. Billing stays the
   // status/portal view.
   async function startSubscribeCheckout() {
-    setSubscribeBusy(true);
     setError(null);
     try {
-      const { response, payload } = await requestJson(
-        "/v1/billing/stripe/checkout",
-        { method: "POST", body: JSON.stringify({ type: "inference" }) },
-        12000,
-      );
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Checkout failed (${response.status}).`));
-      }
-      const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
-      if (!url) {
-        throw new Error("Checkout response did not include a URL.");
-      }
-      window.location.href = url;
+      await runReauthableAction("inference-checkout", async () => {
+        setSubscribeBusy(true);
+        const { response, payload } = await requestJson(
+          "/v1/billing/stripe/checkout",
+          { method: "POST", body: JSON.stringify({ type: "inference" }) },
+          12000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Checkout failed (${response.status}).`);
+        }
+        const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
+        if (!url) {
+          throw new Error("Checkout response did not include a URL.");
+        }
+        window.location.href = url;
+      });
     } catch (checkoutError) {
       setError(checkoutError instanceof Error ? checkoutError.message : "Could not start Stripe checkout.");
       setSubscribeBusy(false);
@@ -291,30 +293,34 @@ export function InferenceScreen() {
       router.push(getBillingRoute(activeOrg?.slug));
       return;
     }
-    setSaving(true);
     setError(null);
     try {
-      const { response, payload } = await requestJson(
-        "/v1/inference",
-        {
-          method: "PATCH",
-          body: JSON.stringify({ enabled: !status.enabled, tier: status.tier }),
-        },
-        20000,
-      );
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to update inference settings (${response.status}).`));
-      }
-      const parsed = parseInferencePayload(payload);
-      if (!parsed) {
-        throw new Error("Inference settings response was incomplete.");
-      }
-      setStatus(parsed);
-      await refreshOrgData();
+      await runReauthableAction("update-inference", async () => {
+        setSaving(true);
+        try {
+          const { response, payload } = await requestJson(
+            "/v1/inference",
+            {
+              method: "PATCH",
+              body: JSON.stringify({ enabled: !status.enabled, tier: status.tier }),
+            },
+            20000,
+          );
+          if (!response.ok) {
+            throw getRequestError(payload, response, `Failed to update inference settings (${response.status}).`);
+          }
+          const parsed = parseInferencePayload(payload);
+          if (!parsed) {
+            throw new Error("Inference settings response was incomplete.");
+          }
+          setStatus(parsed);
+          await refreshOrgData();
+        } finally {
+          setSaving(false);
+        }
+      });
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to update inference settings.");
-    } finally {
-      setSaving(false);
     }
   }
 

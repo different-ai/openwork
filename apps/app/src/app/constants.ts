@@ -36,6 +36,11 @@ export type McpDirectoryInfo = {
   type?: "remote" | "local";
   command?: string[];
   oauth: boolean;
+  oauthConfig?: {
+    clientId?: string;
+    clientSecret?: string;
+    scope?: string;
+  };
   /** Extension category for UI grouping. Defaults to "mcp". */
   kind?: ExtensionKind;
   /** Simple Icons slug for brand icon (e.g. "notion", "stripe", "figma"). */

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 export type IntegrationProvider = "github" | "bitbucket";
@@ -402,9 +402,12 @@ export function useIntegrationRepos(provider: IntegrationProvider, accountId: st
 
 export function useStartGithubInstall() {
   const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
 
   return useMutation({
     mutationFn: async (input: { returnPath: string }): Promise<GithubInstallStartResult> => {
+      let result: GithubInstallStartResult | null = null;
+      await runReauthableAction("start-github-install", async () => {
       const { response, payload } = await requestJson(
         "/v1/connectors/github/install/start",
         {
@@ -415,7 +418,7 @@ export function useStartGithubInstall() {
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to start GitHub install (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to start GitHub install (${response.status}).`);
       }
 
       const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
@@ -425,7 +428,12 @@ export function useStartGithubInstall() {
         throw new Error("GitHub install start response was incomplete.");
       }
 
-      return { redirectUrl, state };
+        result = { redirectUrl, state };
+      });
+      if (!result) {
+        throw new Error("GitHub install start response was incomplete.");
+      }
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: integrationQueryKeys.all });
@@ -560,6 +568,7 @@ export function useGithubAccountRepositories(connectorAccountId: string | null) 
 
 export function useCreateGithubConnectorInstance() {
   const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
 
   return useMutation({
     mutationFn: async (input: {
@@ -570,6 +579,8 @@ export function useCreateGithubConnectorInstance() {
       repositoryFullName: string;
       repositoryId: number;
     }): Promise<GithubConnectorCreationResult> => {
+      let result: GithubConnectorCreationResult | null = null;
+      await runReauthableAction("create-github-connector", async () => {
       const { response, payload } = await requestJson(
         "/v1/connectors/github/setup",
         {
@@ -589,7 +600,7 @@ export function useCreateGithubConnectorInstance() {
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to connect GitHub repository (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to connect GitHub repository (${response.status}).`);
       }
 
       const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
@@ -605,11 +616,16 @@ export function useCreateGithubConnectorInstance() {
         throw new Error("GitHub setup response was incomplete.");
       }
 
-      return {
+        result = {
         connectorInstanceId,
         connectorTargetId,
         repositoryFullName,
       };
+      });
+      if (!result) {
+        throw new Error("GitHub setup response was incomplete.");
+      }
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: integrationQueryKeys.all });
@@ -749,9 +765,12 @@ export function useGithubConnectorDiscovery(connectorInstanceId: string | null) 
 
 export function useApplyGithubDiscovery() {
   const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
 
   return useMutation({
     mutationFn: async (input: { autoImportNewPlugins: boolean; connectorInstanceId: string; selectedKeys: string[] }): Promise<GithubDiscoveryApplyResult> => {
+      let result: GithubDiscoveryApplyResult | null = null;
+      await runReauthableAction("apply-github-discovery", async () => {
       const { response, payload } = await requestJson(
         `/v1/connector-instances/${encodeURIComponent(input.connectorInstanceId)}/discovery/apply`,
         {
@@ -762,7 +781,7 @@ export function useApplyGithubDiscovery() {
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to apply GitHub discovery (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to apply GitHub discovery (${response.status}).`);
       }
 
       const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
@@ -776,12 +795,17 @@ export function useApplyGithubDiscovery() {
       const createdMappingCount = item && Array.isArray(item.createdMappings) ? item.createdMappings.length : 0;
       const materializedConfigObjectCount = item && Array.isArray(item.materializedConfigObjects) ? item.materializedConfigObjects.length : 0;
 
-      return {
+        result = {
         autoImportNewPlugins: item ? Boolean(item.autoImportNewPlugins) : input.autoImportNewPlugins,
         createdMappingCount,
         materializedConfigObjectCount,
         createdPluginNames: createdPlugins,
       };
+      });
+      if (!result) {
+        throw new Error("GitHub discovery response was incomplete.");
+      }
+      return result;
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: integrationQueryKeys.all });
@@ -830,9 +854,12 @@ export function useConnectIntegration() {
 
 export function useDisconnectIntegration() {
   const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
 
   return useMutation({
     mutationFn: async (connectionId: string) => {
+      let result: string | null = null;
+      await runReauthableAction("disconnect-integration", async () => {
       const isGithubConnection = connectionId.startsWith("cac_");
       if (isGithubConnection) {
         const { response, payload } = await requestJson(
@@ -844,14 +871,20 @@ export function useDisconnectIntegration() {
           20000,
         );
         if (!response.ok) {
-          throw new Error(getErrorMessage(payload, `Failed to disconnect integration (${response.status}).`));
+          throw getRequestError(payload, response, `Failed to disconnect integration (${response.status}).`);
         }
-        return connectionId;
+        result = connectionId;
+        return;
       }
 
       await simulateLatency(300);
       mockConnections = mockConnections.filter((entry) => entry.id !== connectionId);
-      return connectionId;
+        result = connectionId;
+      });
+      if (!result) {
+        throw new Error("Disconnect response was incomplete.");
+      }
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: integrationQueryKeys.all });
@@ -926,9 +959,11 @@ export function useConnectorInstanceConfiguration(connectorInstanceId: string | 
 
 export function useSetConnectorInstanceAutoImport() {
   const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
 
   return useMutation({
     mutationFn: async (input: { autoImportNewPlugins: boolean; connectorInstanceId: string }) => {
+      await runReauthableAction("set-connector-auto-import", async () => {
       const { response, payload } = await requestJson(
         `/v1/connector-instances/${encodeURIComponent(input.connectorInstanceId)}/auto-import`,
         {
@@ -939,9 +974,10 @@ export function useSetConnectorInstanceAutoImport() {
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to update auto-import (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to update auto-import (${response.status}).`);
       }
 
+      });
       return input.autoImportNewPlugins;
     },
     onSuccess: (_result, variables) => {
@@ -954,9 +990,11 @@ export function useSetConnectorInstanceAutoImport() {
 
 export function useRemoveConnectorInstance() {
   const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
 
   return useMutation({
     mutationFn: async (connectorInstanceId: string) => {
+      await runReauthableAction("remove-connector-instance", async () => {
       const { response, payload } = await requestJson(
         `/v1/connector-instances/${encodeURIComponent(connectorInstanceId)}/remove`,
         { method: "POST" },
@@ -964,9 +1002,10 @@ export function useRemoveConnectorInstance() {
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to remove connector instance (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to remove connector instance (${response.status}).`);
       }
 
+      });
       return connectorInstanceId;
     },
     onSuccess: () => {

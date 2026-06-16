@@ -28,6 +28,10 @@ type AddMcpState = {
   name: string;
   serverType: "remote" | "local";
   url: string;
+  oauthExpanded: boolean;
+  oauthClientId: string;
+  oauthClientSecret: string;
+  oauthScope: string;
   command: string;
   error: string | null;
   submitting: boolean;
@@ -37,6 +41,10 @@ const initialAddMcpState: AddMcpState = {
   name: "",
   serverType: "remote",
   url: "",
+  oauthExpanded: false,
+  oauthClientId: "",
+  oauthClientSecret: "",
+  oauthScope: "",
   command: "",
   error: null,
   submitting: false,
@@ -74,10 +82,25 @@ export function AddMcpModal(props: AddMcpModalProps) {
 
     if (state.serverType === "remote") {
       const trimmedUrl = state.url.trim();
+      const oauthClientId = state.oauthClientId.trim();
+      const oauthClientSecret = state.oauthClientSecret.trim();
+      const oauthScope = state.oauthScope.trim();
       if (!trimmedUrl) {
         dispatch({ error: t("mcp.url_or_command_required"), submitting: false });
         return;
       }
+      if (!oauthClientId && (oauthClientSecret || oauthScope)) {
+        dispatch({ error: t("mcp.oauth_client_id_required"), submitting: false });
+        return;
+      }
+
+      const oauthConfig = oauthClientId
+        ? {
+            clientId: oauthClientId,
+            ...(oauthClientSecret ? { clientSecret: oauthClientSecret } : {}),
+            ...(oauthScope ? { scope: oauthScope } : {}),
+          }
+        : undefined;
 
       try {
         await Promise.resolve(
@@ -86,9 +109,8 @@ export function AddMcpModal(props: AddMcpModalProps) {
             description: "",
             type: "remote",
             url: trimmedUrl,
-            // Sign-in is auto-detected after connecting; the engine reports
-            // needs_auth for OAuth servers and the sign-in modal opens itself.
-            oauth: false,
+            oauth: Boolean(oauthConfig),
+            ...(oauthConfig ? { oauthConfig } : {}),
           }),
         );
       } finally {
@@ -193,6 +215,45 @@ export function AddMcpModal(props: AddMcpModalProps) {
               />
               <div className="text-[11px] text-dls-secondary">
                 {t("mcp.oauth_autodetect_hint")}
+              </div>
+              <div className="rounded-xl border border-dls-border bg-dls-hover/30">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-dls-text"
+                  onClick={() => dispatch({ oauthExpanded: !state.oauthExpanded })}
+                >
+                  <span>{t("mcp.oauth_advanced_title")}</span>
+                  <span className="text-dls-secondary">{state.oauthExpanded ? "-" : "+"}</span>
+                </button>
+                {state.oauthExpanded ? (
+                  <div className="space-y-3 border-t border-dls-border px-3 py-3">
+                    <div className="text-[11px] leading-relaxed text-dls-secondary">
+                      {t("mcp.oauth_advanced_hint")}
+                    </div>
+                    <TextInput
+                      label={t("mcp.oauth_client_id")}
+                      placeholder={t("mcp.oauth_client_id_placeholder")}
+                      value={state.oauthClientId}
+                      onChange={(event) => dispatch({ oauthClientId: event.currentTarget.value })}
+                    />
+                    <TextInput
+                      label={t("mcp.oauth_client_secret")}
+                      placeholder={t("mcp.oauth_client_secret_placeholder")}
+                      type="password"
+                      value={state.oauthClientSecret}
+                      onChange={(event) => dispatch({ oauthClientSecret: event.currentTarget.value })}
+                    />
+                    <TextInput
+                      label={t("mcp.oauth_scope")}
+                      placeholder={t("mcp.oauth_scope_placeholder")}
+                      value={state.oauthScope}
+                      onChange={(event) => dispatch({ oauthScope: event.currentTarget.value })}
+                    />
+                    <div className="rounded-lg border border-amber-6 bg-amber-2 px-3 py-2 text-[11px] leading-relaxed text-amber-11">
+                      {t("mcp.oauth_secret_warning")}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}

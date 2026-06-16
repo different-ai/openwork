@@ -6,7 +6,7 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import {
     getOrgAccessFlags,
     parseOrgApiKeysPayload,
@@ -52,7 +52,7 @@ function getCreatedKey(payload: unknown) {
 }
 
 export function ApiKeysScreen() {
-    const { orgId, orgContext } = useOrgDashboard();
+    const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
     const [apiKeys, setApiKeys] = useState<DenOrgApiKey[]>([]);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -128,50 +128,53 @@ export function ApiKeysScreen() {
             return;
         }
 
-        setCreating(true);
         setError(null);
         setCreatedKey(null);
         setCreatedKeyName(null);
         setCopied(false);
         try {
-            const { response, payload } = await requestJson(
-                `/v1/api-keys`,
-                {
-                    method: "POST",
-                    body: JSON.stringify({ name }),
-                },
-                12000,
-            );
+            await runReauthableAction("create-api-key", async () => {
+                setCreating(true);
+                try {
+                    const { response, payload } = await requestJson(
+                        `/v1/api-keys`,
+                        {
+                            method: "POST",
+                            body: JSON.stringify({ name }),
+                        },
+                        12000,
+                    );
 
-            if (!response.ok) {
-                throw new Error(
-                    getErrorMessage(
-                        payload,
-                        `Failed to create API key (${response.status}).`,
-                    ),
-                );
-            }
+                    if (!response.ok) {
+                        throw getRequestError(
+                            payload,
+                            response,
+                            `Failed to create API key (${response.status}).`,
+                        );
+                    }
 
-            const nextKey = getCreatedKey(payload);
-            if (!nextKey) {
-                throw new Error(
-                    "API key was created, but the secret was not returned.",
-                );
-            }
+                    const nextKey = getCreatedKey(payload);
+                    if (!nextKey) {
+                        throw new Error(
+                            "API key was created, but the secret was not returned.",
+                        );
+                    }
 
-            setCreatedKey(nextKey);
-            setCreatedKeyName(name);
-            setName("");
-            setShowCreateForm(false);
-            await loadApiKeys();
+                    setCreatedKey(nextKey);
+                    setCreatedKeyName(name);
+                    setName("");
+                    setShowCreateForm(false);
+                    await loadApiKeys();
+                } finally {
+                    setCreating(false);
+                }
+            });
         } catch (nextError) {
             setError(
                 nextError instanceof Error
                     ? nextError.message
                     : "Failed to create API key.",
             );
-        } finally {
-            setCreating(false);
         }
     }
 
@@ -199,33 +202,36 @@ export function ApiKeysScreen() {
             return;
         }
 
-        setDeletingId(apiKey.id);
         setError(null);
         try {
-            const { response, payload } = await requestJson(
-                `/v1/api-keys/${encodeURIComponent(apiKey.id)}`,
-                { method: "DELETE" },
-                12000,
-            );
+            await runReauthableAction("delete-api-key", async () => {
+                setDeletingId(apiKey.id);
+                try {
+                    const { response, payload } = await requestJson(
+                        `/v1/api-keys/${encodeURIComponent(apiKey.id)}`,
+                        { method: "DELETE" },
+                        12000,
+                    );
 
-            if (response.status !== 204 && !response.ok) {
-                throw new Error(
-                    getErrorMessage(
-                        payload,
-                        `Failed to delete API key (${response.status}).`,
-                    ),
-                );
-            }
+                    if (response.status !== 204 && !response.ok) {
+                        throw getRequestError(
+                            payload,
+                            response,
+                            `Failed to delete API key (${response.status}).`,
+                        );
+                    }
 
-            await loadApiKeys();
+                    await loadApiKeys();
+                } finally {
+                    setDeletingId(null);
+                }
+            });
         } catch (nextError) {
             setError(
                 nextError instanceof Error
                     ? nextError.message
                     : "Failed to delete API key.",
             );
-        } finally {
-            setDeletingId(null);
         }
     }
 

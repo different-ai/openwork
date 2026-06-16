@@ -173,8 +173,15 @@
     {
       "idx": 25,
       "version": "5",
+      "when": 1781543270137,
+      "tag": "0025_scim_sync_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "5",
       "when": 1777486400000,
-      "tag": "0025_llm_provider_opencode_oauth",
+      "tag": "0026_llm_provider_opencode_oauth",
       "breakpoints": true
     }
   ]

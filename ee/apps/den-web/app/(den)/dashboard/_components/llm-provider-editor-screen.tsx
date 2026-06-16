@@ -17,7 +17,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenSelectableRow } from "../../_components/ui/selectable-row";
 import { UnderlineTabs } from "../../_components/ui/tabs";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import {
     getLlmProviderRoute,
     getLlmProvidersRoute,
@@ -59,7 +59,7 @@ export function LlmProviderEditorScreen({
     llmProviderId?: string;
 }) {
     const router = useRouter();
-    const { orgId, orgSlug, orgContext } = useOrgDashboard();
+    const { orgId, orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
     const { llmProviders, busy, error, reloadProviders } =
         useOrgLlmProviders(orgId);
     const provider = useMemo(
@@ -402,9 +402,10 @@ export function LlmProviderEditorScreen({
             return;
         }
 
-        setSaveBusy(true);
         setSaveError(null);
         try {
+            await runReauthableAction("save-llm-provider", async () => {
+            setSaveBusy(true);
             const body: Record<string, unknown> = {
                 name: providerName.trim(),
                 source,
@@ -443,12 +444,7 @@ export function LlmProviderEditorScreen({
             );
 
             if (!response.ok) {
-                throw new Error(
-                    getErrorMessage(
-                        payload,
-                        `Failed to save provider (${response.status}).`,
-                    ),
-                );
+                throw getRequestError(payload, response, `Failed to save provider (${response.status}).`);
             }
 
             const nextProvider =
@@ -473,6 +469,7 @@ export function LlmProviderEditorScreen({
             await reloadProviders();
             router.push(getLlmProviderRoute(orgSlug, nextProviderId));
             router.refresh();
+            });
         } catch (nextError) {
             setSaveError(
                 nextError instanceof Error

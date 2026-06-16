@@ -55,6 +55,7 @@ export const idTypesMapNameToPrefix = {
   ssoConnection: "ssc",
   ssoProvider: "ssp",
   externalIdentity: "xid",
+  scimSyncEvent: "sse",
   oauthClient: "ocl",
   oauthAccessToken: "oat",
   oauthRefreshToken: "ort",

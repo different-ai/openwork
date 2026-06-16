@@ -18,10 +18,10 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
-import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { idParamSchema, memberHasRole } from "./shared.js"
+import { ensureOrganizationAdmin, idParamSchema, orgAccessFailureStatus } from "./shared.js"
 
 type DesktopPolicyId = typeof DesktopPolicyTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -45,10 +45,6 @@ const desktopPolicyListResponseSchema = z.object({
 const desktopPolicyResponseSchema = z.object({
   desktopPolicy: z.object({}).passthrough(),
 }).meta({ ref: "DesktopPolicyResponse" })
-
-function isOrganizationAdmin(payload: { currentMember: { isOwner: boolean; role: string } }) {
-  return payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")
-}
 
 function parseDesktopPolicyId(value: string) {
   return normalizeDenTypeId("desktopPolicy", value)
@@ -157,12 +153,12 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
         403: jsonResponse("Only workspace owners and admins can list desktop policies.", forbiddenSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgRoleRoute(["admin"]),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!isOrganizationAdmin(payload)) {
-        return c.json({ error: "forbidden", message: "Only workspace owners and admins can manage desktop policies." }, 403)
+      const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can manage desktop policies.")
+      if (!permission.ok) {
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
 
       const desktopPolicies = await loadDesktopPolicies(payload.organization.id)
@@ -184,13 +180,13 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
         404: jsonResponse("A referenced member or team was not found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgRoleRoute(["admin"]),
     jsonValidator(desktopPolicyWriteSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!isOrganizationAdmin(payload)) {
-        return c.json({ error: "forbidden", message: "Only workspace owners and admins can manage desktop policies." }, 403)
+      const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can manage desktop policies.")
+      if (!permission.ok) {
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
 
       const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
@@ -267,14 +263,14 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
         404: jsonResponse("The policy or a referenced resource was not found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
+    orgRoleRoute(["admin"]),
     paramValidator(desktopPolicyParamsSchema),
-    resolveOrganizationContextMiddleware,
     jsonValidator(desktopPolicyWriteSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!isOrganizationAdmin(payload)) {
-        return c.json({ error: "forbidden", message: "Only workspace owners and admins can manage desktop policies." }, 403)
+      const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can manage desktop policies.")
+      if (!permission.ok) {
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
 
       const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
@@ -373,13 +369,13 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
         404: jsonResponse("The policy was not found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
+    orgRoleRoute(["admin"]),
     paramValidator(desktopPolicyParamsSchema),
-    resolveOrganizationContextMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!isOrganizationAdmin(payload)) {
-        return c.json({ error: "forbidden", message: "Only workspace owners and admins can manage desktop policies." }, 403)
+      const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can manage desktop policies.")
+      if (!permission.ok) {
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
 
       let desktopPolicyId: DesktopPolicyId

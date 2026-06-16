@@ -26,7 +26,7 @@ function formatPolicyTimestamp(value: string | null) {
 }
 
 export function DesktopPoliciesScreen() {
-  const { orgId, orgSlug, orgContext } = useOrgDashboard();
+  const { orgId, orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
   const { desktopPolicies, busy, error, reloadPolicies } = useOrgDesktopPolicies(orgId);
   const [deleting, setDeleting] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -47,13 +47,15 @@ export function DesktopPoliciesScreen() {
 
   const softDeletePolicy = async (policy: DenDesktopPolicy) => {
     if (policy.isDefault || !confirm(`Delete ${policy.policyName}?`)) return;
-    setDeleting(true);
     setPageError(null);
     setPageSuccess(null);
     try {
-      await deleteDesktopPolicy(policy.id);
-      setPageSuccess("Desktop policy deleted.");
-      await reloadPolicies();
+      await runReauthableAction("delete-desktop-policy", async () => {
+        setDeleting(true);
+        await deleteDesktopPolicy(policy.id);
+        setPageSuccess("Desktop policy deleted.");
+        await reloadPolicies();
+      });
     } catch (error) {
       setPageError(error instanceof Error ? error.message : "Failed to delete desktop policy.");
     } finally {

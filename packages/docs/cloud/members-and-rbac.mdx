@@ -29,6 +29,12 @@ Only `Owner` can change member roles, remove members, or create, edit, and delet
 
 Invites are tied to the invited email address.
 
+## SSO just-in-time provisioning
+
+When SSO just-in-time provisioning adds someone to an organization on first sign-in, OpenWork assigns the baseline `Member` role. IdP attributes such as `role`, `groups`, or `admin` are not used to grant OpenWork organization roles.
+
+Treat `Admin`, `Owner`, and custom-role elevation as explicit access changes made inside OpenWork. Review those changes in the member list and audit trail instead of relying on unvalidated IdP attributes for authorization.
+
 ## Restrict who can join
 
 If you only want teammates from specific companies or domains to join:
