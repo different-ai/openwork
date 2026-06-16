@@ -1,10 +1,10 @@
 /** @jsxImportSource react */
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, ExternalLink, X } from "lucide-react";
+import { Download, ExternalLink, FolderOpen, X } from "lucide-react";
 
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
-import { openDesktopPath } from "@/app/lib/desktop";
+import { openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatFileSize } from "@/lib/utils";
@@ -194,6 +194,11 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
     await download();
   };
 
+  const revealExternal = async () => {
+    if (target.kind !== "file" || isRemoteWorkspace) return;
+    await revealDesktopItemInDir(externalPath);
+  };
+
   const save = () => {
     if (target.kind !== "file" || !isTextContent(target) || data?.kind !== "text") {
       return;
@@ -287,6 +292,18 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
               <TooltipContent>Download artifact</TooltipContent>
             </Tooltip>
           ) : null}
+          {target.kind === "file" && !isRemoteWorkspace ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={(
+                  <Button variant="ghost" size="icon-sm" onClick={() => void revealExternal()} aria-label="Show in folder">
+                    <FolderOpen />
+                  </Button>
+                )}
+              />
+              <TooltipContent>Show in folder</TooltipContent>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger
               render={(
@@ -369,4 +386,3 @@ function SheetEditor({ className, ...props }: SheetEditorProps) {
     </Suspense>
   );
 }
-
