@@ -87,11 +87,12 @@ async function fetchOpenworkConfiguredProviders(input: {
   if (!response.ok) {
     throw new Error(`Failed to fetch configured providers (${response.status})`);
   }
-  return normalizeProviderListResponse(await response.json());
+  return normalizeProviderListResponse(await response.json(), { defaultConnectedToAll: false });
 }
 
 export function normalizeProviderListResponse(
   value: ProviderListResponse | ConfiguredProviderListResponse,
+  options: { defaultConnectedToAll?: boolean } = {},
 ): ProviderListResponse {
   const providers = "providers" in value ? value.providers : undefined;
   const all = Array.isArray(providers)
@@ -104,7 +105,7 @@ export function normalizeProviderListResponse(
   return {
     ...value,
     all,
-    connected: value.connected ?? all.map((provider) => provider.id),
+    connected: value.connected ?? (options.defaultConnectedToAll === false ? [] : all.map((provider) => provider.id)),
     default: value.default ?? {},
   };
 }
