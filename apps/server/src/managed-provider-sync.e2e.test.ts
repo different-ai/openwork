@@ -312,7 +312,7 @@ describe("managed provider sync runtime route", () => {
     expect(body.connected).toEqual([]);
   });
 
-  test("keeps Den-managed providers disconnected when OpenCode omits connected list", async () => {
+  test("infers Den-managed providers connected when OpenCode omits connected list", async () => {
     const { base } = await boot({ omitConnected: true });
     const sync = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
@@ -325,7 +325,7 @@ describe("managed provider sync runtime route", () => {
     expect(response.status).toBe(200);
     const body = await response.json() as ProviderListTestBody & { connected?: string[] };
 
-    expect(body.connected).toEqual([]);
+    expect(body.connected).toEqual(["nvidia", "openai"]);
   });
 
   test("keeps OpenCode Zen connected when OpenCode omits connected list", async () => {
@@ -341,7 +341,7 @@ describe("managed provider sync runtime route", () => {
     expect(response.status).toBe(200);
     const body = await response.json() as ProviderListTestBody & { connected?: string[] };
 
-    expect(body.connected).toEqual(["opencode"]);
+    expect(body.connected).toEqual(["opencode", "nvidia", "openai"]);
   });
 
   test("filters managed OAuth provider-list models for live providers-array responses", async () => {

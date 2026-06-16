@@ -1474,6 +1474,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   async function openworkServerRestart(options = {}) {
     const workspacePaths = prioritizeWorkspacePaths(engineState.projectDir, await listLocalWorkspacePaths());
+    if (workspacePaths.length === 0) {
+      return snapshotOpenworkServerState(openworkServerState);
+    }
     const shouldManageOpencode = Boolean(
       openworkServerState.managedOpencodeBinPath || engineState.opencodeBinPath || !engineState.baseUrl,
     );

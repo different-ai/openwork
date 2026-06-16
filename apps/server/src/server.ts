@@ -904,7 +904,7 @@ function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPo
     return {
       ...data,
       all,
-      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds, all),
+      connected: filterConnectedProviderIds(data.connected, policy, all),
     };
   }
   if (Array.isArray(data.providers)) {
@@ -914,7 +914,7 @@ function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPo
     return {
       ...data,
       providers,
-      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds, providers),
+      connected: filterConnectedProviderIds(data.connected, policy, providers),
     };
   }
   if (isRecordValue(data.providers)) {
@@ -926,7 +926,7 @@ function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPo
     return {
       ...data,
       providers,
-      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds, providers),
+      connected: filterConnectedProviderIds(data.connected, policy, providers),
     };
   }
   return data;
@@ -936,20 +936,29 @@ function isRevokedProviderListItem(provider: unknown, revokedProviderIds: Set<st
   return isRecordValue(provider) && typeof provider.id === "string" && revokedProviderIds.has(provider.id);
 }
 
-function filterConnectedProviderIds(connected: unknown, revokedProviderIds: Set<string>, providers?: unknown): string[] {
-  if (Array.isArray(connected)) return connected.filter((id): id is string => typeof id === "string" && !revokedProviderIds.has(id));
-  return providerListIncludesOpencode(providers, revokedProviderIds) ? ["opencode"] : [];
+function filterConnectedProviderIds(connected: unknown, policy: ManagedProviderAccessPolicy, providers?: unknown): string[] {
+  if (Array.isArray(connected)) return connected.filter((id): id is string => typeof id === "string" && !policy.revokedProviderIds.has(id));
+  return inferConnectedProviderIds(providers, policy);
 }
 
-function providerListIncludesOpencode(providers: unknown, revokedProviderIds: Set<string>): boolean {
-  if (revokedProviderIds.has("opencode")) return false;
-  if (Array.isArray(providers)) {
-    return providers.some((provider) => isRecordValue(provider) && provider.id === "opencode");
+function inferConnectedProviderIds(providers: unknown, policy: ManagedProviderAccessPolicy): string[] {
+  const inferred: string[] = [];
+  for (const providerId of providerListIds(providers)) {
+    if (policy.revokedProviderIds.has(providerId)) continue;
+    if (providerId === "opencode" || policy.allowedModelsByProvider.has(providerId)) inferred.push(providerId);
   }
-  if (!isRecordValue(providers)) return false;
-  return Object.entries(providers).some(
-    ([providerId, provider]) => providerId === "opencode" || (isRecordValue(provider) && provider.id === "opencode"),
-  );
+  return inferred;
+}
+
+function providerListIds(providers: unknown): string[] {
+  if (Array.isArray(providers)) {
+    return providers.flatMap((provider) => isRecordValue(provider) && typeof provider.id === "string" ? [provider.id] : []);
+  }
+  if (!isRecordValue(providers)) return [];
+  return Object.entries(providers).flatMap(([providerId, provider]) => {
+    if (isRecordValue(provider) && typeof provider.id === "string") return [provider.id];
+    return [providerId];
+  });
 }
 
 function filterProviderListItem(provider: unknown, allowedModelsByProvider: Map<string, Set<string>>, fallbackProviderId?: string): unknown {
