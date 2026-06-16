@@ -220,11 +220,20 @@ function isTrackableAccessibleTarget(target: OpenTarget) {
   return isOpenableFileTarget(target) || isLocalhostBrowserTarget(target);
 }
 
-function absoluteWorkspacePath(root: string, path: string) {
-  const cleanRoot = root.trim().replace(/[/\\]+$/, "");
-  const cleanPath = path.trim().replace(/^\.\//, "");
-
-  return cleanRoot ? `${cleanRoot}/${cleanPath}` : cleanPath;
+function absoluteWorkspacePath(root: string | null | undefined, value: string) {
+  const target = value.trim();
+  if (!target) return "";
+  if (/^file:\/\//i.test(target)) {
+    try {
+      return new URL(target).pathname;
+    } catch {
+      return target.replace(/^file:\/\//i, "");
+    }
+  }
+  if (target.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(target)) return target;
+  const cleanRoot = root?.trim().replace(/[/\\]+$/, "") ?? "";
+  const cleanTarget = target.replace(/^[.][\\/]/, "");
+  return cleanRoot ? `${cleanRoot}/${cleanTarget}` : cleanTarget;
 }
 
 function hiddenAccessibleTargetsStorageKey(workspaceId: string | null | undefined, sessionId: string | null | undefined) {
