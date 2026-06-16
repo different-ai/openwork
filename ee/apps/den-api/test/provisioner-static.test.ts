@@ -540,6 +540,7 @@ test("static attach URL policy rejects unsafe URLs and allows explicit on-prem h
   expect(workersSharedModule.validateStaticWorkerAttachUrl("http://user:pass@worker.example.com", defaultPolicy)).toMatchObject({ ok: false })
   expect(workersSharedModule.validateStaticWorkerAttachUrl("http://worker.example.com/?token=abc", defaultPolicy)).toMatchObject({ ok: false })
   expect(workersSharedModule.validateStaticWorkerAttachUrl("http://127.0.0.1:8787", defaultPolicy)).toMatchObject({ ok: false })
+  expect(workersSharedModule.validateStaticWorkerAttachUrl("https://100.64.0.1:8787", defaultPolicy)).toMatchObject({ ok: false })
   expect(workersSharedModule.validateStaticWorkerAttachUrl("http://127.0.0.1:8787", { ...defaultPolicy, allowedCidrs: ["127.0.0.0/8"] })).toMatchObject({
     ok: true,
     url: "http://127.0.0.1:8787",
@@ -557,6 +558,12 @@ test("static attach URL policy blocks DNS names resolving to unsafe IPv4 and IPv
     "http://public-name.example.com",
     { allowPrivate: false, allowedHosts: [], allowedCidrs: [] },
     async () => [{ address: "127.0.0.1", family: 4 }],
+  )).resolves.toMatchObject({ ok: false })
+
+  await expect(workersSharedModule.validateResolvedStaticWorkerAttachUrl(
+    "http://public-name.example.com",
+    { allowPrivate: false, allowedHosts: [], allowedCidrs: [] },
+    async () => [{ address: "100.64.0.1", family: 4 }],
   )).resolves.toMatchObject({ ok: false })
 
   await expect(workersSharedModule.validateResolvedStaticWorkerAttachUrl(

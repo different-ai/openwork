@@ -249,6 +249,7 @@ function isPrivateIpv4(hostname: string) {
     return false
   }
   return ipv4InCidr(hostname, "10.0.0.0/8")
+    || ipv4InCidr(hostname, "100.64.0.0/10")
     || ipv4InCidr(hostname, "172.16.0.0/12")
     || ipv4InCidr(hostname, "192.168.0.0/16")
     || ipv4InCidr(hostname, "127.0.0.0/8")
