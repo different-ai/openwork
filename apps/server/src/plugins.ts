@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { join, posix, relative, win32 } from "node:path";
 import { readdir } from "node:fs/promises";
 import type { PluginItem, ServerConfig } from "./types.js";
 import { readJsoncFile } from "./jsonc.js";
@@ -13,7 +13,7 @@ export function normalizePluginSpec(spec: string): string {
   if (trimmed.startsWith("file:") || trimmed.startsWith("http:") || trimmed.startsWith("https:") || trimmed.startsWith("git:")) {
     return trimmed;
   }
-  if (trimmed.startsWith("/")) {
+  if (posix.isAbsolute(trimmed) || win32.isAbsolute(trimmed)) {
     return trimmed;
   }
   if (trimmed.startsWith("@")) {
