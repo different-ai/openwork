@@ -154,10 +154,11 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   const canPickAuthorizedFolder =
     isDesktopRuntime() && canWriteConfig && props.activeWorkspaceType === "local";
   const workspaceRootFolder = serverWorkspaceRoot || props.selectedWorkspaceRoot.trim();
-  const visibleAuthorizedFolders = useMemo(() => {
+  const externalAuthorizedFolders = useMemo(() => {
     const root = workspaceRootFolder;
-    return root ? [root, ...authorizedFolders.filter((folder) => folder !== root)] : authorizedFolders;
+    return root ? authorizedFolders.filter((folder) => folder !== root) : authorizedFolders;
   }, [authorizedFolders, workspaceRootFolder]);
+  const hasVisibleFolderRows = Boolean(workspaceRootFolder) || externalAuthorizedFolders.length > 0;
 
   useEffect(() => {
     const openworkClient = props.openworkServerClient;
@@ -292,10 +293,20 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         </SettingsNotice>
       ) : (
         <>
-          {/* Folder list */}
-          {visibleAuthorizedFolders.length > 0 ? (
+          {hasVisibleFolderRows ? (
             <ul className="flex flex-col gap-2">
-              {visibleAuthorizedFolders.map((folder) => (
+              {workspaceRootFolder ? (
+                <AuthorizedFolderItem
+                  key={workspaceRootFolder}
+                  folder={workspaceRootFolder}
+                  workspaceRootFolder={workspaceRootFolder}
+                  authorizedFoldersLoading={authorizedFoldersLoading}
+                  authorizedFoldersSaving={authorizedFoldersSaving}
+                  canWriteConfig={canWriteConfig}
+                  onRemove={removeAuthorizedFolder}
+                />
+              ) : null}
+              {externalAuthorizedFolders.map((folder) => (
                 <AuthorizedFolderItem
                   key={folder}
                   folder={folder}
@@ -307,7 +318,9 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
                 />
               ))}
             </ul>
-          ) : (
+          ) : null}
+
+          {externalAuthorizedFolders.length === 0 ? (
             <Empty
               variant="ghost"
               className="rounded-2xl border border-dashed border-dls-border bg-dls-surface px-5 py-8 text-dls-text"
@@ -333,7 +346,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
                 </Button>
               </EmptyContent>
             </Empty>
-          )}
+          ) : null}
 
           {/* Status / error */}
           {authorizedFoldersStatus ? (
