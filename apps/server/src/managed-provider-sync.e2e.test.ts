@@ -70,7 +70,7 @@ function providerPayload() {
   };
 }
 
-async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAuthDeletePath?: string; failAuthDeletePathOnce?: string; providerListShape?: "all" | "providers-array" | "providers-object"; providerModelsShape?: "record" | "array"; connected?: string[]; omitConnected?: boolean; initialAuth?: Record<string, unknown> } = {}) {
+async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAuthDeletePath?: string; failAuthDeletePathOnce?: string; providerListShape?: "all" | "providers-array" | "providers-object"; providerModelsShape?: "record" | "array"; connected?: string[]; omitConnected?: boolean; includeOpencodeZen?: boolean; initialAuth?: Record<string, unknown> } = {}) {
   const workspace = mkdtempSync(join(tmpdir(), "openwork-managed-provider-workspace-"));
   const stores = mkdtempSync(join(tmpdir(), "openwork-managed-provider-stores-"));
   dirs.push(workspace, stores);
@@ -125,6 +125,14 @@ async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAu
             "o4-mini": { id: "o4-mini", name: "o4-mini" },
           };
         const providers = [
+          ...(options.includeOpencodeZen ? [{
+            id: "opencode",
+            name: "OpenCode Zen",
+            source: "custom",
+            models: {
+              "big-pickle": { id: "big-pickle", name: "Big Pickle" },
+            },
+          }] : []),
           {
             id: "nvidia",
             name: "NVIDIA",
@@ -308,6 +316,22 @@ describe("managed provider sync runtime route", () => {
     const body = await response.json() as ProviderListTestBody & { connected?: string[] };
 
     expect(body.connected).toEqual([]);
+  });
+
+  test("keeps OpenCode Zen connected when OpenCode omits connected list", async () => {
+    const { base } = await boot({ omitConnected: true, includeOpencodeZen: true });
+    const sync = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+    expect(sync.status).toBe(200);
+
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: clientAuth() });
+    expect(response.status).toBe(200);
+    const body = await response.json() as ProviderListTestBody & { connected?: string[] };
+
+    expect(body.connected).toEqual(["opencode"]);
   });
 
   test("filters managed OAuth provider-list models for live providers-array responses", async () => {

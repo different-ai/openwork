@@ -906,7 +906,7 @@ function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPo
     return {
       ...data,
       all,
-      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds),
+      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds, all),
     };
   }
   if (Array.isArray(data.providers)) {
@@ -916,7 +916,7 @@ function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPo
     return {
       ...data,
       providers,
-      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds),
+      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds, providers),
     };
   }
   if (isRecordValue(data.providers)) {
@@ -928,7 +928,7 @@ function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPo
     return {
       ...data,
       providers,
-      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds),
+      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds, providers),
     };
   }
   return data;
@@ -938,8 +938,20 @@ function isRevokedProviderListItem(provider: unknown, revokedProviderIds: Set<st
   return isRecordValue(provider) && typeof provider.id === "string" && revokedProviderIds.has(provider.id);
 }
 
-function filterConnectedProviderIds(connected: unknown, revokedProviderIds: Set<string>): string[] {
-  return Array.isArray(connected) ? connected.filter((id): id is string => typeof id === "string" && !revokedProviderIds.has(id)) : [];
+function filterConnectedProviderIds(connected: unknown, revokedProviderIds: Set<string>, providers?: unknown): string[] {
+  if (Array.isArray(connected)) return connected.filter((id): id is string => typeof id === "string" && !revokedProviderIds.has(id));
+  return providerListIncludesOpencode(providers, revokedProviderIds) ? ["opencode"] : [];
+}
+
+function providerListIncludesOpencode(providers: unknown, revokedProviderIds: Set<string>): boolean {
+  if (revokedProviderIds.has("opencode")) return false;
+  if (Array.isArray(providers)) {
+    return providers.some((provider) => isRecordValue(provider) && provider.id === "opencode");
+  }
+  if (!isRecordValue(providers)) return false;
+  return Object.entries(providers).some(
+    ([providerId, provider]) => providerId === "opencode" || (isRecordValue(provider) && provider.id === "opencode"),
+  );
 }
 
 function filterProviderListItem(provider: unknown, allowedModelsByProvider: Map<string, Set<string>>, fallbackProviderId?: string): unknown {
