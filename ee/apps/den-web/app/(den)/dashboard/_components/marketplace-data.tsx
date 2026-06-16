@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 export type DenMarketplace = {
   id: string;
@@ -184,6 +185,7 @@ export function useMarketplaceAccess(marketplaceId: string | null) {
 
 export function useGrantMarketplaceAccess() {
   const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
 
   return useMutation({
     mutationFn: async (input: {
@@ -193,6 +195,7 @@ export function useGrantMarketplaceAccess() {
         | { teamId: string; role?: MarketplaceAccessRole }
         | { orgMembershipId: string; role?: MarketplaceAccessRole };
     }) => {
+      await runReauthableAction("grant-marketplace-access", async () => {
       const body = {
         role: input.body.role ?? "viewer",
         ...("orgWide" in input.body ? { orgWide: true } : {}),
@@ -205,8 +208,9 @@ export function useGrantMarketplaceAccess() {
         15000,
       );
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to grant access (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to grant access (${response.status}).`);
       }
+      });
       return input.marketplaceId;
     },
     onSuccess: (marketplaceId) => {
@@ -217,17 +221,20 @@ export function useGrantMarketplaceAccess() {
 
 export function useRevokeMarketplaceAccess() {
   const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
 
   return useMutation({
     mutationFn: async (input: { marketplaceId: string; grantId: string }) => {
+      await runReauthableAction("revoke-marketplace-access", async () => {
       const { response, payload } = await requestJson(
         `/v1/marketplaces/${encodeURIComponent(input.marketplaceId)}/access/${encodeURIComponent(input.grantId)}`,
         { method: "DELETE" },
         15000,
       );
       if (response.status !== 204 && !response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to revoke access (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to revoke access (${response.status}).`);
       }
+      });
       return input.marketplaceId;
     },
     onSuccess: (marketplaceId) => {

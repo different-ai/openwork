@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm"
+import { and, eq, isNull, sql } from "drizzle-orm"
 import { InferenceOrgLimitPolicyTable, InferenceOrgUsageBucketTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_TIER_LIMITS, INFERENCE_WINDOW_DURATIONS_MS } from "@openwork/types/den/inference"
@@ -44,7 +44,7 @@ async function getEffectiveLimits(organizationId: DenTypeId<"organization">) {
   const [memberCountRow] = await db
     .select({ count: sql<number>`count(*)` })
     .from(MemberTable)
-    .where(eq(MemberTable.organizationId, organizationId))
+    .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
   const memberCount = Math.max(0, Number(memberCountRow?.count ?? 0))
 
   return Object.fromEntries(

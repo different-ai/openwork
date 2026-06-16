@@ -710,10 +710,13 @@ export function SessionRoute() {
   // Hidden and subagent-only entries are excluded — those are task-tool
   // delegation targets, not agents the user can run a session as.
   const listAgents = useCallback(async () => {
+    // Include engineReloadVersion so the composer refetches after newly added
+    // agent files become available, even when the inline picker is hidden.
+    void engineReloadVersion;
     if (!opencodeClient) return [];
     const list = unwrap(await opencodeClient.app.agents());
     return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
-  }, [opencodeClient]);
+  }, [engineReloadVersion, opencodeClient]);
 
   const handleOpenSettings = useCallback((route = "/settings/general", workspaceId = sidebarActiveWorkspaceId) => {
     const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;

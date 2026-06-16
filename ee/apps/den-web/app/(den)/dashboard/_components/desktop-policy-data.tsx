@@ -7,7 +7,7 @@ import {
   type DesktopPolicyDefinition,
   type DesktopPolicyValue,
 } from "@openwork/types/den/desktop-policies";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 
 export type DenDesktopPolicyAssignment = {
   id: string;
@@ -166,7 +166,7 @@ export async function createDesktopPolicy(input: DesktopPolicyPayload) {
     body: JSON.stringify(input),
   }, 12000);
   if (!response.ok) {
-    throw new Error(getErrorMessage(payload, `Failed to create desktop policy (${response.status}).`));
+    throw getRequestError(payload, response, `Failed to create desktop policy (${response.status}).`);
   }
 }
 
@@ -177,7 +177,7 @@ export async function updateDesktopPolicy(policyId: string, input: DesktopPolicy
     body: JSON.stringify(input),
   }, 12000);
   if (!response.ok) {
-    throw new Error(getErrorMessage(payload, `Failed to update desktop policy (${response.status}).`));
+    throw getRequestError(payload, response, `Failed to update desktop policy (${response.status}).`);
   }
 }
 
@@ -186,6 +186,6 @@ export async function deleteDesktopPolicy(policyId: string) {
     method: "DELETE",
   }, 12000);
   if (!response.ok) {
-    throw new Error(getErrorMessage(payload, `Failed to delete desktop policy (${response.status}).`));
+    throw getRequestError(payload, response, `Failed to delete desktop policy (${response.status}).`);
   }
 }

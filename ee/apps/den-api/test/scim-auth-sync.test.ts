@@ -106,3 +106,20 @@ test("SCIM mutation sync reports thrown mirror failures without exposing interna
     action: "sync_resource",
   })
 })
+
+test("SCIM sync failure response supports deprovision retry alerts", async () => {
+  const response = scimAuthModule.createScimSyncFailureResponse({
+    ok: false,
+    action: "delete_user",
+    message: "member removal failed",
+  })
+
+  expect(response.status).toBe(503)
+  expect(response.headers.get("retry-after")).toBe("60")
+  await expect(response.json()).resolves.toEqual({
+    schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"],
+    detail: "SCIM user mutation completed, but external identity sync failed; retry later.",
+    status: "503",
+    action: "delete_user",
+  })
+})

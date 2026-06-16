@@ -5,7 +5,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { jsonValidator, paramValidator, queryValidator, requireUserMiddleware, resolveUserOrganizationsMiddleware } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import { getRequiredUserEmail } from "../../user.js"
@@ -137,8 +137,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         401: jsonResponse("The caller must be signed in to list workers.", unauthorizedSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     queryValidator(listWorkersQuerySchema),
     async (c) => {
     const user = c.get("user")
@@ -185,8 +184,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         409: jsonResponse("The organization has reached its worker limit.", orgLimitReachedSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     jsonValidator(createWorkerSchema),
     async (c) => {
     const user = c.get("user")
@@ -326,8 +324,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     paramValidator(workerIdParamSchema),
     async (c) => {
     const user = c.get("user")
@@ -373,8 +370,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     paramValidator(workerIdParamSchema),
     jsonValidator(updateWorkerSchema),
     async (c) => {
@@ -435,8 +431,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         409: jsonResponse("The worker is not ready to return connection tokens yet.", workerRuntimeUnavailableSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     paramValidator(workerIdParamSchema),
     async (c) => {
     const orgId = c.get("activeOrganizationId")
@@ -485,8 +480,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     paramValidator(workerIdParamSchema),
     async (c) => {
     const orgId = c.get("activeOrganizationId")

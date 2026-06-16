@@ -1,6 +1,7 @@
 import type { Env, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { signedWebhookRoute } from "../../middleware/index.js"
 import { handleStripeWebhook } from "../../stripe-billing.js"
 import { jsonResponse } from "../../openapi.js"
 
@@ -20,6 +21,7 @@ export function registerStripeWebhookRoutes<T extends Env>(app: Hono<T>) {
         200: jsonResponse("Stripe webhook processed successfully.", stripeWebhookResponseSchema),
       },
     }),
+    signedWebhookRoute,
     async (c) => {
       const payload = await c.req.raw.text()
       const signature = c.req.raw.headers.get("stripe-signature")

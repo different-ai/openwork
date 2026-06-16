@@ -14,8 +14,11 @@ import {
 import { db } from "../../db.js"
 import { isEntraSsoEnabled } from "../../entra-sso.js"
 import { env } from "../../env.js"
-import { emptyResponse, jsonResponse } from "../../openapi.js"
 import { getInvalidMcpOAuthRedirectUris } from "../../mcp/oauth-client-policy.js"
+import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
+import { publicRoute, tokenRoute } from "../../middleware/index.js"
+import { emptyResponse, jsonResponse } from "../../openapi.js"
+import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import type { AuthContextVariables } from "../../session.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
 import { registerScimAuthRoutes } from "./scim.js"
@@ -71,12 +74,9 @@ async function rewriteMcpClientRegistrationRequest(request: Request, path: strin
     )
   }
 
-  const scope = typeof body.scope === "string" ? body.scope : ""
-  const scopes = new Set(scope.split(/\s+/).filter(Boolean))
-  if (scopes.has("mcp:read") || scopes.has("mcp:write")) {
-    scopes.add("mcp:read")
-    scopes.add("mcp:write")
-    body.scope = Array.from(scopes).join(" ")
+  const normalizedScope = normalizeMcpOAuthClientScope(body.scope)
+  if (normalizedScope) {
+    body.scope = normalizedScope
   }
 
   headers.set("content-type", "application/json")
@@ -203,6 +203,8 @@ async function handleAuthRequest(request: Request) {
 
 export function registerAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   registerScimAuthRoutes(app)
+  app.use("/api/auth/sso/saml2/callback/*", samlResponsePolicyMiddleware)
+  app.use("/api/auth/sso/saml2/sp/acs/*", samlResponsePolicyMiddleware)
   app.get(
     "/v1/auth/providers",
     describeRoute({
@@ -213,17 +215,18 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
         200: jsonResponse("Configured authentication providers.", authProvidersSchema),
       },
     }),
+    publicRoute,
     (c) => c.json({ socialProviders: getConfiguredSocialProviders() }),
   )
-  app.get("/api/auth/.well-known/oauth-authorization-server", async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/api/auth/.well-known/openid-configuration", async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/.well-known/oauth-authorization-server/api/auth", async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/.well-known/openid-configuration/api/auth", async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/.well-known/oauth-authorization-server", async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/oauth-authorization-server")), requestOrigin(c.req.raw)))
-  app.get("/.well-known/openid-configuration", async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/openid-configuration")), requestOrigin(c.req.raw)))
-  app.post("/register", async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
-  app.post("/api/auth/oauth2/register", async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
-  app.get("/api/auth/oauth2/authorize", async (c) => {
+  app.get("/api/auth/.well-known/oauth-authorization-server", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
+  app.get("/api/auth/.well-known/openid-configuration", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
+  app.get("/.well-known/oauth-authorization-server/api/auth", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
+  app.get("/.well-known/openid-configuration/api/auth", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
+  app.get("/.well-known/oauth-authorization-server", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/oauth-authorization-server")), requestOrigin(c.req.raw)))
+  app.get("/.well-known/openid-configuration", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/openid-configuration")), requestOrigin(c.req.raw)))
+  app.post("/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
+  app.post("/api/auth/oauth2/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
+  app.get("/api/auth/oauth2/authorize", tokenRoute, async (c) => {
     await ensureMcpClientScopes(c.req.raw)
     return auth.handler(c.req.raw)
   })
@@ -243,6 +246,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
         401: emptyResponse("Better Auth rejected the request because authentication failed."),
       },
     }),
+    publicRoute,
     (c) => handleAuthRequest(c.req.raw),
   )
   registerDesktopAuthRoutes(app)

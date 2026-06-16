@@ -4,6 +4,10 @@ import { isEntraSsoEnabled, mapEntraProfileToUser, normalizeEntraTenantId } from
 import { env } from "./env.js";
 import { deriveDenMcpResource } from "./mcp/resource.js";
 import {
+  DEN_MCP_DEFAULT_CLIENT_SCOPES,
+  DEN_MCP_SCOPES,
+} from "./mcp/scopes.js";
+import {
   DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
   DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
 } from "./mcp/token-lifetime.js";
@@ -20,7 +24,9 @@ import {
   DEN_API_KEY_EXPIRES_IN_SECONDS,
   DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
+  revokeOrganizationApiKeysForMember,
 } from "./api-keys.js";
+import { revokeMembershipSessionCredentials } from "./credential-revocation.js";
 import {
   canManageSecurityConfiguration,
   denOrganizationAccess,
@@ -36,15 +42,20 @@ import {
   ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
 } from "./sso-saml-policy.js";
 import { ensureEntraSsoMembershipForAccount, getOrganizationContextForUser, seedDefaultOrganizationRoles } from "./orgs.js";
+import {
+  findEnterpriseAuthRequirementForEmail,
+  findEnterpriseAuthRequirementForUserId,
+} from "./enterprise-auth-requirement.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
-import { APIError } from "better-call";
 import { betterAuth } from "better-auth";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { deleteSessionCookie } from "better-auth/cookies";
 import { sql } from "@openwork-ee/den-db/drizzle";
 import { emailOTP, jwt, organization } from "better-auth/plugins";
 
@@ -76,11 +87,11 @@ export const DEN_MCP_RESOURCES = Array.from(new Set([
   `${env.betterAuthUrl}/mcp`,
   ...localMcpResourceAliases(DEN_MCP_RESOURCE),
 ]));
-export const DEN_MCP_SCOPES = ["openid", "profile", "email", "offline_access", "mcp:read", "mcp:write"];
 export const DEN_MCP_TOKEN_USE_CLAIM = "https://openworklabs.com/token_use";
 export const DEN_MCP_ORG_ID_CLAIM = "https://openworklabs.com/org_id";
 export const DEN_MCP_RESOURCE_CLAIM = "https://openworklabs.com/resource";
 export const DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX = "ow_mcp_at_";
+export { DEN_MCP_SCOPES } from "./mcp/scopes.js";
 
 const socialProviders = {
   ...(env.github.clientId && env.github.clientSecret
@@ -157,6 +168,48 @@ function hasMcpScope(scopes: readonly string[]) {
   return scopes.some((scope) => scope.startsWith("mcp:"));
 }
 
+async function revokeOrganizationMemberCredentials(input: {
+  organizationId: string;
+  orgMembershipId: string;
+  userId: string | null;
+}) {
+  const organizationId = normalizeDenTypeId("organization", input.organizationId);
+  const orgMembershipId = normalizeDenTypeId("member", input.orgMembershipId);
+  const userId = input.userId ? normalizeDenTypeId("user", input.userId) : null;
+
+  await revokeOrganizationApiKeysForMember({
+    organizationId,
+    orgMembershipId,
+    userId,
+  });
+  await revokeMembershipSessionCredentials({
+    organizationId,
+    userId,
+  });
+}
+
+function getBodyEmail(body: unknown) {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const value = Object.getOwnPropertyDescriptor(body, "email")?.value;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getEnterpriseAuthRedirectUrl(input: {
+  signInPath: string;
+  email: string;
+  callbackUrl: string | null;
+}) {
+  const url = new URL(input.signInPath, getInvitationOrigin());
+  url.searchParams.set("loginHint", input.email);
+  if (input.callbackUrl) {
+    url.searchParams.set("callbackURL", input.callbackUrl);
+  }
+  return url.toString();
+}
+
 export const auth = betterAuth({
   baseURL: env.betterAuthUrl,
   secret: env.betterAuthSecret,
@@ -173,6 +226,7 @@ export const auth = betterAuth({
   session: {
     expiresIn: DEN_SESSION_EXPIRES_IN_SECONDS,
     updateAge: DEN_SESSION_UPDATE_AGE_IN_SECONDS,
+    freshAge: 15 * 60,
   },
   databaseHooks: {
     account: {
@@ -213,6 +267,50 @@ export const auth = betterAuth({
         },
       },
     },
+  },
+  hooks: {
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/sign-in/email" && ctx.path !== "/sign-up/email") {
+        return;
+      }
+
+      const email = getBodyEmail(ctx.body);
+      if (!email) {
+        return;
+      }
+
+      const requirement = await findEnterpriseAuthRequirementForEmail(email);
+      if (!requirement) {
+        return;
+      }
+
+      throw new APIError("FORBIDDEN", {
+        message: "This account is managed by an organization. Use SSO to sign in.",
+      });
+    }),
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/callback/:id") {
+        return;
+      }
+
+      const newSession = ctx.context.newSession;
+      if (!newSession) {
+        return;
+      }
+
+      const requirement = await findEnterpriseAuthRequirementForUserId(newSession.user.id);
+      if (!requirement) {
+        return;
+      }
+
+      await ctx.context.internalAdapter.deleteSession(newSession.session.token);
+      deleteSessionCookie(ctx);
+      throw ctx.redirect(getEnterpriseAuthRedirectUrl({
+        signInPath: requirement.signInPath,
+        email: newSession.user.email,
+        callbackUrl: ctx.context.responseHeaders?.get("location") ?? null,
+      }));
+    }),
   },
   advanced: {
     ipAddress: {
@@ -374,6 +472,12 @@ export const auth = betterAuth({
               message: "The organization owner cannot be removed.",
             });
           }
+
+          await revokeOrganizationMemberCredentials({
+            organizationId: member.organizationId,
+            orgMembershipId: member.id,
+            userId: member.userId,
+          });
         },
         beforeUpdateMemberRole: async ({ member, newRole }) => {
           if (hasRole(member.role, "owner")) {
@@ -386,6 +490,14 @@ export const auth = betterAuth({
             throw new APIError("BAD_REQUEST", {
               message:
                 "Owner can only be assigned during organization creation.",
+            });
+          }
+
+          if (member.role !== newRole) {
+            await revokeOrganizationMemberCredentials({
+              organizationId: member.organizationId,
+              orgMembershipId: member.id,
+              userId: member.userId,
             });
           }
         },
@@ -402,7 +514,7 @@ export const auth = betterAuth({
       accessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       m2mAccessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       refreshTokenExpiresIn: DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
-      clientRegistrationDefaultScopes: ["openid", "profile", "email", "mcp:read", "mcp:write"],
+      clientRegistrationDefaultScopes: [...DEN_MCP_DEFAULT_CLIENT_SCOPES],
       clientRegistrationAllowedScopes: [...DEN_MCP_SCOPES],
       advertisedMetadata: {
         scopes_supported: [...DEN_MCP_SCOPES],

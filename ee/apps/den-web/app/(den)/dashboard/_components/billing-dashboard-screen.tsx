@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CreditCard } from "lucide-react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
-import { formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { getInferenceRoute } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
@@ -84,7 +84,7 @@ function parseStripeBilling(payload: unknown): StripeBilling | null {
       unitAmount: typeof seats?.unitAmount === "number" ? seats.unitAmount : 1000,
       currency: typeof seats?.currency === "string" ? seats.currency : "usd",
       interval: typeof seats?.interval === "string" ? seats.interval : "month",
-      freeSeatCount: typeof seats?.freeSeatCount === "number" ? seats.freeSeatCount : 5,
+      freeSeatCount: typeof seats?.freeSeatCount === "number" ? seats.freeSeatCount : DEFAULT_FREE_SEAT_COUNT,
       billableSeatCount: typeof seats?.billableSeatCount === "number" ? seats.billableSeatCount : 0,
       hasActiveSubscription: seats?.hasActiveSubscription === true,
       subscription: seats?.subscription && typeof seats.subscription === "object"
@@ -101,6 +101,7 @@ function parseStripeBilling(payload: unknown): StripeBilling | null {
 
 const STRIPE_RETURN_POLL_ATTEMPTS = 20;
 const STRIPE_RETURN_POLL_INTERVAL_MS = 3000;
+const DEFAULT_FREE_SEAT_COUNT = 5;
 
 function parsePolarBilling(payload: unknown): PolarBilling | null {
   if (!payload || typeof payload !== "object" || !("billing" in payload)) return null;
@@ -123,7 +124,7 @@ function parsePolarBilling(payload: unknown): PolarBilling | null {
 export function BillingDashboardScreen() {
   const router = useRouter();
   const { sessionHydrated, user } = useDenFlow();
-  const { activeOrg, orgContext } = useOrgDashboard();
+  const { activeOrg, orgContext, runReauthableAction } = useOrgDashboard();
   const [stripeBilling, setStripeBilling] = useState<StripeBilling | null>(null);
   const [polarBilling, setPolarBilling] = useState<PolarBilling | null>(null);
   const [stripeBusy, setStripeBusy] = useState(false);
@@ -207,18 +208,20 @@ export function BillingDashboardScreen() {
   }, [sessionHydrated, user, orgContext?.organization.id]);
 
   async function startSeatCheckout() {
-    setStripeActionBusy("seat-checkout");
     setStripeError(null);
     try {
-      const { response, payload } = await requestJson(
-        "/v1/billing/stripe/checkout",
-        { method: "POST", body: JSON.stringify({ type: "seat" }) },
-        12000,
-      );
-      if (!response.ok) throw new Error(getErrorMessage(payload, `Seat checkout failed (${response.status}).`));
-      const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
-      if (!url) throw new Error("Seat checkout response did not include a URL.");
-      window.location.href = url;
+      await runReauthableAction("seat-checkout", async () => {
+        setStripeActionBusy("seat-checkout");
+        const { response, payload } = await requestJson(
+          "/v1/billing/stripe/checkout",
+          { method: "POST", body: JSON.stringify({ type: "seat" }) },
+          12000,
+        );
+        if (!response.ok) throw getRequestError(payload, response, `Seat checkout failed (${response.status}).`);
+        const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
+        if (!url) throw new Error("Seat checkout response did not include a URL.");
+        window.location.href = url;
+      });
     } catch (error) {
       setStripeError(error instanceof Error ? error.message : "Could not start seat billing checkout.");
     } finally {
@@ -227,14 +230,16 @@ export function BillingDashboardScreen() {
   }
 
   async function openStripePortal() {
-    setStripeActionBusy("portal");
     setStripeError(null);
     try {
-      const { response, payload } = await requestJson("/v1/billing/stripe/portal", { method: "POST" }, 12000);
-      if (!response.ok) throw new Error(getErrorMessage(payload, `Billing portal failed (${response.status}).`));
-      const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
-      if (!url) throw new Error("Billing portal response did not include a URL.");
-      window.location.href = url;
+      await runReauthableAction("billing-portal", async () => {
+        setStripeActionBusy("portal");
+        const { response, payload } = await requestJson("/v1/billing/stripe/portal", { method: "POST" }, 12000);
+        if (!response.ok) throw getRequestError(payload, response, `Billing portal failed (${response.status}).`);
+        const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
+        if (!url) throw new Error("Billing portal response did not include a URL.");
+        window.location.href = url;
+      });
     } catch (error) {
       setStripeError(error instanceof Error ? error.message : "Could not open Stripe billing portal.");
     } finally {
@@ -298,7 +303,7 @@ export function BillingDashboardScreen() {
             <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Stripe</p>
             <h2 className="text-[20px] font-medium text-gray-950">OpenWork Users</h2>
             <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500">
-              The first {seatBilling?.freeSeatCount ?? 5} users in your organization are free. Additional users are billed at {seatPrice}/user/month.
+              The first {seatBilling?.freeSeatCount ?? DEFAULT_FREE_SEAT_COUNT} users in your organization are free. Additional users are billed at {seatPrice}/user/month.
             </p>
           </div>
           <DenButton variant="secondary" loading={stripeBusy} onClick={() => void refreshStripeBilling(false)}>
@@ -309,7 +314,7 @@ export function BillingDashboardScreen() {
         <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-4">
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="text-[12px] text-gray-500">Included users</p>
-            <p className="mt-1 text-[20px] font-semibold text-gray-950">{seatBilling?.freeSeatCount ?? 5}</p>
+            <p className="mt-1 text-[20px] font-semibold text-gray-950">{seatBilling?.freeSeatCount ?? DEFAULT_FREE_SEAT_COUNT}</p>
           </div>
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="text-[12px] text-gray-500">Active users</p>
@@ -317,7 +322,7 @@ export function BillingDashboardScreen() {
           </div>
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="text-[12px] text-gray-500">Billable users</p>
-            <p className="mt-1 text-[20px] font-semibold text-gray-950">{seatBilling?.billableSeatCount ?? Math.max(0, activeMemberCount - 5)}</p>
+            <p className="mt-1 text-[20px] font-semibold text-gray-950">{seatBilling?.billableSeatCount ?? Math.max(0, activeMemberCount - DEFAULT_FREE_SEAT_COUNT)}</p>
           </div>
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="text-[12px] text-gray-500">Status</p>
@@ -341,7 +346,7 @@ export function BillingDashboardScreen() {
         ) : (
           <div className="flex flex-col gap-4 rounded-[16px] border border-blue-100 bg-blue-50 p-5 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-[15px] font-medium text-blue-950">Subscribe when your workspace grows beyond {seatBilling?.freeSeatCount ?? 5} users</p>
+              <p className="text-[15px] font-medium text-blue-950">Subscribe when your workspace grows beyond {seatBilling?.freeSeatCount ?? DEFAULT_FREE_SEAT_COUNT} users</p>
               <p className="mt-1 text-[13px] leading-5 text-blue-900/70">You will only be charged for users above the free included seats.</p>
             </div>
             <DenButton disabled={!isOwner || seatBilling?.configured === false} loading={stripeActionBusy === "seat-checkout"} onClick={startSeatCheckout}>

@@ -22,7 +22,7 @@ import type {
 const OPENCODE_ROUTER_AGENT_FILE_PATH = ".opencode/agents/opencode-router.md";
 const OPENCODE_ROUTER_AGENT_FILE_TEMPLATE = `# OpenCodeRouter Messaging Agent
 
-Use this file to define how the assistant responds in Slack/Telegram for this workspace.
+Use this file to define how the assistant responds in Telegram for this workspace.
 
 Examples:
 - Keep responses concise and action-oriented.
@@ -102,9 +102,6 @@ export function useMessagingViewProps(
   const [healthError, setHealthError] = useState<string | null>(null);
   const [telegramIdentities, setTelegramIdentities] = useState<OpenworkOpenCodeRouterIdentityItem[]>([]);
   const [telegramIdentitiesError, setTelegramIdentitiesError] = useState<string | null>(null);
-  const [slackIdentities, setSlackIdentities] = useState<OpenworkOpenCodeRouterIdentityItem[]>([]);
-  const [slackIdentitiesError, setSlackIdentitiesError] = useState<string | null>(null);
-
   const [telegramToken, setTelegramToken] = useState("");
   const [telegramEnabled, setTelegramEnabled] = useState(true);
   const [telegramSaving, setTelegramSaving] = useState(false);
@@ -113,13 +110,6 @@ export function useMessagingViewProps(
   const [telegramBotUsername, setTelegramBotUsername] = useState<string | null>(null);
   const [telegramPairingCode, setTelegramPairingCode] = useState<string | null>(null);
   const [publicTelegramWarningOpen, setPublicTelegramWarningOpen] = useState(false);
-
-  const [slackBotToken, setSlackBotToken] = useState("");
-  const [slackAppToken, setSlackAppToken] = useState("");
-  const [slackEnabled, setSlackEnabled] = useState(true);
-  const [slackSaving, setSlackSaving] = useState(false);
-  const [slackStatus, setSlackStatus] = useState<string | null>(null);
-  const [slackError, setSlackError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<MessagingViewTab>("general");
   const [expandedChannel, setExpandedChannel] =
@@ -381,7 +371,6 @@ export function useMessagingViewProps(
     try {
       setHealthError(null);
       setTelegramIdentitiesError(null);
-      setSlackIdentitiesError(null);
       setMessagingError(null);
 
       if (!id) {
@@ -389,10 +378,8 @@ export function useMessagingViewProps(
         setTelegramIdentities([]);
         setTelegramBotUsername(null);
         setTelegramPairingCode(null);
-        setSlackIdentities([]);
         setHealthError(t("identities.worker_scope_unavailable_detail"));
         setTelegramIdentitiesError(t("identities.worker_scope_unavailable"));
-        setSlackIdentitiesError(t("identities.worker_scope_unavailable"));
         resetAgentState();
         setSendStatus(null);
         setSendError(null);
@@ -412,18 +399,15 @@ export function useMessagingViewProps(
         setTelegramIdentitiesError(null);
         setTelegramBotUsername(null);
         setTelegramPairingCode(null);
-        setSlackIdentities([]);
-        setSlackIdentitiesError(null);
         if (!agentDirty && !agentSaving) {
           void loadAgentFile();
         }
         return;
       }
 
-      const [healthRes, tgRes, slackRes, telegramInfo] = await Promise.all([
+      const [healthRes, tgRes, telegramInfo] = await Promise.all([
         (client as any).getOpenCodeRouterHealth(id),
         (client as any).getOpenCodeRouterTelegramIdentities(id),
-        (client as any).getOpenCodeRouterSlackIdentities(id),
         (client as any).getOpenCodeRouterTelegram(id).catch(() => null),
       ]);
 
@@ -457,13 +441,6 @@ export function useMessagingViewProps(
         setTelegramIdentitiesError(t("identities.telegram_unavailable"));
       }
 
-      if (isOpenCodeRouterIdentities(slackRes)) {
-        setSlackIdentities(slackRes.items ?? []);
-      } else {
-        setSlackIdentities([]);
-        setSlackIdentitiesError(t("identities.slack_unavailable"));
-      }
-
       if (!agentDirty && !agentSaving) {
         void loadAgentFile();
       }
@@ -472,10 +449,8 @@ export function useMessagingViewProps(
       setHealth(null);
       setTelegramIdentities([]);
       setTelegramBotUsername(null);
-      setSlackIdentities([]);
       setHealthError(message);
       setTelegramIdentitiesError(message);
-      setSlackIdentitiesError(message);
       if (messagingEnabled) {
         setMessagingRestartRequired(true);
       }
@@ -727,92 +702,6 @@ export function useMessagingViewProps(
     }
   }, [telegramPairingCode]);
 
-  const upsertSlack = useCallback(async () => {
-    if (slackSaving) return;
-    if (!serverReady) return;
-    const id = workspaceId;
-    if (!id) return;
-    const client = options.openworkServerClient;
-    if (!client) return;
-
-    const botToken = slackBotToken.trim();
-    const appToken = slackAppToken.trim();
-    if (!botToken || !appToken) return;
-
-    setSlackSaving(true);
-    setSlackStatus(null);
-    setSlackError(null);
-    try {
-      const result = await (client as any).upsertOpenCodeRouterSlackIdentity(id, {
-        botToken,
-        appToken,
-        enabled: slackEnabled,
-      });
-      if (result.ok) {
-        setSlackStatus(
-          result.applied === false
-            ? t("identities.telegram_saved_pending")
-            : t("identities.telegram_saved"),
-        );
-      } else {
-        setSlackError(t("identities.telegram_save_failed"));
-      }
-      if (typeof result.applyError === "string" && result.applyError.trim()) {
-        setSlackError(result.applyError.trim());
-      }
-      setSlackBotToken("");
-      setSlackAppToken("");
-      void refreshAll({ force: true });
-    } catch (error) {
-      setSlackError(formatRequestError(error));
-    } finally {
-      setSlackSaving(false);
-    }
-  }, [
-    options.openworkServerClient,
-    refreshAll,
-    serverReady,
-    slackAppToken,
-    slackBotToken,
-    slackEnabled,
-    slackSaving,
-    workspaceId,
-  ]);
-
-  const deleteSlack = useCallback(async (identityId: string) => {
-    if (slackSaving) return;
-    if (!serverReady) return;
-    const id = workspaceId;
-    if (!id) return;
-    const client = options.openworkServerClient;
-    if (!client) return;
-    if (!identityId.trim()) return;
-
-    setSlackSaving(true);
-    setSlackStatus(null);
-    setSlackError(null);
-    try {
-      const result = await (client as any).deleteOpenCodeRouterSlackIdentity(id, identityId);
-      if (result.ok) {
-        setSlackStatus(
-          result.applied === false
-            ? t("identities.telegram_deleted_pending")
-            : t("identities.telegram_deleted"),
-        );
-      } else {
-        setSlackError(t("identities.telegram_delete_failed"));
-      }
-      if (typeof result.applyError === "string" && result.applyError.trim()) {
-        setSlackError(result.applyError.trim());
-      }
-      void refreshAll({ force: true });
-    } catch (error) {
-      setSlackError(formatRequestError(error));
-    } finally {
-      setSlackSaving(false);
-    }
-  }, [options.openworkServerClient, refreshAll, serverReady, slackSaving, workspaceId]);
-
   useEffect(() => {
     setHealth(null);
     setHealthError(null);
@@ -820,8 +709,6 @@ export function useMessagingViewProps(
     setTelegramIdentitiesError(null);
     setTelegramBotUsername(null);
     setTelegramPairingCode(null);
-    setSlackIdentities([]);
-    setSlackIdentitiesError(null);
     resetAgentState();
     setSendStatus(null);
     setSendError(null);
@@ -882,16 +769,6 @@ export function useMessagingViewProps(
       error: telegramError,
       botUsername: telegramBotUsername,
       pairingCode: telegramPairingCode,
-    },
-    slack: {
-      identities: slackIdentities,
-      identitiesError: slackIdentitiesError,
-      botToken: slackBotToken,
-      appToken: slackAppToken,
-      enabled: slackEnabled,
-      saving: slackSaving,
-      status: slackStatus,
-      error: slackError,
     },
     agent: {
       loading: agentLoading,
@@ -956,11 +833,6 @@ export function useMessagingViewProps(
     onDeleteTelegram: deleteTelegram,
     onCopyTelegramPairingCode: copyTelegramPairingCode,
     onHideTelegramPairingCode: () => setTelegramPairingCode(null),
-    onSlackBotTokenChange: setSlackBotToken,
-    onSlackAppTokenChange: setSlackAppToken,
-    onSlackEnabledChange: setSlackEnabled,
-    onConnectSlack: upsertSlack,
-    onDeleteSlack: deleteSlack,
     onLoadAgentFile: loadAgentFile,
     onCreateDefaultAgentFile: createDefaultAgentFile,
     onChangeAgentDraft: setAgentDraft,
