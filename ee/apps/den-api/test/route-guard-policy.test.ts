@@ -12,6 +12,7 @@ const routeGuardExceptions = new Map<string, string>([
   ["GET /openapi.json", "public API schema"],
   ["GET /docs", "public API documentation"],
   ["GET /v1/app-version", "public desktop update metadata"],
+  ["GET /v1/auth/providers", "public configured authentication provider discovery"],
   ["GET /api/auth/.well-known/oauth-authorization-server", "public OAuth metadata"],
   ["GET /api/auth/.well-known/openid-configuration", "public OIDC metadata"],
   ["GET /.well-known/oauth-authorization-server/api/auth", "public OAuth metadata"],
