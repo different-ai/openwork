@@ -3006,11 +3006,17 @@ function resolveOpencodeStateLayout(options: {
   devMode: boolean;
 }): OpencodeStateLayout {
   if (!options.devMode) {
+    const stateDir = join(options.dataDir, "opencode-state");
     return {
       devMode: false,
-      rootDir: join(options.dataDir, "opencode-config"),
+      rootDir: stateDir,
       configDir: join(options.dataDir, "opencode-config"),
-      env: {},
+      env: {
+        HOME: join(stateDir, "home"),
+        XDG_DATA_HOME: join(stateDir, "xdg", "data"),
+        XDG_CACHE_HOME: join(stateDir, "xdg", "cache"),
+        XDG_STATE_HOME: join(stateDir, "xdg", "state"),
+      },
     };
   }
 
@@ -3047,8 +3053,6 @@ async function ensureOpencodeStateLayout(
   layout: OpencodeStateLayout,
 ): Promise<void> {
   await mkdir(layout.configDir, { recursive: true });
-  if (!layout.devMode) return;
-
   const homeDir = layout.env.HOME;
   const xdgConfigHome = layout.env.XDG_CONFIG_HOME;
   const xdgDataHome = layout.env.XDG_DATA_HOME;
@@ -3070,6 +3074,8 @@ async function ensureOpencodeStateLayout(
     if (!dir) continue;
     await mkdir(dir, { recursive: true });
   }
+
+  if (!layout.devMode) return;
 
   if (layout.importConfigDir && (await isDir(layout.importConfigDir))) {
     const entries = await readdir(layout.configDir).catch(() => [] as string[]);
