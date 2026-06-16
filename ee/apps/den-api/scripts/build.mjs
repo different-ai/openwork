@@ -53,8 +53,24 @@ export function createPnpmSpawnInput(command, args, platform = process.platform)
   }
 }
 
-function run(command, args) {
-  const input = createPnpmSpawnInput(command, args)
+export function createPackageManagerSpawnInput(args, options = {}) {
+  const npmExecPath = options.npmExecPath ?? process.env.npm_execpath
+  const npmExecPathExists = npmExecPath
+    ? options.npmExecPathExists ?? existsSync(npmExecPath)
+    : false
+  if (npmExecPath && npmExecPathExists) {
+    return {
+      command: options.nodeCommand ?? process.execPath,
+      args: [npmExecPath, ...args],
+      shell: false,
+    }
+  }
+
+  return createPnpmSpawnInput(pnpmCommand, args, options.platform ?? process.platform)
+}
+
+function run(args) {
+  const input = createPackageManagerSpawnInput(args)
   const result = spawnSync(input.command, input.args, {
     cwd: serviceDir,
     env: process.env,
@@ -76,9 +92,9 @@ function main() {
   process.env.DEN_API_LATEST_APP_VERSION = process.env.DEN_API_LATEST_APP_VERSION || readDesktopVersion()
   writeGeneratedVersionFile(process.env.DEN_API_LATEST_APP_VERSION)
 
-  run(pnpmCommand, ["run", "build:email"])
-  run(pnpmCommand, ["run", "build:den-db"])
-  run(pnpmCommand, ["exec", "tsc", "-p", "tsconfig.json"])
+  run(["run", "build:email"])
+  run(["run", "build:den-db"])
+  run(["exec", "tsc", "-p", "tsconfig.json"])
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
