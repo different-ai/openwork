@@ -273,6 +273,24 @@ test("Microsoft account auto-join updates existing non-owner membership", async 
   expect(seam.calls.update).toBe(1)
 })
 
+test("Microsoft account auto-join preserves existing role when token has no groups claim", async () => {
+  const seam = createMembershipSeam({ id: "member_existing", role: "admin" })
+  const result = await ensureEntraSsoMembership({
+    userId: "user_entra",
+    providerId: "microsoft",
+    idToken: unsignedJwt({ roles: ["group-member"] }),
+    config: autoJoinConfig,
+    deps: seam.deps,
+  })
+
+  expect(result.status).toBe("unchanged")
+  expect(result.role).toBe("admin")
+  expect(seam.member).toEqual({ id: "member_existing", role: "admin" })
+  expect(seam.calls.create).toBe(0)
+  expect(seam.calls.update).toBe(0)
+  expect(seam.calls.ensureRoles).toBe(1)
+})
+
 test("non-Microsoft provider and email/password paths do not auto-join", async () => {
   const githubSeam = createMembershipSeam()
   const githubResult = await ensureEntraSsoMembership({

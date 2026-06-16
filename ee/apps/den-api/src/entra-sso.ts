@@ -249,6 +249,14 @@ export function extractEntraGroupsFromIdToken(idToken: string | null | undefined
   return extractEntraGroupsFromClaims(decodeJwtPayload(idToken))
 }
 
+function hasEntraGroupsClaim(idToken: string | null | undefined) {
+  if (!idToken) {
+    return false
+  }
+
+  return Array.isArray(decodeJwtPayload(idToken)?.groups)
+}
+
 export function resolveEntraSsoRole(input: {
   groups: readonly string[]
   adminGroupIds: readonly string[]
@@ -300,6 +308,7 @@ export async function ensureEntraSsoMembership<TMember extends EntraSsoMembershi
     return { status: "organization_not_found" as const }
   }
 
+  const groupsClaimAvailable = hasEntraGroupsClaim(input.idToken)
   const groups = extractEntraGroupsFromIdToken(input.idToken)
   const role = normalizeSsoAssignableRole(resolveEntraSsoRole({
     groups,
@@ -325,6 +334,11 @@ export async function ensureEntraSsoMembership<TMember extends EntraSsoMembershi
   if (input.deps.isOwnerRole(existingMember.role)) {
     await input.deps.ensureDefaultRoles(organizationId)
     return { status: "owner_preserved" as const, member: existingMember, role: existingMember.role }
+  }
+
+  if (!groupsClaimAvailable) {
+    await input.deps.ensureDefaultRoles(organizationId)
+    return { status: "unchanged" as const, member: existingMember, role: existingMember.role }
   }
 
   if (existingMember.role !== role) {
