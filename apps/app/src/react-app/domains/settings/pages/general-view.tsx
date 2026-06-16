@@ -28,21 +28,25 @@ export type GeneralSettingsViewProps = {
   onReportIssue: () => void;
 };
 
-const workspaceCards: { tab: SettingsTab; icon: typeof Sparkles; title: string; desc: string }[] = [
-  { tab: "preferences", icon: Cog, title: "Preferences", desc: "Default model, reasoning, and compaction." },
-  { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "Authorized folders and file access." },
-  { tab: "extensions", icon: Puzzle, title: "Extensions", desc: "MCPs, skills, plugins, and integrations." },
-  { tab: "advanced", icon: Wrench, title: "Advanced", desc: "Runtime, engine, and developer options." },
-];
+function getWorkspaceCards(): { tab: SettingsTab; icon: typeof Sparkles; title: string; desc: string }[] {
+  return [
+    { tab: "preferences", icon: Cog, title: t("settings.general_card_preferences"), desc: t("settings.general_card_preferences_desc") },
+    { tab: "permissions", icon: FolderLock, title: t("settings.general_card_permissions"), desc: t("settings.general_card_permissions_desc") },
+    { tab: "extensions", icon: Puzzle, title: t("settings.general_card_extensions"), desc: t("settings.general_card_extensions_desc") },
+    { tab: "advanced", icon: Wrench, title: t("settings.general_card_advanced"), desc: t("settings.general_card_advanced_desc") },
+  ];
+}
 
-const globalCards: { tab: SettingsTab; icon: typeof Sparkles; title: string; desc: string }[] = [
-  { tab: "ai", icon: Sparkles, title: "AI Providers", desc: "Connect services that provide AI models." },
-  { tab: "cloud-account", icon: Cloud, title: "Cloud", desc: "OpenWork Cloud account and organization." },
-  { tab: "appearance", icon: Paintbrush, title: "Appearance", desc: "Theme, font size, and display." },
-  { tab: "environment", icon: Terminal, title: "Environment", desc: "Environment variables and paths." },
-  { tab: "updates", icon: RefreshCcw, title: "Updates", desc: "App version and update channel." },
-  { tab: "recovery", icon: ShieldCheck, title: "Recovery", desc: "Reset onboarding and clear data." },
-];
+function getGlobalCards(): { tab: SettingsTab; icon: typeof Sparkles; title: string; desc: string }[] {
+  return [
+    { tab: "ai", icon: Sparkles, title: t("settings.general_card_ai"), desc: t("settings.general_card_ai_desc") },
+    { tab: "cloud-account", icon: Cloud, title: t("settings.general_card_cloud"), desc: t("settings.general_card_cloud_desc") },
+    { tab: "appearance", icon: Paintbrush, title: t("settings.general_card_appearance"), desc: t("settings.general_card_appearance_desc") },
+    { tab: "environment", icon: Terminal, title: t("settings.general_card_environment"), desc: t("settings.general_card_environment_desc") },
+    { tab: "updates", icon: RefreshCcw, title: t("settings.general_card_updates"), desc: t("settings.general_card_updates_desc") },
+    { tab: "recovery", icon: ShieldCheck, title: t("settings.general_card_recovery"), desc: t("settings.general_card_recovery_desc") },
+  ];
+}
 
 function SettingsCard(props: {
   icon: typeof Sparkles;
@@ -74,10 +78,10 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Workspace settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Workspace
+          {t("settings.group_workspace")}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          {workspaceCards.map((card) => (
+          {getWorkspaceCards().map((card) => (
             <SettingsCard
               key={card.tab}
               icon={card.icon}
@@ -92,10 +96,10 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Global settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Global
+          {t("settings.group_global")}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          {globalCards.map((card) => (
+          {getGlobalCards().map((card) => (
             <SettingsCard
               key={card.tab}
               icon={card.icon}
@@ -110,7 +114,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Feedback */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Help
+          {t("settings.general_group_help")}
         </div>
         <div className="rounded-2xl border border-dls-border bg-dls-surface p-4">
           <div className="space-y-3">
