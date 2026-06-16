@@ -84,8 +84,8 @@ test("privileged actions require a fresh session", () => {
   expect(sharedModule.hasFreshPrivilegedSession({ session: null }, now)).toBe(false)
 })
 
-test("fresh auth failures remain forbidden responses", () => {
-  expect(sharedModule.orgAccessFailureStatus({ error: "fresh_auth_required" })).toBe(403)
+test("reauth failures remain forbidden responses", () => {
+  expect(sharedModule.orgAccessFailureStatus({ error: "reauth" })).toBe(403)
   expect(sharedModule.orgAccessFailureStatus({ error: "forbidden" })).toBe(403)
   expect(sharedModule.orgAccessFailureStatus({ error: "organization_not_found" })).toBe(404)
 })

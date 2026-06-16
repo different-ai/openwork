@@ -15,6 +15,7 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   memberRemoved: "organization.member.removed",
   scimTokenRotated: "organization.scim.token_rotated",
   scimConnectionDeleted: "organization.scim.connection_deleted",
+  scimReconciliationRun: "organization.scim.reconciliation_run",
   ssoConnectionRegistered: "organization.sso.connection_registered",
   ssoConnectionDeleted: "organization.sso.connection_deleted",
 }

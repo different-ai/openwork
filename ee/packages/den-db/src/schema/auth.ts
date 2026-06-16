@@ -250,6 +250,33 @@ export const ScimProviderTable = mysqlTable(
   ],
 )
 
+export const ScimSyncEventTable = mysqlTable(
+  "scim_sync_event",
+  {
+    id: denTypeIdColumn("scimSyncEvent", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    providerId: varchar("provider_id", { length: 255 }).notNull(),
+    userId: denTypeIdColumn("user", "user_id"),
+    action: varchar("action", { length: 64 }).notNull(),
+    status: varchar("status", { length: 32 }).notNull().default("pending"),
+    attempts: int("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    payloadJson: json("payload_json").$type<Record<string, unknown> | null>(),
+    nextRetryAt: timestamp("next_retry_at", { fsp: 3 }),
+    resolvedAt: timestamp("resolved_at", { fsp: 3 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("scim_sync_event_org_status").on(table.organizationId, table.status),
+    index("scim_sync_event_provider_status").on(table.providerId, table.status),
+    index("scim_sync_event_next_retry").on(table.nextRetryAt),
+    index("scim_sync_event_user").on(table.userId),
+  ],
+)
+
 export const SsoProviderTable = mysqlTable(
   "sso_provider",
   {
@@ -346,6 +373,7 @@ export const oauthRefreshToken = OAuthRefreshTokenTable
 export const oauthAccessToken = OAuthAccessTokenTable
 export const oauthConsent = OAuthConsentTable
 export const scimProvider = ScimProviderTable
+export const scimSyncEvent = ScimSyncEventTable
 export const ssoProvider = SsoProviderTable
 export const ssoConnection = SsoConnectionTable
 export const externalIdentity = ExternalIdentityTable

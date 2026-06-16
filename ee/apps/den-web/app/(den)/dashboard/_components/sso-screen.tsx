@@ -4,7 +4,7 @@ import { Copy, KeyRound, RefreshCw, Shield, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
@@ -19,7 +19,7 @@ function formatDateTime(value: string | null) {
 type FormMode = "saml" | "oidc";
 
 export function SsoScreen() {
-  const { orgId, orgContext } = useOrgDashboard();
+  const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const [connection, setConnection] = useState<DenOrgSsoConnection | null>(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -126,46 +126,50 @@ export function SsoScreen() {
       return;
     }
 
-    setSaving(true);
     setError(null);
     try {
-      const path = formMode === "saml" ? "/v1/sso/saml" : "/v1/sso/oidc";
-      const body = formMode === "saml"
-        ? {
-            issuer,
-            domain,
-            entryPoint,
-            cert,
-            audience: audience || undefined,
-            wantAssertionsSigned,
+      await runReauthableAction("save-sso-settings", async () => {
+        setSaving(true);
+        try {
+          const path = formMode === "saml" ? "/v1/sso/saml" : "/v1/sso/oidc";
+          const body = formMode === "saml"
+            ? {
+                issuer,
+                domain,
+                entryPoint,
+                cert,
+                audience: audience || undefined,
+                wantAssertionsSigned,
+              }
+            : {
+                issuer,
+                domain,
+                clientId,
+                clientSecret,
+                scopes: scopes.split(/\s+/).map((entry) => entry.trim()).filter(Boolean),
+                skipDiscovery,
+                authorizationEndpoint: authorizationEndpoint || undefined,
+                tokenEndpoint: tokenEndpoint || undefined,
+                jwksEndpoint: jwksEndpoint || undefined,
+                userInfoEndpoint: userInfoEndpoint || undefined,
+                tokenEndpointAuthentication: tokenEndpointAuthentication || undefined,
+              };
+
+          const { response, payload } = await requestJson(path, { method: "POST", body: JSON.stringify(body) }, 20000);
+          if (!response.ok) {
+            throw getRequestError(payload, response, `Failed to save SSO settings (${response.status}).`);
           }
-        : {
-            issuer,
-            domain,
-            clientId,
-            clientSecret,
-            scopes: scopes.split(/\s+/).map((entry) => entry.trim()).filter(Boolean),
-            skipDiscovery,
-            authorizationEndpoint: authorizationEndpoint || undefined,
-            tokenEndpoint: tokenEndpoint || undefined,
-            jwksEndpoint: jwksEndpoint || undefined,
-            userInfoEndpoint: userInfoEndpoint || undefined,
-            tokenEndpointAuthentication: tokenEndpointAuthentication || undefined,
-          };
 
-      const { response, payload } = await requestJson(path, { method: "POST", body: JSON.stringify(body) }, 20000);
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to save SSO settings (${response.status}).`));
-      }
-
-      const parsed = parseOrgSsoPayload(payload);
-      setConnection(parsed.connection);
-      syncFormFromConnection(parsed.connection);
-      setDomainVerificationToken(parsed.domainVerificationToken);
+          const parsed = parseOrgSsoPayload(payload);
+          setConnection(parsed.connection);
+          syncFormFromConnection(parsed.connection);
+          setDomainVerificationToken(parsed.domainVerificationToken);
+        } finally {
+          setSaving(false);
+        }
+      });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to save SSO settings.");
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -174,61 +178,73 @@ export function SsoScreen() {
       return;
     }
 
-    setDeleting(true);
     setError(null);
     try {
-      const { response, payload } = await requestJson("/v1/sso", { method: "DELETE" }, 12000);
-      if (response.status !== 204 && !response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to delete SSO settings (${response.status}).`));
-      }
-      setConnection(null);
-      await loadSsoConfig();
+      await runReauthableAction("delete-sso-settings", async () => {
+        setDeleting(true);
+        try {
+          const { response, payload } = await requestJson("/v1/sso", { method: "DELETE" }, 12000);
+          if (response.status !== 204 && !response.ok) {
+            throw getRequestError(payload, response, `Failed to delete SSO settings (${response.status}).`);
+          }
+          setConnection(null);
+          await loadSsoConfig();
+        } finally {
+          setDeleting(false);
+        }
+      });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to delete SSO settings.");
-    } finally {
-      setDeleting(false);
     }
   }
 
   async function handleRequestDomainToken() {
     if (!orgId || !connection) return;
-    setRequestingDomainToken(true);
     setError(null);
     try {
-      const { response, payload } = await requestJson("/v1/sso/request-domain-verification", { method: "POST", body: JSON.stringify({}) }, 12000);
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to request domain verification (${response.status}).`));
-      }
+      await runReauthableAction("request-sso-domain-token", async () => {
+        setRequestingDomainToken(true);
+        try {
+          const { response, payload } = await requestJson("/v1/sso/request-domain-verification", { method: "POST", body: JSON.stringify({}) }, 12000);
+          if (!response.ok) {
+            throw getRequestError(payload, response, `Failed to request domain verification (${response.status}).`);
+          }
 
-      const token = typeof (payload as { domainVerificationToken?: unknown } | null)?.domainVerificationToken === "string"
-        ? (payload as { domainVerificationToken: string }).domainVerificationToken
-        : "";
-      if (!token) {
-        throw new Error("SSO domain verification token was missing from the response.");
-      }
-      setDomainVerificationToken(token);
+          const token = typeof (payload as { domainVerificationToken?: unknown } | null)?.domainVerificationToken === "string"
+            ? (payload as { domainVerificationToken: string }).domainVerificationToken
+            : "";
+          if (!token) {
+            throw new Error("SSO domain verification token was missing from the response.");
+          }
+          setDomainVerificationToken(token);
+        } finally {
+          setRequestingDomainToken(false);
+        }
+      });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to request domain verification.");
-    } finally {
-      setRequestingDomainToken(false);
     }
   }
 
   async function handleVerifyDomain() {
     if (!orgId || !connection) return;
-    setVerifyingDomain(true);
     setError(null);
     try {
-      const { response, payload } = await requestJson("/v1/sso/verify-domain", { method: "POST", body: JSON.stringify({}) }, 12000);
-      if (response.status !== 204 && !response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to verify domain (${response.status}).`));
-      }
-      setDomainVerificationToken(null);
-      await loadSsoConfig();
+      await runReauthableAction("verify-sso-domain", async () => {
+        setVerifyingDomain(true);
+        try {
+          const { response, payload } = await requestJson("/v1/sso/verify-domain", { method: "POST", body: JSON.stringify({}) }, 12000);
+          if (response.status !== 204 && !response.ok) {
+            throw getRequestError(payload, response, `Failed to verify domain (${response.status}).`);
+          }
+          setDomainVerificationToken(null);
+          await loadSsoConfig();
+        } finally {
+          setVerifyingDomain(false);
+        }
+      });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to verify the SSO domain.");
-    } finally {
-      setVerifyingDomain(false);
     }
   }
 

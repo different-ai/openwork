@@ -5,7 +5,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { jsonValidator, requireUserMiddleware } from "../../middleware/index.js"
+import { authenticatedRoute, jsonValidator, publicRoute } from "../../middleware/index.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -163,7 +163,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         401: jsonResponse("The caller must be signed in to create a desktop handoff grant.", unauthorizedSchema),
       },
     }),
-    requireUserMiddleware,
+    authenticatedRoute(),
     jsonValidator(createGrantSchema),
     async (c) => {
     const user = c.get("user")
@@ -211,6 +211,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         404: jsonResponse("The handoff grant was missing, expired, or already used.", grantNotFoundSchema),
       },
     }),
+    publicRoute,
     jsonValidator(exchangeGrantSchema),
     async (c) => {
     const input = c.req.valid("json")

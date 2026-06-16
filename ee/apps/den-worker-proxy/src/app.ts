@@ -186,6 +186,22 @@ async function resolveWorkerTokenScope(workerId: WorkerId, request: Request): Pr
   return "invalid"
 }
 
+function isProxyReadMethod(method: string) {
+  return method.toUpperCase() === "GET" || method.toUpperCase() === "HEAD"
+}
+
+export function isProxyTokenAuthorized(method: string, tokenScope: WorkerTokenScope | "invalid" | null): tokenScope is WorkerTokenScope {
+  if (!tokenScope || tokenScope === "invalid") {
+    return false
+  }
+
+  if (isProxyReadMethod(method)) {
+    return tokenScope === "client" || tokenScope === "host"
+  }
+
+  return tokenScope === "host"
+}
+
 async function enforceProxyRateLimit(input: {
   workerId: WorkerId
   request: Request
@@ -353,9 +369,8 @@ app.all("*", async (c) => {
   try {
     const normalizedWorkerId = normalizeDenTypeId("worker", workerId)
     const tokenScope = await resolveWorkerTokenScope(normalizedWorkerId, c.req.raw)
-    const isWriteMethod = !["GET", "HEAD", "OPTIONS"].includes(c.req.method.toUpperCase())
 
-    if (tokenScope === "invalid" || (isWriteMethod && !tokenScope)) {
+    if (!isProxyTokenAuthorized(c.req.method, tokenScope)) {
       const headers = new Headers({ "Content-Type": "application/json" })
       noCacheHeaders(headers)
       applyPublicCorsHeaders(headers, c.req.raw)

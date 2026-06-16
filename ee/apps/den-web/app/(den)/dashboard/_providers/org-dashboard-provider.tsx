@@ -9,7 +9,8 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { useDenFlow } from "../../_providers/den-flow-provider";
-import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
+import { ReauthDialog } from "../../_components/reauth-dialog";
 import {
   type DenOrgContext,
   type DenOrgSummary,
@@ -43,6 +44,14 @@ type OrgDashboardContextValue = {
   createRole: (input: { roleName: string; permission: Record<string, string[]> }) => Promise<void>;
   updateRole: (roleId: string, input: { roleName?: string; permission?: Record<string, string[]> }) => Promise<void>;
   deleteRole: (roleId: string) => Promise<void>;
+  runReauthableAction: (label: string, action: () => Promise<void>) => Promise<void>;
+};
+
+type PendingReauthMutation = {
+  label: string;
+  action: () => Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
 };
 
 const OrgDashboardContext = createContext<OrgDashboardContextValue | null>(null);
@@ -59,6 +68,7 @@ export function OrgDashboardProvider({
   const [orgBusy, setOrgBusy] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
   const [mutationBusy, setMutationBusy] = useState<string | null>(null);
+  const [pendingReauthMutation, setPendingReauthMutation] = useState<PendingReauthMutation | null>(null);
 
   const activeOrg = useMemo(
     () =>
@@ -153,14 +163,55 @@ export function OrgDashboardProvider({
     }
   }
 
-  async function runMutation(label: string, action: () => Promise<void>) {
+  async function executeReauthableAction(label: string, action: () => Promise<void>) {
     setMutationBusy(label);
     setOrgError(null);
     try {
       await action();
-      await refreshOrgData();
     } finally {
       setMutationBusy(null);
+    }
+  }
+
+  async function runReauthableAction(label: string, action: () => Promise<void>) {
+    try {
+      await executeReauthableAction(label, action);
+    } catch (error) {
+      if (!isReauthRequiredError(error)) {
+        throw error;
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        setPendingReauthMutation({ label, action, resolve, reject });
+      });
+    }
+  }
+
+  async function runMutation(label: string, action: () => Promise<void>) {
+    await runReauthableAction(label, async () => {
+      await action();
+      await refreshOrgData();
+    });
+  }
+
+  function cancelReauth() {
+    const pending = pendingReauthMutation;
+    setPendingReauthMutation(null);
+    pending?.reject(new Error("Sign in again before continuing."));
+  }
+
+  async function retryReauthMutation() {
+    const pending = pendingReauthMutation;
+    if (!pending) {
+      return;
+    }
+
+    setPendingReauthMutation(null);
+    try {
+      await executeReauthableAction(pending.label, pending.action);
+      pending.resolve();
+    } catch (error) {
+      pending.reject(error);
     }
   }
 
@@ -268,7 +319,7 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to update organization (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to update organization (${response.status}).`);
       }
     });
   }
@@ -295,7 +346,7 @@ export function OrgDashboardProvider({
         if (limitError) {
           throw limitError;
         }
-        throw new Error(getErrorMessage(payload, `Failed to invite member (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to invite member (${response.status}).`);
       }
     });
   }
@@ -304,28 +355,30 @@ export function OrgDashboardProvider({
     setMutationBusy("seat-checkout");
     setOrgError(null);
     try {
-      ensureActiveOrganizationSelected();
-      const { response, payload } = await requestJson(
-        "/v1/billing/stripe/checkout",
-        {
-          method: "POST",
-          body: JSON.stringify({ type: "seat" }),
-        },
-        12000,
-      );
+      await runReauthableAction("seat-checkout", async () => {
+        ensureActiveOrganizationSelected();
+        const { response, payload } = await requestJson(
+          "/v1/billing/stripe/checkout",
+          {
+            method: "POST",
+            body: JSON.stringify({ type: "seat" }),
+          },
+          12000,
+        );
 
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Seat billing checkout failed (${response.status}).`));
-      }
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Seat billing checkout failed (${response.status}).`);
+        }
 
-      const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string"
-        ? payload.url
-        : null;
-      if (!url) {
-        throw new Error("Seat billing checkout response did not include a URL.");
-      }
+        const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string"
+          ? payload.url
+          : null;
+        if (!url) {
+          throw new Error("Seat billing checkout response did not include a URL.");
+        }
 
-      window.location.href = url;
+        window.location.href = url;
+      });
     } finally {
       setMutationBusy(null);
     }
@@ -341,7 +394,7 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to cancel invitation (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to cancel invitation (${response.status}).`);
       }
     });
   }
@@ -359,7 +412,7 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to update member (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to update member (${response.status}).`);
       }
     });
   }
@@ -374,7 +427,7 @@ export function OrgDashboardProvider({
       );
 
       if (response.status !== 204 && !response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to remove member (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to remove member (${response.status}).`);
       }
     });
   }
@@ -392,7 +445,7 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to create role (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to create role (${response.status}).`);
       }
     });
   }
@@ -410,7 +463,7 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to create team (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to create team (${response.status}).`);
       }
     });
   }
@@ -428,7 +481,7 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to update team (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to update team (${response.status}).`);
       }
     });
   }
@@ -443,7 +496,7 @@ export function OrgDashboardProvider({
       );
 
       if (response.status !== 204 && !response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to delete team (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to delete team (${response.status}).`);
       }
     });
   }
@@ -461,7 +514,7 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to update role (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to update role (${response.status}).`);
       }
     });
   }
@@ -476,7 +529,7 @@ export function OrgDashboardProvider({
       );
 
       if (response.status !== 204 && !response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to delete role (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to delete role (${response.status}).`);
       }
     });
   }
@@ -520,9 +573,21 @@ export function OrgDashboardProvider({
     createRole,
     updateRole,
     deleteRole,
+    runReauthableAction,
   };
 
-  return <OrgDashboardContext.Provider value={value}>{children}</OrgDashboardContext.Provider>;
+  return (
+    <OrgDashboardContext.Provider value={value}>
+      {children}
+      <ReauthDialog
+        open={Boolean(pendingReauthMutation)}
+        user={user}
+        orgContext={orgContext}
+        onCancel={cancelReauth}
+        onVerified={retryReauthMutation}
+      />
+    </OrgDashboardContext.Provider>
+  );
 }
 
 export function useOrgDashboard() {

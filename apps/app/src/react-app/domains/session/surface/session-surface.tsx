@@ -66,6 +66,7 @@ import {
   getComposerHistory,
   getComposerMentions,
   getComposerPasteParts,
+  getComposerQueuedDrafts,
   useComposerStateStore,
 } from "./composer-state-store";
 import { MessageList } from "@/components/chat/message-list";
@@ -407,12 +408,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const clearComposerSession = useComposerStateStore((state) => state.clearSession);
   const inputHistory = useComposerStateStore((state) => getComposerHistory(state, props.sessionId));
   const appendComposerHistory = useComposerStateStore((state) => state.appendHistory);
+  // Queued follow-up drafts live in the shared composer store keyed by session
+  // id. That keeps a queued message in session A from being drained into
+  // session B when the route swaps the same surface component to another
+  // session.
+  const queuedDrafts = useComposerStateStore((state) => getComposerQueuedDrafts(state, props.sessionId));
+  const appendQueuedDraft = useComposerStateStore((state) => state.appendQueuedDraft);
+  const removeQueuedDraftFromStore = useComposerStateStore((state) => state.removeQueuedDraft);
+  const clearQueuedDrafts = useComposerStateStore((state) => state.clearQueuedDrafts);
+  const prependQueuedDrafts = useComposerStateStore((state) => state.prependQueuedDrafts);
   const [error, setError] = useState<SessionError | null>(null);
   const [sending, setSending] = useState(false);
-  // Locally queued follow-up drafts. OpenCode has no server-side queue, so we
-  // hold these client-side and auto-send the first one once the session goes
-  // idle (see the drain effect below).
-  const [queuedDrafts, setQueuedDrafts] = useState<ComposerDraft[]>([]);
   const [showDelayedLoading, setShowDelayedLoading] = useState(false);
   const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
   const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
@@ -769,13 +775,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleQueue = useCallback(() => {
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
-    setQueuedDrafts((current) => [...current, buildDraft(text, attachments)]);
+    appendQueuedDraft(props.sessionId, buildDraft(text, attachments));
     clearComposer();
-  }, [attachments, buildDraft, clearComposer, draft]);
+  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.sessionId]);
 
   const removeQueuedDraft = useCallback((index: number) => {
-    setQueuedDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index));
-  }, []);
+    removeQueuedDraftFromStore(props.sessionId, index);
+  }, [props.sessionId, removeQueuedDraftFromStore]);
 
   // One label per queued draft, kept index-aligned with `queuedDrafts` so the
   // panel's remove action targets the correct entry. Attachment-only drafts
@@ -796,7 +802,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // Stop means stop: drop queued follow-ups before aborting, otherwise the
     // queue-drain effect below re-prompts the agent the moment the abort
     // lands and the session reports idle (#2014).
-    setQueuedDrafts([]);
+    clearQueuedDrafts(props.sessionId);
     // The prompt was sent through a directory-scoped client (session-route
     // passes the workspace root), so the abort must target the same scope —
     // without it the server resolves the default project, finds no live run,
@@ -812,7 +818,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     captureAnalyticsEvent("task_run_stopped", {});
     await snapshotQuery.refetch();
-  }, [chatStreaming, opencodeClient, props.sessionId, props.workspaceRoot, snapshotQuery.refetch]);
+  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, snapshotQuery.refetch]);
 
   const handleDismissError = useCallback(() => {
     setError(null);
@@ -837,18 +843,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!merged) return;
     const drained = queuedDrafts;
     drainingQueueRef.current = true;
-    setQueuedDrafts([]);
+    clearQueuedDrafts(props.sessionId);
     void (async () => {
       try {
         await sendDraft(merged, merged.attachments);
       } catch {
         // Restore the queue so the user can retry / edit on failure.
-        setQueuedDrafts((current) => [...drained, ...current]);
+        prependQueuedDrafts(props.sessionId, drained);
       } finally {
         drainingQueueRef.current = false;
       }
     })();
-  }, [queuedDrafts, chatStreaming, liveStatus.type, sendDraft]);
+  }, [chatStreaming, clearQueuedDrafts, liveStatus.type, prependQueuedDrafts, props.sessionId, queuedDrafts, sendDraft]);
 
   useEffect(() => {
     props.onDraftChange(buildDraft(draft, attachments));

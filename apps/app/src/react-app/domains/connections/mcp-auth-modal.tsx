@@ -30,6 +30,15 @@ type McpStatusEntry = {
   error?: string;
 };
 
+function isSlackMcpEntry(entry: McpDirectoryInfo, slug: string): boolean {
+  return slug === "slack" || entry.serverName === "slack" || entry.url === "https://mcp.slack.com/mcp";
+}
+
+function isDynamicClientRegistrationError(message: string | undefined): boolean {
+  const normalized = message?.toLowerCase() ?? "";
+  return normalized.includes("dynamic client registration") && normalized.includes("does not support");
+}
+
 export type McpAuthModalProps = {
   open: boolean;
   onClose: () => void;
@@ -225,6 +234,10 @@ export function McpAuthModal(props: McpAuthModalProps) {
       }
 
       const statusEntry = await fetchMcpStatus(slug);
+      if (isSlackMcpEntry(props.entry, slug) && isDynamicClientRegistrationError(statusEntry?.error)) {
+        setError(t("mcp.auth.slack_client_registration_required"));
+        return;
+      }
       if (props.reloadRequired && !reloadSatisfied && !statusEntry) {
         setNeedsReload(true);
         setReloadNotice(
@@ -282,7 +295,10 @@ export function McpAuthModal(props: McpAuthModalProps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : t("mcp.auth.failed_to_start_oauth");
 
-      if (message.toLowerCase().includes("does not support oauth")) {
+      if (isSlackMcpEntry(props.entry, slug) && isDynamicClientRegistrationError(message)) {
+        setNeedsReload(false);
+        setError(t("mcp.auth.slack_client_registration_required"));
+      } else if (message.toLowerCase().includes("does not support oauth")) {
         const serverSlug = props.entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "server";
         const canAutoReload =
           allowAutoReload && !props.isRemoteWorkspace && !props.reloadBlocked && Boolean(props.onReloadEngine);

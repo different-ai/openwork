@@ -4,7 +4,8 @@ import { resolver } from "hono-openapi"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { auth } from "../../auth.js"
-import { deleteScimProvisionedAccess, syncExternalIdentityFromScimResource, syncExternalIdentityFromScimUserId } from "../../scim.js"
+import { deleteScimProvisionedAccessForProvider, recordScimSyncFailure, recordScimSyncFailureFromBearerToken, resolveScimProviderFromBearerToken, syncExternalIdentityFromScimResource, syncExternalIdentityFromScimUserId } from "../../scim.js"
+import { authenticatedRoute, publicRoute, tokenRoute } from "../../middleware/index.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const scimErrorSchema = z.object({
@@ -27,7 +28,7 @@ function logScimSyncWarning(action: string, error: unknown) {
   console.warn(`[scim][external_identity_sync_failed] action=${action} reason=${message}`)
 }
 
-export type ScimSyncAction = "sync_resource" | "sync_user_id"
+export type ScimSyncAction = "sync_resource" | "sync_user_id" | "delete_user"
 export type ScimSyncResult =
   | { ok: true; required: boolean }
   | { ok: false; action: ScimSyncAction; message: string }
@@ -40,6 +41,32 @@ function failedScimSync(action: ScimSyncAction, error: unknown): ScimSyncResult 
 
 function isScimResource(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
+}
+
+async function getScimResponsePayload(response: Response) {
+  const payload: unknown = await response.clone().json().catch(() => null)
+  return isScimResource(payload) ? payload : null
+}
+
+function maybeNormalizeUserId(value: string | undefined) {
+  if (!value) {
+    return null
+  }
+
+  try {
+    return normalizeDenTypeId("user", value)
+  } catch {
+    return null
+  }
+}
+
+async function recordScimFailureSafely(recordFailure: () => Promise<unknown>) {
+  try {
+    await recordFailure()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error(`[scim][sync_failure_record_failed] reason=${message}`)
+  }
 }
 
 export function createScimSyncFailureResponse(result: Extract<ScimSyncResult, { ok: false }>) {
@@ -149,6 +176,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
         },
       },
     }),
+    authenticatedRoute(),
     (c) => rejectManagementRoute(c),
   )
 
@@ -171,6 +199,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
         },
       },
     }),
+    authenticatedRoute(),
     (c) => rejectManagementRoute(c),
   )
 
@@ -193,6 +222,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
         },
       },
     }),
+    authenticatedRoute(),
     (c) => rejectManagementRoute(c),
   )
 
@@ -215,11 +245,12 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
         },
       },
     }),
+    authenticatedRoute(),
     (c) => rejectManagementRoute(c),
   )
 
-  app.all("/api/auth/scim/v2/Groups", (c) => scimGroupsNotSupported(c))
-  app.all("/api/auth/scim/v2/Groups/:groupId", (c) => scimGroupsNotSupported(c))
+  app.all("/api/auth/scim/v2/Groups", publicRoute, (c) => scimGroupsNotSupported(c))
+  app.all("/api/auth/scim/v2/Groups/:groupId", publicRoute, (c) => scimGroupsNotSupported(c))
 
   app.delete(
     "/api/auth/scim/v2/Users/:userId",
@@ -250,6 +281,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
         },
       },
     }),
+    tokenRoute,
     async (c) => {
       const bearerToken = readBearerToken(c.req.raw.headers)
       if (!bearerToken) {
@@ -263,13 +295,47 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
         return c.json({ detail: "User not found" }, 404)
       }
 
-      const deleted = await deleteScimProvisionedAccess({
-        bearerToken,
-        userId: normalizedUserId,
-      })
+      const provider = await resolveScimProviderFromBearerToken(bearerToken)
+      if (!provider) {
+        return c.json({ detail: "Invalid SCIM token" }, 401)
+      }
+
+      let deleted: Awaited<ReturnType<typeof deleteScimProvisionedAccessForProvider>>
+      try {
+        deleted = await deleteScimProvisionedAccessForProvider({
+          provider,
+          userId: normalizedUserId,
+        })
+      } catch (error) {
+        await recordScimFailureSafely(() =>
+          recordScimSyncFailure({
+            provider,
+            action: "delete_user",
+            userId: normalizedUserId,
+            payloadJson: { userId: normalizedUserId },
+            error,
+          }),
+        )
+        return createScimSyncFailureResponse({
+          ok: false,
+          action: "delete_user",
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
 
       if (!deleted.ok) {
-        return c.json(deleted.body, { status: deleted.status as 401 | 404 })
+        if (deleted.status === 409) {
+          await recordScimFailureSafely(() =>
+            recordScimSyncFailure({
+              provider,
+              action: "delete_user",
+              userId: normalizedUserId,
+              payloadJson: { userId: normalizedUserId },
+              error: deleted.body.detail,
+            }),
+          )
+        }
+        return c.json(deleted.body, { status: deleted.status as 401 | 404 | 409 })
       }
 
       return c.body(null, 204)
@@ -289,12 +355,23 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
       fallbackUserId: c.req.param("userId") || undefined,
     })
     if (!syncResult.ok) {
+      await recordScimFailureSafely(async () =>
+        recordScimSyncFailureFromBearerToken({
+          bearerToken,
+          action: syncResult.action,
+          userId: maybeNormalizeUserId(c.req.param("userId")),
+          payloadJson: response.status === 204
+            ? { userId: c.req.param("userId") }
+            : await getScimResponsePayload(response),
+          error: syncResult.message,
+        }),
+      )
       return createScimSyncFailureResponse(syncResult)
     }
     return response
   }
 
-  app.post("/api/auth/scim/v2/Users", async (c) => handleScimMutation(c))
-  app.put("/api/auth/scim/v2/Users/:userId", async (c) => handleScimMutation(c))
-  app.patch("/api/auth/scim/v2/Users/:userId", async (c) => handleScimMutation(c))
+  app.post("/api/auth/scim/v2/Users", tokenRoute, async (c) => handleScimMutation(c))
+  app.put("/api/auth/scim/v2/Users/:userId", tokenRoute, async (c) => handleScimMutation(c))
+  app.patch("/api/auth/scim/v2/Users/:userId", tokenRoute, async (c) => handleScimMutation(c))
 }

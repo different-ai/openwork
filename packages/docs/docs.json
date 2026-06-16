@@ -28,6 +28,7 @@
               "start-here/connect-your-stack/add-anthropic-api-key",
               "start-here/connect-your-stack/add-a-custom-llm",
               "start-here/connect-your-stack/add-an-mcp-server",
+              "start-here/connect-your-stack/connect-slack-mcp",
               "start-here/connect-your-stack/enable-exa-search"
             ]
           },
@@ -73,8 +74,7 @@
             "group": "Run in the cloud",
             "pages": [
               "cloud/run-in-the-cloud/shared-workspace",
-              "cloud/run-in-the-cloud/cloud-mcp",
-              "cloud/run-in-the-cloud/connect-slack"
+              "cloud/run-in-the-cloud/cloud-mcp"
             ]
           },
           "cloud/members-and-rbac",

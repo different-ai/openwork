@@ -7,9 +7,10 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { jsonValidator, paramValidator, queryValidator, requireUserMiddleware, resolveOrganizationContextMiddleware, resolveUserOrganizationsMiddleware } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute, paramValidator, queryValidator, requireUserMiddleware, resolveOrganizationContextMiddleware, resolveUserOrganizationsMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
+import { roleIncludesOwner } from "../../orgs.js"
 import { getRequiredUserEmail } from "../../user.js"
 import { fetchStaticHttpTarget } from "../../workers/static-fetch.js"
 import type { WorkerRouteVariables } from "./shared.js"
@@ -114,6 +115,21 @@ const workerTokensResponseSchema = z.object({
 }).meta({ ref: "WorkerTokensResponse" })
 
 type WorkerRow = typeof WorkerTable.$inferSelect
+
+function getActiveOrganizationMember(input: {
+  activeOrganizationId: string | null | undefined
+  userOrganizations: Array<{ id: string; role: string }>
+}) {
+  const activeOrganization = input.userOrganizations.find((organization) => organization.id === input.activeOrganizationId)
+  if (!activeOrganization) {
+    return null
+  }
+
+  return {
+    isOwner: roleIncludesOwner(activeOrganization.role),
+    role: activeOrganization.role,
+  }
+}
 
 const organizationUnavailableSchema = z.object({
   error: z.literal("organization_unavailable"),
@@ -465,8 +481,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         401: jsonResponse("The caller must be signed in to list workers.", unauthorizedSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     queryValidator(listWorkersQuerySchema),
     async (c) => {
     const user = c.get("user")
@@ -513,8 +528,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         409: jsonResponse("The organization has reached its worker limit or static provisioning failed.", orgLimitReachedSchema.or(workerRuntimeUnavailableSchema)),
       },
     }),
-    requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     jsonValidator(createWorkerSchema),
     async (c) => {
     const user = c.get("user")
@@ -790,8 +804,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     paramValidator(workerIdParamSchema),
     async (c) => {
     const user = c.get("user")
@@ -837,8 +850,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     paramValidator(workerIdParamSchema),
     jsonValidator(updateWorkerSchema),
     async (c) => {
@@ -900,13 +912,15 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         409: jsonResponse("The worker is not ready to return connection tokens yet.", workerRuntimeUnavailableSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     paramValidator(workerIdParamSchema),
     async (c) => {
     const user = c.get("user")
     const orgId = c.get("activeOrganizationId")
-    const organizationContext = c.get("organizationContext")
+    const currentMember = getActiveOrganizationMember({
+      activeOrganizationId: orgId,
+      userOrganizations: c.get("userOrganizations") ?? [],
+    })
     const params = c.req.valid("param")
 
     if (!orgId) {
@@ -929,7 +943,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     if (instance?.provider === "static" && !canReadStaticWorkerTokensForMember({
       worker,
       userId: user.id,
-      currentMember: organizationContext?.currentMember,
+      currentMember,
     })) {
       return c.json({ error: "forbidden", message: "Only the worker creator, organization owners, and admins can read static worker tokens." }, 403)
     }
@@ -962,13 +976,15 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     paramValidator(workerIdParamSchema),
     async (c) => {
     const user = c.get("user")
     const orgId = c.get("activeOrganizationId")
-    const organizationContext = c.get("organizationContext")
+    const currentMember = getActiveOrganizationMember({
+      activeOrganizationId: orgId,
+      userOrganizations: c.get("userOrganizations") ?? [],
+    })
     const params = c.req.valid("param")
 
     if (!orgId) {
@@ -991,7 +1007,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     if (instance?.provider === "static" && !canReadStaticWorkerTokensForMember({
       worker,
       userId: user.id,
-      currentMember: organizationContext?.currentMember,
+      currentMember,
     })) {
       return c.json({ error: "forbidden", message: "Only the worker creator, organization owners, and admins can delete static workers." }, 403)
     }

@@ -1,12 +1,28 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute, paramValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { roleIncludesOwner } from "../../orgs.js"
 import type { WorkerRouteVariables } from "./shared.js"
 import { canReadStaticWorkerTokensForMember, fetchWorkerRuntimeJson, getLatestWorkerInstance, getWorkerByIdForOrg, parseWorkerIdParam, workerIdParamSchema } from "./shared.js"
 
 const workerRuntimeResponseSchema = z.object({}).passthrough().meta({ ref: "WorkerRuntimeResponse" })
+
+function getActiveOrganizationMember(input: {
+  activeOrganizationId: string | null | undefined
+  userOrganizations: Array<{ id: string; role: string }>
+}) {
+  const activeOrganization = input.userOrganizations.find((organization) => organization.id === input.activeOrganizationId)
+  if (!activeOrganization) {
+    return null
+  }
+
+  return {
+    isOwner: roleIncludesOwner(activeOrganization.role),
+    role: activeOrganization.role,
+  }
+}
 
 export function registerWorkerRuntimeRoutes<T extends { Variables: WorkerRouteVariables }>(app: Hono<T>) {
   app.get(
@@ -23,13 +39,15 @@ export function registerWorkerRuntimeRoutes<T extends { Variables: WorkerRouteVa
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     paramValidator(workerIdParamSchema),
     async (c) => {
     const user = c.get("user")
     const orgId = c.get("activeOrganizationId")
-    const organizationContext = c.get("organizationContext")
+    const currentMember = getActiveOrganizationMember({
+      activeOrganizationId: orgId,
+      userOrganizations: c.get("userOrganizations") ?? [],
+    })
     const params = c.req.valid("param")
 
     if (!orgId) {
@@ -52,7 +70,7 @@ export function registerWorkerRuntimeRoutes<T extends { Variables: WorkerRouteVa
     if (instance?.provider === "static" && !canReadStaticWorkerTokensForMember({
       worker,
       userId: user.id,
-      currentMember: organizationContext?.currentMember,
+      currentMember,
     })) {
       return c.json({ error: "forbidden", message: "Only the worker creator, organization owners, and admins can access static worker runtime operations." }, 403)
     }
@@ -86,14 +104,16 @@ export function registerWorkerRuntimeRoutes<T extends { Variables: WorkerRouteVa
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     paramValidator(workerIdParamSchema),
     jsonValidator(z.object({}).passthrough()),
     async (c) => {
     const user = c.get("user")
     const orgId = c.get("activeOrganizationId")
-    const organizationContext = c.get("organizationContext")
+    const currentMember = getActiveOrganizationMember({
+      activeOrganizationId: orgId,
+      userOrganizations: c.get("userOrganizations") ?? [],
+    })
     const params = c.req.valid("param")
     const body = c.req.valid("json")
 
@@ -117,7 +137,7 @@ export function registerWorkerRuntimeRoutes<T extends { Variables: WorkerRouteVa
     if (instance?.provider === "static" && !canReadStaticWorkerTokensForMember({
       worker,
       userId: user.id,
-      currentMember: organizationContext?.currentMember,
+      currentMember,
     })) {
       return c.json({ error: "forbidden", message: "Only the worker creator, organization owners, and admins can access static worker runtime operations." }, 403)
     }

@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
+import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { buildMcpCatalog, getToolDescription, loadOpenApiDocument, type McpToolOperation } from "./catalog.js"
 import { invokeMcpOperation } from "./invoke.js"
@@ -35,11 +36,11 @@ function protectedResourceMetadata(request: Request) {
 }
 
 export function registerMcpRoutes<T extends { Variables: Record<string, unknown> }>(app: Hono<T>) {
-  app.get("/.well-known/oauth-protected-resource", (c) => c.json(protectedResourceMetadata(c.req.raw)))
-  app.get("/.well-known/oauth-protected-resource/mcp", (c) => c.json(protectedResourceMetadata(c.req.raw)))
-  app.get("/mcp/.well-known/oauth-protected-resource", (c) => c.json(protectedResourceMetadata(c.req.raw)))
+  app.get("/.well-known/oauth-protected-resource", publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
+  app.get("/.well-known/oauth-protected-resource/mcp", publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
+  app.get("/mcp/.well-known/oauth-protected-resource", publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
 
-  app.all("/mcp", async (c) => {
+  app.all("/mcp", tokenRoute, async (c) => {
     const principal = await verifyMcpRequest(c.req.raw.headers, getMcpResourceUrl(c.req.raw))
     if (principal instanceof Response) {
       return principal
