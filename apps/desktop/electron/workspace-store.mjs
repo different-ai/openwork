@@ -7,6 +7,7 @@ import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/
 import os from "node:os";
 import path from "node:path";
 
+import { desktopBootstrapCandidates, normalizeDesktopBootstrapConfig as normalizeBootstrapConfig } from "./bootstrap-config.mjs";
 import { openworkWorkspaceDisplayName, selectOpenworkWorkspaceForConnection } from "./remote-workspace.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 
@@ -102,25 +103,24 @@ async function readJsonFile(targetPath, fallback) {
 }
 
 export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSignin, forceRequireSignin }) {
-  function desktopBootstrapPath() {
-    if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
-      return process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH.trim();
-    }
+  function desktopBootstrapPaths() {
     // Dev mode swaps process.env.HOME to the sandboxed dev-data home midway
     // through startup (runtime.mjs buildChildEnv -> Object.assign(process.env)),
     // which changes what os.homedir() returns. Resolve the dev-data home
     // deterministically so early and late IPC reads target the same file.
     if (process.env.OPENWORK_DEV_MODE === "1") {
-      return path.join(
-        app.getPath("userData"),
-        "openwork-dev-data",
-        "home",
-        ".config",
-        "openwork",
-        "desktop-bootstrap.json",
-      );
+      const devPath = path.join(app.getPath("userData"), "openwork-dev-data", "home", ".config", "openwork", "desktop-bootstrap.json");
+      return [{ source: "dev", path: devPath }];
     }
-    return path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
+    return desktopBootstrapCandidates();
+  }
+
+  function desktopBootstrapWritePath() {
+    const candidates = desktopBootstrapPaths();
+    return candidates.find((candidate) => candidate.source === "env")?.path
+      ?? candidates.find((candidate) => candidate.source === "user")?.path
+      ?? candidates[0]?.path
+      ?? path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
   }
 
   function workspaceStatePath() {
@@ -153,68 +153,65 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   function normalizeDesktopBootstrapConfig(input) {
-    const baseUrl = typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "";
-    if (!baseUrl) {
-      throw new Error("baseUrl is required");
-    }
-
-    const apiBaseUrl =
-      typeof input?.apiBaseUrl === "string" && input.apiBaseUrl.trim().length > 0
-        ? input.apiBaseUrl.trim()
-        : null;
     return {
-      baseUrl,
-      apiBaseUrl,
+      ...normalizeBootstrapConfig(input),
       requireSignin: forceRequireSignin || input?.requireSignin === true,
     };
   }
 
   async function getDesktopBootstrapConfig() {
-    const configPath = desktopBootstrapPath();
-    try {
-      const raw = await readFile(configPath, "utf8");
-      return normalizeDesktopBootstrapConfig(JSON.parse(raw));
-    } catch (error) {
-      console.warn("[desktop-bootstrap] falling back to defaults", {
-        path: configPath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return {
-        baseUrl: defaultDenBaseUrl,
-        apiBaseUrl: null,
-        requireSignin: defaultRequireSignin,
-      };
+    const errors = [];
+    for (const candidate of desktopBootstrapPaths()) {
+      try {
+        const raw = await readFile(candidate.path, "utf8");
+        return normalizeDesktopBootstrapConfig(JSON.parse(raw));
+      } catch (error) {
+        errors.push({ source: candidate.source, path: candidate.path, error: error instanceof Error ? error.message : String(error) });
+      }
     }
+    console.warn("[desktop-bootstrap] falling back to defaults", { errors });
+    return {
+      baseUrl: defaultDenBaseUrl,
+      apiBaseUrl: null,
+      requireSignin: defaultRequireSignin,
+    };
   }
 
   async function debugDesktopBootstrapConfig() {
-    const configPath = desktopBootstrapPath();
     const result = {
-      path: configPath,
+      path: null,
+      candidates: desktopBootstrapPaths(),
       home: os.homedir(),
       envHome: process.env.HOME ?? null,
       envOverride: process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH ?? null,
-      exists: existsSync(configPath),
+      exists: false,
       raw: null,
       parsed: null,
       normalized: null,
       error: null,
     };
 
-    try {
-      result.raw = await readFile(configPath, "utf8");
-      result.parsed = JSON.parse(result.raw);
-      result.normalized = normalizeDesktopBootstrapConfig(result.parsed);
-    } catch (error) {
-      result.error = error instanceof Error ? error.message : String(error);
+    const errors = [];
+    for (const candidate of result.candidates) {
+      try {
+        result.raw = await readFile(candidate.path, "utf8");
+        result.path = candidate.path;
+        result.exists = true;
+        result.parsed = JSON.parse(result.raw);
+        result.normalized = normalizeDesktopBootstrapConfig(result.parsed);
+        return result;
+      } catch (error) {
+        errors.push({ source: candidate.source, path: candidate.path, error: error instanceof Error ? error.message : String(error) });
+      }
     }
+    result.error = errors.map((entry) => `${entry.source}:${entry.error}`).join("; ");
 
     return result;
   }
 
   async function setDesktopBootstrapConfig(config) {
     const normalized = normalizeDesktopBootstrapConfig(config);
-    const outputPath = desktopBootstrapPath();
+    const outputPath = desktopBootstrapWritePath();
     await mkdir(path.dirname(outputPath), { recursive: true });
     await writeFile(outputPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
     return normalized;
@@ -768,7 +765,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
 
   async function resetOpenworkState() {
     await rm(workspaceStatePath(), { force: true });
-    await rm(desktopBootstrapPath(), { force: true });
+    await rm(desktopBootstrapWritePath(), { force: true });
     return undefined;
   }
 
