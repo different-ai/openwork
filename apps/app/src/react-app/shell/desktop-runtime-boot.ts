@@ -146,7 +146,11 @@ export function useDesktopRuntimeBoot() {
         setPhase("bootstrapping-workspaces");
         const list = await workspaceBootstrap().catch(() => null) as WorkspaceList | null;
         if (!list) {
-          await startServerWithoutDesktopWorkspace();
+          markReady();
+          return;
+        }
+        if (list.workspaces.length === 0) {
+          markReady();
           return;
         }
 
@@ -163,13 +167,13 @@ export function useDesktopRuntimeBoot() {
         }
 
         if (!workspace || workspace.workspaceType === "remote") {
-          await startServerWithoutDesktopWorkspace();
+          markReady();
           return;
         }
 
         const workspaceRoot = workspace.path?.trim();
         if (!workspaceRoot) {
-          await startServerWithoutDesktopWorkspace();
+          markReady();
           return;
         }
 
