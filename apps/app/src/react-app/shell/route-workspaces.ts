@@ -128,7 +128,15 @@ export function mergeRouteWorkspaces(
   const remoteDesktopIds = new Set(
     desktopWorkspaces.flatMap((workspace) => workspace.workspaceType === "remote" ? [workspace.id] : []),
   );
-  const filteredServer = serverWorkspaces.filter((workspace) => !remoteDesktopIds.has(workspace.id));
+  const remoteDesktopRuntimeIds = new Set(
+    desktopWorkspaces.flatMap((workspace) => {
+      const id = workspace.workspaceType === "remote" ? workspace.openworkWorkspaceId?.trim() : "";
+      return id ? [id] : [];
+    }),
+  );
+  const filteredServer = serverWorkspaces.filter((workspace) => (
+    !remoteDesktopIds.has(workspace.id) && !remoteDesktopRuntimeIds.has(workspace.id)
+  ));
 
   const mergedServer = filteredServer.map((workspace) => {
     const match =
