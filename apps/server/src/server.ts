@@ -1081,7 +1081,6 @@ async function readManagedProviderAccessPolicy(workspaceRoot: string): Promise<M
 
 function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPolicy): unknown {
   if (!isRecordValue(data)) return data;
-  const managedProviderIds = new Set(policy.allowedModelsByProvider.keys());
   if (Array.isArray(data.all)) {
     const all = data.all
       .filter((provider) => !isRevokedProviderListItem(provider, policy.revokedProviderIds))
@@ -1089,7 +1088,7 @@ function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPo
     return {
       ...data,
       all,
-      connected: mergeManagedConnectedProviderIds(data.connected, all, managedProviderIds, policy.revokedProviderIds),
+      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds),
     };
   }
   if (Array.isArray(data.providers)) {
@@ -1099,7 +1098,7 @@ function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPo
     return {
       ...data,
       providers,
-      connected: mergeManagedConnectedProviderIds(data.connected, providers, managedProviderIds, policy.revokedProviderIds),
+      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds),
     };
   }
   if (isRecordValue(data.providers)) {
@@ -1111,7 +1110,7 @@ function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPo
     return {
       ...data,
       providers,
-      connected: mergeManagedConnectedProviderIds(data.connected, Object.keys(providers), managedProviderIds, policy.revokedProviderIds),
+      connected: filterConnectedProviderIds(data.connected, policy.revokedProviderIds),
     };
   }
   return data;
@@ -1121,19 +1120,8 @@ function isRevokedProviderListItem(provider: unknown, revokedProviderIds: Set<st
   return isRecordValue(provider) && typeof provider.id === "string" && revokedProviderIds.has(provider.id);
 }
 
-function mergeManagedConnectedProviderIds(connected: unknown, providers: unknown[], managedProviderIds: Set<string>, revokedProviderIds: Set<string>): string[] {
-  const providerIds = new Set(
-    providers.map((provider) => {
-      if (typeof provider === "string") return provider;
-      if (isRecordValue(provider) && typeof provider.id === "string") return provider.id;
-      return "";
-    }).filter(Boolean),
-  );
-  const next = new Set(Array.isArray(connected) ? connected.filter((id): id is string => typeof id === "string" && !revokedProviderIds.has(id)) : []);
-  for (const providerId of managedProviderIds) {
-    if (providerIds.has(providerId)) next.add(providerId);
-  }
-  return [...next];
+function filterConnectedProviderIds(connected: unknown, revokedProviderIds: Set<string>): string[] {
+  return Array.isArray(connected) ? connected.filter((id): id is string => typeof id === "string" && !revokedProviderIds.has(id)) : [];
 }
 
 function filterProviderListItem(provider: unknown, allowedModelsByProvider: Map<string, Set<string>>, fallbackProviderId?: string): unknown {
