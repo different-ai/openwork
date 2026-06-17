@@ -1,9 +1,10 @@
 import { createReadStream } from "node:fs";
 import { readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep, posix } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
+import { normalizeWorkspaceRelativePath, resolveSafeChildPath } from "../path-security.js";
 import { FileSessionStore } from "../file-sessions.js";
 import type { ApprovalRequest, ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { ensureDir, exists, shortId } from "../utils.js";
@@ -43,45 +44,10 @@ function resolveOutboxDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "openwork", "outbox");
 }
 
-export function normalizeWorkspaceRelativePath(input: string, options: { allowSubdirs: boolean }): string {
-  const raw = String(input ?? "").trim();
-  if (!raw) {
-    throw new ApiError(400, "invalid_path", "Path is required");
-  }
-  if (raw.includes("\u0000")) {
-    throw new ApiError(400, "invalid_path", "Path contains null byte");
-  }
-
-  // A lot of user-facing surfaces (artifacts, tool logs) reference files as
-  // `workspace/<path>` or `/workspace/<path>`. The server API expects
-  // workspace-relative paths, so normalize those common prefixes here.
-  let normalized = raw.replace(/\\/g, "/");
-  normalized = normalized.replace(/^\/+/, "");
-  normalized = normalized.replace(/^\.\//, "");
-  normalized = normalized.replace(/^workspaces\/[^/]+\//i, "");
-  normalized = normalized.replace(/^workspace\/(?:ws_[^/]+|\d+|[0-9a-f-]{6,})\//i, "");
-  normalized = normalized.replace(/^workspace\//, "");
-  normalized = normalized.replace(/^\/+/, "");
-
-  normalized = posix.normalize(normalized);
-  if (normalized.startsWith("../") || normalized === "..") {
-    throw new ApiError(400, "invalid_path", "Path traversal is not allowed");
-  }
-
-  const parts = normalized.split("/").filter(Boolean);
-  if (!parts.length) {
-    throw new ApiError(400, "invalid_path", "Path is required");
-  }
-  if (!options.allowSubdirs && parts.length > 1) {
-    throw new ApiError(400, "invalid_path", "Subdirectories are not allowed");
-  }
-  for (const part of parts) {
-    if (part === "." || part === "..") {
-      throw new ApiError(400, "invalid_path", "Path traversal is not allowed");
-    }
-  }
-  return parts.join("/");
-}
+// normalizeWorkspaceRelativePath and resolveSafeChildPath are imported from
+// ../path-security.ts — the single shared implementation used by both this
+// module and extensions/openai-image-generation.ts.
+export { normalizeWorkspaceRelativePath } from "../path-security.js";
 
 export function isSupportedWorkspaceTextFilePath(relativePath: string): boolean {
   const lowered = relativePath.toLowerCase();
@@ -112,25 +78,6 @@ export function isSupportedWorkspaceTextFilePath(relativePath: string): boolean 
   ].some((ext) =>
     lowered.endsWith(ext),
   );
-}
-
-function resolveSafeChildPath(root: string, child: string): string {
-  const rootResolved = resolve(root);
-  const candidate = resolve(rootResolved, child);
-  if (candidate === rootResolved) {
-    throw new ApiError(400, "invalid_path", "Path must point to a file");
-  }
-
-  const isCaseInsensitive = process.platform === "win32" || process.platform === "darwin";
-  const rootPrefix = rootResolved + sep;
-  const isSafe = isCaseInsensitive
-    ? candidate.toLowerCase().startsWith(rootPrefix.toLowerCase())
-    : candidate.startsWith(rootPrefix);
-
-  if (!isSafe) {
-    throw new ApiError(400, "invalid_path", "Path traversal is not allowed");
-  }
-  return candidate;
 }
 
 function encodeArtifactId(path: string): string {

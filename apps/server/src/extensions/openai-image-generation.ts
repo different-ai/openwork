@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
 import { ApiError } from "../errors.js";
+import { resolveSafeChildPath } from "../path-security.js";
 import type { EnvService } from "../env-file.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 
@@ -98,24 +99,8 @@ function workspaceForContext(config: ServerConfig, context: Record<string, unkno
   return { ...workspace, path: resolve(workspace.path) };
 }
 
-function resolveSafeChildPath(root: string, child: string): string {
-  const rootResolved = resolve(root);
-  const candidate = resolve(rootResolved, child);
-  if (candidate === rootResolved) {
-    throw new ApiError(400, "invalid_path", "Path must point to a file");
-  }
-
-  const isCaseInsensitive = process.platform === "win32" || process.platform === "darwin";
-  const rootPrefix = rootResolved + sep;
-  const isSafe = isCaseInsensitive
-    ? candidate.toLowerCase().startsWith(rootPrefix.toLowerCase())
-    : candidate.startsWith(rootPrefix);
-
-  if (!isSafe) {
-    throw new ApiError(400, "invalid_path", "Path traversal is not allowed");
-  }
-  return candidate;
-}
+// resolveSafeChildPath is imported from ../path-security.ts — the single
+// shared implementation. See that module for the full rationale.
 
 async function fetchOpenAiImage(input: { apiKey: string; prompt: string }) {
   const controller = new AbortController();
