@@ -65,7 +65,12 @@ import {
 } from "../../../../app/cloud/desktop-app-restrictions";
 
 type ProviderReturnFocusTarget = "none" | "composer";
-type CloudProviderSyncReason = "sign_in" | "app_launch" | "interval" | "settings_cloud_opened";
+type CloudProviderSyncReason =
+  | "sign_in"
+  | "app_launch"
+  | "interval"
+  | "settings_cloud_opened"
+  | "window_focus";
 
 export type ProviderAuthMethod = {
   type: "oauth" | "api" | "cloud";
