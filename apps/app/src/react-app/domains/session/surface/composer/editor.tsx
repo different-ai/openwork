@@ -302,20 +302,21 @@ function pastedTextChipLabel(lines: number) {
 
 function createPastedTextChipDom(label: string, lines: number) {
   const dom = document.createElement("span");
-  dom.className = "inline-flex items-center gap-1 rounded-full border border-amber-6/35 bg-amber-3/15 px-2.5 py-1 text-xs font-medium text-amber-11";
+  dom.className = "group inline-flex cursor-pointer items-center gap-1 rounded-full border border-amber-6/35 bg-amber-3/15 px-2.5 py-1 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-4/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-8";
   dom.contentEditable = "false";
   dom.setAttribute("spellcheck", "false");
+  dom.setAttribute("role", "button");
+  dom.setAttribute("aria-label", `Expand pasted text ${label}`);
+  dom.tabIndex = 0;
   dom.title = `Pasted text · ${label}`;
+  dom.dataset.pastedExpandLabel = label;
 
   const text = document.createElement("span");
   text.textContent = pastedTextChipLabel(lines);
 
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-amber-10 transition-colors hover:bg-amber-4 hover:text-amber-12";
-  button.title = "Expand pasted text";
-  button.setAttribute("aria-label", "Expand pasted text");
-  button.dataset.pastedExpandLabel = label;
+  const icon = document.createElement("span");
+  icon.className = "ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-amber-10 transition-colors group-hover:text-amber-12";
+  icon.setAttribute("aria-hidden", "true");
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 16 16");
@@ -325,19 +326,24 @@ function createPastedTextChipDom(label: string, lines: number) {
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
   path.setAttribute("d", "M5 3h8v8h-1.5V5.56l-7.97 7.97-1.06-1.06 7.97-7.97H5V3Z");
   svg.append(path);
-  button.append(svg);
-  dom.append(text, button);
+  icon.append(svg);
+  dom.append(text, icon);
   return dom;
 }
 
 function updatePastedTextChipDom(dom: HTMLElement, label: string, lines: number) {
   const text = dom.firstElementChild;
   if (text) text.textContent = pastedTextChipLabel(lines);
-  const button = dom.querySelector("button[data-pasted-expand-label]");
-  if (button instanceof HTMLButtonElement) {
-    button.dataset.pastedExpandLabel = label;
-  }
+  dom.dataset.pastedExpandLabel = label;
+  dom.setAttribute("aria-label", `Expand pasted text ${label}`);
   dom.title = `Pasted text · ${label}`;
+}
+
+function pastedTextExpandLabelFromTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) return null;
+  const trigger = target.closest("[data-pasted-expand-label]");
+  if (!(trigger instanceof HTMLElement)) return null;
+  return trigger.dataset.pastedExpandLabel?.trim() || null;
 }
 
 type SerializedComposerPastedTextNode = Spread<
@@ -800,11 +806,7 @@ export function LexicalPromptEditor(props: EditorProps) {
   );
 
   const handlePastedTextExpandPointer = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    const button = target.closest("button[data-pasted-expand-label]");
-    if (!(button instanceof HTMLButtonElement)) return;
-    const label = button.dataset.pastedExpandLabel;
+    const label = pastedTextExpandLabelFromTarget(event.target);
     if (!label) return;
     event.preventDefault();
     event.stopPropagation();
@@ -812,12 +814,19 @@ export function LexicalPromptEditor(props: EditorProps) {
   }, [props.onExpandPastedText]);
 
   const handlePastedTextExpandMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (!target.closest("button[data-pasted-expand-label]")) return;
+    if (!pastedTextExpandLabelFromTarget(event.target)) return;
     event.preventDefault();
     event.stopPropagation();
   }, []);
+
+  const handlePastedTextExpandKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const label = pastedTextExpandLabelFromTarget(event.target);
+    if (!label) return;
+    event.preventDefault();
+    event.stopPropagation();
+    props.onExpandPastedText?.(label);
+  }, [props.onExpandPastedText]);
 
   return (
     <LexicalComposer initialConfig={initialConfig}>
@@ -827,7 +836,12 @@ export function LexicalPromptEditor(props: EditorProps) {
         - max-h caps the composer — long pastes / multi-paragraph drafts scroll
           inside the editor instead of pushing the transcript out of view.
       */}
-      <div className="relative" onClickCapture={handlePastedTextExpandPointer} onMouseDownCapture={handlePastedTextExpandMouseDown}>
+      <div
+        className="relative"
+        onClickCapture={handlePastedTextExpandPointer}
+        onKeyDownCapture={handlePastedTextExpandKeyDown}
+        onMouseDownCapture={handlePastedTextExpandMouseDown}
+      >
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
