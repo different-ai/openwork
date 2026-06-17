@@ -301,14 +301,14 @@ export function ModelSelect({
               disabled={disabled}
               aria-label="Change model"
               aria-keyshortcuts="Meta+Alt+/"
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-60"
+              className="flex items-center gap-1.5 rounded-2xl px-3 py-2 text-sm text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-60"
             />
           }
         >
           <span className="max-w-48 truncate">
             {selectedOption?.title ?? value.modelID ?? "Select model"}
           </span>
-          <ChevronDown className="h-3 w-3" />
+          <ChevronDown size={14} />
         </TooltipTrigger>
         <TooltipContent>
           Change model
