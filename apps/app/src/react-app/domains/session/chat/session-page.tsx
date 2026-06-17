@@ -225,7 +225,8 @@ function absoluteWorkspacePath(root: string | null | undefined, value: string) {
   if (!target) return "";
   if (/^file:\/\//i.test(target)) {
     try {
-      return new URL(target).pathname;
+      const pathname = new URL(target).pathname;
+      return /^\/[a-zA-Z]:/.test(pathname) ? pathname.slice(1) : pathname;
     } catch {
       return target.replace(/^file:\/\//i, "");
     }

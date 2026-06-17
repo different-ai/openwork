@@ -149,6 +149,51 @@ function hasFencedCodeBlock(text: string) {
   return /(^|\n)```/.test(text);
 }
 
+function normalizeOpenTargetLink(value: string) {
+  const trimmed = value.trim();
+  if (/^(https?|wss?):\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  const withoutHash = trimmed.split("#")[0] ?? "";
+  const withoutQuery = withoutHash.split("?")[0] ?? "";
+  let decoded = withoutQuery;
+
+  try {
+    decoded = decodeURIComponent(withoutQuery);
+  } catch {
+    decoded = withoutQuery;
+  }
+
+  if (/^file:\/\//i.test(decoded)) {
+    try {
+      const pathname = new URL(decoded).pathname;
+      decoded = /^\/[a-zA-Z]:/.test(pathname) ? pathname.slice(1) : pathname;
+    } catch {
+      decoded = decoded.replace(/^file:\/\//i, "");
+    }
+  }
+
+  return decoded
+    .replace(/[\\]+/g, "/")
+    .replace(/^\.\//, "")
+    .replace(WORKSPACES_PREFIX_PATTERN, "")
+    .replace(WORKSPACE_ID_PREFIX_PATTERN, "")
+    .replace(/\/$/, "");
+}
+
+function linkMatchesTarget(href: string, target: OpenTarget) {
+  const normalizedHref = normalizeOpenTargetLink(href).toLowerCase();
+  const normalizedTarget = normalizeOpenTargetLink(target.value).toLowerCase();
+
+  if (!normalizedHref || !normalizedTarget) return false;
+  if (target.kind === "url") return normalizedHref === normalizedTarget;
+  return normalizedHref === normalizedTarget || normalizedHref.endsWith(`/${normalizedTarget}`) || normalizedTarget.endsWith(`/${normalizedHref}`);
+}
+
+function openTargetForHref(href: string, targets: OpenTarget[]) {
+  return targets.find((target) => linkMatchesTarget(href, target)) ?? null;
+}
+
 function estimatedRenderedImageHeight(image: HTMLImageElement) {
   if (!image.naturalWidth || !image.naturalHeight) return 0;
 
