@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import { readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, posix } from "node:path";
 import { Readable } from "node:stream";
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
@@ -63,6 +63,11 @@ export function normalizeWorkspaceRelativePath(input: string, options: { allowSu
   normalized = normalized.replace(/^workspace\//, "");
   normalized = normalized.replace(/^\/+/, "");
 
+  normalized = posix.normalize(normalized);
+  if (normalized.startsWith("../") || normalized === "..") {
+    throw new ApiError(400, "invalid_path", "Path traversal is not allowed");
+  }
+
   const parts = normalized.split("/").filter(Boolean);
   if (!parts.length) {
     throw new ApiError(400, "invalid_path", "Path is required");
@@ -115,7 +120,14 @@ function resolveSafeChildPath(root: string, child: string): string {
   if (candidate === rootResolved) {
     throw new ApiError(400, "invalid_path", "Path must point to a file");
   }
-  if (!candidate.startsWith(rootResolved + sep)) {
+
+  const isWindows = process.platform === "win32";
+  const rootPrefix = rootResolved + sep;
+  const isSafe = isWindows
+    ? candidate.toLowerCase().startsWith(rootPrefix.toLowerCase())
+    : candidate.startsWith(rootPrefix);
+
+  if (!isSafe) {
     throw new ApiError(400, "invalid_path", "Path traversal is not allowed");
   }
   return candidate;
