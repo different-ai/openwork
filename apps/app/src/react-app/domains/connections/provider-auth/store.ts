@@ -1679,9 +1679,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     // Validate URL format
     try {
-      new URL(baseUrl);
+      const parsedUrl = new URL(baseUrl);
+      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+        throw new Error("Valid Base URL must use http or https.");
+      }
     } catch {
       throw new Error("Valid Base URL is required (e.g. https://inference-api.nousresearch.com/v1).");
+    }
+
+    if (!modelId) {
+      throw new Error("Model Name is required.");
     }
 
     if (!apiKey) {
@@ -1710,9 +1717,15 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     try {
       // Write provider block to opencode.jsonc
-      const modelEntry = modelId
-        ? { [modelId]: { id: modelId, name: modelId } }
-        : {};
+      const modelEntry = { [modelId]: { id: modelId, name: modelId } };
+      
+      const providerConfig = {
+        id: providerId,
+        name: "Custom OpenAI Compatible",
+        api: baseUrl,
+        npm: "@ai-sdk/openai-compatible",
+        models: modelEntry,
+      };
 
       const updatedConfig = await updateProjectConfigFile(
         (raw) => {
@@ -1723,18 +1736,20 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           const providerEdits = modify(
             updated,
             ["provider", providerId],
-            {
-              id: providerId,
-              name: "Custom OpenAI Compatible",
-              api: baseUrl,
-              npm: "@ai-sdk/openai-compatible",
-              ...(modelId ? { models: modelEntry } : {}),
-            } as unknown as Record<string, unknown>,
+            providerConfig as unknown as Record<string, unknown>,
             { formattingOptions: { insertSpaces: true, tabSize: 2 } },
           );
           updated = applyEdits(updated, providerEdits);
           return updated.endsWith("\n") ? updated : `${updated}\n`;
         },
+        (config) => {
+          const nextConfig = { ...config };
+          nextConfig.provider = {
+            ...(nextConfig.provider as Record<string, unknown> ?? {}),
+            [providerId]: providerConfig,
+          };
+          return nextConfig;
+        }
       );
 
       if (!updatedConfig) {

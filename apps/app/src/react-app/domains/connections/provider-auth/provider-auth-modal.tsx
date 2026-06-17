@@ -583,9 +583,17 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       return;
     }
     try {
-      new URL(trimmedUrl);
+      const parsedUrl = new URL(trimmedUrl);
+      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+        setLocalError("Valid Base URL must use http or https.");
+        return;
+      }
     } catch {
       setLocalError("Valid Base URL is required (e.g. https://inference-api.nousresearch.com/v1).");
+      return;
+    }
+    if (!trimmedModel) {
+      setLocalError("Model Name is required.");
       return;
     }
     if (!trimmedKey) {
@@ -1057,7 +1065,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-11 mb-1">
-                        Model Name <span className="text-gray-9">(optional)</span>
+                        Model Name <span className="text-red-11">*</span>
                       </label>
                       <input
                         id="custom-provider-model-id"
@@ -1099,7 +1107,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     <div className="text-[11px] text-gray-9">Keys are stored locally by OpenCode.</div>
                     <Button
                       onClick={() => void handleCustomSubmit()}
-                      disabled={actionDisabled || !customBaseUrl.trim() || !customApiKey.trim()}
+                      disabled={actionDisabled || !customBaseUrl.trim() || !customModelId.trim() || !customApiKey.trim()}
                     >
                       {props.submitting ? "Saving…" : "Save provider"}
                     </Button>
