@@ -101,7 +101,17 @@ function workspaceForContext(config: ServerConfig, context: Record<string, unkno
 function resolveSafeChildPath(root: string, child: string): string {
   const rootResolved = resolve(root);
   const candidate = resolve(rootResolved, child);
-  if (candidate === rootResolved || !candidate.startsWith(`${rootResolved}${sep}`)) {
+  if (candidate === rootResolved) {
+    throw new ApiError(400, "invalid_path", "Path must point to a file");
+  }
+
+  const isCaseInsensitive = process.platform === "win32" || process.platform === "darwin";
+  const rootPrefix = rootResolved + sep;
+  const isSafe = isCaseInsensitive
+    ? candidate.toLowerCase().startsWith(rootPrefix.toLowerCase())
+    : candidate.startsWith(rootPrefix);
+
+  if (!isSafe) {
     throw new ApiError(400, "invalid_path", "Path traversal is not allowed");
   }
   return candidate;

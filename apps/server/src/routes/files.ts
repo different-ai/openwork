@@ -121,9 +121,9 @@ function resolveSafeChildPath(root: string, child: string): string {
     throw new ApiError(400, "invalid_path", "Path must point to a file");
   }
 
-  const isWindows = process.platform === "win32";
+  const isCaseInsensitive = process.platform === "win32" || process.platform === "darwin";
   const rootPrefix = rootResolved + sep;
-  const isSafe = isWindows
+  const isSafe = isCaseInsensitive
     ? candidate.toLowerCase().startsWith(rootPrefix.toLowerCase())
     : candidate.startsWith(rootPrefix);
 
