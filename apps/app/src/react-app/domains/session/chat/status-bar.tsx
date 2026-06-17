@@ -68,7 +68,7 @@ type StatusIndicatorProps = {
 function StatusIndicator(props: StatusIndicatorProps) {
   if (props.loading || (props.openworkServerStatus === "disconnected" && props.initializing)) {
     return (
-      <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex min-w-0 items-center gap-2.5 px-1">
         <StatusDot variant="loading" />
         <span className="shrink-0 font-medium text-foreground text-xs">
           {t("session.preparing_workspace")}
@@ -82,7 +82,7 @@ function StatusIndicator(props: StatusIndicatorProps) {
 
   if (props.clientConnected) {
     return (
-      <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex min-w-0 items-center gap-2.5 px-1">
         <Tooltip>
           <TooltipTrigger render={<span className="inline-flex" />}>
             <StatusDot variant="connected" />
@@ -105,7 +105,7 @@ function StatusIndicator(props: StatusIndicatorProps) {
 
   if (props.openworkServerStatus === "limited") {
     return (
-      <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex min-w-0 items-center gap-2.5 px-1">
         <StatusDot variant="partial" />
         <span className="shrink-0 font-medium text-foreground text-xs">
           {t("status.limited_mode")}
@@ -120,7 +120,7 @@ function StatusIndicator(props: StatusIndicatorProps) {
   }
 
   return (
-    <div className="flex min-w-0 items-center gap-2.5">
+    <div className="flex min-w-0 items-center gap-2.5 px-1">
       <StatusDot variant="disconnected" />
       <span className="shrink-0 font-medium text-foreground text-xs">
         {t("status.disconnected_label")}
@@ -266,7 +266,7 @@ export function StatusBar(props: StatusBarProps) {
 
   return (
     <div className="border-t border-border bg-background">
-      <div className="flex h-8 items-center justify-between gap-3 px-4 md:px-6">
+      <div className="flex h-8 items-center justify-between gap-3 px-2 md:px-2">
         <StatusIndicator
           clientConnected={props.clientConnected}
           openworkServerStatus={props.openworkServerStatus}
