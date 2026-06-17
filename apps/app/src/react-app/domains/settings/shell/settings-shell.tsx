@@ -55,7 +55,7 @@ export function SettingsShell(props: SettingsShellProps) {
   if (props.compact) {
     return (
       <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
-        <header className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-dls-border px-3 mac:titlebar-drag">
+        <header className="flex py-1.5 px-1.5 shrink-0 items-center justify-between gap-2 border-b border-dls-border mac:titlebar-drag">
           <div className="flex min-w-0 items-center gap-2 mac:titlebar-no-drag">
             <SettingsSectionMenu
               activeTab={props.activeTab}
