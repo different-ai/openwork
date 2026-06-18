@@ -2998,28 +2998,19 @@ async function readManagedProviderVisibleIds(workspaceRoot: string, providerIds:
 }
 
 async function applyManagedProviderConfigSet(workspaceRoot: string, providers: ManagedProviderSyncProvider[], previousManagedProviderIds: Set<string>) {
-  const config = await readOpencodeConfig(workspaceRoot);
-  const providerConfig = isRecordValue(config.provider) ? { ...config.provider } : {};
+  const configPath = opencodeConfigPath(workspaceRoot);
+  await readJsoncFile(configPath, {}, { allowInvalid: false });
   const currentProviderIds = new Set(providers.map((provider) => getManagedProviderRuntimeId(provider)));
 
   for (const providerId of previousManagedProviderIds) {
     if (!currentProviderIds.has(providerId)) {
-      delete providerConfig[providerId];
+      await updateJsoncPath(configPath, ["provider", providerId], undefined);
     }
   }
 
   for (const provider of providers) {
-    providerConfig[getManagedProviderRuntimeId(provider)] = buildManagedProviderRuntimeConfig(provider);
+    await updateJsoncPath(configPath, ["provider", getManagedProviderRuntimeId(provider)], buildManagedProviderRuntimeConfig(provider));
   }
-
-  const nextConfig = { ...config };
-  if (Object.keys(providerConfig).length > 0) {
-    nextConfig.provider = providerConfig;
-  } else {
-    delete nextConfig.provider;
-  }
-
-  await writeJsoncFile(opencodeConfigPath(workspaceRoot), nextConfig);
 }
 
 function buildManagedProviderModelRuntimeConfig(model: ManagedProviderSyncProvider["models"][number]) {

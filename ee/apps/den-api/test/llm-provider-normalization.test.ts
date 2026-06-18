@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test"
 import { CustomProviderConfigError, normalizeCustomProviderConfig } from "../src/llm/custom-provider.js"
 
+function seedRequiredEnv() {
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
+  process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
+  process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
+}
+
 test("normalizes a full opencode JSONC config with provider and models maps", () => {
   const normalized = normalizeCustomProviderConfig({
     customConfigText: `{
@@ -98,4 +105,29 @@ test("rejects full opencode configs with multiple providers", () => {
       },
     },
   })).toThrow(new CustomProviderConfigError("Custom provider config contains multiple providers. Paste one provider block or remove the others."))
+})
+
+test("keeps custom provider credential kind and API key when normalizing route input", async () => {
+  seedRequiredEnv()
+  const { normalizeLlmProviderInput } = await import("../src/routes/org/llm-providers.js")
+  const normalized = await normalizeLlmProviderInput({
+    name: "Meettie Gateway",
+    source: "custom",
+    credentialKind: "api_key",
+    customConfig: {
+      id: "meettie-gateway",
+      api: "https://llm.meettie.com/v1",
+      env: ["MEETTIE_GATEWAY_API_KEY"],
+      npm: "@ai-sdk/anthropic",
+      name: "Meettie LLM Gateway",
+      models: [{ id: "tie-auto", name: "Tie Auto" }],
+    },
+    apiKey: "  sk-custom  ",
+    memberIds: [],
+    teamIds: [],
+  })
+
+  expect(normalized.credentialKind).toBe("api_key")
+  expect(normalized.apiKey).toBe("sk-custom")
+  expect(normalized.opencodeAuth).toBeNull()
 })

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -410,6 +410,49 @@ describe("managed provider sync runtime route", () => {
     expect(body.reason).toBe("Managed provider sync failed");
     const configPath = join(workspace, "opencode.jsonc");
     expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : "").not.toContain("nvidia");
+  });
+
+  test("managed provider sync patches opencode JSONC without dropping comments", async () => {
+    const { base, workspace } = await boot();
+    const configPath = join(workspace, "opencode.jsonc");
+    writeFileSync(configPath, `{
+  // user-owned setting must survive provider sync
+  "custom_user_key": true
+}
+`, "utf8");
+
+    const sync = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+
+    expect(sync.status).toBe(200);
+    const config = readFileSync(configPath, "utf8");
+    expect(config).toContain("// user-owned setting must survive provider sync");
+    expect(config).toContain('"custom_user_key": true');
+    expect(config).toContain('"nvidia"');
+  });
+
+  test("managed provider sync preserves invalid opencode JSONC on failure", async () => {
+    const { base, workspace } = await boot();
+    const configPath = join(workspace, "opencode.jsonc");
+    const invalidConfig = `{ "provider": {
+}
+}
+}
+`;
+    writeFileSync(configPath, invalidConfig, "utf8");
+
+    const sync = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+
+    expect(sync.status).toBe(502);
+    expect(await sync.json()).toMatchObject({ status: "failed", reason: "Managed provider sync failed" });
+    expect(readFileSync(configPath, "utf8")).toBe(invalidConfig);
   });
 
   test("authoritatively removes revoked managed providers from config, auth, and provider lists", async () => {

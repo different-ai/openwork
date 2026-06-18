@@ -492,7 +492,7 @@ async function resolveTeamIds(input: {
   return teamIds
 }
 
-async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteSchema>) {
+export async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteSchema>) {
   const credentialKind = input.credentialKind
   const apiKey = credentialKind === "api_key" ? input.apiKey?.trim() || null : null
   const opencodeAuth = credentialKind === "opencode_oauth" ? normalizeOpencodeAuth(input.opencodeAuth) : null
@@ -537,11 +537,13 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
 
     return {
       source: input.source,
+      credentialKind,
       providerId: customProvider.providerId,
       name: input.name,
       providerConfig: customProvider.providerConfig,
       models: customProvider.models,
-      apiKey: input.apiKey?.trim() || null,
+      apiKey,
+      opencodeAuth,
     }
   } catch (error) {
     if (error instanceof CustomProviderConfigError) {
