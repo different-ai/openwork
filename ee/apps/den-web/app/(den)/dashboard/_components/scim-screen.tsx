@@ -309,7 +309,7 @@ export function ScimScreen() {
                 ) : null}
               </div>
 
-              <div className="rounded-[20px] border border-cyan-100 bg-cyan-50 p-4 text-[13px] leading-6 text-cyan-900">
+              <div className="rounded-[20px] border border-cyan-100 bg-cyan-50 p-4 text-[13px] leading-6 text-cyan-900 dark:border-cyan-800/30 dark:bg-cyan-950/50 dark:text-cyan-200">
                 SCIM deprovisioning removes workspace access and the SCIM provider account, but it does not blindly delete the global OpenWork user record.
               </div>
             </div>
