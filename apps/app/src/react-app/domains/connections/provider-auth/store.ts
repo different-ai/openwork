@@ -147,6 +147,18 @@ export const getCloudManagedProviderId = (
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+function hasAnnotatedCloudProviderBlock(input: {
+  configContent: string;
+  localProviderId: string;
+  cloudProviderId: string;
+}) {
+  const commentPattern = new RegExp(
+    `(^[ \\t]*)// OpenWork Cloud import:.*\\(${escapeRegExp(input.cloudProviderId)}\\).*\\n\\1(?="${escapeRegExp(input.localProviderId)}":)`,
+    "m",
+  );
+  return commentPattern.test(input.configContent);
+}
+
 export function isCloudProviderConfigImportCollision(input: {
   configContent: string;
   localProviderId: string;
@@ -169,11 +181,11 @@ export function isCloudProviderConfigImportCollision(input: {
   }
 
   if (input.cloudProviderId) {
-    const commentPattern = new RegExp(
-      `(^[ \\t]*)// OpenWork Cloud import:.*\\(${escapeRegExp(input.cloudProviderId)}\\).*\\n\\1(?="${escapeRegExp(input.localProviderId)}":)`,
-      "m",
-    );
-    if (commentPattern.test(input.configContent)) {
+    if (hasAnnotatedCloudProviderBlock({
+      configContent: input.configContent,
+      localProviderId: input.localProviderId,
+      cloudProviderId: input.cloudProviderId,
+    })) {
       return false;
     }
   }
@@ -1530,9 +1542,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (existingImported?.providerId !== localProviderId) {
         const existingAuth = await readProviderAuthCredentials(localProviderId);
         if (existingAuth !== null) {
-          throw new Error(
-            `${localProviderId} already has OpenCode auth credentials. Disconnect it before importing the cloud-managed version.`,
-          );
+          const configFile = await readProjectConfigFile() as { content?: string } | null;
+          const isAnnotatedPartialImport = Boolean(configFile?.content && hasAnnotatedCloudProviderBlock({
+            configContent: configFile.content,
+            localProviderId,
+            cloudProviderId: provider.id,
+          }));
+          if (!isAnnotatedPartialImport) {
+            throw new Error(
+              `${localProviderId} already has OpenCode auth credentials. Disconnect it before importing the cloud-managed version.`,
+            );
+          }
         }
       }
 
