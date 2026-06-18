@@ -272,7 +272,7 @@ function MarketplaceAccessSection({ marketplaceId }: { marketplaceId: string }) 
             role="switch"
             aria-checked={Boolean(orgWideGrant)}
             className={`relative inline-flex h-6 w-[42px] shrink-0 items-center rounded-full transition-colors ${
-              orgWideGrant ? "bg-[#0f172a]" : "bg-gray-200"
+              orgWideGrant ? "bg-[#0f172a] dark:bg-gray-100" : "bg-gray-200 dark:bg-gray-700"
             }`}
           >
             <span

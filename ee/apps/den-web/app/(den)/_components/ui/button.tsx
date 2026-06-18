@@ -8,9 +8,10 @@ export type ButtonVariant = "primary" | "secondary" | "destructive";
 export type ButtonSize = "md" | "sm";
 
 const variantClasses: Record<ButtonVariant, string> = {
-    primary: "bg-[#0f172a] text-white hover:bg-[#111c33]",
+    primary:
+        "bg-[#0f172a] text-white dark:bg-gray-100 dark:text-gray-900 hover:bg-[#111c33] dark:hover:bg-gray-200",
     secondary:
-        "border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] text-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50 hover:border-gray-300 dark:hover:border-gray-500 dark:border-gray-600 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100",
+        "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900 dark:border-gray-700 dark:bg-[var(--dls-surface)] dark:text-gray-100 dark:hover:bg-gray-800/50 dark:hover:border-gray-600",
     destructive:
         "border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300",
 };

@@ -291,7 +291,7 @@ export function SsoScreen() {
                   </label>
                   <label className="block text-[14px] text-gray-700 dark:text-gray-300">
                     <span className="mb-2 block font-medium">Client Secret</span>
-                    <input type="password" className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} />
+                    <input type="password" className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} />
                   </label>
                   <label className="block text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
                     <span className="mb-2 block font-medium">Scopes</span>
