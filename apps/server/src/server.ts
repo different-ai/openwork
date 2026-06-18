@@ -1491,7 +1491,11 @@ function createRoutes(
       await applyManagedProviderConfigSet(workspace.path, payload.providers, previousManagedProviderIds);
       for (const provider of payload.providers) {
         const providerId = getManagedProviderRuntimeId(provider);
-        previousAuthByProviderId.set(providerId, await readManagedProviderAuth(config, workspace, providerId));
+        const previousAuth = await readManagedProviderAuth(config, workspace, providerId);
+        if (previousAuth !== null && !previousManagedProviderIds.has(providerId)) {
+          throw new ApiError(409, "managed_provider_auth_collision", `${providerId} already has OpenCode auth credentials`);
+        }
+        previousAuthByProviderId.set(providerId, previousAuth);
         await applyManagedProviderAuth(config, workspace, provider);
         applied.push(providerId);
       }

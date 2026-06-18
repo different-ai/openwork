@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -195,6 +195,14 @@ function readManagedProviderMetadata(workspace: string) {
     managedProviders?: { applied?: string[]; revoked?: string[]; revision?: string };
   };
   return openworkConfig.managedProviders ?? {};
+}
+
+function writeManagedProviderMetadata(workspace: string, applied: string[]) {
+  const openworkDir = join(workspace, ".opencode");
+  mkdirSync(openworkDir, { recursive: true });
+  writeFileSync(join(openworkDir, "openwork.json"), JSON.stringify({
+    managedProviders: { source: "den", revision: "previous-sync", applied, appliedAt: new Date(0).toISOString() },
+  }), "utf8");
 }
 
 beforeEach(() => {
@@ -478,6 +486,22 @@ describe("managed provider sync runtime route", () => {
     expect(authCalls).toEqual([]);
   });
 
+  test("managed provider sync refuses to overwrite user-owned auth-only credentials", async () => {
+    const previousAuth = { type: "api", key: "user-owned-key" };
+    const { base, workspace, authStore } = await boot({ initialAuth: { "/auth/nvidia": previousAuth } });
+
+    const sync = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+
+    expect(sync.status).toBe(502);
+    expect(await sync.json()).toMatchObject({ status: "failed", reason: "Managed provider sync failed" });
+    expect(authStore.get("/auth/nvidia")).toEqual(previousAuth);
+    expect(existsSync(join(workspace, "opencode.jsonc"))).toBe(false);
+  });
+
   test("authoritatively removes revoked managed providers from config, auth, and provider lists", async () => {
     const { base, workspace, authCalls } = await boot();
     const fullPayload = providerPayload();
@@ -575,10 +599,11 @@ describe("managed provider sync runtime route", () => {
 
   test("failure on a later provider restores previous working auth written earlier in the same attempt", async () => {
     const previousAuth = { type: "api", key: "previous-working-key" };
-    const { base, authCalls, authStore } = await boot({
+    const { base, workspace, authCalls, authStore } = await boot({
       failAuthPath: "/auth/openai",
       initialAuth: { "/auth/nvidia": previousAuth },
     });
+    writeManagedProviderMetadata(workspace, ["nvidia"]);
     const response = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
       headers: hostAuth(),

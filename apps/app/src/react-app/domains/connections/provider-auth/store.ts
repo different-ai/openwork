@@ -1413,6 +1413,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
     }
 
+    let authRollbackProviderId: string | null = null;
     try {
       const den = createDenClient({
         baseUrl: settings.baseUrl,
@@ -1426,6 +1427,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       const apiKey = provider.apiKey?.trim() ?? "";
       const opencodeAuth = provider.opencodeAuth?.trim() ?? "";
       const env = getCloudProviderEnv(provider.providerConfig);
+      let nextAuth: Parameters<typeof c.auth.set>[0]["auth"] | null = null;
       if (provider.credentialKind === "opencode_oauth" && !opencodeAuth) {
         throw new Error(`${provider.name} does not have a stored OpenCode OAuth credential yet.`);
       }
@@ -1458,31 +1460,24 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         if (typeof authRecord.expires !== "number" || !Number.isFinite(authRecord.expires) || authRecord.expires < 0) {
           throw new Error(`${provider.name} OpenCode OAuth auth must include a non-negative numeric expires value.`);
         }
-        await c.auth.set({
-          providerID: localProviderId,
-          auth: parsedAuth as Parameters<typeof c.auth.set>[0]["auth"],
-        });
+        nextAuth = parsedAuth as Parameters<typeof c.auth.set>[0]["auth"];
       } else if (apiKey) {
-        await c.auth.set({
-          providerID: localProviderId,
-          auth: { type: "api", key: apiKey },
-        });
+        nextAuth = { type: "api", key: apiKey };
       }
-      if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
-        try {
-          await removeProviderAuthCredentials(existingImported.providerId);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error ?? "");
-          if (!/not found|unknown auth|404/i.test(message.toLowerCase())) {
-            throw error;
-          }
-        }
-      }
+
       const updatedConfig = await updateProjectConfigFile((raw) =>
         formatConfigWithCloudProvider(raw, provider, localProviderId, existingImported?.providerId ?? null),
       );
       if (!updatedConfig) {
         throw new Error("Could not update opencode.jsonc for this workspace.");
+      }
+
+      if (nextAuth) {
+        await c.auth.set({
+          providerID: localProviderId,
+          auth: nextAuth,
+        });
+        authRollbackProviderId = localProviderId;
       }
 
       const nextImportedProviders = {
@@ -1502,6 +1497,18 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         },
       };
       await persistImportedCloudProviders(nextImportedProviders);
+      authRollbackProviderId = null;
+
+      if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
+        try {
+          await removeProviderAuthCredentials(existingImported.providerId);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error ?? "");
+          if (!/not found|unknown auth|404/i.test(message.toLowerCase())) {
+            throw error;
+          }
+        }
+      }
 
       const nextDisabledProviders = options
         .disabledProviders()
@@ -1513,6 +1520,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       emitChange();
       return `${t("status.connected")} ${provider.name}`;
     } catch (error) {
+      if (authRollbackProviderId) {
+        await removeProviderAuthCredentials(authRollbackProviderId).catch(() => undefined);
+      }
       const message = describeProviderError(error, "Failed to connect organization provider.");
       if (!optionsArg?.silent) {
         setStateField("providerAuthError", message);
