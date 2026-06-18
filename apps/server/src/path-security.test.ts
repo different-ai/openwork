@@ -193,17 +193,48 @@ describe("resolveSafeChildPath", () => {
   });
 
   // Regression #2285 — vector (b): case-mismatch on Windows/macOS
-  test("[Regression #2285-b] accepts path whose casing differs from root (case-insensitive OS fix)", () => {
-    // On Windows and macOS the filesystem is case-insensitive, so a path
-    // differing only in case should still be accepted rather than rejected
-    // with a false-positive traversal error.
-    const upperRoot = root.toUpperCase();
-    // Build a candidate that resolves to the same location but with different case.
-    const child = "notes.md";
-    // We test the function against the lower-cased root; on a real Windows/macOS
-    // system `resolve` would normalise the case; here we validate the guard itself.
-    // The function should NOT throw for a valid child.
-    expect(() => resolveSafeChildPath(upperRoot, child)).not.toThrow();
+  //
+  // The fix: on case-insensitive filesystems (win32, darwin), the boundary
+  // check folds both root and candidate to lower-case before comparing.
+  //
+  // Critical: the child must be an *absolute* path whose casing differs from
+  // the root string.  If the child is relative, resolve() builds the candidate
+  // FROM the root and both strings share the same case — so the old
+  // case-sensitive check would pass too, making the test vacuous.
+  //
+  // With an absolute child whose case differs:
+  //   OLD (case-sensitive): candidate.startsWith(rootPrefix) → false → throws ❌
+  //   NEW (case-insensitive): candidate.toLowerCase().startsWith(…toLowerCase()) → true → ok ✔
+  test("[Regression #2285-b] accepts absolute child whose casing differs from root on Windows", () => {
+    if (process.platform !== "win32") return; // Windows-specific case-folding
+    const lowerRoot = "c:\\projects\\ws";
+    // Absolute child with UPPER-case root prefix — same location, different casing.
+    const absoluteChildUpper = "C:\\PROJECTS\\WS\\notes.md";
+    // Pre-PR (case-sensitive): startsWith("c:\\projects\\ws\\") is FALSE for
+    // "C:\\PROJECTS\\WS\\notes.md" → would throw a false-rejection.
+    // Post-PR (case-insensitive): toLowerCase() match → correctly accepted.
+    expect(() => resolveSafeChildPath(lowerRoot, absoluteChildUpper)).not.toThrow();
+  });
+
+  test("[Regression #2285-b] accepts absolute child whose casing differs from root on macOS/POSIX", () => {
+    if (process.platform === "win32") return; // POSIX/darwin variant
+    const lowerRoot = "/projects/ws";
+    // Absolute path — same location, artificially upper-cased to simulate a
+    // case-insensitive FS where the OS hands back a differently-cased path.
+    // We bypass resolve() by constructing the absolute string directly so the
+    // pre/post-PR difference is visible in the string comparison.
+    const mixedCaseChild = "/Projects/WS/notes.md";
+    // Pre-PR (case-sensitive): startsWith("/projects/ws/") → false → throws.
+    // Post-PR (case-insensitive on darwin): toLowerCase() match → accepted.
+    if (process.platform === "darwin") {
+      expect(() => resolveSafeChildPath(lowerRoot, mixedCaseChild)).not.toThrow();
+    } else {
+      // On Linux (case-sensitive FS) this IS a legitimately different path and
+      // SHOULD be rejected — the guard is correct to throw here.
+      expect(() => resolveSafeChildPath(lowerRoot, mixedCaseChild)).toThrow(
+        /Path traversal is not allowed/,
+      );
+    }
   });
 
   // ── Rejection ─────────────────────────────────────────────────────────────
