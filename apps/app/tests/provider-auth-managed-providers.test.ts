@@ -96,4 +96,20 @@ describe("cloud managed provider import identity", () => {
       existingImportedProviderId: "custom-runtime",
     })).toBe(false);
   });
+
+  test("cloud import collision allows retrying an annotated block for the same cloud provider", () => {
+    const configContent = `{
+      "provider": {
+        // OpenWork Cloud import: Custom Provider (lpr_custom). Manage this entry from Cloud settings.
+        "custom-runtime": { "id": "custom-runtime", "npm": "@ai-sdk/openai" }
+      }
+    }`;
+
+    expect(isCloudProviderConfigImportCollision({
+      configContent,
+      localProviderId: "custom-runtime",
+      existingImportedProviderId: "old-runtime",
+      cloudProviderId: "lpr_custom",
+    })).toBe(false);
+  });
 });

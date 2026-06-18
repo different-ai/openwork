@@ -144,23 +144,41 @@ export const getCloudManagedProviderId = (
   return configId || provider.providerId.trim() || provider.id.trim();
 };
 
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 export function isCloudProviderConfigImportCollision(input: {
   configContent: string;
   localProviderId: string;
   existingImportedProviderId?: string | null;
+  cloudProviderId?: string | null;
 }) {
   const parsed = parse(input.configContent);
   const providerSection =
     parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>).provider
       : null;
-  return Boolean(
-    providerSection &&
-      typeof providerSection === "object" &&
-      !Array.isArray(providerSection) &&
-      input.localProviderId in (providerSection as Record<string, unknown>) &&
-      input.existingImportedProviderId !== input.localProviderId,
-  );
+  if (
+    !providerSection ||
+    typeof providerSection !== "object" ||
+    Array.isArray(providerSection) ||
+    !(input.localProviderId in (providerSection as Record<string, unknown>)) ||
+    input.existingImportedProviderId === input.localProviderId
+  ) {
+    return false;
+  }
+
+  if (input.cloudProviderId) {
+    const commentPattern = new RegExp(
+      `(^[ \\t]*)// OpenWork Cloud import:.*\\(${escapeRegExp(input.cloudProviderId)}\\).*\\n\\1(?="${escapeRegExp(input.localProviderId)}":)`,
+      "m",
+    );
+    if (commentPattern.test(input.configContent)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 export function resolveAppliedManagedProvidersFromSyncResult(
@@ -710,9 +728,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   };
 
-  const escapeRegExp = (value: string) =>
-    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
   const cloudProviderComment = (provider: Pick<DenOrgLlmProvider, "id" | "name">) =>
     `// OpenWork Cloud import: ${provider.name
       .replace(/\s+/g, " ")
@@ -870,6 +885,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       configContent: configFile.content,
       localProviderId,
       existingImportedProviderId: existingImported?.providerId,
+      cloudProviderId: provider.id,
     })) {
       throw new Error(
         `${localProviderId} already has a provider block in opencode.jsonc. Remove it before importing the cloud-managed version.`,
