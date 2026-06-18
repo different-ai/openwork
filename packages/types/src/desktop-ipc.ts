@@ -467,6 +467,8 @@ export type DesktopCommandMap = {
   __openPath: { args: [target: string]; result: unknown };
   __revealItemInDir: { args: [target: string]; result: unknown };
   __getFileIcon: { args: [target: string, size?: "small" | "normal" | "large"]; result: string | null };
+  __getApplicationsForFile: { args: [target: string]; result: { name: string; appPath: string; icon: string | null }[] };
+  __openWithApp: { args: [target: string, appPath: string]; result: unknown };
   __fetch: { args: [url: string, init?: DesktopFetchInit]; result: DesktopFetchResult };
   __homeDir: { args: []; result: string };
   __joinPath: { args: [...segments: string[]]; result: string };

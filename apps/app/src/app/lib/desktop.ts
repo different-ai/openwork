@@ -356,6 +356,23 @@ export async function getDesktopFileIcon(target: string, size?: "small" | "norma
   return invokeElectronHelper("__getFileIcon", target, size);
 }
 
+export type DesktopApplication = {
+  name: string;
+  appPath: string;
+  icon: string | null;
+};
+
+export async function getDesktopApplicationsForFile(target: string): Promise<DesktopApplication[]> {
+  return invokeElectronHelper("__getApplicationsForFile", target);
+}
+
+export async function openDesktopWithApp(target: string, appPath: string): Promise<void> {
+  const result = await invokeElectronHelper("__openWithApp", target, appPath);
+  if (typeof result === "string" && result.trim()) {
+    throw new Error(result);
+  }
+}
+
 export async function relaunchDesktopApp(): Promise<void> {
   await window.__OPENWORK_ELECTRON__?.shell?.relaunch?.();
 }
