@@ -54,41 +54,59 @@ export const INFERENCE_WINDOW_DURATIONS_MS: Record<
 // For upstreamModel values, please get from models.dev/api.json provider = openrouter.models.id
 
 export const INFERENCE_MODEL_ALIASES = {
+  "openrouter/fusion": {
+    upstreamModel: "openrouter/fusion",
+    displayName: "OpenWork: OpenRouter Fusion",
+    enabled: true,
+    usageFactor: 0.5,
+  },
+  "z-ai/glm-5.2": {
+    upstreamModel: "z-ai/glm-5.2",
+    displayName: "OpenWork: GLM 5.2",
+    enabled: true,
+    usageFactor: 0.5,
+  },
+  "moonshotai/kimi-k2.7-code": {
+    upstreamModel: "moonshotai/kimi-k2.7-code",
+    displayName: "OpenWork: Kimi K2.7",
+    enabled: true,
+    usageFactor: 0.5,
+  },
   "tencent/hy3-preview": {
     upstreamModel: "tencent/hy3-preview",
     displayName: "OpenWork: Hy3 Preview",
     enabled: true,
-    usageFactor: 1,
+    usageFactor: 0.5,
   },
   "moonshotai/kimi-k2.6": {
     upstreamModel: "moonshotai/kimi-k2.6",
     displayName: "OpenWork: Kimi K2.6",
     enabled: true,
-    usageFactor: 1,
+    usageFactor: 0.5,
   },
   "deepseek/deepseek-v4-flash": {
     upstreamModel: "deepseek/deepseek-v4-flash",
     displayName: "OpenWork: DeepSeek V4 Flash",
     enabled: true,
-    usageFactor: 1,
+    usageFactor: 0.5,
   },
   "minimax/minimax-m2.7": {
     upstreamModel: "minimax/minimax-m2.7",
     displayName: "OpenWork: MiniMax M2.7",
     enabled: true,
-    usageFactor: 1,
+    usageFactor: 0.5,
   },
   "minimax/minimax-m3": {
     upstreamModel: "minimax/minimax-m3",
     displayName: "OpenWork: MiniMax M3",
     enabled: true,
-    usageFactor: 1,
+    usageFactor: 0.5,
   },
   "z-ai/glm-5.1": {
     upstreamModel: "z-ai/glm-5.1",
     displayName: "OpenWork: GLM-5.1",
     enabled: true,
-    usageFactor: 1,
+    usageFactor: 0.5,
   },
 } as const;
 

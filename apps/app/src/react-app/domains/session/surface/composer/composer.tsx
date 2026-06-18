@@ -14,7 +14,7 @@ import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSI
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { ModelBehaviorSelect } from "@/components/model-behavior-select";
 import { ModelSelect } from "@/components/model-select";
-import { LexicalPromptEditor } from "./editor";
+import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
 import { getSlashCommandQuery } from "./slash-command";
@@ -315,6 +315,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [dropzoneActive, setDropzoneActive] = useState(false);
   const toolMenuRef = useRef<HTMLDivElement | null>(null);
+  const editorRef = useRef<LexicalPromptEditorHandle | null>(null);
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
   // IME composition guard: while an IME composition is active, we must not
   // treat Enter as a submit. Three signals keep this reliable across WebKit,
@@ -750,9 +751,9 @@ export function ReactSessionComposer(props: ComposerProps) {
     target?.scrollIntoView({ block: "nearest" });
   }, [menuIndex, activeItems.length]);
 
-  const applyCommandSelection = (command: SlashCommandOption) => {
+  const applyCommandSelection = (command: SlashCommandOption, options?: { replaceSkillDraft?: boolean }) => {
     if (command.source === "skill") {
-      applySkillSelection(command.name);
+      applySkillSelection(command.name, options);
       return;
     }
     props.onDraftChange(`/${command.name} `);
@@ -760,8 +761,18 @@ export function ReactSessionComposer(props: ComposerProps) {
     setToolMenuOpen(false);
   };
 
-  const applySkillSelection = (name: string) => {
-    props.onDraftChange(`[skill ${name}] `);
+  const applySkillSelection = (name: string, options?: { replaceSkillDraft?: boolean }) => {
+    if (options?.replaceSkillDraft) {
+      props.onDraftChange(`[skill ${name}] `);
+    } else {
+      const editor = editorRef.current;
+      if (editor) {
+        editor.insertSkillAtSelection(name);
+      } else {
+        const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
+        props.onDraftChange(`${props.draft}${separator}[skill ${name}] `);
+      }
+    }
     setSlashOpen(false);
     setToolMenuOpen(false);
   };
@@ -804,7 +815,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (activeMenu === "slash") {
       const command = slashFiltered[menuIndex];
       if (!command) return false;
-      applyCommandSelection(command);
+      applyCommandSelection(command, { replaceSkillDraft: true });
       return true;
     }
     if (activeMenu === "mention") {
@@ -1036,10 +1047,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                     onMouseDown={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
-                      applyCommandSelection(command);
+                      applyCommandSelection(command, { replaceSkillDraft: true });
                     }}
                     onClick={(event) => {
-                      if (event.detail === 0) applyCommandSelection(command);
+                      if (event.detail === 0) applyCommandSelection(command, { replaceSkillDraft: true });
                     }}
                   >
                     <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
@@ -1194,6 +1205,7 @@ export function ReactSessionComposer(props: ComposerProps) {
           <div className="px-4 pt-3 pb-2">
             {/* Editor */}
             <LexicalPromptEditor
+              ref={editorRef}
               value={props.draft}
               mentions={props.mentions}
               pastedText={pastedTextTokens}
@@ -1306,7 +1318,14 @@ export function ReactSessionComposer(props: ComposerProps) {
                 >
                   <Paperclip size={16} />
                 </button>
-                <div ref={toolMenuRef} className="relative">
+                <div
+                  ref={toolMenuRef}
+                  className="relative"
+                  onMouseDown={(event) => {
+                    const target = event.target;
+                    if (target instanceof Element && target.closest("button")) event.preventDefault();
+                  }}
+                >
                   <button
                     type="button"
                     className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-md transition-colors ${toolMenuOpen ? "bg-gray-3 text-gray-12" : "text-gray-10 hover:bg-gray-3"}`}

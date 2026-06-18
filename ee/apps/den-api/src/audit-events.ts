@@ -12,6 +12,7 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   roleUpdated: "organization.role.updated",
   roleDeleted: "organization.role.deleted",
   memberRoleUpdated: "organization.member.role_updated",
+  memberOwnershipTransferred: "organization.member.ownership_transferred",
   memberRemoved: "organization.member.removed",
   scimTokenRotated: "organization.scim.token_rotated",
   scimConnectionDeleted: "organization.scim.connection_deleted",
@@ -39,7 +40,45 @@ export function buildOrganizationAuditEvent(input: {
   }
 }
 
+type OrganizationAuditEvent = ReturnType<typeof buildOrganizationAuditEvent>
+
+export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) {
+  switch (action) {
+    case ORGANIZATION_AUDIT_ACTIONS.apiKeyCreated:
+    case ORGANIZATION_AUDIT_ACTIONS.apiKeyDeleted:
+    case ORGANIZATION_AUDIT_ACTIONS.invitationCreated:
+    case ORGANIZATION_AUDIT_ACTIONS.invitationRefreshed:
+    case ORGANIZATION_AUDIT_ACTIONS.invitationCanceled:
+    case ORGANIZATION_AUDIT_ACTIONS.roleCreated:
+    case ORGANIZATION_AUDIT_ACTIONS.roleUpdated:
+    case ORGANIZATION_AUDIT_ACTIONS.roleDeleted:
+    case ORGANIZATION_AUDIT_ACTIONS.memberRoleUpdated:
+    case ORGANIZATION_AUDIT_ACTIONS.memberRemoved:
+    case ORGANIZATION_AUDIT_ACTIONS.scimTokenRotated:
+    case ORGANIZATION_AUDIT_ACTIONS.scimConnectionDeleted:
+    case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered:
+    case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted:
+      return true
+    case ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun:
+      return false
+  }
+}
+
+export function buildOrganizationAuditAlertLogLine(event: OrganizationAuditEvent) {
+  return `[audit-alert] ${JSON.stringify({
+    auditEventId: event.id,
+    organizationId: event.org_id,
+    actorUserId: event.actor_user_id,
+    action: event.action,
+    payload: event.payload,
+  })}`
+}
+
 export async function recordOrganizationAuditEvent(input: Parameters<typeof buildOrganizationAuditEvent>[0]) {
   const { db } = await import("./db.js")
-  await db.insert(AuditEventTable).values(buildOrganizationAuditEvent(input))
+  const event = buildOrganizationAuditEvent(input)
+  await db.insert(AuditEventTable).values(event)
+  if (isOrganizationAuditAlertAction(event.action)) {
+    console.warn(buildOrganizationAuditAlertLogLine(event))
+  }
 }

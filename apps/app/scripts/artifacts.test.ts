@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { UIMessage } from "ai";
 
 import type { OpenTarget } from "../src/react-app/domains/session/artifacts/open-target";
-import { canPreviewArtifact, getArtifactsFromMessages } from "../src/lib/artifacts";
+import { canOpenArtifact, canPreviewArtifact, getArtifactsFromMessages } from "../src/lib/artifacts";
 
 describe("getArtifactsFromMessages", () => {
   it("includes verified slide deck targets mentioned in assistant summaries", () => {
@@ -109,5 +109,29 @@ describe("getArtifactsFromMessages", () => {
     expect(artifacts.map((artifact) => artifact.path)).toEqual(["reports/new.md", "reports/old.md", "src/widget.tsx"]);
     expect(canPreviewArtifact(artifacts[0])).toBe(true);
     expect(canPreviewArtifact(artifacts[2])).toBe(false);
+  });
+
+  it("lets verified unsupported file artifacts open outside the sidebar", () => {
+    const messages: UIMessage[] = [{
+      id: "msg_unsupported",
+      role: "assistant",
+      parts: [{ type: "text", text: "Created src/widget.tsx", state: "done" }],
+    }];
+    const targets: OpenTarget[] = [{
+      id: "file:src/widget.tsx",
+      kind: "file",
+      value: "src/widget.tsx",
+      name: "widget.tsx",
+      preview: "text",
+      confidence: 65,
+      reason: "message",
+      exists: true,
+    }];
+
+    const artifact = getArtifactsFromMessages(messages, targets, { includeTargetFallbacks: false })[0];
+
+    expect(artifact).toMatchObject({ path: "src/widget.tsx", legacy_target: { exists: true, preview: "text" } });
+    expect(artifact ? canPreviewArtifact(artifact) : true).toBe(false);
+    expect(artifact ? canOpenArtifact(artifact) : false).toBe(true);
   });
 });
