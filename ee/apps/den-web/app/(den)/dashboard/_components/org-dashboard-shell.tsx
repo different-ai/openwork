@@ -288,7 +288,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     <div className="relative">
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-gray-100 dark:bg-gray-700 dark:hover:bg-gray-800"
+        className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-gray-100 dark:hover:bg-white/5"
         onClick={() => setSwitcherOpen((current) => !current)}
       >
         <div className="flex min-w-0 items-center gap-3">
@@ -297,12 +297,12 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             <p className="truncate text-[14px] font-medium text-gray-900 dark:text-gray-100">
               {activeOrg?.name ?? "Loading..."}
             </p>
-            <p className="truncate text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="truncate text-[12px] text-gray-500 dark:text-gray-400">
               {activeOrg ? formatRoleLabel(activeOrg.role) : "Preparing workspace"}
             </p>
           </div>
         </div>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500 shrink-0">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 dark:text-gray-500 shrink-0">
           <path d="M17 3l4 4-4 4"/>
           <path d="M3 7h18"/>
           <path d="M7 21l-4-4 4-4"/>
@@ -321,7 +321,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           <div className="mx-2 h-px bg-gray-100 dark:bg-gray-800 my-1" />
 
           <div className="px-3 pb-1 pt-1">
-            <p className="text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
               Switch workspace
             </p>
           </div>
@@ -338,13 +338,13 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                 className={`flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left transition-colors ${
                   org.isActive
                     ? "bg-gray-50 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
-                    : "text-gray-600 hover:bg-gray-50 dark:bg-gray-800/50 hover:text-gray-900 dark:text-gray-400 dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
                 }`}
               >
                 <div className="flex min-w-0 items-center gap-2.5">
                   <div className="min-w-0">
                     <span className="block truncate text-[13px] font-medium tracking-[-0.1px]">{org.name}</span>
-                    <span className="block truncate text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                    <span className="block truncate text-[12px] text-gray-500 dark:text-gray-400">
                       {org.role === "owner" ? "Creator plan" : "Free plan"} • {org.memberCount} {org.memberCount === 1 ? "member" : "members"}
                     </span>
                   </div>
@@ -361,10 +361,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           <div className="px-1.5 mt-0.5">
             <Link
               href="/organization"
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 dark:bg-gray-800/50 hover:text-gray-900 dark:text-gray-400 dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
               onClick={() => setSwitcherOpen(false)}
             >
-              <span className="text-gray-400 text-[16px] leading-none dark:text-gray-500 dark:text-gray-400 dark:text-gray-500">+</span> Create or join workspace
+              <span className="text-gray-400 text-[16px] leading-none dark:text-gray-500">+</span> Create or join workspace
             </Link>
           </div>
 
@@ -374,9 +374,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={() => void signOut()}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 dark:bg-gray-800/50 hover:text-gray-900 dark:text-gray-400 dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
             >
-              <LogOut className="h-4 w-4 text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500" />
+              <LogOut className="h-4 w-4 text-gray-400 dark:text-gray-500" />
               Sign out
             </button>
           </div>
@@ -388,7 +388,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const sidebarContent = (
-    <div className="flex flex-1 flex-col">
+    <div className="relative flex flex-1 flex-col overflow-hidden">
       <div className="border-b border-gray-100 px-4 pb-4 pt-5 dark:border-gray-800">
         <div className="flex items-center justify-between gap-3">
           <OpenWorkMark />
@@ -403,8 +403,8 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
 
-      <nav className="flex-1 px-3 py-5">
-        <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500">
+      <nav className="flex-1 overflow-y-auto min-h-0 px-3 py-5 pb-24">
+        <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
           Navigation
         </p>
         <div className="space-y-1">
@@ -425,7 +425,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                 className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] transition-colors ${
                   selected
                     ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
-                    : "text-gray-500 hover:bg-gray-50 dark:bg-gray-800/50 hover:text-gray-700 dark:text-gray-400 dark:text-gray-500 dark:hover:bg-gray-800/50 dark:hover:text-gray-300"
+                    : "text-gray-500 hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300"
                 }`}
               >
                 <span className="flex items-center gap-3">
@@ -443,11 +443,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       </nav>
 
-      <div className="mt-auto p-3">
+      <div className="absolute bottom-0 left-0 right-0 border-t border-gray-100 bg-white p-3 dark:border-gray-800 dark:bg-[var(--dls-sidebar)]">
         {orgSwitcher}
 
         {orgBusy ? (
-          <p className="mt-3 px-2 text-[11px] text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500">Refreshing workspace…</p>
+          <p className="mt-3 px-2 text-[11px] text-gray-400 dark:text-gray-400">Refreshing workspace…</p>
         ) : null}
         {orgError ? (
           <p className="mt-3 px-2 text-[11px] font-medium text-rose-600 dark:text-rose-400">{orgError}</p>
@@ -457,9 +457,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#fafafa] md:flex-row dark:bg-[var(--dls-app-bg)]">
+    <div className="flex min-h-screen flex-col bg-[#fafafa] dark:bg-[var(--dls-app-bg)] md:flex-row md:pl-[260px]">
       {/* Desktop sidebar — always visible at md+ */}
-      <aside className="hidden shrink-0 border-r border-gray-100 bg-white dark:bg-[var(--dls-surface)] md:flex md:min-h-screen md:w-[260px] md:flex-col dark:border-gray-800 dark:bg-[var(--dls-sidebar)]">
+      <aside className="hidden border-r border-gray-100 bg-white dark:bg-[var(--dls-surface)] md:fixed md:left-0 md:top-0 md:z-30 md:flex md:h-screen md:w-[260px] md:flex-col dark:border-gray-800 dark:bg-[var(--dls-sidebar)]">
         {sidebarContent}
       </aside>
 
@@ -493,7 +493,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 dark:bg-gray-800/50 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-300"
               aria-label="Toggle dark mode"
             >
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -502,7 +502,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               href={feedbackHref}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 dark:bg-gray-800/50 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-300"
             >
               <MessageSquare className="h-4 w-4" />
               <span className="hidden sm:inline">Feedback</span>
@@ -511,7 +511,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               href={OPENWORK_DOCS_URL}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 dark:bg-gray-800/50 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-300"
             >
               <FileText className="h-4 w-4" />
               <span className="hidden sm:inline">Docs</span>
