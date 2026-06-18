@@ -34,35 +34,47 @@ export class CronScheduler {
     if (this.isTicking) return;
     this.isTicking = true;
     try {
-      const now = new Date();
-      // Round down to the current minute to avoid missing/double triggers
-      now.setSeconds(0, 0);
+      const nowMinute = new Date();
+      nowMinute.setSeconds(0, 0);
+      const targetMinute = nowMinute.getTime();
 
-      if (this.lastTickMinute === now.getTime()) return;
-      this.lastTickMinute = now.getTime();
+      let startMinute = this.lastTickMinute !== null ? this.lastTickMinute + 60000 : targetMinute;
+      
+      // Cap catch-up to the last 5 minutes to prevent spam after system sleep
+      if (targetMinute - startMinute > 5 * 60000) {
+        startMinute = targetMinute - 5 * 60000;
+      }
 
-      for (const workspace of this.config.workspaces) {
-      try {
-        const routines = await listRoutines(workspace.path, "workspace");
-        for (const routine of routines) {
-          if (!routine.enabled) continue;
+      if (startMinute > targetMinute) return;
+      this.lastTickMinute = targetMinute;
 
+      for (let time = startMinute; time <= targetMinute; time += 60000) {
+        const checkTime = new Date(time);
+        for (const workspace of this.config.workspaces) {
           try {
-            const interval = CronExpressionParser.parse(routine.schedule, { currentDate: new Date(now.getTime() - 60000) });
-            const nextDate = interval.next().toDate();
-            
-            // If the next scheduled time matches our current minute exactly
-            if (nextDate.getTime() === now.getTime()) {
-              await this.triggerRoutine(workspace, routine);
+            const routines = await listRoutines(workspace.path, "workspace");
+            for (const routine of routines) {
+              if (!routine.enabled) continue;
+
+              try {
+                const interval = CronExpressionParser.parse(routine.schedule, { currentDate: new Date(checkTime.getTime() - 60000) });
+                const nextDate = interval.next().toDate();
+                
+                // If the next scheduled time matches our check minute exactly
+                if (nextDate.getTime() === checkTime.getTime()) {
+                  this.triggerRoutine(workspace, routine).catch((err) => {
+                    console.error(`Failed to execute routine ${routine.name}:`, err);
+                  });
+                }
+              } catch (err) {
+                console.error(`Error parsing schedule for routine ${routine.name}:`, err);
+              }
             }
           } catch (err) {
-            console.error(`Error parsing schedule for routine ${routine.name}:`, err);
+            console.error(`Error listing routines for workspace ${workspace.id}:`, err);
           }
         }
-      } catch (err) {
-        console.error(`Error listing routines for workspace ${workspace.id}:`, err);
       }
-    }
     } finally {
       this.isTicking = false;
     }
