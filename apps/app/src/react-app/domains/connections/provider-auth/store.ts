@@ -1454,7 +1454,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     let authRollbackProviderId: string | null = null;
-    let configRollbackContent: string | null = null;
+    let importedProvidersRollback: Record<string, CloudImportedProvider> | null = null;
     try {
       const den = createDenClient({
         baseUrl: settings.baseUrl,
@@ -1514,18 +1514,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         nextAuth = { type: "api", key: apiKey };
       }
 
-      const previousConfigFile = await readProjectConfigFile() as { content?: string } | null;
-      const previousConfigContent = previousConfigFile?.content?.trim()
-        ? previousConfigFile.content
-        : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
-      const updatedConfig = await updateProjectConfigFile((raw) =>
-        formatConfigWithCloudProvider(raw, provider, localProviderId, existingImported?.providerId ?? null),
-      );
-      if (!updatedConfig) {
-        throw new Error("Could not update opencode.jsonc for this workspace.");
-      }
-      configRollbackContent = previousConfigContent;
-
       if (nextAuth) {
         await c.auth.set({
           providerID: localProviderId,
@@ -1550,9 +1538,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           importedAt: Date.now(),
         },
       };
+      importedProvidersRollback = state.importedCloudProviders;
       await persistImportedCloudProviders(nextImportedProviders);
+
+      const updatedConfig = await updateProjectConfigFile((raw) =>
+        formatConfigWithCloudProvider(raw, provider, localProviderId, existingImported?.providerId ?? null),
+      );
+      if (!updatedConfig) {
+        throw new Error("Could not update opencode.jsonc for this workspace.");
+      }
       authRollbackProviderId = null;
-      configRollbackContent = null;
+      importedProvidersRollback = null;
 
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         try {
@@ -1578,8 +1574,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (authRollbackProviderId) {
         await removeProviderAuthCredentials(authRollbackProviderId).catch(() => undefined);
       }
-      if (configRollbackContent !== null) {
-        await writeProjectConfigFile(configRollbackContent).catch(() => undefined);
+      if (importedProvidersRollback) {
+        await persistImportedCloudProviders(importedProvidersRollback).catch(() => undefined);
       }
       const message = describeProviderError(error, "Failed to connect organization provider.");
       if (!optionsArg?.silent) {
