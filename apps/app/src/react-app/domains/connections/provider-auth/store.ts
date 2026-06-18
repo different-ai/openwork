@@ -1004,6 +1004,46 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     throw new Error(t("providers.removal_unsupported"));
   };
 
+  const isAuthNotFoundError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    return /not found|unknown auth|404/i.test(message.toLowerCase());
+  };
+
+  const readProviderAuthCredentials = async (providerId: string) => {
+    const c = options.client();
+    if (!c) {
+      throw new Error(t("providers.not_connected"));
+    }
+
+    const authClient = c.auth as unknown as {
+      get?: (options: { providerID: string }) => Promise<unknown>;
+    };
+    if (typeof authClient.get === "function") {
+      try {
+        const result = await authClient.get({ providerID: providerId });
+        assertNoClientError(result);
+        return result ?? null;
+      } catch (error) {
+        if (isAuthNotFoundError(error)) return null;
+        throw error;
+      }
+    }
+
+    const rawClient = (c as unknown as {
+      client?: { get?: (options: { url: string }) => Promise<unknown> };
+    }).client;
+    if (rawClient?.get) {
+      try {
+        return await rawClient.get({ url: `/auth/${encodeURIComponent(providerId)}` });
+      } catch (error) {
+        if (isAuthNotFoundError(error)) return null;
+        throw error;
+      }
+    }
+
+    return null;
+  };
+
   const describeProviderError = (error: unknown, fallback: string) => {
     const readString = (value: unknown, max = 700) => {
       if (typeof value !== "string") return null;
@@ -1414,6 +1454,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     let authRollbackProviderId: string | null = null;
+    let configRollbackContent: string | null = null;
     try {
       const den = createDenClient({
         baseUrl: settings.baseUrl,
@@ -1436,6 +1477,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
 
       await assertCloudProviderImportSafe(provider);
+      if (existingImported?.providerId !== localProviderId) {
+        const existingAuth = await readProviderAuthCredentials(localProviderId);
+        if (existingAuth !== null) {
+          throw new Error(
+            `${localProviderId} already has OpenCode auth credentials. Disconnect it before importing the cloud-managed version.`,
+          );
+        }
+      }
 
       if (provider.credentialKind === "opencode_oauth" && opencodeAuth) {
         let parsedAuth: unknown;
@@ -1465,12 +1514,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         nextAuth = { type: "api", key: apiKey };
       }
 
+      const previousConfigFile = await readProjectConfigFile() as { content?: string } | null;
+      const previousConfigContent = previousConfigFile?.content?.trim()
+        ? previousConfigFile.content
+        : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
       const updatedConfig = await updateProjectConfigFile((raw) =>
         formatConfigWithCloudProvider(raw, provider, localProviderId, existingImported?.providerId ?? null),
       );
       if (!updatedConfig) {
         throw new Error("Could not update opencode.jsonc for this workspace.");
       }
+      configRollbackContent = previousConfigContent;
 
       if (nextAuth) {
         await c.auth.set({
@@ -1498,13 +1552,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       };
       await persistImportedCloudProviders(nextImportedProviders);
       authRollbackProviderId = null;
+      configRollbackContent = null;
 
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         try {
           await removeProviderAuthCredentials(existingImported.providerId);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error ?? "");
-          if (!/not found|unknown auth|404/i.test(message.toLowerCase())) {
+          if (!isAuthNotFoundError(message)) {
             throw error;
           }
         }
@@ -1522,6 +1577,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     } catch (error) {
       if (authRollbackProviderId) {
         await removeProviderAuthCredentials(authRollbackProviderId).catch(() => undefined);
+      }
+      if (configRollbackContent !== null) {
+        await writeProjectConfigFile(configRollbackContent).catch(() => undefined);
       }
       const message = describeProviderError(error, "Failed to connect organization provider.");
       if (!optionsArg?.silent) {
