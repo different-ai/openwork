@@ -127,19 +127,16 @@ function SettingsToggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={[
-        "relative inline-flex h-7 w-12 items-center rounded-full border transition-colors",
+        "inline-flex shrink-0 h-7 w-12 items-center rounded-full border p-0.5 transition-colors",
         checked
-          ? "border-[#0f172a] bg-[#0f172a]"
-          : "border-gray-200 dark:border-gray-700 bg-gray-200",
+          ? "justify-end border-[#0f172a] bg-[#0f172a]"
+          : "justify-start border-gray-200 dark:border-gray-700 bg-gray-200",
         disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
       ].join(" ")}
     >
       <span
         aria-hidden="true"
-        className={[
-          "inline-block h-5 w-5 rounded-full bg-white dark:bg-[var(--dls-surface)] transition-transform",
-          checked ? "translate-x-6" : "translate-x-1",
-        ].join(" ")}
+        className="h-5 w-5 rounded-full bg-white dark:bg-[var(--dls-surface)] transition-all"
       />
     </button>
   );
