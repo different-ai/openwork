@@ -1600,7 +1600,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error ?? "");
           if (!isAuthNotFoundError(message)) {
-            throw error;
+            console.warn(`[cloud-provider-import] failed to remove stale auth for ${existingImported.providerId}: ${message}`);
           }
         }
       }
@@ -1871,7 +1871,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
 
       try {
-        await removeCloudProviderInternal(importedProvider.cloudProviderId, { silent: true });
         await connectCloudProviderInternal(liveProvider.id, { silent: true });
         configChanged = true;
       } catch (error) {
