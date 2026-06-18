@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { getOrgAccessFlags } from "../../_lib/den-org";
+import { usePathname, useRouter } from "next/navigation";
+import { getApiKeysRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 export default function AdminDashboardLayout({
@@ -11,17 +11,20 @@ export default function AdminDashboardLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { orgContext, orgBusy } = useOrgDashboard();
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
+    orgContext?.roles,
   );
+  const canUseAdminRoute = access.isAdmin || (pathname === getApiKeysRoute() && access.canManageApiKeys);
 
   useEffect(() => {
-    if (orgContext && !access.isAdmin) {
+    if (orgContext && !canUseAdminRoute) {
       router.replace("/dashboard");
     }
-  }, [access.isAdmin, orgContext, router]);
+  }, [canUseAdminRoute, orgContext, router]);
 
   if (orgBusy || !orgContext) {
     return (
@@ -31,7 +34,7 @@ export default function AdminDashboardLayout({
     );
   }
 
-  if (!access.isAdmin) {
+  if (!canUseAdminRoute) {
     return (
       <div className="flex min-h-[320px] items-center justify-center px-6 text-[14px] text-gray-500">
         Redirecting to your dashboard...

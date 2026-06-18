@@ -1,6 +1,7 @@
 import { oauthProviderAuthServerMetadata, oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
+import { z } from "zod"
 import { auth } from "../../auth.js"
 import {
   getBreachedPasswordResponse,
@@ -12,7 +13,7 @@ import { env } from "../../env.js"
 import { getInvalidMcpOAuthRedirectUris } from "../../mcp/oauth-client-policy.js"
 import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, tokenRoute } from "../../middleware/index.js"
-import { emptyResponse } from "../../openapi.js"
+import { emptyResponse, jsonResponse } from "../../openapi.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import type { AuthContextVariables } from "../../session.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
@@ -111,6 +112,16 @@ function requestOrigin(request: Request) {
   return new URL(request.url).origin
 }
 
+const authLoginLockedSchema = z.object({
+  error: z.literal("login_locked"),
+  message: z.string(),
+}).meta({ ref: "AuthLoginLockedError" })
+
+const authPasswordScreeningUnavailableSchema = z.object({
+  error: z.literal("password_screening_unavailable"),
+  message: z.string(),
+}).meta({ ref: "AuthPasswordScreeningUnavailableError" })
+
 async function handleAuthRequest(request: Request) {
   const emailPasswordAttempt = await readEmailPasswordSignInAttempt(request)
   if (emailPasswordAttempt) {
@@ -157,8 +168,10 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
       responses: {
         200: emptyResponse("Better Auth handled the request successfully."),
         302: emptyResponse("Better Auth redirected the user to continue the auth flow."),
-        400: emptyResponse("Better Auth rejected the request as invalid."),
+        400: emptyResponse("Better Auth rejected the request as invalid. Password creation, password change, or reset is also rejected when the proposed password is known to be compromised."),
         401: emptyResponse("Better Auth rejected the request because authentication failed."),
+        429: jsonResponse("Email/password sign-in is temporarily locked after too many failed attempts. The response includes a Retry-After header.", authLoginLockedSchema),
+        503: jsonResponse("Password breach screening is temporarily unavailable, so password creation or reset should be retried later.", authPasswordScreeningUnavailableSchema),
       },
     }),
     publicRoute,

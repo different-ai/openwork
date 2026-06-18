@@ -1,6 +1,6 @@
 {
   "name": "opencode-router",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "description": "opencode-router: Slack + Telegram bridge + directory routing for a running opencode server",
   "private": false,
   "type": "module",

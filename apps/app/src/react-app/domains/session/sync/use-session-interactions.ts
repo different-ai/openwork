@@ -67,7 +67,21 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
     void (async () => {
       const snapshotStartedAt = Date.now();
       try {
-        const list = unwrap(await client.permission.list({ directory }));
+        const list: Parameters<typeof seedPermissionState>[2] = [];
+        let readSucceeded = false;
+        try {
+          list.push(...unwrap(await client.permission.list({ directory })));
+          readSucceeded = true;
+        } catch {
+          // Older/newer OpenCode permission APIs can fail independently.
+        }
+        try {
+          list.push(...unwrap(await client.v2.session.permission.list({ sessionID: sessionId })).data);
+          readSucceeded = true;
+        } catch {
+          // Keep the legacy snapshot if the v2 endpoint is unavailable.
+        }
+        if (!readSucceeded) return;
         if (!cancelled) {
           seedPermissionState(workspaceId, sessionId, list, { snapshotStartedAt });
         }
@@ -110,13 +124,23 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
       permissionReplyBusyRef.current = true;
       setPermissionReplyBusy(true);
       try {
-        unwrap(
-          await client.permission.reply({
+        const pendingPermission = pendingPermissions.find((permission) => permission.id === requestID);
+        if (pendingPermission?.protocol === "v2") {
+          const result = await client.v2.session.permission.reply({
+            sessionID: pendingPermission.sessionID,
             requestID,
             reply,
-            directory: workspaceRoot || undefined,
-          }),
-        );
+          });
+          if (result.error !== undefined) unwrap(result);
+        } else {
+          unwrap(
+            await client.permission.reply({
+              requestID,
+              reply,
+              directory: workspaceRoot || undefined,
+            }),
+          );
+        }
         getReactQueryClient().setQueryData<PendingPermission[]>(
           permissionKey(workspaceId, sessionId),
           (current = []) => current.filter((permission) => permission.id !== requestID),
@@ -130,7 +154,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
         setPermissionReplyBusy(false);
       }
     },
-    [client, sessionId, workspaceId, workspaceRoot],
+    [client, pendingPermissions, sessionId, workspaceId, workspaceRoot],
   );
 
   const activeQuestion = pendingQuestions[0] ?? null;

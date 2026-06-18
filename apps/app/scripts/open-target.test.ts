@@ -75,6 +75,17 @@ describe("deriveOpenTargets", () => {
     expect(targets[0]).toMatchObject({ value: "reports/summary.md", preview: "markdown", confidence: 95 });
   });
 
+  it("keeps written unsupported files available for opening externally", () => {
+    const targets = deriveOpenTargets([
+      toolMessage("msg_tool", "write", { filePath: "src/widget.tsx" }, { filePath: "src/widget.tsx" }),
+    ]);
+
+    const target = targets[0];
+
+    expect(target).toMatchObject({ value: "src/widget.tsx", preview: "text", confidence: 95 });
+    expect(target ? isCollectibleArtifactTarget({ ...target, exists: true }) : true).toBe(false);
+  });
+
   it("extracts PowerPoint decks from assistant artifact summaries", () => {
     const targets = deriveOpenTargets([
       message("msg_1", "assistant", "Updated file: decks/openwork-vertebrae-deck.pptx"),

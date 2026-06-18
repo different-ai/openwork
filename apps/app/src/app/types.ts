@@ -2,6 +2,7 @@ import type {
   Message,
   Part,
   PermissionRequest as ApiPermissionRequest,
+  PermissionV2Request,
   QuestionRequest,
   ProviderListResponse,
   Session,
@@ -382,8 +383,11 @@ export type ReloadTrigger = {
   path?: string;
 };
 
-export type PendingPermission = ApiPermissionRequest & {
+export type PendingPermission = Omit<ApiPermissionRequest, "always"> & {
+  always: unknown;
   receivedAt: number;
+  protocol: "legacy" | "v2";
+  v2?: Pick<PermissionV2Request, "action" | "resources" | "save">;
 };
 
 export type PendingQuestion = QuestionRequest & {

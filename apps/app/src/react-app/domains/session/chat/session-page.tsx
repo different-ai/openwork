@@ -9,7 +9,7 @@ import { OPENWORK_EXTENSION_CATALOG } from "../../../../app/constants";
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import type { WorkspaceInfo } from "../../../../app/lib/desktop";
+import { openDesktopPath, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   PendingPermission,
   PendingQuestion,
@@ -54,7 +54,7 @@ import { useShellConfig } from "../../../shell/shell-config";
 import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-store";
 
 import { isElectronRuntime } from "../../../../app/utils";
-import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, type OpenTarget } from "../artifacts/open-target";
+import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
 import { VoicePanel } from "../voice/voice-panel";
 import { SidePanel } from "../panel/side-panel";
 import { TerminalDock } from "../terminal/terminal-dock";
@@ -216,7 +216,14 @@ function sessionExistsInWorkspace(groups: WorkspaceSessionGroup[], workspaceId: 
 }
 
 function isTrackableAccessibleTarget(target: OpenTarget) {
-  return isCollectibleArtifactTarget(target) || isLocalhostBrowserTarget(target);
+  return isOpenableFileTarget(target) || isLocalhostBrowserTarget(target);
+}
+
+function absoluteWorkspacePath(root: string, path: string) {
+  const cleanRoot = root.trim().replace(/[/\\]+$/, "");
+  const cleanPath = path.trim().replace(/^\.\//, "");
+
+  return cleanRoot ? `${cleanRoot}/${cleanPath}` : cleanPath;
 }
 
 function hiddenAccessibleTargetsStorageKey(workspaceId: string | null | undefined, sessionId: string | null | undefined) {
@@ -385,6 +392,21 @@ export function SessionPage(props: SessionPageProps) {
     if (/^wss?:\/\//i.test(target.value)) return target.value.replace(/^ws:/i, "http:").replace(/^wss:/i, "https:");
     return target.value;
   }, []);
+  const downloadOpenTarget = useCallback(async (target: OpenTarget) => {
+    if (target.kind !== "file" || !props.openworkServerClient || !props.runtimeWorkspaceId) {
+      return;
+    }
+
+    const result = await props.openworkServerClient.downloadWorkspaceFile(props.runtimeWorkspaceId, target.value);
+    const url = URL.createObjectURL(new Blob([result.data], { type: result.contentType ?? "application/octet-stream" }));
+    const anchor = document.createElement("a");
+
+    anchor.href = url;
+    anchor.download = target.name;
+    anchor.click();
+
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [props.openworkServerClient, props.runtimeWorkspaceId]);
   const openTarget = useCallback((target: OpenTarget, options?: { auto?: boolean }, sourceSessionId?: string) => {
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
@@ -396,8 +418,19 @@ export function SessionPage(props: SessionPageProps) {
       }
       return;
     }
+    if (!isCollectibleArtifactTarget(target)) {
+      if (isOpenableFileTarget(target)) {
+        if (props.selectedWorkspaceDisplay.workspaceType === "remote") {
+          void downloadOpenTarget(target).catch(() => undefined);
+        } else if (isElectronRuntime()) {
+          void openDesktopPath(absoluteWorkspacePath(props.selectedWorkspaceRoot, target.value)).catch(() => undefined);
+        }
+      }
+      return;
+    }
+
     const sessionId = sourceSessionId ?? props.selectedSessionId;
-    if (!sessionId || !isCollectibleArtifactTarget(target)) return;
+    if (!sessionId) return;
     if (options?.auto && activePanelTab?.id === target.id) return;
     openTab(sessionId, {
       id: target.id,
@@ -407,7 +440,7 @@ export function SessionPage(props: SessionPageProps) {
     });
     preserveSidePanelOnPanelOpenRef.current = true;
     setCurrentSidePanel("panel");
-  }, [activePanelTab?.id, browserUrlForTarget, openTab, props.selectedSessionId, setCurrentSidePanel]);
+  }, [activePanelTab?.id, browserUrlForTarget, downloadOpenTarget, openTab, props.selectedSessionId, props.selectedWorkspaceDisplay.workspaceType, props.selectedWorkspaceRoot, setCurrentSidePanel]);
   const closeRightPane = useCallback(() => {
     setCurrentSidePanel(null);
   }, [setCurrentSidePanel]);
