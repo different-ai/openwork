@@ -123,6 +123,9 @@ jobs:
       - name: Run server unit tests
         run: pnpm --filter openwork-server test
 
+      - name: Run Den API unit tests
+        run: pnpm --filter @openwork-ee/den-api test
+
       - name: Run desktop unit tests
         run: pnpm --filter @openwork/desktop test
 
