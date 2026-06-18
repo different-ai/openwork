@@ -396,7 +396,7 @@ export function AuthPanel({
           <label className="grid gap-2">
             <span className="den-label">Email</span>
             <input
-              className="den-input disabled:cursor-not-allowed disabled:bg-gray-50 dark:bg-gray-800/50 disabled:text-gray-500 dark:text-gray-400 dark:text-gray-500"
+              className="den-input disabled:cursor-not-allowed disabled:bg-gray-50 dark:bg-gray-800/50 disabled:text-gray-500 dark:text-gray-300"
               type="email"
               value={email}
               onChange={(event) => {
@@ -417,7 +417,7 @@ export function AuthPanel({
           <label className="grid gap-2">
             <span className="den-label">Password</span>
             <input
-              className="den-input"
+              className="den-input dark:bg-gray-800/50 dark:text-gray-300"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
