@@ -33,6 +33,17 @@ export function validateCommandName(name: string): void {
   }
 }
 
+export function sanitizeRoutineName(name: string): string {
+  const trimmed = name.trim().replace(/^\/+/, "");
+  return trimmed;
+}
+
+export function validateRoutineName(name: string): void {
+  if (!name || !COMMAND_NAME_REGEX.test(name)) {
+    throw new ApiError(400, "invalid_routine_name", "Routine name must be alphanumeric with _ or -");
+  }
+}
+
 export function validateMcpName(name: string): void {
   if (!name || name.startsWith("-") || !MCP_NAME_REGEX.test(name)) {
     throw new ApiError(400, "invalid_mcp_name", "MCP name must be alphanumeric and not start with -");

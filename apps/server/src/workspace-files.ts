@@ -25,6 +25,10 @@ export function projectCommandsDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "commands");
 }
 
+export function projectRoutinesDir(workspaceRoot: string): string {
+  return join(workspaceRoot, ".opencode", "routines");
+}
+
 export function projectPluginsDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "plugins");
 }

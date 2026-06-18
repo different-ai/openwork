@@ -289,6 +289,15 @@ export type OpenworkCommandItem = {
   scope: "workspace" | "global";
 };
 
+export type OpenworkRoutineItem = {
+  name: string;
+  description?: string;
+  schedule: string;
+  command: string;
+  enabled: boolean;
+  scope: "workspace" | "global";
+};
+
 export type OpenworkMcpItem = {
   name: string;
   config: Record<string, unknown>;
@@ -1534,6 +1543,28 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
     deleteCommand: (workspaceId: string, name: string) =>
       requestJson<{ ok: boolean }>(baseUrl, `/workspace/${workspaceId}/commands/${encodeURIComponent(name)}`, {
+        token,
+        hostToken,
+        method: "DELETE",
+      }),
+    listRoutines: (workspaceId: string, scope: "workspace" | "global" = "workspace") =>
+      requestJson<{ items: OpenworkRoutineItem[] }>(
+        baseUrl,
+        `/workspace/${workspaceId}/routines?scope=${scope}`,
+        { token, hostToken },
+      ),
+    upsertRoutine: (
+      workspaceId: string,
+      payload: { name: string; description?: string; schedule: string; command: string; enabled: boolean },
+    ) =>
+      requestJson<{ items: OpenworkRoutineItem[] }>(baseUrl, `/workspace/${workspaceId}/routines`, {
+        token,
+        hostToken,
+        method: "POST",
+        body: payload,
+      }),
+    deleteRoutine: (workspaceId: string, name: string) =>
+      requestJson<{ ok: boolean }>(baseUrl, `/workspace/${workspaceId}/routines/${encodeURIComponent(name)}`, {
         token,
         hostToken,
         method: "DELETE",

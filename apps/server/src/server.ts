@@ -11,6 +11,8 @@ import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
+import { deleteRoutine, listRoutines, upsertRoutine } from "./routines.js";
+import { CronScheduler } from "./scheduler.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
@@ -562,6 +564,9 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   };
   const routes = createRoutes(config, approvals, tokens, env, restartReloadWatchers);
+  
+  const scheduler = new CronScheduler(config, (workspace) => createWorkspaceOpencodeClient(config, workspace));
+  scheduler.start();
 
   const serverOptions: {
     hostname: string;
@@ -746,7 +751,7 @@ type OpencodeClientResult<T, E> =
   | { data: T | undefined; error: undefined; response: Response }
   | { data: undefined; error: E; response: Response };
 
-function createWorkspaceOpencodeClient(config: ServerConfig, workspace: WorkspaceInfo) {
+export function createWorkspaceOpencodeClient(config: ServerConfig, workspace: WorkspaceInfo) {
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const directory = resolveOpencodeDirectory(workspace);
   const directoryFetch = directory ? createOpencodeDirectoryFetch(directory) : undefined;
@@ -2247,6 +2252,77 @@ function createRoutes(
       path,
     });
     const items = await listCommands(workspace.path, "workspace");
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/routines", "client", async (ctx) => {
+    const scope = ctx.url.searchParams.get("scope") === "global" ? "global" : "workspace";
+    if (scope === "global") {
+      await requireHost(ctx.request, config, tokens);
+    }
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const items = await listRoutines(workspace.path, scope);
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/routines", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const name = String(body.name ?? "");
+    const schedule = String(body.schedule ?? "");
+    const command = String(body.command ?? "");
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "routines.upsert",
+      summary: `Upsert routine ${name}`,
+      paths: [join(workspace.path, ".opencode", "routines", `${name}.md`)],
+    });
+    const path = await upsertRoutine(workspace.path, {
+      name,
+      description: body.description ? String(body.description) : undefined,
+      schedule,
+      command,
+      enabled: typeof body.enabled === "boolean" ? body.enabled : true,
+    });
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "routines.upsert",
+      target: path,
+      summary: `Upserted routine ${name}`,
+      timestamp: Date.now(),
+    });
+
+    const items = await listRoutines(workspace.path, "workspace");
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "DELETE", "/workspace/:id/routines/:name", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const name = String(ctx.params.name ?? "").trim();
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "routines.delete",
+      summary: `Delete routine ${name}`,
+      paths: [join(workspace.path, ".opencode", "routines", `${name}.md`)],
+    });
+    await deleteRoutine(workspace.path, name);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "routines.delete",
+      target: name,
+      summary: `Deleted routine ${name}`,
+      timestamp: Date.now(),
+    });
+
+    const items = await listRoutines(workspace.path, "workspace");
     return jsonResponse({ items });
   });
 

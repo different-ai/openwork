@@ -211,6 +211,15 @@ export interface CommandItem {
   scope: "workspace" | "global";
 }
 
+export interface RoutineItem {
+  name: string;
+  description?: string;
+  schedule: string;
+  command: string;
+  enabled: boolean;
+  scope: "workspace" | "global";
+}
+
 export interface Actor {
   type: "remote" | "host";
   clientId?: string;
