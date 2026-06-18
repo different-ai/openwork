@@ -238,6 +238,7 @@ function parseSettingsPath(pathname: string): {
     case "ai":
     case "preferences":
     case "permissions":
+    case "skills":
     case "shell":
     case "advanced":
     case "appearance":
