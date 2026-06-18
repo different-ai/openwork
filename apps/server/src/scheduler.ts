@@ -7,6 +7,8 @@ export class CronScheduler {
   private config: ServerConfig;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private createClient: (workspace: ServerConfig["workspaces"][number]) => any;
+  private isTicking = false;
+  private lastTickMinute: number | null = null;
 
   constructor(config: ServerConfig, createClient: (workspace: ServerConfig["workspaces"][number]) => any) {
     this.config = config;
@@ -29,11 +31,17 @@ export class CronScheduler {
   }
 
   private async tick() {
-    const now = new Date();
-    // Round down to the current minute to avoid missing/double triggers
-    now.setSeconds(0, 0);
+    if (this.isTicking) return;
+    this.isTicking = true;
+    try {
+      const now = new Date();
+      // Round down to the current minute to avoid missing/double triggers
+      now.setSeconds(0, 0);
 
-    for (const workspace of this.config.workspaces) {
+      if (this.lastTickMinute === now.getTime()) return;
+      this.lastTickMinute = now.getTime();
+
+      for (const workspace of this.config.workspaces) {
       try {
         const routines = await listRoutines(workspace.path, "workspace");
         for (const routine of routines) {
@@ -54,6 +62,9 @@ export class CronScheduler {
       } catch (err) {
         console.error(`Error listing routines for workspace ${workspace.id}:`, err);
       }
+    }
+    } finally {
+      this.isTicking = false;
     }
   }
 

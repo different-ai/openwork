@@ -23,35 +23,39 @@ async function listRoutinesInDir(dir: string, scope: "workspace" | "global"): Pr
     if (!entry.isFile()) continue;
     if (!entry.name.endsWith(".md")) continue;
     const filePath = join(dir, entry.name);
-    const content = await readFile(filePath, "utf8");
-    const { data, body } = parseFrontmatter(content);
-    
-    const name = typeof data.name === "string" ? data.name : entry.name.replace(/\.md$/, "");
     try {
-      validateRoutineName(name);
-    } catch {
-      continue;
-    }
-
-    const schedule = typeof data.schedule === "string" ? data.schedule : "";
-    try {
-      // Validate cron expression
-      if (schedule) {
-        CronExpressionParser.parse(schedule);
+      const content = await readFile(filePath, "utf8");
+      const { data, body } = parseFrontmatter(content);
+      
+      const name = typeof data.name === "string" ? data.name : entry.name.replace(/\.md$/, "");
+      try {
+        validateRoutineName(name);
+      } catch {
+        continue;
       }
-    } catch {
-      // Skip invalid crons
-      continue;
-    }
 
-    items.push({
-      name,
-      description: typeof data.description === "string" ? data.description : undefined,
-      schedule,
-      enabled: typeof data.enabled === "boolean" ? data.enabled : true,
-      command: body.trim(),
-      scope,
-    });
+      const schedule = typeof data.schedule === "string" ? data.schedule : "";
+      try {
+        // Validate cron expression
+        if (schedule) {
+          CronExpressionParser.parse(schedule);
+        }
+      } catch {
+        // Skip invalid crons
+        continue;
+      }
+
+      items.push({
+        name,
+        description: typeof data.description === "string" ? data.description : undefined,
+        schedule,
+        enabled: typeof data.enabled === "boolean" ? data.enabled : true,
+        command: body.trim(),
+        scope,
+      });
+    } catch (err) {
+      console.warn(`Failed to read/parse routine file ${filePath}`, err);
+    }
   }
   return items;
 }

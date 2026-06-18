@@ -12,6 +12,7 @@ import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { deleteRoutine, listRoutines, upsertRoutine } from "./routines.js";
+import { sanitizeRoutineName } from "./validators.js";
 import { CronScheduler } from "./scheduler.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
@@ -2271,13 +2272,14 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const name = String(body.name ?? "");
+    const sanitizedName = sanitizeRoutineName(name);
     const schedule = String(body.schedule ?? "");
     const command = String(body.command ?? "");
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "routines.upsert",
       summary: `Upsert routine ${name}`,
-      paths: [join(workspace.path, ".opencode", "routines", `${name}.md`)],
+      paths: [join(workspace.path, ".opencode", "routines", `${sanitizedName}.md`)],
     });
     const path = await upsertRoutine(workspace.path, {
       name,
@@ -2305,11 +2307,12 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const name = String(ctx.params.name ?? "").trim();
+    const sanitizedName = sanitizeRoutineName(name);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "routines.delete",
       summary: `Delete routine ${name}`,
-      paths: [join(workspace.path, ".opencode", "routines", `${name}.md`)],
+      paths: [join(workspace.path, ".opencode", "routines", `${sanitizedName}.md`)],
     });
     await deleteRoutine(workspace.path, name);
     await recordAudit(workspace.path, {
