@@ -127,6 +127,16 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     return path.join(app.getPath("userData"), "openwork-workspaces.json");
   }
 
+  function openworkServerTokenStorePath() {
+    return path.join(app.getPath("userData"), "openwork-server-tokens.json");
+  }
+
+  function openworkServerConfigPath() {
+    if (process.env.OPENWORK_SERVER_CONFIG?.trim()) return path.resolve(process.env.OPENWORK_SERVER_CONFIG.trim());
+    if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "openwork", "server.json");
+    return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "openwork", "server.json");
+  }
+
   // Earlier Electron alpha builds copied Tauri's openwork-workspaces.json into
   // an Electron-only workspace-state.json. Keep importing that file when the
   // shared canonical file is missing, but write openwork-workspaces.json going
@@ -250,6 +260,106 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   function normalizeWorkspacePathKey(value) {
     const trimmed = String(value ?? "").trim();
     return trimmed ? path.resolve(trimmed).replace(/\\/g, "/").toLowerCase() : "";
+  }
+
+  function normalizeRecoveredWorkspacePath(value) {
+    const trimmed = String(value ?? "").trim();
+    if (!trimmed) return "";
+    if (process.platform !== "win32") return trimmed;
+    return trimmed
+      .replace(/^\\\\\?\\UNC\\/i, "\\\\")
+      .replace(/^\\\\\?\\/i, "")
+      .replace(/^\/\/\?\/UNC\//i, "//")
+      .replace(/^\/\/\?\//i, "")
+      .replace(/\//g, "\\");
+  }
+
+  function isRecord(value) {
+    return typeof value === "object" && value !== null;
+  }
+
+  async function recoverWorkspacesFromTokenStore() {
+    const store = await readJsonFile(openworkServerTokenStorePath(), null);
+    if (!isRecord(store) || !isRecord(store.workspaces)) return [];
+
+    const candidates = [];
+    for (const [rawPath, entry] of Object.entries(store.workspaces)) {
+      const normalizedInput = normalizeRecoveredWorkspacePath(rawPath);
+      if (!normalizedInput) continue;
+      const workspacePath = await normalizeLocalWorkspacePath(normalizedInput);
+      if (!(await pathExists(workspacePath))) continue;
+      candidates.push({
+        path: workspacePath,
+        updatedAt: isRecord(entry) && typeof entry.updatedAt === "number" ? entry.updatedAt : 0,
+      });
+    }
+
+    candidates.sort((left, right) => right.updatedAt - left.updatedAt);
+    const seen = new Set();
+    return candidates.flatMap((candidate) => {
+      const key = normalizeWorkspacePathKey(candidate.path);
+      if (!key || seen.has(key)) return [];
+      seen.add(key);
+      return [normalizeWorkspaceEntry({
+        id: localWorkspaceId(candidate.path),
+        name: path.basename(candidate.path) || "Workspace",
+        displayName: path.basename(candidate.path) || "Workspace",
+        path: candidate.path,
+        preset: "starter",
+        workspaceType: "local",
+      })];
+    });
+  }
+
+  async function recoverWorkspacesFromServerConfig() {
+    const config = await readJsonFile(openworkServerConfigPath(), null);
+    if (!isRecord(config) || !Array.isArray(config.workspaces)) return [];
+
+    const seen = new Set();
+    const workspaces = [];
+    for (const entry of config.workspaces) {
+      if (!isRecord(entry)) continue;
+      const workspaceType = entry.workspaceType === "remote" ? "remote" : "local";
+      const rawPath = typeof entry.path === "string" ? entry.path.trim() : "";
+      const normalizedPath = workspaceType === "local"
+        ? await normalizeLocalWorkspacePath(normalizeRecoveredWorkspacePath(rawPath))
+        : rawPath;
+      if (workspaceType === "local" && (!normalizedPath || !(await pathExists(normalizedPath)))) continue;
+
+      const baseUrl = typeof entry.baseUrl === "string" ? entry.baseUrl.trim() : "";
+      const directory = typeof entry.directory === "string" && entry.directory.trim() ? entry.directory.trim() : null;
+      const remoteType = entry.remoteType === "opencode" ? "opencode" : "openwork";
+      const openworkWorkspaceId = typeof entry.openworkWorkspaceId === "string" ? entry.openworkWorkspaceId.trim() : "";
+      const id = typeof entry.id === "string" && entry.id.trim()
+        ? entry.id.trim()
+        : workspaceType === "remote"
+          ? remoteType === "openwork"
+            ? openworkRemoteWorkspaceId(baseUrl, openworkWorkspaceId)
+            : remoteWorkspaceId(baseUrl, directory)
+          : localWorkspaceId(normalizedPath);
+      const key = workspaceType === "remote" ? id : normalizeWorkspacePathKey(normalizedPath);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      workspaces.push(normalizeWorkspaceEntry({
+        ...entry,
+        id,
+        path: normalizedPath,
+        name: typeof entry.name === "string" && entry.name.trim()
+          ? entry.name.trim()
+          : path.basename(normalizedPath) || "Workspace",
+        displayName: typeof entry.displayName === "string" ? entry.displayName : undefined,
+        preset: typeof entry.preset === "string" && entry.preset.trim() ? entry.preset.trim() : "starter",
+        workspaceType,
+        ...(workspaceType === "remote" ? { remoteType, baseUrl, directory } : {}),
+      }));
+    }
+    return workspaces;
+  }
+
+  async function recoverWorkspacesFromKnownState() {
+    const fromServerConfig = await recoverWorkspacesFromServerConfig();
+    if (fromServerConfig.length > 0) return fromServerConfig;
+    return recoverWorkspacesFromTokenStore();
   }
 
   function stableWorkspaceId(value) {
@@ -401,7 +511,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
 
   async function readWorkspaceState() {
     const state = await readJsonFile(workspaceStatePath(), EMPTY_WORKSPACE_LIST);
-    const selectedId =
+    let selectedId =
       typeof state?.selectedId === "string"
         ? state.selectedId
         : typeof state?.selectedWorkspaceId === "string"
@@ -409,15 +519,30 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
           : typeof state?.activeId === "string"
             ? state.activeId
             : "";
-    const watchedId =
+    let watchedId =
       typeof state?.watchedId === "string"
         ? state.watchedId
         : typeof state?.watchedWorkspaceId === "string"
           ? state.watchedWorkspaceId
           : null;
-    const activeId = typeof state?.activeId === "string" ? state.activeId : null;
-    const workspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
+    let activeId = typeof state?.activeId === "string" ? state.activeId : null;
+    let workspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
     let changed = false;
+    if (workspaces.length === 0) {
+      const recoveredWorkspaces = await recoverWorkspacesFromKnownState();
+      if (recoveredWorkspaces.length > 0) {
+        const selectedWorkspace = recoveredWorkspaces[0];
+        console.info("[migration] recovered desktop workspaces from persisted OpenWork state", {
+          count: recoveredWorkspaces.length,
+          selectedWorkspaceId: selectedWorkspace.id,
+        });
+        selectedId = selectedWorkspace.id;
+        watchedId = selectedWorkspace.id;
+        activeId = selectedWorkspace.id;
+        workspaces = recoveredWorkspaces;
+        changed = true;
+      }
+    }
     const idMap = new Map();
     const migratedWorkspaces = workspaces.map((entry) => {
       const workspace = entry && typeof entry === "object" ? entry : normalizeWorkspaceEntry(entry ?? {});

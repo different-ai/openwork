@@ -1,7 +1,7 @@
 {
   "name": "@openwork/desktop",
   "private": true,
-  "version": "0.17.0",
+  "version": "0.17.1",
   "description": "OpenWork desktop shell",
   "author": {
     "name": "OpenWork",
@@ -20,7 +20,7 @@
     "check:electron": "node ./scripts/check-electron-bridge.mjs",
     "typecheck:electron": "pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs",
-    "test": "node --test electron/runtime.test.mjs electron/updater.test.mjs electron/remote-workspace.test.mjs"
+    "test": "node --test electron/runtime.test.mjs electron/updater.test.mjs electron/remote-workspace.test.mjs electron/workspace-store.test.mjs"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.17.3",
@@ -40,5 +40,5 @@
     "electron-devtools-installer": "^4.0.0"
   },
   "packageManager": "pnpm@10.27.0",
-  "opencodeRouterVersion": "0.17.0"
+  "opencodeRouterVersion": "0.17.1"
 }

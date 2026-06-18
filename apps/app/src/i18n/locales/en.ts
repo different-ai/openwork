@@ -1573,6 +1573,7 @@ export default {
   "session_management.archived_count_other": "Archived ({count})",
   "session_management.move_to_group": "Move to group",
   "session_management.no_group": "No group",
+  "session_management.no_groups_yet": "No groups yet",
   "session_management.create_group": "Create a Group",
   "session_management.new_group": "New group...",
   "session_management.new_group_prompt": "Name this group (e.g. Done, In progress):",

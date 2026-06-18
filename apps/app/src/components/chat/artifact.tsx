@@ -12,6 +12,7 @@ import {
 } from "@/components/descriptive-button";
 import {
   type ArtifactItem,
+  canOpenArtifact,
   canPreviewArtifact,
   useArtifacts,
   usePreviewArtifact,
@@ -31,7 +32,8 @@ function compactArtifactTitle(name: string) {
 
 function ArtifactButton({ artifact }: ArtifactButtonProps) {
   const previewArtifact = usePreviewArtifact();
-  const canOpen = canPreviewArtifact(artifact);
+  const canOpen = canOpenArtifact(artifact);
+  const canPreview = canPreviewArtifact(artifact);
   const title = compactArtifactTitle(artifact.name);
 
   const content = (
@@ -58,7 +60,7 @@ function ArtifactButton({ artifact }: ArtifactButtonProps) {
     <DescriptiveButton
       className="w-fit max-w-full flex-none items-center gap-1.5 rounded-xl px-2 py-1.5 whitespace-nowrap"
       onClick={() => previewArtifact(artifact)}
-      title={`Open ${artifact.name}`}
+      title={canPreview ? `Preview ${artifact.name}` : `Open ${artifact.name}`}
     >
       {content}
     </DescriptiveButton>
