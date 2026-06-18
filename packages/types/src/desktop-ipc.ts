@@ -456,6 +456,7 @@ export type DesktopCommandMap = {
     args: [scope: string, projectDir: string, content: string];
     result: ExecResult;
   };
+  deleteOpencodeConfig: { args: [scope: string, projectDir: string]; result: ExecResult };
   /**
    * The renderer passes its reset-modal mode, but the main process currently
    * IGNORES it and always removes workspace state + bootstrap config; only

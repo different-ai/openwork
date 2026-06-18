@@ -2025,6 +2025,39 @@ function createRoutes(
     });
   });
 
+  addRoute(routes, "DELETE", "/workspace/:id/opencode-config", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const scope = normalizeOpencodeScope(ctx.url.searchParams.get("scope"));
+    const configPath = resolveOpencodeConfigFilePath(scope, workspace.path);
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: scope === "global" ? "config.global.write" : "config.write",
+      summary: `Delete ${scope} OpenCode config`,
+      paths: [configPath],
+    });
+
+    const existed = existsSync(configPath);
+    if (existed) {
+      await rm(configPath, { force: true });
+      await recordAudit(workspace.path, {
+        id: shortId(),
+        workspaceId: workspace.id,
+        actor: ctx.actor ?? { type: "remote" },
+        action: scope === "global" ? "config.global.write" : "config.write",
+        target: configPath,
+        summary: `Deleted ${scope} OpenCode config`,
+        timestamp: Date.now(),
+      });
+      if (scope === "project") {
+        emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(configPath));
+      }
+    }
+
+    return jsonResponse({ ok: true, status: 0, stdout: `Deleted ${configPath}`, stderr: "" });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/audit", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const limitParam = ctx.url.searchParams.get("limit");

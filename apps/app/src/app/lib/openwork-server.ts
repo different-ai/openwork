@@ -1397,6 +1397,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "POST",
         body: { scope, content },
       }),
+    deleteOpencodeConfigFile: (workspaceId: string, scope: "project" | "global") => {
+      const query = `?scope=${scope}`;
+      return requestJson<ExecResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-config${query}`, {
+        token,
+        hostToken,
+        method: "DELETE",
+      });
+    },
     listReloadEvents: (workspaceId: string, options?: { since?: number }) => {
       const query = typeof options?.since === "number" ? `?since=${options.since}` : "";
       return requestJson<{ items: OpenworkReloadEvent[]; cursor?: number }>(

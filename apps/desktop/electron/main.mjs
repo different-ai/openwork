@@ -692,6 +692,13 @@ async function writeOpencodeConfig(scope, projectDir, content) {
   return execResult(true, `Wrote ${targetPath}`);
 }
 
+async function deleteOpencodeConfig(scope, projectDir) {
+  const { jsoncPath, jsonPath } = resolveOpencodeConfigPath(scope, projectDir);
+  const targetPath = (await pathExists(jsoncPath)) ? jsoncPath : (await pathExists(jsonPath)) ? jsonPath : jsoncPath;
+  await rm(targetPath, { force: true });
+  return execResult(true, `Deleted ${targetPath}`);
+}
+
 function resolveCommandsDir(scope, projectDir) {
   if (scope === "workspace") {
     if (!String(projectDir ?? "").trim()) {
@@ -1248,6 +1255,9 @@ const desktopCommandHandlers = {
         String(args[1] ?? "").trim(),
         String(args[2] ?? ""),
       );
+  },
+  "deleteOpencodeConfig": async (event, ...args) => {
+      return deleteOpencodeConfig(String(args[0] ?? "").trim(), String(args[1] ?? "").trim());
   },
   "resetOpenworkState": async (event, ...args) => {
       return workspaceStore.resetOpenworkState();

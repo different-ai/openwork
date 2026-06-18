@@ -16,6 +16,7 @@ import {
 } from "../../../../app/lib/den";
 import { unwrap, waitForHealthy } from "../../../../app/lib/opencode";
 import {
+  deleteOpencodeConfig,
   readOpencodeConfig,
   writeOpencodeConfig,
   workspaceOpenworkRead,
@@ -549,6 +550,39 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       const result = await writeOpencodeConfig("project", root, content) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
         throw new Error(result.stderr || result.stdout || "Failed to write opencode.jsonc");
+      }
+      return true;
+    }
+
+    return false;
+  };
+
+  const deleteProjectConfigFile = async () => {
+    const root = options.selectedWorkspaceRoot().trim();
+    const isLocalWorkspace =
+      options.selectedWorkspaceDisplay().workspaceType === "local";
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+      await resolveOpenworkConfigTarget("write");
+
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+      const result = await openworkClient.deleteOpencodeConfigFile(
+        openworkWorkspaceId,
+        "project",
+      ) as { ok: boolean; stderr?: string; stdout?: string };
+      if (!result.ok) {
+        throw new Error(result.stderr || result.stdout || "Failed to delete opencode.jsonc");
+      }
+      return true;
+    }
+
+    if (hasOpenworkTarget) {
+      throw new Error("OpenWork server config API is unavailable for this workspace.");
+    }
+
+    if (isLocalWorkspace && isDesktopRuntime() && root) {
+      const result = await deleteOpencodeConfig("project", root) as { ok: boolean; stderr?: string; stdout?: string };
+      if (!result.ok) {
+        throw new Error(result.stderr || result.stdout || "Failed to delete opencode.jsonc");
       }
       return true;
     }
@@ -1455,6 +1489,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     let authRollbackProviderId: string | null = null;
     let importedProvidersRollback: Record<string, CloudImportedProvider> | null = null;
+    let configRollback: { existed: boolean; content: string | null } | null = null;
     try {
       const den = createDenClient({
         baseUrl: settings.baseUrl,
@@ -1541,6 +1576,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       importedProvidersRollback = state.importedCloudProviders;
       await persistImportedCloudProviders(nextImportedProviders);
 
+      const previousConfigFile = await readProjectConfigFile() as { exists?: boolean; content?: string | null } | null;
+      configRollback = {
+        existed: previousConfigFile?.exists === true,
+        content: previousConfigFile?.content ?? null,
+      };
       const updatedConfig = await updateProjectConfigFile((raw) =>
         formatConfigWithCloudProvider(raw, provider, localProviderId, existingImported?.providerId ?? null),
       );
@@ -1549,6 +1589,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
       authRollbackProviderId = null;
       importedProvidersRollback = null;
+      configRollback = null;
 
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         try {
@@ -1576,6 +1617,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
       if (importedProvidersRollback) {
         await persistImportedCloudProviders(importedProvidersRollback).catch(() => undefined);
+      }
+      if (configRollback) {
+        if (configRollback.existed) {
+          await writeProjectConfigFile(configRollback.content ?? "").catch(() => undefined);
+        } else {
+          await deleteProjectConfigFile().catch(() => undefined);
+        }
       }
       const message = describeProviderError(error, "Failed to connect organization provider.");
       if (!optionsArg?.silent) {
