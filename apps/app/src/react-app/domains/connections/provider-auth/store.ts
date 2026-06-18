@@ -1487,7 +1487,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
     }
 
-    let authRollbackProviderId: string | null = null;
+    let authRollback: { providerId: string; auth: Parameters<typeof c.auth.set>[0]["auth"] | null } | null = null;
     let importedProvidersRollback: Record<string, CloudImportedProvider> | null = null;
     let configRollback: { existed: boolean; content: string | null } | null = null;
     try {
@@ -1550,11 +1550,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
 
       if (nextAuth) {
+        const previousAuth = existingImported?.providerId === localProviderId
+          ? await readProviderAuthCredentials(localProviderId) as Parameters<typeof c.auth.set>[0]["auth"] | null
+          : null;
         await c.auth.set({
           providerID: localProviderId,
           auth: nextAuth,
         });
-        authRollbackProviderId = localProviderId;
+        authRollback = { providerId: localProviderId, auth: previousAuth };
       }
 
       const nextImportedProviders = {
@@ -1587,7 +1590,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (!updatedConfig) {
         throw new Error("Could not update opencode.jsonc for this workspace.");
       }
-      authRollbackProviderId = null;
+      authRollback = null;
       importedProvidersRollback = null;
       configRollback = null;
 
@@ -1612,8 +1615,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       emitChange();
       return `${t("status.connected")} ${provider.name}`;
     } catch (error) {
-      if (authRollbackProviderId) {
-        await removeProviderAuthCredentials(authRollbackProviderId).catch(() => undefined);
+      if (authRollback) {
+        if (authRollback.auth === null) {
+          await removeProviderAuthCredentials(authRollback.providerId).catch(() => undefined);
+        } else {
+          await c.auth.set({ providerID: authRollback.providerId, auth: authRollback.auth }).catch(() => undefined);
+        }
       }
       if (importedProvidersRollback) {
         await persistImportedCloudProviders(importedProvidersRollback).catch(() => undefined);
