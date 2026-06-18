@@ -220,23 +220,6 @@ function isTrackableAccessibleTarget(target: OpenTarget) {
   return isOpenableFileTarget(target) || isLocalhostBrowserTarget(target);
 }
 
-function absoluteWorkspacePath(root: string | null | undefined, value: string) {
-  const target = value.trim();
-  if (!target) return "";
-  if (/^file:\/\//i.test(target)) {
-    try {
-      const pathname = new URL(target).pathname;
-      return /^\/[a-zA-Z]:/.test(pathname) ? pathname.slice(1) : pathname;
-    } catch {
-      return target.replace(/^file:\/\//i, "");
-    }
-  }
-  if (target.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(target)) return target;
-  const cleanRoot = root?.trim().replace(/[/\\]+$/, "") ?? "";
-  const cleanTarget = target.replace(/^[.][\\/]/, "");
-  return cleanRoot ? `${cleanRoot}/${cleanTarget}` : cleanTarget;
-}
-
 function hiddenAccessibleTargetsStorageKey(workspaceId: string | null | undefined, sessionId: string | null | undefined) {
   if (!workspaceId || !sessionId) return null;
   return `openwork.session.hiddenAccessibleTargets.v1:${workspaceId}:${sessionId}`;
@@ -451,6 +434,7 @@ export function SessionPage(props: SessionPageProps) {
     });
     preserveSidePanelOnPanelOpenRef.current = true;
     setCurrentSidePanel("panel");
+  }, [activePanelTab?.id, browserUrlForTarget, downloadOpenTarget, openTab, props.selectedSessionId, props.selectedWorkspaceDisplay.workspaceType, props.selectedWorkspaceRoot, setCurrentSidePanel]);
   }, [activePanelTab?.id, browserUrlForTarget, downloadOpenTarget, openTab, props.selectedSessionId, props.selectedWorkspaceDisplay.workspaceType, props.selectedWorkspaceRoot, setCurrentSidePanel]);
   const closeRightPane = useCallback(() => {
     setCurrentSidePanel(null);

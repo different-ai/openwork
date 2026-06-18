@@ -352,6 +352,10 @@ export async function revealDesktopItemInDir(target: string): Promise<void> {
   await invokeElectronHelper("__revealItemInDir", target);
 }
 
+export async function getDesktopFileIcon(target: string, size?: "small" | "normal" | "large"): Promise<string | null> {
+  return invokeElectronHelper("__getFileIcon", target, size);
+}
+
 export async function relaunchDesktopApp(): Promise<void> {
   await window.__OPENWORK_ELECTRON__?.shell?.relaunch?.();
 }

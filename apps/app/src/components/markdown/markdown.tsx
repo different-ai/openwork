@@ -312,8 +312,15 @@ const baseMarkedOptions = {
       const safe = escapeAttribute(safeHref(href));
       const originalHref = escapeAttribute(href);
       const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
+      const isFilePath = !/^(https?|wss?|ftp|mailto|tel|file):/i.test(href);
+      const linkClass = isFilePath
+        ? "inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-xs font-medium text-foreground no-underline transition-colors hover:bg-muted hover:border-border"
+        : "text-indigo-10 underline underline-offset-2 transition-colors hover:text-indigo-8";
+      const icon = isFilePath
+        ? `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/></svg>`
+        : "";
 
-      return `<a href="${safe}" data-openwork-link-href="${originalHref}"${titleAttr} target="_blank" rel="noreferrer noopener" class="text-indigo-10 underline underline-offset-2 transition-colors hover:text-indigo-8">${this.parser.parseInline(tokens)}</a>`;
+      return `<a href="${safe}" data-openwork-link-href="${originalHref}"${titleAttr} target="_blank" rel="noreferrer noopener" class="${linkClass}">${icon}${this.parser.parseInline(tokens)}</a>`;
     },
     image({ href, title, text }) {
       const safe = escapeAttribute(safeHref(href));
@@ -475,7 +482,6 @@ function MarkdownBlockInner({
         if (target && onOpenTarget) {
           event.preventDefault();
           onOpenTarget(target);
-
           return;
         }
       }

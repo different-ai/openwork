@@ -71,7 +71,7 @@ import {
 } from "./composer-state-store";
 import { MessageList } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
-import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
+import { OpenTargetProvider } from "@/lib/target-provider";
 import type { ThreadStatus } from "@/lib/messages";
 import {
   EnvironmentVariableProvider,

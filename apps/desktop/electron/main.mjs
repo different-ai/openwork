@@ -1267,6 +1267,18 @@ const desktopCommandHandlers = {
       shell.showItemInFolder(target);
       return undefined;
   },
+  "__getFileIcon": async (event, ...args) => {
+      const target = String(args[0] ?? "").trim();
+      if (!target) return null;
+      const size = String(args[1] ?? "normal");
+      const validSize = ["small", "normal", "large"].includes(size) ? size : "normal";
+      try {
+        const image = await app.getFileIcon(target, { size: validSize });
+        return image.isEmpty() ? null : image.toDataURL();
+      } catch {
+        return null;
+      }
+  },
   "__fetch": async (event, ...args) => {
       const url = String(args[0] ?? "").trim();
       const init = args[1] ?? {};

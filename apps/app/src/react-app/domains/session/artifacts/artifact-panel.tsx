@@ -4,7 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, ExternalLink, FolderOpen, X } from "lucide-react";
 
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
-import { openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
+import { getDesktopFileIcon, openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
+import { isElectronRuntime } from "@/app/utils";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatFileSize } from "@/lib/utils";
@@ -84,6 +85,14 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
   const [draft, setDraft] = useState("");
   const isDirectTextEdit = isTextContent(target) && target.preview === "markdown";
   const externalPath = useMemo(() => target.kind === "file" ? absoluteWorkspacePath(workspaceRoot, target.value) : target.value, [target.kind, target.value, workspaceRoot]);
+
+  const { data: fileIcon } = useQuery<string | null>({
+    queryKey: ["desktop-file-icon", externalPath] as const,
+    queryFn: async () => getDesktopFileIcon(externalPath, "small"),
+    enabled: target.kind === "file" && !isRemoteWorkspace && isElectronRuntime(),
+    staleTime: Infinity,
+    gcTime: 5 * 60 * 1000,
+  });
 
   const { data, error, isError, isLoading } = useQuery<ArtifactQueryState>({
     queryKey: ["artifact-panel", workspaceId, target.id] as const,
@@ -230,6 +239,9 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
       <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
         <div className="flex h-10 items-center gap-2 pe-2 ps-4">
           <div className="min-w-0 flex-1 flex items-center gap-1.5">
+            {fileIcon ? (
+              <img src={fileIcon} alt="" className="h-4 w-4 shrink-0 object-contain" />
+            ) : null}
             <h3 className="text-sm font-medium text-foreground">
               <span className="truncate">{target.name}</span>
             </h3>
