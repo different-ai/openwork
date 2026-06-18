@@ -1270,8 +1270,12 @@ const desktopCommandHandlers = {
   "__getFileIcon": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
       if (!target) return null;
-      const size = String(args[1] ?? "normal");
-      const validSize = ["small", "normal", "large"].includes(size) ? size : "normal";
+      const requestedSize = args[1];
+      /** @type {"small" | "normal" | "large"} */
+      let validSize = "normal";
+      if (requestedSize === "small" || requestedSize === "normal" || requestedSize === "large") {
+        validSize = requestedSize;
+      }
       try {
         const image = await app.getFileIcon(target, { size: validSize });
         return image.isEmpty() ? null : image.toDataURL();
@@ -1350,7 +1354,8 @@ const desktopCommandHandlers = {
         if (platform === "darwin") {
           execFileSync("open", ["-a", appPath, target]);
         } else if (platform === "linux") {
-          execFileSync(appPath, [target], { detached: true, stdio: "ignore" });
+          const child = spawn(appPath, [target], { detached: true, stdio: "ignore" });
+          child.unref();
         } else {
           return `Open with app is not supported on ${platform}`;
         }
