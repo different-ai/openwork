@@ -14,6 +14,7 @@ import {
 import { db } from "../../db.js"
 import { isEntraSsoEnabled } from "../../entra-sso.js"
 import { env } from "../../env.js"
+import { getMcpClientCompatibilityScopeUpdate } from "../../mcp/client-scope-compat.js"
 import { getInvalidMcpOAuthRedirectUris } from "../../mcp/oauth-client-policy.js"
 import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, tokenRoute } from "../../middleware/index.js"
@@ -162,21 +163,16 @@ async function ensureMcpClientScopes(request: Request) {
     return
   }
 
-  const scopes = new Set(readStoredClientScopes(client.scopes))
-  const hasMcpRead = scopes.has("mcp:read")
-  const hasMcpWrite = scopes.has("mcp:write")
-  if (!hasMcpRead && !hasMcpWrite) {
+  const scopes = getMcpClientCompatibilityScopeUpdate({
+    storedScopes: readStoredClientScopes(client.scopes),
+    requestedScopes: Array.from(requestedScopes),
+  })
+  if (!scopes) {
     return
   }
-  if (hasMcpRead && hasMcpWrite) {
-    return
-  }
-
-  scopes.add("mcp:read")
-  scopes.add("mcp:write")
   await db
     .update(OAuthClientTable)
-    .set({ scopes: JSON.stringify(Array.from(scopes)) })
+    .set({ scopes: JSON.stringify(scopes) })
     .where(eq(OAuthClientTable.clientId, clientId))
 }
 

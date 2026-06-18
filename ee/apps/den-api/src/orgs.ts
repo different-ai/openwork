@@ -733,6 +733,22 @@ export async function ensureEntraSsoMembershipForAccount(input: {
       createMember: async ({ organizationId, userId, role }) => {
         const normalizedOrganizationId = organizationId as OrgId
         const normalizedUserId = userId as UserId
+        const userRows = await db
+          .select({ email: AuthUserTable.email })
+          .from(AuthUserTable)
+          .where(eq(AuthUserTable.id, normalizedUserId))
+          .limit(1)
+        const organizationRows = await db
+          .select({ allowedEmailDomains: OrganizationTable.allowedEmailDomains })
+          .from(OrganizationTable)
+          .where(eq(OrganizationTable.id, normalizedOrganizationId))
+          .limit(1)
+        const allowedEmailDomains = normalizeStoredAllowedEmailDomains(organizationRows[0]?.allowedEmailDomains)
+        const email = userRows[0]?.email ?? ""
+        if (!isEmailAllowedForOrganization(allowedEmailDomains, email)) {
+          throw new OrganizationEmailDomainRestrictionError(email, allowedEmailDomains ?? [])
+        }
+
         await cleanupExpiredInvitationPlaceholdersForOrganization({
           organizationId: normalizedOrganizationId,
           removedByOrgMemberId: null,
@@ -752,10 +768,29 @@ export async function ensureEntraSsoMembershipForAccount(input: {
         })
       },
       updateMemberRole: async ({ memberId, role }) => {
+        const existingRows = await db
+          .select()
+          .from(MemberTable)
+          .where(eq(MemberTable.id, memberId as MemberId))
+          .limit(1)
+        const existing = existingRows[0]
+        if (!existing) {
+          throw new Error("failed_to_update_member")
+        }
+
         await db
           .update(MemberTable)
           .set({ role })
           .where(eq(MemberTable.id, memberId as MemberId))
+        await revokeOrganizationApiKeysForMember({
+          organizationId: existing.organizationId,
+          orgMembershipId: existing.id,
+          userId: existing.userId,
+        })
+        await revokeMembershipSessionCredentials({
+          organizationId: existing.organizationId,
+          userId: existing.userId,
+        })
 
         const updatedRows = await db
           .select()

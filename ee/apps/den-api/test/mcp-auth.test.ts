@@ -1,4 +1,5 @@
 import { beforeAll, expect, test } from "bun:test"
+import { getMcpClientCompatibilityScopeUpdate } from "../src/mcp/client-scope-compat.js"
 import { DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS } from "../src/mcp/token-lifetime.js"
 import {
   DEN_JWKS_GRACE_PERIOD_SECONDS,
@@ -47,4 +48,16 @@ test("Den JWT keys pin EdDSA and retain rotated keys during the MCP token lifeti
   })
   expect(DEN_JWKS_ROTATION_INTERVAL_SECONDS).toBe(24 * 60 * 60)
   expect(DEN_JWKS_GRACE_PERIOD_SECONDS).toBeGreaterThan(DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS)
+})
+
+test("MCP client compatibility scopes never upgrade read-only clients to write", () => {
+  expect(getMcpClientCompatibilityScopeUpdate({
+    storedScopes: ["openid", "profile", "email", "mcp:read"],
+    requestedScopes: ["mcp:write"],
+  })).toBeNull()
+
+  expect(getMcpClientCompatibilityScopeUpdate({
+    storedScopes: ["openid", "profile", "email", "mcp:write"],
+    requestedScopes: ["mcp:read"],
+  })).toEqual(["openid", "profile", "email", "mcp:write", "mcp:read"])
 })
