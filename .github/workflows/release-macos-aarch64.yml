@@ -326,7 +326,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-electron-pnpm-
 
+      - name: Install dependencies (macOS dual arch)
+        if: matrix.os_type == 'macos'
+        run: |
+          set -euo pipefail
+          # The x64 macOS app is built on an arm64 runner, but node-pty
+          # resolves its CPU-specific optional package at runtime.
+          {
+            echo "supportedArchitectures.cpu[]=x64"
+            echo "supportedArchitectures.cpu[]=arm64"
+          } >> .npmrc
+          pnpm install --frozen-lockfile
+
       - name: Install dependencies
+        if: matrix.os_type != 'macos'
         run: pnpm install --frozen-lockfile
 
       - name: Write Electron notary API key (macOS)
