@@ -3,8 +3,11 @@ import { describe, expect, test } from "bun:test";
 import type { DenOrgLlmProvider } from "../src/app/lib/den";
 import {
   getCloudManagedProviderId,
+  getCloudManagedProviderPolicyIds,
+  hasCloudProviderSessionContext,
   isCloudProviderConfigImportCollision,
   resolveAppliedManagedProvidersFromSyncResult,
+  shouldRestoreExistingCloudProviderAuth,
 } from "../src/react-app/domains/connections/provider-auth/store";
 
 function provider(input: Partial<DenOrgLlmProvider> & Pick<DenOrgLlmProvider, "id" | "providerId">): DenOrgLlmProvider {
@@ -49,6 +52,39 @@ describe("cloud managed provider import identity", () => {
       credentialKind: "api_key",
       providerConfig: { id: "custom-runtime" },
     }))).toBe("custom-runtime");
+  });
+
+  test("checks desktop policy against source and runtime provider IDs", () => {
+    expect(getCloudManagedProviderPolicyIds(provider({
+      id: "lpr_custom",
+      providerId: "custom-source",
+      providerConfig: { id: "custom-runtime" },
+    }))).toEqual(["custom-source", "custom-runtime"]);
+
+    expect(getCloudManagedProviderPolicyIds(provider({
+      id: "lpr_openwork",
+      providerId: "openwork-cloud",
+      source: "openwork",
+    }))).toEqual(["openwork-cloud", "openwork"]);
+  });
+
+  test("startup cleanup only treats a missing Cloud session as signed out", () => {
+    expect(hasCloudProviderSessionContext({ authToken: "token", activeOrgId: "org" })).toBe(true);
+    expect(hasCloudProviderSessionContext({ authToken: "token", activeOrgId: "" })).toBe(false);
+  });
+
+  test("partial import retry preserves existing auth for rollback", () => {
+    expect(shouldRestoreExistingCloudProviderAuth({
+      existingImportedProviderId: null,
+      localProviderId: "custom-runtime",
+      isAnnotatedPartialImport: true,
+    })).toBe(true);
+
+    expect(shouldRestoreExistingCloudProviderAuth({
+      existingImportedProviderId: null,
+      localProviderId: "custom-runtime",
+      isAnnotatedPartialImport: false,
+    })).toBe(false);
   });
 
   test("remote sync only records providers identified as applied by Den", () => {

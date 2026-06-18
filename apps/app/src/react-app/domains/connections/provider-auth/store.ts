@@ -144,6 +144,20 @@ export const getCloudManagedProviderId = (
   return configId || provider.providerId.trim() || provider.id.trim();
 };
 
+export const getCloudManagedProviderPolicyIds = (
+  provider: Pick<DenOrgLlmProvider, "id" | "providerId" | "source" | "providerConfig">,
+) => [...new Set([provider.providerId.trim(), getCloudManagedProviderId(provider)].filter(Boolean))];
+
+export const hasCloudProviderSessionContext = (
+  settings: Pick<ReturnType<typeof readDenSettings>, "authToken" | "activeOrgId">,
+) => Boolean(settings.authToken?.trim() && settings.activeOrgId?.trim());
+
+export const shouldRestoreExistingCloudProviderAuth = (input: {
+  existingImportedProviderId?: string | null;
+  localProviderId: string;
+  isAnnotatedPartialImport: boolean;
+}) => input.existingImportedProviderId === input.localProviderId || input.isAnnotatedPartialImport;
+
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -1524,13 +1538,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         token,
       });
       const provider = await den.getOrgLlmProviderConnection(orgId, cloudProviderId);
-      assertProviderAllowedByDesktopPolicy(provider.providerId);
       const existingImported = state.importedCloudProviders[cloudProviderId] ?? null;
       const localProviderId = getCloudManagedProviderId(provider);
+      for (const providerId of getCloudManagedProviderPolicyIds(provider)) {
+        assertProviderAllowedByDesktopPolicy(providerId);
+      }
       const apiKey = provider.apiKey?.trim() ?? "";
       const opencodeAuth = provider.opencodeAuth?.trim() ?? "";
       const env = getCloudProviderEnv(provider.providerConfig);
       let nextAuth: Parameters<typeof c.auth.set>[0]["auth"] | null = null;
+      let previousLocalAuth: Parameters<typeof c.auth.set>[0]["auth"] | null | undefined;
       if (provider.credentialKind === "opencode_oauth" && !opencodeAuth) {
         throw new Error(`${provider.name} does not have a stored OpenCode OAuth credential yet.`);
       }
@@ -1541,6 +1558,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       await assertCloudProviderImportSafe(provider);
       if (existingImported?.providerId !== localProviderId) {
         const existingAuth = await readProviderAuthCredentials(localProviderId);
+        previousLocalAuth = existingAuth as Parameters<typeof c.auth.set>[0]["auth"] | null;
         if (existingAuth !== null) {
           const configFile = await readProjectConfigFile() as { content?: string } | null;
           const isAnnotatedPartialImport = Boolean(configFile?.content && hasAnnotatedCloudProviderBlock({
@@ -1548,7 +1566,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             localProviderId,
             cloudProviderId: provider.id,
           }));
-          if (!isAnnotatedPartialImport) {
+          if (!shouldRestoreExistingCloudProviderAuth({
+            existingImportedProviderId: existingImported?.providerId,
+            localProviderId,
+            isAnnotatedPartialImport,
+          })) {
             throw new Error(
               `${localProviderId} already has OpenCode auth credentials. Disconnect it before importing the cloud-managed version.`,
             );
@@ -1585,9 +1607,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
 
       if (nextAuth) {
-        const previousAuth = existingImported?.providerId === localProviderId
+        const previousAuth = previousLocalAuth === undefined
           ? await readProviderAuthCredentials(localProviderId) as Parameters<typeof c.auth.set>[0]["auth"] | null
-          : null;
+          : previousLocalAuth;
         authRollback = { providerId: localProviderId, auth: previousAuth };
         await c.auth.set({
           providerID: localProviderId,
@@ -1780,8 +1802,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       options.selectedWorkspaceRoot().trim() || options.runtimeWorkspaceId() || "";
     return Boolean(
       options.client() &&
-        settings.authToken?.trim() &&
-        settings.activeOrgId?.trim() &&
+        hasCloudProviderSessionContext(settings) &&
         workspaceTarget,
     );
   };
@@ -2182,7 +2203,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       // Startup cleanup: if no auth token, remove any cloud providers that
       // were left behind. Handles orphans from a previous sign-out that
       // didn't clean up (e.g. crash, force-quit, external edit).
-      if (!hasCloudProviderSyncPrerequisites()) {
+      if (!hasCloudProviderSessionContext(readDenSettings())) {
         void (async () => {
           // First: remove anything tracked in import state
           if (imported && Object.keys(imported).length > 0) {
