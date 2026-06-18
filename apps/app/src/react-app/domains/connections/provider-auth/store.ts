@@ -1553,11 +1553,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         const previousAuth = existingImported?.providerId === localProviderId
           ? await readProviderAuthCredentials(localProviderId) as Parameters<typeof c.auth.set>[0]["auth"] | null
           : null;
+        authRollback = { providerId: localProviderId, auth: previousAuth };
         await c.auth.set({
           providerID: localProviderId,
           auth: nextAuth,
         });
-        authRollback = { providerId: localProviderId, auth: previousAuth };
       }
 
       const nextImportedProviders = {
