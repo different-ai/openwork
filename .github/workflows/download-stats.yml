@@ -13,10 +13,25 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
+    env:
+      OPENWORK_GH_AGENT_NAME: ${{ secrets.OPENWORK_GH_AGENT_NAME }}
+      OPENWORK_GH_AGENT_EMAIL: ${{ secrets.OPENWORK_GH_AGENT_EMAIL }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.OPENWORK_GH_AGENT_TOKEN }}
+
+      - name: Import OpenWork GH Agent GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.OPENWORK_GH_AGENT_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.OPENWORK_GH_AGENT_GPG_PASSPHRASE }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_committer_name: ${{ env.OPENWORK_GH_AGENT_NAME }}
+          git_committer_email: ${{ env.OPENWORK_GH_AGENT_EMAIL }}
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -36,8 +51,8 @@ jobs:
 
       - name: Commit stats
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.email "$OPENWORK_GH_AGENT_EMAIL"
+          git config --local user.name "$OPENWORK_GH_AGENT_NAME"
           git add STATS.md STATS_V2.md
-          git diff --staged --quiet || git commit -m "ignore: update download stats $(date -I)"
+          git diff --staged --quiet || git commit -S -m "ignore: update download stats $(date -I)"
           git push

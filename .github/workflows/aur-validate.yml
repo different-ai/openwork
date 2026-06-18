@@ -134,6 +134,8 @@ jobs:
       INPUT_ARTIFACT_NAME: ${{ inputs.artifact_name || 'openwork-electron-linux-x64' }}
       PUSH_TO_AUR: ${{ inputs.push_to_aur && 'true' || 'false' }}
       AUR_REPO: ${{ inputs.aur_repo || 'openwork' }}
+      OPENWORK_GH_AGENT_NAME: ${{ secrets.OPENWORK_GH_AGENT_NAME }}
+      OPENWORK_GH_AGENT_EMAIL: ${{ secrets.OPENWORK_GH_AGENT_EMAIL }}
     steps:
       - name: Validate workflow inputs
         shell: bash
@@ -173,6 +175,7 @@ jobs:
             base-devel \
             curl \
             git \
+            gnupg \
             jq \
             namcap \
             openssh \
@@ -408,6 +411,18 @@ jobs:
             echo "No runnable desktop binary found; install sanity check passed." 
           fi
 
+      - name: Import OpenWork GH Agent GPG key
+        if: env.PUSH_TO_AUR == 'true'
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.OPENWORK_GH_AGENT_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.OPENWORK_GH_AGENT_GPG_PASSPHRASE }}
+          git_config_global: true
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_committer_name: ${{ env.OPENWORK_GH_AGENT_NAME }}
+          git_committer_email: ${{ env.OPENWORK_GH_AGENT_EMAIL }}
+
       - name: Publish to AUR
         if: env.PUSH_TO_AUR == 'true'
         env:
@@ -449,9 +464,9 @@ jobs:
           fi
 
           git add PKGBUILD .SRCINFO
-          git -c user.name="OpenWork Release Bot" \
-              -c user.email="release-bot@users.noreply.github.com" \
-              commit -m "chore(aur): update PKGBUILD for ${RELEASE_TAG#v}"
+          git config --local user.email "$OPENWORK_GH_AGENT_EMAIL"
+          git config --local user.name "$OPENWORK_GH_AGENT_NAME"
+          git commit -S -m "chore(aur): update PKGBUILD for ${RELEASE_TAG#v}"
 
           current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
           if [ -z "$current_branch" ]; then

@@ -1,0 +1,66 @@
+name: Close PRs With Unsigned Commits
+
+on:
+  pull_request_target:
+    branches:
+      - dev
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  check-signed-commits:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Close PRs with unsigned commits
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            const unsigned = commits.filter((commit) => {
+              return commit.commit.verification?.verified !== true;
+            });
+
+            if (unsigned.length === 0) {
+              core.info("All PR commits are verified.");
+              return;
+            }
+
+            const body = [
+              "This PR has been automatically closed due to unsigned commits.",
+              "OpenWork only accepts signed commits for all and any contributions. Please recommit your changes after enabling signing for your account, and reopen the PR.",
+              "Thanks for helping us keep OpenSource software safe and secure",
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body,
+            });
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              state: "closed",
+            });
+
+            core.setFailed("PR contains unsigned or unverified commits.");

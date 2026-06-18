@@ -834,12 +834,25 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      OPENWORK_GH_AGENT_NAME: ${{ secrets.OPENWORK_GH_AGENT_NAME }}
+      OPENWORK_GH_AGENT_EMAIL: ${{ secrets.OPENWORK_GH_AGENT_EMAIL }}
     steps:
       - name: Checkout dev
         uses: actions/checkout@v6
         with:
           ref: dev
           fetch-depth: 0
+          token: ${{ secrets.OPENWORK_GH_AGENT_TOKEN }}
+
+      - name: Import OpenWork GH Agent GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.OPENWORK_GH_AGENT_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.OPENWORK_GH_AGENT_GPG_PASSPHRASE }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_committer_name: ${{ env.OPENWORK_GH_AGENT_NAME }}
+          git_committer_email: ${{ env.OPENWORK_GH_AGENT_EMAIL }}
 
       - name: Update AUR packaging files
         run: scripts/aur/update-aur.sh "$RELEASE_TAG"
@@ -855,10 +868,10 @@ jobs:
           fi
 
           version="${RELEASE_TAG#v}"
+          git config --local user.email "$OPENWORK_GH_AGENT_EMAIL"
+          git config --local user.name "$OPENWORK_GH_AGENT_NAME"
           git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
-          git -c user.name="OpenWork Release Bot" \
-              -c user.email="release-bot@users.noreply.github.com" \
-              commit -m "chore(aur): update PKGBUILD for ${version}"
+          git commit -S -m "chore(aur): update PKGBUILD for ${version}"
           git push origin HEAD:dev
 
       - name: Publish to AUR
