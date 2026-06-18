@@ -30,7 +30,7 @@ export type DenCardProps = HTMLAttributes<HTMLDivElement> & {
  * Intentional constraints:
  * - No drop shadows. Ever.
  * - No hover transforms. Cards are surfaces, not buttons.
- * - Single, borderable background (`border-gray-200 bg-white`).
+ * - Single, borderable background (`border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]`).
  *
  * Pick a size that matches the surrounding flow:
  * - `comfortable` (default): forms, summary cards, inline editors.
@@ -48,7 +48,7 @@ export const DenCard = forwardRef<HTMLDivElement, DenCardProps>(function DenCard
       ref={ref}
       {...rest}
       className={[
-        "border border-gray-200 bg-white",
+        "border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]",
         sizeClasses[size],
         className ?? "",
       ]

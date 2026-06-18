@@ -126,14 +126,14 @@ function GithubInstallCompletionRedirect({ installationId, state }: { installati
           body={completionQuery.error instanceof Error ? completionQuery.error.message : "Unknown GitHub installation error."}
         />
       ) : (
-        <section className="flex flex-col items-center justify-center rounded-2xl border border-gray-100 bg-white px-6 py-16 text-center">
+        <section className="flex flex-col items-center justify-center rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-16 text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-white">
             <LoaderCircle className="h-6 w-6 animate-spin" aria-hidden />
           </div>
-          <h2 className="mt-5 text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+          <h2 className="mt-5 text-[18px] font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-100">
             Finalizing your GitHub connection
           </h2>
-          <p className="mt-2 max-w-[460px] text-[13px] leading-[1.6] text-gray-500">
+          <p className="mt-2 max-w-[460px] text-[13px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
             OpenWork is resolving the installation and loading accessible repositories.
           </p>
         </section>
@@ -196,9 +196,9 @@ function ConfigurationLoadingState() {
       description="OpenWork is loading this repository's connector configuration."
       colors={["#DBEAFE", "#0F172A", "#1D4ED8", "#BFDBFE"]}
     >
-      <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center shadow-sm">
-        <LoaderCircle className="mx-auto h-6 w-6 animate-spin text-gray-400" />
-        <p className="mt-3 text-[14px] text-gray-500">Loading connector configuration…</p>
+      <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-center shadow-sm">
+        <LoaderCircle className="mx-auto h-6 w-6 animate-spin text-gray-400 dark:text-gray-500" />
+        <p className="mt-3 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Loading connector configuration…</p>
       </div>
     </DashboardPageTemplate>
   );
@@ -276,7 +276,7 @@ function GithubConnectorInstanceManagePhase({
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700"
+          className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
         >
           <ArrowLeft className="h-4 w-4" />
           Back
@@ -289,20 +289,20 @@ function GithubConnectorInstanceManagePhase({
       <div className="space-y-8">
         <section>
           <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
               Imported plugins
             </h2>
-            <p className="text-[11px] text-gray-400">
+            <p className="text-[11px] text-gray-400 dark:text-gray-500">
               {configuration.configuredPlugins.length} plugin{configuration.configuredPlugins.length === 1 ? "" : "s"}
             </p>
           </div>
 
-          <div className="mb-4 flex items-start justify-between gap-5 rounded-2xl border border-gray-100 bg-white px-5 py-4">
+          <div className="mb-4 flex items-start justify-between gap-5 rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-4">
             <div className="min-w-0 flex-1">
-              <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+              <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                 Auto-import new plugins
               </p>
-              <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500">
+              <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 When new plugin structures appear in this repository on future pushes, OpenWork will discover and import them automatically.
               </p>
               {autoImportMutation.error ? (
@@ -325,11 +325,11 @@ function GithubConnectorInstanceManagePhase({
               ))}
             </div>
           ) : (
-            <div className="rounded-[20px] border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
-              <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
+            <div className="rounded-[20px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-10 text-center">
+              <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800 dark:text-gray-200">
                 No plugins imported yet
               </p>
-              <p className="mx-auto mt-2 max-w-[400px] text-[13px] leading-6 text-gray-400">
+              <p className="mx-auto mt-2 max-w-[400px] text-[13px] leading-6 text-gray-400 dark:text-gray-500">
                 Re-run discovery to pick plugins from this repository.
               </p>
             </div>
@@ -340,13 +340,13 @@ function GithubConnectorInstanceManagePhase({
           <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-red-400">
             Danger zone
           </h2>
-          <div className="overflow-hidden rounded-2xl border border-red-100 bg-white">
+          <div className="overflow-hidden rounded-2xl border border-red-100 dark:border-red-800/60 bg-white dark:bg-[var(--dls-surface)]">
             <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
               <div className="min-w-0 flex-1">
-                <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+                <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                   Remove this repository
                 </p>
-                <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500">
+                <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                   Deletes everything OpenWork imported from this repository. The GitHub connection itself stays active.
                 </p>
               </div>
@@ -361,7 +361,7 @@ function GithubConnectorInstanceManagePhase({
               </DenButton>
             </div>
             {removeMutation.error ? (
-              <div className="border-t border-red-100 bg-red-50 px-5 py-2 text-[12px] text-red-700">
+              <div className="border-t border-red-100 dark:border-red-800/60 bg-red-50 dark:bg-red-900/30 px-5 py-2 text-[12px] text-red-700 dark:text-red-400">
                 {removeMutation.error instanceof Error ? removeMutation.error.message : "Failed to remove this repository."}
               </div>
             ) : null}
@@ -426,15 +426,15 @@ function PluginListItem({ plugin }: {
       : plugin.rootPath;
 
   return (
-    <article className="group overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]">
+    <article className="group overflow-hidden rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] transition hover:-translate-y-0.5 hover:border-gray-200 dark:hover:border-gray-600 dark:border-gray-700 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] dark:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.4)]">
       <div className="flex items-stretch">
         <div className="relative w-[72px] shrink-0 overflow-hidden">
           <div className="absolute inset-0">
             <PaperMeshGradient seed={plugin.id} speed={0} />
           </div>
           <div className="relative flex h-full items-center justify-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-              <Puzzle className="h-4.5 w-4.5 text-gray-700" aria-hidden />
+            <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white dark:bg-[var(--dls-surface)] shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
+              <Puzzle className="h-4.5 w-4.5 text-gray-700 dark:text-gray-300" aria-hidden />
             </div>
           </div>
         </div>
@@ -442,17 +442,17 @@ function PluginListItem({ plugin }: {
         <div className="min-w-0 flex-1 px-5 py-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <h3 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-gray-900">
+              <h3 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-gray-900 dark:text-gray-100">
                 {plugin.name}
               </h3>
               {plugin.description ? (
-                <p className="mt-0.5 line-clamp-2 text-[13px] leading-[1.55] text-gray-500">
+                <p className="mt-0.5 line-clamp-2 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                   {plugin.description}
                 </p>
               ) : null}
             </div>
             {repoPath ? (
-              <code className="shrink-0 rounded-md bg-gray-50 px-2 py-0.5 font-mono text-[11px] text-gray-500">
+              <code className="shrink-0 rounded-md bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 font-mono text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 {repoPath}
               </code>
             ) : null}
@@ -463,10 +463,10 @@ function PluginListItem({ plugin }: {
               {orderedCountEntries.map(([type, count]) => (
                 <span
                   key={type}
-                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2.5 py-0.5 text-[11.5px] text-gray-600"
+                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2.5 py-0.5 text-[11.5px] text-gray-600 dark:text-gray-400 dark:text-gray-500"
                 >
-                  <span className="font-semibold text-gray-900">{count}</span>
-                  <span className="text-gray-500">
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">{count}</span>
+                  <span className="text-gray-500 dark:text-gray-400 dark:text-gray-500">
                     {formatComponentCount(type, count).replace(`${count} `, "")}
                   </span>
                 </span>
@@ -500,7 +500,7 @@ function Toggle({
       } ${busy ? "opacity-60" : ""} focus:outline-none focus:ring-2 focus:ring-[#0f172a]/20 focus:ring-offset-2`}
     >
       <span
-        className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-[0_2px_6px_-1px_rgba(15,23,42,0.3)] transition-transform ${
+        className={`inline-block h-5 w-5 transform rounded-full bg-white dark:bg-[var(--dls-surface)] shadow-[0_2px_6px_-1px_rgba(15,23,42,0.3)] transition-transform ${
           checked ? "translate-x-[18px]" : "translate-x-0.5"
         }`}
       />
@@ -532,7 +532,7 @@ function RemoveRepositoryConfirmDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        className="w-full max-w-md rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start gap-3">
@@ -540,35 +540,35 @@ function RemoveRepositoryConfirmDialog({
             <Trash2 className="h-5 w-5" aria-hidden />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-100">
               Remove {repoName}?
             </h2>
-            <p className="mt-1 text-[13px] leading-6 text-gray-600">
+            <p className="mt-1 text-[13px] leading-6 text-gray-600 dark:text-gray-400 dark:text-gray-500">
               This will delete everything OpenWork imported from this repository, including:
             </p>
-            <ul className="mt-3 space-y-1.5 text-[13px] leading-6 text-gray-600">
+            <ul className="mt-3 space-y-1.5 text-[13px] leading-6 text-gray-600 dark:text-gray-400 dark:text-gray-500">
               <li className="flex gap-2">
-                <span className="text-gray-400">•</span>
+                <span className="text-gray-400 dark:text-gray-500">•</span>
                 <span>
                   <strong>{pluginCount}</strong> imported plugin{pluginCount === 1 ? "" : "s"}
                 </span>
               </li>
               <li className="flex gap-2">
-                <span className="text-gray-400">•</span>
+                <span className="text-gray-400 dark:text-gray-500">•</span>
                 <span>
                   <strong>{configObjectCount}</strong> imported config object{configObjectCount === 1 ? "" : "s"} and all their versions
                 </span>
               </li>
               <li className="flex gap-2">
-                <span className="text-gray-400">•</span>
+                <span className="text-gray-400 dark:text-gray-500">•</span>
                 <span>Connector mappings, source bindings, and sync history for this repository</span>
               </li>
               <li className="flex gap-2">
-                <span className="text-gray-400">•</span>
+                <span className="text-gray-400 dark:text-gray-500">•</span>
                 <span>Any marketplace that was created solely from this repository and is now empty</span>
               </li>
             </ul>
-            <p className="mt-3 text-[12px] leading-5 text-gray-500">
+            <p className="mt-3 text-[12px] leading-5 text-gray-500 dark:text-gray-400 dark:text-gray-500">
               The GitHub connection itself stays active. You can re-add this repository later from the Integrations page.
             </p>
           </div>
@@ -665,14 +665,14 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
       <div className="mb-6 flex items-center justify-between gap-3">
         <Link
           href={getIntegrationsRoute(orgSlug)}
-          className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700"
+          className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
         >
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
         {ownerLogin ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-100 bg-white px-3 py-1 text-[12px] font-medium text-gray-600">
-            <Github className="h-3.5 w-3.5 text-gray-500" aria-hidden />
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
+            <Github className="h-3.5 w-3.5 text-gray-500 dark:text-gray-400 dark:text-gray-500" aria-hidden />
             @{ownerLogin}
           </span>
         ) : null}
@@ -696,10 +696,10 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
       ) : (
         <div className="space-y-5">
           <div className="flex items-baseline justify-between gap-3">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
               Repositories
             </h2>
-            <div className="flex items-center gap-2 text-[11px] text-gray-400">
+            <div className="flex items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500">
               <span>{unconfiguredRepos.length} unconfigured</span>
               <span className="text-gray-300">·</span>
               <span>{totalReadable} readable</span>
@@ -740,24 +740,24 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
                   })}
                 </div>
               ) : (
-                <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
-                  <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
+                <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-10 text-center">
+                  <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800 dark:text-gray-200">
                     No repositories matched your search
                   </p>
-                  <p className="mx-auto mt-2 max-w-[360px] text-[13px] leading-6 text-gray-400">
+                  <p className="mx-auto mt-2 max-w-[360px] text-[13px] leading-6 text-gray-400 dark:text-gray-500">
                     Try a different search term, or pick from the list above.
                   </p>
                 </div>
               )}
 
               {selectedRepo ? (
-                <div className="flex flex-col-reverse items-stretch justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 sm:flex-row sm:items-center">
+                <div className="flex flex-col-reverse items-stretch justify-between gap-3 rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 py-3 sm:flex-row sm:items-center">
                   <div className="min-w-0">
-                    <p className="truncate text-[13px] font-semibold tracking-[-0.01em] text-gray-900">
+                    <p className="truncate text-[13px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                       {selectedRepo.fullName}
                     </p>
-                    <p className="truncate text-[11.5px] text-gray-500">
-                      <GitBranch className="mr-1 inline h-3 w-3 text-gray-400" aria-hidden />
+                    <p className="truncate text-[11.5px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                      <GitBranch className="mr-1 inline h-3 w-3 text-gray-400 dark:text-gray-500" aria-hidden />
                       {selectedRepo.defaultBranch ?? "Default branch unavailable"}
                     </p>
                   </div>
@@ -770,7 +770,7 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
                   </DenButton>
                 </div>
               ) : unconfiguredRepos.length > 0 ? (
-                <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-4 py-3 text-[13px] text-gray-400">
+                <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 py-3 text-[13px] text-gray-400 dark:text-gray-500">
                   Select a repository above to start discovery.
                 </div>
               ) : null}
@@ -778,11 +778,11 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
           ) : null}
 
           {unconfiguredRepos.length === 0 && allRepos.length > 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
-              <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
+            <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-10 text-center">
+              <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800 dark:text-gray-200">
                 Nothing left to configure here
               </p>
-              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
+              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 {connection.account.repositorySelection === "selected"
                   ? "This GitHub installation is limited to selected repositories, and OpenWork has already configured all of them."
                   : "This GitHub installation already has access to all repositories under this owner, and there are none unconfigured right now."}
@@ -802,18 +802,18 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
           ) : null}
 
           {allRepos.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
-              <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
+            <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-10 text-center">
+              <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800 dark:text-gray-200">
                 No repositories available
               </p>
-              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
+              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 This GitHub installation has no repositories OpenWork can read right now.
               </p>
             </div>
           ) : null}
 
           {connectMutation.error ? (
-            <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-[13px] text-red-700">
+            <div className="rounded-2xl border border-red-100 dark:border-red-800/60 bg-red-50 dark:bg-red-900/30 px-4 py-3 text-[13px] text-red-700 dark:text-red-400">
               {connectMutation.error instanceof Error ? connectMutation.error.message : "Failed to create the connector instance."}
             </div>
           ) : null}
@@ -865,8 +865,8 @@ function RepositoryCard({
           <PaperMeshGradient seed={fullName} speed={0} />
         </div>
         <div className="relative flex h-full items-center justify-center">
-          <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-            <GitBranch className="h-4 w-4 text-gray-700" aria-hidden />
+          <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white dark:bg-[var(--dls-surface)] shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
+            <GitBranch className="h-4 w-4 text-gray-700 dark:text-gray-300" aria-hidden />
           </div>
         </div>
       </div>
@@ -874,11 +874,11 @@ function RepositoryCard({
       <div className="flex min-w-0 flex-1 items-center gap-4 px-5 py-3.5">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+            <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
               {fullName}
             </p>
             {isConfigured ? (
-              <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-gray-600">
+              <span className="inline-flex items-center rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-gray-600 dark:text-gray-400 dark:text-gray-500">
                 Configured
               </span>
             ) : null}
@@ -888,7 +888,7 @@ function RepositoryCard({
               </span>
             ) : null}
           </div>
-          <p className="mt-0.5 truncate text-[12px] text-gray-500">
+          <p className="mt-0.5 truncate text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
             {defaultBranch ? `${defaultBranch} branch` : "Default branch unavailable"}
           </p>
         </div>
@@ -896,7 +896,7 @@ function RepositoryCard({
         {isConfigured ? (
           <span
             aria-hidden
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-400 transition group-hover:bg-gray-100 group-hover:text-gray-900"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-400 transition group-hover:bg-gray-100 dark:hover:bg-gray-800 dark:bg-gray-700 group-hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
           >
             <Settings className="h-4 w-4" />
           </span>
@@ -907,10 +907,10 @@ function RepositoryCard({
             className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border transition ${
               selected
                 ? "border-[#0f172a] bg-[#0f172a] text-white"
-                : "border-gray-300 bg-white text-transparent group-hover:border-gray-500"
+                : "border-gray-300 dark:border-gray-600 bg-white dark:bg-[var(--dls-surface)] text-transparent group-hover:border-gray-500"
             }`}
           >
-            <span className={`h-2 w-2 rounded-full ${selected ? "bg-white" : "bg-transparent"}`} />
+            <span className={`h-2 w-2 rounded-full ${selected ? "bg-white dark:bg-[var(--dls-surface)]" : "bg-transparent"}`} />
           </span>
         )}
       </div>
@@ -919,8 +919,8 @@ function RepositoryCard({
 
   const baseClass = `group block w-full overflow-hidden rounded-2xl border text-left transition ${
     selected
-      ? "border-[#0f172a] bg-white shadow-[0_8px_24px_-12px_rgba(15,23,42,0.2)]"
-      : "border-gray-100 bg-white hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
+      ? "border-[#0f172a] bg-white dark:bg-[var(--dls-surface)] shadow-[0_8px_24px_-12px_rgba(15,23,42,0.2)]"
+      : "border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] hover:-translate-y-0.5 hover:border-gray-200 dark:hover:border-gray-600 dark:border-gray-700 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] dark:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.4)]"
   }`;
 
   if (isConfigured && configuredHref) {
@@ -991,14 +991,14 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700"
+          className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
         >
           <ArrowLeft className="h-4 w-4" />
           Back
         </button>
         {discoveryQuery.data ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-100 bg-white px-3 py-1 text-[11px] font-medium text-gray-600">
-            <GitBranch className="h-3 w-3 text-gray-400" aria-hidden />
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-1 text-[11px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
+            <GitBranch className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-hidden />
             <code className="font-mono">{discoveryQuery.data.sourceRevisionRef.slice(0, 7)}</code>
           </span>
         ) : null}
@@ -1033,20 +1033,20 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
 
           <div>
             <div className="mb-3 flex items-baseline justify-between gap-3">
-              <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+              <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                 Discovered plugins
               </h2>
-              <p className="text-[11px] text-gray-400">
+              <p className="text-[11px] text-gray-400 dark:text-gray-500">
                 {selectedPlugins.length} of {discoveryQuery.data.discoveredPlugins.length} selected
               </p>
             </div>
 
-            <div className="mb-4 flex items-start justify-between gap-5 rounded-2xl border border-gray-100 bg-white px-5 py-4">
+            <div className="mb-4 flex items-start justify-between gap-5 rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-4">
               <div className="min-w-0 flex-1">
-                <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+                <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                   Auto-import new plugins
                 </p>
-                <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500">
+                <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                   When new plugin structures appear on future pushes, OpenWork will discover and import them automatically.
                 </p>
               </div>
@@ -1071,20 +1071,20 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
                 ))}
               </div>
             ) : (
-              <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
-                <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
+              <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-10 text-center">
+                <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800 dark:text-gray-200">
                   No Claude-compatible plugins detected
                 </p>
-                <p className="mx-auto mt-2 max-w-[440px] text-[13px] leading-6 text-gray-500">
-                  OpenWork currently only supports Claude-compatible plugins and marketplaces. Add <code className="rounded bg-gray-100 px-1 py-0.5 text-[11px]">.claude-plugin/marketplace.json</code> or <code className="rounded bg-gray-100 px-1 py-0.5 text-[11px]">.claude-plugin/plugin.json</code> to this repository.
+                <p className="mx-auto mt-2 max-w-[440px] text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                  OpenWork currently only supports Claude-compatible plugins and marketplaces. Add <code className="rounded bg-gray-100 dark:bg-gray-700 px-1 py-0.5 text-[11px]">.claude-plugin/marketplace.json</code> or <code className="rounded bg-gray-100 dark:bg-gray-700 px-1 py-0.5 text-[11px]">.claude-plugin/plugin.json</code> to this repository.
                 </p>
               </div>
             )}
           </div>
 
           {discoveryQuery.data.discoveredPlugins.length > 0 ? (
-            <div className="flex flex-col-reverse items-stretch justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 sm:flex-row sm:items-center">
-              <div className="min-w-0 text-[12.5px] text-gray-500">
+            <div className="flex flex-col-reverse items-stretch justify-between gap-3 rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 py-3 sm:flex-row sm:items-center">
+              <div className="min-w-0 text-[12.5px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 {selectedPlugins.length === 0
                   ? "Select at least one plugin to import."
                   : `This will create ${selectedPlugins.length} plugin${selectedPlugins.length === 1 ? "" : "s"} and their mappings in OpenWork.`}
@@ -1100,7 +1100,7 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
           ) : null}
 
           {applyMutation.error ? (
-            <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-[13px] text-red-700">
+            <div className="rounded-2xl border border-red-100 dark:border-red-800/60 bg-red-50 dark:bg-red-900/30 px-4 py-3 text-[13px] text-red-700 dark:text-red-400">
               {applyMutation.error instanceof Error ? applyMutation.error.message : "Failed to apply discovery results."}
             </div>
           ) : null}
@@ -1132,8 +1132,8 @@ function DiscoveredPluginCard({
 
   const baseClass = `group block w-full overflow-hidden rounded-2xl border text-left transition ${
     !plugin.supported
-      ? "cursor-not-allowed border-gray-100 bg-white opacity-70"
-      : "border-gray-100 bg-white hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
+      ? "cursor-not-allowed border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] opacity-70"
+      : "border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] hover:-translate-y-0.5 hover:border-gray-200 dark:hover:border-gray-600 dark:border-gray-700 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] dark:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.4)]"
   }`;
 
   return (
@@ -1144,8 +1144,8 @@ function DiscoveredPluginCard({
             <PaperMeshGradient seed={plugin.key} speed={0} />
           </div>
           <div className="relative flex h-full items-center justify-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-              <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />
+            <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white dark:bg-[var(--dls-surface)] shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
+              <Puzzle className="h-4 w-4 text-gray-700 dark:text-gray-300" aria-hidden />
             </div>
           </div>
         </div>
@@ -1154,7 +1154,7 @@ function DiscoveredPluginCard({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-gray-900">
+                <h3 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-gray-900 dark:text-gray-100">
                   {plugin.displayName}
                 </h3>
                 {!plugin.supported ? (
@@ -1164,13 +1164,13 @@ function DiscoveredPluginCard({
                 ) : null}
               </div>
               {plugin.description ? (
-                <p className="mt-0.5 line-clamp-2 text-[13px] leading-[1.55] text-gray-500">
+                <p className="mt-0.5 line-clamp-2 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                   {plugin.description}
                 </p>
               ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <code className="rounded-md bg-gray-50 px-2 py-0.5 font-mono text-[11px] text-gray-500">
+              <code className="rounded-md bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 font-mono text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 {repoPath}
               </code>
               <span
@@ -1179,10 +1179,10 @@ function DiscoveredPluginCard({
                 aria-disabled={!plugin.supported}
                 className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] border transition ${
                   !plugin.supported
-                    ? "border-gray-200 bg-gray-50 text-transparent"
+                    ? "border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-transparent"
                     : selected
                       ? "border-[#0f172a] bg-[#0f172a] text-white"
-                      : "border-gray-300 bg-white text-transparent group-hover:border-gray-500"
+                      : "border-gray-300 dark:border-gray-600 bg-white dark:bg-[var(--dls-surface)] text-transparent group-hover:border-gray-500"
                 }`}
               >
                 <svg viewBox="0 0 12 12" aria-hidden className="h-3 w-3">
@@ -1204,7 +1204,7 @@ function DiscoveredPluginCard({
               {plugin.componentKinds.map((kind) => (
                 <span
                   key={`${plugin.key}:${kind}`}
-                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2.5 py-0.5 text-[11.5px] text-gray-600"
+                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2.5 py-0.5 text-[11.5px] text-gray-600 dark:text-gray-400 dark:text-gray-500"
                 >
                   {kind.replaceAll("_", " ")}
                 </span>
@@ -1233,19 +1233,19 @@ function DiscoveryAppliedState({
   onDone: () => void;
 }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-emerald-100 bg-white">
+    <div className="overflow-hidden rounded-2xl border border-emerald-100 bg-white dark:bg-[var(--dls-surface)]">
       <div className="flex items-start gap-4 px-6 py-5">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
           <CheckCircle2 className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-gray-950">
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-gray-950 dark:text-gray-100">
             Discovery applied
           </h2>
-          <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500">
-            OpenWork created <span className="font-semibold text-gray-900">{createdPluginNames.length}</span> plugin{createdPluginNames.length === 1 ? "" : "s"},{" "}
-            <span className="font-semibold text-gray-900">{createdMappingCount}</span> mapping{createdMappingCount === 1 ? "" : "s"}, and{" "}
-            <span className="font-semibold text-gray-900">{materializedConfigObjectCount}</span> imported config object{materializedConfigObjectCount === 1 ? "" : "s"}.
+          <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            OpenWork created <span className="font-semibold text-gray-900 dark:text-gray-100">{createdPluginNames.length}</span> plugin{createdPluginNames.length === 1 ? "" : "s"},{" "}
+            <span className="font-semibold text-gray-900 dark:text-gray-100">{createdMappingCount}</span> mapping{createdMappingCount === 1 ? "" : "s"}, and{" "}
+            <span className="font-semibold text-gray-900 dark:text-gray-100">{materializedConfigObjectCount}</span> imported config object{materializedConfigObjectCount === 1 ? "" : "s"}.
           </p>
 
           {createdPluginNames.length > 0 ? (
@@ -1253,7 +1253,7 @@ function DiscoveryAppliedState({
               {createdPluginNames.map((name) => (
                 <span
                   key={name}
-                  className="inline-flex items-center rounded-full bg-gray-50 px-2.5 py-0.5 text-[11.5px] text-gray-700"
+                  className="inline-flex items-center rounded-full bg-gray-50 dark:bg-gray-800/50 px-2.5 py-0.5 text-[11.5px] text-gray-700 dark:text-gray-300"
                 >
                   {name}
                 </span>
@@ -1262,7 +1262,7 @@ function DiscoveryAppliedState({
           ) : null}
         </div>
       </div>
-      <div className="flex justify-end border-t border-gray-100 bg-gray-50/60 px-6 py-3">
+      <div className="flex justify-end border-t border-gray-100 dark:border-gray-700 bg-gray-50/60 px-6 py-3">
         <DenButton onClick={onDone}>Return to integrations</DenButton>
       </div>
     </div>
@@ -1271,14 +1271,14 @@ function DiscoveryAppliedState({
 
 function DiscoveryLoadingState() {
   return (
-    <section className="flex flex-col items-center justify-center rounded-2xl border border-gray-100 bg-white px-6 py-16 text-center">
+    <section className="flex flex-col items-center justify-center rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-16 text-center">
       <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-white">
         <LoaderCircle className="h-6 w-6 animate-spin" aria-hidden />
       </div>
-      <h2 className="mt-5 text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+      <h2 className="mt-5 text-[18px] font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-100">
         Discovering marketplaces and plugins in your repository
       </h2>
-      <p className="mt-2 max-w-[460px] text-[13px] leading-[1.6] text-gray-500">
+      <p className="mt-2 max-w-[460px] text-[13px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
         OpenWork is scanning the repo for Claude-compatible plugin and marketplace manifests.
       </p>
     </section>
@@ -1287,9 +1287,9 @@ function DiscoveryLoadingState() {
 
 function StatePanel({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
-      <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-900">{title}</p>
-      <p className="mx-auto mt-2 max-w-xl text-[13px] leading-6 text-gray-500">{body}</p>
+    <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-10 text-center">
+      <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-900 dark:text-gray-100">{title}</p>
+      <p className="mx-auto mt-2 max-w-xl text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">{body}</p>
     </div>
   );
 }

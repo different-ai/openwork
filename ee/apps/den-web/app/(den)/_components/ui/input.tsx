@@ -55,10 +55,10 @@ export function DenInput({
       disabled={disabled}
       className={[
         // base visual style
-        "w-full rounded-lg border border-gray-200 bg-white",
-        "h-[42px] px-4 text-[14px] leading-5 text-gray-900",
-        "outline-none transition-all placeholder:text-gray-400",
-        "focus:border-gray-300 focus:ring-2 focus:ring-gray-900/5",
+        "w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]",
+        "h-[42px] px-4 text-[14px] leading-5 text-gray-900 dark:text-gray-100",
+        "outline-none transition-all placeholder:text-gray-400 dark:text-gray-500",
+        "focus:border-gray-300 dark:focus:border-gray-600 dark:border-gray-600 focus:ring-2 focus:ring-gray-900/5 dark:focus:ring-gray-100/10",
         // disabled state
         disabled ? "cursor-not-allowed opacity-60" : "",
         // icon left-padding (overrides px-4 left side)
@@ -80,7 +80,7 @@ export function DenInput({
       >
         <Icon
           size={iconSize}
-          className={disabled ? "text-gray-300" : "text-gray-400"}
+          className={disabled ? "text-gray-300" : "text-gray-400 dark:text-gray-500"}
           aria-hidden="true"
         />
       </div>

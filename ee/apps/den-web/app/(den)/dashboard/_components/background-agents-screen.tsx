@@ -44,9 +44,9 @@ function getStatusBadgeClass(bucket: ReturnType<typeof getWorkerStatusMeta>["buc
     case "starting":
       return "border-amber-100 bg-amber-50 text-amber-600";
     case "attention":
-      return "border-rose-100 bg-rose-50 text-rose-600";
+      return "border-rose-100 bg-rose-50 text-rose-600 dark:text-rose-400";
     default:
-      return "border-gray-100 bg-gray-50 text-gray-500";
+      return "border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 dark:text-gray-500";
   }
 }
 
@@ -65,18 +65,18 @@ function CredentialField({
 }) {
   return (
     <div>
-      <label className="mb-1.5 block text-[12px] text-gray-500">{label}</label>
+      <label className="mb-1.5 block text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{label}</label>
       <div className="flex items-center gap-2">
         <input
           readOnly
           value={value}
-          className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] font-mono text-gray-600 outline-none shadow-sm transition-colors focus:border-gray-300"
+          className="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-2 text-[12px] font-mono text-gray-600 dark:text-gray-400 dark:text-gray-500 outline-none shadow-sm transition-colors focus:border-gray-300 dark:focus:border-gray-600 dark:border-gray-600"
           onClick={(event) => event.currentTarget.select()}
         />
         <button
           type="button"
           onClick={() => onCopy(id, value)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 shadow-sm transition-colors hover:border-gray-300 hover:text-gray-700"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] text-gray-400 shadow-sm transition-colors hover:border-gray-300 dark:hover:border-gray-500 dark:border-gray-600 hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
           aria-label={`Copy ${label}`}
         >
           {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
@@ -130,14 +130,14 @@ function SandboxCard({
   ].filter((field): field is { id: string; label: string; value: string } => Boolean(field));
 
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white p-5 transition-all hover:border-gray-200 hover:shadow-[0_2px_8px_-4px_rgba(0,0,0,0.04)]">
+    <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 transition-all hover:border-gray-200 dark:hover:border-gray-600 dark:border-gray-700 hover:shadow-[0_2px_8px_-4px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_-4px_rgba(0,0,0,0.2)]">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-4">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-100 bg-gray-50">
-            <Box size={18} className="text-gray-400" />
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+            <Box size={18} className="text-gray-400 dark:text-gray-500" />
           </div>
           <div>
-            <h3 className="mb-0.5 flex items-center gap-2 text-[14px] font-medium text-gray-900">
+            <h3 className="mb-0.5 flex items-center gap-2 text-[14px] font-medium text-gray-900 dark:text-gray-100">
               {sandbox.workerName}
               <span
                 className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.5px] ${getStatusBadgeClass(meta.bucket)}`}
@@ -146,7 +146,7 @@ function SandboxCard({
                 {meta.label}
               </span>
             </h3>
-            <p className="text-[12px] text-gray-400">
+            <p className="text-[12px] text-gray-400 dark:text-gray-500">
               Source: {sandbox.provider ? `${sandbox.provider} sandbox` : "cloud sandbox"}
             </p>
           </div>
@@ -163,8 +163,8 @@ function SandboxCard({
             disabled={!canConnect}
             className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors ${
               expanded
-                ? "bg-gray-100 text-gray-900 hover:bg-gray-200"
-                : "bg-gray-50 text-gray-700 hover:bg-gray-100 hover:text-gray-900"
+                ? "bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700"
+                : "bg-gray-50 dark:bg-gray-800/50 text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 dark:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
             } disabled:cursor-not-allowed disabled:opacity-60`}
           >
             {expanded ? "Hide details" : "Connect"}
@@ -174,7 +174,7 @@ function SandboxCard({
             type="button"
             onClick={onRename}
             disabled={renameBusy}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
             aria-label={`Rename ${sandbox.workerName}`}
           >
             <MoreHorizontal size={16} />
@@ -183,7 +183,7 @@ function SandboxCard({
       </div>
 
       {expanded ? (
-        <div className="mt-5 border-t border-gray-100 pt-5">
+        <div className="mt-5 border-t border-gray-100 dark:border-gray-700 pt-5">
           <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="button"
@@ -203,7 +203,7 @@ function SandboxCard({
                 href={openWebUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white py-2.5 text-[13px] font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] py-2.5 text-[13px] font-medium text-gray-700 dark:text-gray-300 shadow-sm transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
               >
                 <ExternalLink size={15} /> Open in web
               </a>
@@ -211,7 +211,7 @@ function SandboxCard({
               <button
                 type="button"
                 disabled
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white py-2.5 text-[13px] font-medium text-gray-700 shadow-sm opacity-60"
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] py-2.5 text-[13px] font-medium text-gray-700 dark:text-gray-300 shadow-sm opacity-60"
               >
                 <ExternalLink size={15} /> Open in web
               </button>
@@ -223,30 +223,30 @@ function SandboxCard({
               <button
                 type="button"
                 onClick={() => setShowTokens((current) => !current)}
-                className="flex w-full items-center justify-between rounded-xl border border-gray-100 bg-gray-50/50 px-4 py-2.5 text-[12px] font-medium text-gray-600 transition-colors hover:bg-gray-50"
+                className="flex w-full items-center justify-between rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/50 px-4 py-2.5 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
               >
                 <span className="flex items-center gap-2">
-                  <KeyRound size={14} className="text-gray-400" />
+                  <KeyRound size={14} className="text-gray-400 dark:text-gray-500" />
                   Connection credentials
                 </span>
                 {showTokens ? (
-                  <ChevronUp size={14} className="text-gray-400" />
+                  <ChevronUp size={14} className="text-gray-400 dark:text-gray-500" />
                 ) : (
-                  <ChevronDown size={14} className="text-gray-400" />
+                  <ChevronDown size={14} className="text-gray-400 dark:text-gray-500" />
                 )}
               </button>
 
               {showTokens ? (
-                <div className="mt-2 space-y-4 rounded-xl border border-gray-100 bg-gray-50/50 p-5">
+                <div className="mt-2 space-y-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/50 p-5">
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-[1px] text-gray-500">
+                    <span className="text-[10px] font-semibold uppercase tracking-[1px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                       Access Tokens
                     </span>
                     <button
                       type="button"
                       onClick={onRefresh}
                       disabled={connectBusy}
-                      className="flex items-center gap-1.5 text-[12px] font-medium text-gray-500 transition-colors hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="flex items-center gap-1.5 text-[12px] font-medium text-gray-500 transition-colors hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <RefreshCw size={13} className={connectBusy ? "animate-spin" : ""} />
                       {connectBusy ? "Refreshing..." : "Refresh tokens"}
@@ -265,7 +265,7 @@ function SandboxCard({
                       />
                     ))
                   ) : (
-                    <p className="text-[12px] text-gray-500">
+                    <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                       {connectBusy
                         ? "Loading connection credentials..."
                         : "Connection credentials will appear here once the workspace is ready."}
@@ -275,7 +275,7 @@ function SandboxCard({
               ) : null}
             </div>
           ) : (
-            <p className="mt-4 text-[12px] text-gray-500">
+            <p className="mt-4 text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
               Connection details will appear once this workspace is ready.
             </p>
           )}
@@ -403,7 +403,7 @@ export function BackgroundAgentsScreen() {
 
       <div>
         <div className="mb-4 flex items-center justify-between gap-4">
-          <h2 className="text-[15px] font-medium tracking-[-0.2px] text-gray-900">
+          <h2 className="text-[15px] font-medium tracking-[-0.2px] text-gray-900 dark:text-gray-100">
             Current workspaces
           </h2>
           <div className="w-full max-w-[240px]">
@@ -419,11 +419,11 @@ export function BackgroundAgentsScreen() {
 
         <div className="space-y-3">
           {!workersLoadedOnce ? (
-            <div className="rounded-2xl border border-gray-100 bg-white p-5 text-[13px] text-gray-500">
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
               Loading workspaces...
             </div>
           ) : filteredWorkers.length === 0 ? (
-            <div className="rounded-2xl border border-gray-100 bg-white p-5 text-[13px] text-gray-500">
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
               {workerQuery.trim()
                 ? "No workspaces match that search yet."
                 : "No workspaces launched yet."}
@@ -453,7 +453,7 @@ export function BackgroundAgentsScreen() {
       </div>
 
       {workersLoadedOnce && workersBusy ? (
-        <p className="mt-4 text-[12px] text-gray-400">Refreshing workspaces…</p>
+        <p className="mt-4 text-[12px] text-gray-400 dark:text-gray-500">Refreshing workspaces…</p>
       ) : null}
     </DashboardPageTemplate>
   );

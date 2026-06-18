@@ -98,7 +98,7 @@ export function LlmProviderDetailScreen({
     if (busy && !provider) {
         return (
             <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-                <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+                <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                     Loading provider details...
                 </div>
             </div>
@@ -123,12 +123,12 @@ export function LlmProviderDetailScreen({
     return (
         <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
             <div className="mb-8 flex flex-col gap-3">
-                <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">
+                <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400 dark:text-gray-500">
                     LLM provider
                 </p>
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                     <div>
-                        <h1 className="text-[34px] font-semibold tracking-[-0.07em] text-gray-950">
+                        <h1 className="text-[34px] font-semibold tracking-[-0.07em] text-gray-950 dark:text-gray-100">
                             {provider.name}
                         </h1>
                     </div>
@@ -138,7 +138,7 @@ export function LlmProviderDetailScreen({
             <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
                 <Link
                     href={getLlmProvidersRoute(orgSlug)}
-                    className="inline-flex items-center gap-2 text-[15px] font-medium text-gray-500 transition hover:text-gray-900"
+                    className="inline-flex items-center gap-2 text-[15px] font-medium text-gray-500 transition hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
                 >
                     <ArrowLeft className="h-5 w-5" />
                     Back to providers
@@ -176,10 +176,10 @@ export function LlmProviderDetailScreen({
                 </div>
             ) : null}
 
-            <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
+            <section className="mb-8 rounded-[36px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div>
-                        <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
+                        <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950 dark:text-gray-100">
                             Provider configuration
                         </h2>
                     </div>
@@ -195,35 +195,35 @@ export function LlmProviderDetailScreen({
                 </div>
 
                 <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <div className="rounded-[24px] bg-gray-50 p-5">
-                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    <div className="rounded-[24px] bg-gray-50 dark:bg-gray-800/50 p-5">
+                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                             Provider id
                         </p>
-                        <p className="mt-3 text-[16px] font-medium text-gray-900">
+                        <p className="mt-3 text-[16px] font-medium text-gray-900 dark:text-gray-100">
                             {provider.providerId}
                         </p>
                     </div>
-                    <div className="rounded-[24px] bg-gray-50 p-5">
-                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    <div className="rounded-[24px] bg-gray-50 dark:bg-gray-800/50 p-5">
+                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                             NPM package
                         </p>
-                        <p className="mt-3 text-[16px] font-medium text-gray-900">
+                        <p className="mt-3 text-[16px] font-medium text-gray-900 dark:text-gray-100">
                             {npmPackage ?? "Not set"}
                         </p>
                     </div>
-                    <div className="rounded-[24px] bg-gray-50 p-5">
-                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    <div className="rounded-[24px] bg-gray-50 dark:bg-gray-800/50 p-5">
+                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                             API base
                         </p>
-                        <p className="mt-3 break-all text-[16px] font-medium text-gray-900">
+                        <p className="mt-3 break-all text-[16px] font-medium text-gray-900 dark:text-gray-100">
                             {apiBase ?? "Not set"}
                         </p>
                     </div>
-                    <div className="rounded-[24px] bg-gray-50 p-5">
-                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    <div className="rounded-[24px] bg-gray-50 dark:bg-gray-800/50 p-5">
+                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                             Updated
                         </p>
-                        <p className="mt-3 text-[16px] font-medium text-gray-900">
+                        <p className="mt-3 text-[16px] font-medium text-gray-900 dark:text-gray-100">
                             {formatProviderTimestamp(provider.updatedAt)}
                         </p>
                     </div>
@@ -233,7 +233,7 @@ export function LlmProviderDetailScreen({
                     {envNames.map((envName) => (
                         <span
                             key={envName}
-                            className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600"
+                            className="rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500"
                         >
                             {envName}
                         </span>
@@ -243,7 +243,7 @@ export function LlmProviderDetailScreen({
                             href={docUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600 transition hover:bg-gray-200"
+                            className="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500 transition hover:bg-gray-200 dark:hover:bg-gray-700"
                         >
                             Docs
                             <ExternalLink className="h-3.5 w-3.5" />
@@ -252,14 +252,14 @@ export function LlmProviderDetailScreen({
                 </div>
             </section>
 
-            <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
+            <section className="mb-8 rounded-[36px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                 <div className="flex items-start justify-between gap-4">
                     <div>
-                        <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
+                        <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950 dark:text-gray-100">
                             Selected models
                         </h2>
                     </div>
-                    <div className="rounded-full bg-gray-100 px-4 py-2 text-[13px] font-medium text-gray-600">
+                    <div className="rounded-full bg-gray-100 dark:bg-gray-700 px-4 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
                         {formatCountLabel(
                             provider.models.length,
                             "model",
@@ -274,19 +274,19 @@ export function LlmProviderDetailScreen({
                         return (
                             <div
                                 key={model.id}
-                                className="rounded-[24px] border border-gray-200 bg-gray-50 p-5"
+                                className="rounded-[24px] border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-5"
                             >
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
-                                        <p className="text-[17px] font-semibold tracking-[-0.03em] text-gray-950">
+                                        <p className="text-[17px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">
                                             {model.name}
                                         </p>
-                                        <p className="mt-1 text-[13px] text-gray-500">
+                                        <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                             {model.id}
                                         </p>
                                     </div>
                                     {limitLabel ? (
-                                        <span className="rounded-full bg-white px-3 py-1 text-[12px] font-medium text-gray-600">
+                                        <span className="rounded-full bg-white dark:bg-[var(--dls-surface)] px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
                                             {limitLabel}
                                         </span>
                                     ) : null}
@@ -297,14 +297,14 @@ export function LlmProviderDetailScreen({
                 </div>
             </section>
 
-            <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
+            <section className="mb-8 rounded-[36px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                 <div className="flex items-start justify-between gap-4">
                     <div>
-                        <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
+                        <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950 dark:text-gray-100">
                             Access
                         </h2>
                     </div>
-                    <div className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-4 py-2 text-[13px] font-medium text-gray-600">
+                    <div className="inline-flex items-center gap-2 rounded-full bg-gray-100 dark:bg-gray-700 px-4 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
                         <Users className="h-4 w-4" />
                         {provider.access.members.length +
                             provider.access.teams.length}{" "}
@@ -313,25 +313,25 @@ export function LlmProviderDetailScreen({
                 </div>
 
                 <div className="mt-8 grid gap-6 xl:grid-cols-2">
-                    <div className="rounded-[24px] bg-gray-50 p-5">
-                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    <div className="rounded-[24px] bg-gray-50 dark:bg-gray-800/50 p-5">
+                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                             People
                         </p>
                         <div className="mt-4 grid gap-3">
                             {provider.access.members.length === 0 ? (
-                                <p className="text-[14px] text-gray-500">
+                                <p className="text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                     No direct people access yet.
                                 </p>
                             ) : (
                                 provider.access.members.map((member) => (
                                     <div
                                         key={member.id}
-                                        className="rounded-[18px] border border-gray-200 bg-white px-4 py-3"
+                                        className="rounded-[18px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 py-3"
                                     >
-                                        <p className="text-[15px] font-medium text-gray-900">
+                                        <p className="text-[15px] font-medium text-gray-900 dark:text-gray-100">
                                             {member.user.name}
                                         </p>
-                                        <p className="mt-1 text-[13px] text-gray-500">
+                                        <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                             {member.user.email}
                                         </p>
                                     </div>
@@ -340,25 +340,25 @@ export function LlmProviderDetailScreen({
                         </div>
                     </div>
 
-                    <div className="rounded-[24px] bg-gray-50 p-5">
-                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    <div className="rounded-[24px] bg-gray-50 dark:bg-gray-800/50 p-5">
+                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                             Teams
                         </p>
                         <div className="mt-4 grid gap-3">
                             {provider.access.teams.length === 0 ? (
-                                <p className="text-[14px] text-gray-500">
+                                <p className="text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                     No team access yet.
                                 </p>
                             ) : (
                                 provider.access.teams.map((team) => (
                                     <div
                                         key={team.id}
-                                        className="rounded-[18px] border border-gray-200 bg-white px-4 py-3"
+                                        className="rounded-[18px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 py-3"
                                     >
-                                        <p className="text-[15px] font-medium text-gray-900">
+                                        <p className="text-[15px] font-medium text-gray-900 dark:text-gray-100">
                                             {team.name}
                                         </p>
-                                        <p className="mt-1 text-[13px] text-gray-500">
+                                        <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                             Updated{" "}
                                             {formatProviderTimestamp(
                                                 team.updatedAt,
@@ -373,11 +373,11 @@ export function LlmProviderDetailScreen({
             </section>
 
             {provider.source === "custom" ? (
-                <section className="rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
-                    <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
+                <section className="rounded-[36px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
+                    <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950 dark:text-gray-100">
                         Custom provider payload
                     </h2>
-                    <p className="mt-2 text-[15px] text-gray-500">
+                    <p className="mt-2 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                         The raw provider config saved for this custom source.
                     </p>
                     <pre className="mt-6 overflow-x-auto rounded-[24px] bg-[#0f172a] p-5 text-[13px] leading-6 text-slate-100">

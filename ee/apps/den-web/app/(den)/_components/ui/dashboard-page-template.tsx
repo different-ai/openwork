@@ -50,7 +50,7 @@ export function DashboardPageTemplate({
   return (
     <div className="mx-auto max-w-[860px] p-8">
       {/* ── Gradient hero card ── */}
-      <div className="relative mb-8 flex h-[200px] items-center overflow-hidden rounded-3xl border border-gray-100 px-10">
+      <div className="relative mb-8 flex h-[200px] items-center overflow-hidden rounded-3xl border border-gray-100 dark:border-gray-700 px-10">
         {/* Background layers: mesh gradient wrapped in a dithering texture */}
         <div className="absolute inset-0 z-0">
           <Dithering
@@ -82,14 +82,14 @@ export function DashboardPageTemplate({
         </div>
 
         {/* Icon — top right */}
-        <div className="absolute right-8 top-8 z-10 flex h-12 w-12 items-center justify-center rounded-xl border border-white/30 bg-white/20 backdrop-blur-md">
+        <div className="absolute right-8 top-8 z-10 flex h-12 w-12 items-center justify-center rounded-xl border border-white/30 bg-white dark:bg-white/20 backdrop-blur-md">
           <Icon size={24} className="text-white" strokeWidth={1.5} />
         </div>
 
         {/* Badge (optional) + Title — bottom left */}
         <div className="absolute bottom-8 left-10 z-10 flex flex-col items-start gap-2">
           {badgeLabel ? (
-            <span className="rounded-full border border-white/20 bg-white/20 px-2.5 py-1 text-[10px] uppercase tracking-[1px] text-white backdrop-blur-md">
+            <span className="rounded-full border border-white/20 bg-white dark:bg-white/20 px-2.5 py-1 text-[10px] uppercase tracking-[1px] text-white backdrop-blur-md">
               {badgeLabel}
             </span>
           ) : null}
@@ -100,7 +100,7 @@ export function DashboardPageTemplate({
       </div>
 
       {/* ── Description ── */}
-      <p className="mb-6 text-[14px] text-gray-500">{description}</p>
+      <p className="mb-6 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{description}</p>
 
       {/* ── Page content ── */}
       {children}

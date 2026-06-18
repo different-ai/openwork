@@ -143,12 +143,12 @@ export function IntegrationConnectDialog({
       aria-modal="true"
       aria-label={`Connect ${meta.name}`}
     >
-      <div className="relative w-full max-w-lg rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]">
+      <div className="relative w-full max-w-lg rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]">
         {/* Close */}
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-5 top-5 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+          className="absolute right-5 top-5 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 dark:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
           aria-label="Close"
         >
           <X className="h-4 w-4" />
@@ -156,16 +156,16 @@ export function IntegrationConnectDialog({
 
         {/* Header */}
         <div className="grid gap-2 pr-8">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">
+          <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400 dark:text-gray-500">
             {progressLabel}
           </p>
           <div className="flex items-center gap-3">
             <ProviderBadge provider={provider} />
             <div>
-              <h2 className="text-[20px] font-semibold tracking-[-0.03em] text-gray-950">
+              <h2 className="text-[20px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">
                 Connect {meta.name}
               </h2>
-              <p className="text-[13px] text-gray-500">{meta.description}</p>
+              <p className="text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{meta.description}</p>
             </div>
           </div>
         </div>
@@ -278,22 +278,22 @@ function ProviderBadge({ provider }: { provider: IntegrationProvider }) {
 
 function AuthorizeStep({ providerName, scopes }: { providerName: string; scopes: string[] }) {
   return (
-    <div className="rounded-2xl border border-gray-100 bg-gray-50/60 p-5">
-      <p className="flex items-center gap-2 text-[13px] font-medium text-gray-900">
-        <ShieldCheck className="h-4 w-4 text-gray-500" />
+    <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50/60 p-5">
+      <p className="flex items-center gap-2 text-[13px] font-medium text-gray-900 dark:text-gray-100">
+        <ShieldCheck className="h-4 w-4 text-gray-500 dark:text-gray-400 dark:text-gray-500" />
         {providerName} is requesting the following permissions
       </p>
-      <ul className="mt-3 grid gap-2 text-[13px] text-gray-600">
+      <ul className="mt-3 grid gap-2 text-[13px] text-gray-600 dark:text-gray-400 dark:text-gray-500">
         {scopes.map((scope) => (
           <li key={scope} className="flex items-center gap-2">
-            <Lock className="h-3.5 w-3.5 text-gray-400" />
-            <code className="rounded bg-white px-1.5 py-0.5 text-[12px] text-gray-700 ring-1 ring-gray-200">
+            <Lock className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500" />
+            <code className="rounded bg-white dark:bg-[var(--dls-surface)] px-1.5 py-0.5 text-[12px] text-gray-700 dark:text-gray-300 ring-1 ring-gray-200">
               {scope}
             </code>
           </li>
         ))}
       </ul>
-      <p className="mt-4 text-[12px] leading-5 text-gray-400">
+      <p className="mt-4 text-[12px] leading-5 text-gray-400 dark:text-gray-500">
         You will be redirected to {providerName} to approve access. This preview simulates that
         redirect — no data leaves your browser.
       </p>
@@ -314,21 +314,21 @@ function SelectAccountStep({
 }) {
   if (loading) {
     return (
-      <div className="rounded-2xl border border-dashed border-gray-200 px-5 py-10 text-center text-[13px] text-gray-400">
+      <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 px-5 py-10 text-center text-[13px] text-gray-400 dark:text-gray-500">
         Loading accounts…
       </div>
     );
   }
   if (accounts.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-gray-200 px-5 py-10 text-center text-[13px] text-gray-400">
+      <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 px-5 py-10 text-center text-[13px] text-gray-400 dark:text-gray-500">
         No accounts available.
       </div>
     );
   }
   return (
-    <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
-      <div className="divide-y divide-gray-100">
+    <div className="overflow-hidden rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]">
+      <div className="divide-y divide-gray-100 dark:divide-gray-700">
         {accounts.map((account) => (
           <DenSelectableRow
             key={account.id}
@@ -376,16 +376,16 @@ function SelectReposStep({
       />
 
       {loading ? (
-        <div className="rounded-2xl border border-dashed border-gray-200 px-5 py-10 text-center text-[13px] text-gray-400">
+        <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 px-5 py-10 text-center text-[13px] text-gray-400 dark:text-gray-500">
           Loading repositories…
         </div>
       ) : repos.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-gray-200 px-5 py-10 text-center text-[13px] text-gray-400">
+        <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 px-5 py-10 text-center text-[13px] text-gray-400 dark:text-gray-500">
           {totalCount === 0 ? "No repositories available on this account." : "No repositories match that filter."}
         </div>
       ) : (
-        <div className="max-h-[320px] overflow-y-auto rounded-2xl border border-gray-100 bg-white">
-          <div className="divide-y divide-gray-100">
+        <div className="max-h-[320px] overflow-y-auto rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]">
+          <div className="divide-y divide-gray-100 dark:divide-gray-700">
             {repos.map((repo) => (
               <DenSelectableRow
                 key={repo.id}
@@ -394,7 +394,7 @@ function SelectReposStep({
                 descriptionBelow
                 selected={selectedIds.has(repo.id)}
                 onClick={() => onToggle(repo)}
-                leading={<GitBranch className="h-4 w-4 text-gray-400" />}
+                leading={<GitBranch className="h-4 w-4 text-gray-400 dark:text-gray-500" />}
                 aside={
                   repo.hasPlugins ? (
                     <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
@@ -408,7 +408,7 @@ function SelectReposStep({
         </div>
       )}
 
-      <p className="text-[12px] text-gray-400">
+      <p className="text-[12px] text-gray-400 dark:text-gray-500">
         {selectedIds.size === 0
           ? "Select one or more repos to expose their plugins and skills."
           : `${selectedIds.size} of ${totalCount} selected.`}
@@ -419,15 +419,15 @@ function SelectReposStep({
 
 function ConnectingStep({ providerName }: { providerName: string }) {
   return (
-    <div className="rounded-2xl border border-gray-100 bg-gray-50/60 px-5 py-10 text-center">
+    <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50/60 px-5 py-10 text-center">
       <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center">
-        <svg aria-hidden="true" className="h-8 w-8 animate-spin text-gray-500" viewBox="0 0 24 24" fill="none">
+        <svg aria-hidden="true" className="h-8 w-8 animate-spin text-gray-500 dark:text-gray-400 dark:text-gray-500" viewBox="0 0 24 24" fill="none">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
       </div>
-      <p className="text-[14px] font-medium text-gray-900">Installing {providerName} integration…</p>
-      <p className="mt-1 text-[12px] text-gray-500">Registering webhooks and indexing repository manifests.</p>
+      <p className="text-[14px] font-medium text-gray-900 dark:text-gray-100">Installing {providerName} integration…</p>
+      <p className="mt-1 text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Registering webhooks and indexing repository manifests.</p>
     </div>
   );
 }
@@ -444,10 +444,10 @@ function ConnectedStep({
   return (
     <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 px-5 py-6 text-center">
       <CheckCircle2 className="mx-auto mb-2 h-8 w-8 text-emerald-700" />
-      <p className="text-[14px] font-medium text-gray-900">
+      <p className="text-[14px] font-medium text-gray-900 dark:text-gray-100">
         {providerName} connected{account ? ` · ${account.name}` : ""}
       </p>
-      <p className="mt-1 text-[12px] text-gray-500">
+      <p className="mt-1 text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
         {repoCount} {repoCount === 1 ? "repository" : "repositories"} will now contribute plugins and skills.
       </p>
     </div>

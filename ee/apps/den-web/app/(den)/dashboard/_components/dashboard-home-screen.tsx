@@ -14,7 +14,7 @@ export function DashboardHomeScreen() {
 
   if (orgBusy || !orgContext) {
     return (
-      <div className="flex min-h-[320px] items-center justify-center px-6 text-[14px] text-gray-500">
+      <div className="flex min-h-[320px] items-center justify-center px-6 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
         Loading your workspace...
       </div>
     );

@@ -105,33 +105,33 @@ export function LlmProvidersScreen() {
       ) : null}
 
       {busy ? (
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
           Loading your provider library...
         </div>
       ) : (
       <div className="grid gap-8">
         {openWorkKeyRows.length > 0 ? (
-          <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-white">
-            <div className="border-b border-gray-100 px-6 py-4">
-              <h2 className="text-[16px] font-medium tracking-[-0.02em] text-gray-950">OpenWork Model Keys</h2>
-              <p className="mt-1 text-[13px] text-gray-500">Members in this organization with an OpenWork Models key.</p>
+          <section className="overflow-hidden rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]">
+            <div className="border-b border-gray-100 dark:border-gray-700 px-6 py-4">
+              <h2 className="text-[16px] font-medium tracking-[-0.02em] text-gray-950 dark:text-gray-100">OpenWork Model Keys</h2>
+              <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Members in this organization with an OpenWork Models key.</p>
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-[14px]">
-                <thead className="bg-gray-50 text-[12px] uppercase tracking-[0.08em] text-gray-500">
+                <thead className="bg-gray-50 dark:bg-gray-800/50 text-[12px] uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                   <tr>
                     <th className="px-6 py-3 font-medium">Member</th>
                     <th className="px-6 py-3 font-medium">Created</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                   {openWorkKeyRows.map((row) => (
                     <tr key={row.id}>
                       <td className="px-6 py-3">
-                        <p className="text-[14px] font-medium text-gray-950">{row.name}</p>
-                        <p className="text-[12px] text-gray-500">{row.email}</p>
+                        <p className="text-[14px] font-medium text-gray-950 dark:text-gray-100">{row.name}</p>
+                        <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{row.email}</p>
                       </td>
-                      <td className="px-6 py-3 text-[13px] text-gray-600">{formatProviderTimestamp(row.createdAt)}</td>
+                      <td className="px-6 py-3 text-[13px] text-gray-600 dark:text-gray-400 dark:text-gray-500">{formatProviderTimestamp(row.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -141,13 +141,13 @@ export function LlmProvidersScreen() {
         ) : null}
 
         <section className="grid gap-4">
-          <h2 className="text-[16px] font-medium tracking-[-0.02em] text-gray-950">Custom</h2>
+          <h2 className="text-[16px] font-medium tracking-[-0.02em] text-gray-950 dark:text-gray-100">Custom</h2>
           {filteredProviders.length === 0 ? (
-            <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
-              <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
+            <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center">
+              <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900 dark:text-gray-100">
                 {customProviders.length === 0 ? "No custom providers configured yet." : "No providers match that search yet."}
               </p>
-              <p className="mx-auto mt-3 max-w-[560px] text-[15px] leading-8 text-gray-500">
+              <p className="mx-auto mt-3 max-w-[560px] text-[15px] leading-8 text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 {customProviders.length === 0
                   ? "Start with a models.dev provider, select the models you want to expose, add the credential, and then grant access to the right people or teams."
                   : "Try a broader search term, or create a new provider if this org needs a different stack."}
@@ -164,7 +164,7 @@ export function LlmProvidersScreen() {
               <Link
                 key={provider.id}
                 href={getLlmProviderRoute(orgSlug, provider.id)}
-                className="block overflow-hidden rounded-[28px] border border-gray-200 bg-white p-6 transition hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-[0_18px_40px_-24px_rgba(15,23,42,0.25)]"
+                className="block overflow-hidden rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 transition hover:-translate-y-0.5 hover:border-gray-300 dark:hover:border-gray-500 dark:border-gray-600 hover:shadow-[0_18px_40px_-24px_rgba(15,23,42,0.25)] dark:shadow-[0_18px_40px_-24px_rgba(0,0,0,0.4)]"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -172,11 +172,11 @@ export function LlmProvidersScreen() {
                       <SourceIcon className="h-3.5 w-3.5" />
                       {getProviderSourceLabel(provider.source)}
                     </div>
-                    <h2 className="mt-4 text-[22px] font-semibold tracking-[-0.05em] text-gray-950">{provider.name}</h2>
-                    <p className="mt-2 text-[14px] text-gray-500">{provider.providerId}</p>
+                    <h2 className="mt-4 text-[22px] font-semibold tracking-[-0.05em] text-gray-950 dark:text-gray-100">{provider.name}</h2>
+                    <p className="mt-2 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{provider.providerId}</p>
                   </div>
 
-                  <div className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-[12px] font-medium text-gray-600">
+                  <div className="rounded-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
                     {provider.models.length} {provider.models.length === 1 ? "model" : "models"}
                   </div>
                 </div>
@@ -187,24 +187,24 @@ export function LlmProvidersScreen() {
                     {provider.hasApiKey ? "Credential saved" : "Credential missing"}
                   </span>
                   {envNames.slice(0, 2).map((envName) => (
-                    <span key={envName} className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">
+                    <span key={envName} className="rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
                       {envName}
                     </span>
                   ))}
                   {envNames.length > 2 ? (
-                    <span className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">
+                    <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
                       +{envNames.length - 2} more keys
                     </span>
                   ) : null}
                 </div>
 
-                <div className="mt-6 grid gap-3 rounded-[24px] bg-gray-50 p-4 text-[13px] text-gray-600 sm:grid-cols-2">
+                <div className="mt-6 grid gap-3 rounded-[24px] bg-gray-50 dark:bg-gray-800/50 p-4 text-[13px] text-gray-600 dark:text-gray-400 dark:text-gray-500 sm:grid-cols-2">
                   <div>
-                    <p className="font-medium text-gray-900">Access</p>
+                    <p className="font-medium text-gray-900 dark:text-gray-100">Access</p>
                     <p className="mt-1">{memberAccessCount} people · {teamAccessCount} teams</p>
                   </div>
                   <div>
-                    <p className="font-medium text-gray-900">Updated</p>
+                    <p className="font-medium text-gray-900 dark:text-gray-100">Updated</p>
                     <p className="mt-1">{formatProviderTimestamp(provider.updatedAt)}</p>
                   </div>
                 </div>

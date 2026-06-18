@@ -253,7 +253,7 @@ export function ApiKeysScreen() {
                 description="Create named, rate-limited API keys for your own org membership and revoke any key in the workspace when needed."
                 colors={["#E6FFFA", "#0F766E", "#14B8A6", "#99F6E4"]}
             >
-                <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+                <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                     Loading organization details...
                 </div>
             </DashboardPageTemplate>
@@ -297,7 +297,7 @@ export function ApiKeysScreen() {
                                     </div>
                                 </div>
 
-                                <div className="mt-5 rounded-[20px] border border-white/10 bg-white/5 p-4">
+                                <div className="mt-5 rounded-[20px] border border-white/10 bg-white dark:bg-white/5 p-4">
                                     <code className="block break-all text-[13px] leading-6 text-emerald-200">
                                         {createdKey}
                                     </code>
@@ -320,10 +320,10 @@ export function ApiKeysScreen() {
                             <form onSubmit={handleCreate}>
                                 <div className="mb-5 flex items-start justify-between gap-4">
                                     <div>
-                                        <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">
+                                        <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900 dark:text-gray-100">
                                             Issue a new key
                                         </p>
-                                        <p className="mt-1 text-[14px] leading-6 text-gray-500">
+                                        <p className="mt-1 text-[14px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                             Keys are issued to you for this
                                             organization only.
                                         </p>
@@ -331,7 +331,7 @@ export function ApiKeysScreen() {
                                 </div>
 
                                 <label className="grid gap-3">
-                                    <span className="text-[14px] font-medium text-gray-700">
+                                    <span className="text-[14px] font-medium text-gray-700 dark:text-gray-300">
                                         Key name
                                     </span>
                                     <DenInput
@@ -361,7 +361,7 @@ export function ApiKeysScreen() {
                         ) : (
                             <div className="flex flex-wrap items-center justify-between gap-4">
                                 <div>
-                                    <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">
+                                    <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900 dark:text-gray-100">
                                         Create a new API key
                                     </p>
                                 </div>
@@ -372,8 +372,8 @@ export function ApiKeysScreen() {
                         )}
                     </DenCard>
 
-                    <div className="overflow-hidden rounded-[28px] border border-gray-100 bg-white">
-                        <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_180px_120px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                    <div className="overflow-hidden rounded-[28px] border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]">
+                        <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_180px_120px] gap-4 border-b border-gray-100 dark:border-gray-700 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
                             <span>Key</span>
                             <span>Owner</span>
                             <span>Last used</span>
@@ -381,41 +381,41 @@ export function ApiKeysScreen() {
                         </div>
 
                         {busy ? (
-                            <div className="px-6 py-8 text-center text-[13px] text-gray-400">
+                            <div className="px-6 py-8 text-center text-[13px] text-gray-400 dark:text-gray-500">
                                 Loading API keys...
                             </div>
                         ) : apiKeys.length === 0 ? (
-                            <div className="px-6 py-8 text-center text-[13px] text-gray-400">
+                            <div className="px-6 py-8 text-center text-[13px] text-gray-400 dark:text-gray-500">
                                 No API keys for this workspace yet.
                             </div>
                         ) : (
                             apiKeys.map((apiKey) => (
                                 <div
                                     key={apiKey.id}
-                                    className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_180px_120px] items-center gap-4 border-b border-gray-100 px-6 py-4 transition hover:bg-gray-50/70 last:border-b-0"
+                                    className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_180px_120px] items-center gap-4 border-b border-gray-100 dark:border-gray-700 px-6 py-4 transition hover:bg-gray-50 dark:hover:bg-gray-800/50/70 last:border-b-0"
                                 >
                                     <div className="min-w-0">
-                                        <p className="truncate text-[14px] font-medium text-gray-900">
+                                        <p className="truncate text-[14px] font-medium text-gray-900 dark:text-gray-100">
                                             {apiKey.name ??
                                                 apiKey.start ??
                                                 "Untitled key"}
                                         </p>
-                                        <p className="mt-1 truncate text-[12px] text-gray-400">
+                                        <p className="mt-1 truncate text-[12px] text-gray-400 dark:text-gray-500">
                                             {formatKeyPreview(apiKey)}{" "}
                                             {formatDateTime(apiKey.createdAt)}
                                         </p>
                                     </div>
 
                                     <div className="min-w-0">
-                                        <p className="truncate text-[13px] font-medium text-gray-900">
+                                        <p className="truncate text-[13px] font-medium text-gray-900 dark:text-gray-100">
                                             {apiKey.owner.name}
                                         </p>
-                                        <p className="truncate text-[12px] text-gray-400">
+                                        <p className="truncate text-[12px] text-gray-400 dark:text-gray-500">
                                             {apiKey.owner.email}
                                         </p>
                                     </div>
 
-                                    <span className="text-[13px] text-gray-500">
+                                    <span className="text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                         {formatDateTime(apiKey.lastRequest)}
                                     </span>
 

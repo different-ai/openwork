@@ -17,6 +17,7 @@
     --dls-active: #eef2f7;
     --dls-shell-shadow: 0 18px 40px -30px rgba(15, 23, 42, 0.14);
     --dls-card-shadow: 0 12px 24px -20px rgba(15, 23, 42, 0.1);
+    --ow-chart-bar-empty: #EBEEF4;
     --ow-bg: var(--dls-app-bg);
     --ow-ink: var(--dls-text-primary);
     --ow-muted: var(--dls-text-secondary);
@@ -44,6 +45,7 @@
     --dls-active: #1e293b;
     --dls-shell-shadow: 0 18px 40px -30px rgba(0, 0, 0, 0.6);
     --dls-card-shadow: 0 12px 24px -20px rgba(0, 0, 0, 0.5);
+    --ow-chart-bar-empty: #374151;
     --ow-bg: var(--dls-app-bg);
     --ow-ink: var(--dls-text-primary);
     --ow-muted: var(--dls-text-secondary);

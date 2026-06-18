@@ -335,7 +335,7 @@ export function DenCombobox({
           onKeyDown={handleInputKeyDown}
           className={[
             denDropdownFieldBaseClass,
-            "rounded-lg placeholder:text-gray-400",
+            "rounded-lg placeholder:text-gray-400 dark:text-gray-500",
             open ? denDropdownFieldOpenClass : "",
             disabled ? "cursor-not-allowed opacity-60" : "cursor-text",
             className ?? "",
@@ -344,7 +344,7 @@ export function DenCombobox({
             .join(" ")}
         />
         <span className={denDropdownChevronSlotClass}>
-          <ChevronDown size={16} className={disabled ? "text-gray-300" : "text-gray-400"} aria-hidden="true" />
+          <ChevronDown size={16} className={disabled ? "text-gray-300" : "text-gray-400 dark:text-gray-500"} aria-hidden="true" />
         </span>
       </div>
 
@@ -381,21 +381,21 @@ export function DenCombobox({
                       .join(" ")}
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-[14px] font-medium text-gray-900">{option.label}</p>
+                      <p className="truncate text-[14px] font-medium text-gray-900 dark:text-gray-100">{option.label}</p>
                       {option.description ? (
-                        <p className="mt-1 truncate text-[12px] text-gray-500">{option.description}</p>
+                        <p className="mt-1 truncate text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{option.description}</p>
                       ) : null}
                     </div>
 
                     <div className="flex shrink-0 items-center gap-3 pl-2">
-                      {option.meta ? <span className="text-[12px] text-gray-400">{option.meta}</span> : null}
-                      {selected ? <Check className="h-4 w-4 text-gray-900" aria-hidden="true" /> : null}
+                      {option.meta ? <span className="text-[12px] text-gray-400 dark:text-gray-500">{option.meta}</span> : null}
+                      {selected ? <Check className="h-4 w-4 text-gray-900 dark:text-gray-100" aria-hidden="true" /> : null}
                     </div>
                   </button>
                 );
               })
             ) : (
-              <div className="px-3 py-4 text-[13px] text-gray-500">
+              <div className="px-3 py-4 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 {query ? `${emptyLabel} "${query}"` : emptyLabel}
               </div>
             )}

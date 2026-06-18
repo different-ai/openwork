@@ -396,7 +396,7 @@ export function AuthPanel({
           <label className="grid gap-2">
             <span className="den-label">Email</span>
             <input
-              className="den-input disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500"
+              className="den-input disabled:cursor-not-allowed disabled:bg-gray-50 dark:bg-gray-800/50 disabled:text-gray-500 dark:text-gray-400 dark:text-gray-500"
               type="email"
               value={email}
               onChange={(event) => {
@@ -542,7 +542,7 @@ export function AuthPanel({
           aria-live="polite"
         >
           {passwordResetInfo ? <p>{passwordResetInfo}</p> : null}
-          {passwordResetError ? <p className="font-medium text-rose-600">{passwordResetError}</p> : null}
+          {passwordResetError ? <p className="font-medium text-rose-600 dark:text-rose-400">{passwordResetError}</p> : null}
         </div>
       ) : null}
 
@@ -552,7 +552,7 @@ export function AuthPanel({
           aria-live="polite"
         >
           <p>{authInfo}</p>
-          {authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
+          {authError ? <p className="font-medium text-rose-600 dark:text-rose-400">{authError}</p> : null}
           {!authError && verificationRequired ? (
             <div className="mt-1 inline-flex items-center justify-center gap-1 text-emerald-600">
               <CheckCircle2 className="h-3.5 w-3.5" />

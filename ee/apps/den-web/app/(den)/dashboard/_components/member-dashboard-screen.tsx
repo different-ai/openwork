@@ -80,22 +80,22 @@ function SummaryCard({
   tone: "blue" | "emerald" | "violet" | "amber";
 }) {
   const toneClass = {
-    blue: "bg-blue-50 text-blue-700",
+    blue: "bg-blue-50 dark:bg-blue-900/30 text-blue-700",
     emerald: "bg-emerald-50 text-emerald-700",
     violet: "bg-violet-50 text-violet-700",
     amber: "bg-amber-50 text-amber-700",
   }[tone];
 
   return (
-    <section className="rounded-[24px] border border-gray-200 bg-white p-5 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+    <section className="rounded-[24px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
       <div className="flex items-start gap-4">
         <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${toneClass}`}>
           <Icon className="h-5 w-5" aria-hidden="true" />
         </div>
         <div className="min-w-0">
-          <p className="text-[13px] font-medium text-gray-500">{title}</p>
-          <p className="mt-1 text-[24px] font-semibold tracking-[-0.04em] text-gray-950">{value}</p>
-          <p className="mt-1 text-[13px] leading-5 text-gray-500">{detail}</p>
+          <p className="text-[13px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">{title}</p>
+          <p className="mt-1 text-[24px] font-semibold tracking-[-0.04em] text-gray-950 dark:text-gray-100">{value}</p>
+          <p className="mt-1 text-[13px] leading-5 text-gray-500 dark:text-gray-400 dark:text-gray-500">{detail}</p>
         </div>
       </div>
     </section>
@@ -112,7 +112,7 @@ function ErrorNotice({ children }: { children: React.ReactNode }) {
 
 function EmptyList({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-[13px] text-gray-500">
+    <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-6 text-center text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
       {children}
     </div>
   );
@@ -143,10 +143,10 @@ export function MemberDashboardScreen() {
 
   return (
     <div className="mx-auto max-w-[1100px] px-4 pb-10 pt-5 sm:px-6 md:px-8">
-      <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-[#07192C] text-white shadow-[0_24px_70px_-45px_rgba(15,23,42,0.7)]">
+      <section className="overflow-hidden rounded-[28px] border border-gray-200 dark:border-gray-700 bg-[#07192C] text-white shadow-[0_24px_70px_-45px_rgba(15,23,42,0.7)]">
         <div className="grid gap-8 p-6 md:grid-cols-[1.5fr_1fr] md:p-8">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-white/70">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white dark:bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-white/70">
               <Users className="h-3.5 w-3.5" aria-hidden="true" />
               Workspace Member
             </div>
@@ -157,7 +157,7 @@ export function MemberDashboardScreen() {
               Marketplaces contain plugins. OpenWork Marketplace is built in, and assigned marketplaces become available after you sign in to the app.
             </p>
           </div>
-          <div className="rounded-[22px] border border-white/10 bg-white/[0.06] p-5">
+          <div className="rounded-[22px] border border-white/10 bg-white dark:bg-white/[0.06] p-5">
             <p className="text-[12px] uppercase tracking-[0.14em] text-white/40">Signed in as</p>
             <p className="mt-2 text-[18px] font-semibold tracking-[-0.03em] text-white">{roleLabel}</p>
             <p className="mt-4 text-[13px] leading-6 text-white/55">
@@ -199,13 +199,13 @@ export function MemberDashboardScreen() {
       </div>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr]">
-        <section className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+        <section className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">LLM providers</h2>
-              <p className="mt-1 text-[13px] text-gray-500">Custom providers you can use from OpenWork.</p>
+              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">LLM providers</h2>
+              <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Custom providers you can use from OpenWork.</p>
             </div>
-            <span className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">
+            <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
               {customProviders.length} available
             </span>
           </div>
@@ -220,17 +220,17 @@ export function MemberDashboardScreen() {
               customProviders.slice(0, 5).map((provider) => {
                 const envNames = getProviderEnvNames(provider.providerConfig);
                 return (
-                  <div key={provider.id} className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3">
+                  <div key={provider.id} className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="truncate text-[14px] font-semibold text-gray-950">{provider.name}</p>
-                        <p className="mt-1 text-[12px] text-gray-500">{provider.models.length} model{provider.models.length === 1 ? "" : "s"}</p>
+                        <p className="truncate text-[14px] font-semibold text-gray-950 dark:text-gray-100">{provider.name}</p>
+                        <p className="mt-1 text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{provider.models.length} model{provider.models.length === 1 ? "" : "s"}</p>
                       </div>
-                      <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] text-gray-500">
+                      <span className="shrink-0 rounded-full bg-white dark:bg-[var(--dls-surface)] px-2 py-1 text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                         {provider.source === "custom" ? "Custom" : "Catalog"}
                       </span>
                     </div>
-                    <p className="mt-3 text-[12px] text-gray-500">
+                    <p className="mt-3 text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                       {envNames.length > 0 ? envNames.slice(0, 3).join(", ") : "No environment keys listed"} - Updated {formatProviderTimestamp(provider.updatedAt)}
                     </p>
                   </div>
@@ -240,11 +240,11 @@ export function MemberDashboardScreen() {
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+        <section className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">OpenWork Models</h2>
-              <p className="mt-1 text-[13px] text-gray-500">Org-provided inference status.</p>
+              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">OpenWork Models</h2>
+              <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Org-provided inference status.</p>
             </div>
             <span className={`rounded-full px-3 py-1 text-[12px] font-medium ${inference?.enabled ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
               {inferenceLabel}
@@ -253,14 +253,14 @@ export function MemberDashboardScreen() {
 
           <div className="mt-5 grid gap-3">
             {inferenceError ? <ErrorNotice>{getErrorText(inferenceError)}</ErrorNotice> : null}
-            <div className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-4">
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-4">
               <div className="flex items-center gap-3">
-                <CheckCircle2 className={`h-5 w-5 ${inference?.enabled ? "text-emerald-600" : "text-gray-400"}`} aria-hidden="true" />
+                <CheckCircle2 className={`h-5 w-5 ${inference?.enabled ? "text-emerald-600" : "text-gray-400 dark:text-gray-500"}`} aria-hidden="true" />
                 <div>
-                  <p className="text-[14px] font-semibold text-gray-950">
+                  <p className="text-[14px] font-semibold text-gray-950 dark:text-gray-100">
                     {inference?.enabled ? "Enabled for this workspace" : "Not enabled for this workspace"}
                   </p>
-                  <p className="mt-1 text-[12px] text-gray-500">
+                  <p className="mt-1 text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                     {inference?.subscribed === false ? "The workspace needs an active subscription before members can use OpenWork Models." : `${inference?.memberCount ?? 0} member${inference?.memberCount === 1 ? "" : "s"} included in usage limits.`}
                   </p>
                 </div>
@@ -271,13 +271,13 @@ export function MemberDashboardScreen() {
       </div>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr]">
-        <section className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+        <section className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">Marketplaces</h2>
-              <p className="mt-1 text-[13px] text-gray-500">Marketplaces contain plugins and sync into the app after sign-in.</p>
+              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">Marketplaces</h2>
+              <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Marketplaces contain plugins and sync into the app after sign-in.</p>
             </div>
-            <span className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">
+            <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
               {marketplaces.length} visible
             </span>
           </div>
@@ -290,13 +290,13 @@ export function MemberDashboardScreen() {
               <EmptyList>No marketplaces are available to you yet.</EmptyList>
             ) : (
               marketplaces.slice(0, 5).map((marketplace) => (
-                <div key={marketplace.id} className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3">
+                <div key={marketplace.id} className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-[14px] font-semibold text-gray-950">{marketplace.name}</p>
-                      {marketplace.description ? <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-gray-500">{marketplace.description}</p> : null}
+                      <p className="truncate text-[14px] font-semibold text-gray-950 dark:text-gray-100">{marketplace.name}</p>
+                      {marketplace.description ? <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-gray-500 dark:text-gray-400 dark:text-gray-500">{marketplace.description}</p> : null}
                     </div>
-                    <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] text-gray-500">
+                    <span className="shrink-0 rounded-full bg-white dark:bg-[var(--dls-surface)] px-2 py-1 text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                       {marketplace.pluginCount} plugin{marketplace.pluginCount === 1 ? "" : "s"}
                     </span>
                   </div>
@@ -306,13 +306,13 @@ export function MemberDashboardScreen() {
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+        <section className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">Plugins</h2>
-              <p className="mt-1 text-[13px] text-gray-500">Skills, hooks, MCPs, agents, and commands you can use.</p>
+              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">Plugins</h2>
+              <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Skills, hooks, MCPs, agents, and commands you can use.</p>
             </div>
-            <span className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">
+            <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
               {plugins.length} visible
             </span>
           </div>
@@ -325,10 +325,10 @@ export function MemberDashboardScreen() {
               <EmptyList>No plugins are available to you yet.</EmptyList>
             ) : (
               plugins.slice(0, 5).map((plugin) => (
-                <div key={plugin.id} className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3">
-                  <p className="truncate text-[14px] font-semibold text-gray-950">{plugin.name}</p>
-                  <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-gray-500">{plugin.description}</p>
-                  <p className="mt-3 text-[12px] text-gray-500">{getPluginPartsSummary(plugin)}</p>
+                <div key={plugin.id} className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-3">
+                  <p className="truncate text-[14px] font-semibold text-gray-950 dark:text-gray-100">{plugin.name}</p>
+                  <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-gray-500 dark:text-gray-400 dark:text-gray-500">{plugin.description}</p>
+                  <p className="mt-3 text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{getPluginPartsSummary(plugin)}</p>
                 </div>
               ))
             )}

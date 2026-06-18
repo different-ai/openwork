@@ -200,7 +200,7 @@ export function PluginsScreen() {
       ) : null}
 
       {isLoading || integrationsLoading ? (
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
           Loading plugin catalog...
         </div>
       ) : !hasAnyIntegration && plugins.length === 0 ? (
@@ -221,7 +221,7 @@ export function PluginsScreen() {
               <Link
                 key={plugin.id}
                 href={getPluginRoute(orgSlug, plugin.id)}
-                className="group block overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
+                className="group block overflow-hidden rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] transition hover:-translate-y-0.5 hover:border-gray-200 dark:hover:border-gray-600 dark:border-gray-700 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] dark:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.4)]"
               >
                 <div className="flex items-stretch">
                   <div className="relative w-[68px] shrink-0 overflow-hidden">
@@ -229,20 +229,20 @@ export function PluginsScreen() {
                       <PaperMeshGradient seed={plugin.id} speed={0} />
                     </div>
                     <div className="relative flex h-full items-center justify-center">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-                        <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />
+                      <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white dark:bg-[var(--dls-surface)] shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
+                        <Puzzle className="h-4 w-4 text-gray-700 dark:text-gray-300" aria-hidden />
                       </div>
                     </div>
                   </div>
 
                   <div className="min-w-0 flex-1 px-5 py-4">
                     <div className="flex items-start justify-between gap-2">
-                      <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+                      <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                         {plugin.name}
                       </h2>
                     </div>
                     {plugin.description ? (
-                      <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">
+                      <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                         {plugin.description}
                       </p>
                     ) : null}
@@ -252,16 +252,16 @@ export function PluginsScreen() {
                         {(plugin.marketplaces ?? []).map((marketplace) => (
                           <span
                             key={marketplace.id}
-                            className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600"
+                            className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-400 dark:text-gray-500"
                           >
-                            <Store className="h-3 w-3 text-gray-400" aria-hidden />
+                            <Store className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-hidden />
                             <span className="truncate">{marketplace.name}</span>
                           </span>
                         ))}
                       </div>
                     ) : null}
 
-                    <p className="mt-3 text-[11.5px] text-gray-400">
+                    <p className="mt-3 text-[11.5px] text-gray-400 dark:text-gray-500">
                       {getPluginPartsSummary(plugin)}
                     </p>
                   </div>
@@ -356,23 +356,23 @@ export function PluginsScreen() {
 
 function EmptyState({ title, description }: { title: string; description: string }) {
   return (
-    <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
-      <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">{title}</p>
-      <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-8 text-gray-500">{description}</p>
+    <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center">
+      <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900 dark:text-gray-100">{title}</p>
+      <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-8 text-gray-500 dark:text-gray-400 dark:text-gray-500">{description}</p>
     </div>
   );
 }
 
 function ConnectIntegrationEmptyState({ integrationsHref }: { integrationsHref: string }) {
   return (
-    <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-gray-100 text-gray-500">
+    <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 dark:text-gray-500">
         <Cable className="h-6 w-6" />
       </div>
-      <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
+      <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900 dark:text-gray-100">
         Connect an integration to discover plugins
       </p>
-      <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-8 text-gray-500">
+      <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-8 text-gray-500 dark:text-gray-400 dark:text-gray-500">
         Plugins, skills, hooks, and MCP servers are sourced from the repositories you connect on the
         Integrations page. Connect GitHub or Bitbucket to see your catalog populate.
       </p>
@@ -429,34 +429,34 @@ function PrimitiveList({
         <Link
           key={row.id}
           href={row.href}
-          className="group flex min-w-0 flex-col gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-4 transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.08)]"
+          className="group flex min-w-0 flex-col gap-3 rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 py-4 transition hover:-translate-y-0.5 hover:border-gray-200 dark:hover:border-gray-600 dark:border-gray-700 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.08)] dark:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.3)]"
         >
           <div className="flex min-w-0 items-start gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-gray-50 text-gray-500 group-hover:bg-gray-100 group-hover:text-gray-700">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-gray-50 dark:bg-gray-800/50 text-gray-500 group-hover:bg-gray-100 dark:hover:bg-gray-800 dark:bg-gray-700 group-hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300">
               <Icon className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
               <p
-                className={`truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900 ${
+                className={`truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100 ${
                   row.monospacedTitle ? "font-mono" : ""
                 }`}
               >
                 {row.title}
               </p>
               {row.description ? (
-                <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">
+                <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                   {row.description}
                 </p>
               ) : null}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 border-t border-gray-50 pt-2.5">
-            <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
-              <Puzzle className="h-3 w-3 text-gray-400" aria-hidden />
+            <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <Puzzle className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-hidden />
               <span className="max-w-[160px] truncate">{row.pluginName}</span>
             </span>
             {row.meta ? (
-              <span className="rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
+              <span className="rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 {row.meta}
               </span>
             ) : null}

@@ -47,7 +47,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   if (isLoading && !data) {
     return (
       <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
-        <div className="rounded-2xl border border-gray-100 bg-white px-5 py-8 text-[13px] text-gray-400">
+        <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-8 text-[13px] text-gray-400 dark:text-gray-500">
           Loading marketplace…
         </div>
       </div>
@@ -57,7 +57,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   if (!data) {
     return (
       <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
-        <div className="rounded-2xl border border-red-100 bg-red-50 px-5 py-3.5 text-[13px] text-red-600">
+        <div className="rounded-2xl border border-red-100 dark:border-red-800/60 bg-red-50 dark:bg-red-900/30 px-5 py-3.5 text-[13px] text-red-600 dark:text-red-400">
           {error instanceof Error ? error.message : "That marketplace could not be found."}
         </div>
       </div>
@@ -71,21 +71,21 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
       <div className="mb-6 flex items-center justify-between gap-4">
         <Link
           href={getMarketplacesRoute(orgSlug)}
-          className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700"
+          className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
         >
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
       </div>
 
-      <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+      <article className="overflow-hidden rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]">
         <div className="flex items-stretch">
           <div className="relative w-[96px] shrink-0 overflow-hidden">
             <div className="absolute inset-0">
               <PaperMeshGradient seed={marketplace.id} speed={0} />
             </div>
             <div className="relative flex h-full items-center justify-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-[16px] border border-white/60 bg-white shadow-[0_10px_24px_-10px_rgba(15,23,42,0.3)]">
+              <div className="flex h-14 w-14 items-center justify-center rounded-[16px] border border-white/60 bg-white dark:bg-[var(--dls-surface)] shadow-[0_10px_24px_-10px_rgba(15,23,42,0.3)]">
                 <MarketplaceLogo
                   logoUrl={marketplace.logoUrl}
                   name={marketplace.name}
@@ -98,17 +98,17 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
 
           <div className="min-w-0 flex-1 px-6 py-5">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+              <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-100">
                 {marketplace.name}
               </h1>
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+              <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
               </span>
             </div>
             {marketplace.description ? (
-              <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{marketplace.description}</p>
+              <p className="mt-1 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">{marketplace.description}</p>
             ) : null}
-            <p className="mt-3 text-[11.5px] text-gray-400">
+            <p className="mt-3 text-[11.5px] text-gray-400 dark:text-gray-500">
               Added {formatMarketplaceTimestamp(marketplace.createdAt)}
             </p>
           </div>
@@ -118,26 +118,26 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
       <div className="mt-6 space-y-6">
         {source ? (
           <section>
-            <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
               Source
             </h2>
             <Link
               href={getGithubIntegrationSetupRoute(orgSlug, source.connectorInstanceId)}
-              className="group flex items-center gap-4 rounded-2xl border border-gray-100 bg-white px-4 py-3 transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.08)]"
+              className="group flex items-center gap-4 rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 py-3 transition hover:-translate-y-0.5 hover:border-gray-200 dark:hover:border-gray-600 dark:border-gray-700 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.08)] dark:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.3)]"
             >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-gray-50 text-gray-600 group-hover:bg-gray-100 group-hover:text-gray-800">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-gray-50 dark:bg-gray-800/50 text-gray-600 group-hover:bg-gray-100 dark:hover:bg-gray-800 dark:bg-gray-700 group-hover:text-gray-800 dark:text-gray-200">
                 <Github className="h-4 w-4" aria-hidden />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+                <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                   {source.repositoryFullName}
                 </p>
-                <p className="mt-0.5 truncate text-[12.5px] text-gray-500">
+                <p className="mt-0.5 truncate text-[12.5px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                   {source.accountLogin ? `@${source.accountLogin}` : "GitHub connector"}
                   {source.branch ? (
                     <>
                       <span className="mx-1.5 text-gray-300">·</span>
-                      <GitBranch className="mr-1 inline h-3 w-3 text-gray-400" aria-hidden />
+                      <GitBranch className="mr-1 inline h-3 w-3 text-gray-400 dark:text-gray-500" aria-hidden />
                       {source.branch}
                     </>
                   ) : null}
@@ -151,20 +151,20 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
 
         <section>
           <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
               Plugins
             </h2>
-            <p className="text-[11px] text-gray-400">
+            <p className="text-[11px] text-gray-400 dark:text-gray-500">
               {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
             </p>
           </div>
 
           {plugins.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
-              <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
+            <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-10 text-center">
+              <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800 dark:text-gray-200">
                 No plugins in this marketplace yet
               </p>
-              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
+              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 Plugins appear here as they're imported from the source repository.
               </p>
             </div>
@@ -242,27 +242,27 @@ function MarketplaceAccessSection({ marketplaceId }: { marketplaceId: string }) 
   return (
     <section>
       <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
           Who can access this
         </h2>
-        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" aria-hidden /> : null}
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 dark:text-gray-500" aria-hidden /> : null}
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+      <div className="overflow-hidden rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]">
         <button
           type="button"
           onClick={() => void handleToggleOrgWide()}
           disabled={grantMutation.isPending || revokeMutation.isPending}
-          className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-gray-50/60 disabled:opacity-60"
+          className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-gray-50 dark:hover:bg-gray-800/50 disabled:opacity-60"
         >
-          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${orgWideGrant ? "bg-emerald-50 text-emerald-600" : "bg-gray-50 text-gray-500"}`}>
+          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${orgWideGrant ? "bg-emerald-50 text-emerald-600" : "bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 dark:text-gray-500"}`}>
             <Globe className="h-4 w-4" aria-hidden />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+            <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
               Everyone in {orgContext?.organization.name ?? "this organization"}
             </p>
-            <p className="mt-0.5 text-[12.5px] leading-[1.55] text-gray-500">
+            <p className="mt-0.5 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
               {orgWideGrant
                 ? "All org members can see this marketplace."
                 : "Only admins and people you add below can see this marketplace."}
@@ -276,7 +276,7 @@ function MarketplaceAccessSection({ marketplaceId }: { marketplaceId: string }) 
             }`}
           >
             <span
-              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-[0_2px_6px_-1px_rgba(15,23,42,0.3)] transition-transform ${
+              className={`inline-block h-5 w-5 transform rounded-full bg-white dark:bg-[var(--dls-surface)] shadow-[0_2px_6px_-1px_rgba(15,23,42,0.3)] transition-transform ${
                 orgWideGrant ? "translate-x-[18px]" : "translate-x-0.5"
               }`}
             />
@@ -371,31 +371,31 @@ function AccessRowGroup({
   disabled: boolean;
 }) {
   return (
-    <div className="border-t border-gray-100 px-5 py-4">
+    <div className="border-t border-gray-100 dark:border-gray-700 px-5 py-4">
       <div className="mb-2 flex items-center gap-2">
-        <Icon className="h-3.5 w-3.5 text-gray-400" aria-hidden />
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">{label}</p>
+        <Icon className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500" aria-hidden />
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400 dark:text-gray-500">{label}</p>
       </div>
 
       {items.length === 0 ? (
-        <p className="text-[12.5px] text-gray-400">{emptyLabel}</p>
+        <p className="text-[12.5px] text-gray-400 dark:text-gray-500">{emptyLabel}</p>
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {items.map((entry) => (
             <span
               key={entry.grantId}
-              className="group inline-flex items-center gap-1.5 rounded-full bg-gray-50 py-1 pl-3 pr-1 text-[12px] text-gray-700"
+              className="group inline-flex items-center gap-1.5 rounded-full bg-gray-50 dark:bg-gray-800/50 py-1 pl-3 pr-1 text-[12px] text-gray-700 dark:text-gray-300"
             >
               <span className="truncate max-w-[180px]">{entry.title}</span>
               {entry.subtitle ? (
-                <span className="truncate max-w-[140px] text-gray-400">· {entry.subtitle}</span>
+                <span className="truncate max-w-[140px] text-gray-400 dark:text-gray-500">· {entry.subtitle}</span>
               ) : null}
               <button
                 type="button"
                 aria-label={`Remove ${entry.title}`}
                 disabled={disabled}
                 onClick={() => onRemove(entry.grantId)}
-                className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-200 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <X className="h-3 w-3" aria-hidden />
               </button>
@@ -455,7 +455,7 @@ function AccessAddPicker({
 
   if (options.length === 0) {
     return (
-      <p className="mt-2 text-[11.5px] text-gray-400">{emptyLabel}</p>
+      <p className="mt-2 text-[11.5px] text-gray-400 dark:text-gray-500">{emptyLabel}</p>
     );
   }
 
@@ -465,27 +465,27 @@ function AccessAddPicker({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((value) => !value)}
-        className="inline-flex items-center gap-1 rounded-full border border-dashed border-gray-200 px-2.5 py-1 text-[11.5px] text-gray-500 transition hover:border-gray-400 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-full border border-dashed border-gray-200 dark:border-gray-700 px-2.5 py-1 text-[11.5px] text-gray-500 transition hover:border-gray-400 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Plus className="h-3 w-3" aria-hidden />
         Add {label.toLowerCase().replace(/s$/, "")}
       </button>
 
       {open ? (
-        <div className="absolute left-0 top-[calc(100%+4px)] z-10 w-[260px] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-[0_20px_40px_-16px_rgba(15,23,42,0.18)]">
-          <div className="border-b border-gray-100 px-3 py-2">
+        <div className="absolute left-0 top-[calc(100%+4px)] z-10 w-[260px] overflow-hidden rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] shadow-[0_20px_40px_-16px_rgba(15,23,42,0.18)]">
+          <div className="border-b border-gray-100 dark:border-gray-700 px-3 py-2">
             <input
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={`Search ${label.toLowerCase()}...`}
-              className="w-full bg-transparent text-[12.5px] text-gray-900 placeholder:text-gray-400 focus:outline-none"
+              className="w-full bg-transparent text-[12.5px] text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:text-gray-500 focus:outline-none"
               autoFocus
             />
           </div>
           <div className="max-h-[240px] overflow-y-auto py-1">
             {filtered.length === 0 ? (
-              <p className="px-3 py-3 text-[12px] text-gray-400">No matches</p>
+              <p className="px-3 py-3 text-[12px] text-gray-400 dark:text-gray-500">No matches</p>
             ) : (
               filtered.map((option) => (
                 <button
@@ -496,11 +496,11 @@ function AccessAddPicker({
                     setOpen(false);
                     setQuery("");
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-gray-50"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[12.5px] font-medium text-gray-900">{option.label}</p>
-                    <p className="truncate text-[11px] text-gray-500">{option.subtitle}</p>
+                    <p className="truncate text-[12.5px] font-medium text-gray-900 dark:text-gray-100">{option.label}</p>
+                    <p className="truncate text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{option.subtitle}</p>
                   </div>
                   <Check className="h-3.5 w-3.5 shrink-0 text-transparent" aria-hidden />
                 </button>
@@ -527,7 +527,7 @@ function MarketplacePluginCard({
   return (
     <Link
       href={getPluginRoute(orgSlug, plugin.id)}
-      className="group block overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
+      className="group block overflow-hidden rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] transition hover:-translate-y-0.5 hover:border-gray-200 dark:hover:border-gray-600 dark:border-gray-700 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] dark:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.4)]"
     >
       <div className="flex items-stretch">
         <div className="relative w-[64px] shrink-0 overflow-hidden">
@@ -535,17 +535,17 @@ function MarketplacePluginCard({
             <PaperMeshGradient seed={plugin.id} speed={0} />
           </div>
           <div className="relative flex h-full items-center justify-center">
-            <div className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-              <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />
+            <div className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-white/60 bg-white dark:bg-[var(--dls-surface)] shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
+              <Puzzle className="h-4 w-4 text-gray-700 dark:text-gray-300" aria-hidden />
             </div>
           </div>
         </div>
         <div className="min-w-0 flex-1 px-4 py-3">
-          <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+          <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
             {plugin.name}
           </p>
           {plugin.description ? (
-            <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">
+            <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
               {plugin.description}
             </p>
           ) : null}
@@ -555,19 +555,19 @@ function MarketplacePluginCard({
               {orderedCountEntries.map(([type, count]) => (
                 <span
                   key={type}
-                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11.5px] text-gray-600"
+                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11.5px] text-gray-600 dark:text-gray-400 dark:text-gray-500"
                 >
-                  <span className="font-semibold text-gray-900">{count}</span>
-                  <span className="text-gray-500">{componentTypeLabel(type, count)}</span>
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">{count}</span>
+                  <span className="text-gray-500 dark:text-gray-400 dark:text-gray-500">{componentTypeLabel(type, count)}</span>
                 </span>
               ))}
             </div>
           ) : plugin.memberCount > 0 ? (
-            <p className="mt-2 text-[11.5px] text-gray-400">
+            <p className="mt-2 text-[11.5px] text-gray-400 dark:text-gray-500">
               {plugin.memberCount} imported object{plugin.memberCount === 1 ? "" : "s"}
             </p>
           ) : (
-            <p className="mt-2 text-[11.5px] text-gray-400">
+            <p className="mt-2 text-[11.5px] text-gray-400 dark:text-gray-500">
               {plugin.sourceFormat === "openwork-builtin"
                 ? "Built into the OpenWork desktop app"
                 : "Content imports when the source repository is connected"}

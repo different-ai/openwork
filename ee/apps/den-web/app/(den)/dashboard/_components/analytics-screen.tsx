@@ -100,10 +100,10 @@ function successRate(completed: number, failed: number): string {
 
 function toneBg(tone: "violet" | "green" | "blue" | "amber") {
   switch (tone) {
-    case "violet": return "bg-[#EDE4FF]";
-    case "green": return "bg-[#E3F3E3]";
-    case "blue": return "bg-[#E4ECFB]";
-    case "amber": return "bg-[#FBF0DC]";
+    case "violet": return "bg-[#EDE4FF] dark:bg-[#4C1D95]/40";
+    case "green": return "bg-[#E3F3E3] dark:bg-[#166534]/40";
+    case "blue": return "bg-[#E4ECFB] dark:bg-[#1E3A5F]/40";
+    case "amber": return "bg-[#FBF0DC] dark:bg-[#78350F]/40";
   }
 }
 
@@ -113,13 +113,13 @@ function StatCard({ icon, title, value, sub, tone }: {
   icon: React.ReactNode; title: string; value: string; sub?: string; tone: "violet" | "green" | "blue" | "amber";
 }) {
   return (
-    <div className="rounded-[16px] border border-[#e3e7ee] bg-white/90 px-4 py-3.5">
+    <div className="rounded-[16px] border border-[#e3e7ee] dark:border-gray-700 bg-white dark:bg-gray-900/90 px-4 py-3.5">
       <div className="flex items-center gap-3">
         <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] ${toneBg(tone)}`}>{icon}</div>
         <div className="min-w-0">
-          <div className="text-[13px] font-medium tracking-[-0.01em] text-[#30405F]">{title}</div>
-          <div className="mt-0.5 text-[20px] font-semibold tracking-[-0.03em] text-[#07192C]">{value}</div>
-          {sub ? <div className="mt-0.5 truncate text-[12px] text-[#637291]">{sub}</div> : null}
+          <div className="text-[13px] font-medium tracking-[-0.01em] text-[#30405F] dark:text-gray-300">{title}</div>
+          <div className="mt-0.5 text-[20px] font-semibold tracking-[-0.03em] text-[#07192C] dark:text-gray-100">{value}</div>
+          {sub ? <div className="mt-0.5 truncate text-[12px] text-[#637291] dark:text-gray-400">{sub}</div> : null}
         </div>
       </div>
     </div>
@@ -142,16 +142,16 @@ function TrendChart({ title, subtitle, weeks, series }: {
   const hasData = series.some((s) => s.values.some((v) => v > 0));
 
   return (
-    <div className="rounded-[16px] border border-[#e3e7ee] bg-white/90 p-4">
+    <div className="rounded-[16px] border border-[#e3e7ee] dark:border-gray-700 bg-white dark:bg-gray-900/90 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
-          <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C]">{title}</h3>
-          <p className="mt-0.5 text-[12px] text-[#637291]">{subtitle}</p>
+          <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C] dark:text-gray-100">{title}</h3>
+          <p className="mt-0.5 text-[12px] text-[#637291] dark:text-gray-400">{subtitle}</p>
         </div>
         {series.length > 1 ? (
           <div className="flex items-center gap-3">
             {series.map((s) => (
-              <span key={s.label} className="flex items-center gap-1.5 text-[11px] text-[#637291]">
+              <span key={s.label} className="flex items-center gap-1.5 text-[11px] text-[#637291] dark:text-gray-400">
                 <span className="h-2 w-2 rounded-full" style={{ backgroundColor: s.color }} />
                 {s.label}
               </span>
@@ -174,7 +174,7 @@ function TrendChart({ title, subtitle, weeks, series }: {
                     className="w-full max-w-[18px] rounded-t-[3px] transition-[height]"
                     style={{
                       height: `${height}%`,
-                      backgroundColor: value > 0 ? s.color : "#EBEEF4",
+                      backgroundColor: value > 0 ? s.color : "var(--ow-chart-bar-empty)",
                     }}
                   />
                 );
@@ -184,12 +184,12 @@ function TrendChart({ title, subtitle, weeks, series }: {
         </div>
         {!hasData ? (
           <div className="absolute inset-0 flex items-center justify-center">
-            <span className="rounded-full bg-white/90 px-3 py-1 text-[12px] text-[#637291]">No usage events yet</span>
+            <span className="rounded-full bg-white dark:bg-gray-900/90 px-3 py-1 text-[12px] text-[#637291] dark:text-gray-400">No usage events yet</span>
           </div>
         ) : null}
       </div>
 
-      <div className="mt-2 flex justify-between text-[11px] text-[#9AA5BA]">
+      <div className="mt-2 flex justify-between text-[11px] text-[#9AA5BA] dark:text-gray-500">
         <span>{weeks.length > 0 ? formatWeekLabel(weeks[0].weekStart) : ""}</span>
         <span>{weeks.length > 0 ? formatWeekLabel(weeks[weeks.length - 1].weekStart) : ""}</span>
       </div>
@@ -219,20 +219,20 @@ export function AnalyticsScreen() {
     <div className="mx-auto max-w-[1100px] px-4 pb-8 pt-4 sm:px-6 md:px-8">
 
       {/* Breadcrumb */}
-      <div className="flex flex-wrap items-center gap-2.5 border-b border-[#e7e9f0] pb-3">
-        <span className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C]">{activeOrg?.name ?? "OpenWork Cloud"}</span>
-        <ChevronRight className="h-3.5 w-3.5 text-[#9AA5BA]" />
-        <span className="text-[14px] font-medium tracking-[-0.01em] text-[#5A6886]">Analytics</span>
+      <div className="flex flex-wrap items-center gap-2.5 border-b border-[#e7e9f0] dark:border-gray-700 pb-3">
+        <span className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C] dark:text-gray-100">{activeOrg?.name ?? "OpenWork Cloud"}</span>
+        <ChevronRight className="h-3.5 w-3.5 text-[#9AA5BA] dark:text-gray-500" />
+        <span className="text-[14px] font-medium tracking-[-0.01em] text-[#5A6886] dark:text-gray-400">Analytics</span>
       </div>
 
       {/* Header */}
       <div className="mt-4 flex flex-wrap items-center gap-2.5">
-        <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-[#07192C]">Usage &amp; adoption</h1>
-        <span className="rounded-full border border-[#d8e0ec] bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6F3DFF]">
+        <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-[#07192C] dark:text-gray-100">Usage &amp; adoption</h1>
+        <span className="rounded-full border border-[#d8e0ec] dark:border-gray-600 bg-white dark:bg-[var(--dls-surface)] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6F3DFF]">
           Enterprise
         </span>
       </div>
-      <p className="mt-1 text-[14px] leading-6 text-[#5A6886]">
+      <p className="mt-1 text-[14px] leading-6 text-[#5A6886] dark:text-gray-400">
         See how your team is adopting OpenWork — active members, sessions, and task activity over time.
         Only event metadata is collected — never prompts, code, or file contents.
       </p>
@@ -329,7 +329,7 @@ export function AnalyticsScreen() {
       </div>
 
       {/* Privacy note */}
-      <p className="mt-5 text-[12px] leading-5 text-[#9AA5BA]">
+      <p className="mt-5 text-[12px] leading-5 text-[#9AA5BA] dark:text-gray-500">
         Telemetry never includes prompt contents, code, file contents, diffs, secrets, or terminal output.
         Usage data appears here once members sign in to the OpenWork app and start running tasks.
       </p>

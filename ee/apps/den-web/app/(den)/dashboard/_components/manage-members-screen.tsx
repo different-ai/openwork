@@ -105,10 +105,10 @@ function SummaryCard({
 }) {
   return (
     <div
-      className={`rounded-[24px] border px-5 py-4 ${tone === "dark" ? "border-[#0f172a] bg-[#0f172a] text-white" : "border-gray-200 bg-white text-gray-900"}`}
+      className={`rounded-[24px] border px-5 py-4 ${tone === "dark" ? "border-[#0f172a] bg-[#0f172a] text-white" : "border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] text-gray-900 dark:text-gray-100"}`}
     >
       <p
-        className={`text-[12px] font-semibold uppercase tracking-[0.16em] ${tone === "dark" ? "text-white/60" : "text-gray-400"}`}
+        className={`text-[12px] font-semibold uppercase tracking-[0.16em] ${tone === "dark" ? "text-white/60" : "text-gray-400 dark:text-gray-500"}`}
       >
         {label}
       </p>
@@ -257,7 +257,7 @@ export function ManageMembersScreen() {
   if (orgBusy && !orgContext) {
     return (
       <div className="mx-auto max-w-[1200px] px-6 py-8 md:px-8">
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
           Loading organization details...
         </div>
       </div>
@@ -307,7 +307,7 @@ export function ManageMembersScreen() {
           }}
         >
           <label className="grid gap-3">
-            <span className="text-[14px] font-medium text-gray-700">Email</span>
+            <span className="text-[14px] font-medium text-gray-700 dark:text-gray-300">Email</span>
             <DenInput
               type="email"
               value={inviteEmail}
@@ -317,7 +317,7 @@ export function ManageMembersScreen() {
             />
           </label>
           <label className="grid gap-3">
-            <span className="text-[14px] font-medium text-gray-700">Role</span>
+            <span className="text-[14px] font-medium text-gray-700 dark:text-gray-300">Role</span>
             <DenSelect value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}>
               {assignableRoles.map((role) => (
                 <option key={role.id} value={role.role}>
@@ -357,7 +357,7 @@ export function ManageMembersScreen() {
           }}
         >
           <label className="grid gap-3">
-            <span className="text-[14px] font-medium text-gray-700">Role</span>
+            <span className="text-[14px] font-medium text-gray-700 dark:text-gray-300">Role</span>
             <DenSelect value={memberRoleDraft} onChange={(event) => setMemberRoleDraft(event.target.value)}>
               {assignableRoles.map((role) => (
                 <option key={role.id} value={role.role}>
@@ -405,7 +405,7 @@ export function ManageMembersScreen() {
           }}
         >
           <label className="grid gap-3 lg:max-w-[420px]">
-            <span className="text-[14px] font-medium text-gray-700">
+            <span className="text-[14px] font-medium text-gray-700 dark:text-gray-300">
               Team name
             </span>
             <DenInput
@@ -418,11 +418,11 @@ export function ManageMembersScreen() {
           </label>
 
           <div>
-            <p className="mb-3 text-[14px] font-medium text-gray-700">
+            <p className="mb-3 text-[14px] font-medium text-gray-700 dark:text-gray-300">
               Team members
             </p>
             {orgContext.members.length === 0 ? (
-              <div className="rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[14px] text-gray-500">
+              <div className="rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                 Invite a member before assigning people to this team.
               </div>
             ) : (
@@ -443,7 +443,7 @@ export function ManageMembersScreen() {
                       className={`flex items-start gap-3 rounded-[22px] border px-4 py-4 text-left transition ${
                         selected
                           ? "border-[#0f172a] bg-[#0f172a] text-white"
-                          : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
+                          : "border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-500 dark:border-gray-600"
                       }`}
                     >
                       {selected ? (
@@ -501,7 +501,7 @@ export function ManageMembersScreen() {
           }}
         >
           <label className="grid gap-3 lg:max-w-[420px]">
-            <span className="text-[14px] font-medium text-gray-700">
+            <span className="text-[14px] font-medium text-gray-700 dark:text-gray-300">
               Role name
             </span>
             <DenInput
@@ -518,9 +518,9 @@ export function ManageMembersScreen() {
               ([resource, actions]) => (
                 <div
                   key={resource}
-                  className="rounded-[24px] border border-gray-200 bg-[#f8fafc] p-4"
+                  className="rounded-[24px] border border-gray-200 dark:border-gray-700 bg-[#f8fafc] dark:bg-gray-800 p-4"
                 >
-                  <p className="mb-3 text-[15px] font-semibold text-gray-900">
+                  <p className="mb-3 text-[15px] font-semibold text-gray-900 dark:text-gray-100">
                     {formatRoleLabel(resource)}
                   </p>
                   <div className="grid gap-2">
@@ -531,7 +531,7 @@ export function ManageMembersScreen() {
                       return (
                         <label
                           key={`${resource}-${action}`}
-                          className="inline-flex items-center gap-2 text-[14px] text-gray-600"
+                          className="inline-flex items-center gap-2 text-[14px] text-gray-600 dark:text-gray-400 dark:text-gray-500"
                         >
                           <input
                             type="checkbox"
@@ -668,7 +668,7 @@ export function ManageMembersScreen() {
       {activeTab === "members" ? (
         <div>
           <div className="mb-6 flex items-center justify-between gap-4">
-            <p className="text-[15px] text-gray-400">
+            <p className="text-[15px] text-gray-400 dark:text-gray-500">
               {access.canManageMembers
                 ? "Invite people, update their role, or remove them from the organization."
                 : access.canRemoveMembers
@@ -682,8 +682,8 @@ export function ManageMembersScreen() {
             ) : null}
           </div>
 
-          <div className="overflow-visible rounded-2xl border border-gray-100 bg-white">
-            <div className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+          <div className="overflow-visible rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]">
+            <div className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] gap-4 border-b border-gray-100 dark:border-gray-700 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
               <span>Member</span>
               <span>Role</span>
               <span>Joined</span>
@@ -703,20 +703,20 @@ export function ManageMembersScreen() {
               return (
                 <div
                   key={member.id}
-                  className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] items-center gap-4 border-b border-gray-100 px-6 py-3.5 transition hover:bg-gray-50/60 last:border-b-0"
+                  className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] items-center gap-4 border-b border-gray-100 dark:border-gray-700 px-6 py-3.5 transition hover:bg-gray-50 dark:hover:bg-gray-800/50 last:border-b-0"
                 >
                   <OrgMemberIdentity member={member} />
-                  <span className="text-[13px] text-gray-500">
+                  <span className="text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                     {splitRoleString(member.role).map(formatRoleLabel).join(", ")}
                   </span>
-                  <span className="text-[13px] text-gray-400">
+                  <span className="text-[13px] text-gray-400 dark:text-gray-500">
                     {member.joinedAt
                       ? new Date(member.joinedAt).toLocaleDateString()
                       : "Pending"}
                   </span>
                   <div className="relative flex items-center justify-end gap-2">
                     {member.isOwner ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-[12px] text-gray-400">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] text-gray-400 dark:text-gray-500">
                         <Lock className="h-3 w-3" />
                         Locked
                       </span>
@@ -725,13 +725,13 @@ export function ManageMembersScreen() {
                         <button
                           type="button"
                           onClick={() => setOpenMemberMenuId((current) => current === member.id ? null : member.id)}
-                          className="rounded-full p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+                          className="rounded-full p-2 text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
                           aria-label={`Open actions for ${member.user.name}`}
                         >
                           <MoreHorizontal className="h-4 w-4" />
                         </button>
                         {openMemberMenuId === member.id ? (
-                          <div className="absolute right-0 top-9 z-10 w-44 overflow-hidden rounded-2xl border border-gray-100 bg-white p-1.5 text-[13px] shadow-xl shadow-gray-900/10">
+                          <div className="absolute right-0 top-9 z-10 w-44 overflow-hidden rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-1.5 text-[13px] shadow-xl shadow-gray-900/10">
                             {isInvited && inviteToken ? (
                               <button
                                 type="button"
@@ -740,11 +740,11 @@ export function ManageMembersScreen() {
                                   await navigator.clipboard.writeText(inviteUrl);
                                   setOpenMemberMenuId(null);
                                 }}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50"
-                              >
-                                <Link className="h-3.5 w-3.5" />
-                                Copy invite link
-                              </button>
+                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                                >
+                                  <Link className="h-3.5 w-3.5" />
+                                  Copy invite link
+                                </button>
                             ) : null}
                             {isInvited && access.canInviteMembers ? (
                               <button
@@ -759,7 +759,7 @@ export function ManageMembersScreen() {
                                   }
                                 }}
                                 disabled={mutationBusy === "invite-member"}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-800/50 disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 <Send className="h-3.5 w-3.5" />
                                 Resend invite
@@ -793,7 +793,7 @@ export function ManageMembersScreen() {
                                   setShowInviteForm(false);
                                   setOpenMemberMenuId(null);
                                 }}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50"
+                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-800/50"
                               >
                                 <Settings className="h-3.5 w-3.5" />
                                 Edit role
@@ -825,7 +825,7 @@ export function ManageMembersScreen() {
                         ) : null}
                       </>
                     ) : (
-                      <span className="text-[13px] text-gray-400">Read only</span>
+                      <span className="text-[13px] text-gray-400 dark:text-gray-500">Read only</span>
                     )}
                   </div>
                 </div>
@@ -838,7 +838,7 @@ export function ManageMembersScreen() {
       {activeTab === "teams" ? (
         <div>
           <div className="mb-6 flex items-center justify-between gap-4">
-            <p className="text-[15px] text-gray-400">Manage teams and their members.</p>
+            <p className="text-[15px] text-gray-400 dark:text-gray-500">Manage teams and their members.</p>
             {toolbarAction ? (
               <DenButton icon={Plus} onClick={toolbarAction.onClick}>
                 {toolbarAction.label}
@@ -846,28 +846,28 @@ export function ManageMembersScreen() {
             ) : null}
           </div>
 
-          <div className="overflow-x-auto overflow-y-visible rounded-2xl border border-gray-100 bg-white">
-            <div className="grid grid-cols-[minmax(0,1fr)_160px_200px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+          <div className="overflow-x-auto overflow-y-visible rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]">
+            <div className="grid grid-cols-[minmax(0,1fr)_160px_200px] gap-4 border-b border-gray-100 dark:border-gray-700 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
               <span>Team</span>
               <span>Members</span>
               <span />
             </div>
 
             {orgContext.teams.length === 0 ? (
-              <div className="px-6 py-8 text-center text-[13px] text-gray-400">
+              <div className="px-6 py-8 text-center text-[13px] text-gray-400 dark:text-gray-500">
                 No teams yet.
               </div>
             ) : (
               orgContext.teams.map((team) => (
                 <div
                   key={team.id}
-                  className="grid grid-cols-[minmax(0,1fr)_160px_200px] items-center gap-4 border-b border-gray-100 px-6 py-3.5 transition hover:bg-gray-50/60 last:border-b-0"
+                  className="grid grid-cols-[minmax(0,1fr)_160px_200px] items-center gap-4 border-b border-gray-100 dark:border-gray-700 px-6 py-3.5 transition hover:bg-gray-50 dark:hover:bg-gray-800/50 last:border-b-0"
                 >
                   <div>
-                    <span className="text-[13px] font-medium text-gray-900">
+                    <span className="text-[13px] font-medium text-gray-900 dark:text-gray-100">
                       {team.name}
                     </span>
-                    <p className="mt-0.5 text-[12px] text-gray-400">
+                    <p className="mt-0.5 text-[12px] text-gray-400 dark:text-gray-500">
                       {teamMemberNames.get(team.id)?.slice(0, 3).join(", ") ||
                         "No members assigned yet"}
                       {(teamMemberNames.get(team.id)?.length ?? 0) > 3
@@ -875,7 +875,7 @@ export function ManageMembersScreen() {
                         : ""}
                     </p>
                   </div>
-                  <span className="text-[13px] text-gray-400">{`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}</span>
+                  <span className="text-[13px] text-gray-400 dark:text-gray-500">{`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}</span>
                   <div className="flex items-center justify-end gap-3">
                     {access.canManageTeams ? (
                       <>
@@ -914,7 +914,7 @@ export function ManageMembersScreen() {
                         </ActionButton>
                       </>
                     ) : (
-                      <span className="text-[13px] text-gray-400">
+                      <span className="text-[13px] text-gray-400 dark:text-gray-500">
                         Read only
                       </span>
                     )}
@@ -929,7 +929,7 @@ export function ManageMembersScreen() {
       {activeTab === "roles" ? (
         <div>
           <div className="mb-6 flex items-center justify-between gap-4">
-            <p className="text-[15px] text-gray-400">
+            <p className="text-[15px] text-gray-400 dark:text-gray-500">
               {access.canManageRoles
                 ? "Default roles stay available, and owners can add, edit, or remove custom roles here."
                 : "Role definitions are visible here, but only owners can change them."}
@@ -941,8 +941,8 @@ export function ManageMembersScreen() {
             ) : null}
           </div>
 
-          <div className="overflow-x-auto overflow-y-visible rounded-2xl border border-gray-100 bg-white">
-            <div className="grid grid-cols-[minmax(0,1fr)_120px_200px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+          <div className="overflow-x-auto overflow-y-visible rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]">
+            <div className="grid grid-cols-[minmax(0,1fr)_120px_200px] gap-4 border-b border-gray-100 dark:border-gray-700 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
               <span>Role</span>
               <span>Type</span>
               <span />
@@ -951,12 +951,12 @@ export function ManageMembersScreen() {
             {orgContext.roles.map((role) => (
               <div
                 key={role.id}
-                className="grid grid-cols-[minmax(0,1fr)_120px_200px] items-center gap-4 border-b border-gray-100 px-6 py-3.5 transition hover:bg-gray-50/60 last:border-b-0"
+                className="grid grid-cols-[minmax(0,1fr)_120px_200px] items-center gap-4 border-b border-gray-100 dark:border-gray-700 px-6 py-3.5 transition hover:bg-gray-50 dark:hover:bg-gray-800/50 last:border-b-0"
               >
-                <span className="text-[13px] font-medium text-gray-900">
+                <span className="text-[13px] font-medium text-gray-900 dark:text-gray-100">
                   {formatRoleLabel(role.role)}
                 </span>
-                <span className="text-[13px] text-gray-400">
+                <span className="text-[13px] text-gray-400 dark:text-gray-500">
                   {role.protected
                     ? "System"
                     : role.builtIn
@@ -1003,7 +1003,7 @@ export function ManageMembersScreen() {
                       </ActionButton>
                     </>
                   ) : (
-                    <span className="text-[13px] text-gray-400">Read only</span>
+                    <span className="text-[13px] text-gray-400 dark:text-gray-500">Read only</span>
                   )}
                 </div>
               </div>

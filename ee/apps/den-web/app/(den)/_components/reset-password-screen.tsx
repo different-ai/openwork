@@ -128,7 +128,7 @@ export function ResetPasswordScreen() {
         )}
 
         {error ? (
-          <div className="den-frame-inset rounded-[1.5rem] px-4 py-3 text-center text-[13px] font-medium text-rose-600" aria-live="polite">
+          <div className="den-frame-inset rounded-[1.5rem] px-4 py-3 text-center text-[13px] font-medium text-rose-600 dark:text-rose-400" aria-live="polite">
             {error}
           </div>
         ) : null}

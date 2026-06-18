@@ -71,7 +71,7 @@ export function IntegrationsScreen() {
       ) : null}
 
       {isLoading ? (
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
           Loading integrations…
         </div>
       ) : (
@@ -83,18 +83,18 @@ export function IntegrationsScreen() {
             return (
               <div
                 key={meta.provider}
-                className="overflow-hidden rounded-2xl border border-gray-100 bg-white"
+                className="overflow-hidden rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]"
               >
                 {/* Header */}
                 <div
-                  className={`flex items-start gap-4 px-6 py-5 ${isConnected ? "border-b border-gray-100" : ""}`}
+                  className={`flex items-start gap-4 px-6 py-5 ${isConnected ? "border-b border-gray-100 dark:border-gray-700" : ""}`}
                 >
                   <ProviderLogo provider={meta.provider} />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-[15px] font-semibold text-gray-900">{meta.name}</h2>
+                      <h2 className="text-[15px] font-semibold text-gray-900 dark:text-gray-100">{meta.name}</h2>
                       {meta.provider === "bitbucket" ? (
-                        <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                        <span className="inline-flex rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
                           Coming soon
                         </span>
                       ) : isConnected ? (
@@ -103,13 +103,13 @@ export function IntegrationsScreen() {
                           Connected
                         </span>
                       ) : (
-                        <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                        <span className="inline-flex rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
                           Not connected
                         </span>
                       )}
                     </div>
                     {!isConnected ? (
-                      <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{meta.description}</p>
+                      <p className="mt-1 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">{meta.description}</p>
                     ) : null}
                   </div>
 
@@ -132,7 +132,7 @@ export function IntegrationsScreen() {
 
                 {/* Body: connected accounts + repos */}
                 {isConnected ? (
-                  <div className="divide-y divide-gray-100">
+                  <div className="divide-y divide-gray-100 dark:divide-gray-700">
                     {providerConnections.map((connection) => (
                       <ConnectionRow
                         key={connection.id}
@@ -187,7 +187,7 @@ function ConnectionRow({
         onClick={() => setConfirmOpen(true)}
         aria-label={`Disconnect ${accountLogin}`}
         disabled={busy}
-        className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 opacity-0 transition-all duration-150 hover:bg-red-50 hover:text-red-600 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500/30 group-hover:opacity-100 disabled:cursor-not-allowed"
+        className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 dark:text-gray-500 opacity-0 transition-all duration-150 hover:bg-red-50 hover:text-red-600 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500/30 group-hover:opacity-100 disabled:cursor-not-allowed"
       >
         {busy ? (
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -200,20 +200,20 @@ function ConnectionRow({
         <Avatar url={avatarUrl} fallback={connection.account.avatarInitial} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate text-[14px] font-semibold text-gray-900">@{accountLogin}</p>
-            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+            <p className="truncate text-[14px] font-semibold text-gray-900 dark:text-gray-100">@{accountLogin}</p>
+            <span className="inline-flex items-center rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
               {connection.account.kind === "user" ? "Personal" : "Organization"}
             </span>
           </div>
-          <p className="mt-0.5 truncate text-[12px] text-gray-500">
+          <p className="mt-0.5 truncate text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
             {connectedBy ? `Added by ${connectedBy}` : "Added recently"}
-            <span className="text-gray-400"> · {formatIntegrationTimestamp(connection.connectedAt)}</span>
+            <span className="text-gray-400 dark:text-gray-500"> · {formatIntegrationTimestamp(connection.connectedAt)}</span>
           </p>
         </div>
       </div>
 
       <div className="px-6 pb-5">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400 dark:text-gray-500">
           Configured repositories
         </p>
 
@@ -222,17 +222,17 @@ function ConnectionRow({
             {connection.repos.map((repo) => (
               <li
                 key={repo.id}
-                className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition hover:bg-gray-50"
+                className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
               >
-                <span className="inline-flex min-w-0 items-center gap-2 text-[13px] text-gray-700">
-                  <GitBranch className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                <span className="inline-flex min-w-0 items-center gap-2 text-[13px] text-gray-700 dark:text-gray-300">
+                  <GitBranch className="h-3.5 w-3.5 shrink-0 text-gray-400 dark:text-gray-500" />
                   <span className="truncate">{repo.fullName}</span>
                 </span>
                 {connection.provider === "github" && repo.connectorInstanceId ? (
                   <Link
                     href={getGithubIntegrationSetupRoute(orgSlug, repo.connectorInstanceId)}
                     aria-label={`Open setup for ${repo.fullName}`}
-                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-200 hover:text-gray-900"
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
                   >
                     <Settings className="h-4 w-4" aria-hidden />
                   </Link>
@@ -241,14 +241,14 @@ function ConnectionRow({
             ))}
           </ul>
         ) : (
-          <p className="text-[13px] text-gray-400">No repositories configured yet.</p>
+          <p className="text-[13px] text-gray-400 dark:text-gray-500">No repositories configured yet.</p>
         )}
 
         {onConfigureNewRepo ? (
           <button
             type="button"
             onClick={onConfigureNewRepo}
-            className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-200 px-3 py-2 text-[13px] font-medium text-gray-500 transition hover:border-gray-400 hover:bg-gray-50 hover:text-gray-900"
+            className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-200 dark:border-gray-700 px-3 py-2 text-[13px] font-medium text-gray-500 transition hover:border-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
           >
             <Plus className="h-4 w-4" aria-hidden />
             Add new repo
@@ -289,7 +289,7 @@ function Avatar({ url, fallback }: { url: string | null; fallback: string }) {
       src={url}
       alt=""
       onError={() => setErrored(true)}
-      className="h-11 w-11 shrink-0 rounded-full bg-gray-100 object-cover"
+      className="h-11 w-11 shrink-0 rounded-full bg-gray-100 dark:bg-gray-700 object-cover"
     />
   );
 }
@@ -316,7 +316,7 @@ function DisconnectConfirmDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        className="w-full max-w-md rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start gap-3">
@@ -324,29 +324,29 @@ function DisconnectConfirmDialog({
             <Trash2 className="h-5 w-5" aria-hidden />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-100">
               Remove @{accountLogin}?
             </h2>
-            <p className="mt-1 text-[13px] leading-6 text-gray-600">
+            <p className="mt-1 text-[13px] leading-6 text-gray-600 dark:text-gray-400 dark:text-gray-500">
               This will permanently delete everything OpenWork imported from this GitHub account, including:
             </p>
-            <ul className="mt-3 space-y-1.5 text-[13px] leading-6 text-gray-600">
+            <ul className="mt-3 space-y-1.5 text-[13px] leading-6 text-gray-600 dark:text-gray-400 dark:text-gray-500">
               <li className="flex gap-2">
-                <span className="text-gray-400">•</span>
+                <span className="text-gray-400 dark:text-gray-500">•</span>
                 <span>
                   <strong>{repoCount}</strong> connected {repoCount === 1 ? "repository" : "repositories"} and their connector setup
                 </span>
               </li>
               <li className="flex gap-2">
-                <span className="text-gray-400">•</span>
+                <span className="text-gray-400 dark:text-gray-500">•</span>
                 <span>All plugins and marketplaces created from those repos</span>
               </li>
               <li className="flex gap-2">
-                <span className="text-gray-400">•</span>
+                <span className="text-gray-400 dark:text-gray-500">•</span>
                 <span>All imported config objects, versions and source bindings</span>
               </li>
             </ul>
-            <p className="mt-3 text-[12px] leading-5 text-gray-500">
+            <p className="mt-3 text-[12px] leading-5 text-gray-500 dark:text-gray-400 dark:text-gray-500">
               The GitHub App installation itself stays on GitHub. You can remove it from your GitHub account settings if you also want to revoke access.
             </p>
           </div>

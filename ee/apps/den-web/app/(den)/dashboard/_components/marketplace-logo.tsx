@@ -18,7 +18,7 @@ export function MarketplaceLogo({
   const [erroredUrl, setErroredUrl] = useState<string | null>(null);
 
   if (!logoUrl || erroredUrl === logoUrl) {
-    return <Store className={`${iconClassName} text-gray-700`} aria-hidden />;
+    return <Store className={`${iconClassName} text-gray-700 dark:text-gray-300`} aria-hidden />;
   }
 
   return (

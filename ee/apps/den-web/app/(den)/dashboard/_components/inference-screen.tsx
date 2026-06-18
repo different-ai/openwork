@@ -115,29 +115,29 @@ function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }) {
   if (ordered.length === 0) return null;
 
   return (
-    <section className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
-      <div className="border-b border-gray-100 px-6 py-4">
-        <p className="text-[13px] leading-5 text-gray-500">
+    <section className="overflow-hidden rounded-3xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+      <div className="border-b border-gray-100 dark:border-gray-700 px-6 py-4">
+        <p className="text-[13px] leading-5 text-gray-500 dark:text-gray-400 dark:text-gray-500">
           Usage limits are shared across your organization and scale with the number of active members.
         </p>
       </div>
-      <ul className="divide-y divide-gray-100">
+      <ul className="divide-y divide-gray-100 dark:divide-gray-700">
         {ordered.map((bucket) => {
           const remaining = computeRemainingPercent(bucket);
           return (
             <li key={bucket.windowType} className="flex items-center gap-6 px-6 py-5">
               <div className="min-w-[200px]">
-                <p className="text-[15px] font-medium text-gray-950">{WINDOW_LABEL[bucket.windowType]}</p>
-                <p className="mt-1 text-[13px] text-gray-500">{formatResetLabel(bucket)}</p>
+                <p className="text-[15px] font-medium text-gray-950 dark:text-gray-100">{WINDOW_LABEL[bucket.windowType]}</p>
+                <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{formatResetLabel(bucket)}</p>
               </div>
               <div className="flex flex-1 items-center gap-4">
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100">
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
                   <div
                     className="h-full rounded-full bg-gray-900 transition-[width] duration-500"
                     style={{ width: `${remaining}%` }}
                   />
                 </div>
-                <span className="min-w-[80px] text-right text-[13px] font-medium text-gray-700">
+                <span className="min-w-[80px] text-right text-[13px] font-medium text-gray-700 dark:text-gray-300">
                   {remaining.toFixed(1)}% left
                 </span>
               </div>
@@ -169,19 +169,19 @@ function ModelsValueProp(props: {
   onSubscribe: () => void;
 }) {
   return (
-    <section className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+    <section className="overflow-hidden rounded-3xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
       <div className="grid gap-8 p-8 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div>
-          <h2 className="text-[24px] font-medium leading-8 tracking-[-0.4px] text-gray-950">
+          <h2 className="text-[24px] font-medium leading-8 tracking-[-0.4px] text-gray-950 dark:text-gray-100">
             The best open-source models, ready for your whole team.
           </h2>
-          <p className="mt-3 max-w-[560px] text-[14px] leading-6 text-gray-500">
+          <p className="mt-3 max-w-[560px] text-[14px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
             OpenWork Models gives every member of your workspace instant access to a hand-picked
             lineup of OSS frontier models — no provider accounts, no key juggling.
           </p>
           <ul className="mt-6 grid gap-3">
             {VALUE_POINTS.map((point) => (
-              <li key={point} className="flex items-start gap-3 text-[14px] leading-6 text-gray-700">
+              <li key={point} className="flex items-start gap-3 text-[14px] leading-6 text-gray-700 dark:text-gray-300">
                 <Check className="mt-1 h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
                 <span>{point}</span>
               </li>
@@ -196,7 +196,7 @@ function ModelsValueProp(props: {
             >
               Subscribe with Stripe
             </DenButton>
-            <p className="text-[13px] leading-5 text-gray-500">
+            <p className="text-[13px] leading-5 text-gray-500 dark:text-gray-400 dark:text-gray-500">
               $10/user/month · {props.memberCount > 0 ? `${props.memberCount} active member${props.memberCount === 1 ? "" : "s"}` : "billed per active member"} · cancel anytime
             </p>
           </div>
@@ -206,15 +206,15 @@ function ModelsValueProp(props: {
             </p>
           )}
         </div>
-        <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+        <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-5">
+          <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-gray-400 dark:text-gray-500">
             Included models
           </p>
-          <ul className="mt-3 divide-y divide-gray-100">
+          <ul className="mt-3 divide-y divide-gray-100 dark:divide-gray-700">
             {MODEL_LINEUP.map((model) => (
               <li key={model.id} className="py-2.5">
-                <p className="text-[14px] font-medium text-gray-900">{model.name}</p>
-                <p className="text-[12px] text-gray-500">{model.id}</p>
+                <p className="text-[14px] font-medium text-gray-900 dark:text-gray-100">{model.name}</p>
+                <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{model.id}</p>
               </li>
             ))}
           </ul>
@@ -347,13 +347,13 @@ export function InferenceScreen() {
             onSubscribe={() => void startSubscribeCheckout()}
           />
         ) : (
-          <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+          <section className="rounded-3xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
             <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
               <div className="max-w-[560px]">
-                <div className="mb-3 inline-flex rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-blue-700">
+                <div className="mb-3 inline-flex rounded-full border border-blue-100 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-blue-700">
                   {loading ? "Checking" : enabled ? "Enabled" : "Disabled"}
                 </div>
-                <h2 className="text-[20px] font-medium tracking-[-0.3px] text-gray-950">
+                <h2 className="text-[20px] font-medium tracking-[-0.3px] text-gray-950 dark:text-gray-100">
                   {cardTitle}
                 </h2>
               </div>

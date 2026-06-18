@@ -35,13 +35,13 @@ export function OrgLimitDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6">
-      <div className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]">
+      <div className="w-full max-w-md rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]">
         <div className="grid gap-3">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">{eyebrow}</p>
+          <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400 dark:text-gray-500">{eyebrow}</p>
           <div className="grid gap-2">
-            <h2 className="text-[24px] font-semibold tracking-[-0.03em] text-gray-950">{title}</h2>
-            <p className="text-[15px] leading-7 text-gray-600">{message}</p>
-            {detail ? <p className="text-[13px] leading-6 text-gray-500">{detail}</p> : null}
+            <h2 className="text-[24px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">{title}</h2>
+            <p className="text-[15px] leading-7 text-gray-600 dark:text-gray-400 dark:text-gray-500">{message}</p>
+            {detail ? <p className="text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">{detail}</p> : null}
           </div>
         </div>
 

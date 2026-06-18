@@ -310,7 +310,7 @@ export function DenSelect({
         className={[
           denDropdownFieldBaseClass,
           "flex items-center justify-between gap-3 rounded-lg text-left",
-          "focus-visible:border-gray-300 focus-visible:ring-2 focus-visible:ring-gray-900/5",
+          "focus-visible:border-gray-300 dark:border-gray-600 focus-visible:ring-2 focus-visible:ring-gray-900/5",
           open ? denDropdownFieldOpenClass : "",
           disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
           className ?? "",
@@ -320,7 +320,7 @@ export function DenSelect({
       >
         <span className="truncate">{selectedOption?.content ?? null}</span>
         <span className={denDropdownChevronSlotClass}>
-          <ChevronDown size={16} className={disabled ? "text-gray-300" : "text-gray-400"} aria-hidden="true" />
+          <ChevronDown size={16} className={disabled ? "text-gray-300 dark:text-gray-600" : "text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500"} aria-hidden="true" />
         </span>
       </button>
 
@@ -368,10 +368,10 @@ export function DenSelect({
                     .filter(Boolean)
                     .join(" ")}
                 >
-                  <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-gray-900">
+                  <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-gray-900 dark:text-[var(--dls-text-primary)]">
                     {option.content}
                   </span>
-                  {selected ? <Check className="h-4 w-4 shrink-0 text-gray-900" aria-hidden="true" /> : null}
+                  {selected ? <Check className="h-4 w-4 shrink-0 text-gray-900 dark:text-[var(--dls-text-primary)]" aria-hidden="true" /> : null}
                 </button>
               );
             })}

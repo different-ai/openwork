@@ -371,7 +371,7 @@ export function LlmProviderEditorScreen({
     if (busy && llmProviderId && !provider) {
         return (
             <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-                <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+                <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                     Loading provider details...
                 </div>
             </div>
@@ -404,17 +404,17 @@ export function LlmProviderEditorScreen({
     return (
         <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
             <div className="mb-8 flex flex-col gap-3">
-                <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">
+                <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400 dark:text-gray-500">
                     {provider ? "Edit provider" : "Add provider"}
                 </p>
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                     <div>
-                        <h1 className="text-[34px] font-semibold tracking-[-0.07em] text-gray-950">
+                        <h1 className="text-[34px] font-semibold tracking-[-0.07em] text-gray-950 dark:text-gray-100">
                             {provider
                                 ? (providerName.trim() || provider.name)
                                 : "Add a new LLM provider"}
                         </h1>
-                        <p className="mt-3 max-w-[720px] text-[16px] leading-8 text-gray-500">
+                        <p className="mt-3 max-w-[720px] text-[16px] leading-8 text-gray-500 dark:text-gray-400 dark:text-gray-500">
                             Pick a provider or paste a custom config, then
                             decide which models to allow and which teammates can
                             use it.
@@ -430,7 +430,7 @@ export function LlmProviderEditorScreen({
                             ? getLlmProviderRoute(orgSlug, provider.id)
                             : getLlmProvidersRoute(orgSlug)
                     }
-                    className="inline-flex items-center gap-2 text-[15px] font-medium text-gray-500 transition hover:text-gray-900"
+                    className="inline-flex items-center gap-2 text-[15px] font-medium text-gray-500 transition hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
                 >
                     <ArrowLeft className="h-5 w-5" />
                     Back
@@ -450,9 +450,9 @@ export function LlmProviderEditorScreen({
                 </div>
             ) : null}
 
-            <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
+            <section className="mb-8 rounded-[36px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                 <label className="grid gap-3">
-                    <span className="text-[14px] font-medium text-gray-700">
+                    <span className="text-[14px] font-medium text-gray-700 dark:text-gray-300">
                         Name
                     </span>
                     <DenInput
@@ -462,14 +462,14 @@ export function LlmProviderEditorScreen({
                         autoComplete="off"
                     />
                 </label>
-                <p className="mt-3 text-[13px] text-gray-500">
+                <p className="mt-3 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                     Pick a clear label so teammates know which key or provider
                     setup they are using.
                 </p>
             </section>
 
-            <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
-                <h2 className="mb-6 text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
+            <section className="mb-8 rounded-[36px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
+                <h2 className="mb-6 text-[24px] font-semibold tracking-[-0.05em] text-gray-950 dark:text-gray-100">
                     Provider type
                 </h2>
                 <UnderlineTabs
@@ -481,7 +481,7 @@ export function LlmProviderEditorScreen({
                 {source === "models_dev" ? (
                     <div className="mt-8 grid gap-6">
                         <div className="grid gap-3">
-                            <span className="text-[14px] font-medium text-gray-700">
+                            <span className="text-[14px] font-medium text-gray-700 dark:text-gray-300">
                                 Provider
                             </span>
                             <DenCombobox
@@ -496,7 +496,7 @@ export function LlmProviderEditorScreen({
                         </div>
 
                         {catalogBusy ? (
-                            <p className="text-[14px] text-gray-500">
+                            <p className="text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                 Loading provider catalog...
                             </p>
                         ) : null}
@@ -507,7 +507,7 @@ export function LlmProviderEditorScreen({
                         ) : null}
 
                         {detailBusy ? (
-                            <p className="text-[14px] text-gray-500">
+                            <p className="text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                 Loading provider details...
                             </p>
                         ) : null}
@@ -518,30 +518,30 @@ export function LlmProviderEditorScreen({
                         ) : null}
 
                         {catalogDetail ? (
-                            <div className="rounded-[28px] bg-gray-50 p-6">
+                            <div className="rounded-[28px] bg-gray-50 dark:bg-gray-800/50 p-6">
                                 <div className="grid gap-4 md:grid-cols-2">
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400 dark:text-gray-500">
                                             NPM package
                                         </p>
                                         <p className="mt-2">
-                                            <span className="inline-flex max-w-full rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                            <span className="inline-flex max-w-full rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200">
                                                 {providerNpm ?? "Not set"}
                                             </span>
                                         </p>
                                     </div>
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400 dark:text-gray-500">
                                             API base
                                         </p>
                                         <p className="mt-2">
-                                            <span className="inline-flex max-w-full break-all rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                            <span className="inline-flex max-w-full break-all rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200">
                                                 {providerApiBase ?? "Not set"}
                                             </span>
                                         </p>
                                     </div>
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400 dark:text-gray-500">
                                             Env keys
                                         </p>
                                         {providerEnv.length > 0 ? (
@@ -549,7 +549,7 @@ export function LlmProviderEditorScreen({
                                                 {providerEnv.map((envName) => (
                                                     <span
                                                         key={envName}
-                                                        className="inline-flex max-w-full break-all rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200"
+                                                        className="inline-flex max-w-full break-all rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200"
                                                     >
                                                         {envName}
                                                     </span>
@@ -557,18 +557,18 @@ export function LlmProviderEditorScreen({
                                             </div>
                                         ) : (
                                             <p className="mt-2">
-                                                <span className="inline-flex max-w-full rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                                <span className="inline-flex max-w-full rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200">
                                                     None listed
                                                 </span>
                                             </p>
                                         )}
                                     </div>
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400 dark:text-gray-500">
                                             Docs
                                         </p>
                                         <p className="mt-2">
-                                            <span className="inline-flex max-w-full break-all rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                            <span className="inline-flex max-w-full break-all rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200">
                                                 {providerDoc ?? "Not set"}
                                             </span>
                                         </p>
@@ -579,7 +579,7 @@ export function LlmProviderEditorScreen({
                     </div>
                 ) : (
                     <div className="mt-8 grid gap-3">
-                        <span className="text-[14px] font-medium text-gray-700">
+                        <span className="text-[14px] font-medium text-gray-700 dark:text-gray-300">
                             Custom provider JSON / JSONC
                         </span>
                         <DenTextarea
@@ -589,10 +589,10 @@ export function LlmProviderEditorScreen({
                             }
                             rows={18}
                         />
-                        <p className="text-[13px] text-gray-500">
+                        <p className="text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                             Paste a models.dev provider, a single provider block,
                             or a full{" "}
-                            <code className="rounded bg-gray-100 px-1 py-0.5">
+                            <code className="rounded bg-gray-100 dark:bg-gray-700 px-1 py-0.5">
                                 opencode.jsonc
                             </code>
                             . Model maps are imported automatically.
@@ -601,10 +601,10 @@ export function LlmProviderEditorScreen({
                 )}
             </section>
 
-            <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
+            <section className="mb-8 rounded-[36px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                 <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <div>
-                        <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
+                        <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950 dark:text-gray-100">
                             Credential
                         </h2>
                     </div>
@@ -616,7 +616,7 @@ export function LlmProviderEditorScreen({
                 </div>
 
                 <label className="grid gap-3">
-                    <span className="text-[14px] font-medium text-gray-700">
+                    <span className="text-[14px] font-medium text-gray-700 dark:text-gray-300">
                         API key / credential
                     </span>
                     <DenInput
@@ -633,15 +633,15 @@ export function LlmProviderEditorScreen({
             </section>
 
             {source === "models_dev" ? (
-                <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
+                <section className="mb-8 rounded-[36px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                     <div>
                         <div>
                             <div className="flex flex-wrap items-center gap-3">
-                                <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
+                                <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950 dark:text-gray-100">
                                     Models
                                 </h2>
                                 {catalogDetail ? (
-                                    <span className="rounded-full bg-gray-200 px-3 py-1 text-[12px] font-medium text-gray-700">
+                                    <span className="rounded-full bg-gray-200 px-3 py-1 text-[12px] font-medium text-gray-700 dark:text-gray-300">
                                         {selectedModelIds.length}{" "}
                                         {selectedModelIds.length === 1
                                             ? "model selected"
@@ -649,7 +649,7 @@ export function LlmProviderEditorScreen({
                                     </span>
                                 ) : null}
                             </div>
-                            <p className="mt-2 text-[15px] text-gray-500">
+                            <p className="mt-2 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                 Pick the exact models this provider should
                                 allow.
                             </p>
@@ -671,7 +671,7 @@ export function LlmProviderEditorScreen({
                     {catalogDetail ? (
                         filteredModels.length ? (
                             <div className="mt-4">
-                                <div className="overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
+                                <div className="overflow-hidden rounded-[16px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] divide-y divide-gray-200 dark:divide-gray-700">
                                     {filteredModels.map((model) => {
                                         const selected =
                                             selectedModelIds.includes(model.id);
@@ -704,40 +704,40 @@ export function LlmProviderEditorScreen({
                                 </div>
                             </div>
                         ) : (
-                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                 No models match{" "}
-                                <span className="font-medium text-gray-700">
+                                <span className="font-medium text-gray-700 dark:text-gray-300">
                                     &quot;{modelQuery}&quot;
                                 </span>
                                 .
                             </div>
                         )
                     ) : (
-                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                             Select a provider to browse its models.
                         </div>
                     )}
                 </section>
             ) : null}
 
-            <section className="rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
+            <section className="rounded-[36px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                 <div>
-                    <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
+                    <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950 dark:text-gray-100">
                         Configure access
                     </h2>
-                    <p className="mt-2 text-[15px] text-gray-500">
+                    <p className="mt-2 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                         Select which teams and people can use this provider.
                     </p>
                 </div>
 
-                <div className="mt-8 grid w-80 grid-cols-2 rounded-xl bg-gray-200 p-1 text-[13px] font-medium text-gray-500">
+                <div className="mt-8 grid w-80 grid-cols-2 rounded-xl bg-gray-200 p-1 text-[13px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
                     <button
                         type="button"
                         onClick={() => {
                             setAccessTab("teams");
                             setAccessQuery("");
                         }}
-                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "teams" ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-700"}`}
+                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "teams" ? "bg-white dark:bg-[var(--dls-surface)] text-gray-900 dark:text-gray-100 shadow-sm" : "hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"}`}
                     >
                         <Users className="h-4 w-4" />
                         {`Teams (${selectedTeamIds.length})`}
@@ -748,7 +748,7 @@ export function LlmProviderEditorScreen({
                             setAccessTab("people");
                             setAccessQuery("");
                         }}
-                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "people" ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-700"}`}
+                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "people" ? "bg-white dark:bg-[var(--dls-surface)] text-gray-900 dark:text-gray-100 shadow-sm" : "hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"}`}
                     >
                         <User className="h-4 w-4" />
                         {`People (${selectedMemberIds.length})`}
@@ -772,7 +772,7 @@ export function LlmProviderEditorScreen({
                 {accessTab === "teams" ? (
                     orgContext?.teams.length ? (
                         filteredTeams.length ? (
-                            <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
+                            <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] divide-y divide-gray-200 dark:divide-gray-700">
                                 {filteredTeams.map((team) => {
                                     const selected = selectedTeamIds.includes(team.id);
                                     return (
@@ -780,7 +780,7 @@ export function LlmProviderEditorScreen({
                                             key={team.id}
                                             selected={selected}
                                             leading={
-                                                <Users className="h-4 w-4 text-gray-400" />
+                                                <Users className="h-4 w-4 text-gray-400 dark:text-gray-500" />
                                             }
                                             title={team.name}
                                             description={`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}
@@ -799,23 +799,23 @@ export function LlmProviderEditorScreen({
                                 })}
                             </div>
                         ) : (
-                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                 No teams match{" "}
-                                <span className="font-medium text-gray-700">
+                                <span className="font-medium text-gray-700 dark:text-gray-300">
                                     &quot;{accessQuery}&quot;
                                 </span>
                                 .
                             </div>
                         )
                     ) : (
-                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                             Create teams from the Members page before assigning team
                             access.
                         </div>
                     )
                 ) : orgContext?.members.length ? (
                     filteredMembers.length ? (
-                        <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
+                        <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] divide-y divide-gray-200 dark:divide-gray-700">
                             {filteredMembers.map((member) => {
                                 const selected = selectedMemberIds.includes(
                                     member.id,
@@ -840,7 +840,7 @@ export function LlmProviderEditorScreen({
                                         description={member.user.email}
                                         aside={
                                             locked ? (
-                                                <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-500">
+                                                <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-2.5 py-1 text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                                     Locked
                                                 </span>
                                             ) : undefined
@@ -860,16 +860,16 @@ export function LlmProviderEditorScreen({
                             })}
                         </div>
                     ) : (
-                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                             No people match{" "}
-                            <span className="font-medium text-gray-700">
+                            <span className="font-medium text-gray-700 dark:text-gray-300">
                                 &quot;{accessQuery}&quot;
                             </span>
                             .
                         </div>
                     )
                 ) : (
-                    <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                    <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
                         No people are available to assign yet.
                     </div>
                 )}

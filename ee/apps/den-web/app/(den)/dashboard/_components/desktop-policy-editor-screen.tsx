@@ -159,7 +159,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <Link
           href={listRoute}
-          className="inline-flex items-center gap-2 text-[13px] font-medium text-gray-500 hover:text-gray-900"
+          className="inline-flex items-center gap-2 text-[13px] font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to desktop policies
@@ -175,27 +175,27 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
       ) : null}
 
       {initialLoad ? (
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">Loading desktop policy...</div>
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Loading desktop policy...</div>
       ) : notFound ? (
-        <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center text-[15px] text-gray-500">
+        <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
           Desktop policy not found.
         </div>
       ) : !canManage ? (
-        <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center text-[15px] text-gray-500">
+        <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
           Only workspace owners and admins can manage desktop policies.
         </div>
       ) : (
-        <section className="grid gap-5 rounded-[28px] border border-gray-200 bg-white p-6">
+        <section className="grid gap-5 rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6">
           <div className="flex flex-wrap items-end gap-3">
             <label className="grid flex-1 min-w-[240px] gap-2">
-              <span className="text-[13px] font-medium text-gray-700">Policy name</span>
+              <span className="text-[13px] font-medium text-gray-700 dark:text-gray-300">Policy name</span>
               <DenInput
                 value={draft.policyName}
                 onChange={(event) => setDraft({ ...draft, policyName: event.target.value })}
                 disabled={saving || togglingEnabled || isDefault}
               />
               {isDefault ? (
-                <span className="text-[12px] text-gray-500">The default desktop policy name cannot be changed.</span>
+                <span className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">The default desktop policy name cannot be changed.</span>
               ) : null}
             </label>
             {isEditing && policy && !isDefault ? (
@@ -215,11 +215,11 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
             {definitions.map((definition) => (
               <label
                 key={definition.id}
-                className="flex items-start justify-between gap-4 rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-4"
+                className="flex items-start justify-between gap-4 rounded-[22px] border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-4"
               >
                 <span>
-                  <span className="block text-[14px] font-medium text-gray-950">{definition.name}</span>
-                  <span className="mt-1 block text-[13px] leading-6 text-gray-500">{definition.description}</span>
+                  <span className="block text-[14px] font-medium text-gray-950 dark:text-gray-100">{definition.name}</span>
+                  <span className="mt-1 block text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">{definition.description}</span>
                 </span>
                 <input
                   type="checkbox"
@@ -240,12 +240,12 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
           {!isDefault ? (
             <div className="grid items-start gap-5 lg:grid-cols-2">
               <div className="flex flex-col gap-2">
-                <p className="text-[13px] font-medium text-gray-700">Members</p>
-                <div className="flex max-h-64 min-h-[160px] flex-col gap-2 overflow-auto rounded-[22px] border border-gray-200 p-3">
+                <p className="text-[13px] font-medium text-gray-700 dark:text-gray-300">Members</p>
+                <div className="flex max-h-64 min-h-[160px] flex-col gap-2 overflow-auto rounded-[22px] border border-gray-200 dark:border-gray-700 p-3">
                   {(orgContext?.members ?? []).length === 0 ? (
                     <Link
                       href={getMembersRoute(orgSlug)}
-                      className="flex flex-1 items-center justify-center rounded-xl px-3 py-6 text-center text-[13px] text-gray-500 hover:bg-gray-50 hover:text-gray-900"
+                      className="flex flex-1 items-center justify-center rounded-xl px-3 py-6 text-center text-[13px] text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
                     >
                       Invite members to assign them to this policy.
                     </Link>
@@ -253,7 +253,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
                     (orgContext?.members ?? []).map((member) => (
                       <label
                         key={member.id}
-                        className="flex items-center gap-3 rounded-xl px-2 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50"
+                        className="flex items-center gap-3 rounded-xl px-2 py-1.5 text-[13px] text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
                       >
                         <input
                           type="checkbox"
@@ -269,12 +269,12 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
               </div>
 
               <div className="flex flex-col gap-2">
-                <p className="text-[13px] font-medium text-gray-700">Teams</p>
-                <div className="flex max-h-64 min-h-[160px] flex-col gap-2 overflow-auto rounded-[22px] border border-gray-200 p-3">
+                <p className="text-[13px] font-medium text-gray-700 dark:text-gray-300">Teams</p>
+                <div className="flex max-h-64 min-h-[160px] flex-col gap-2 overflow-auto rounded-[22px] border border-gray-200 dark:border-gray-700 p-3">
                   {(orgContext?.teams ?? []).length === 0 ? (
                     <Link
                       href={getMembersRoute(orgSlug)}
-                      className="flex flex-1 items-center justify-center rounded-xl px-3 py-6 text-center text-[13px] text-gray-500 hover:bg-gray-50 hover:text-gray-900"
+                      className="flex flex-1 items-center justify-center rounded-xl px-3 py-6 text-center text-[13px] text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
                     >
                       Click here to set up your teams.
                     </Link>
@@ -282,7 +282,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
                     (orgContext?.teams ?? []).map((team) => (
                       <label
                         key={team.id}
-                        className="flex items-center gap-3 rounded-xl px-2 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50"
+                        className="flex items-center gap-3 rounded-xl px-2 py-1.5 text-[13px] text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
                       >
                         <input
                           type="checkbox"
@@ -302,7 +302,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
           <div className="flex flex-wrap justify-end gap-3">
             <Link
               href={listRoute}
-              className="inline-flex h-10 items-center justify-center rounded-full border border-gray-200 bg-white px-5 text-[13px] font-medium text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
+              className="inline-flex h-10 items-center justify-center rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 text-[13px] font-medium text-gray-700 transition-colors hover:border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
             >
               Cancel
             </Link>

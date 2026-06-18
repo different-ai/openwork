@@ -115,22 +115,22 @@ export function OrganizationScreen() {
   if (!sessionHydrated || busy) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#fafafa]">
-        <p className="text-sm text-gray-500">Loading organizations...</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">Loading organizations...</p>
       </div>
     );
   }
 
   return (
     <div className="flex min-h-screen flex-col bg-[#fafafa]">
-      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 sm:px-6">
+      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 sm:px-6">
         <div className="flex items-center gap-2">
-          <span className="text-[14px] font-medium text-gray-900">OpenWork Cloud</span>
+          <span className="text-[14px] font-medium text-gray-900 dark:text-gray-100">OpenWork Cloud</span>
         </div>
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-          <span className="min-w-0 truncate text-sm text-gray-500">{user?.email}</span>
+          <span className="min-w-0 truncate text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">{user?.email}</span>
           <button
             onClick={() => void signOut()}
-            className="text-gray-400 transition-colors hover:text-gray-900"
+            className="text-gray-400 transition-colors hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
             aria-label="Log out"
           >
             <LogOut className="h-4 w-4" />
@@ -141,17 +141,17 @@ export function OrganizationScreen() {
       <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-12">
         {showDirectCreateFlow ? (
           <div className="mx-auto max-w-2xl">
-            <section className="rounded-[1.75rem] border border-gray-200 bg-white p-5 shadow-sm sm:p-7 md:rounded-[2rem] md:p-10">
+            <section className="rounded-[1.75rem] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 shadow-sm sm:p-7 md:rounded-[2rem] md:p-10">
               <div className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-start">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#011627] text-sm font-semibold uppercase tracking-[0.08em] text-white sm:h-14 sm:w-14">
                   {userInitials}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium uppercase tracking-[0.18em] text-gray-400">OpenWork Cloud</p>
-                  <h1 className="mt-2 text-[2rem] font-semibold leading-none tracking-[-0.04em] text-gray-950 sm:text-3xl">
+                  <p className="text-sm font-medium uppercase tracking-[0.18em] text-gray-400 dark:text-gray-500">OpenWork Cloud</p>
+                  <h1 className="mt-2 text-[2rem] font-semibold leading-none tracking-[-0.04em] text-gray-950 dark:text-gray-100 sm:text-3xl">
                     Name your team.
                   </h1>
-                  <p className="mt-3 max-w-xl text-[13px] leading-6 text-gray-500 sm:text-sm">
+                  <p className="mt-3 max-w-xl text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500 sm:text-sm">
                     You can rename it later. No credit card required.
                   </p>
                 </div>
@@ -165,19 +165,19 @@ export function OrganizationScreen() {
 
               <form onSubmit={handleCreate} className="grid gap-5">
                 <label className="grid gap-2">
-                  <span className="text-sm font-medium text-gray-700">Organization name</span>
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Organization name</span>
                   <input
                     type="text"
                     value={createName}
                     onChange={(e) => setCreateName(e.target.value)}
                     placeholder="Acme Corp"
-                    className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
+                    className="w-full rounded-2xl border border-gray-200 dark:border-gray-700 px-4 py-3 text-sm text-gray-900 dark:text-gray-100 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5 dark:focus:ring-gray-100/10"
                     autoFocus
                     required
                   />
                 </label>
 
-                {createError ? <p className="text-sm font-medium text-rose-600">{createError}</p> : null}
+                {createError ? <p className="text-sm font-medium text-rose-600 dark:text-rose-400">{createError}</p> : null}
 
                 <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                   <button
@@ -195,18 +195,18 @@ export function OrganizationScreen() {
         ) : (
           <div className="mx-auto max-w-5xl">
             <div className="mb-6 sm:mb-8">
-              <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Settings</h1>
-              <p className="mt-1 text-sm text-gray-500">Manage your profile and organization memberships.</p>
+              <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">Settings</h1>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">Manage your profile and organization memberships.</p>
             </div>
 
-            <div className="mb-6 flex gap-6 overflow-x-auto border-b border-gray-200 sm:mb-8 sm:gap-8">
+            <div className="mb-6 flex gap-6 overflow-x-auto border-b border-gray-200 dark:border-gray-700 sm:mb-8 sm:gap-8">
               <button
                 type="button"
                 onClick={() => setActiveTab("profile")}
                 className={`border-b-2 pb-3 text-sm font-medium transition-colors ${
                   activeTab === "profile"
-                    ? "border-gray-900 text-gray-900"
-                    : "border-transparent text-gray-500 hover:text-gray-700"
+                    ? "border-gray-900 text-gray-900 dark:text-gray-100"
+                    : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
                 }`}
               >
                 Profile
@@ -216,8 +216,8 @@ export function OrganizationScreen() {
                 onClick={() => setActiveTab("organizations")}
                 className={`border-b-2 pb-3 text-sm font-medium transition-colors ${
                   activeTab === "organizations"
-                    ? "border-gray-900 text-gray-900"
-                    : "border-transparent text-gray-500 hover:text-gray-700"
+                    ? "border-gray-900 text-gray-900 dark:text-gray-100"
+                    : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
                 }`}
               >
                 Organizations
@@ -231,55 +231,55 @@ export function OrganizationScreen() {
             ) : null}
 
             {activeTab === "profile" ? (
-              <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <section className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-sm">
                 <div className="mb-6 flex items-start gap-4">
                   <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#011627] text-sm font-semibold uppercase tracking-[0.08em] text-white">
                     {userInitials}
                   </div>
                   <div className="min-w-0">
-                    <h2 className="text-lg font-medium text-gray-900">{userDisplayName}</h2>
-                    <p className="mt-1 text-sm text-gray-500">{user?.email ?? "Signed in"}</p>
+                    <h2 className="text-lg font-medium text-gray-900 dark:text-gray-100">{userDisplayName}</h2>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">{user?.email ?? "Signed in"}</p>
                   </div>
                 </div>
 
                 <div className="grid gap-5 md:grid-cols-2">
                   <label className="grid gap-2">
-                    <span className="text-sm font-medium text-gray-700">Full name</span>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Full name</span>
                     <input
                       type="text"
                       value={user?.name ?? ""}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none"
                     />
                   </label>
 
                   <label className="grid gap-2">
-                    <span className="text-sm font-medium text-gray-700">Email</span>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Email</span>
                     <input
                       type="email"
                       value={user?.email ?? ""}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none"
                     />
                   </label>
 
                   <label className="grid gap-2">
-                    <span className="text-sm font-medium text-gray-700">User ID</span>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">User ID</span>
                     <input
                       type="text"
                       value={user?.id ?? ""}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none"
                     />
                   </label>
 
                   <label className="grid gap-2">
-                    <span className="text-sm font-medium text-gray-700">Current organization</span>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Current organization</span>
                     <input
                       type="text"
                       value={activeOrg?.name ?? "No active organization"}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none"
                     />
                   </label>
                 </div>
@@ -287,7 +287,7 @@ export function OrganizationScreen() {
             ) : (
               <>
                 <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="max-w-2xl text-sm text-gray-500">
+                  <p className="max-w-2xl text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">
                     Organizations are independent environments. In each organization you can collaborate with other members and manage your own resources.
                   </p>
                   <button
@@ -299,17 +299,17 @@ export function OrganizationScreen() {
                 </div>
 
                 {showCreate ? (
-                  <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:mb-8 sm:p-6">
-                    <h2 className="mb-4 text-lg font-medium text-gray-900">Create an Organization</h2>
+                  <div className="mb-6 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 shadow-sm sm:mb-8 sm:p-6">
+                    <h2 className="mb-4 text-lg font-medium text-gray-900 dark:text-gray-100">Create an Organization</h2>
                     <form onSubmit={handleCreate} className="grid max-w-md gap-4">
                       <label className="grid gap-2">
-                        <span className="text-sm font-medium text-gray-700">Organization Name</span>
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Organization Name</span>
                         <input
                           type="text"
                           value={createName}
                           onChange={(e) => setCreateName(e.target.value)}
                           placeholder="Acme Corp"
-                          className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
+                          className="w-full rounded-xl border border-gray-200 dark:border-gray-700 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5 dark:focus:ring-gray-100/10"
                           autoFocus
                           required
                         />
@@ -323,7 +323,7 @@ export function OrganizationScreen() {
                             setCreateName("");
                             setCreateError(null);
                           }}
-                          className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                          className="rounded-xl border border-gray-200 dark:border-gray-700 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
                         >
                           Cancel
                         </button>
@@ -336,18 +336,18 @@ export function OrganizationScreen() {
                         </button>
                       </div>
 
-                      {createError ? <p className="text-sm font-medium text-rose-600">{createError}</p> : null}
+                      {createError ? <p className="text-sm font-medium text-rose-600 dark:text-rose-400">{createError}</p> : null}
                     </form>
                   </div>
                 ) : null}
 
                 <div className="grid gap-3 md:hidden">
                   {orgs.map((org) => (
-                    <section key={org.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <section key={org.id} className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-4 shadow-sm">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <h2 className="truncate text-[15px] font-semibold text-gray-950">{org.name}</h2>
-                          <p className="mt-1 text-xs text-gray-500">
+                          <h2 className="truncate text-[15px] font-semibold text-gray-950 dark:text-gray-100">{org.name}</h2>
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 dark:text-gray-500">
                             {org.role === "owner" ? "Creator plan" : "Free plan"} • {formatRoleLabel(org.role)}
                           </p>
                         </div>
@@ -360,13 +360,13 @@ export function OrganizationScreen() {
                       <div className="mt-4 flex gap-2">
                         <button
                           onClick={() => handleSwitch(org.slug)}
-                          className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+                          className="flex-1 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 shadow-sm transition hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
                         >
                           {org.isActive ? "Open" : "Switch"}
                         </button>
                         <button
                           onClick={() => handleSwitch(org.slug)}
-                          className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-3 py-2.5 text-gray-500 transition hover:bg-gray-50 hover:text-gray-800"
+                          className="inline-flex items-center justify-center rounded-xl border border-gray-200 dark:border-gray-700 px-3 py-2.5 text-gray-500 transition hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50 hover:text-gray-800 dark:text-gray-200"
                           aria-label="Organization settings"
                         >
                           <Settings className="h-4 w-4" />
@@ -376,44 +376,44 @@ export function OrganizationScreen() {
                   ))}
                 </div>
 
-                <div className="hidden overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm md:block">
+                <div className="hidden overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] shadow-sm md:block">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
-                      <thead className="border-b border-gray-200 bg-gray-50/50">
+                      <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50/50">
                         <tr>
-                          <th className="px-6 py-4 font-medium text-gray-500">Organization</th>
-                          <th className="px-6 py-4 font-medium text-gray-500">Seat Type</th>
-                          <th className="px-6 py-4 text-right font-medium text-gray-500">Action</th>
+                          <th className="px-6 py-4 font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">Organization</th>
+                          <th className="px-6 py-4 font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">Seat Type</th>
+                          <th className="px-6 py-4 text-right font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">Action</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-100">
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                         {orgs.map((org) => (
-                          <tr key={org.id} className="transition-colors hover:bg-gray-50/50">
+                          <tr key={org.id} className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50/50">
                             <td className="px-6 py-4">
-                              <div className="font-medium text-gray-900">{org.name}</div>
-                              <div className="mt-1 text-xs text-gray-500">
+                              <div className="font-medium text-gray-900 dark:text-gray-100">{org.name}</div>
+                              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                 {org.role === "owner" ? "Creator plan" : "Free plan"} • 1 member
                               </div>
                             </td>
                             <td className="px-6 py-4">
-                              <span className="text-gray-700">{formatRoleLabel(org.role)}</span>
+                              <span className="text-gray-700 dark:text-gray-300">{formatRoleLabel(org.role)}</span>
                             </td>
                             <td className="px-6 py-4 text-right">
                               {org.isActive ? (
-                                <span className="inline-flex cursor-default items-center rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-500">
+                                <span className="inline-flex cursor-default items-center rounded-lg bg-gray-100 dark:bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
                                   Current Organization
                                 </span>
                               ) : (
                                 <button
                                   onClick={() => handleSwitch(org.slug)}
-                                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+                                  className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 shadow-sm transition hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
                                 >
                                   Switch
                                 </button>
                               )}
                               <button
                                 onClick={() => handleSwitch(org.slug)}
-                                className="ml-2 inline-flex items-center justify-center rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+                                className="ml-2 inline-flex items-center justify-center rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 dark:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
                                 aria-label="Organization settings"
                               >
                                 <Settings className="h-4 w-4" />
@@ -426,7 +426,7 @@ export function OrganizationScreen() {
                   </div>
                 </div>
 
-                <p className="mt-8 text-center text-sm text-gray-500">You have no pending organization invites.</p>
+                <p className="mt-8 text-center text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">You have no pending organization invites.</p>
               </>
             )}
           </div>

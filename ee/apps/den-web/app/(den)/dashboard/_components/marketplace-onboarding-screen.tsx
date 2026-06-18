@@ -24,7 +24,7 @@ function StepDots({ current, total }: { current: number; total: number }) {
         <div
           key={i}
           className={`h-1.5 rounded-full transition-all ${
-            i === current ? "w-6 bg-white" : "w-1.5 bg-white/30"
+            i === current ? "w-6 bg-white dark:bg-[var(--dls-surface)]" : "w-1.5 bg-white dark:bg-white/30"
           }`}
         />
       ))}
@@ -73,9 +73,9 @@ export function MarketplaceOnboardingScreen() {
                   </p>
                 </div>
 
-                <div className="mt-5 rounded-[18px] border border-white/10 bg-white/[0.06] p-4">
+                <div className="mt-5 rounded-[18px] border border-white/10 bg-white dark:bg-white/[0.06] p-4">
                   <div className="flex items-center gap-2.5">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-300/90 text-[#07192C]">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-300/90 text-[#07192C] dark:text-gray-100">
                       <Sparkles className="h-4 w-4" />
                     </div>
                     <p className="text-[13px] font-semibold">OpenWork Models</p>
@@ -84,7 +84,7 @@ export function MarketplaceOnboardingScreen() {
                     Below-market-rate AI. No API keys needed to start, or bring your own.
                   </p>
                   <div className="mt-3 flex gap-2">
-                    <Link href="/dashboard/inference" className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-white px-3 py-2 text-[12px] font-semibold text-[#07192C]">
+                    <Link href="/dashboard/inference" className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-white dark:bg-[var(--dls-surface)] px-3 py-2 text-[12px] font-semibold text-[#07192C] dark:text-gray-100">
                       <Zap className="h-3.5 w-3.5" /> Enable
                     </Link>
                     <Link href="/dashboard/custom-llm-providers" className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full border border-white/20 px-3 py-2 text-[12px] font-semibold text-white">
@@ -96,7 +96,7 @@ export function MarketplaceOnboardingScreen() {
                 <button
                   type="button"
                   onClick={() => setStep(1)}
-                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/15 px-4 py-3 text-[14px] font-semibold text-white transition hover:bg-white/10"
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/15 px-4 py-3 text-[14px] font-semibold text-white transition hover:bg-white dark:bg-white/10"
                 >
                   Next <ArrowRight className="h-4 w-4" />
                 </button>
@@ -105,14 +105,14 @@ export function MarketplaceOnboardingScreen() {
           </div>
         ) : step === 1 ? (
           <div className="flex min-h-[calc(100dvh-3.5rem)] flex-col">
-            <section className="flex flex-1 flex-col overflow-hidden rounded-[24px] border border-[#d7e2f5] bg-gradient-to-br from-[#F4F8FF] to-[#EEF3FF] shadow-sm">
+            <section className="flex flex-1 flex-col overflow-hidden rounded-[24px] border border-[#d7e2f5] dark:border-gray-700 bg-gradient-to-br from-[#F4F8FF] to-[#EEF3FF] shadow-sm">
               <div className="flex flex-1 flex-col justify-between p-5">
                 <div>
                   <StepDotsLight current={1} total={3} />
-                  <h1 className="mt-5 text-[28px] font-semibold leading-[0.98] tracking-[-0.05em] text-[#07192C]">
+                  <h1 className="mt-5 text-[28px] font-semibold leading-[0.98] tracking-[-0.05em] text-[#07192C] dark:text-gray-100">
                     Download the app.
                   </h1>
-                  <p className="mt-2 text-[14px] leading-6 text-[#526582]">
+                  <p className="mt-2 text-[14px] leading-6 text-[#526582] dark:text-gray-400">
                     Sign in with this account to unlock built-in extensions.
                   </p>
                 </div>
@@ -124,17 +124,17 @@ export function MarketplaceOnboardingScreen() {
                     { icon: Monitor, name: "Image Gen", desc: "Generate images with GPT" },
                     { icon: Monitor, name: "Google Workspace", desc: "Calendar, Drive, Gmail" },
                   ].map((ext) => (
-                    <div key={ext.name} className="flex items-center gap-3 rounded-2xl bg-white/80 px-4 py-3">
+                    <div key={ext.name} className="flex items-center gap-3 rounded-2xl bg-white dark:bg-gray-900/80 px-4 py-3">
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#07192C] text-white">
                         <ext.icon className="h-4 w-4" />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-[14px] font-semibold text-[#07192C]">{ext.name}</p>
-                        <p className="text-[12px] text-[#526582]">{ext.desc}</p>
+                        <p className="text-[14px] font-semibold text-[#07192C] dark:text-gray-100">{ext.name}</p>
+                        <p className="text-[12px] text-[#526582] dark:text-gray-400">{ext.desc}</p>
                       </div>
                     </div>
                   ))}
-                  <p className="px-1 text-[12px] text-[#526582]">
+                  <p className="px-1 text-[12px] text-[#526582] dark:text-gray-400">
                     Plus your team&apos;s marketplace extensions.
                   </p>
                 </div>
@@ -151,26 +151,26 @@ export function MarketplaceOnboardingScreen() {
           </div>
         ) : (
           <div className="flex min-h-[calc(100dvh-3.5rem)] flex-col">
-            <section className="flex flex-1 flex-col overflow-hidden rounded-[24px] border border-gray-200 bg-white shadow-sm">
+            <section className="flex flex-1 flex-col overflow-hidden rounded-[24px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] shadow-sm">
               <div className="flex flex-1 flex-col justify-between p-5">
                 <div>
                   <StepDotsLight current={2} total={3} />
-                  <h1 className="mt-5 text-[28px] font-semibold leading-[0.98] tracking-[-0.05em] text-[#07192C]">
+                  <h1 className="mt-5 text-[28px] font-semibold leading-[0.98] tracking-[-0.05em] text-[#07192C] dark:text-gray-100">
                     Create your own.
                   </h1>
-                  <p className="mt-2 text-[14px] leading-6 text-[#526582]">
+                  <p className="mt-2 text-[14px] leading-6 text-[#526582] dark:text-gray-400">
                     Import plugins from a GitHub repo and share them with your team through a marketplace.
                   </p>
                 </div>
 
                 <div className="mt-5 space-y-3">
-                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+                  <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4">
                     <div className="flex items-center gap-2.5">
-                      <Github className="h-5 w-5 text-[#07192C]" />
-                      <p className="text-[14px] font-semibold text-[#07192C]">Try the starter repo</p>
+                      <Github className="h-5 w-5 text-[#07192C] dark:text-gray-100" />
+                      <p className="text-[14px] font-semibold text-[#07192C] dark:text-gray-100">Try the starter repo</p>
                     </div>
-                    <p className="mt-2 text-[13px] leading-5 text-[#526582]">
-                      Fork <span className="font-medium text-[#07192C]">anthropics/knowledge-work-plugins</span>, connect your GitHub, and import the example plugins.
+                    <p className="mt-2 text-[13px] leading-5 text-[#526582] dark:text-gray-400">
+                      Fork <span className="font-medium text-[#07192C] dark:text-gray-100">anthropics/knowledge-work-plugins</span>, connect your GitHub, and import the example plugins.
                     </p>
                     <a
                       href={ANTHROPIC_KNOWLEDGE_WORK_REPO}
@@ -182,12 +182,12 @@ export function MarketplaceOnboardingScreen() {
                     </a>
                   </div>
 
-                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+                  <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4">
                     <div className="flex items-center gap-2.5">
-                      <Puzzle className="h-5 w-5 text-[#07192C]" />
-                      <p className="text-[14px] font-semibold text-[#07192C]">Or use the MCP</p>
+                      <Puzzle className="h-5 w-5 text-[#07192C] dark:text-gray-100" />
+                      <p className="text-[14px] font-semibold text-[#07192C] dark:text-gray-100">Or use the MCP</p>
                     </div>
-                    <p className="mt-2 text-[13px] leading-5 text-[#526582]">
+                    <p className="mt-2 text-[13px] leading-5 text-[#526582] dark:text-gray-400">
                       Ask any AI app to package and distribute plugins through OpenWork.
                     </p>
                     <pre className="mt-2 rounded-lg bg-[#07192C] px-3 py-2 text-[11px] text-cyan-100"><code>npx openwork-ui-mcp</code></pre>
@@ -203,7 +203,7 @@ export function MarketplaceOnboardingScreen() {
                   </Link>
                   <Link
                     href={getOrgDashboardRoute(orgSlug)}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-gray-200 px-4 py-3 text-[14px] font-semibold text-gray-700"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 px-4 py-3 text-[14px] font-semibold text-gray-700 dark:text-gray-300"
                   >
                     Go to dashboard
                   </Link>
@@ -228,18 +228,18 @@ export function MarketplaceOnboardingScreen() {
                 We set up two starter marketplaces for {orgName}.
               </p>
               <div className="mt-5 flex flex-wrap gap-3">
-                <Link href={getMarketplacesRoute(orgSlug)} className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-4 py-2.5 text-[13px] font-semibold text-[#07192C] transition hover:bg-white/90">
+                <Link href={getMarketplacesRoute(orgSlug)} className="inline-flex items-center justify-center gap-2 rounded-full bg-white dark:bg-[var(--dls-surface)] px-4 py-2.5 text-[13px] font-semibold text-[#07192C] dark:text-gray-100 transition hover:bg-white dark:bg-gray-900/90">
                   View marketplaces <ArrowRight className="h-4 w-4" />
                 </Link>
-                <Link href={getOrgDashboardRoute(orgSlug)} className="inline-flex items-center justify-center gap-2 rounded-full border border-white/15 px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-white/10">
+                <Link href={getOrgDashboardRoute(orgSlug)} className="inline-flex items-center justify-center gap-2 rounded-full border border-white/15 px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-white dark:bg-white/10">
                   Go to dashboard
                 </Link>
               </div>
             </div>
 
-            <div className="rounded-[22px] border border-white/10 bg-white/[0.06] p-5">
+            <div className="rounded-[22px] border border-white/10 bg-white dark:bg-white/[0.06] p-5">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-300 text-[#07192C]">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-300 text-[#07192C] dark:text-gray-100">
                   <Monitor className="h-5 w-5" />
                 </div>
                 <div>
@@ -252,7 +252,7 @@ export function MarketplaceOnboardingScreen() {
         </section>
 
         {/* OpenWork Models */}
-        <section className="mt-6 overflow-hidden rounded-[28px] border border-[#d7e2f5] bg-gradient-to-br from-[#F4F8FF] to-[#EEF3FF] p-6 shadow-sm md:p-8">
+        <section className="mt-6 overflow-hidden rounded-[28px] border border-[#d7e2f5] dark:border-gray-700 bg-gradient-to-br from-[#F4F8FF] to-[#EEF3FF] p-6 shadow-sm md:p-8">
           <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center md:gap-8">
             <div>
               <div className="flex items-center gap-2">
@@ -261,10 +261,10 @@ export function MarketplaceOnboardingScreen() {
                 </div>
                 <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[#41618F]">OpenWork Models</p>
               </div>
-              <h2 className="mt-3 text-[24px] font-semibold tracking-[-0.03em] text-[#07192C]">
+              <h2 className="mt-3 text-[24px] font-semibold tracking-[-0.03em] text-[#07192C] dark:text-gray-100">
                 Below-market-rate AI models, ready to go.
               </h2>
-              <p className="mt-2 text-[14px] leading-6 text-[#526582]">
+              <p className="mt-2 text-[14px] leading-6 text-[#526582] dark:text-gray-400">
                 The best open-source and frontier models to get work done. No API keys needed to start.
                 Prefer your own provider? Bring your own keys instead.
               </p>
@@ -273,7 +273,7 @@ export function MarketplaceOnboardingScreen() {
               <Link href="/dashboard/inference" className="inline-flex items-center justify-center gap-2 rounded-full bg-[#07192C] px-5 py-2.5 text-[13px] font-semibold text-white shadow-[0_14px_32px_-20px_rgba(1,22,39,0.45)] transition hover:bg-black">
                 <Zap className="h-4 w-4" /> Enable OpenWork Models
               </Link>
-              <Link href="/dashboard/custom-llm-providers" className="inline-flex items-center justify-center gap-2 rounded-full border border-[#d8e0ec] px-5 py-2.5 text-[13px] font-semibold text-[#07192C] transition hover:bg-white">
+              <Link href="/dashboard/custom-llm-providers" className="inline-flex items-center justify-center gap-2 rounded-full border border-[#d8e0ec] dark:border-gray-600 px-5 py-2.5 text-[13px] font-semibold text-[#07192C] dark:text-gray-100 transition hover:bg-white dark:bg-[var(--dls-surface)]">
                 Use your own keys
               </Link>
             </div>
@@ -293,7 +293,7 @@ export function MarketplaceOnboardingScreen() {
               <Link
                 key={marketplace.id}
                 href={`${getMarketplacesRoute(orgSlug)}/${encodeURIComponent(marketplace.id)}`}
-                className="rounded-[22px] border border-[#e2e7f0] bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[#cfd8e8] hover:shadow-md"
+                className="rounded-[22px] border border-[#e2e7f0] dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[#cfd8e8] hover:shadow-md"
               >
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#EDF4FF] text-[#164B8F]">
@@ -301,8 +301,8 @@ export function MarketplaceOnboardingScreen() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <h2 className="truncate text-[16px] font-semibold tracking-[-0.02em] text-[#07192C]">{isOpenWork ? "OpenWork Marketplace" : "Community Plugins"}</h2>
-                      <span className="shrink-0 text-[12px] font-medium text-[#667695]">{marketplace.pluginCount} ext{marketplace.pluginCount === 1 ? "" : "s"}</span>
+                      <h2 className="truncate text-[16px] font-semibold tracking-[-0.02em] text-[#07192C] dark:text-gray-100">{isOpenWork ? "OpenWork Marketplace" : "Community Plugins"}</h2>
+                      <span className="shrink-0 text-[12px] font-medium text-[#667695] dark:text-gray-400">{marketplace.pluginCount} ext{marketplace.pluginCount === 1 ? "" : "s"}</span>
                     </div>
                   </div>
                 </div>
@@ -311,7 +311,7 @@ export function MarketplaceOnboardingScreen() {
             );
           })}
           {isLoading ? (
-            <div className="rounded-[22px] border border-[#e2e7f0] bg-white p-5 text-[13px] text-[#667695] shadow-sm">Loading...</div>
+            <div className="rounded-[22px] border border-[#e2e7f0] dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 text-[13px] text-[#667695] dark:text-gray-400 shadow-sm">Loading...</div>
           ) : null}
         </section>
 
@@ -342,9 +342,9 @@ export function MarketplaceOnboardingScreen() {
 
         {/* Starter repo + MCP */}
         <section className="mt-6 grid gap-4 lg:grid-cols-2">
-          <div className="rounded-[22px] border border-[#e2e7f0] bg-white p-6 shadow-sm">
+          <div className="rounded-[22px] border border-[#e2e7f0] dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-sm">
             <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[#6C7890]">Starter repo</p>
-            <h2 className="mt-2 text-[18px] font-semibold tracking-[-0.03em] text-[#07192C]">Try Knowledge Work Plugins</h2>
+            <h2 className="mt-2 text-[18px] font-semibold tracking-[-0.03em] text-[#07192C] dark:text-gray-100">Try Knowledge Work Plugins</h2>
             <p className="mt-2 text-[13px] leading-6 text-[#5C6B86]">
               A GitHub repo with example plugins. Fork it and connect to see how import works.
             </p>
@@ -352,10 +352,10 @@ export function MarketplaceOnboardingScreen() {
               Open on GitHub <ArrowRight className="h-4 w-4" />
             </a>
           </div>
-          <div className="rounded-[22px] border border-[#d7e2f5] bg-[#F4F8FF] p-6 shadow-sm">
+          <div className="rounded-[22px] border border-[#d7e2f5] dark:border-gray-700 bg-[#F4F8FF] p-6 shadow-sm">
             <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[#41618F]">Use with any AI app</p>
-            <h2 className="mt-2 text-[18px] font-semibold tracking-[-0.03em] text-[#07192C]">OpenWork MCP</h2>
-            <p className="mt-2 text-[13px] leading-6 text-[#526582]">
+            <h2 className="mt-2 text-[18px] font-semibold tracking-[-0.03em] text-[#07192C] dark:text-gray-100">OpenWork MCP</h2>
+            <p className="mt-2 text-[13px] leading-6 text-[#526582] dark:text-gray-400">
               Add the MCP server to Claude, Cursor, or any app that supports MCP.
             </p>
             <pre className="mt-3 overflow-x-auto rounded-xl bg-[#07192C] px-4 py-3 text-[12px] leading-6 text-cyan-100"><code>npx openwork-ui-mcp</code></pre>
@@ -377,10 +377,10 @@ function ActionCard({ icon, title, body, href, label }: {
   label: string;
 }) {
   return (
-    <Link href={href} className="flex items-start gap-4 rounded-[22px] border border-[#e2e7f0] bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[#cfd8e8] hover:shadow-md">
+    <Link href={href} className="flex items-start gap-4 rounded-[22px] border border-[#e2e7f0] dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[#cfd8e8] hover:shadow-md">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#07192C] text-white">{icon}</div>
       <div className="min-w-0">
-        <h2 className="text-[15px] font-semibold tracking-[-0.02em] text-[#07192C]">{title}</h2>
+        <h2 className="text-[15px] font-semibold tracking-[-0.02em] text-[#07192C] dark:text-gray-100">{title}</h2>
         <p className="mt-1 text-[13px] leading-5 text-[#5C6B86]">{body}</p>
         <span className="mt-2 inline-flex items-center gap-1 text-[13px] font-semibold text-[#164B8F]">
           {label} <ArrowRight className="h-3.5 w-3.5" />

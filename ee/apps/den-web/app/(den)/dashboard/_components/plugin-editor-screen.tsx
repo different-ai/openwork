@@ -252,20 +252,20 @@ export function PluginEditorScreen() {
     <div className="mx-auto w-full max-w-3xl px-6 py-10">
       <Link
         href={getPluginsRoute(orgSlug)}
-        className="mb-6 inline-flex items-center gap-2 text-[14px] text-gray-500 hover:text-gray-900"
+        className="mb-6 inline-flex items-center gap-2 text-[14px] text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
       >
         <ArrowLeft size={15} />
         Back to plugins
       </Link>
 
-      <h1 className="text-[28px] font-semibold text-gray-900">Create a plugin</h1>
-      <p className="mt-1 text-[15px] text-gray-500">
+      <h1 className="text-[28px] font-semibold text-gray-900 dark:text-gray-100">Create a plugin</h1>
+      <p className="mt-1 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
         Bundle skills, commands, and MCP servers your team can install in OpenWork with one click.
       </p>
 
-      <div className="mt-8 flex flex-col gap-5 rounded-[24px] border border-gray-200 bg-white p-6">
+      <div className="mt-8 flex flex-col gap-5 rounded-[24px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6">
         <div>
-          <label className="mb-1.5 block text-[13px] font-medium text-gray-700">Plugin name</label>
+          <label className="mb-1.5 block text-[13px] font-medium text-gray-700 dark:text-gray-300">Plugin name</label>
           <DenInput
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -274,7 +274,7 @@ export function PluginEditorScreen() {
           />
         </div>
         <div>
-          <label className="mb-1.5 block text-[13px] font-medium text-gray-700">Description</label>
+          <label className="mb-1.5 block text-[13px] font-medium text-gray-700 dark:text-gray-300">Description</label>
           <DenTextarea
             value={description}
             onChange={(event) => setDescription(event.target.value)}
@@ -287,7 +287,7 @@ export function PluginEditorScreen() {
 
       <div className="mt-6">
         <div className="flex items-center justify-between">
-          <h2 className="text-[18px] font-semibold text-gray-900">What&apos;s inside</h2>
+          <h2 className="text-[18px] font-semibold text-gray-900 dark:text-gray-100">What&apos;s inside</h2>
           <div className="flex gap-2">
             {(Object.keys(COMPONENT_META) as ComponentKind[]).map((kind) => {
               const meta = COMPONENT_META[kind];
@@ -308,7 +308,7 @@ export function PluginEditorScreen() {
         </div>
 
         {components.length === 0 ? (
-          <div className="mt-4 rounded-[24px] border border-dashed border-gray-300 bg-gray-50 px-6 py-10 text-center text-[14px] text-gray-500">
+          <div className="mt-4 rounded-[24px] border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 px-6 py-10 text-center text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
             Add a skill, command, or MCP server to get started. A plugin needs at least one component.
           </div>
         ) : null}
@@ -318,23 +318,23 @@ export function PluginEditorScreen() {
             const meta = COMPONENT_META[component.kind];
             const Icon = meta.icon;
             return (
-              <div key={component.key} className="rounded-[24px] border border-gray-200 bg-white p-5">
+              <div key={component.key} className="rounded-[24px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5">
                 <div className="mb-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-[14px] font-medium text-gray-900">
-                    <Icon size={16} className="text-gray-500" />
+                  <div className="flex items-center gap-2 text-[14px] font-medium text-gray-900 dark:text-gray-100">
+                    <Icon size={16} className="text-gray-500 dark:text-gray-400 dark:text-gray-500" />
                     {meta.label}
                   </div>
                   <button
                     type="button"
                     onClick={() => removeComponent(component.key)}
                     disabled={saving}
-                    className="text-gray-400 hover:text-red-600"
+                    className="text-gray-400 dark:text-gray-500 hover:text-red-600"
                     aria-label={`Remove ${meta.label.toLowerCase()}`}
                   >
                     <Trash2 size={15} />
                   </button>
                 </div>
-                <p className="mb-4 text-[13px] text-gray-500">{meta.hint}</p>
+                <p className="mb-4 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{meta.hint}</p>
                 <div className="flex flex-col gap-3">
                   <DenInput
                     value={component.name}
@@ -377,9 +377,9 @@ export function PluginEditorScreen() {
         </div>
       </div>
 
-      <div className="mt-6 flex flex-col gap-4 rounded-[24px] border border-gray-200 bg-white p-6">
-        <h2 className="text-[18px] font-semibold text-gray-900">Share</h2>
-        <label className="flex items-start gap-3 text-[14px] text-gray-700">
+      <div className="mt-6 flex flex-col gap-4 rounded-[24px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6">
+        <h2 className="text-[18px] font-semibold text-gray-900 dark:text-gray-100">Share</h2>
+        <label className="flex items-start gap-3 text-[14px] text-gray-700 dark:text-gray-300">
           <input
             type="checkbox"
             checked={shareOrgWide}
@@ -389,13 +389,13 @@ export function PluginEditorScreen() {
           />
           <span>
             Share with everyone in the organization
-            <span className="block text-[13px] text-gray-500">
+            <span className="block text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
               Members can see and install this plugin. Uncheck to keep it private to you while you iterate.
             </span>
           </span>
         </label>
         <div>
-          <label className="mb-1.5 block text-[13px] font-medium text-gray-700">Marketplace</label>
+          <label className="mb-1.5 block text-[13px] font-medium text-gray-700 dark:text-gray-300">Marketplace</label>
           <DenSelect
             value={marketplaceId}
             onChange={(event) => {
@@ -411,7 +411,7 @@ export function PluginEditorScreen() {
               </option>
             ))}
           </DenSelect>
-          <p className="mt-1.5 text-[13px] text-gray-500">
+          <p className="mt-1.5 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
             Publishing puts the plugin in the marketplace so members find it in the OpenWork app.
           </p>
         </div>
@@ -427,7 +427,7 @@ export function PluginEditorScreen() {
         <DenButton onClick={() => void createPlugin()} disabled={saving}>
           {saving ? progress ?? "Creating..." : "Create plugin"}
         </DenButton>
-        <Link href={getPluginsRoute(orgSlug)} className="text-[14px] text-gray-500 hover:text-gray-900">
+        <Link href={getPluginsRoute(orgSlug)} className="text-[14px] text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100">
           Cancel
         </Link>
       </div>

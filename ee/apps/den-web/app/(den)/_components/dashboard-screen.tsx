@@ -649,7 +649,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
             </div>
 
             {workersBusy ? <p className="text-xs text-[var(--dls-text-secondary)]">Loading workers...</p> : null}
-            {workersError ? <p className="text-xs font-medium text-rose-600">{workersError}</p> : null}
+            {workersError ? <p className="text-xs font-medium text-rose-600 dark:text-rose-400">{workersError}</p> : null}
             {workers.length === 0 && !workersBusy ? <p className="text-xs text-[var(--dls-text-secondary)]">No workers yet.</p> : null}
           </div>
 

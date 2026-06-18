@@ -33,8 +33,8 @@ export function DenSelectableRow({
         "group relative flex w-full items-center gap-3 px-4 py-3 text-left outline-none transition-colors duration-150",
         "focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-gray-900/5",
         selected
-          ? "bg-gray-100"
-          : "bg-white hover:bg-gray-50/60",
+          ? "bg-gray-100 dark:bg-gray-700"
+          : "bg-white dark:bg-[var(--dls-surface)] hover:bg-gray-50 dark:hover:bg-gray-800/50",
         disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
         className ?? "",
       ]
@@ -45,8 +45,8 @@ export function DenSelectableRow({
 
       <div className="min-w-0 flex-1">
         <div className={descriptionBelow ? "grid min-w-0 gap-0.5" : "flex min-w-0 items-baseline gap-2"}>
-          <p className="truncate text-[15px] font-medium leading-[1.15] tracking-[-0.02em] text-gray-950">{title}</p>
-          {description ? <p className="truncate text-[12px] leading-[1.15] text-gray-500">{description}</p> : null}
+          <p className="truncate text-[15px] font-medium leading-[1.15] tracking-[-0.02em] text-gray-950 dark:text-gray-100">{title}</p>
+          {description ? <p className="truncate text-[12px] leading-[1.15] text-gray-500 dark:text-gray-400 dark:text-gray-500">{description}</p> : null}
         </div>
       </div>
 
@@ -57,7 +57,7 @@ export function DenSelectableRow({
           <Check className="h-3 w-3" />
         </span>
       ) : (
-        <span className="h-5 w-5 shrink-0 rounded-[5px] border border-gray-300 bg-white transition-colors group-hover:border-gray-400" aria-hidden="true" />
+        <span className="h-5 w-5 shrink-0 rounded-[5px] border border-gray-300 dark:border-gray-600 bg-white dark:bg-[var(--dls-surface)] transition-colors group-hover:border-gray-400" aria-hidden="true" />
       )}
     </button>
   );

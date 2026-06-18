@@ -145,9 +145,9 @@ function detectOS(): "macos" | "windows" | "linux" {
 
 function toneBg(tone: "violet" | "green" | "blue") {
   switch (tone) {
-    case "violet": return "bg-[#EDE4FF]";
-    case "green": return "bg-[#E3F3E3]";
-    case "blue": return "bg-[#E4ECFB]";
+    case "violet": return "bg-[#EDE4FF] dark:bg-[#4C1D95]/40";
+    case "green": return "bg-[#E3F3E3] dark:bg-[#166534]/40";
+    case "blue": return "bg-[#E4ECFB] dark:bg-[#1E3A5F]/40";
   }
 }
 
@@ -157,13 +157,13 @@ function StatCard({ icon, title, value, sub, tone }: {
   icon: React.ReactNode; title: string; value: string; sub?: string; tone: "violet" | "green" | "blue";
 }) {
   return (
-    <div className="rounded-[16px] border border-[#e3e7ee] bg-white/90 px-4 py-3.5">
+    <div className="rounded-[16px] border border-[#e3e7ee] dark:border-gray-700 bg-white dark:bg-gray-900/90 px-4 py-3.5">
       <div className="flex items-center gap-3">
         <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] ${toneBg(tone)}`}>{icon}</div>
         <div className="min-w-0">
-          <div className="text-[13px] font-medium tracking-[-0.01em] text-[#30405F]">{title}</div>
-          <div className="mt-0.5 text-[20px] font-semibold tracking-[-0.03em] text-[#07192C]">{value}</div>
-          {sub ? <div className="mt-0.5 truncate text-[12px] text-[#637291]">{sub}</div> : null}
+          <div className="text-[13px] font-medium tracking-[-0.01em] text-[#30405F] dark:text-gray-300">{title}</div>
+          <div className="mt-0.5 text-[20px] font-semibold tracking-[-0.03em] text-[#07192C] dark:text-gray-100">{value}</div>
+          {sub ? <div className="mt-0.5 truncate text-[12px] text-[#637291] dark:text-gray-400">{sub}</div> : null}
         </div>
       </div>
     </div>
@@ -176,7 +176,7 @@ function DownloadLink({ href, children }: { href: string; children: React.ReactN
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2 text-[12px] font-medium text-white transition-colors hover:bg-white/10"
+      className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white dark:bg-white/10 px-3 py-2 text-[12px] font-medium text-white transition-colors hover:bg-gray-50 dark:hover:bg-white/20"
     >
       <Download className="h-3 w-3 shrink-0" />
       {children}
@@ -212,39 +212,39 @@ export function DashboardOverviewScreen() {
     <div className="mx-auto max-w-[1100px] px-4 pb-8 pt-4 sm:px-6 md:px-8">
 
       {/* Breadcrumb */}
-      <div className="flex flex-wrap items-center gap-2.5 border-b border-[#e7e9f0] pb-3">
-        <span className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C]">{activeOrg?.name ?? "OpenWork Cloud"}</span>
-        <ChevronRight className="h-3.5 w-3.5 text-[#9AA5BA]" />
-        <span className="text-[14px] font-medium tracking-[-0.01em] text-[#5A6886]">Dashboard</span>
+      <div className="flex flex-wrap items-center gap-2.5 border-b border-[#e7e9f0] dark:border-gray-700 pb-3">
+        <span className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C] dark:text-gray-100">{activeOrg?.name ?? "OpenWork Cloud"}</span>
+        <ChevronRight className="h-3.5 w-3.5 text-[#9AA5BA] dark:text-gray-500" />
+        <span className="text-[14px] font-medium tracking-[-0.01em] text-[#5A6886] dark:text-gray-400">Dashboard</span>
       </div>
 
       {/* Greeting */}
-      <h1 className="mt-4 text-[22px] font-semibold tracking-[-0.03em] text-[#07192C]">{getGreeting(user?.name)}</h1>
-      <p className="mt-1 text-[14px] leading-6 text-[#5A6886]">
+      <h1 className="mt-4 text-[22px] font-semibold tracking-[-0.03em] text-[#07192C] dark:text-gray-100">{getGreeting(user?.name)}</h1>
+      <p className="mt-1 text-[14px] leading-6 text-[#5A6886] dark:text-gray-400">
         Run locally for free. Keep data on your machine and move to shared workflows when ready.
       </p>
 
       {/* Extensions banner */}
-      <section className="mt-5 rounded-[18px] border border-[#d7e2f5] bg-gradient-to-br from-[#F4F8FF] to-[#EEF3FF] p-5">
-        <h2 className="text-[16px] font-semibold tracking-[-0.02em] text-[#07192C]">Download the app to unlock extensions</h2>
-        <p className="mt-1.5 text-[13px] leading-6 text-[#526582]">
+      <section className="mt-5 rounded-[18px] border border-[#d7e2f5] dark:border-gray-700 bg-gradient-to-br from-[#F4F8FF] to-[#EEF3FF] dark:from-gray-800 dark:to-gray-900/80 p-5">
+        <h2 className="text-[16px] font-semibold tracking-[-0.02em] text-[#07192C] dark:text-gray-100">Download the app to unlock extensions</h2>
+        <p className="mt-1.5 text-[13px] leading-6 text-[#526582] dark:text-gray-400">
           Sign in with this account to get Computer Use, Browser, Image Gen, Google Workspace, and your team&apos;s marketplace extensions — all built in.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Link href={getMarketplacesRoute(activeOrg?.slug ?? "")} className="inline-flex items-center gap-1.5 rounded-full border border-[#d8e0ec] bg-white px-3.5 py-1.5 text-[13px] font-semibold text-[#07192C] transition hover:bg-gray-50">
+          <Link href={getMarketplacesRoute(activeOrg?.slug ?? "")} className="inline-flex items-center gap-1.5 rounded-full border border-[#d8e0ec] dark:border-gray-600 bg-white dark:bg-[var(--dls-surface)] px-3.5 py-1.5 text-[13px] font-semibold text-[#07192C] dark:text-gray-100 transition hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50">
             View all extensions <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
       </section>
 
       {/* Download OpenWork */}
-      <section className="mt-4 overflow-hidden rounded-[18px] border border-[#e3e7ee] bg-[#07192C]">
+      <section className="mt-4 overflow-hidden rounded-[18px] border border-[#e3e7ee] dark:border-gray-700 bg-[#07192C]">
         <div className="px-6 py-5">
           <div className="flex items-center gap-2.5">
             <Download className="h-5 w-5 text-white/80" />
             <span className="text-[16px] font-semibold text-white">Download OpenWork</span>
             {releaseData?.releaseTag ? (
-              <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/60">{releaseData.releaseTag}</span>
+              <span className="rounded-full bg-white dark:bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/60">{releaseData.releaseTag}</span>
             ) : null}
           </div>
           <p className="mt-2 max-w-[520px] text-[13px] leading-[1.6] text-white/50">
@@ -252,7 +252,7 @@ export function DashboardOverviewScreen() {
           </p>
         </div>
 
-        <div className="grid gap-px bg-white/[0.06] sm:grid-cols-3">
+        <div className="grid gap-px bg-white dark:bg-white/[0.06] sm:grid-cols-3">
           {/* macOS */}
           <div className="bg-[#07192C] px-6 py-4">
             <div className="flex items-center gap-2">
