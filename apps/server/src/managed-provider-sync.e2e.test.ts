@@ -455,6 +455,29 @@ describe("managed provider sync runtime route", () => {
     expect(readFileSync(configPath, "utf8")).toBe(invalidConfig);
   });
 
+  test("managed provider sync refuses to overwrite user-owned provider blocks", async () => {
+    const { base, workspace, authCalls } = await boot();
+    const configPath = join(workspace, "opencode.jsonc");
+    const userConfig = `{
+  "provider": {
+    "nvidia": { "id": "nvidia", "npm": "@ai-sdk/openai-compatible", "name": "User NVIDIA" }
+  }
+}
+`;
+    writeFileSync(configPath, userConfig, "utf8");
+
+    const sync = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+
+    expect(sync.status).toBe(502);
+    expect(await sync.json()).toMatchObject({ status: "failed", reason: "Managed provider sync failed" });
+    expect(readFileSync(configPath, "utf8")).toBe(userConfig);
+    expect(authCalls).toEqual([]);
+  });
+
   test("authoritatively removes revoked managed providers from config, auth, and provider lists", async () => {
     const { base, workspace, authCalls } = await boot();
     const fullPayload = providerPayload();

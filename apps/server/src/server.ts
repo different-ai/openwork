@@ -2999,7 +2999,8 @@ async function readManagedProviderVisibleIds(workspaceRoot: string, providerIds:
 
 async function applyManagedProviderConfigSet(workspaceRoot: string, providers: ManagedProviderSyncProvider[], previousManagedProviderIds: Set<string>) {
   const configPath = opencodeConfigPath(workspaceRoot);
-  await readJsoncFile(configPath, {}, { allowInvalid: false });
+  const config = await readJsoncFile<Record<string, unknown>>(configPath, {}, { allowInvalid: false });
+  const providerConfig = isRecordValue(config.data.provider) ? config.data.provider : {};
   const currentProviderIds = new Set(providers.map((provider) => getManagedProviderRuntimeId(provider)));
 
   for (const providerId of previousManagedProviderIds) {
@@ -3009,7 +3010,11 @@ async function applyManagedProviderConfigSet(workspaceRoot: string, providers: M
   }
 
   for (const provider of providers) {
-    await updateJsoncPath(configPath, ["provider", getManagedProviderRuntimeId(provider)], buildManagedProviderRuntimeConfig(provider));
+    const providerId = getManagedProviderRuntimeId(provider);
+    if (!previousManagedProviderIds.has(providerId) && providerId in providerConfig) {
+      throw new ApiError(409, "managed_provider_collision", `${providerId} already has a provider block in opencode.jsonc`);
+    }
+    await updateJsoncPath(configPath, ["provider", providerId], buildManagedProviderRuntimeConfig(provider));
   }
 }
 

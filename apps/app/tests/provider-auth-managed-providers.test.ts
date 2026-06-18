@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { DenOrgLlmProvider } from "../src/app/lib/den";
 import {
   getCloudManagedProviderId,
+  isCloudProviderConfigImportCollision,
   resolveAppliedManagedProvidersFromSyncResult,
 } from "../src/react-app/domains/connections/provider-auth/store";
 
@@ -75,5 +76,24 @@ describe("cloud managed provider import identity", () => {
       provider({ id: "lpr_applied", providerId: "openai" }),
       provider({ id: "lpr_filtered", providerId: "anthropic" }),
     ])).toThrow("did not identify which providers were applied");
+  });
+
+  test("cloud import collision checks still run when an imported provider changes runtime ID", () => {
+    const configContent = `{
+      "provider": {
+        "custom-runtime": { "id": "custom-runtime", "npm": "@ai-sdk/openai" }
+      }
+    }`;
+
+    expect(isCloudProviderConfigImportCollision({
+      configContent,
+      localProviderId: "custom-runtime",
+      existingImportedProviderId: "old-runtime",
+    })).toBe(true);
+    expect(isCloudProviderConfigImportCollision({
+      configContent,
+      localProviderId: "custom-runtime",
+      existingImportedProviderId: "custom-runtime",
+    })).toBe(false);
   });
 });

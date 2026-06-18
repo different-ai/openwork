@@ -143,6 +143,25 @@ export const getCloudManagedProviderId = (
   return configId || provider.providerId.trim() || provider.id.trim();
 };
 
+export function isCloudProviderConfigImportCollision(input: {
+  configContent: string;
+  localProviderId: string;
+  existingImportedProviderId?: string | null;
+}) {
+  const parsed = parse(input.configContent);
+  const providerSection =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>).provider
+      : null;
+  return Boolean(
+    providerSection &&
+      typeof providerSection === "object" &&
+      !Array.isArray(providerSection) &&
+      input.localProviderId in (providerSection as Record<string, unknown>) &&
+      input.existingImportedProviderId !== input.localProviderId,
+  );
+}
+
 export function resolveAppliedManagedProvidersFromSyncResult(
   result: { providerCount: number; providerIds?: string[] },
   liveProviders: DenOrgLlmProvider[],
@@ -803,28 +822,22 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       );
     }
 
-    if (!existingImported && options.providerConnectedIds().includes(localProviderId)) {
+    if (existingImported?.providerId !== localProviderId && options.providerConnectedIds().includes(localProviderId)) {
       throw new Error(
         `${localProviderId} is already connected in this workspace. Disconnect it before importing the cloud-managed version.`,
       );
     }
 
     const configFile = await readProjectConfigFile() as { content?: string } | null;
-    if (!configFile?.content?.trim() || existingImported) {
+    if (!configFile?.content?.trim()) {
       return;
     }
 
-    const parsed = parse(configFile.content);
-    const providerSection =
-      parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>).provider
-        : null;
-    if (
-      providerSection &&
-      typeof providerSection === "object" &&
-      !Array.isArray(providerSection) &&
-      localProviderId in (providerSection as Record<string, unknown>)
-    ) {
+    if (isCloudProviderConfigImportCollision({
+      configContent: configFile.content,
+      localProviderId,
+      existingImportedProviderId: existingImported?.providerId,
+    })) {
       throw new Error(
         `${localProviderId} already has a provider block in opencode.jsonc. Remove it before importing the cloud-managed version.`,
       );
