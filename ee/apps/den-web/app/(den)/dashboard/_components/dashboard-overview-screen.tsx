@@ -176,9 +176,9 @@ function DownloadLink({ href, children }: { href: string; children: React.ReactN
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white dark:bg-white/10 px-3 py-2 text-[12px] font-medium text-white transition-colors hover:bg-gray-50 dark:hover:bg-white/20"
+      className="inline-flex items-center gap-2 rounded-lg border border-gray-200 dark:border-white/10 bg-gray-100 dark:bg-white/10 px-3 py-2 text-[12px] font-medium text-gray-900 dark:text-white transition-colors hover:bg-gray-200 dark:hover:bg-white/20"
     >
-      <Download className="h-3 w-3 shrink-0" />
+      <Download className="h-3 w-3 shrink-0 text-gray-500" />
       {children}
     </a>
   );
@@ -238,27 +238,27 @@ export function DashboardOverviewScreen() {
       </section>
 
       {/* Download OpenWork */}
-      <section className="mt-4 overflow-hidden rounded-[18px] border border-[#e3e7ee] dark:border-gray-700 bg-[#07192C]">
+      <section className="mt-4 overflow-hidden rounded-[18px] border border-[#e3e7ee] dark:border-gray-700 bg-white dark:bg-[#07192C]">
         <div className="px-6 py-5">
           <div className="flex items-center gap-2.5">
-            <Download className="h-5 w-5 text-white/80" />
-            <span className="text-[16px] font-semibold text-white">Download OpenWork</span>
+            <Download className="h-5 w-5 text-gray-500" />
+            <span className="text-[16px] font-semibold text-gray-900 dark:text-white">Download OpenWork</span>
             {releaseData?.releaseTag ? (
-              <span className="rounded-full bg-white dark:bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/60">{releaseData.releaseTag}</span>
+              <span className="rounded-full bg-gray-100 dark:bg-white/10 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-white/60">{releaseData.releaseTag}</span>
             ) : null}
           </div>
-          <p className="mt-2 max-w-[520px] text-[13px] leading-[1.6] text-white/50">
+          <p className="mt-2 max-w-[520px] text-[13px] leading-[1.6] text-gray-600 dark:text-white/50">
             Install the desktop app on macOS, Windows, or Linux. Your workspace connects automatically after sign-in.
           </p>
         </div>
 
-        <div className="grid gap-px bg-white dark:bg-white/[0.06] sm:grid-cols-3">
+        <div className="grid gap-px bg-gray-100 dark:bg-white/[0.06] sm:grid-cols-3">
           {/* macOS */}
-          <div className="bg-[#07192C] px-6 py-4">
+          <div className="bg-white dark:bg-[#07192C] px-6 py-4">
             <div className="flex items-center gap-2">
-              <Monitor className="h-4 w-4 text-white/60" />
-              <span className="text-[13px] font-semibold text-white">macOS</span>
-              {os === "macos" ? <span className="rounded-full bg-[#18A34A]/20 px-1.5 py-px text-[10px] font-medium text-[#4ADE80]">Detected</span> : null}
+              <Monitor className="h-4 w-4 text-gray-500" />
+              <span className="text-[13px] font-semibold text-gray-900 dark:text-white">macOS</span>
+              {os === "macos" ? <span className="rounded-full bg-green-100 dark:bg-[#18A34A]/20 px-1.5 py-px text-[10px] font-medium text-green-700 dark:text-[#4ADE80]">Detected</span> : null}
             </div>
             <div className="mt-3 flex flex-col gap-2">
               <DownloadLink href={inst?.macos.appleSilicon ?? FALLBACK_RELEASE}>Apple Silicon (M1+)</DownloadLink>
@@ -267,11 +267,11 @@ export function DashboardOverviewScreen() {
           </div>
 
           {/* Windows */}
-          <div className="bg-[#07192C] px-6 py-4">
+          <div className="bg-white dark:bg-[#07192C] px-6 py-4">
             <div className="flex items-center gap-2">
-              <Monitor className="h-4 w-4 text-white/60" />
-              <span className="text-[13px] font-semibold text-white">Windows</span>
-              {os === "windows" ? <span className="rounded-full bg-[#18A34A]/20 px-1.5 py-px text-[10px] font-medium text-[#4ADE80]">Detected</span> : null}
+              <Monitor className="h-4 w-4 text-gray-500" />
+              <span className="text-[13px] font-semibold text-gray-900 dark:text-white">Windows</span>
+              {os === "windows" ? <span className="rounded-full bg-green-100 dark:bg-[#18A34A]/20 px-1.5 py-px text-[10px] font-medium text-green-700 dark:text-[#4ADE80]">Detected</span> : null}
             </div>
             <div className="mt-3 flex flex-col gap-2">
               <DownloadLink href={inst?.windows.x64 ?? FALLBACK_RELEASE}>x64 Installer</DownloadLink>
@@ -279,11 +279,11 @@ export function DashboardOverviewScreen() {
           </div>
 
           {/* Linux */}
-          <div className="bg-[#07192C] px-6 py-4">
+          <div className="bg-white dark:bg-[#07192C] px-6 py-4">
             <div className="flex items-center gap-2">
-              <Monitor className="h-4 w-4 text-white/60" />
-              <span className="text-[13px] font-semibold text-white">Linux</span>
-              {os === "linux" ? <span className="rounded-full bg-[#18A34A]/20 px-1.5 py-px text-[10px] font-medium text-[#4ADE80]">Detected</span> : null}
+              <Monitor className="h-4 w-4 text-gray-500" />
+              <span className="text-[13px] font-semibold text-gray-900 dark:text-white">Linux</span>
+              {os === "linux" ? <span className="rounded-full bg-green-100 dark:bg-[#18A34A]/20 px-1.5 py-px text-[10px] font-medium text-green-700 dark:text-[#4ADE80]">Detected</span> : null}
             </div>
             <div className="mt-3 flex flex-col gap-2">
               <DownloadLink href={inst?.linux.appImageX64 ?? FALLBACK_RELEASE}>AppImage (x64)</DownloadLink>
