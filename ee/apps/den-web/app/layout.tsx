@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Inter } from "next/font/google";
 import Script from "next/script";
+import { ThemeProvider } from "./_components/theme-provider";
 import "./globals.css";
 
 const inter = Inter({
@@ -56,17 +57,20 @@ posthog.init(${JSON.stringify(posthogKey)}, {
 });`
   : "";
 
+const themeScript = `(function(){var e=function(){try{var t=localStorage.getItem("openwork.theme")||"system";if(t==="dark"||t==="light")return t;return window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}catch(e){return"light"}}();document.documentElement.dataset.theme=e;document.documentElement.classList.toggle("dark",e==="dark");document.documentElement.style.colorScheme=e})()`;
+
 export default function RootLayout({
   children
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${inter.variable} ${ibmPlexMono.variable}`}>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         {posthogBootstrap ? (
           <Script id="posthog" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: posthogBootstrap }} />
         ) : null}
       </head>
-      <body>{children}</body>
+      <body><ThemeProvider>{children}</ThemeProvider></body>
     </html>
   );
 }
