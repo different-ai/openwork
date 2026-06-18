@@ -129,7 +129,7 @@ function SettingsToggle({
       className={[
         "inline-flex shrink-0 h-7 w-12 items-center rounded-full border p-0.5 transition-colors",
         checked
-          ? "justify-end border-[#0f172a] bg-[#0f172a]"
+          ? "justify-end border-[#0f172a] bg-[#0f172a] dark:border-gray-100 dark:bg-gray-100"
           : "justify-start border-gray-200 dark:border-gray-700 bg-gray-200",
         disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
       ].join(" ")}
