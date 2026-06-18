@@ -807,10 +807,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return updated.endsWith("\n") ? updated : `${updated}\n`;
   };
 
-  // Sweep all cloud-managed provider entries (keys matching /^lpr_/) from
-  // opencode.jsonc regardless of importedCloudProviders state. Returns the
-  // list of provider IDs that were removed so callers can also clear their
-  // auth credentials.
+  // Sweep tracked cloud-managed provider entries plus legacy /^lpr_/ keys.
+  // Returns provider IDs removed so callers can also clear auth credentials.
   const sweepOrphanCloudProvidersFromConfig = async (): Promise<string[]> => {
     const configFile = await readProjectConfigFile() as { content?: string } | null;
     if (!configFile?.content?.trim()) return [];
@@ -824,8 +822,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     ) {
       return [];
     }
+    const trackedProviderIds = new Set(Object.values(state.importedCloudProviders).map((entry) => entry.providerId));
     const orphanIds = Object.keys(providerSection as Record<string, unknown>).filter(
-      (key) => /^lpr_/i.test(key),
+      (key) => /^lpr_/i.test(key) || trackedProviderIds.has(key),
     );
     if (orphanIds.length === 0) return [];
 
@@ -1576,9 +1575,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           importedAt: Date.now(),
         },
       };
-      importedProvidersRollback = state.importedCloudProviders;
-      await persistImportedCloudProviders(nextImportedProviders);
-
       const previousConfigFile = await readProjectConfigFile() as { exists?: boolean; content?: string | null } | null;
       configRollback = {
         existed: previousConfigFile?.exists === true,
@@ -1591,7 +1587,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         throw new Error("Could not update opencode.jsonc for this workspace.");
       }
       authRollback = null;
-      importedProvidersRollback = null;
       configRollback = null;
 
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
@@ -1600,10 +1595,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error ?? "");
           if (!isAuthNotFoundError(message)) {
-            console.warn(`[cloud-provider-import] failed to remove stale auth for ${existingImported.providerId}: ${message}`);
+            throw error;
           }
         }
       }
+
+      importedProvidersRollback = state.importedCloudProviders;
+      await persistImportedCloudProviders(nextImportedProviders);
+      importedProvidersRollback = null;
 
       const nextDisabledProviders = options
         .disabledProviders()
