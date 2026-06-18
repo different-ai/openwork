@@ -1,5 +1,5 @@
 import type { UIMessage } from "ai";
-import type { FilePart, Part, PermissionRequest, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
+import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
@@ -208,8 +208,52 @@ function releaseRetainedSessionSoon(input: SyncOptions, entry: SyncEntry, sessio
   retainSession(input, entry, sessionId, idleRetainedSessionTtlMs);
 }
 
-function withReceivedAt(permission: PermissionRequest, receivedAt: number): PendingPermission {
-  return { ...permission, receivedAt };
+type PermissionSeed = PermissionRequest | PermissionV2Request;
+
+function isV2PermissionRequest(permission: PermissionSeed): permission is PermissionV2Request {
+  return "action" in permission;
+}
+
+function legacyPermissionWithReceivedAt(permission: PermissionRequest, receivedAt: number): PendingPermission {
+  return { ...permission, receivedAt, protocol: "legacy" };
+}
+
+function v2PermissionKind(action: string): string {
+  if (action === "external_directory") return "external_directory";
+  if (action.endsWith(".external_directory")) return "external_directory";
+  if (action === "file.read") return "read";
+  if (action === "file.edit" || action === "file.write") return "edit";
+  return action;
+}
+
+function v2PermissionWithReceivedAt(permission: PermissionV2Request, receivedAt: number): PendingPermission {
+  const metadata: Record<string, unknown> = {
+    ...(permission.metadata ?? {}),
+    action: permission.action,
+  };
+  if (permission.save?.length) metadata.save = permission.save.join(", ");
+  return {
+    id: permission.id,
+    sessionID: permission.sessionID,
+    permission: v2PermissionKind(permission.action),
+    patterns: permission.resources,
+    metadata,
+    always: permission.save ?? [],
+    ...(permission.source ? { tool: { messageID: permission.source.messageID, callID: permission.source.callID } } : {}),
+    receivedAt,
+    protocol: "v2",
+    v2: {
+      action: permission.action,
+      resources: permission.resources,
+      ...(permission.save ? { save: permission.save } : {}),
+    },
+  };
+}
+
+function permissionWithReceivedAt(permission: PermissionSeed, receivedAt: number): PendingPermission {
+  return isV2PermissionRequest(permission)
+    ? v2PermissionWithReceivedAt(permission, receivedAt)
+    : legacyPermissionWithReceivedAt(permission, receivedAt);
 }
 
 function questionWithReceivedAt(question: QuestionRequest, receivedAt: number): PendingQuestion {
@@ -227,7 +271,7 @@ function sortQuestions(a: PendingQuestion, b: PendingQuestion) {
 export function seedPermissionState(
   workspaceId: string,
   sessionId: string,
-  permissions: PermissionRequest[],
+  permissions: PermissionSeed[],
   options: { snapshotStartedAt?: number } = {},
 ) {
   useSessionActivityStore.getState().replaceWaitingRequests(
@@ -241,7 +285,7 @@ export function seedPermissionState(
   queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId), (current = []) => {
     const receivedAtById = new Map(current.map((permission) => [permission.id, permission.receivedAt]));
     const seeded = permissions.flatMap((permission) =>
-      permission.sessionID === sessionId ? [withReceivedAt(permission, receivedAtById.get(permission.id) ?? now)] : [],
+      permission.sessionID === sessionId ? [permissionWithReceivedAt(permission, receivedAtById.get(permission.id) ?? now)] : [],
     );
     const seededIds = new Set(seeded.map((permission) => permission.id));
     const snapshotStartedAt = options.snapshotStartedAt;
@@ -644,7 +688,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const receivedAt = Date.now();
     queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, permission.sessionID), (current = []) => {
       const existing = current.find((item) => item.id === permission.id);
-      const next = withReceivedAt(permission, existing?.receivedAt ?? receivedAt);
+      const next = permissionWithReceivedAt(permission, existing?.receivedAt ?? receivedAt);
       if (existing) {
         return current.map((item) => (item.id === permission.id ? next : item)).sort(sortPermissions);
       }
@@ -653,7 +697,24 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     return;
   }
 
-  if (event.type === "permission.replied") {
+  if (event.type === "permission.v2.asked") {
+    const permission = event.properties as PermissionV2Request;
+    if (!permission?.id || !permission.sessionID) return;
+    useSessionActivityStore.getState().setWaitingRequest(workspaceId, permission.sessionID, "permission", permission.id, true);
+    if (!isTrackedSession(entry, permission.sessionID)) return;
+    const receivedAt = Date.now();
+    queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, permission.sessionID), (current = []) => {
+      const existing = current.find((item) => item.id === permission.id);
+      const next = permissionWithReceivedAt(permission, existing?.receivedAt ?? receivedAt);
+      if (existing) {
+        return current.map((item) => (item.id === permission.id ? next : item)).sort(sortPermissions);
+      }
+      return [...current, next].sort(sortPermissions);
+    });
+    return;
+  }
+
+  if (event.type === "permission.replied" || event.type === "permission.v2.replied") {
     const props = (event.properties ?? {}) as { sessionID?: string; requestID?: string };
     if (!props.sessionID || !props.requestID) return;
     useSessionActivityStore.getState().setWaitingRequest(workspaceId, props.sessionID, "permission", props.requestID, false);

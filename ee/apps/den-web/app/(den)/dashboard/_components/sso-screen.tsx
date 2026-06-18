@@ -47,8 +47,8 @@ export function SsoScreen() {
   const [tokenEndpointAuthentication, setTokenEndpointAuthentication] = useState<"" | "client_secret_basic" | "client_secret_post">("");
 
   const access = useMemo(
-    () => getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false),
-    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role],
+    () => getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false, orgContext?.roles),
+    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.roles],
   );
 
   async function loadSsoConfig() {

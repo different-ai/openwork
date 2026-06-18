@@ -20,6 +20,7 @@ function pendingPermission(overrides: Partial<PendingPermission> = {}): PendingP
       project: false,
     },
     receivedAt: 1,
+    protocol: "legacy",
     ...overrides,
   };
 }

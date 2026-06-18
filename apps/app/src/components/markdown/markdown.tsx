@@ -18,6 +18,8 @@ import {
 import { bundledLanguages, codeToHtml } from "shiki";
 
 import { cn } from "@/lib/utils";
+import { useOpenTargets } from "@/lib/target-provider";
+import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 
 import { applyTextHighlights } from "./text-highlights";
 
@@ -56,6 +58,59 @@ function safeHref(href: string) {
   }
 
   return "#";
+}
+
+function localPathFromHref(href: string) {
+  const trimmed = href.trim();
+
+  if (!trimmed || trimmed.startsWith("#") || /^(?:https?|mailto):/i.test(trimmed)) {
+    return "";
+  }
+
+  if (/^file:/i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      const host = decodeURIComponent(parsed.hostname);
+      const pathname = decodeURIComponent(parsed.pathname);
+      const localPath = /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
+
+      if (host && host !== "localhost") {
+        return `//${host}${localPath.startsWith("/") ? localPath : `/${localPath}`}`;
+      }
+
+      return localPath;
+    } catch {
+      return "";
+    }
+  }
+
+  return trimmed.split(/[?#]/)[0] ?? trimmed;
+}
+
+function normalizeFilePathForMatch(path: string) {
+  return path
+    .trim()
+    .replace(/[\\]+/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/[/]+$/, "")
+    .toLowerCase();
+}
+
+function filePathMatchesTarget(path: string, targetValue: string) {
+  const normalizedPath = normalizeFilePathForMatch(path);
+  const normalizedTarget = normalizeFilePathForMatch(targetValue);
+
+  return normalizedPath === normalizedTarget || normalizedPath.endsWith(`/${normalizedTarget}`);
+}
+
+function openTargetForHref(href: string, openTargets: OpenTarget[]) {
+  const path = localPathFromHref(href);
+
+  if (!path) {
+    return null;
+  }
+
+  return openTargets.find((target) => target.kind === "file" && filePathMatchesTarget(path, target.value)) ?? null;
 }
 
 function alignAttribute(align: Tokens.TableCell["align"]) {
@@ -137,6 +192,7 @@ function sanitizeMarkdownHtml(value: string) {
       "data-openwork-image-preview",
       "data-openwork-image-toggle",
       "data-openwork-image-toggle-label",
+      "data-openwork-link-href",
       "data-openwork-shiki",
       "decoding",
       "disabled",
@@ -209,9 +265,10 @@ const baseMarkedOptions = {
     },
     link({ href, title, tokens }) {
       const safe = escapeAttribute(safeHref(href));
+      const originalHref = escapeAttribute(href);
       const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
 
-      return `<a href="${safe}"${titleAttr} target="_blank" rel="noreferrer noopener" class="text-indigo-10 underline underline-offset-2 transition-colors hover:text-indigo-8">${this.parser.parseInline(tokens)}</a>`;
+      return `<a href="${safe}" data-openwork-link-href="${originalHref}"${titleAttr} target="_blank" rel="noreferrer noopener" class="text-indigo-10 underline underline-offset-2 transition-colors hover:text-indigo-8">${this.parser.parseInline(tokens)}</a>`;
     },
     image({ href, title, text }) {
       const safe = escapeAttribute(safeHref(href));
@@ -302,6 +359,7 @@ function MarkdownBlockInner({
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const { openTargets, onOpenTarget } = useOpenTargets();
   const syncHtml = useMemo(() => {
     if (!text.trim()) {
       return "";
@@ -366,6 +424,17 @@ function MarkdownBlockInner({
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return;
 
+      const anchor = event.target.closest("a[data-openwork-link-href]");
+      if (anchor instanceof HTMLAnchorElement) {
+        const target = openTargetForHref(anchor.dataset.openworkLinkHref ?? "", openTargets);
+        if (target && onOpenTarget) {
+          event.preventDefault();
+          onOpenTarget(target);
+
+          return;
+        }
+      }
+
       const button = event.target.closest("[data-openwork-image-toggle]");
       if (!(button instanceof HTMLButtonElement)) return;
 
@@ -396,7 +465,7 @@ function MarkdownBlockInner({
       root.removeEventListener("load", handleLoad, true);
       root.removeEventListener("click", handleClick);
     };
-  }, [html]);
+  }, [html, onOpenTarget, openTargets]);
 
   if (!html) {
     return null;

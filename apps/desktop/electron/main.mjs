@@ -1372,8 +1372,17 @@ async function createMainWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("file://")) {
+      try {
+        void shell.openPath(fileURLToPath(url));
+      } catch {
+        void shell.openExternal(url);
+      }
+
+      return { action: "deny" };
+    }
+
     const local =
-      url.startsWith("file://") ||
       url.startsWith("http://127.0.0.1") ||
       url.startsWith("http://localhost");
     if (!local) {

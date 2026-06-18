@@ -69,8 +69,9 @@ export function ApiKeysScreen() {
             getOrgAccessFlags(
                 orgContext?.currentMember.role ?? "member",
                 orgContext?.currentMember.isOwner ?? false,
+                orgContext?.roles,
             ),
-        [orgContext?.currentMember.isOwner, orgContext?.currentMember.role],
+        [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.roles],
     );
 
     async function loadApiKeys() {

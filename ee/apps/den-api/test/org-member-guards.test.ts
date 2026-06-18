@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import {
+  getRoleValueAfterOwnershipTransfer,
   validateOrganizationMemberRemoval,
   validateOrganizationMemberRoleChange,
   type MemberLifecycleGuardRow,
@@ -69,4 +70,24 @@ test("member role changes allow privileged downgrades when another active privil
     activeMembers: [owner, admin],
     nextRole: "member",
   })).toEqual({ ok: true })
+})
+
+test("ownership transfer makes the old owner an admin and preserves custom target roles", () => {
+  expect(getRoleValueAfterOwnershipTransfer({
+    currentRole: "owner,security-admin",
+    targetRole: "admin,billing-admin",
+  })).toEqual({
+    previousOwnerRole: "admin,security-admin",
+    newOwnerRole: "owner,billing-admin",
+  })
+})
+
+test("ownership transfer promotes a basic member to owner", () => {
+  expect(getRoleValueAfterOwnershipTransfer({
+    currentRole: "owner",
+    targetRole: "member",
+  })).toEqual({
+    previousOwnerRole: "admin",
+    newOwnerRole: "owner",
+  })
 })

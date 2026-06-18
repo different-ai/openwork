@@ -59,6 +59,10 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -161,59 +165,23 @@ type SessionActionsProps = {
   isArchived: boolean;
 };
 
-function SessionGroupSubmenu({ workspaceId, sessionId }: { workspaceId: string; sessionId: string }) {
+type SessionMenuContentProps = {
+  variant: "dropdown" | "context";
+  sessionId: string;
+  workspaceId: string;
+  isPinned: boolean;
+  isArchived: boolean;
+};
+
+function SessionMenuContent({ variant, sessionId, workspaceId, isPinned, isArchived }: SessionMenuContentProps) {
   const ctx = useSidebarContext();
   const { groups, assignments } = useWorkspaceGroups(workspaceId);
   const store = useSessionManagementStore;
   const assignedGroupId = assignments[sessionId] ?? null;
-  return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger>
-        <Tag className="size-4" />
-        {t("session_management.move_to_group")}
-      </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="w-52">
-        <DropdownMenuItem
-          onClick={() => store.getState().assignGroup(workspaceId, sessionId, null)}
-          disabled={!assignedGroupId}
-        >
-          {t("session_management.no_group")}
-        </DropdownMenuItem>
-        {groups.length ? <DropdownMenuSeparator /> : null}
-        {groups.map((group) => (
-          <DropdownMenuItem
-            key={group.id}
-            onClick={() => store.getState().assignGroup(workspaceId, sessionId, group.id)}
-            disabled={assignedGroupId === group.id}
-          >
-            {group.label}
-          </DropdownMenuItem>
-        ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => ctx.onOpenCreateGroupModal?.(workspaceId)}>
-          <FolderPlus className="size-4" />
-          {t("session_management.new_group")}
-        </DropdownMenuItem>
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
-  );
-}
 
-function SessionActions({ className, sessionId, workspaceId, isPinned, isArchived }: SessionActionsProps) {
-  const ctx = useSidebarContext();
-  const store = useSessionManagementStore;
-  if (!useCanManageSession()) return null;
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger className="size-6 text-muted-foreground"
-        render={
-          <Button variant="ghost" size="icon-sm" className={cn("size-6", className)}>
-            <MoreHorizontal className="size-4" />
-          </Button>
-        }
-      />
-      <DropdownMenuContent align="end" side="bottom" sideOffset={4} alignOffset={-4} className="w-56">
+  if (variant === "dropdown") {
+    return (
+      <>
         <DropdownMenuItem onClick={() => store.getState().togglePin(sessionId)}>
           {isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
           {isPinned ? t("session_management.unpin_session") : t("session_management.pin_session")}
@@ -224,9 +192,48 @@ function SessionActions({ className, sessionId, workspaceId, isPinned, isArchive
             {t("workspace_list.rename_session")}
           </DropdownMenuItem>
         ) : null}
-        {!isArchived ? (
-          <SessionGroupSubmenu workspaceId={workspaceId} sessionId={sessionId} />
-        ) : null}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Tag className="size-4" />
+            {t("session_management.move_to_group")}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-52">
+            {groups.length === 0 ? (
+              <DropdownMenuItem onClick={() => ctx.onOpenCreateGroupModal?.(workspaceId)}>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  {t("session_management.no_groups_yet")}
+                </span>
+                <span className="ml-auto flex size-5 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-foreground">
+                  <Plus className="size-3.5" />
+                </span>
+              </DropdownMenuItem>
+            ) : (
+              <>
+                <DropdownMenuItem
+                  onClick={() => store.getState().assignGroup(workspaceId, sessionId, null)}
+                  disabled={!assignedGroupId}
+                >
+                  {t("session_management.no_group")}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {groups.map((group) => (
+                  <DropdownMenuItem
+                    key={group.id}
+                    onClick={() => store.getState().assignGroup(workspaceId, sessionId, group.id)}
+                    disabled={assignedGroupId === group.id}
+                  >
+                    {group.label}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => ctx.onOpenCreateGroupModal?.(workspaceId)}>
+                  <FolderPlus className="size-4" />
+                  {t("session_management.new_group")}
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
         {ctx.onArchiveSession ? (
           <DropdownMenuItem onClick={() => ctx.onArchiveSession?.(sessionId, !isArchived)}>
             {isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
@@ -242,6 +249,103 @@ function SessionActions({ className, sessionId, workspaceId, isPinned, isArchive
             </DropdownMenuItem>
           </>
         ) : null}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <ContextMenuItem onClick={() => store.getState().togglePin(sessionId)}>
+        {isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+        {isPinned ? t("session_management.unpin_session") : t("session_management.pin_session")}
+      </ContextMenuItem>
+      {ctx.onOpenRenameSession ? (
+        <ContextMenuItem onClick={() => ctx.onOpenRenameSession?.(sessionId)}>
+          <Pencil className="size-4" />
+          {t("workspace_list.rename_session")}
+        </ContextMenuItem>
+      ) : null}
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>
+          <Tag className="mr-2 size-4" />
+          {t("session_management.move_to_group")}
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent>
+          {groups.length === 0 ? (
+            <ContextMenuItem onClick={() => ctx.onOpenCreateGroupModal?.(workspaceId)}>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                {t("session_management.no_groups_yet")}
+              </span>
+              <span className="ml-auto flex size-5 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-foreground">
+                <Plus className="size-3.5" />
+              </span>
+            </ContextMenuItem>
+          ) : (
+            <>
+              <ContextMenuItem
+                onClick={() => store.getState().assignGroup(workspaceId, sessionId, null)}
+                disabled={!assignedGroupId}
+              >
+                {t("session_management.no_group")}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              {groups.map((group) => (
+                <ContextMenuItem
+                  key={group.id}
+                  onClick={() => store.getState().assignGroup(workspaceId, sessionId, group.id)}
+                  disabled={assignedGroupId === group.id}
+                >
+                  {group.label}
+                </ContextMenuItem>
+              ))}
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={() => ctx.onOpenCreateGroupModal?.(workspaceId)}>
+                <FolderPlus className="size-4" />
+                {t("session_management.new_group")}
+              </ContextMenuItem>
+            </>
+          )}
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      {ctx.onArchiveSession ? (
+        <ContextMenuItem onClick={() => ctx.onArchiveSession?.(sessionId, !isArchived)}>
+          {isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+          {isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session")}
+        </ContextMenuItem>
+      ) : null}
+      {ctx.onOpenDeleteSession ? (
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" onClick={() => ctx.onOpenDeleteSession?.(sessionId)}>
+            <Trash2 className="size-4" />
+            {t("workspace_list.delete_session")}
+          </ContextMenuItem>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function SessionActions({ className, sessionId, workspaceId, isPinned, isArchived }: SessionActionsProps) {
+  if (!useCanManageSession()) return null;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className="size-6 text-muted-foreground"
+        render={
+          <Button variant="ghost" size="icon-sm" className={cn("size-6", className)}>
+            <MoreHorizontal className="size-4" />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" side="bottom" sideOffset={4} alignOffset={-4} className="w-56">
+        <SessionMenuContent
+          variant="dropdown"
+          sessionId={sessionId}
+          workspaceId={workspaceId}
+          isPinned={isPinned}
+          isArchived={isArchived}
+        />
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -256,36 +360,19 @@ type SessionContextMenuProps = {
 };
 
 function SessionContextMenu({ children, sessionId, workspaceId, isPinned, isArchived }: SessionContextMenuProps) {
-  const ctx = useSidebarContext();
-  const store = useSessionManagementStore;
   if (!useCanManageSession()) return children;
 
   return (
     <ContextMenu>
       <ContextMenuTrigger render={children} />
       <ContextMenuContent className="w-56">
-        <ContextMenuItem onClick={() => store.getState().togglePin(sessionId)}>
-          {isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
-          {isPinned ? t("session_management.unpin_session") : t("session_management.pin_session")}
-        </ContextMenuItem>
-        {ctx.onOpenRenameSession ? (
-          <ContextMenuItem onClick={() => ctx.onOpenRenameSession?.(sessionId)}>
-            <Pencil className="size-4" />
-            {t("workspace_list.rename_session")}
-          </ContextMenuItem>
-        ) : null}
-        {ctx.onArchiveSession ? (
-          <ContextMenuItem onClick={() => ctx.onArchiveSession?.(sessionId, !isArchived)}>
-            {isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
-            {isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session")}
-          </ContextMenuItem>
-        ) : null}
-        {ctx.onOpenDeleteSession ? (
-          <ContextMenuItem variant="destructive" onClick={() => ctx.onOpenDeleteSession?.(sessionId)}>
-            <Trash2 className="size-4" />
-            {t("workspace_list.delete_session")}
-          </ContextMenuItem>
-        ) : null}
+        <SessionMenuContent
+          variant="context"
+          sessionId={sessionId}
+          workspaceId={workspaceId}
+          isPinned={isPinned}
+          isArchived={isArchived}
+        />
       </ContextMenuContent>
     </ContextMenu>
   );

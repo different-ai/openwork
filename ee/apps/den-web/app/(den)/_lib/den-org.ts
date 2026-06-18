@@ -213,6 +213,7 @@ export const DEN_ROLE_PERMISSION_OPTIONS = {
   invitation: ["create", "cancel"],
   team: ["create", "update", "delete"],
   ac: ["create", "read", "update", "delete"],
+  security_configuration: ["manage"],
 } as const;
 
 export const PENDING_ORG_INVITATION_STORAGE_KEY = "openwork:web:pending-org-invitation";
@@ -299,22 +300,32 @@ export function splitRoleString(value: string): string[] {
     .filter(Boolean);
 }
 
-export function getOrgAccessFlags(roleValue: string, isOwner: boolean) {
-  const roles = new Set(splitRoleString(roleValue));
-  const isAdmin = isOwner || roles.has("admin");
+function roleHasSecurityConfigurationPermission(roleValue: string, roles: readonly DenOrgRole[]) {
+  const roleNames = new Set(splitRoleString(roleValue));
+  return roles.some((role) => (
+    roleNames.has(role.role)
+    && (role.permission.security_configuration?.includes("manage") ?? false)
+  ));
+}
+
+export function getOrgAccessFlags(roleValue: string, isOwner: boolean, roleDefinitions: readonly DenOrgRole[] = []) {
+  const roleNames = new Set(splitRoleString(roleValue));
+  const isAdmin = isOwner || roleNames.has("admin");
+  const canManageSecurityConfiguration = isOwner || roleHasSecurityConfigurationPermission(roleValue, roleDefinitions);
 
   return {
     isOwner,
     isAdmin,
+    canManageSecurityConfiguration,
     canInviteMembers: isAdmin,
     canCancelInvitations: isAdmin,
     canManageMembers: isOwner,
     canRemoveMembers: isAdmin,
     canManageRoles: isOwner,
     canManageTeams: isAdmin,
-    canManageApiKeys: isAdmin,
-    canManageScim: isAdmin,
-    canManageSso: isAdmin,
+    canManageApiKeys: canManageSecurityConfiguration,
+    canManageScim: canManageSecurityConfiguration,
+    canManageSso: canManageSecurityConfiguration,
   };
 }
 

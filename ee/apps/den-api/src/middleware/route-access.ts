@@ -12,6 +12,13 @@ type OrgRoleContext = {
 
 type RouteAccessVariables = AuthContextVariables & Partial<OrganizationContextVariables> & Partial<UserOrganizationsContext>
 
+const explicitAuthGuardHandlers = new WeakSet<object>([
+  requireAdminMiddleware,
+  requireUserMiddleware,
+  resolveOrganizationContextMiddleware,
+  resolveUserOrganizationsMiddleware,
+])
+
 /**
  * Den API routes are deny-by-default: every `app.get/post/patch/delete/all/on`
  * registration must include one explicit access policy marker from this file.
@@ -62,6 +69,10 @@ export function adminRoute(): MiddlewareHandler<{ Variables: AuthContextVariable
   return requireAdminMiddleware
 }
 
+export function hasExplicitAuthGuardHandler(handler: unknown) {
+  return typeof handler === "function" && explicitAuthGuardHandlers.has(handler)
+}
+
 export function orgMemberRoute(options: { useUserOrganizations: true }): typeof resolveUserOrganizationsMiddleware
 export function orgMemberRoute(): typeof resolveOrganizationContextMiddleware
 export function orgMemberRoute(options?: { useUserOrganizations: true }) {
@@ -73,7 +84,7 @@ export function orgMemberRoute(options?: { useUserOrganizations: true }) {
 }
 
 export function orgRoleRoute(roles: readonly string[]): MiddlewareHandler<{ Variables: RouteAccessVariables }> {
-  return async (c, next) => {
+  const handler: MiddlewareHandler<{ Variables: RouteAccessVariables }> = async (c, next) => {
     let roleResponse: Response | undefined
     const contextResponse = await resolveOrganizationContextMiddleware(c, async () => {
       const payload = c.get("organizationContext")
@@ -93,4 +104,6 @@ export function orgRoleRoute(roles: readonly string[]): MiddlewareHandler<{ Vari
 
     return contextResponse ?? roleResponse
   }
+  explicitAuthGuardHandlers.add(handler)
+  return handler
 }

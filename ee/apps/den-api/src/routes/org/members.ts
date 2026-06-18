@@ -10,9 +10,9 @@ import { revokeMembershipSessionCredentials } from "../../credential-revocation.
 import { db } from "../../db.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
-import { listAssignableRoles, removeOrganizationMember, validateOrganizationMemberRoleUpdate } from "../../orgs.js"
+import { listAssignableRoles, recoverOrganizationOwnership, removeOrganizationMember, transferOrganizationOwnership, validateOrganizationMemberRoleUpdate } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureMemberRemover, ensureOwner, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
+import { ensureMemberRemover, ensureOrganizationAdmin, ensureOwner, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
 
 const updateMemberRoleSchema = z.object({
   role: z.string().trim().min(1).max(64),
@@ -97,6 +97,81 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         },
       })
     }
+
+    return c.json({ success: true })
+    },
+  )
+
+  app.post(
+    "/v1/members/:memberId/transfer-ownership",
+    describeRoute({
+      tags: ["Members"],
+      summary: "Transfer workspace ownership",
+      description: "Transfers the protected workspace owner role to another active organization member. Workspace admins may use this endpoint only to recover an organization that has no active owner.",
+      responses: {
+        200: jsonResponse("Workspace ownership transferred successfully.", successSchema),
+        400: jsonResponse("The ownership transfer request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to transfer ownership.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners can transfer ownership.", forbiddenSchema),
+        404: jsonResponse("The target member or organization could not be found.", notFoundSchema),
+      },
+    }),
+    orgRoleRoute(["admin"]),
+    paramValidator(orgMemberParamsSchema),
+    async (c) => {
+    const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can transfer ownership.")
+    if (!permission.ok) {
+      return c.json(permission.response, orgAccessFailureStatus(permission.response))
+    }
+
+    const payload = c.get("organizationContext")
+    const params = c.req.valid("param")
+    let memberId: MemberId
+    try {
+      memberId = normalizeDenTypeId("member", params.memberId)
+    } catch {
+      return c.json({ error: "target_member_not_found", message: "Choose an active member to become workspace owner." }, 404)
+    }
+
+    const transfer = payload.currentMember.isOwner
+      ? await transferOrganizationOwnership({
+        organizationId: payload.organization.id,
+        currentOwnerMemberId: payload.currentMember.id,
+        targetMemberId: memberId,
+      })
+      : await recoverOrganizationOwnership({
+        organizationId: payload.organization.id,
+        targetMemberId: memberId,
+      })
+    if (!transfer.ok) {
+      if (transfer.error === "target_member_not_found" || transfer.error === "owner_not_found") {
+        return c.json({ error: transfer.error, message: transfer.message }, 404)
+      }
+      if (!payload.currentMember.isOwner) {
+        return c.json({ error: transfer.error, message: transfer.message }, 403)
+      }
+      return c.json({ error: transfer.error, message: transfer.message }, 400)
+    }
+
+    const previousOwner = "previousOwner" in transfer ? transfer.previousOwner : null
+    const previousOwnerRole = "previousOwnerRole" in transfer ? transfer.previousOwnerRole : null
+
+    await recordOrganizationAuditEvent({
+      organizationId: payload.organization.id,
+      actorUserId: payload.currentMember.userId,
+      action: ORGANIZATION_AUDIT_ACTIONS.memberOwnershipTransferred,
+      payload: {
+        previousOwnerOrgMembershipId: previousOwner?.id ?? null,
+        previousOwnerUserId: previousOwner?.userId ?? null,
+        previousOwnerRole: previousOwner?.role ?? null,
+        previousOwnerNextRole: previousOwnerRole,
+        previousOwnerCount: "previousOwnerCount" in transfer ? transfer.previousOwnerCount : 1,
+        newOwnerOrgMembershipId: transfer.newOwner.id,
+        newOwnerUserId: transfer.newOwner.userId,
+        newOwnerPreviousRole: transfer.newOwner.role,
+        newOwnerRole: transfer.newOwnerRole,
+      },
+    })
 
     return c.json({ success: true })
     },
