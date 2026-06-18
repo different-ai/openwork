@@ -390,10 +390,10 @@ export function BillingDashboardScreen() {
             </DenButton>
           </div>
         ) : (
-          <div className="flex flex-col gap-4 rounded-[16px] border border-blue-100 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 p-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-4 rounded-[16px] border border-blue-100 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/50 p-5 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-[15px] font-medium text-blue-950">Not subscribed yet</p>
-              <p className="mt-1 text-[13px] leading-5 text-blue-900/70">
+              <p className="text-[15px] font-medium text-blue-950 dark:text-blue-100">Not subscribed yet</p>
+              <p className="mt-1 text-[13px] leading-5 text-blue-900/70 dark:text-blue-200/70">
                 See the model lineup and subscribe from the OpenWork Models page.
               </p>
             </div>

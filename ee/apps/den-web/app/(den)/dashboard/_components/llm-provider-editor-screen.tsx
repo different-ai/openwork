@@ -730,7 +730,7 @@ export function LlmProviderEditorScreen({
                     </p>
                 </div>
 
-                <div className="mt-8 grid w-80 grid-cols-2 rounded-xl bg-gray-200 p-1 text-[13px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <div className="mt-8 grid w-80 grid-cols-2 rounded-xl bg-gray-200 p-1 text-[13px] font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                     <button
                         type="button"
                         onClick={() => {

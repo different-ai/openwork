@@ -258,27 +258,27 @@ export function SsoScreen() {
             <div className="mt-6 grid gap-4 md:grid-cols-2">
               <label className="block text-[14px] text-gray-700 dark:text-gray-300">
                 <span className="mb-2 block font-medium">Issuer URL</span>
-                <input className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://idp.example.com" />
+                <input className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://idp.example.com" />
               </label>
               <label className="block text-[14px] text-gray-700 dark:text-gray-300">
                 <span className="mb-2 block font-medium">Domain</span>
-                <input className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.com" />
+                <input className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.com" />
               </label>
               {formMode === "saml" ? (
                 <>
                   <label className="block text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
                     <span className="mb-2 block font-medium">SAML Entry Point</span>
-                    <input className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={entryPoint} onChange={(event) => setEntryPoint(event.target.value)} placeholder="https://idp.example.com/sso" />
+                    <input className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={entryPoint} onChange={(event) => setEntryPoint(event.target.value)} placeholder="https://idp.example.com/sso" />
                   </label>
                   <label className="block text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
                     <span className="mb-2 block font-medium">Audience URL</span>
-                    <input className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Defaults to the OpenWork auth URL" />
+                    <input className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Defaults to the OpenWork auth URL" />
                   </label>
                   <label className="block text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
                     <span className="mb-2 block font-medium">IdP Certificate</span>
-                    <textarea className="min-h-[140px] w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={cert} onChange={(event) => setCert(event.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />
+                    <textarea className="min-h-[140px] w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={cert} onChange={(event) => setCert(event.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />
                   </label>
-                  <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3 text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
+                  <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-[14px] text-gray-700 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-300 md:col-span-2">
                     <input type="checkbox" checked={wantAssertionsSigned} onChange={(event) => setWantAssertionsSigned(event.target.checked)} />
                     Require signed SAML assertions
                   </label>
@@ -287,7 +287,7 @@ export function SsoScreen() {
                 <>
                   <label className="block text-[14px] text-gray-700 dark:text-gray-300">
                     <span className="mb-2 block font-medium">Client ID</span>
-                    <input className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={clientId} onChange={(event) => setClientId(event.target.value)} />
+                    <input className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={clientId} onChange={(event) => setClientId(event.target.value)} />
                   </label>
                   <label className="block text-[14px] text-gray-700 dark:text-gray-300">
                     <span className="mb-2 block font-medium">Client Secret</span>
@@ -295,17 +295,17 @@ export function SsoScreen() {
                   </label>
                   <label className="block text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
                     <span className="mb-2 block font-medium">Scopes</span>
-                    <input className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={scopes} onChange={(event) => setScopes(event.target.value)} placeholder="openid email profile" />
+                    <input className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={scopes} onChange={(event) => setScopes(event.target.value)} placeholder="openid email profile" />
                   </label>
                   <label className="block text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
                     <span className="mb-2 block font-medium">Token endpoint auth method</span>
-                    <select className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={tokenEndpointAuthentication} onChange={(event) => setTokenEndpointAuthentication(event.target.value === "client_secret_basic" || event.target.value === "client_secret_post" ? event.target.value : "")}>
+                    <select className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={tokenEndpointAuthentication} onChange={(event) => setTokenEndpointAuthentication(event.target.value === "client_secret_basic" || event.target.value === "client_secret_post" ? event.target.value : "")}>
                       <option value="">Use provider default</option>
                       <option value="client_secret_basic">client_secret_basic</option>
                       <option value="client_secret_post">client_secret_post</option>
                     </select>
                   </label>
-                  <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3 text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
+                  <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-[14px] text-gray-700 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-300 md:col-span-2">
                     <input type="checkbox" checked={skipDiscovery} onChange={(event) => setSkipDiscovery(event.target.checked)} />
                     Use manual OIDC endpoints instead of discovery
                   </label>
@@ -313,19 +313,19 @@ export function SsoScreen() {
                     <>
                       <label className="block text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
                         <span className="mb-2 block font-medium">Authorization endpoint</span>
-                        <input className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={authorizationEndpoint} onChange={(event) => setAuthorizationEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/authorize" />
+                        <input className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={authorizationEndpoint} onChange={(event) => setAuthorizationEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/authorize" />
                       </label>
                       <label className="block text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
                         <span className="mb-2 block font-medium">Token endpoint</span>
-                        <input className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={tokenEndpoint} onChange={(event) => setTokenEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/token" />
+                        <input className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={tokenEndpoint} onChange={(event) => setTokenEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/token" />
                       </label>
                       <label className="block text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
                         <span className="mb-2 block font-medium">JWKS endpoint</span>
-                        <input className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={jwksEndpoint} onChange={(event) => setJwksEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/keys" />
+                        <input className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={jwksEndpoint} onChange={(event) => setJwksEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/keys" />
                       </label>
                       <label className="block text-[14px] text-gray-700 dark:text-gray-300 md:col-span-2">
                         <span className="mb-2 block font-medium">UserInfo endpoint</span>
-                        <input className="w-full rounded-[18px] border border-gray-200 dark:border-gray-700 px-4 py-3" value={userInfoEndpoint} onChange={(event) => setUserInfoEndpoint(event.target.value)} placeholder="Optional" />
+                        <input className="w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-gray-900 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100" value={userInfoEndpoint} onChange={(event) => setUserInfoEndpoint(event.target.value)} placeholder="Optional" />
                       </label>
                     </>
                   ) : null}

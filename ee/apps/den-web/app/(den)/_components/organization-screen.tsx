@@ -158,7 +158,7 @@ export function OrganizationScreen() {
               </div>
 
               {error ? (
-                <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+                <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900 dark:border-red-800/40 dark:bg-red-900/20 dark:text-red-400">
                   {error}
                 </div>
               ) : null}
