@@ -23,10 +23,23 @@ the ref, conditionally installs deps, starts XFCE/noVNC, Vite, Electron, and
 waits for CDP:
 
 ```bash
-bash .devcontainer/test-on-daytona.sh [branch-or-commit]
+bash .devcontainer/test-on-daytona.sh [branch-or-commit] --artifacts-volume
 ```
 
-It prints the CDP and noVNC URLs at the end. Then use `browser_list` to connect.
+It prints the CDP and noVNC URLs at the end. For UI validation, keep
+`--artifacts-volume` on by default so `/daytona-artifacts` is mounted and the
+artifact server on port 8090 is available for frame proof. Then run the coded
+eval runner when a flow exists:
+
+```bash
+pnpm evals --flow <flow-id> --cdp-url <printed-electron-cdp-url>
+```
+
+Use direct browser tools for exploration/debugging or for UI paths that are not
+codified yet. If the behavior is PR evidence and repeatable, add a flow under
+`evals/flows/*.flow.mjs` and rerun it through `pnpm evals`.
+
+Use `browser_list` to connect when manual inspection is needed.
 Refresh the snapshot with `bash .devcontainer/create-daytona-openwork-snapshot.sh`
 when dependencies or base setup change. The snapshot excludes `node_modules`;
 dependency installs reuse the `openwork-eval-pnpm-store` volume.
@@ -62,6 +75,8 @@ source every `/daytona-secrets/*.env` file before Electron starts.
 
 Validation standard: use `daytona-flow-validator`. Default proof format is
 frame-by-frame HTML — named PNGs in a browseable index served on port 8090.
+The eval runner writes `evals/results/<run-id>/index.html`; serve that result
+directory or copy it into `/daytona-artifacts/validation/<flow>/` for PR proof.
 Use video only for interactions that need motion (streaming, animations,
 loading states). See `daytona-recording-artifacts` for the frame workflow.
 

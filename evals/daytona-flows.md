@@ -11,13 +11,14 @@ Daytona proxy.
 
 ```bash
 daytona organization use "<org-name>"
-bash .devcontainer/test-on-daytona.sh [branch-or-commit]
+bash .devcontainer/test-on-daytona.sh [branch-or-commit] --artifacts-volume
 ```
 
 Use the helper. It creates from the reusable `openwork-eval-vnc` snapshot,
 mounts secrets, mounts the reusable pnpm store volume, checks out the requested
 ref, conditionally installs deps, starts services, waits for CDP, and prints the
-CDP/noVNC URLs. If the snapshot is missing, create it with
+CDP/noVNC URLs. Keep `--artifacts-volume` on for UI validation so frame proof can
+be served from port 8090. If the snapshot is missing, create it with
 `bash .devcontainer/create-daytona-openwork-snapshot.sh`.
 
 The reusable `openwork-eval-secrets` volume is mounted at `/daytona-secrets`.
@@ -30,6 +31,17 @@ To persist downloadable artifacts, pass `--artifacts-volume`. The helper mounts
 the reusable `openwork-eval-artifacts` volume at `/daytona-artifacts`, starts a
 static download server, and prints its Daytona preview URL. Capture screenshot
 checkpoints with `daytona exec <sandbox> -- 'bash .devcontainer/capture-daytona-screenshot.sh'`.
+
+For repeatable PR evidence, prefer coded flows under `evals/flows/`:
+
+```bash
+pnpm evals --list
+pnpm evals --flow <flow-id> --cdp-url <printed-electron-cdp-url>
+```
+
+The runner writes `evals/results/<run-id>/report.md` and a frame-by-frame
+`index.html` with screenshots captured by `ctx.screenshot(...)`. Use the manual
+CDP snippets below for debugging or for flows that have not been codified yet.
 
 To record the Electron display, pass `--record-video`:
 
