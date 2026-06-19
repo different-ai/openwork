@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 
-import { useLocal } from "../../../kernel/local-provider";
+import { DEFAULT_SHOW_THINKING, useLocal } from "../../../kernel/local-provider";
 
 type BooleanUpdater = boolean | ((current: boolean) => boolean);
 
@@ -23,7 +23,7 @@ export function useSessionDisplayPreferences() {
   }, [setShowThinking]);
 
   const resetSessionDisplayPreferences = useCallback(() => {
-    setShowThinking(false);
+    setShowThinking(DEFAULT_SHOW_THINKING);
   }, [setShowThinking]);
 
   return {

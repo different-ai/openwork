@@ -2,12 +2,11 @@
 
 Shared UI primitives for OpenWork apps.
 
-This package intentionally ships two framework-specific entrypoints:
+This package ships one entrypoint: `@openwork/ui/react`, used by `apps/app`
+and `ee/apps/den-web`. (A Solid flavor existed during the Solid-to-React
+migration and was removed once the last Solid consumer disappeared.)
 
-- `@openwork/ui/react` for React apps like `ee/apps/den-web`
-- `@openwork/ui/solid` for Solid apps like `apps/app`
-
-The public API should stay aligned across both entrypoints. If you add a new component, add both implementations in the same task unless there is a documented blocker.
+Exports resolve to `src/` directly, so consumers need no build step.
 
 ## Paper components
 
@@ -34,6 +33,4 @@ These components default to `fill={true}`, which means they render at `width: 10
 
 - Shared seed logic lives in `src/common/paper.ts`
 - React wrappers live in `src/react/paper/*`
-- Solid wrappers live in `src/solid/paper/*`
-- Keep the framework prop names aligned unless there is a hard runtime mismatch
 - Prefer extending the existing seed helpers instead of inventing per-app one-off shader configs

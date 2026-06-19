@@ -1,7 +1,7 @@
 {
   "name": "@openwork/desktop",
   "private": true,
-  "version": "0.13.9",
+  "version": "0.17.1",
   "description": "OpenWork desktop shell",
   "author": {
     "name": "OpenWork",
@@ -12,8 +12,6 @@
   "scripts": {
     "dev": "node ./scripts/electron-dev.mjs",
     "dev:electron": "node ./scripts/electron-dev.mjs",
-    "dev:windows": "node ./scripts/dev-windows.mjs",
-    "dev:windows:x64": "node ./scripts/dev-windows.mjs x64",
     "build": "node ./scripts/electron-build.mjs",
     "build:electron": "node ./scripts/electron-build.mjs",
     "package:electron": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml",
@@ -21,23 +19,26 @@
     "electron": "pnpm exec electron ./electron/main.mjs",
     "check:electron": "node ./scripts/check-electron-bridge.mjs",
     "typecheck:electron": "pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
-    "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
+    "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs",
+    "test": "node --test electron/runtime.test.mjs electron/updater.test.mjs electron/remote-workspace.test.mjs electron/workspace-store.test.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@opencode-ai/sdk": "^1.17.3",
     "better-sqlite3": "^11.10.0",
-    "chrome-devtools-mcp": "0.17.0",
+    "drizzle-orm": "^0.45.1",
     "electron-updater": "^6.3.9",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.0.1",
+    "node-pty": "npm:@lydell/node-pty@1.2.0-beta.12",
     "yaml": "^2.6.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@openwork/types": "workspace:*",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
     "electron-devtools-installer": "^4.0.0"
   },
   "packageManager": "pnpm@10.27.0",
-  "opencodeRouterVersion": "0.13.9"
+  "opencodeRouterVersion": "0.17.1"
 }

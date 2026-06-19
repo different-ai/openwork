@@ -1,2 +1,2 @@
-export * from "./den/desktop-app-restrictions"
+export * from "./den/desktop-policies"
 export * from "./den/inference"

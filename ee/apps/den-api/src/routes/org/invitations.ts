@@ -1,17 +1,20 @@
-import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, InvitationTable, MemberTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { db } from "../../db.js"
-import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
-import { getOrganizationLimitStatus } from "../../organization-limits.js"
-import { isEmailAllowedForOrganization, listAssignableRoles } from "../../orgs.js"
+import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
+import { resolveOrganizationPermissionRecord, validateAssignableOrganizationPermissionRecord } from "../../organization-access.js"
+import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
+import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { buildInvitationLink, createInvitationId, ensureInviteManager, idParamSchema, normalizeRoleName } from "./shared.js"
+import { buildInvitationLink, createInvitationId, createInvitationToken, ensureInviteManager, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
 
 const inviteMemberSchema = z.object({
   email: z.string().email(),
@@ -23,6 +26,7 @@ const invitationResponseSchema = z.object({
   email: z.string().email(),
   role: z.string(),
   expiresAt: z.string().datetime(),
+  inviteToken: z.string(),
 }).meta({ ref: "InvitationResponse" })
 
 const invitationEmailFailedSchema = z.object({
@@ -38,6 +42,15 @@ const inviteEmailDomainNotAllowedSchema = z.object({
   emailDomain: z.string().nullable(),
   allowedEmailDomains: z.array(z.string()),
 }).meta({ ref: "InviteEmailDomainNotAllowedError" })
+
+const invitePaymentRequiredSchema = z.object({
+  error: z.literal("payment_required"),
+  reason: z.literal("seat_subscription_required"),
+  subscriptionType: z.literal("seat"),
+  currentCount: z.number(),
+  freeSeatCount: z.number(),
+  message: z.string(),
+}).meta({ ref: "InvitePaymentRequiredError" })
 
 type InvitationId = typeof InvitationTable.$inferSelect.id
 
@@ -55,19 +68,19 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         201: jsonResponse("Invitation created successfully.", invitationResponseSchema),
         400: jsonResponse("The invitation request body or path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to invite organization members.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can create or resend invitations.", forbiddenSchema),
+        402: jsonResponse("A seat subscription is required before inviting more members.", invitePaymentRequiredSchema),
+        403: jsonResponse("Only workspace owners and admins can create invitations, and invitees can only receive roles whose permissions the inviter already has.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
         409: jsonResponse("The email address is outside this workspace's allowed domains.", inviteEmailDomainNotAllowedSchema),
         502: jsonResponse("The invitation was saved but the email provider rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgRoleRoute(["admin"]),
     jsonValidator(inviteMemberSchema),
     async (c) => {
     const permission = ensureInviteManager(c)
     if (!permission.ok) {
-      return c.json(permission.response, permission.response.error === "forbidden" ? 403 : 404)
+      return c.json(permission.response, orgAccessFailureStatus(permission.response))
     }
 
     const payload = c.get("organizationContext")
@@ -94,11 +107,23 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       return c.json({ error: "invalid_role", message: "Choose one of the existing organization roles." }, 400)
     }
 
+    const assignableRole = validateAssignableOrganizationPermissionRecord({
+      permission: resolveOrganizationPermissionRecord(role, payload.roles),
+      roleValue: payload.currentMember.role,
+      roles: payload.roles,
+    })
+    if (!assignableRole.ok) {
+      return c.json({
+        error: "forbidden",
+        message: "You can only invite members into roles with permissions you already have.",
+      }, 403)
+    }
+
     const existingMembers = await db
       .select({ id: MemberTable.id })
       .from(MemberTable)
       .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
-      .where(and(eq(MemberTable.organizationId, payload.organization.id), eq(AuthUserTable.email, email)))
+      .where(and(eq(MemberTable.organizationId, payload.organization.id), eq(AuthUserTable.email, email), isNull(MemberTable.removedAt)))
       .limit(1)
 
     if (existingMembers[0]) {
@@ -122,26 +147,57 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       .limit(1)
 
     if (!existingInvitation[0]) {
-      const memberLimit = await getOrganizationLimitStatus(payload.organization.id, "members")
-      if (memberLimit.exceeded) {
+      const seatEligibility = await getOrganizationSeatAddEligibility(payload.organization.id)
+      if (!seatEligibility.allowed) {
         return c.json({
-          error: "org_limit_reached",
-          limitType: "members",
-          limit: memberLimit.limit,
-          currentCount: memberLimit.currentCount,
-          message: `This workspace currently supports up to ${memberLimit.limit} members. Contact support to increase the limit.`,
-        }, 409)
+          error: "payment_required",
+          reason: "seat_subscription_required",
+          subscriptionType: "seat",
+          currentCount: seatEligibility.currentCount,
+          freeSeatCount: seatEligibility.freeSeatCount,
+          message: `This workspace includes ${seatEligibility.freeSeatCount} free members. Start seat billing before inviting another member.`,
+        }, 402)
       }
     }
 
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7)
     const invitationId = existingInvitation[0]?.id ?? createInvitationId()
+    const inviteToken = createInvitationToken()
+    let createdOrgMemberId: typeof MemberTable.$inferSelect.id | null = null
+    let invitationOrgMemberId: typeof MemberTable.$inferSelect.id | null = null
 
     if (existingInvitation[0]) {
       await db
         .update(InvitationTable)
-        .set({ role, inviterId: normalizeDenTypeId("user", user.id), expiresAt })
+        .set({ role, inviterId: normalizeDenTypeId("user", user.id), orgMemberId: payload.currentMember.id, inviteToken, expiresAt })
         .where(eq(InvitationTable.id, existingInvitation[0].id))
+
+      const invitedMemberRows = await db
+        .select({ id: MemberTable.id })
+        .from(MemberTable)
+        .where(and(eq(MemberTable.inviteId, existingInvitation[0].id), eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.removedAt)))
+        .limit(1)
+
+      if (invitedMemberRows[0]) {
+        await db
+          .update(MemberTable)
+          .set({ role, invitedByOrgMember: payload.currentMember.id })
+          .where(eq(MemberTable.id, invitedMemberRows[0].id))
+        invitationOrgMemberId = invitedMemberRows[0].id
+      } else {
+        const memberId = createDenTypeId("member")
+        await db.insert(MemberTable).values({
+          id: memberId,
+          organizationId: payload.organization.id,
+          userId: null,
+          inviteId: existingInvitation[0].id,
+          invitedByOrgMember: payload.currentMember.id,
+          role,
+          joinedAt: null,
+        })
+        createdOrgMemberId = memberId
+        invitationOrgMemberId = memberId
+      }
     } else {
       await db.insert(InvitationTable).values({
         id: invitationId,
@@ -150,16 +206,50 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         role,
         status: "pending",
         inviterId: normalizeDenTypeId("user", user.id),
+        orgMemberId: payload.currentMember.id,
+        inviteToken,
         expiresAt,
       })
+
+      const memberId = createDenTypeId("member")
+      await db.insert(MemberTable).values({
+        id: memberId,
+        organizationId: payload.organization.id,
+        userId: null,
+        inviteId: invitationId,
+        invitedByOrgMember: payload.currentMember.id,
+        role,
+        joinedAt: null,
+      })
+      createdOrgMemberId = memberId
+      invitationOrgMemberId = memberId
     }
+
+    if (createdOrgMemberId) {
+      await runPostOrganizationMemberChangeHooks({ organizationId: payload.organization.id, memberId: createdOrgMemberId, change: "added" })
+    }
+
+    await recordOrganizationAuditEvent({
+      organizationId: payload.organization.id,
+      actorUserId: payload.currentMember.userId,
+      action: existingInvitation[0]
+        ? ORGANIZATION_AUDIT_ACTIONS.invitationRefreshed
+        : ORGANIZATION_AUDIT_ACTIONS.invitationCreated,
+      payload: {
+        invitationId,
+        targetOrgMembershipId: invitationOrgMemberId,
+        targetEmail: email,
+        role,
+        expiresAt: expiresAt.toISOString(),
+      },
+    })
 
     try {
       await sendEmail({
         to: email,
         template: "organizationInvite",
         props: {
-          inviteLink: buildInvitationLink(invitationId),
+          inviteLink: buildInvitationLink(inviteToken),
           invitedByName: user.name ?? user.email ?? "OpenWork",
           invitedByEmail: user.email ?? "",
           organizationName: payload.organization.name,
@@ -192,7 +282,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       throw error
     }
 
-    return c.json({ invitationId, email, role, expiresAt }, existingInvitation[0] ? 200 : 201)
+    return c.json({ invitationId, email, role, expiresAt, inviteToken }, existingInvitation[0] ? 200 : 201)
     },
   )
 
@@ -210,13 +300,12 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         404: jsonResponse("The invitation or organization could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
+    orgRoleRoute(["admin"]),
     paramValidator(orgInvitationParamsSchema),
-    resolveOrganizationContextMiddleware,
     async (c) => {
     const permission = ensureInviteManager(c)
     if (!permission.ok) {
-      return c.json(permission.response, permission.response.error === "forbidden" ? 403 : 404)
+      return c.json(permission.response, orgAccessFailureStatus(permission.response))
     }
 
     const payload = c.get("organizationContext")
@@ -229,7 +318,12 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     }
 
     const invitationRows = await db
-      .select({ id: InvitationTable.id })
+      .select({
+        id: InvitationTable.id,
+        email: InvitationTable.email,
+        role: InvitationTable.role,
+        status: InvitationTable.status,
+      })
       .from(InvitationTable)
       .where(and(eq(InvitationTable.id, invitationId), eq(InvitationTable.organizationId, payload.organization.id)))
       .limit(1)
@@ -238,7 +332,39 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
+    const invitedMemberRows = await db
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(eq(MemberTable.inviteId, invitationId), eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.joinedAt), isNull(MemberTable.removedAt)))
+      .limit(1)
+
     await db.update(InvitationTable).set({ status: "canceled" }).where(eq(InvitationTable.id, invitationId))
+
+    const invitedMember = invitedMemberRows[0]
+    if (invitedMember) {
+      const removed = await removeOrganizationMember({
+        organizationId: payload.organization.id,
+        memberId: invitedMember.id,
+        removedByOrgMemberId: payload.currentMember.id,
+      })
+      if (!removed.ok && removed.error !== "member_not_found") {
+        return c.json({ error: removed.error, message: removed.message }, 400)
+      }
+    }
+
+    await recordOrganizationAuditEvent({
+      organizationId: payload.organization.id,
+      actorUserId: payload.currentMember.userId,
+      action: ORGANIZATION_AUDIT_ACTIONS.invitationCanceled,
+      payload: {
+        invitationId: invitationRows[0].id,
+        targetOrgMembershipId: invitedMember?.id ?? null,
+        targetEmail: invitationRows[0].email,
+        role: invitationRows[0].role,
+        previousStatus: invitationRows[0].status,
+      },
+    })
+
     return c.json({ success: true })
     },
   )

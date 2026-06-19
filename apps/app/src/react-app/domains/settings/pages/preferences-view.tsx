@@ -1,5 +1,4 @@
 /** @jsxImportSource react */
-import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 
 import { t } from "@/i18n";
@@ -18,14 +17,13 @@ import {
 
 export type PreferencesViewProps = {
   busy: boolean;
-  defaultModelLabel: string;
-  defaultModelRef: string;
-  onChangeDefaultModel: () => void;
   showThinking: boolean;
   onToggleShowThinking: () => void;
   autoCompactContext: boolean;
   autoCompactContextBusy: boolean;
   onToggleAutoCompactContext: () => void;
+  analyticsEnabled: boolean;
+  onToggleAnalytics: () => void;
 };
 
 export function PreferencesView(props: PreferencesViewProps) {
@@ -36,23 +34,6 @@ export function PreferencesView(props: PreferencesViewProps) {
           <LayoutSectionTitle>{t("settings.model_title")}</LayoutSectionTitle>
           <LayoutSectionDescription>{t("settings.model_section_desc")}</LayoutSectionDescription>
         </LayoutSectionHeader>
-
-        {/* Default model */}
-        <LayoutSectionItem>
-          <LayoutSectionItemHeader>
-            <LayoutSectionItemTitle>{props.defaultModelLabel}</LayoutSectionItemTitle>
-            <LayoutSectionItemDescription className="truncate font-mono">{props.defaultModelRef}</LayoutSectionItemDescription>
-            <LayoutSectionItemHeaderActions>
-              <Button
-                variant="outline"
-                onClick={props.onChangeDefaultModel}
-                disabled={props.busy}
-              >
-                {t("settings.change")}
-              </Button>
-            </LayoutSectionItemHeaderActions>
-          </LayoutSectionItemHeader>
-        </LayoutSectionItem>
 
         {/* Show reasoning */}
         <LayoutSectionItem>
@@ -81,6 +62,28 @@ export function PreferencesView(props: PreferencesViewProps) {
                 checked={props.autoCompactContext}
                 disabled={props.busy || props.autoCompactContextBusy}
                 onCheckedChange={props.onToggleAutoCompactContext}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      </LayoutSection>
+
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>{t("settings.privacy_title")}</LayoutSectionTitle>
+          <LayoutSectionDescription>{t("settings.privacy_section_desc")}</LayoutSectionDescription>
+        </LayoutSectionHeader>
+
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.analytics_toggle")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("settings.analytics_toggle_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label={t("settings.analytics_toggle")}
+                checked={props.analyticsEnabled}
+                disabled={props.busy}
+                onCheckedChange={props.onToggleAnalytics}
               />
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>

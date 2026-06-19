@@ -225,9 +225,9 @@ export class EnvService {
     });
   }
 
-  // Used by the Electron + orchestrator shells at spawn time. The Tauri Rust
-  // shell has its own equivalent in src-tauri/src/env_file.rs — keep the two
-  // readers byte-for-byte in sync on path resolution and reserved-keys policy.
+  // Used by the Electron + orchestrator shells at spawn time. Keep the
+  // loaders in apps/desktop/electron/runtime.mjs and apps/orchestrator/src/cli.ts
+  // byte-for-byte in sync on path resolution and reserved-keys policy.
   static async readForInjection(overridePath?: string): Promise<Record<string, string>> {
     const path = overridePath?.trim() ? resolve(overridePath.trim()) : resolveDefaultEnvStorePath();
     const store = await readStore(path, { tolerateInvalid: true });

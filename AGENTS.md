@@ -32,3 +32,34 @@ To maximize merge speed, include evidence of the end-to-end flow:
 
 If you cannot run tests or capture the video, say so explicitly and explain why, and include the exact commands/steps for the reviewer to reproduce.
 
+## Coding Guidelines
+
+### TypeScript
+
+- Never use `any`, typecasts, or `as`, unless 100% necessary or specifically instructed.
+
+### Package Managers
+
+- Use pnpm.
+- Never use npm or yarn.
+
+### UI and UX
+
+- Use components from @/components when possible.
+- When creating new components, we prefer using shadcn/ui with (Base UI).
+- Assume most end users of OpenWork are non-technical.
+
+### Tech Stack Preferences
+
+When uncertain, prefer: Tailwind, TypeScript, React, shadcn/ui (Base UI), TanStack Query, Zustand, Zod, Drizzle, Better-Auth.
+
+### Code Style
+
+- Always strive for concise, simple solutions.
+- If a problem can be solved in a simpler way, propose it.
+- Use the smallest possible diff to make a change. Then think of how to make it smaller and do that again.
+- Avoid fallback expressions when types or control flow already guarantee a value.
+
+### Workflow
+
+- If asked to do too much work at once, stop and state that clearly.

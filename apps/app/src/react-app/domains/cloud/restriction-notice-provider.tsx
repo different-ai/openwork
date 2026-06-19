@@ -40,7 +40,7 @@ type RestrictionNoticeProviderProps = {
  * `useRestrictionNotice()`. Call sites:
  *
  *   const notice = useRestrictionNotice();
- *   if (checkDesktopRestriction({ restriction: "blockMultipleWorkspaces" })) {
+ *   if (checkDesktopRestriction({ restriction: "allowMultipleWorkspaces" })) {
  *     notice.show({ title: "...", message: "..." });
  *     return;
  *   }

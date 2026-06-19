@@ -15,6 +15,10 @@ const workerProxyPort = process.env.DEN_WORKER_PROXY_PORT?.trim() || "8789"
 const inferencePort = process.env.INFERENCE_PORT?.trim() || "8791"
 const webPort = process.env.DEN_WEB_PORT?.trim() || "3005"
 const appPort = process.env.OPENWORK_APP_PORT?.trim() || process.env.PORT?.trim() || "5173"
+const extraAppPorts = (process.env.OPENWORK_EXTRA_APP_PORTS?.trim() || "5174")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean)
 const databaseUrl = process.env.DATABASE_URL?.trim() || "mysql://root:password@127.0.0.1:3306/openwork_den"
 const dbEncryptionKey =
   process.env.DEN_DB_ENCRYPTION_KEY?.trim() ||
@@ -28,6 +32,11 @@ function detectWebOrigins() {
     `http://localhost:${appPort}`,
     `http://127.0.0.1:${appPort}`,
   ])
+
+  for (const port of extraAppPorts) {
+    origins.add(`http://localhost:${port}`)
+    origins.add(`http://127.0.0.1:${port}`)
+  }
 
   for (const entries of Object.values(os.networkInterfaces())) {
     for (const entry of entries || []) {

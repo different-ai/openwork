@@ -5,7 +5,7 @@ description: "Run OpenWork on your own server or infrastructure."
 
 Most users just use the [desktop app](https://openworklabs.com/download). Self-hosting is for teams that want OpenWork to run on their own server, VPC, or private cloud and then connect the desktop app to it remotely.
 
-Want hosted workspaces, team skill hubs, or shared providers without running infra? Use [OpenWork Cloud](/cloud/get-started) instead. Rolling this out across a company? [Book a call](https://calendar.app.google/86QpCENvhfEzDFLu5) about [Enterprise](/cloud/enterprise).
+Want hosted workspaces, team marketplaces, or shared providers without running infra? Use [OpenWork Cloud](/cloud/get-started) instead. Rolling this out across a company? [Book a call](https://calendar.app.google/86QpCENvhfEzDFLu5) about [Enterprise](/cloud/enterprise).
 
 ## What you deploy
 
@@ -22,6 +22,8 @@ If you only need one private remote workspace, deploy the worker runtime. If you
 
 Our hosted deployment uses Render for long-running services and worker provisioning. Render gives us service deploys, env vars, health checks, logs, and worker builds without asking us to operate raw AWS services directly. If you want to run closer to AWS yourself, use the same service boundaries on ECS/Fargate, EC2, Kubernetes, or another container platform.
 
+In production, hosted OpenWork runs the Cloud app and Den controller as scaled Render services with at least two instances. Render load balances traffic across healthy instances, removes failing instances from routing, and restarts failed instances. Den controller application instances are stateless replicas; shared control-plane state is stored in PlanetScale.
+
 The production shape is straightforward:
 
 - Put HTTPS in front of every public service.
@@ -36,8 +38,17 @@ For a containerized worker runtime, start from the [Docker packaging](https://gi
 
 - Worker runtimes use filesystem state and opencode SQLite data inside the mounted workspace/data paths.
 - The Den control plane uses a MySQL-compatible database. Local Docker uses MySQL 8.4; production can use standard MySQL or PlanetScale-compatible credentials.
+- Hosted OpenWork uses PlanetScale for Den control-plane state. PlanetScale production clusters provide one primary and at least two replicas across three availability zones, managed failover, and automated backups.
 - Postgres is not required by the current Den deployment path.
-- The share service stores public bundle payloads in Vercel Blob in our hosted setup. Local/dev can fall back to filesystem storage. If you self-host share, use equivalent object storage or leave share disabled.
+
+For production, configure encryption explicitly:
+
+- Enable encryption at rest for the MySQL-compatible database, database backups, object storage, worker volumes, and logs that may contain operational metadata.
+- Require TLS for application-to-database traffic. PlanetScale connections require TLS. For standard MySQL, include a certificate-verifying SSL mode in `DATABASE_URL`, such as `?sslmode=require`, `?sslmode=verify-ca`, or `?sslmode=verify-full`.
+- Keep the local Docker MySQL URL (`mysql://root:password@127.0.0.1:3306/openwork_den`) for development only; it is not a production security posture.
+- Set a unique `DEN_DB_ENCRYPTION_KEY` of at least 32 characters. OpenWork uses it to encrypt selected sensitive database columns, but it does not replace infrastructure-level encryption at rest.
+
+For a self-hosted production deployment, use a managed MySQL-compatible database with automated failover and backups, or provide equivalent redundancy yourself. Document the restore process, backup retention, recovery time objective, recovery point objective, and the person or team responsible for failover and restore.
 
 ## Auth and SSO
 
@@ -70,7 +81,7 @@ OpenWork does not require many third-party services for the core runtime. These 
 
 - We use Render: our current hosted service and worker deployment path.
 - Daytona: optional sandbox provider for cloud workers.
-- Vercel: optional Den web/share hosting and worker DNS automation.
+- Vercel: optional Den web hosting and worker DNS automation.
 - PostHog: optional analytics for public web surfaces. You can point it at self-hosted PostHog with `NEXT_PUBLIC_POSTHOG_HOST`, or remove/clear the key in your self-hosted web build if you do not want analytics.
 - Polar: optional billing/paywall for hosted cloud workers.
 - Loops: optional user sync and lifecycle messaging.
@@ -80,7 +91,7 @@ OpenWork does not require many third-party services for the core runtime. These 
 
 Skip the server. [**OpenWork Cloud**](/cloud/get-started) runs hosted workers for your team.
 
-Cloud also gives you org-wide primitives you'd otherwise have to build: [team skill hubs](/cloud/share-with-your-team/skill-hubs), [shared LLM providers](/cloud/share-with-your-team/managed-llm-provider), [RBAC](/cloud/members-and-rbac), and [shared workspaces](/cloud/run-in-the-cloud/shared-workspace).
+Cloud also gives you org-wide primitives you'd otherwise have to build: [team templates](/cloud/share-with-your-team/team-templates), [shared LLM providers](/cloud/share-with-your-team/managed-llm-provider), [RBAC](/cloud/members-and-rbac), and [shared workspaces](/cloud/run-in-the-cloud/shared-workspace).
 
 ## Looking for support for a larger rollout?
 

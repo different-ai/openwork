@@ -1,7 +1,9 @@
 /** @jsxImportSource react */
+import { useState } from "react";
 import { CircleAlert, Info } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { Button } from "@/components/ui/button";
 import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
 import {
@@ -88,6 +90,7 @@ export type UpdatesViewProps = {
 };
 
 export function UpdatesView(props: UpdatesViewProps) {
+  const [confirmRestartOpen, setConfirmRestartOpen] = useState(false);
   const updateState = props.updateStatus?.state ?? "idle";
   const updateVersion = props.updateStatus?.version ?? null;
   const updateDate = props.updateStatus?.date ?? null;
@@ -97,9 +100,9 @@ export function UpdatesView(props: UpdatesViewProps) {
   const updateErrorMessage = props.updateStatus?.message ?? null;
   const updateNotes = props.updateStatus?.notes ?? null;
 
-  const updateRestartBlockedMessage =
+  const updateRestartActiveRunsMessage =
     updateState === "ready" && props.anyActiveRuns
-      ? t("settings.restart_blocked_message")
+      ? t("settings.update_restart_active_tasks")
       : null;
 
   return (
@@ -160,9 +163,14 @@ export function UpdatesView(props: UpdatesViewProps) {
                     {updateState === "ready" ? (
                       <Button
                         variant="secondary"
-                        onClick={() => void props.installUpdateAndRestart()}
-                        disabled={props.busy || props.anyActiveRuns}
-                        title={updateRestartBlockedMessage ?? ""}
+                        onClick={() => {
+                          if (props.anyActiveRuns) {
+                            setConfirmRestartOpen(true);
+                            return;
+                          }
+                          void props.installUpdateAndRestart();
+                        }}
+                        disabled={props.busy}
                       >
                         {t("settings.update_install_button")}
                       </Button>
@@ -182,12 +190,25 @@ export function UpdatesView(props: UpdatesViewProps) {
                 </Alert>
               ) : null}
 
-              {updateRestartBlockedMessage ? (
+              {updateRestartActiveRunsMessage ? (
                 <Alert>
                   <Info />
-                  <AlertDescription>{updateRestartBlockedMessage}</AlertDescription>
+                  <AlertDescription>{updateRestartActiveRunsMessage}</AlertDescription>
                 </Alert>
               ) : null}
+
+              <ConfirmModal
+                open={confirmRestartOpen}
+                title={t("settings.update_restart_confirm_title")}
+                message={t("settings.update_restart_confirm_message")}
+                confirmLabel={t("settings.update_install_button")}
+                cancelLabel={t("common.cancel")}
+                onConfirm={() => {
+                  setConfirmRestartOpen(false);
+                  void props.installUpdateAndRestart();
+                }}
+                onCancel={() => setConfirmRestartOpen(false)}
+              />
             </LayoutSectionItem>
 
             {updateState === "available" && updateNotes ? (

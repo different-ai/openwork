@@ -11,7 +11,7 @@ const downloadSchema = {
   "@type": "SoftwareApplication",
   name: "OpenWork",
   description:
-    "Open source Claude Cowork alternative. Sign up for OpenWork Cloud to get access to the desktop app for macOS, Windows, and Linux.",
+    "Open source Claude Cowork alternative. Sign up for OpenWork Cloud, download the desktop app, and open the built-in OpenWork Marketplace.",
   url: "https://openworklabs.com/download",
   downloadUrl: CLOUD_SIGNUP_URL,
   applicationCategory: "BusinessApplication",
@@ -31,7 +31,7 @@ const downloadSchema = {
 export const metadata = {
   title: "Get Started with OpenWork — macOS, Windows, Linux",
   description:
-    "Create a free OpenWork Cloud account to get access to the OpenWork desktop app for macOS, Windows, and Linux.",
+    "Create a free OpenWork Cloud account, download the OpenWork desktop app, and open the built-in Marketplace of AI capabilities.",
   alternates: {
     canonical: "/download"
   },
@@ -63,8 +63,9 @@ export default async function Download() {
               Get Started with OpenWork
             </h1>
             <p className="mb-6 text-[17px] leading-relaxed text-gray-700">
-              Create a free OpenWork Cloud account first. After signup, we guide
-              you to the desktop app and connect it to your cloud workspace.
+              Create a free OpenWork Cloud account first. After signup, download
+              the desktop app and sign in there. Marketplaces contain plugins,
+              and the built-in OpenWork Marketplace will be available in the app.
             </p>
             <a
               href={CLOUD_SIGNUP_URL}
@@ -82,12 +83,12 @@ export default async function Download() {
               <p className="text-[14px] text-gray-700">Create your free OpenWork Cloud account.</p>
             </div>
             <div className="feature-card border-violet-100 bg-violet-50/50">
-              <span className="mb-2 block text-[16px] font-semibold text-gray-900">2. Create a workspace</span>
-              <p className="text-[14px] text-gray-700">Set up your personal or team workspace before installing.</p>
+              <span className="mb-2 block text-[16px] font-semibold text-gray-900">2. Download the app</span>
+              <p className="text-[14px] text-gray-700">Install OpenWork on your desktop. Your workspace is created in the app.</p>
             </div>
             <div className="feature-card border-emerald-100 bg-emerald-50/60">
-              <span className="mb-2 block text-[16px] font-semibold text-gray-900">3. Open the app</span>
-              <p className="text-[14px] text-gray-700">Use the guided desktop app access flow from Cloud.</p>
+              <span className="mb-2 block text-[16px] font-semibold text-gray-900">3. Open Marketplace</span>
+              <p className="text-[14px] text-gray-700">Sign in inside OpenWork to find the built-in Marketplace and its plugins.</p>
             </div>
           </section>
 

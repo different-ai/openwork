@@ -1,97 +1,195 @@
 /** @jsxImportSource react */
-import { memo, useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import type { Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { Streamdown } from "streamdown";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { Marked, type Tokens } from "marked";
+import { markedEmoji } from "marked-emoji";
+import markedShiki from "marked-shiki";
+import emojiKeywords from "emojilib";
+import {
+  transformerMetaHighlight,
+  transformerMetaWordHighlight,
+  transformerNotationDiff,
+  transformerNotationErrorLevel,
+  transformerNotationFocus,
+  transformerNotationHighlight,
+  transformerNotationWordHighlight,
+} from "@shikijs/transformers";
+import { bundledLanguages, codeToHtml } from "shiki";
 
 import { applyTextHighlights } from "./text-highlights";
 
-function MarkdownCodeBlock(props: { className?: string; children: React.ReactNode }) {
-  const text = Array.isArray(props.children) ? props.children.join("") : String(props.children ?? "");
-  const [copied, setCopied] = useState(false);
-
-  return (
-    <div className="my-4 overflow-hidden rounded-[18px] border border-dls-border/70 bg-gray-1/80">
-      <div className="flex items-center justify-end border-b border-dls-border/70 px-3 py-2">
-        <button
-          type="button"
-          className="rounded-full border border-dls-border bg-dls-surface px-3 py-1 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
-          onClick={async () => {
-            await navigator.clipboard.writeText(text);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1200);
-          }}
-        >
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
-      <pre className="overflow-x-auto px-4 py-3 text-[12px] leading-6 text-gray-12">
-        <code className={props.className}>{props.children}</code>
-      </pre>
-    </div>
-  );
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
-const markdownComponents: Components = {
-  a({ href, children }) {
-    return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer noopener"
-        className="underline underline-offset-2 text-dls-accent hover:text-[var(--dls-accent-hover)]"
-      >
-        {children}
-      </a>
-    );
-  },
-  pre({ children }) {
-    return (
-      <pre className="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 px-4 py-3 text-[12px] leading-6 text-gray-12">
-        {children}
-      </pre>
-    );
-  },
-  code({ className, children }) {
-    const isBlock = Boolean(className?.includes("language-"));
-    if (isBlock) {
-      return <MarkdownCodeBlock className={className}>{children}</MarkdownCodeBlock>;
-    }
-    return (
-      <code className="rounded-md bg-gray-2/70 px-1.5 py-0.5 font-mono text-[0.92em] text-gray-12">
-        {children}
-      </code>
-    );
-  },
-  blockquote({ children }) {
-    return <blockquote className="my-4 rounded-r-lg border-l border-dls-border bg-dls-hover/40 pl-4 italic text-gray-11">{children}</blockquote>;
-  },
-  table({ children }) {
-    return <table className="my-4 w-full border-collapse">{children}</table>;
-  },
-  th({ children }) {
-    return <th className="border border-dls-border bg-dls-hover p-2 text-left">{children}</th>;
-  },
-  td({ children }) {
-    return <td className="border border-dls-border p-2 align-top">{children}</td>;
-  },
-  hr() {
-    return <hr className="my-6 border-none h-px bg-gray-4" />;
-  },
-};
+function escapeAttribute(value: string) {
+  return escapeHtml(value).replace(/`/g, "&#96;");
+}
 
-const markdownClassName = `markdown-content max-w-none text-gray-12
-  [&_strong]:font-semibold
-  [&_em]:italic
-  [&_h1]:my-5 [&_h1]:text-xl [&_h1]:font-semibold
-  [&_h2]:my-4 [&_h2]:text-lg [&_h2]:font-semibold
-  [&_h3]:my-3 [&_h3]:text-base [&_h3]:font-semibold
-  [&_p]:my-3 [&_p]:leading-relaxed
-  [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6
-  [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6
-  [&_li]:my-1
-`.trim();
+function safeHref(href: string) {
+  const trimmed = href.trim();
+  if (!trimmed) return "#";
+  if (trimmed.startsWith("#") || trimmed.startsWith("/") || trimmed.startsWith("./") || trimmed.startsWith("../")) {
+    return trimmed;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (["http:", "https:", "mailto:"].includes(parsed.protocol)) return trimmed;
+  } catch {
+    return "#";
+  }
+  return "#";
+}
+
+function alignAttribute(align: Tokens.TableCell["align"]) {
+  return align ? ` style="text-align: ${align}"` : "";
+}
+
+function codeLanguageClass(lang: string | undefined) {
+  const normalized = lang?.trim().split(/\s+/)[0];
+  return normalized ? ` class="language-${escapeAttribute(normalized)}"` : "";
+}
+
+function createEmojiAliases() {
+  const aliases: Record<string, string> = {};
+  for (const [emoji, names] of Object.entries(emojiKeywords)) {
+    for (const name of names) {
+      if (aliases[name] === undefined) aliases[name] = emoji;
+    }
+  }
+  return aliases;
+}
+
+const emojiAliases = createEmojiAliases();
+
+function normalizeShikiLanguage(lang: string) {
+  const normalized = lang.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  return normalized in bundledLanguages ? normalized : "text";
+}
+
+function hasFencedCodeBlock(text: string) {
+  return /(^|\n)```/.test(text);
+}
+
+const baseMarkedOptions = {
+  async: false,
+  breaks: false,
+  gfm: true,
+  pedantic: false,
+  silent: true,
+  renderer: {
+    html({ text }) {
+      return text.includes('data-openwork-shiki="true"') ? text : "";
+    },
+    paragraph({ tokens }) {
+      return `<p class="my-3 leading-relaxed">${this.parser.parseInline(tokens)}</p>`;
+    },
+    heading({ tokens, depth }) {
+      const className = depth === 1
+        ? "my-5 text-xl font-semibold"
+        : depth === 2
+          ? "my-4 text-lg font-semibold"
+          : "my-3 text-base font-semibold";
+      return `<h${depth} class="${className}">${this.parser.parseInline(tokens)}</h${depth}>`;
+    },
+    list(token) {
+      const tag = token.ordered ? "ol" : "ul";
+      const className = token.ordered ? "my-3 list-decimal pl-6" : "my-3 list-disc pl-6";
+      const start = token.ordered && typeof token.start === "number" && token.start !== 1
+        ? ` start="${token.start}"`
+        : "";
+      return `<${tag}${start} class="${className}">${token.items.map((item) => this.listitem(item)).join("")}</${tag}>`;
+    },
+    listitem(item) {
+      const checkbox = item.task
+        ? `<input disabled="" type="checkbox"${item.checked ? " checked=\"\"" : ""}> `
+        : "";
+      return `<li class="my-1">${checkbox}${this.parser.parse(item.tokens)}</li>`;
+    },
+    blockquote({ tokens }) {
+      return `<blockquote class="my-4 rounded-r-lg border-l border-dls-border bg-dls-hover/40 pl-4 italic text-muted-foreground">${this.parser.parse(tokens)}</blockquote>`;
+    },
+    code({ text, lang }) {
+      return `<pre class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 px-4 py-3 text-xs leading-6 text-muted-foreground"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre>`;
+    },
+    codespan({ text }) {
+      return `<code class="rounded-md bg-gray-2/70 px-1.5 py-0.5 font-mono text-sm text-foreground">${escapeHtml(text)}</code>`;
+    },
+    del({ raw, tokens }) {
+      if (!raw.startsWith("~~")) return escapeHtml(raw);
+      return `<del>${this.parser.parseInline(tokens)}</del>`;
+    },
+    link({ href, title, tokens }) {
+      const safe = escapeAttribute(safeHref(href));
+      const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
+      return `<a href="${safe}"${titleAttr} target="_blank" rel="noreferrer noopener" class="text-indigo-10 underline underline-offset-2 transition-colors hover:text-indigo-8">${this.parser.parseInline(tokens)}</a>`;
+    },
+    image({ href, title, text }) {
+      const safe = escapeAttribute(safeHref(href));
+      const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
+      return `<img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="my-4 max-w-full rounded-[18px] border border-dls-border/70">`;
+    },
+    table(token) {
+      const header = token.header.map((cell) => this.tablecell({ ...cell, header: true })).join("");
+      const body = token.rows.map((row) => this.tablerow({ text: row.map((cell) => this.tablecell(cell)).join("") })).join("");
+      return `<table class="my-4 w-full border-collapse"><thead>${this.tablerow({ text: header })}</thead><tbody>${body}</tbody></table>`;
+    },
+    tablerow({ text }) {
+      return `<tr>${text}</tr>`;
+    },
+    tablecell({ tokens, header, align }) {
+      const tag = header ? "th" : "td";
+      const className = header
+        ? "border border-dls-border bg-dls-hover p-2 text-left"
+        : "border border-dls-border p-2 align-top";
+      return `<${tag}${alignAttribute(align)} class="${className}">${this.parser.parseInline(tokens)}</${tag}>`;
+    },
+    hr() {
+      return `<hr class="my-6 border-none h-px bg-gray-4">`;
+    },
+  },
+} satisfies ConstructorParameters<typeof Marked<string, string>>[0];
+
+const markdownParser = new Marked<string, string>(baseMarkedOptions).use(
+  markedEmoji({
+    emojis: emojiAliases,
+    renderer: (token) => escapeHtml(token.emoji),
+  }),
+);
+
+const highlightedMarkdownParser = new Marked<string, string>({
+  ...baseMarkedOptions,
+  async: true,
+}).use(
+  markedEmoji({
+    emojis: emojiAliases,
+    renderer: (token) => escapeHtml(token.emoji),
+  }),
+  markedShiki({
+    async highlight(code, lang, props) {
+      const language = normalizeShikiLanguage(lang);
+      return codeToHtml(code, {
+        lang: language,
+        meta: { __raw: props.join(" ") },
+        theme: "github-light",
+        transformers: [
+          transformerNotationDiff({ matchAlgorithm: "v3" }),
+          transformerNotationHighlight({ matchAlgorithm: "v3" }),
+          transformerNotationWordHighlight({ matchAlgorithm: "v3" }),
+          transformerNotationFocus({ matchAlgorithm: "v3" }),
+          transformerNotationErrorLevel({ matchAlgorithm: "v3" }),
+          transformerMetaHighlight(),
+          transformerMetaWordHighlight(),
+        ],
+      });
+    },
+    container: `<div data-openwork-shiki="true" class="my-4 overflow-hidden rounded-[18px] border border-dls-border/70 bg-gray-1/80 p-4 text-xs leading-6">%s</div>`,
+  }),
+);
 
 function MarkdownBlockInner(props: {
   text: string;
@@ -99,6 +197,28 @@ function MarkdownBlockInner(props: {
   highlightQuery?: string;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const syncHtml = useMemo(() => {
+    if (!props.text.trim()) return "";
+    return markdownParser.parse(props.text, { async: false });
+  }, [props.text]);
+  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
+
+  useEffect(() => {
+    if (props.streaming || !hasFencedCodeBlock(props.text)) {
+      setHighlightedHtml(null);
+      return;
+    }
+
+    let cancelled = false;
+    void highlightedMarkdownParser.parse(props.text, { async: true }).then((html) => {
+      if (!cancelled && html.trim()) setHighlightedHtml({ text: props.text, html });
+    }).catch(() => {
+      if (!cancelled) setHighlightedHtml(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.streaming, props.text]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -110,24 +230,16 @@ function MarkdownBlockInner(props: {
     });
   }, [props.highlightQuery, props.streaming, props.text]);
 
-  if (!props.text.trim()) return null;
+  const html = highlightedHtml?.text === props.text ? highlightedHtml.html : syncHtml;
 
-  if (props.streaming) {
-    return (
-      <div ref={rootRef} className={markdownClassName}>
-        <Streamdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml>
-          {props.text}
-        </Streamdown>
-      </div>
-    );
-  }
+  if (!html) return null;
 
   return (
-    <div ref={rootRef} className={markdownClassName}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml>
-        {props.text}
-      </ReactMarkdown>
-    </div>
+    <div
+      ref={rootRef}
+      className="markdown-content max-w-none text-foreground"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }
 

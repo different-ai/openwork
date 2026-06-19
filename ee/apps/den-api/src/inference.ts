@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto"
-import { and, eq, inArray, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   InferenceKeyTable,
   InferenceOrgLimitPolicyTable,
@@ -71,12 +71,12 @@ async function activeMemberCount(organizationId: OrgId) {
   const [row] = await db
     .select({ count: sql<number>`count(*)` })
     .from(MemberTable)
-    .where(eq(MemberTable.organizationId, organizationId))
+    .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
   return Math.max(0, Number(row?.count ?? 0))
 }
 
 async function listOrgMembers(organizationId: OrgId) {
-  return db.select({ id: MemberTable.id }).from(MemberTable).where(eq(MemberTable.organizationId, organizationId))
+  return db.select({ id: MemberTable.id }).from(MemberTable).where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
 }
 
 function addWindow(start: Date, windowType: InferenceWindowType) {

@@ -5,8 +5,9 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { jsonValidator, requireUserMiddleware } from "../../middleware/index.js"
+import { authenticatedRoute, jsonValidator, publicRoute } from "../../middleware/index.js"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
@@ -75,9 +76,17 @@ function isWebAppHost(hostname: string) {
     }
   }
 
+  const configuredHosts = env.webAppHosts
+  if (configuredHosts.some((host) => (host.startsWith(".") ? normalized.endsWith(host) : normalized === host))) {
+    return true
+  }
+
   return normalized === "app.openworklabs.com"
     || normalized === "app.openwork.software"
     || normalized.startsWith("app.")
+    // Cloud Run hostnames serve the den-web frontend, which only exposes the
+    // Den API behind its /api/den proxy path (see #1807).
+    || normalized.endsWith(".run.app")
 }
 
 function withDenProxyPath(origin: string) {
@@ -154,7 +163,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         401: jsonResponse("The caller must be signed in to create a desktop handoff grant.", unauthorizedSchema),
       },
     }),
-    requireUserMiddleware,
+    authenticatedRoute(),
     jsonValidator(createGrantSchema),
     async (c) => {
     const user = c.get("user")
@@ -202,6 +211,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         404: jsonResponse("The handoff grant was missing, expired, or already used.", grantNotFoundSchema),
       },
     }),
+    publicRoute,
     jsonValidator(exchangeGrantSchema),
     async (c) => {
     const input = c.req.valid("json")

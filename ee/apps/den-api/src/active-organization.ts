@@ -1,4 +1,4 @@
-import { asc, eq } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
@@ -11,7 +11,7 @@ export async function getInitialActiveOrganizationIdForUser(userId: string) {
       organizationId: MemberTable.organizationId,
     })
     .from(MemberTable)
-    .where(eq(MemberTable.userId, normalizedUserId))
+    .where(and(eq(MemberTable.userId, normalizedUserId), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
     .limit(1)
 

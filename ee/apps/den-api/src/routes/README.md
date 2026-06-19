@@ -16,6 +16,7 @@ This folder groups Den API endpoints by product surface instead of keeping one l
 - Each route area exports a single `register...Routes()` function from its `index.ts`
 - Request validation should use Hono Zod validators from `src/middleware/index.ts`
 - Shared auth/org/team context should come from `src/middleware/index.ts`, not from ad hoc request parsing
+- Routes are deny-by-default in CI: new routes must use shared auth middleware or be added to `test/route-guard-policy.test.ts` with a narrow reason
 - New route areas should get their own folder plus a local `README.md`
 
 ## Why this exists

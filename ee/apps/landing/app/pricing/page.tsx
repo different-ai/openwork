@@ -26,32 +26,33 @@ const pricingSchema = {
     {
       "@type": "Offer",
       name: "Team Starter",
-      price: "50",
+      price: "10",
       priceCurrency: "USD",
-      url: "https://app.openworklabs.com/checkout",
+      url: "https://app.openworklabs.com/dashboard/billing",
       availability: "https://schema.org/InStock",
       priceSpecification: {
         "@type": "UnitPriceSpecification",
-        price: "50",
+        price: "10",
         priceCurrency: "USD",
-        unitText: "MONTH"
+        unitText: "seat per month"
       },
-      description: "5 seats, API access, Skill Hub Manager, distributed keys."
+      description:
+        "First 5 seats free, then $10 per seat per month. API access, Extension Marketplace, distributed keys."
     },
     {
       "@type": "Offer",
       name: "Enterprise",
       url: "https://openworklabs.com/enterprise",
       description:
-        "Custom pricing. Enterprise rollout support, deployment guidance, and custom commercial terms."
+        "Custom pricing. SSO/SAML and SCIM, bring your own inference, desktop policies and version controls, managed deployment, custom skill development, MCP consulting, and custom commercial terms."
     }
   ]
 };
 
 export const metadata = {
-  title: "OpenWork Pricing — Free desktop, $50/mo cloud, enterprise",
+  title: "OpenWork Pricing — Free desktop, $10/seat teams, enterprise",
   description:
-    "OpenWork is free forever for solo use with bring-your-own-keys. Cloud workers from $50/month per seat, plus custom enterprise licensing with self-hosted deployment.",
+    "OpenWork is free forever for solo use with bring-your-own-keys. Teams get their first 5 seats free, then $10 per seat per month, plus custom enterprise plans with SSO and bring-your-own inference.",
   alternates: {
     canonical: "/pricing"
   },
@@ -68,7 +69,7 @@ export default async function PricingPage() {
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
       <StructuredData data={pricingSchema} />
-      <LandingBackground />
+      <LandingBackground fadeOnScroll={false} />
 
       <div className="relative z-10 flex min-h-screen flex-col items-center pb-3 pt-1 md:pb-4 md:pt-2">
         <div className="w-full">

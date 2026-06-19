@@ -3,7 +3,7 @@ title: "Managing members and RBAC"
 description: "Invite teammates, create teams, and control Cloud access with owners, admins, members, and custom roles"
 ---
 
-OpenWork Cloud separates org membership from team assignment. Teams are used for skill hub and provider access; roles control what a person can manage across the org.
+OpenWork Cloud separates org membership from team assignment. Teams are used for marketplace and provider access; roles control what a person can manage across the org.
 
 ## Default roles
 
@@ -29,6 +29,12 @@ Only `Owner` can change member roles, remove members, or create, edit, and delet
 
 Invites are tied to the invited email address.
 
+## SSO just-in-time provisioning
+
+When SSO just-in-time provisioning adds someone to an organization on first sign-in, OpenWork assigns the baseline `Member` role. IdP attributes such as `role`, `groups`, or `admin` are not used to grant OpenWork organization roles.
+
+Treat `Admin`, `Owner`, and custom-role elevation as explicit access changes made inside OpenWork. Review those changes in the member list and audit trail instead of relying on unvalidated IdP attributes for authorization.
+
 ## Restrict who can join
 
 If you only want teammates from specific companies or domains to join:
@@ -48,7 +54,7 @@ When this is enabled, OpenWork Cloud only lets people join with email addresses 
 4. Choose `Team members`.
 5. Click `Create team`.
 
-You can use teams to control access to skill hubs and LLM providers without assigning people one by one.
+You can use teams to control access to marketplaces and LLM providers without assigning people one by one.
 
 ## Use custom roles when needed
 
@@ -58,6 +64,8 @@ You can use teams to control access to skill hubs and LLM providers without assi
 4. Choose the permissions that role should have.
 5. Click `Create role`.
 
+Use `security_configuration.manage` for the identity/security operator role that manages SSO, SCIM, and organization API keys. Keep it separate from day-to-day `Admin` membership operations when your organization needs separation of duties.
+
 ## Practical access pattern
 
 A simple setup that works well for most orgs:
@@ -65,7 +73,7 @@ A simple setup that works well for most orgs:
 - keep 1-2 `Owner` users
 - give day-to-day operators `Admin`
 - keep most people as `Member`
-- use `Teams` to decide who can see specific skill hubs or providers
+- use `Teams` to decide who can see specific marketplaces or providers
 
 ## Notes
 

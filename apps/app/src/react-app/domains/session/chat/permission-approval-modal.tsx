@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
 import type { PendingPermission } from "@/app/types";
 
@@ -365,5 +366,100 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
+  const presentation = useMemo(() => describePermissionRequest(props.permission), [props.permission]);
+  const metadata =
+    props.permission.metadata && typeof props.permission.metadata === "object"
+      ? props.permission.metadata
+      : {};
+  const hasMetadata = Object.keys(metadata).length > 0;
+  const Icon = presentation.isDoomLoop ? RefreshCcw : ShieldCheck;
+
+  return (
+    <div className="overflow-hidden border-b border-dls-border bg-transparent">
+        <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
+              <Icon size={16} strokeWidth={1.9} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium leading-5 text-dls-text">{presentation.title}</div>
+              <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{presentation.message}</div>
+              {presentation.note ? (
+                <div className="mt-1 text-[12px] leading-5 text-dls-secondary">{presentation.note}</div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="border-red-7/25 text-red-11 hover:bg-red-1/40"
+              onClick={() => props.respondPermission?.(props.permission.id, "reject")}
+              disabled={props.busy || !props.respondPermission}
+            >
+              <XCircle data-icon="inline-start" />
+              {t("session.deny")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => props.respondPermission?.(props.permission.id, "once")}
+              disabled={props.busy || !props.respondPermission}
+            >
+              <Clock3 data-icon="inline-start" />
+              {t("session.allow_once")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => props.respondPermission?.(props.permission.id, "always")}
+              disabled={props.busy || !props.respondPermission}
+            >
+              <Check data-icon="inline-start" />
+              {t("session.allow_for_session")}
+            </Button>
+          </div>
+        </div>
+
+        <div className="border-t border-dls-border px-4 py-3">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-dls-secondary">
+                {t("session.permission_label")}
+              </div>
+              <div className="mt-1 font-mono text-[12px] leading-5 text-dls-text">
+                {presentation.permissionLabel}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-dls-secondary">
+                {presentation.scopeLabel}
+              </div>
+              <div className="mt-1 truncate rounded-lg border border-dls-border bg-dls-hover/55 px-2.5 py-1.5 font-mono text-[12px] leading-5 text-dls-text">
+                {presentation.scopeValue}
+              </div>
+            </div>
+          </div>
+
+          {hasMetadata ? (
+            <details className="group mt-3 rounded-xl border border-dls-border bg-dls-surface px-3 py-2">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[12px] font-medium text-dls-text">
+                <span>{t("session.details_label")}</span>
+                <ChevronRight size={14} className="text-dls-secondary transition-transform group-open:rotate-90" />
+              </summary>
+              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-dls-hover/45 px-3 py-2 text-[11px] leading-5 text-dls-secondary">
+                {stringifyMetadata(metadata, props.safeStringify)}
+              </pre>
+            </details>
+          ) : null}
+        </div>
+    </div>
   );
 }

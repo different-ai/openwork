@@ -1,4 +1,5 @@
 export * from "./auth"
+export * from "./desktop-policies"
 export * from "./inference"
 export * from "./org"
 export * from "./sharables/llm-providers"

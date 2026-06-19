@@ -15,7 +15,7 @@
  * the overlay renders null.
  *
  * Findings also land on window.__openwork.slice("profiler") so external
- * tools / Chrome MCP can read them.
+ * tools can read them.
  */
 
 import {
@@ -29,7 +29,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { publishInspectorSlice } from "./app-inspector";
+import { publishInspectorSlice } from "../../app/lib/app-inspector";
 
 type CommitRecord = {
   id: string;

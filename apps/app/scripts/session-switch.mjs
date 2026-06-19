@@ -144,6 +144,8 @@ try {
   results.ok = false;
   results.error = message;
   results.stderr = server.getStderr();
+  results.stdout = server.getStdout?.() ?? "";
+  results.serverExit = server.getExitInfo?.() ?? null;
   console.error(JSON.stringify(results, null, 2));
   process.exitCode = 1;
 } finally {

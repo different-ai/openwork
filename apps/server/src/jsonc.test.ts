@@ -56,4 +56,35 @@ describe("updateJsoncPath", () => {
     const next = await readFile(file, "utf8");
     expect(next).not.toContain('"permission"');
   });
+
+  test("adds a nested provider without replacing existing providers", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "openwork-jsonc-"));
+    const file = join(dir, "opencode.jsonc");
+    await writeFile(
+      file,
+      `{
+  "provider": {
+    "openai": {
+      "models": {
+        "gpt-5": {}
+      }
+    }
+  }
+}
+`,
+      "utf8",
+    );
+
+    await updateJsoncPath(file, ["provider", "ollama"], {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Ollama (local)",
+      options: { baseURL: "http://localhost:11434/v1" },
+      models: { llama2: { name: "Llama 2" } },
+    });
+
+    const next = await readFile(file, "utf8");
+    expect(next).toContain('"openai"');
+    expect(next).toContain('"ollama"');
+    expect(next).toContain('"baseURL": "http://localhost:11434/v1"');
+  });
 });

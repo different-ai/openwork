@@ -7,10 +7,6 @@ type PolarCustomerState = {
   }>
 }
 
-type PolarCheckoutSession = {
-  url?: string
-}
-
 type PolarCustomerSession = {
   customer_portal_url?: string
 }
@@ -80,7 +76,6 @@ export type CloudWorkerAccess =
     }
   | {
       allowed: false
-      checkoutUrl: string
     }
 
 export type CloudWorkerBillingPrice = {
@@ -118,7 +113,6 @@ export type CloudWorkerBillingStatus = {
   featureGateEnabled: boolean
   hasActivePlan: boolean
   checkoutRequired: boolean
-  checkoutUrl: string | null
   portalUrl: string | null
   price: CloudWorkerBillingPrice | null
   subscription: CloudWorkerBillingSubscription | null
@@ -142,7 +136,6 @@ type CloudAccessInput = {
 }
 
 type BillingStatusOptions = {
-  includeCheckoutUrl?: boolean
   includePortalUrl?: boolean
   includeInvoices?: boolean
 }
@@ -279,47 +272,16 @@ function hasRequiredBenefit(state: PolarCustomerState | null) {
   return state.granted_benefits.some((grant) => grant.benefit_id === env.polar.benefitId)
 }
 
-async function createCheckoutSession(input: CloudAccessInput): Promise<string> {
-  const payload = {
-    products: [env.polar.productId],
-    success_url: env.polar.successUrl,
-    return_url: env.polar.returnUrl,
-    external_customer_id: input.userId,
-    customer_email: input.email,
-    customer_name: input.name,
-  }
-
-  const { response, payload: checkout, text } = await polarFetchJson<PolarCheckoutSession>("/v1/checkouts/", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  })
-
-  if (!response.ok) {
-    throw new Error(`Polar checkout creation failed (${response.status}): ${text.slice(0, 400)}`)
-  }
-
-  if (!checkout?.url) {
-    throw new Error("Polar checkout response missing URL")
-  }
-
-  return checkout.url
-}
-
 type CloudWorkerAccessEvaluation = {
   featureGateEnabled: boolean
   hasActivePlan: boolean
-  checkoutUrl: string | null
 }
 
-async function evaluateCloudWorkerAccess(
-  input: CloudAccessInput,
-  options: { includeCheckoutUrl?: boolean } = {},
-): Promise<CloudWorkerAccessEvaluation> {
+async function evaluateCloudWorkerAccess(input: CloudAccessInput): Promise<CloudWorkerAccessEvaluation> {
   if (!env.polar.featureGateEnabled) {
     return {
       featureGateEnabled: false,
       hasActivePlan: true,
-      checkoutUrl: null,
     }
   }
 
@@ -330,7 +292,6 @@ async function evaluateCloudWorkerAccess(
     return {
       featureGateEnabled: true,
       hasActivePlan: true,
-      checkoutUrl: null,
     }
   }
 
@@ -342,7 +303,6 @@ async function evaluateCloudWorkerAccess(
       return {
         featureGateEnabled: true,
         hasActivePlan: true,
-        checkoutUrl: null,
       }
     }
   }
@@ -350,7 +310,6 @@ async function evaluateCloudWorkerAccess(
   return {
     featureGateEnabled: true,
     hasActivePlan: false,
-    checkoutUrl: options.includeCheckoutUrl ? await createCheckoutSession(input) : null,
   }
 }
 
@@ -398,23 +357,6 @@ function toBillingPriceFromSubscription(subscription: CloudWorkerBillingSubscrip
     recurringInterval: subscription.recurringInterval,
     recurringIntervalCount: subscription.recurringIntervalCount,
   }
-}
-
-async function getSubscriptionById(subscriptionId: string): Promise<PolarSubscription | null> {
-  const encodedId = encodeURIComponent(subscriptionId)
-  const { response, payload, text } = await polarFetchJson<PolarSubscription>(`/v1/subscriptions/${encodedId}`, {
-    method: "GET",
-  })
-
-  if (response.status === 404) {
-    return null
-  }
-
-  if (!response.ok) {
-    throw new Error(`Polar subscription lookup failed (${response.status}): ${text.slice(0, 400)}`)
-  }
-
-  return payload
 }
 
 async function listSubscriptionsByExternalCustomer(
@@ -634,18 +576,13 @@ async function getProductBillingPrice(productId: string): Promise<CloudWorkerBil
 }
 
 export async function requireCloudWorkerAccess(input: CloudAccessInput): Promise<CloudWorkerAccess> {
-  const evaluation = await evaluateCloudWorkerAccess(input, { includeCheckoutUrl: true })
+  const evaluation = await evaluateCloudWorkerAccess(input)
   if (evaluation.hasActivePlan) {
     return { allowed: true }
   }
 
-  if (!evaluation.checkoutUrl) {
-    throw new Error("Polar checkout URL unavailable")
-  }
-
   return {
     allowed: false,
-    checkoutUrl: evaluation.checkoutUrl,
   }
 }
 
@@ -655,16 +592,13 @@ export async function getCloudWorkerBillingStatus(
 ): Promise<CloudWorkerBillingStatus> {
   const includePortalUrl = options.includePortalUrl !== false
   const includeInvoices = options.includeInvoices !== false
-  const evaluation = await evaluateCloudWorkerAccess(input, {
-    includeCheckoutUrl: options.includeCheckoutUrl,
-  })
+  const evaluation = await evaluateCloudWorkerAccess(input)
 
   if (!evaluation.featureGateEnabled) {
     return {
       featureGateEnabled: false,
       hasActivePlan: true,
       checkoutRequired: false,
-      checkoutUrl: null,
       portalUrl: null,
       price: null,
       subscription: null,
@@ -679,7 +613,7 @@ export async function getCloudWorkerBillingStatus(
   const [subscriptionResult, priceResult, portalResult, invoicesResult] = await Promise.all([
     getPrimarySubscriptionForCustomer(input.userId).catch(() => null),
     env.polar.productId ? getProductBillingPrice(env.polar.productId).catch(() => null) : Promise.resolve<CloudWorkerBillingPrice | null>(null),
-    includePortalUrl ? createCustomerPortalUrl(input.userId).catch(() => null) : Promise.resolve<string | null>(null),
+    includePortalUrl && evaluation.hasActivePlan ? createCustomerPortalUrl(input.userId).catch(() => null) : Promise.resolve<string | null>(null),
     includeInvoices ? listBillingInvoices(input.userId).catch(() => []) : Promise.resolve<CloudWorkerBillingInvoice[]>([]),
   ])
 
@@ -692,7 +626,6 @@ export async function getCloudWorkerBillingStatus(
     featureGateEnabled: evaluation.featureGateEnabled,
     hasActivePlan: evaluation.hasActivePlan,
     checkoutRequired: evaluation.featureGateEnabled && !evaluation.hasActivePlan,
-    checkoutUrl: evaluation.checkoutUrl,
     portalUrl,
     price: productPrice ?? toBillingPriceFromSubscription(subscription),
     subscription,
@@ -777,43 +710,4 @@ export async function getCloudWorkerAdminBillingStatus(
       note: error instanceof Error ? error.message : "Billing lookup failed.",
     }
   }
-}
-
-export async function setCloudWorkerSubscriptionCancellation(
-  input: CloudAccessInput,
-  cancelAtPeriodEnd: boolean,
-): Promise<CloudWorkerBillingSubscription | null> {
-  if (!env.polar.featureGateEnabled) {
-    return null
-  }
-
-  assertPaywallConfig()
-
-  const activeSubscriptions = await listSubscriptionsByExternalCustomer(input.userId, {
-    activeOnly: true,
-    limit: 1,
-  })
-  const active = activeSubscriptions[0]
-  if (!active?.id) {
-    return null
-  }
-
-  const encodedId = encodeURIComponent(active.id)
-  const { response, payload, text } = await polarFetchJson<PolarSubscription>(`/v1/subscriptions/${encodedId}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      cancel_at_period_end: cancelAtPeriodEnd,
-    }),
-  })
-
-  if (!response.ok) {
-    throw new Error(`Polar subscription update failed (${response.status}): ${text.slice(0, 400)}`)
-  }
-
-  if (payload?.id) {
-    return toBillingSubscription(payload)
-  }
-
-  const refreshed = await getSubscriptionById(active.id)
-  return toBillingSubscription(refreshed)
 }
