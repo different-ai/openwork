@@ -95,7 +95,7 @@ export function LlmProviderDetailScreen({
     if (busy && !provider) {
         return (
             <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-                <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-500">
                     Loading provider details...
                 </div>
             </div>
@@ -230,7 +230,7 @@ export function LlmProviderDetailScreen({
                     {envNames.map((envName) => (
                         <span
                             key={envName}
-                            className="rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500"
+                            className="rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-500"
                         >
                             {envName}
                         </span>
@@ -240,7 +240,7 @@ export function LlmProviderDetailScreen({
                             href={docUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500 transition hover:bg-gray-200 dark:hover:bg-gray-700"
+                            className="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-gray-700 px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-500 transition hover:bg-gray-200 dark:hover:bg-gray-700"
                         >
                             Docs
                             <ExternalLink className="h-3.5 w-3.5" />
@@ -256,7 +256,7 @@ export function LlmProviderDetailScreen({
                             Selected models
                         </h2>
                     </div>
-                    <div className="rounded-full bg-gray-100 dark:bg-gray-700 px-4 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
+                    <div className="rounded-full bg-gray-100 dark:bg-gray-700 px-4 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-500">
                         {formatCountLabel(
                             provider.models.length,
                             "model",
@@ -278,12 +278,12 @@ export function LlmProviderDetailScreen({
                                         <p className="text-[17px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">
                                             {model.name}
                                         </p>
-                                        <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                                        <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-500">
                                             {model.id}
                                         </p>
                                     </div>
                                     {limitLabel ? (
-                                        <span className="rounded-full bg-white dark:bg-[var(--dls-surface)] px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
+                                        <span className="rounded-full bg-white dark:bg-[var(--dls-surface)] px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-500">
                                             {limitLabel}
                                         </span>
                                     ) : null}
@@ -301,7 +301,7 @@ export function LlmProviderDetailScreen({
                             Access
                         </h2>
                     </div>
-                    <div className="inline-flex items-center gap-2 rounded-full bg-gray-100 dark:bg-gray-700 px-4 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
+                    <div className="inline-flex items-center gap-2 rounded-full bg-gray-100 dark:bg-gray-700 px-4 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-500">
                         <Users className="h-4 w-4" />
                         {provider.access.members.length +
                             provider.access.teams.length}{" "}
@@ -316,7 +316,7 @@ export function LlmProviderDetailScreen({
                         </p>
                         <div className="mt-4 grid gap-3">
                             {provider.access.members.length === 0 ? (
-                                <p className="text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                                <p className="text-[14px] text-gray-500 dark:text-gray-500">
                                     No direct people access yet.
                                 </p>
                             ) : (
@@ -328,7 +328,7 @@ export function LlmProviderDetailScreen({
                                         <p className="text-[15px] font-medium text-gray-900 dark:text-gray-100">
                                             {member.user.name}
                                         </p>
-                                        <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                                        <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-500">
                                             {member.user.email}
                                         </p>
                                     </div>
@@ -343,7 +343,7 @@ export function LlmProviderDetailScreen({
                         </p>
                         <div className="mt-4 grid gap-3">
                             {provider.access.teams.length === 0 ? (
-                                <p className="text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                                <p className="text-[14px] text-gray-500 dark:text-gray-500">
                                     No team access yet.
                                 </p>
                             ) : (
@@ -355,7 +355,7 @@ export function LlmProviderDetailScreen({
                                         <p className="text-[15px] font-medium text-gray-900 dark:text-gray-100">
                                             {team.name}
                                         </p>
-                                        <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                                        <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-500">
                                             Updated{" "}
                                             {formatProviderTimestamp(
                                                 team.updatedAt,
@@ -374,7 +374,7 @@ export function LlmProviderDetailScreen({
                     <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950 dark:text-gray-100">
                         Custom provider payload
                     </h2>
-                    <p className="mt-2 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                    <p className="mt-2 text-[15px] text-gray-500 dark:text-gray-500">
                         The raw provider config saved for this custom source.
                     </p>
                     <pre className="mt-6 overflow-x-auto rounded-[24px] bg-[#0f172a] p-5 text-[13px] leading-6 text-slate-100">

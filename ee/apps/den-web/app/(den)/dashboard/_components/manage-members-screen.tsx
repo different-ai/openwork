@@ -258,7 +258,7 @@ export function ManageMembersScreen() {
   if (orgBusy && !orgContext) {
     return (
       <div className="mx-auto max-w-[1200px] px-6 py-8 md:px-8">
-        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-500">
           Loading organization details...
         </div>
       </div>
@@ -423,7 +423,7 @@ export function ManageMembersScreen() {
               Team members
             </p>
             {orgContext.members.length === 0 ? (
-              <div className="rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <div className="rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[14px] text-gray-500 dark:text-gray-500">
                 Invite a member before assigning people to this team.
               </div>
             ) : (
@@ -532,7 +532,7 @@ export function ManageMembersScreen() {
                       return (
                         <label
                           key={`${resource}-${action}`}
-                          className="inline-flex items-center gap-2 text-[14px] text-gray-600 dark:text-gray-400 dark:text-gray-500"
+                          className="inline-flex items-center gap-2 text-[14px] text-gray-600 dark:text-gray-500"
                         >
                           <input
                             type="checkbox"
@@ -707,7 +707,7 @@ export function ManageMembersScreen() {
                   className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] items-center gap-4 border-b border-gray-100 dark:border-gray-700 px-6 py-3.5 transition hover:bg-gray-50 dark:hover:bg-gray-800/50 last:border-b-0"
                 >
                   <OrgMemberIdentity member={member} />
-                  <span className="text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                  <span className="text-[13px] text-gray-500 dark:text-gray-500">
                     {splitRoleString(member.role).map(formatRoleLabel).join(", ")}
                   </span>
                   <span className="text-[13px] text-gray-400 dark:text-gray-500">

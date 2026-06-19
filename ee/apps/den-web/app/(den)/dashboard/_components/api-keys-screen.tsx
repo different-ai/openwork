@@ -260,7 +260,7 @@ export function ApiKeysScreen() {
                 description="Create named, rate-limited API keys for your own org membership and revoke any key in the workspace when needed."
                 colors={["#E6FFFA", "#0F766E", "#14B8A6", "#99F6E4"]}
             >
-                <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-500">
                     Loading organization details...
                 </div>
             </DashboardPageTemplate>
@@ -330,7 +330,7 @@ export function ApiKeysScreen() {
                                         <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900 dark:text-gray-100">
                                             Issue a new key
                                         </p>
-                                        <p className="mt-1 text-[14px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                                        <p className="mt-1 text-[14px] leading-6 text-gray-500 dark:text-gray-500">
                                             Keys are issued to you for this
                                             organization only.
                                         </p>
@@ -422,7 +422,7 @@ export function ApiKeysScreen() {
                                         </p>
                                     </div>
 
-                                    <span className="text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                                    <span className="text-[13px] text-gray-500 dark:text-gray-500">
                                         {formatDateTime(apiKey.lastRequest)}
                                     </span>
 

@@ -46,7 +46,7 @@ export function DenSelectableRow({
       <div className="min-w-0 flex-1">
         <div className={descriptionBelow ? "grid min-w-0 gap-0.5" : "flex min-w-0 items-baseline gap-2"}>
           <p className="truncate text-[15px] font-medium leading-[1.15] tracking-[-0.02em] text-gray-950 dark:text-gray-100">{title}</p>
-          {description ? <p className="truncate text-[12px] leading-[1.15] text-gray-500 dark:text-gray-400 dark:text-gray-500">{description}</p> : null}
+          {description ? <p className="truncate text-[12px] leading-[1.15] text-gray-500 dark:text-gray-500">{description}</p> : null}
         </div>
       </div>
 

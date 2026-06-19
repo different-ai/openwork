@@ -117,7 +117,7 @@ function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }) {
   return (
     <section className="overflow-hidden rounded-3xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
       <div className="border-b border-gray-100 dark:border-gray-700 px-6 py-4">
-        <p className="text-[13px] leading-5 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+        <p className="text-[13px] leading-5 text-gray-500 dark:text-gray-500">
           Usage limits are shared across your organization and scale with the number of active members.
         </p>
       </div>
@@ -128,7 +128,7 @@ function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }) {
             <li key={bucket.windowType} className="flex items-center gap-6 px-6 py-5">
               <div className="min-w-[200px]">
                 <p className="text-[15px] font-medium text-gray-950 dark:text-gray-100">{WINDOW_LABEL[bucket.windowType]}</p>
-                <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{formatResetLabel(bucket)}</p>
+                <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-500">{formatResetLabel(bucket)}</p>
               </div>
               <div className="flex flex-1 items-center gap-4">
                 <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
@@ -175,7 +175,7 @@ function ModelsValueProp(props: {
           <h2 className="text-[24px] font-medium leading-8 tracking-[-0.4px] text-gray-950 dark:text-gray-100">
             The best open-source models, ready for your whole team.
           </h2>
-          <p className="mt-3 max-w-[560px] text-[14px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+          <p className="mt-3 max-w-[560px] text-[14px] leading-6 text-gray-500 dark:text-gray-500">
             OpenWork Models gives every member of your workspace instant access to a hand-picked
             lineup of OSS frontier models — no provider accounts, no key juggling.
           </p>
@@ -196,7 +196,7 @@ function ModelsValueProp(props: {
             >
               Subscribe with Stripe
             </DenButton>
-            <p className="text-[13px] leading-5 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="text-[13px] leading-5 text-gray-500 dark:text-gray-500">
               $10/user/month · {props.memberCount > 0 ? `${props.memberCount} active member${props.memberCount === 1 ? "" : "s"}` : "billed per active member"} · cancel anytime
             </p>
           </div>
@@ -214,7 +214,7 @@ function ModelsValueProp(props: {
             {MODEL_LINEUP.map((model) => (
               <li key={model.id} className="py-2.5">
                 <p className="text-[14px] font-medium text-gray-900 dark:text-gray-100">{model.name}</p>
-                <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{model.id}</p>
+                <p className="text-[12px] text-gray-500 dark:text-gray-500">{model.id}</p>
               </li>
             ))}
           </ul>

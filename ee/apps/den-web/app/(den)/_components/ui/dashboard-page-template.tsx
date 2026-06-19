@@ -100,7 +100,7 @@ export function DashboardPageTemplate({
       </div>
 
       {/* ── Description ── */}
-      <p className="mb-6 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{description}</p>
+      <p className="mb-6 text-[14px] text-gray-500 dark:text-gray-500">{description}</p>
 
       {/* ── Page content ── */}
       {children}

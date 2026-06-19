@@ -101,12 +101,12 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
               <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-100">
                 {marketplace.name}
               </h1>
-              <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-500">
                 {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
               </span>
             </div>
             {marketplace.description ? (
-              <p className="mt-1 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">{marketplace.description}</p>
+              <p className="mt-1 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-500">{marketplace.description}</p>
             ) : null}
             <p className="mt-3 text-[11.5px] text-gray-400 dark:text-gray-500">
               Added {formatMarketplaceTimestamp(marketplace.createdAt)}
@@ -132,7 +132,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
                 <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                   {source.repositoryFullName}
                 </p>
-                <p className="mt-0.5 truncate text-[12.5px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mt-0.5 truncate text-[12.5px] text-gray-500 dark:text-gray-500">
                   {source.accountLogin ? `@${source.accountLogin}` : "GitHub connector"}
                   {source.branch ? (
                     <>
@@ -164,7 +164,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
               <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800 dark:text-gray-200">
                 No plugins in this marketplace yet
               </p>
-              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500 dark:text-gray-500">
                 Plugins appear here as they're imported from the source repository.
               </p>
             </div>
@@ -255,14 +255,14 @@ function MarketplaceAccessSection({ marketplaceId }: { marketplaceId: string }) 
           disabled={grantMutation.isPending || revokeMutation.isPending}
           className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-gray-50 dark:hover:bg-gray-800/50 disabled:opacity-60"
         >
-          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${orgWideGrant ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 dark:text-gray-500"}`}>
+          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${orgWideGrant ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-500"}`}>
             <Globe className="h-4 w-4" aria-hidden />
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
               Everyone in {orgContext?.organization.name ?? "this organization"}
             </p>
-            <p className="mt-0.5 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="mt-0.5 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-500">
               {orgWideGrant
                 ? "All org members can see this marketplace."
                 : "Only admins and people you add below can see this marketplace."}
@@ -500,7 +500,7 @@ function AccessAddPicker({
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[12.5px] font-medium text-gray-900 dark:text-gray-100">{option.label}</p>
-                    <p className="truncate text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{option.subtitle}</p>
+                    <p className="truncate text-[11px] text-gray-500 dark:text-gray-500">{option.subtitle}</p>
                   </div>
                   <Check className="h-3.5 w-3.5 shrink-0 text-transparent" aria-hidden />
                 </button>
@@ -545,7 +545,7 @@ function MarketplacePluginCard({
             {plugin.name}
           </p>
           {plugin.description ? (
-            <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-500">
               {plugin.description}
             </p>
           ) : null}
@@ -555,10 +555,10 @@ function MarketplacePluginCard({
               {orderedCountEntries.map(([type, count]) => (
                 <span
                   key={type}
-                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11.5px] text-gray-600 dark:text-gray-400 dark:text-gray-500"
+                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11.5px] text-gray-600 dark:text-gray-500"
                 >
                   <span className="font-semibold text-gray-900 dark:text-gray-100">{count}</span>
-                  <span className="text-gray-500 dark:text-gray-400 dark:text-gray-500">{componentTypeLabel(type, count)}</span>
+                  <span className="text-gray-500 dark:text-gray-500">{componentTypeLabel(type, count)}</span>
                 </span>
               ))}
             </div>

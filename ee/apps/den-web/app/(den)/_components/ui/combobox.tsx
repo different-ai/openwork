@@ -383,7 +383,7 @@ export function DenCombobox({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[14px] font-medium text-gray-900 dark:text-gray-100">{option.label}</p>
                       {option.description ? (
-                        <p className="mt-1 truncate text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{option.description}</p>
+                        <p className="mt-1 truncate text-[12px] text-gray-500 dark:text-gray-500">{option.description}</p>
                       ) : null}
                     </div>
 
@@ -395,7 +395,7 @@ export function DenCombobox({
                 );
               })
             ) : (
-              <div className="px-3 py-4 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <div className="px-3 py-4 text-[13px] text-gray-500 dark:text-gray-500">
                 {query ? `${emptyLabel} "${query}"` : emptyLabel}
               </div>
             )}

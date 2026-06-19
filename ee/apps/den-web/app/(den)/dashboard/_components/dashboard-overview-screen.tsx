@@ -231,7 +231,7 @@ export function DashboardOverviewScreen() {
           Sign in with this account to get Computer Use, Browser, Image Gen, Google Workspace, and your team&apos;s marketplace extensions — all built in.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Link href={getMarketplacesRoute(activeOrg?.slug ?? "")} className="inline-flex items-center gap-1.5 rounded-full border border-[#d8e0ec] dark:border-gray-600 bg-white dark:bg-[var(--dls-surface)] px-3.5 py-1.5 text-[13px] font-semibold text-[#07192C] dark:text-gray-100 transition hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50">
+          <Link href={getMarketplacesRoute(activeOrg?.slug ?? "")} className="inline-flex items-center gap-1.5 rounded-full border border-[#d8e0ec] dark:border-gray-600 bg-white dark:bg-[var(--dls-surface)] px-3.5 py-1.5 text-[13px] font-semibold text-[#07192C] dark:text-gray-100 transition hover:bg-gray-50 dark:hover:bg-gray-800/50">
             View all extensions <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>

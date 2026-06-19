@@ -40,8 +40,8 @@ export function OrgLimitDialog({
           <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400 dark:text-gray-500">{eyebrow}</p>
           <div className="grid gap-2">
             <h2 className="text-[24px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">{title}</h2>
-            <p className="text-[15px] leading-7 text-gray-600 dark:text-gray-400 dark:text-gray-500">{message}</p>
-            {detail ? <p className="text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">{detail}</p> : null}
+            <p className="text-[15px] leading-7 text-gray-600 dark:text-gray-500">{message}</p>
+            {detail ? <p className="text-[13px] leading-6 text-gray-500 dark:text-gray-500">{detail}</p> : null}
           </div>
         </div>
 

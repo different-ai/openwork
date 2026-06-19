@@ -320,7 +320,7 @@ export function DenSelect({
       >
         <span className="truncate">{selectedOption?.content ?? null}</span>
         <span className={denDropdownChevronSlotClass}>
-          <ChevronDown size={16} className={disabled ? "text-gray-300 dark:text-gray-600" : "text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500"} aria-hidden="true" />
+          <ChevronDown size={16} className={disabled ? "text-gray-300 dark:text-gray-600" : "text-gray-400 dark:text-gray-500"} aria-hidden="true" />
         </span>
       </button>
 

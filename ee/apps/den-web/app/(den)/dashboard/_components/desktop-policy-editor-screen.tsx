@@ -180,13 +180,13 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
       ) : null}
 
       {initialLoad ? (
-        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Loading desktop policy...</div>
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-500">Loading desktop policy...</div>
       ) : notFound ? (
-        <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+        <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center text-[15px] text-gray-500 dark:text-gray-500">
           Desktop policy not found.
         </div>
       ) : !canManage ? (
-        <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+        <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center text-[15px] text-gray-500 dark:text-gray-500">
           Only workspace owners and admins can manage desktop policies.
         </div>
       ) : (
@@ -200,7 +200,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
                 disabled={saving || togglingEnabled || isDefault}
               />
               {isDefault ? (
-                <span className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">The default desktop policy name cannot be changed.</span>
+                <span className="text-[12px] text-gray-500 dark:text-gray-500">The default desktop policy name cannot be changed.</span>
               ) : null}
             </label>
             {isEditing && policy && !isDefault ? (
@@ -224,7 +224,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
               >
                 <span>
                   <span className="block text-[14px] font-medium text-gray-950 dark:text-gray-100">{definition.name}</span>
-                  <span className="mt-1 block text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">{definition.description}</span>
+                  <span className="mt-1 block text-[13px] leading-6 text-gray-500 dark:text-gray-500">{definition.description}</span>
                 </span>
                 <input
                   type="checkbox"

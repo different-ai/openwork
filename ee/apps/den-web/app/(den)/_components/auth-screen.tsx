@@ -120,7 +120,7 @@ export function AuthScreen() {
               </div>
 
               <div className="grid gap-3 sm:gap-4">
-                <span className="inline-flex w-fit rounded-full border border-white/20 bg-white dark:bg-white/15 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur-md">
+                <span className="inline-flex w-fit rounded-full border border-white/20 bg-white/15 dark:bg-white/15 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur-md">
                   OpenWork Cloud
                 </span>
                 <h1 className="max-w-[13ch] text-[2rem] font-semibold leading-[0.95] tracking-[-0.06em] text-white sm:text-[2.35rem] md:text-[3rem]">

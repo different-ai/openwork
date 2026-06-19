@@ -57,7 +57,7 @@ posthog.init(${JSON.stringify(posthogKey)}, {
 });`
   : "";
 
-const themeScript = `(function(){var e=function(){try{var t=localStorage.getItem("openwork.theme")||"system";if(t==="dark"||t==="light")return t;return window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}catch(e){return"light"}}();document.documentElement.dataset.theme=e;document.documentElement.classList.toggle("dark",e==="dark");document.documentElement.style.colorScheme=e})()`;
+const themeScript = `(function(){var e=function(){try{var t=localStorage.getItem("openwork.theme");if(t==="dark"||t==="light")return t}catch(e){}return window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}();document.documentElement.dataset.theme=e;document.documentElement.classList.toggle("dark",e==="dark");document.documentElement.style.colorScheme=e})()`;
 
 export default function RootLayout({
   children

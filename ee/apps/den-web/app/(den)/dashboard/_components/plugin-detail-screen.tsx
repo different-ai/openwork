@@ -80,13 +80,13 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
                 {plugin.name}
               </h1>
               {plugin.version ? (
-                <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-500">
                   v{plugin.version}
                 </span>
               ) : null}
             </div>
             {plugin.description ? (
-              <p className="mt-1 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">{plugin.description}</p>
+              <p className="mt-1 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-500">{plugin.description}</p>
             ) : null}
 
             {marketplaces.length > 0 ? (
@@ -94,7 +94,7 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
                 {marketplaces.map((marketplace) => (
                   <span
                     key={marketplace.id}
-                    className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-400 dark:text-gray-500"
+                    className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-500"
                   >
                     <Store className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-hidden />
                     <span className="truncate">{marketplace.name}</span>
@@ -174,7 +174,7 @@ function renderSkillRow(skill: PluginSkill) {
     >
       <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">{skill.name}</p>
       {skill.description ? (
-        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">{skill.description}</p>
+        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-500">{skill.description}</p>
       ) : null}
     </div>
   );
@@ -189,11 +189,11 @@ function renderHookRow(hook: PluginHook) {
       <div className="min-w-0 flex-1">
         <p className="truncate font-mono text-[13px] font-semibold text-gray-900 dark:text-gray-100">{hook.event}</p>
         {hook.description ? (
-          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">{hook.description}</p>
+          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-500">{hook.description}</p>
         ) : null}
       </div>
       {hook.matcher ? (
-        <span className="shrink-0 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+        <span className="shrink-0 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-500">
           matcher: {hook.matcher}
         </span>
       ) : null}
@@ -210,10 +210,10 @@ function renderMcpRow(mcp: PluginMcp) {
       <div className="min-w-0 flex-1">
         <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">{mcp.name}</p>
         {mcp.description ? (
-          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">{mcp.description}</p>
+          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-500">{mcp.description}</p>
         ) : null}
       </div>
-      <span className="shrink-0 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+      <span className="shrink-0 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-500">
         {mcp.transport} · {mcp.toolCount} tool{mcp.toolCount === 1 ? "" : "s"}
       </span>
     </div>
@@ -228,7 +228,7 @@ function renderAgentRow(agent: PluginAgent) {
     >
       <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">{agent.name}</p>
       {agent.description ? (
-        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">{agent.description}</p>
+        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-500">{agent.description}</p>
       ) : null}
     </div>
   );
@@ -242,7 +242,7 @@ function renderCommandRow(command: PluginCommand) {
     >
       <p className="truncate font-mono text-[13px] font-semibold text-gray-900 dark:text-gray-100">{command.name}</p>
       {command.description ? (
-        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">{command.description}</p>
+        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-500">{command.description}</p>
       ) : null}
     </div>
   );

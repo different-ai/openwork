@@ -262,7 +262,7 @@ export function ScimScreen() {
         description="Provision organization members from your identity provider with an org-scoped SCIM connector."
         colors={["#ECFEFF", "#155E75", "#06B6D4", "#A5F3FC"]}
       >
-        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-500">
           Loading organization details...
         </div>
       </DashboardPageTemplate>
@@ -319,10 +319,10 @@ export function ScimScreen() {
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900 dark:text-gray-100">
                   SCIM base URL
                 </p>
-                <p className="mt-1 text-[14px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mt-1 text-[14px] leading-6 text-gray-500 dark:text-gray-500">
                   Use this URL when your identity provider asks for the SCIM endpoint.
                 </p>
-                <p className="mt-2 text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mt-2 text-[13px] leading-6 text-gray-500 dark:text-gray-500">
                   SCIM currently supports User provisioning and deprovisioning. SCIM Groups are not enabled yet.
                 </p>
               </div>
@@ -349,7 +349,7 @@ export function ScimScreen() {
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900 dark:text-gray-100">
                   Connector token
                 </p>
-                <p className="mt-1 text-[14px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mt-1 text-[14px] leading-6 text-gray-500 dark:text-gray-500">
                   {connection
                     ? "Rotate the bearer token whenever your identity provider needs a fresh secret."
                     : "Create the workspace SCIM connector and generate its first bearer token."}
@@ -375,13 +375,13 @@ export function ScimScreen() {
 
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <div className="rounded-[20px] border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4">
-                <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-500">
                   Status
                 </p>
                 <p className="mt-2 text-[15px] font-medium text-gray-900 dark:text-gray-100">
                   {busy ? "Loading..." : connection ? "Connected" : "Not configured"}
                 </p>
-                <p className="mt-2 text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mt-2 text-[13px] leading-6 text-gray-500 dark:text-gray-500">
                   Last rotated {formatDateTime(connection?.updatedAt ?? null)}
                 </p>
                 {connection ? (

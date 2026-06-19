@@ -165,7 +165,7 @@ export function IntegrationConnectDialog({
               <h2 className="text-[20px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">
                 Connect {meta.name}
               </h2>
-              <p className="text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{meta.description}</p>
+              <p className="text-[13px] text-gray-500 dark:text-gray-500">{meta.description}</p>
             </div>
           </div>
         </div>
@@ -280,10 +280,10 @@ function AuthorizeStep({ providerName, scopes }: { providerName: string; scopes:
   return (
     <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50/60 p-5">
       <p className="flex items-center gap-2 text-[13px] font-medium text-gray-900 dark:text-gray-100">
-        <ShieldCheck className="h-4 w-4 text-gray-500 dark:text-gray-400 dark:text-gray-500" />
+        <ShieldCheck className="h-4 w-4 text-gray-500 dark:text-gray-500" />
         {providerName} is requesting the following permissions
       </p>
-      <ul className="mt-3 grid gap-2 text-[13px] text-gray-600 dark:text-gray-400 dark:text-gray-500">
+      <ul className="mt-3 grid gap-2 text-[13px] text-gray-600 dark:text-gray-500">
         {scopes.map((scope) => (
           <li key={scope} className="flex items-center gap-2">
             <Lock className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500" />
@@ -421,13 +421,13 @@ function ConnectingStep({ providerName }: { providerName: string }) {
   return (
     <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50/60 px-5 py-10 text-center">
       <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center">
-        <svg aria-hidden="true" className="h-8 w-8 animate-spin text-gray-500 dark:text-gray-400 dark:text-gray-500" viewBox="0 0 24 24" fill="none">
+        <svg aria-hidden="true" className="h-8 w-8 animate-spin text-gray-500 dark:text-gray-500" viewBox="0 0 24 24" fill="none">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
       </div>
       <p className="text-[14px] font-medium text-gray-900 dark:text-gray-100">Installing {providerName} integration…</p>
-      <p className="mt-1 text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Registering webhooks and indexing repository manifests.</p>
+      <p className="mt-1 text-[12px] text-gray-500 dark:text-gray-500">Registering webhooks and indexing repository manifests.</p>
     </div>
   );
 }
@@ -447,7 +447,7 @@ function ConnectedStep({
       <p className="text-[14px] font-medium text-gray-900 dark:text-gray-100">
         {providerName} connected{account ? ` · ${account.name}` : ""}
       </p>
-      <p className="mt-1 text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+      <p className="mt-1 text-[12px] text-gray-500 dark:text-gray-500">
         {repoCount} {repoCount === 1 ? "repository" : "repositories"} will now contribute plugins and skills.
       </p>
     </div>

@@ -251,7 +251,7 @@ export function SsoScreen() {
   if (!orgContext) {
     return (
       <DashboardPageTemplate icon={Shield} badgeLabel="Admin" title="SSO" description="Set up enterprise single sign-on for this workspace." colors={["#F5F3FF", "#4C1D95", "#8B5CF6", "#DDD6FE"]}>
-        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Loading organization details...</div>
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-500">Loading organization details...</div>
       </DashboardPageTemplate>
     );
   }
@@ -359,11 +359,11 @@ export function SsoScreen() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900 dark:text-gray-100">Current connection</p>
-                <p className="mt-1 text-[14px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">Use the generated sign-in and provider setup URLs below.</p>
+                <p className="mt-1 text-[14px] leading-6 text-gray-500 dark:text-gray-500">Use the generated sign-in and provider setup URLs below.</p>
               </div>
             </div>
 
-            {!connection && !busy ? <p className="mt-4 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">No SSO connection configured yet.</p> : null}
+            {!connection && !busy ? <p className="mt-4 text-[14px] text-gray-500 dark:text-gray-500">No SSO connection configured yet.</p> : null}
 
             {connection ? (
               <div className="mt-5 space-y-4">
@@ -375,7 +375,7 @@ export function SsoScreen() {
                 ].map(([label, value, key]) => (
                   <div key={key as string} className="rounded-[20px] border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4">
                     <div className="mb-2 flex items-center justify-between gap-3">
-                      <p className="text-[13px] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400 dark:text-gray-500">{label as string}</p>
+                      <p className="text-[13px] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-500">{label as string}</p>
                       <DenButton variant="secondary" icon={Copy} onClick={() => void copyValue((value as string | null) ?? null, key as string)} disabled={!value}>{copiedValue === key ? "Copied" : "Copy"}</DenButton>
                     </div>
                     <code className="block break-all text-[13px] leading-6 text-gray-700 dark:text-gray-300">{(value as string | null) ?? "Not applicable"}</code>

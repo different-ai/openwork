@@ -71,7 +71,7 @@ export function IntegrationsScreen() {
       ) : null}
 
       {isLoading ? (
-        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400">
           Loading integrations…
         </div>
       ) : (
@@ -222,7 +222,7 @@ function ConnectionRow({
             {connection.repos.map((repo) => (
               <li
                 key={repo.id}
-                className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
+                className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition hover:bg-gray-50 dark:hover:bg-gray-700/50"
               >
                 <span className="inline-flex min-w-0 items-center gap-2 text-[13px] text-gray-700 dark:text-gray-300">
                   <GitBranch className="h-3.5 w-3.5 shrink-0 text-gray-400 dark:text-gray-500" />

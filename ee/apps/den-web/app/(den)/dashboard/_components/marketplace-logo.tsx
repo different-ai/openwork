@@ -26,7 +26,7 @@ export function MarketplaceLogo({
       src={logoUrl}
       alt={`${name} logo`}
       onError={() => setErroredUrl(logoUrl)}
-      className={`${imgClassName} object-contain`}
+      className={`${imgClassName} object-contain dark:invert`}
     />
   );
 }

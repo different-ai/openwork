@@ -452,7 +452,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                   {item.label}
                 </span>
                 {item.badge ? (
-                  <span className="rounded-full bg-white dark:bg-[var(--dls-surface)] px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:bg-[var(--dls-sidebar)] dark:text-gray-400 dark:text-gray-500">
+                  <span className="rounded-full bg-white dark:bg-[var(--dls-surface)] px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:bg-[var(--dls-sidebar)] dark:text-gray-500">
                     {item.badge}
                   </span>
                 ) : null}

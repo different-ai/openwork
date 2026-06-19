@@ -44,7 +44,7 @@ function getStatusBadgeClass(bucket: ReturnType<typeof getWorkerStatusMeta>["buc
     case "starting":
       return "border-amber-100 bg-amber-50 text-amber-600 dark:border-amber-800/30 dark:bg-amber-950/50 dark:text-amber-200";
     case "attention":
-      return "border-rose-100 bg-rose-50 text-rose-600 dark:text-rose-400";
+      return "border-rose-100 bg-rose-50 text-rose-600 dark:border-rose-800/30 dark:bg-rose-950/30 dark:text-rose-400";
     default:
       return "border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 dark:text-gray-500";
   }

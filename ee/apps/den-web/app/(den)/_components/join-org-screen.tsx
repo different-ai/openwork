@@ -332,7 +332,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
             <p className="den-copy">
               {preview.organization.name} only accepts accounts from <span className="font-medium text-[var(--dls-text-primary)]">{allowedDomainsLabel}</span>. You are signed in as <span className="font-medium text-[var(--dls-text-primary)]">{user.email}</span>, so this account cannot join.
             </p>
-            <p className="text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="text-sm text-gray-500 dark:text-gray-500">
               Log out, then create a new account or sign in with an allowed email address.
             </p>
             <div className="flex flex-wrap gap-3">

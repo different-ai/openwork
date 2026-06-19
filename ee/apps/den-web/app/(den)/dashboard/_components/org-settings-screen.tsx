@@ -324,7 +324,7 @@ export function OrgSettingsScreen() {
   if (orgBusy && !orgContext) {
     return (
       <div className="mx-auto max-w-[860px] p-8">
-        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-500">
           Loading workspace settings...
         </div>
       </div>
@@ -475,13 +475,13 @@ export function OrgSettingsScreen() {
               <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900 dark:text-gray-100">
                 Allowed email domains
               </h2>
-              <p className="text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <p className="text-[14px] text-gray-500 dark:text-gray-500">
                 Only allow people with specific email domains to join this
                 Organization.
               </p>
             </div>
             <div className="flex items-center gap-3 pt-1">
-              <span className="text-[13px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <span className="text-[13px] font-medium text-gray-500 dark:text-gray-500">
                 {domainRestrictionsEnabled ? "On" : "Off"}
               </span>
               <SettingsToggle
@@ -500,7 +500,7 @@ export function OrgSettingsScreen() {
               <span className="text-[14px] font-medium text-gray-700 dark:text-gray-300">
                 Domain allowlist
               </span>
-              <span className="text-[10px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <span className="text-[10px] text-gray-500 dark:text-gray-500">
                 Enter domains one per line or with comma as separator
               </span>
               <DenTextarea
@@ -528,7 +528,7 @@ export function OrgSettingsScreen() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-[14px] text-gray-600 dark:text-gray-400 dark:text-gray-500">
+                  <p className="text-[14px] text-gray-600 dark:text-gray-500">
                     No email domains are configured yet.
                   </p>
                 )}
@@ -560,7 +560,7 @@ export function OrgSettingsScreen() {
             <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900 dark:text-gray-100">
               Single sign-on requirement
             </h2>
-            <p className="text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="text-[14px] text-gray-500 dark:text-gray-500">
               Require members to use the workspace SSO entrypoint when their email domain matches this organization.
             </p>
           </div>
@@ -568,7 +568,7 @@ export function OrgSettingsScreen() {
           <div className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-4">
             <div className="grid gap-1 pr-4">
               <p className="text-[15px] font-medium text-gray-900 dark:text-gray-100">Require SSO for matching domains</p>
-              <p className="text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <p className="text-[13px] text-gray-500 dark:text-gray-500">
                 Email/password sign-in will redirect users to the org SSO flow when their email domain matches the configured SSO connection.
               </p>
             </div>
@@ -589,7 +589,7 @@ export function OrgSettingsScreen() {
             <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900 dark:text-gray-100">
               Allowed Desktop Versions
             </h2>
-            <p className="text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="text-[14px] text-gray-500 dark:text-gray-500">
               Choose which supported desktop versions can sign in to this
               workspace.
             </p>
@@ -603,7 +603,7 @@ export function OrgSettingsScreen() {
           </div>
 
           {desktopVersionOptionsBusy ? (
-            <div className="rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-4 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <div className="rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-4 text-[14px] text-gray-500 dark:text-gray-500">
               Loading desktop versions...
             </div>
           ) : null}
@@ -656,7 +656,7 @@ export function OrgSettingsScreen() {
         </DenCard>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+          <p className="text-[13px] text-gray-500 dark:text-gray-500">
             {!isOwner && "Only workspace owners can change these settings."}
           </p>
           {isOwner ? (

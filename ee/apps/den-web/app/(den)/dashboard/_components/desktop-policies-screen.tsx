@@ -85,9 +85,9 @@ export function DesktopPoliciesScreen() {
       {error ? <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">{error}</div> : null}
 
       {busy ? (
-        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Loading desktop policies...</div>
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-500">Loading desktop policies...</div>
       ) : visiblePolicies.length === 0 ? (
-        <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">No desktop policies.</div>
+        <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center text-[15px] text-gray-500 dark:text-gray-500">No desktop policies.</div>
       ) : (
         <section className="overflow-hidden rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)]">
           <div className="overflow-x-auto">
@@ -98,7 +98,7 @@ export function DesktopPoliciesScreen() {
                 <col className="w-[1%]" />
                 <col className="w-[1%]" />
               </colgroup>
-              <thead className="bg-gray-50 dark:bg-gray-800/50 text-[12px] uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <thead className="bg-gray-50 dark:bg-gray-800/50 text-[12px] uppercase tracking-[0.08em] text-gray-500 dark:text-gray-500">
                 <tr>
                   <th scope="col" className="whitespace-nowrap px-4 py-3 font-medium">Name</th>
                   <th scope="col" className="whitespace-nowrap px-4 py-3 font-medium">Enabled</th>
@@ -122,11 +122,11 @@ export function DesktopPoliciesScreen() {
                         </div>
                       </td>
                       <td className="whitespace-nowrap px-4 py-4">
-                        <span className={`inline-flex items-center rounded-full px-3 py-1 text-[12px] font-medium ${policy.isEnabled ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 dark:text-gray-500"}`}>
+                        <span className={`inline-flex items-center rounded-full px-3 py-1 text-[12px] font-medium ${policy.isEnabled ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-500"}`}>
                           {policy.isEnabled ? "Yes" : "No"}
                         </span>
                       </td>
-                      <td className="whitespace-nowrap px-4 py-4 text-[13px] text-gray-600 dark:text-gray-400 dark:text-gray-500">
+                      <td className="whitespace-nowrap px-4 py-4 text-[13px] text-gray-600 dark:text-gray-500">
                         {formatPolicyTimestamp(policy.createdAt)}
                       </td>
                       <td className="whitespace-nowrap px-4 py-4">

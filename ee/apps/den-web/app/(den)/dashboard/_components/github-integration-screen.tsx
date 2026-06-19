@@ -133,7 +133,7 @@ function GithubInstallCompletionRedirect({ installationId, state }: { installati
           <h2 className="mt-5 text-[18px] font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-100">
             Finalizing your GitHub connection
           </h2>
-          <p className="mt-2 max-w-[460px] text-[13px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+          <p className="mt-2 max-w-[460px] text-[13px] leading-[1.6] text-gray-500 dark:text-gray-500">
             OpenWork is resolving the installation and loading accessible repositories.
           </p>
         </section>
@@ -198,7 +198,7 @@ function ConfigurationLoadingState() {
     >
       <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-center shadow-sm">
         <LoaderCircle className="mx-auto h-6 w-6 animate-spin text-gray-400 dark:text-gray-500" />
-        <p className="mt-3 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Loading connector configuration…</p>
+        <p className="mt-3 text-[14px] text-gray-500 dark:text-gray-500">Loading connector configuration…</p>
       </div>
     </DashboardPageTemplate>
   );
@@ -302,7 +302,7 @@ function GithubConnectorInstanceManagePhase({
               <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                 Auto-import new plugins
               </p>
-              <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-500">
                 When new plugin structures appear in this repository on future pushes, OpenWork will discover and import them automatically.
               </p>
               {autoImportMutation.error ? (
@@ -346,7 +346,7 @@ function GithubConnectorInstanceManagePhase({
                 <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                   Remove this repository
                 </p>
-                <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-500">
                   Deletes everything OpenWork imported from this repository. The GitHub connection itself stays active.
                 </p>
               </div>
@@ -446,13 +446,13 @@ function PluginListItem({ plugin }: {
                 {plugin.name}
               </h3>
               {plugin.description ? (
-                <p className="mt-0.5 line-clamp-2 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mt-0.5 line-clamp-2 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-500">
                   {plugin.description}
                 </p>
               ) : null}
             </div>
             {repoPath ? (
-              <code className="shrink-0 rounded-md bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 font-mono text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <code className="shrink-0 rounded-md bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 font-mono text-[11px] text-gray-500 dark:text-gray-500">
                 {repoPath}
               </code>
             ) : null}
@@ -463,10 +463,10 @@ function PluginListItem({ plugin }: {
               {orderedCountEntries.map(([type, count]) => (
                 <span
                   key={type}
-                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2.5 py-0.5 text-[11.5px] text-gray-600 dark:text-gray-400 dark:text-gray-500"
+                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2.5 py-0.5 text-[11.5px] text-gray-600 dark:text-gray-500"
                 >
                   <span className="font-semibold text-gray-900 dark:text-gray-100">{count}</span>
-                  <span className="text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                  <span className="text-gray-500 dark:text-gray-500">
                     {formatComponentCount(type, count).replace(`${count} `, "")}
                   </span>
                 </span>
@@ -543,10 +543,10 @@ function RemoveRepositoryConfirmDialog({
             <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-100">
               Remove {repoName}?
             </h2>
-            <p className="mt-1 text-[13px] leading-6 text-gray-600 dark:text-gray-400 dark:text-gray-500">
+            <p className="mt-1 text-[13px] leading-6 text-gray-600 dark:text-gray-500">
               This will delete everything OpenWork imported from this repository, including:
             </p>
-            <ul className="mt-3 space-y-1.5 text-[13px] leading-6 text-gray-600 dark:text-gray-400 dark:text-gray-500">
+            <ul className="mt-3 space-y-1.5 text-[13px] leading-6 text-gray-600 dark:text-gray-500">
               <li className="flex gap-2">
                 <span className="text-gray-400 dark:text-gray-500">•</span>
                 <span>
@@ -568,7 +568,7 @@ function RemoveRepositoryConfirmDialog({
                 <span>Any marketplace that was created solely from this repository and is now empty</span>
               </li>
             </ul>
-            <p className="mt-3 text-[12px] leading-5 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="mt-3 text-[12px] leading-5 text-gray-500 dark:text-gray-500">
               The GitHub connection itself stays active. You can re-add this repository later from the Integrations page.
             </p>
           </div>
@@ -671,8 +671,8 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
           Back
         </Link>
         {ownerLogin ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
-            <Github className="h-3.5 w-3.5 text-gray-500 dark:text-gray-400 dark:text-gray-500" aria-hidden />
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-1 text-[12px] font-medium text-gray-600 dark:text-gray-500">
+            <Github className="h-3.5 w-3.5 text-gray-500 dark:text-gray-500" aria-hidden />
             @{ownerLogin}
           </span>
         ) : null}
@@ -756,7 +756,7 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
                     <p className="truncate text-[13px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                       {selectedRepo.fullName}
                     </p>
-                    <p className="truncate text-[11.5px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                    <p className="truncate text-[11.5px] text-gray-500 dark:text-gray-500">
                       <GitBranch className="mr-1 inline h-3 w-3 text-gray-400 dark:text-gray-500" aria-hidden />
                       {selectedRepo.defaultBranch ?? "Default branch unavailable"}
                     </p>
@@ -782,7 +782,7 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
               <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800 dark:text-gray-200">
                 Nothing left to configure here
               </p>
-              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500 dark:text-gray-500">
                 {connection.account.repositorySelection === "selected"
                   ? "This GitHub installation is limited to selected repositories, and OpenWork has already configured all of them."
                   : "This GitHub installation already has access to all repositories under this owner, and there are none unconfigured right now."}
@@ -806,7 +806,7 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
               <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800 dark:text-gray-200">
                 No repositories available
               </p>
-              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500 dark:text-gray-500">
                 This GitHub installation has no repositories OpenWork can read right now.
               </p>
             </div>
@@ -878,7 +878,7 @@ function RepositoryCard({
               {fullName}
             </p>
             {isConfigured ? (
-              <span className="inline-flex items-center rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-gray-600 dark:text-gray-400 dark:text-gray-500">
+              <span className="inline-flex items-center rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-gray-600 dark:text-gray-500">
                 Configured
               </span>
             ) : null}
@@ -888,7 +888,7 @@ function RepositoryCard({
               </span>
             ) : null}
           </div>
-          <p className="mt-0.5 truncate text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+          <p className="mt-0.5 truncate text-[12px] text-gray-500 dark:text-gray-500">
             {defaultBranch ? `${defaultBranch} branch` : "Default branch unavailable"}
           </p>
         </div>
@@ -997,7 +997,7 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
           Back
         </button>
         {discoveryQuery.data ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-1 text-[11px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-1 text-[11px] font-medium text-gray-600 dark:text-gray-500">
             <GitBranch className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-hidden />
             <code className="font-mono">{discoveryQuery.data.sourceRevisionRef.slice(0, 7)}</code>
           </span>
@@ -1046,7 +1046,7 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
                 <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                   Auto-import new plugins
                 </p>
-                <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-500">
                   When new plugin structures appear on future pushes, OpenWork will discover and import them automatically.
                 </p>
               </div>
@@ -1075,7 +1075,7 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
                 <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800 dark:text-gray-200">
                   No Claude-compatible plugins detected
                 </p>
-                <p className="mx-auto mt-2 max-w-[440px] text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mx-auto mt-2 max-w-[440px] text-[13px] leading-6 text-gray-500 dark:text-gray-500">
                   OpenWork currently only supports Claude-compatible plugins and marketplaces. Add <code className="rounded bg-gray-100 dark:bg-gray-700 px-1 py-0.5 text-[11px]">.claude-plugin/marketplace.json</code> or <code className="rounded bg-gray-100 dark:bg-gray-700 px-1 py-0.5 text-[11px]">.claude-plugin/plugin.json</code> to this repository.
                 </p>
               </div>
@@ -1084,7 +1084,7 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
 
           {discoveryQuery.data.discoveredPlugins.length > 0 ? (
             <div className="flex flex-col-reverse items-stretch justify-between gap-3 rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 py-3 sm:flex-row sm:items-center">
-              <div className="min-w-0 text-[12.5px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <div className="min-w-0 text-[12.5px] text-gray-500 dark:text-gray-500">
                 {selectedPlugins.length === 0
                   ? "Select at least one plugin to import."
                   : `This will create ${selectedPlugins.length} plugin${selectedPlugins.length === 1 ? "" : "s"} and their mappings in OpenWork.`}
@@ -1164,13 +1164,13 @@ function DiscoveredPluginCard({
                 ) : null}
               </div>
               {plugin.description ? (
-                <p className="mt-0.5 line-clamp-2 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mt-0.5 line-clamp-2 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-500">
                   {plugin.description}
                 </p>
               ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <code className="rounded-md bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 font-mono text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <code className="rounded-md bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 font-mono text-[11px] text-gray-500 dark:text-gray-500">
                 {repoPath}
               </code>
               <span
@@ -1204,7 +1204,7 @@ function DiscoveredPluginCard({
               {plugin.componentKinds.map((kind) => (
                 <span
                   key={`${plugin.key}:${kind}`}
-                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2.5 py-0.5 text-[11.5px] text-gray-600 dark:text-gray-400 dark:text-gray-500"
+                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2.5 py-0.5 text-[11.5px] text-gray-600 dark:text-gray-500"
                 >
                   {kind.replaceAll("_", " ")}
                 </span>
@@ -1242,7 +1242,7 @@ function DiscoveryAppliedState({
           <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-gray-950 dark:text-gray-100">
             Discovery applied
           </h2>
-          <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+          <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500 dark:text-gray-500">
             OpenWork created <span className="font-semibold text-gray-900 dark:text-gray-100">{createdPluginNames.length}</span> plugin{createdPluginNames.length === 1 ? "" : "s"},{" "}
             <span className="font-semibold text-gray-900 dark:text-gray-100">{createdMappingCount}</span> mapping{createdMappingCount === 1 ? "" : "s"}, and{" "}
             <span className="font-semibold text-gray-900 dark:text-gray-100">{materializedConfigObjectCount}</span> imported config object{materializedConfigObjectCount === 1 ? "" : "s"}.
@@ -1278,7 +1278,7 @@ function DiscoveryLoadingState() {
       <h2 className="mt-5 text-[18px] font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-100">
         Discovering marketplaces and plugins in your repository
       </h2>
-      <p className="mt-2 max-w-[460px] text-[13px] leading-[1.6] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+      <p className="mt-2 max-w-[460px] text-[13px] leading-[1.6] text-gray-500 dark:text-gray-500">
         OpenWork is scanning the repo for Claude-compatible plugin and marketplace manifests.
       </p>
     </section>
@@ -1289,7 +1289,7 @@ function StatePanel({ title, body }: { title: string; body: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 py-10 text-center">
       <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-900 dark:text-gray-100">{title}</p>
-      <p className="mx-auto mt-2 max-w-xl text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">{body}</p>
+      <p className="mx-auto mt-2 max-w-xl text-[13px] leading-6 text-gray-500 dark:text-gray-500">{body}</p>
     </div>
   );
 }

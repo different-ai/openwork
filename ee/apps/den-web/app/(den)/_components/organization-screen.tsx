@@ -115,7 +115,7 @@ export function OrganizationScreen() {
   if (!sessionHydrated || busy) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#fafafa]">
-        <p className="text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">Loading organizations...</p>
+        <p className="text-sm text-gray-500 dark:text-gray-500">Loading organizations...</p>
       </div>
     );
   }
@@ -127,7 +127,7 @@ export function OrganizationScreen() {
           <span className="text-[14px] font-medium text-gray-900 dark:text-gray-100">OpenWork Cloud</span>
         </div>
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-          <span className="min-w-0 truncate text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">{user?.email}</span>
+          <span className="min-w-0 truncate text-sm text-gray-500 dark:text-gray-500">{user?.email}</span>
           <button
             onClick={() => void signOut()}
             className="text-gray-400 transition-colors hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
@@ -151,7 +151,7 @@ export function OrganizationScreen() {
                   <h1 className="mt-2 text-[2rem] font-semibold leading-none tracking-[-0.04em] text-gray-950 dark:text-gray-100 sm:text-3xl">
                     Name your team.
                   </h1>
-                  <p className="mt-3 max-w-xl text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500 sm:text-sm">
+                  <p className="mt-3 max-w-xl text-[13px] leading-6 text-gray-500 dark:text-gray-500 sm:text-sm">
                     You can rename it later. No credit card required.
                   </p>
                 </div>
@@ -196,7 +196,7 @@ export function OrganizationScreen() {
           <div className="mx-auto max-w-5xl">
             <div className="mb-6 sm:mb-8">
               <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">Settings</h1>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">Manage your profile and organization memberships.</p>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-500">Manage your profile and organization memberships.</p>
             </div>
 
             <div className="mb-6 flex gap-6 overflow-x-auto border-b border-gray-200 dark:border-gray-700 sm:mb-8 sm:gap-8">
@@ -238,7 +238,7 @@ export function OrganizationScreen() {
                   </div>
                   <div className="min-w-0">
                     <h2 className="text-lg font-medium text-gray-900 dark:text-gray-100">{userDisplayName}</h2>
-                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">{user?.email ?? "Signed in"}</p>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-500">{user?.email ?? "Signed in"}</p>
                   </div>
                 </div>
 
@@ -287,7 +287,7 @@ export function OrganizationScreen() {
             ) : (
               <>
                 <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="max-w-2xl text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                  <p className="max-w-2xl text-sm text-gray-500 dark:text-gray-500">
                     Organizations are independent environments. In each organization you can collaborate with other members and manage your own resources.
                   </p>
                   <button
@@ -347,7 +347,7 @@ export function OrganizationScreen() {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <h2 className="truncate text-[15px] font-semibold text-gray-950 dark:text-gray-100">{org.name}</h2>
-                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-500">
                             {org.role === "owner" ? "Creator plan" : "Free plan"} • {formatRoleLabel(org.role)}
                           </p>
                         </div>
@@ -381,17 +381,17 @@ export function OrganizationScreen() {
                     <table className="w-full text-left text-sm">
                       <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50/50">
                         <tr>
-                          <th className="px-6 py-4 font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">Organization</th>
-                          <th className="px-6 py-4 font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">Seat Type</th>
-                          <th className="px-6 py-4 text-right font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">Action</th>
+                          <th className="px-6 py-4 font-medium text-gray-500 dark:text-gray-500">Organization</th>
+                          <th className="px-6 py-4 font-medium text-gray-500 dark:text-gray-500">Seat Type</th>
+                          <th className="px-6 py-4 text-right font-medium text-gray-500 dark:text-gray-500">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                         {orgs.map((org) => (
-                          <tr key={org.id} className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50/50">
+                          <tr key={org.id} className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
                             <td className="px-6 py-4">
                               <div className="font-medium text-gray-900 dark:text-gray-100">{org.name}</div>
-                              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                              <div className="mt-1 text-xs text-gray-500 dark:text-gray-500">
                                 {org.role === "owner" ? "Creator plan" : "Free plan"} • 1 member
                               </div>
                             </td>
@@ -400,7 +400,7 @@ export function OrganizationScreen() {
                             </td>
                             <td className="px-6 py-4 text-right">
                               {org.isActive ? (
-                                <span className="inline-flex cursor-default items-center rounded-lg bg-gray-100 dark:bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                                <span className="inline-flex cursor-default items-center rounded-lg bg-gray-100 dark:bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-500">
                                   Current Organization
                                 </span>
                               ) : (
@@ -426,7 +426,7 @@ export function OrganizationScreen() {
                   </div>
                 </div>
 
-                <p className="mt-8 text-center text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">You have no pending organization invites.</p>
+                <p className="mt-8 text-center text-sm text-gray-500 dark:text-gray-500">You have no pending organization invites.</p>
               </>
             )}
           </div>

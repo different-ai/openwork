@@ -368,7 +368,7 @@ export function LlmProviderEditorScreen({
     if (busy && llmProviderId && !provider) {
         return (
             <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-                <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-500">
                     Loading provider details...
                 </div>
             </div>
@@ -411,7 +411,7 @@ export function LlmProviderEditorScreen({
                                 ? (providerName.trim() || provider.name)
                                 : "Add a new LLM provider"}
                         </h1>
-                        <p className="mt-3 max-w-[720px] text-[16px] leading-8 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                        <p className="mt-3 max-w-[720px] text-[16px] leading-8 text-gray-500 dark:text-gray-500">
                             Pick a provider or paste a custom config, then
                             decide which models to allow and which teammates can
                             use it.
@@ -459,7 +459,7 @@ export function LlmProviderEditorScreen({
                         autoComplete="off"
                     />
                 </label>
-                <p className="mt-3 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mt-3 text-[13px] text-gray-500 dark:text-gray-500">
                     Pick a clear label so teammates know which key or provider
                     setup they are using.
                 </p>
@@ -493,7 +493,7 @@ export function LlmProviderEditorScreen({
                         </div>
 
                         {catalogBusy ? (
-                            <p className="text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                            <p className="text-[14px] text-gray-500 dark:text-gray-500">
                                 Loading provider catalog...
                             </p>
                         ) : null}
@@ -504,7 +504,7 @@ export function LlmProviderEditorScreen({
                         ) : null}
 
                         {detailBusy ? (
-                            <p className="text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                            <p className="text-[14px] text-gray-500 dark:text-gray-500">
                                 Loading provider details...
                             </p>
                         ) : null}
@@ -586,7 +586,7 @@ export function LlmProviderEditorScreen({
                             }
                             rows={18}
                         />
-                        <p className="text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                        <p className="text-[13px] text-gray-500 dark:text-gray-500">
                             Paste a models.dev provider, a single provider block,
                             or a full{" "}
                             <code className="rounded bg-gray-100 dark:bg-gray-700 px-1 py-0.5">
@@ -646,7 +646,7 @@ export function LlmProviderEditorScreen({
                                     </span>
                                 ) : null}
                             </div>
-                            <p className="mt-2 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                            <p className="mt-2 text-[15px] text-gray-500 dark:text-gray-500">
                                 Pick the exact models this provider should
                                 allow.
                             </p>
@@ -701,7 +701,7 @@ export function LlmProviderEditorScreen({
                                 </div>
                             </div>
                         ) : (
-                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-500">
                                 No models match{" "}
                                 <span className="font-medium text-gray-700 dark:text-gray-300">
                                     &quot;{modelQuery}&quot;
@@ -710,7 +710,7 @@ export function LlmProviderEditorScreen({
                             </div>
                         )
                     ) : (
-                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-500">
                             Select a provider to browse its models.
                         </div>
                     )}
@@ -722,7 +722,7 @@ export function LlmProviderEditorScreen({
                     <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950 dark:text-gray-100">
                         Configure access
                     </h2>
-                    <p className="mt-2 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                    <p className="mt-2 text-[15px] text-gray-500 dark:text-gray-500">
                         Select which teams and people can use this provider.
                     </p>
                 </div>
@@ -796,7 +796,7 @@ export function LlmProviderEditorScreen({
                                 })}
                             </div>
                         ) : (
-                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-500">
                                 No teams match{" "}
                                 <span className="font-medium text-gray-700 dark:text-gray-300">
                                     &quot;{accessQuery}&quot;
@@ -805,7 +805,7 @@ export function LlmProviderEditorScreen({
                             </div>
                         )
                     ) : (
-                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-500">
                             Create teams from the Members page before assigning team
                             access.
                         </div>
@@ -837,7 +837,7 @@ export function LlmProviderEditorScreen({
                                         description={member.user.email}
                                         aside={
                                             locked ? (
-                                                <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-2.5 py-1 text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                                                <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-2.5 py-1 text-[11px] font-medium text-gray-500 dark:text-gray-500">
                                                     Locked
                                                 </span>
                                             ) : undefined
@@ -857,7 +857,7 @@ export function LlmProviderEditorScreen({
                             })}
                         </div>
                     ) : (
-                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-500">
                             No people match{" "}
                             <span className="font-medium text-gray-700 dark:text-gray-300">
                                 &quot;{accessQuery}&quot;
@@ -866,7 +866,7 @@ export function LlmProviderEditorScreen({
                         </div>
                     )
                 ) : (
-                    <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                    <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-5 py-6 text-[15px] text-gray-500 dark:text-gray-500">
                         No people are available to assign yet.
                     </div>
                 )}

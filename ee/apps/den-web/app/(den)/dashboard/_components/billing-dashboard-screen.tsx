@@ -284,7 +284,7 @@ export function BillingDashboardScreen() {
             <div>
               <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-gray-400 dark:text-gray-500">Polar</p>
               <h2 className="text-[18px] font-medium text-gray-950 dark:text-gray-100">Cloud worker plan</h2>
-              <p className="mt-2 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <p className="mt-2 text-[14px] text-gray-500 dark:text-gray-400">
                 Your existing Polar subscription is {formatSubscriptionStatus(polarBilling?.subscription?.status ?? "active").toLowerCase()}.
               </p>
             </div>
@@ -346,8 +346,8 @@ export function BillingDashboardScreen() {
         ) : (
           <div className="flex flex-col gap-4 rounded-[16px] border border-blue-100 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 p-5 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-[15px] font-medium text-blue-950">Subscribe when your workspace grows beyond {seatBilling?.freeSeatCount ?? DEFAULT_FREE_SEAT_COUNT} users</p>
-              <p className="mt-1 text-[13px] leading-5 text-blue-900/70">You will only be charged for users above the free included seats.</p>
+              <p className="text-[15px] font-medium text-blue-950 dark:text-blue-100">Subscribe when your workspace grows beyond {seatBilling?.freeSeatCount ?? DEFAULT_FREE_SEAT_COUNT} users</p>
+              <p className="mt-1 text-[13px] leading-5 text-blue-900/70 dark:text-blue-200/80">You will only be charged for users above the free included seats.</p>
             </div>
             <DenButton disabled={!isOwner || seatBilling?.configured === false} loading={stripeActionBusy === "seat-checkout"} onClick={startSeatCheckout}>
               Subscribe with Stripe

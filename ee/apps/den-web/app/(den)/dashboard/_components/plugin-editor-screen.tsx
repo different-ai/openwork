@@ -271,7 +271,7 @@ export function PluginEditorScreen() {
       </Link>
 
       <h1 className="text-[28px] font-semibold text-gray-900 dark:text-gray-100">Create a plugin</h1>
-      <p className="mt-1 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+      <p className="mt-1 text-[15px] text-gray-500 dark:text-gray-500">
         Bundle skills, commands, and MCP servers your team can install in OpenWork with one click.
       </p>
 
@@ -320,7 +320,7 @@ export function PluginEditorScreen() {
         </div>
 
         {components.length === 0 ? (
-          <div className="mt-4 rounded-[24px] border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 px-6 py-10 text-center text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+          <div className="mt-4 rounded-[24px] border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 px-6 py-10 text-center text-[14px] text-gray-500 dark:text-gray-500">
             Add a skill, command, or MCP server to get started. A plugin needs at least one component.
           </div>
         ) : null}
@@ -333,7 +333,7 @@ export function PluginEditorScreen() {
               <div key={component.key} className="rounded-[24px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5">
                 <div className="mb-3 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-[14px] font-medium text-gray-900 dark:text-gray-100">
-                    <Icon size={16} className="text-gray-500 dark:text-gray-400 dark:text-gray-500" />
+                    <Icon size={16} className="text-gray-500 dark:text-gray-500" />
                     {meta.label}
                   </div>
                   <button
@@ -346,7 +346,7 @@ export function PluginEditorScreen() {
                     <Trash2 size={15} />
                   </button>
                 </div>
-                <p className="mb-4 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{meta.hint}</p>
+                <p className="mb-4 text-[13px] text-gray-500 dark:text-gray-500">{meta.hint}</p>
                 <div className="flex flex-col gap-3">
                   <DenInput
                     value={component.name}
@@ -401,7 +401,7 @@ export function PluginEditorScreen() {
           />
           <span>
             Share with everyone in the organization
-            <span className="block text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <span className="block text-[13px] text-gray-500 dark:text-gray-500">
               Members can see and install this plugin. Uncheck to keep it private to you while you iterate.
             </span>
           </span>
@@ -423,7 +423,7 @@ export function PluginEditorScreen() {
               </option>
             ))}
           </DenSelect>
-          <p className="mt-1.5 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+          <p className="mt-1.5 text-[13px] text-gray-500 dark:text-gray-500">
             Publishing puts the plugin in the marketplace so members find it in the OpenWork app.
           </p>
         </div>

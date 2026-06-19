@@ -52,7 +52,7 @@ export function MarketplacesScreen() {
       ) : null}
 
       {isLoading || integrationsLoading ? (
-        <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[14px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+        <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[14px] text-gray-500 dark:text-gray-500">
           Loading marketplaces…
         </div>
       ) : !hasAnyIntegration && marketplaces.length === 0 ? (
@@ -101,12 +101,12 @@ export function MarketplacesScreen() {
                     <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
                       {marketplace.name}
                     </h2>
-                    <span className="shrink-0 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                    <span className="shrink-0 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-500">
                       {marketplace.pluginCount} plugin{marketplace.pluginCount === 1 ? "" : "s"}
                     </span>
                   </div>
                   {marketplace.description ? (
-                    <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                    <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-500">
                       {marketplace.description}
                     </p>
                   ) : null}
@@ -136,7 +136,7 @@ function EmptyState({
   return (
     <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center">
       <p className="text-[15px] font-semibold tracking-[-0.02em] text-gray-900 dark:text-gray-100">{title}</p>
-      <p className="mx-auto mt-2 max-w-[520px] text-[13px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">{description}</p>
+      <p className="mx-auto mt-2 max-w-[520px] text-[13px] leading-6 text-gray-500 dark:text-gray-500">{description}</p>
       {action ? (
         <div className="mt-5 flex justify-center">
           <Link href={action.href} className={buttonVariants({ variant: "primary", size: "sm" })}>

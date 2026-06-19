@@ -200,7 +200,7 @@ export function PluginsScreen() {
       ) : null}
 
       {isLoading || integrationsLoading ? (
-        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+        <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-500">
           Loading plugin catalog...
         </div>
       ) : !hasAnyIntegration && plugins.length === 0 ? (
@@ -242,7 +242,7 @@ export function PluginsScreen() {
                       </h2>
                     </div>
                     {plugin.description ? (
-                      <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                      <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-500">
                         {plugin.description}
                       </p>
                     ) : null}
@@ -252,7 +252,7 @@ export function PluginsScreen() {
                         {(plugin.marketplaces ?? []).map((marketplace) => (
                           <span
                             key={marketplace.id}
-                            className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-400 dark:text-gray-500"
+                            className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-500"
                           >
                             <Store className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-hidden />
                             <span className="truncate">{marketplace.name}</span>
@@ -358,7 +358,7 @@ function EmptyState({ title, description }: { title: string; description: string
   return (
     <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center">
       <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900 dark:text-gray-100">{title}</p>
-      <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-8 text-gray-500 dark:text-gray-400 dark:text-gray-500">{description}</p>
+      <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-8 text-gray-500 dark:text-gray-500">{description}</p>
     </div>
   );
 }
@@ -366,13 +366,13 @@ function EmptyState({ title, description }: { title: string; description: string
 function ConnectIntegrationEmptyState({ integrationsHref }: { integrationsHref: string }) {
   return (
     <div className="rounded-[32px] border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-12 text-center">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-500">
         <Cable className="h-6 w-6" />
       </div>
       <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900 dark:text-gray-100">
         Connect an integration to discover plugins
       </p>
-      <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-8 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+      <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-8 text-gray-500 dark:text-gray-500">
         Plugins, skills, hooks, and MCP servers are sourced from the repositories you connect on the
         Integrations page. Connect GitHub or Bitbucket to see your catalog populate.
       </p>
@@ -444,19 +444,19 @@ function PrimitiveList({
                 {row.title}
               </p>
               {row.description ? (
-                <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-500">
                   {row.description}
                 </p>
               ) : null}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 border-t border-gray-50 pt-2.5">
-            <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-500">
               <Puzzle className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-hidden />
               <span className="max-w-[160px] truncate">{row.pluginName}</span>
             </span>
             {row.meta ? (
-              <span className="rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+              <span className="rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-500">
                 {row.meta}
               </span>
             ) : null}
