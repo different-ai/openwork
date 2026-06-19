@@ -9,7 +9,7 @@ export class CronScheduler {
   private createClient: (workspace: WorkspaceInfo) => any;
   private isTicking = false;
   private lastTickMinute: number | null = null;
-  private runningRoutines = new Set<string>();
+  private routineQueues = new Map<string, Promise<void>>();
 
   constructor(config: ServerConfig, createClient: (workspace: WorkspaceInfo) => any) {
     this.config = config;
@@ -90,18 +90,29 @@ export class CronScheduler {
     }
   }
 
-  private async executeRoutineInBackground(workspace: WorkspaceInfo, routine: RoutineItem) {
+  private executeRoutineInBackground(workspace: WorkspaceInfo, routine: RoutineItem) {
     const key = `${workspace.id}:${routine.name}`;
-    if (this.runningRoutines.has(key)) {
-      console.warn(`Skipping overlapping routine trigger for ${routine.name}`);
-      return;
-    }
-    this.runningRoutines.add(key);
-    try {
-      await this.triggerRoutine(workspace, routine);
-    } finally {
-      this.runningRoutines.delete(key);
-    }
+    const previous = this.routineQueues.get(key) || Promise.resolve();
+    
+    // Chain the next execution to ensure sequential processing without overlap
+    const next = previous.then(async () => {
+      try {
+        await this.triggerRoutine(workspace, routine);
+      } catch (err) {
+        console.error(`Error in background routine ${routine.name}:`, err);
+      }
+    });
+
+    this.routineQueues.set(key, next);
+
+    // Clean up the queue entry once it finishes, if no new tasks were queued
+    next.finally(() => {
+      if (this.routineQueues.get(key) === next) {
+        this.routineQueues.delete(key);
+      }
+    });
+
+    return next;
   }
 
   private async triggerRoutine(workspace: WorkspaceInfo, routine: RoutineItem) {
