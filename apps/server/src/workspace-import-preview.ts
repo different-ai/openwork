@@ -11,16 +11,18 @@ import { planPortableFiles, listPortableFilePaths, type PortableFile } from "./p
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { buildSkillContent } from "./skills.js";
 import { exists } from "./utils.js";
-import { sanitizeCommandName, validateCommandName, validateSkillName } from "./validators.js";
+import { sanitizeCommandName, validateCommandName, validateSkillName, sanitizeRoutineName, validateRoutineName } from "./validators.js";
 import {
   opencodeConfigPath,
   openworkConfigPath,
   projectCommandsDir,
   projectSkillsDir,
+  projectRoutinesDir,
 } from "./workspace-files.js";
+import { buildRoutineContent } from "./routines.js";
 
 export type WorkspaceImportMode = "merge" | "replace";
-export type WorkspaceImportChangeKind = "opencode" | "openwork" | "skill" | "command" | "file";
+export type WorkspaceImportChangeKind = "opencode" | "openwork" | "skill" | "command" | "routine" | "file";
 export type WorkspaceImportChangeAction = "create" | "update" | "replace" | "delete" | "unchanged";
 
 export type WorkspaceImportChange = {
@@ -53,7 +55,7 @@ export type WorkspaceImportPlan = Omit<WorkspaceImportPreview, "changes"> & {
   changes: WorkspaceImportPlannedChange[];
 };
 
-type WorkspaceImportSection = "opencode" | "openwork" | "skills" | "commands" | "files";
+type WorkspaceImportSection = "opencode" | "openwork" | "skills" | "commands" | "routines" | "files";
 
 export type NormalizedWorkspaceImport = {
   modes: Record<string, WorkspaceImportMode>;
@@ -68,6 +70,13 @@ export type NormalizedWorkspaceImport = {
     agent?: string;
     model?: string | null;
     subtask?: boolean;
+  }>;
+  routines: Array<{
+    name: string;
+    command: string;
+    schedule: string;
+    enabled: boolean;
+    description?: string;
   }>;
   files: PortableFile[];
 };
@@ -89,6 +98,7 @@ function normalizeModes(value: unknown): Record<string, WorkspaceImportMode> {
     openwork: readMode(record.openwork),
     skills: readMode(record.skills),
     commands: readMode(record.commands),
+    routines: readMode(record.routines),
     files: readMode(record.files),
   };
 }
@@ -167,6 +177,43 @@ function normalizeCommands(value: unknown): NormalizedWorkspaceImport["commands"
   });
 }
 
+function normalizeRoutines(value: unknown): NormalizedWorkspaceImport["routines"] {
+  return readArray(value, "routines").map((routine) => {
+    if (typeof routine.content === "string" && routine.content.trim()) {
+      const parsed = parseFrontmatter(routine.content);
+      const name = sanitizeRoutineName(
+        String(routine.name || (typeof parsed.data.name === "string" ? parsed.data.name : "")),
+      );
+      validateRoutineName(name);
+      const command = parsed.body.trim();
+      if (!command) {
+        throw new ApiError(400, "invalid_routine_command", "Routine command is required");
+      }
+      return {
+        name,
+        command,
+        schedule: typeof parsed.data.schedule === "string" ? parsed.data.schedule : "",
+        enabled: typeof parsed.data.enabled === "boolean" ? parsed.data.enabled : true,
+        description: typeof parsed.data.description === "string" ? parsed.data.description : undefined,
+      };
+    }
+
+    const name = sanitizeRoutineName(String(routine.name ?? ""));
+    validateRoutineName(name);
+    const command = typeof routine.command === "string" ? routine.command : "";
+    if (!command.trim()) {
+      throw new ApiError(400, "invalid_routine_command", "Routine command is required");
+    }
+    return {
+      name,
+      command,
+      schedule: typeof routine.schedule === "string" ? routine.schedule : "",
+      enabled: typeof routine.enabled === "boolean" ? routine.enabled : true,
+      description: typeof routine.description === "string" ? routine.description : undefined,
+    };
+  });
+}
+
 export function normalizeWorkspaceImportPayload(
   workspaceRoot: string,
   payload: Record<string, unknown>,
@@ -178,6 +225,7 @@ export function normalizeWorkspaceImportPayload(
       openwork: payload.openwork !== undefined,
       skills: payload.skills !== undefined,
       commands: payload.commands !== undefined,
+      routines: payload.routines !== undefined,
       files: payload.files !== undefined,
     },
     ...(payload.opencode !== undefined
@@ -188,6 +236,7 @@ export function normalizeWorkspaceImportPayload(
       : {}),
     skills: normalizeSkills(payload.skills),
     commands: normalizeCommands(payload.commands),
+    routines: normalizeRoutines(payload.routines),
     files: planPortableFiles(workspaceRoot, payload.files).map((file) => ({
       path: file.path,
       content: file.content,
@@ -308,6 +357,16 @@ async function listProjectCommandNames(workspaceRoot: string): Promise<string[]>
     .sort();
 }
 
+async function listProjectRoutineNames(workspaceRoot: string): Promise<string[]> {
+  const dir = projectRoutinesDir(workspaceRoot);
+  if (!(await exists(dir))) return [];
+  const entries = await readdir(dir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => entry.name.replace(/\.md$/, ""))
+    .sort();
+}
+
 export async function buildWorkspaceImportPreview(
   workspaceRoot: string,
   payload: Record<string, unknown>,
@@ -412,6 +471,44 @@ export async function buildWorkspaceImportPreview(
         if (before === null) continue;
         changes.push({
           kind: "command",
+          action: "delete",
+          label: name,
+          path: rel(workspaceRoot, path),
+          absolutePath: path,
+          beforeDigest: textDigest(before),
+          afterDigest: textDigest(null),
+        });
+      }
+    }
+  }
+
+  if (input.sections.routines) {
+    const existing = new Set(await listProjectRoutineNames(workspaceRoot));
+    const incoming = new Set<string>();
+    for (const routine of input.routines) {
+      incoming.add(routine.name);
+      const path = join(projectRoutinesDir(workspaceRoot), `${routine.name}.md`);
+      const existsBefore = existing.has(routine.name);
+      const before = existsBefore ? await readTextIfPresent(path) : null;
+      const next = buildRoutineContent(routine);
+      changes.push({
+        kind: "routine",
+        action: actionForTarget(before !== null, before !== next.content, "merge"),
+        label: routine.name,
+        path: rel(workspaceRoot, path),
+        absolutePath: path,
+        beforeDigest: before !== null ? textDigest(before) : textDigest(null),
+        afterDigest: textDigest(next.content),
+      });
+    }
+    if (input.modes.routines === "replace") {
+      for (const name of existing) {
+        if (incoming.has(name)) continue;
+        const path = join(projectRoutinesDir(workspaceRoot), `${name}.md`);
+        const before = await readTextIfPresent(path);
+        if (before === null) continue;
+        changes.push({
+          kind: "routine",
           action: "delete",
           label: name,
           path: rel(workspaceRoot, path),

@@ -1,16 +1,17 @@
 import { listRoutines } from "./routines.js";
-import type { ServerConfig } from "./types.js";
+import type { ServerConfig, WorkspaceInfo, RoutineItem } from "./types.js";
 import { createWorkspaceOpencodeClient } from "./server.js"; // We need to export this or pass a callback
 import { CronExpressionParser } from "cron-parser";
 
 export class CronScheduler {
   private config: ServerConfig;
   private intervalId: ReturnType<typeof setInterval> | null = null;
-  private createClient: (workspace: ServerConfig["workspaces"][number]) => any;
+  private createClient: (workspace: WorkspaceInfo) => any;
   private isTicking = false;
   private lastTickMinute: number | null = null;
+  private runningRoutines = new Set<string>();
 
-  constructor(config: ServerConfig, createClient: (workspace: ServerConfig["workspaces"][number]) => any) {
+  constructor(config: ServerConfig, createClient: (workspace: WorkspaceInfo) => any) {
     this.config = config;
     this.createClient = createClient;
   }
@@ -45,33 +46,42 @@ export class CronScheduler {
         startMinute = targetMinute - 5 * 60000;
       }
 
-      if (startMinute > targetMinute) return;
+      if (startMinute > targetMinute) {
+        this.lastTickMinute = targetMinute;
+        return;
+      }
       this.lastTickMinute = targetMinute;
+
+      // Pre-fetch all routines for all workspaces outside the catch-up loop to avoid redundant disk I/O
+      const workspacesRoutines = new Map<WorkspaceInfo, RoutineItem[]>();
+      for (const workspace of this.config.workspaces) {
+        try {
+          const routines = await listRoutines(workspace.path, "workspace");
+          workspacesRoutines.set(workspace, routines);
+        } catch (err) {
+          console.error(`Error listing routines for workspace ${workspace.id}:`, err);
+        }
+      }
 
       for (let time = startMinute; time <= targetMinute; time += 60000) {
         const checkTime = new Date(time);
-        for (const workspace of this.config.workspaces) {
-          try {
-            const routines = await listRoutines(workspace.path, "workspace");
-            for (const routine of routines) {
-              if (!routine.enabled) continue;
+        for (const [workspace, routines] of workspacesRoutines.entries()) {
+          for (const routine of routines) {
+            if (!routine.enabled) continue;
 
-              try {
-                const interval = CronExpressionParser.parse(routine.schedule, { currentDate: new Date(checkTime.getTime() - 60000) });
-                const nextDate = interval.next().toDate();
-                
-                // If the next scheduled time matches our check minute exactly
-                if (nextDate.getTime() === checkTime.getTime()) {
-                  this.triggerRoutine(workspace, routine).catch((err) => {
-                    console.error(`Failed to execute routine ${routine.name}:`, err);
-                  });
-                }
-              } catch (err) {
-                console.error(`Error parsing schedule for routine ${routine.name}:`, err);
+            try {
+              const interval = CronExpressionParser.parse(routine.schedule, { currentDate: new Date(checkTime.getTime() - 60000) });
+              const nextDate = interval.next().toDate();
+              
+              // If the next scheduled time matches our check minute exactly
+              if (nextDate.getTime() === checkTime.getTime()) {
+                this.executeRoutineInBackground(workspace, routine).catch((err) => {
+                  console.error(`Failed to execute routine ${routine.name}:`, err);
+                });
               }
+            } catch (err) {
+              console.error(`Error parsing schedule for routine ${routine.name}:`, err);
             }
-          } catch (err) {
-            console.error(`Error listing routines for workspace ${workspace.id}:`, err);
           }
         }
       }
@@ -80,7 +90,21 @@ export class CronScheduler {
     }
   }
 
-  private async triggerRoutine(workspace: ServerConfig["workspaces"][number], routine: any) {
+  private async executeRoutineInBackground(workspace: WorkspaceInfo, routine: RoutineItem) {
+    const key = `${workspace.id}:${routine.name}`;
+    if (this.runningRoutines.has(key)) {
+      console.warn(`Skipping overlapping routine trigger for ${routine.name}`);
+      return;
+    }
+    this.runningRoutines.add(key);
+    try {
+      await this.triggerRoutine(workspace, routine);
+    } finally {
+      this.runningRoutines.delete(key);
+    }
+  }
+
+  private async triggerRoutine(workspace: WorkspaceInfo, routine: RoutineItem) {
     try {
       const opencode = this.createClient(workspace);
       
@@ -101,9 +125,8 @@ export class CronScheduler {
 
       // 2. Prompt the agent
       await opencode.session.prompt({
-        sessionID: sessionId,
-        text: routine.command,
-        mode: "prompt",
+        path: { id: sessionId },
+        body: { parts: [{ text: routine.command }] },
       });
 
     } catch (err) {

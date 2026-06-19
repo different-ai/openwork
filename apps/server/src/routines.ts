@@ -35,11 +35,11 @@ async function listRoutinesInDir(dir: string, scope: "workspace" | "global"): Pr
       }
 
       const schedule = typeof data.schedule === "string" ? data.schedule : "";
+      if (schedule.trim().length === 0) continue;
+
       try {
         // Validate cron expression
-        if (schedule) {
-          CronExpressionParser.parse(schedule);
-        }
+        CronExpressionParser.parse(schedule);
       } catch {
         // Skip invalid crons
         continue;

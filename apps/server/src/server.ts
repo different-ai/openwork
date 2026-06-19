@@ -20,7 +20,12 @@ import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
 import { computeReloadFingerprint } from "./reload-fingerprint.js";
 import { startReloadWatchers } from "./reload-watcher.js";
-import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
+import { opencodeConfigPath,  openworkConfigPath,
+  projectCommandsDir,
+  projectPluginsDir,
+  projectSkillsDir,
+  projectRoutinesDir,
+} from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
@@ -2919,6 +2924,7 @@ async function exportWorkspace(
   const openwork = sanitizeOpenworkTemplateConfig(await readOpenworkConfig(workspace.path));
   const skills = await listSkills(workspace.path, false);
   const commands = await listCommands(workspace.path, "workspace");
+  const routines = await listRoutines(workspace.path, "workspace");
   let files = await listPortableFiles(workspace.path);
   const warnings = collectWorkspaceExportWarnings({ opencode: rawOpencode, files });
   if (warnings.length && sensitiveMode === "auto") {
@@ -2948,6 +2954,13 @@ async function exportWorkspace(
       template: command.template,
     })),
   );
+  const routineContents = routines.map((routine) => ({
+    name: routine.name,
+    description: routine.description,
+    schedule: routine.schedule,
+    enabled: routine.enabled,
+    command: routine.command,
+  }));
 
   return {
     workspaceId: workspace.id,
@@ -2956,6 +2969,7 @@ async function exportWorkspace(
     openwork,
     skills: skillContents,
     commands: commandContents,
+    routines: routineContents,
     ...(files.length ? { files } : {}),
   };
 }
@@ -3041,6 +3055,21 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
     if (input.modes.commands === "replace") {
       for (const change of preview.changes) {
         if (change.kind === "command" && change.action === "delete") {
+          await rm(change.absolutePath, { force: true });
+        }
+      }
+    }
+  }
+
+  if (input.sections.routines) {
+    for (const routine of input.routines) {
+      const path = workspaceImportRelativePath(workspace, join(projectRoutinesDir(workspace.path), `${routine.name}.md`));
+      if (!changedPath("routine", path)) continue;
+      await upsertRoutine(workspace.path, routine);
+    }
+    if (input.modes.routines === "replace") {
+      for (const change of preview.changes) {
+        if (change.kind === "routine" && change.action === "delete") {
           await rm(change.absolutePath, { force: true });
         }
       }
