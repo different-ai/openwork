@@ -71,8 +71,12 @@ import {
 } from "./composer-state-store";
 import { MessageList } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
-import { OpenTargetProvider } from "@/lib/target-provider";
+import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
 import type { ThreadStatus } from "@/lib/messages";
+import {
+  EnvironmentVariableProvider,
+  type ApplyEnvironmentChangesResult,
+} from "@/react-app/domains/settings/pages/environment-variable-provider";
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
@@ -89,6 +93,7 @@ type SessionError = {
 
 export type SessionSurfaceProps = {
   client: OpenworkServerClient;
+  environmentClient?: OpenworkServerClient | null;
   workspaceId: string;
   workspaceRoot: string;
   sessionId: string;
@@ -133,7 +138,9 @@ export type SessionSurfaceProps = {
   onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins" | "providers") => void) | undefined;
   onRevertToMessage?: (messageId: string, sessionId: string) => Promise<boolean>;
   onForkAtMessage?: (messageId: string | null, sessionId: string) => void;
-  onOpenTarget?: (target: OpenTarget, options?: { auto?: boolean }, sessionId?: string) => void;
+  onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions, sessionId?: string) => void;
+  environmentRuntimeKey?: string | null;
+  onApplyEnvironmentChanges?: () => Promise<ApplyEnvironmentChangesResult>;
 };
 
 function messageToReadableText(message: UIMessage) {
@@ -1274,25 +1281,31 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   openTargets={verifiedOpenTargets}
                   onOpenTarget={props.onOpenTarget}
                 >
-                  <MessageListProvider
-                    workspaceId={props.workspaceId}
-                    sessionId={props.sessionId}
-                    showThinking={showThinking}
-                    developerMode={props.developerMode}
-                    displaySuggestions={shellConfig.starterCards}
-                    providerConnectedCount={props.providerConnectedCount ?? 0}
-                    dispatchAction={handleMessageListDispatchAction}
-                    setPrompt={handleMessageListSetPrompt}
-                    onRevertToUserMessage={handleRevertToUserMessage}
-                    onForkAtMessage={handleForkAtMessage}
-                    onEditUserMessage={handleEditUserMessage}
+                  <EnvironmentVariableProvider
+                    client={props.isRemoteWorkspace ? null : props.environmentClient ?? props.client}
+                    runtimeKey={props.environmentRuntimeKey}
+                    onApplyChanges={props.onApplyEnvironmentChanges}
                   >
-                    <MessageList
-                      messages={renderedMessages}
-                      status={status}
-                      retryStatus={liveStatus.type === "retry" ? liveStatus : null}
-                    />
-                  </MessageListProvider>
+                    <MessageListProvider
+                      workspaceId={props.workspaceId}
+                      sessionId={props.sessionId}
+                      showThinking={showThinking}
+                      developerMode={props.developerMode}
+                      displaySuggestions={shellConfig.starterCards}
+                      providerConnectedCount={props.providerConnectedCount ?? 0}
+                      dispatchAction={handleMessageListDispatchAction}
+                      setPrompt={handleMessageListSetPrompt}
+                      onRevertToUserMessage={handleRevertToUserMessage}
+                      onForkAtMessage={handleForkAtMessage}
+                      onEditUserMessage={handleEditUserMessage}
+                    >
+                      <MessageList
+                        messages={renderedMessages}
+                        status={status}
+                        retryStatus={liveStatus.type === "retry" ? liveStatus : null}
+                      />
+                    </MessageListProvider>
+                  </EnvironmentVariableProvider>
                 </OpenTargetProvider>
               </DevProfiler>
             )}

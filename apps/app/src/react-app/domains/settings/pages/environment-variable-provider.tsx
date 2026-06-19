@@ -70,6 +70,8 @@ export interface RemoveAsyncOptions {
 }
 
 interface EnvironmentVariableContextValue {
+  canModify: boolean;
+  canApplyChanges: boolean;
   isPendingChanges: boolean;
   applyAsync: UseMutateFunction<ApplyEnvironmentChangesResult | undefined, Error, void, unknown>;
   modifyAsync: UseMutateFunction<unknown, Error, EnvironmentEditorDraft, unknown>;
@@ -180,6 +182,8 @@ export function EnvironmentVariableProvider({ children, client, runtimeKey, onAp
     },
   });
   const value = useMemo<EnvironmentVariableContextValue>(() => ({
+    canModify: client !== null,
+    canApplyChanges: onApplyChanges !== undefined,
     isPendingChanges: data === true,
     applyAsync,
     modifyAsync,
@@ -191,6 +195,8 @@ export function EnvironmentVariableProvider({ children, client, runtimeKey, onAp
     modifyError,
     removeError,
   }), [
+    client,
+    onApplyChanges,
     applyAsync,
     modifyAsync,
     removeAsync,
@@ -256,4 +262,10 @@ export function useIsEnvironmentVariableChangesPending() {
   const { isPendingChanges } = useEnvironmentVariableContext();
 
   return isPendingChanges;
+}
+
+export function useEnvironmentVariableAvailability() {
+  const { canModify, canApplyChanges } = useEnvironmentVariableContext();
+
+  return { canModify, canApplyChanges };
 }

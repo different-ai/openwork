@@ -19,6 +19,15 @@ spinners, animations, drag-and-drop, or real-time interactions that a static
 frame cannot capture. When video is used, embed it inside the frame-by-frame
 HTML page alongside the static frames.
 
+When a coded eval exists, prefer the eval runner frame output first:
+
+```bash
+pnpm evals --flow <flow-id> --cdp-url <printed-electron-cdp-url>
+```
+
+The runner writes `evals/results/<run-id>/index.html` plus PNG screenshots from
+`ctx.screenshot(...)`. Serve or copy that result directory for PR evidence.
+
 ### How to produce frame proof
 
 1. Serve a directory from the sandbox on port 8090:
@@ -43,6 +52,27 @@ echo "${FRAMES_URL}/index.html"
 
 5. Post the index URL in the PR body. Individual frame PNGs are also directly
    linkable: `${FRAMES_URL}/01-auth-landing.png`.
+
+### Fallback when `/daytona-artifacts` is unavailable
+
+The preferred path is `test-on-daytona.sh --artifacts-volume`, which mounts and
+serves `/daytona-artifacts`. If that path is unavailable or not writable, do not
+stop at local screenshots. Use `/workspace/proof-frames` as a fallback:
+
+```bash
+daytona exec "$SANDBOX" -- 'bash -lc "mkdir -p /workspace/proof-frames; nohup python3 -m http.server 8090 --bind 0.0.0.0 --directory /workspace/proof-frames >/tmp/proof-frames-http.log 2>&1 &"'
+```
+
+Upload the generated `index.html` and PNG frames there, then verify every file is
+non-zero before sharing:
+
+```bash
+daytona exec "$SANDBOX" -- 'bash -lc "ls -lh /workspace/proof-frames && curl -s -I http://127.0.0.1:8090/index.html | sed -n \"1,8p\""'
+daytona preview-url "$SANDBOX" -p 8090
+```
+
+If you use this fallback, say so in the PR/eval report because the files are not
+on the persistent artifacts volume.
 
 ### When to include video clips
 

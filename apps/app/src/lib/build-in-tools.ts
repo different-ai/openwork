@@ -32,6 +32,15 @@ export interface QuestionMetadata extends ToolMetadata {
   answers: string[][];
 }
 
+export interface EnvVarRequestInput {
+  key: string;
+  label?: string;
+  description?: string;
+  placeholder?: string;
+  helpUrl?: string;
+  followUpPrompt?: string;
+}
+
 export interface BashInput {
   command: string;
   timeout?: number;
@@ -367,6 +376,12 @@ export type QuestionToolPart = BuiltInDynamicToolPart<"question", QuestionInput>
 
 export function isQuestionToolPart(part: ToolUIPart | DynamicToolUIPart): part is QuestionToolPart {
   return part.type === "dynamic-tool" && part.toolName === "question";
+}
+
+export type EnvVarRequestToolPart = BuiltInDynamicToolPart<"request_env_var" | "env_var_request", EnvVarRequestInput, unknown>;
+
+export function isEnvVarRequestToolPart(part: ToolUIPart | DynamicToolUIPart): part is EnvVarRequestToolPart {
+  return part.type === "dynamic-tool" && (part.toolName === "request_env_var" || part.toolName === "env_var_request");
 }
 
 export type TaskToolPart = BuiltInDynamicToolPart<"task", TaskInput>;

@@ -3,6 +3,7 @@ import {
   isApplyPatchToolPart,
   isBashToolPart,
   isEditToolPart,
+  isEnvVarRequestToolPart,
   isGlobToolPart,
   isGrepToolPart,
   isLspToolPart,
@@ -92,6 +93,10 @@ export function getToolActivityLabel(part: AnyToolPart): string {
   if (isQuestionToolPart(part)) {
     return "Asking a question"
   }
+  if (isEnvVarRequestToolPart(part)) {
+    const key = part.input?.key?.trim()
+    return key ? `Requesting ${key}` : "Requesting an environment variable"
+  }
   if (isTaskToolPart(part)) {
     const description = part.input?.description?.trim()
     return description
@@ -114,5 +119,4 @@ export function getActiveToolLabel(parts: DynamicToolUIPart[]): string | null {
   }
   return null
 }
-
 

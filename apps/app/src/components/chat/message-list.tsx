@@ -25,6 +25,7 @@ import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
 import { EditTool } from "@/components/tools/edit"
+import { EnvVarRequestTool } from "@/components/tools/env-var-request"
 import { ReadFileTool, WriteFileTool } from "@/components/tools/file"
 import { GlobTool } from "@/components/tools/glob"
 import { GrepTool } from "@/components/tools/grep"
@@ -62,6 +63,7 @@ import {
   isApplyPatchToolPart,
   isBashToolPart,
   isEditToolPart,
+  isEnvVarRequestToolPart,
   isGlobToolPart,
   isGrepToolPart,
   isLspToolPart,
@@ -181,6 +183,10 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
 
   if (isQuestionToolPart(part)) {
     return <QuestionTool part={part} />
+  }
+
+  if (isEnvVarRequestToolPart(part)) {
+    return <EnvVarRequestTool part={part} />
   }
 
   return <Tool toolPart={part} />

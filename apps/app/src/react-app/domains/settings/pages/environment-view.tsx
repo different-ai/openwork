@@ -384,11 +384,62 @@ type EnvironmentEditorModalProps = {
   onChange: (value: SetStateAction<EnvironmentEditorState>) => void;
 };
 
+type EnvironmentEditorFieldsProps = {
+  editor: EnvironmentEditorDraft;
+  onChange: (value: SetStateAction<EnvironmentEditorDraft>) => void;
+  disabled?: boolean;
+  error?: Error | null;
+  keyPlaceholder?: string;
+  valuePlaceholder?: string;
+};
+
+export function EnvironmentEditorFields(props: EnvironmentEditorFieldsProps) {
+  const keyFieldId = useId();
+  const valueFieldId = useId();
+
+  return (
+    <FieldGroup>
+      <Field data-invalid={props.error ? true : undefined}>
+        <FieldLabel htmlFor={keyFieldId}>{t("settings.environment.key_label")}</FieldLabel>
+        <Input
+          id={keyFieldId}
+          value={props.editor.key}
+          onChange={(event) =>
+            props.onChange((current) => ({ ...current, key: event.target.value }))
+          }
+          disabled={props.editor.mode === "edit" || props.disabled}
+          placeholder={props.keyPlaceholder ?? "ANTHROPIC_API_KEY"}
+          spellCheck={false}
+          autoComplete="off"
+          aria-invalid={props.error ? true : undefined}
+        />
+        <FieldDescription>{t("settings.environment.key_hint")}</FieldDescription>
+      </Field>
+      <Field data-invalid={props.error ? true : undefined}>
+        <FieldLabel htmlFor={valueFieldId}>{t("settings.environment.value_label")}</FieldLabel>
+        <Textarea
+          id={valueFieldId}
+          value={props.editor.value}
+          onChange={(event) =>
+            props.onChange((current) => ({ ...current, value: event.target.value }))
+          }
+          disabled={props.disabled}
+          rows={3}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder={props.valuePlaceholder}
+          className="font-mono"
+          aria-invalid={props.error ? true : undefined}
+        />
+        {props.error ? <FieldError>{props.error.message}</FieldError> : null}
+      </Field>
+    </FieldGroup>
+  );
+}
+
 function EnvironmentEditorModal(props: EnvironmentEditorModalProps) {
   const { modifyAsync, isModifying, error } = useEnvironmentVariableModify();
   const titleId = useId();
-  const keyFieldId = useId();
-  const valueFieldId = useId();
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -424,41 +475,17 @@ function EnvironmentEditorModal(props: EnvironmentEditorModalProps) {
           </DialogTitle>
         </DialogHeader>
 
-        <FieldGroup>
-          <Field data-invalid={error ? true : undefined}>
-            <FieldLabel htmlFor={keyFieldId}>{t("settings.environment.key_label")}</FieldLabel>
-            <Input
-              id={keyFieldId}
-              value={props.editor.key}
-              onChange={(event) =>
-                props.onChange((current) => (current ? { ...current, key: event.target.value } : current))
-              }
-              disabled={props.editor.mode === "edit" || isModifying}
-              placeholder="ANTHROPIC_API_KEY"
-              spellCheck={false}
-              autoComplete="off"
-              aria-invalid={error ? true : undefined}
-            />
-            <FieldDescription>{t("settings.environment.key_hint")}</FieldDescription>
-          </Field>
-          <Field data-invalid={error ? true : undefined}>
-            <FieldLabel htmlFor={valueFieldId}>{t("settings.environment.value_label")}</FieldLabel>
-            <Textarea
-              id={valueFieldId}
-              value={props.editor.value}
-              onChange={(event) =>
-                props.onChange((current) => (current ? { ...current, value: event.target.value } : current))
-              }
-              disabled={isModifying}
-              rows={3}
-              spellCheck={false}
-              autoComplete="off"
-              className="font-mono"
-              aria-invalid={error ? true : undefined}
-            />
-            {error ? <FieldError>{error.message}</FieldError> : null}
-          </Field>
-        </FieldGroup>
+        <EnvironmentEditorFields
+          editor={props.editor}
+          onChange={(value) => {
+            props.onChange((current) => {
+              if (!current) return current;
+              return typeof value === "function" ? value(current) : value;
+            });
+          }}
+          disabled={isModifying}
+          error={error}
+        />
 
         <DialogFooter>
           <DialogClose

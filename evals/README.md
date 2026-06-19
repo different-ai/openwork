@@ -1,12 +1,13 @@
 # OpenWork UI evals
 
-Human-readable scenarios that an LLM (or a person) can replay against a live
-OpenWork instance to verify end-to-end behavior of the UI.
+Human-readable scenarios and coded flows that verify end-to-end OpenWork UI
+behavior against a live app.
 
-Each eval is:
-- A short list of steps written in plain English.
+Each eval should have:
+- A short narrative spec written in plain English.
 - An **expected outcome** with observable signals.
-- The CDP browser tool calls to drive it.
+- A coded flow under [`flows/`](./flows) when it is used for PR evidence or
+  repeated regression coverage.
 
 They are not unit tests. They intentionally exercise the running stack
 (OpenCode + OpenWork server + React UI) so regressions in wiring — not just
@@ -17,7 +18,8 @@ types — get caught.
 A growing subset of flows is codified under [`flows/`](./flows) and executed by
 the zero-dependency runner in [`runner/`](./runner) with machine-checkable
 assertions, poll-until-condition waits (no fixed sleeps), and JSON + markdown
-reports with screenshots.
+reports with screenshots. The runner also writes a browseable frame-by-frame
+`index.html` in each result directory.
 
 ```bash
 pnpm evals --list                 # show available coded flows
@@ -31,7 +33,8 @@ The runner probes `http://127.0.0.1:9825` (Daytona) then `:9823` (local
 `requiredEnv` and are skipped (not failed) when the env is missing — e.g.
 `cloud-signin-handoff` needs `OPENWORK_EVAL_DEN_API_URL` and
 `OPENWORK_EVAL_DEN_TOKEN`. Reports land in `evals/results/<run-id>/`
-(gitignored). A non-zero exit code means at least one flow failed.
+(gitignored). Open `evals/results/<run-id>/index.html` for the frame proof.
+A non-zero exit code means at least one flow failed.
 
 ### One-command cloud stack
 
@@ -62,8 +65,8 @@ Quick start:
 
 ```bash
 daytona organization use "<org-name>"
-bash .devcontainer/test-on-daytona.sh [branch-or-commit]
-# Use the printed Electron CDP URL with browser_* tools.
+bash .devcontainer/test-on-daytona.sh [branch-or-commit] --artifacts-volume
+pnpm evals --flow app-smoke --cdp-url <printed-electron-cdp-url>
 ```
 
 ### Option B: Local Electron
@@ -76,9 +79,11 @@ pnpm dev
 
 Wait ~15s, then use the browser tools against `http://127.0.0.1:9825`.
 
-### Option C: Manual browser
+### Option C: Manual browser/debugging
 
-Open the app and follow the step lists by hand.
+Open the app and follow the step lists by hand. Use this for exploration or
+debugging only; PR evidence for UI changes should use a coded flow when
+possible.
 
 ## Tool reference
 
@@ -98,13 +103,18 @@ plugin (configured in `.opencode/opencode.json`). Every tool takes
 
 ## Conventions
 
-- Use `browser_eval` for button clicks and text input — it's more reliable
-  than snapshot UIDs for dynamic React UIs.
-- For Lexical editors, use `document.execCommand('insertText', false, text)`
-  after focusing. Direct DOM manipulation doesn't trigger Lexical state updates.
+- Prefer coded flows in `evals/flows/*.flow.mjs` over ad hoc browser tool calls.
+- Use runner helpers such as `ctx.clickText`, `ctx.fill`, `ctx.waitFor`,
+  `ctx.waitForText`, `ctx.control`, and `ctx.screenshot`.
+- Use direct `browser_eval` only for debugging/prototyping or when a flow has
+  not yet been codified. If the behavior matters for a PR, codify it before
+  calling the UI validation complete.
+- For Lexical editors in coded flows, use a synthetic paste/event helper; direct
+  DOM manipulation doesn't trigger Lexical state updates.
 - For React state injection (e.g., folder picker bypass), use the
   `__reactFiber$` → reducer dispatch pattern documented in `daytona-flows.md`.
-- When asked to "wait for X", use `sleep` then `browser_eval` to check.
+- Prefer poll-until-condition waits (`ctx.waitFor`, `ctx.waitForText`) over
+  fixed sleeps.
 
 ## Files
 

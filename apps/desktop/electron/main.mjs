@@ -1272,6 +1272,102 @@ const desktopCommandHandlers = {
       shell.showItemInFolder(target);
       return undefined;
   },
+  "__getFileIcon": async (event, ...args) => {
+      const target = String(args[0] ?? "").trim();
+      if (!target) return null;
+      const requestedSize = args[1];
+      /** @type {"small" | "normal" | "large"} */
+      let validSize = "normal";
+      if (requestedSize === "small" || requestedSize === "normal" || requestedSize === "large") {
+        validSize = requestedSize;
+      }
+      try {
+        const image = await app.getFileIcon(target, { size: validSize });
+        return image.isEmpty() ? null : image.toDataURL();
+      } catch {
+        return null;
+      }
+  },
+  "__getApplicationsForFile": async (event, ...args) => {
+      const target = String(args[0] ?? "").trim();
+      if (!target) return [];
+      const platform = process.platform;
+      const results = [];
+
+      try {
+        if (platform === "darwin") {
+          // Scan /Applications and /System/Applications for .app bundles
+          const appDirs = ["/Applications", "/System/Applications", "/Applications/Utilities", `${os.homedir()}/Applications`];
+          const seen = new Set();
+          for (const dir of appDirs) {
+            let entries;
+            try { entries = await readdir(dir); } catch { continue; }
+            for (const entry of entries) {
+              if (!entry.endsWith(".app")) continue;
+              const appPath = path.join(dir, entry);
+              if (seen.has(appPath)) continue;
+              seen.add(appPath);
+              const name = entry.replace(/\.app$/i, "");
+              let icon = null;
+              try {
+                const img = await app.getFileIcon(appPath, { size: "small" });
+                icon = img.isEmpty() ? null : img.toDataURL();
+              } catch {}
+              results.push({ name, appPath, icon });
+            }
+          }
+        } else if (platform === "linux") {
+          // Parse .desktop files in standard directories
+          const desktopDirs = ["/usr/share/applications", "/usr/local/share/applications", `${os.homedir()}/.local/share/applications`];
+          const seen = new Set();
+          for (const dir of desktopDirs) {
+            let entries;
+            try { entries = await readdir(dir); } catch { continue; }
+            for (const entry of entries) {
+              if (!entry.endsWith(".desktop")) continue;
+              const filePath = path.join(dir, entry);
+              if (seen.has(filePath)) continue;
+              seen.add(filePath);
+              try {
+                const content = await readFile(filePath, "utf-8");
+                const nameMatch = content.match(/^Name=(.+)$/m);
+                const execMatch = content.match(/^Exec=(.+)$/m);
+                if (!nameMatch || !execMatch) continue;
+                const name = nameMatch[1].trim();
+                const appPath = execMatch[1].trim().replace(/%[fFuU]/g, "").trim();
+                if (!appPath) continue;
+                let icon = null;
+                try {
+                  const img = await app.getFileIcon(filePath, { size: "small" });
+                  icon = img.isEmpty() ? null : img.toDataURL();
+                } catch {}
+                results.push({ name, appPath, icon });
+              } catch {}
+            }
+          }
+        }
+      } catch {}
+
+      return results;
+  },
+  "__openWithApp": async (event, ...args) => {
+      const target = String(args[0] ?? "").trim();
+      const appPath = String(args[1] ?? "").trim();
+      if (!target || !appPath) return "Target and app path are required.";
+      const platform = process.platform;
+      try {
+        if (platform === "darwin") {
+          execFileSync("open", ["-a", appPath, target]);
+        } else if (platform === "linux") {
+          const child = spawn(appPath, [target], { detached: true, stdio: "ignore" });
+          child.unref();
+        } else {
+          return `Open with app is not supported on ${platform}`;
+        }
+      } catch (err) {
+        return String(err?.message ?? err);
+      }
+  },
   "__fetch": async (event, ...args) => {
       const url = String(args[0] ?? "").trim();
       const init = args[1] ?? {};
