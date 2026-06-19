@@ -69,7 +69,7 @@ export function LandingAppDemoPanel(props: Props) {
               return (
                 <div
                   key={`${message.role}-${index}`}
-                  className="mt-2 max-w-[85%] self-center rounded-3xl bg-gray-100/80 px-5 py-3 text-center text-gray-800"
+                  className="mt-2 max-w-[85%] self-center break-words rounded-3xl bg-gray-100/80 px-5 py-3 text-center text-gray-800 [overflow-wrap:anywhere]"
                 >
                   {message.content}
                 </div>
