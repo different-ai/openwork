@@ -399,7 +399,7 @@ export function ScimScreen() {
               </div>
             </div>
 
-            <div className="mt-5 rounded-[24px] border border-gray-200 bg-gray-50 p-4 text-[13px] leading-6 text-gray-600">
+            <div className="mt-5 rounded-[24px] border border-gray-200 bg-gray-50 p-4 text-[13px] leading-6 text-gray-600 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-300">
               OpenWork records failed SCIM lifecycle work for retry, runs periodic reconciliation for local SCIM drift, and surfaces unresolved issues here so deprovisioning failures are not silent.
               <div className="mt-3">
                 <DenButton variant="secondary" icon={RefreshCw} onClick={() => void handleRunReconciliation()} loading={reconciling}>
