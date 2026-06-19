@@ -9,6 +9,7 @@ import { requestId } from "hono/request-id"
 import { describeRoute, openAPIRouteHandler, resolver } from "hono-openapi"
 import { z } from "zod"
 import { env } from "./env.js"
+import { publicRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
@@ -90,6 +91,7 @@ app.get(
       302: emptyResponse("Redirect to the OpenWork marketing site."),
     },
   }),
+  publicRoute,
   (c) => {
     return c.redirect("https://openworklabs.com", 302)
   },
@@ -112,6 +114,7 @@ app.get(
       },
     },
   }),
+  publicRoute,
   (c) => {
     return c.json({ ok: true, service: "den-api" })
   },
@@ -139,6 +142,7 @@ app.get(
       200: jsonResponse("OpenAPI document returned successfully.", openApiDocumentSchema),
     },
   }),
+  publicRoute,
   openAPIRouteHandler(app, {
     documentation: {
       openapi: "3.1.0",
@@ -218,6 +222,7 @@ app.get(
       200: htmlResponse("Swagger UI page returned successfully."),
     },
   }),
+  publicRoute,
   swaggerUI({
     url: "/openapi.json",
     persistAuthorization: true,

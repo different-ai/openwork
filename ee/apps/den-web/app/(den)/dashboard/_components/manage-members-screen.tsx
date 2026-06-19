@@ -169,8 +169,9 @@ export function ManageMembersScreen() {
       getOrgAccessFlags(
         orgContext?.currentMember.role ?? "member",
         orgContext?.currentMember.isOwner ?? false,
+        orgContext?.roles,
       ),
-    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role],
+    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.roles],
   );
   const canStartSeatCheckout = orgContext?.currentMember.isOwner === true;
 
@@ -784,7 +785,7 @@ export function ManageMembersScreen() {
                                 Cancel invite
                               </button>
                             ) : null}
-                            {!isInvited && access.canRemoveMembers ? (
+                            {!isInvited && access.canManageMembers ? (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -799,7 +800,7 @@ export function ManageMembersScreen() {
                                 Edit role
                               </button>
                             ) : null}
-                            {!isInvited && access.canManageMembers ? (
+                            {!isInvited && access.canRemoveMembers ? (
                               <button
                                 type="button"
                                 onClick={async () => {

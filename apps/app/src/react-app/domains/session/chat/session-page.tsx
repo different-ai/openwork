@@ -9,7 +9,7 @@ import { OPENWORK_EXTENSION_CATALOG } from "../../../../app/constants";
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import type { WorkspaceInfo } from "../../../../app/lib/desktop";
+import { openDesktopPath, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   PendingPermission,
   PendingQuestion,
@@ -54,7 +54,8 @@ import { useShellConfig } from "../../../shell/shell-config";
 import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-store";
 
 import { isElectronRuntime } from "../../../../app/utils";
-import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, type OpenTarget } from "../artifacts/open-target";
+import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
+import type { OpenTargetOptions } from "@/lib/target-provider";
 import { VoicePanel } from "../voice/voice-panel";
 import { SidePanel } from "../panel/side-panel";
 import { TerminalDock } from "../terminal/terminal-dock";
@@ -146,6 +147,7 @@ export type SessionPageProps = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
   openworkServerClient: OpenworkServerClient | null;
+  environmentClient?: OpenworkServerClient | null;
   openworkServerToken?: string | null;
   developerMode: boolean;
   headerStatus: string;
@@ -216,7 +218,24 @@ function sessionExistsInWorkspace(groups: WorkspaceSessionGroup[], workspaceId: 
 }
 
 function isTrackableAccessibleTarget(target: OpenTarget) {
-  return isCollectibleArtifactTarget(target) || isLocalhostBrowserTarget(target);
+  return isOpenableFileTarget(target) || isLocalhostBrowserTarget(target);
+}
+
+function absoluteWorkspacePath(root: string | null | undefined, value: string) {
+  const target = value.trim();
+  if (!target) return "";
+  if (/^file:\/\//i.test(target)) {
+    try {
+      const pathname = new URL(target).pathname;
+      return /^\/[a-zA-Z]:/.test(pathname) ? pathname.slice(1) : pathname;
+    } catch {
+      return target.replace(/^file:\/\//i, "");
+    }
+  }
+  if (target.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(target)) return target;
+  const cleanRoot = root?.trim().replace(/[/\\]+$/, "") ?? "";
+  const cleanTarget = target.replace(/^[.][\\/]/, "");
+  return cleanRoot ? `${cleanRoot}/${cleanTarget}` : cleanTarget;
 }
 
 function hiddenAccessibleTargetsStorageKey(workspaceId: string | null | undefined, sessionId: string | null | undefined) {
@@ -385,7 +404,22 @@ export function SessionPage(props: SessionPageProps) {
     if (/^wss?:\/\//i.test(target.value)) return target.value.replace(/^ws:/i, "http:").replace(/^wss:/i, "https:");
     return target.value;
   }, []);
-  const openTarget = useCallback((target: OpenTarget, options?: { auto?: boolean }, sourceSessionId?: string) => {
+  const downloadOpenTarget = useCallback(async (target: OpenTarget) => {
+    if (target.kind !== "file" || !props.openworkServerClient || !props.runtimeWorkspaceId) {
+      return;
+    }
+
+    const result = await props.openworkServerClient.downloadWorkspaceFile(props.runtimeWorkspaceId, target.value);
+    const url = URL.createObjectURL(new Blob([result.data], { type: result.contentType ?? "application/octet-stream" }));
+    const anchor = document.createElement("a");
+
+    anchor.href = url;
+    anchor.download = target.name;
+    anchor.click();
+
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [props.openworkServerClient, props.runtimeWorkspaceId]);
+  const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
       if (isElectronRuntime()) {
@@ -396,8 +430,37 @@ export function SessionPage(props: SessionPageProps) {
       }
       return;
     }
+    if (options?.external && target.kind === "file" && props.selectedWorkspaceDisplay.workspaceType !== "remote") {
+      const path = absoluteWorkspacePath(props.selectedWorkspaceRoot, target.value);
+      if (path && isElectronRuntime()) {
+        void (async () => {
+          try {
+            if (options.reveal) {
+              await revealDesktopItemInDir(path);
+            } else {
+              await openDesktopPath(path);
+            }
+          } catch {
+            await revealDesktopItemInDir(path).catch(() => undefined);
+          }
+        })();
+      }
+      return;
+    }
+
+    if (!isCollectibleArtifactTarget(target)) {
+      if (isOpenableFileTarget(target)) {
+        if (props.selectedWorkspaceDisplay.workspaceType === "remote") {
+          void downloadOpenTarget(target).catch(() => undefined);
+        } else if (isElectronRuntime()) {
+          void openDesktopPath(absoluteWorkspacePath(props.selectedWorkspaceRoot, target.value)).catch(() => undefined);
+        }
+      }
+      return;
+    }
+
     const sessionId = sourceSessionId ?? props.selectedSessionId;
-    if (!sessionId || !isCollectibleArtifactTarget(target)) return;
+    if (!sessionId) return;
     if (options?.auto && activePanelTab?.id === target.id) return;
     openTab(sessionId, {
       id: target.id,
@@ -407,7 +470,7 @@ export function SessionPage(props: SessionPageProps) {
     });
     preserveSidePanelOnPanelOpenRef.current = true;
     setCurrentSidePanel("panel");
-  }, [activePanelTab?.id, browserUrlForTarget, openTab, props.selectedSessionId, setCurrentSidePanel]);
+  }, [activePanelTab?.id, browserUrlForTarget, downloadOpenTarget, openTab, props.selectedSessionId, props.selectedWorkspaceDisplay.workspaceType, props.selectedWorkspaceRoot, setCurrentSidePanel]);
   const closeRightPane = useCallback(() => {
     setCurrentSidePanel(null);
   }, [setCurrentSidePanel]);
@@ -953,6 +1016,7 @@ export function SessionPage(props: SessionPageProps) {
                         // SessionRoute, not from anything in `surface`.
                         {...props.surface!}
                         client={props.openworkServerClient!}
+                        environmentClient={props.environmentClient}
                         workspaceId={props.runtimeWorkspaceId!}
                         sessionId={props.selectedSessionId!}
                         opencodeBaseUrl={reactSessionBaseUrl}
@@ -973,6 +1037,7 @@ export function SessionPage(props: SessionPageProps) {
                         <SessionSurface
                           {...props.surface!}
                           client={props.openworkServerClient!}
+                          environmentClient={props.environmentClient}
                           workspaceId={props.runtimeWorkspaceId!}
                           sessionId={splitSessionId!}
                           opencodeBaseUrl={reactSessionBaseUrl}

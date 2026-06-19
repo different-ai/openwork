@@ -1850,7 +1850,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         method: "POST",
         token,
         organizationId: orgId,
-        body: {},
+        body: { scopes: ["mcp:read", "mcp:write"] },
       });
       const minted = getMcpToken(payload);
       if (!minted) {

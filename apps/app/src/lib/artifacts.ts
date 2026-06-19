@@ -7,7 +7,7 @@ import {
   isWriteToolPart,
 } from "@/lib/build-in-tools";
 import { useOpenTargets } from "@/lib/target-provider";
-import { isCollectibleArtifactTarget, type OpenTarget, type OpenTargetPreview } from "@/react-app/domains/session/artifacts/open-target";
+import { isCollectibleArtifactTarget, isOpenableFileTarget, type OpenTarget, type OpenTargetPreview } from "@/react-app/domains/session/artifacts/open-target";
 
 export type ArtifactType = "website" | "markdown" | "sheet" | "slides" | "document" | "image" | "video" | "audio" | "pdf" | "html" | "text" | "unknown";
 
@@ -136,6 +136,10 @@ export function getArtifactTypeLabel(type: ArtifactType) {
 
 export function canPreviewArtifact(artifact: ArtifactItem) {
   return isCollectibleArtifactTarget(artifact.legacy_target);
+}
+
+export function canOpenArtifact(artifact: ArtifactItem) {
+  return canPreviewArtifact(artifact) || isOpenableFileTarget(artifact.legacy_target);
 }
 
 function getArtifactName(path: string) {
@@ -317,7 +321,7 @@ export function getArtifactsFromMessages(messages: UIMessage[], openTargets: Ope
   if (options.includeTargetFallbacks ?? true) {
     const fallbackMessageId = messages[messages.length - 1]?.id ?? "open-target";
     for (const target of openTargets) {
-      if (isCollectibleArtifactTarget(target)) {
+      if (isOpenableFileTarget(target)) {
         addArtifact(artifacts, target.value, fallbackMessageId, messages.length, sequence, openTargets, target);
         sequence += 1;
       }

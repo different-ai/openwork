@@ -669,8 +669,12 @@ export function createConnectionsStore(options: {
           // otherwise opencode reports "needs_auth" despite valid headers.
           mcpEntryConfig["oauth"] = false;
         }
-        if (entry.oauth && !resolvedHeaders) {
-          mcpEntryConfig["oauth"] = {};
+        if (!resolvedHeaders) {
+          if (entry.oauthConfig) {
+            mcpEntryConfig["oauth"] = entry.oauthConfig;
+          } else if (entry.oauth) {
+            mcpEntryConfig["oauth"] = {};
+          }
         }
       }
 
@@ -749,7 +753,8 @@ export function createConnectionsStore(options: {
                 url: resolvedUrl ?? entry.url!,
                 enabled: true,
                 ...(resolvedHeaders ? { headers: resolvedHeaders, oauth: false as const } : {}),
-                ...(entry.oauth && !resolvedHeaders ? { oauth: {} } : {}),
+                ...(!resolvedHeaders && entry.oauthConfig ? { oauth: entry.oauthConfig } : {}),
+                ...(!resolvedHeaders && !entry.oauthConfig && entry.oauth ? { oauth: {} } : {}),
               }
             : {
                 type: "local" as const,

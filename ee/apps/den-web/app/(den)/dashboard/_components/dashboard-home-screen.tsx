@@ -10,6 +10,7 @@ export function DashboardHomeScreen() {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
+    orgContext?.roles,
   );
 
   if (orgBusy || !orgContext) {

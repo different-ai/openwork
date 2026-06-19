@@ -2,6 +2,11 @@ import { getInitialActiveOrganizationIdForUser } from "./active-organization.js"
 import { db } from "./db.js";
 import { env } from "./env.js";
 import { deriveDenMcpResource } from "./mcp/resource.js";
+import { getDenAuthIssuer, getDenJwtOptions } from "./mcp/jwt-policy.js";
+import {
+  DEN_MCP_DEFAULT_CLIENT_SCOPES,
+  DEN_MCP_SCOPES,
+} from "./mcp/scopes.js";
 import {
   DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
   DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
@@ -19,7 +24,9 @@ import {
   DEN_API_KEY_EXPIRES_IN_SECONDS,
   DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
+  revokeOrganizationApiKeysForMember,
 } from "./api-keys.js";
+import { revokeMembershipSessionCredentials } from "./credential-revocation.js";
 import {
   canManageSecurityConfiguration,
   denOrganizationAccess,
@@ -34,7 +41,12 @@ import {
   ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
   ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
 } from "./sso-saml-policy.js";
-import { getOrganizationContextForUser, seedDefaultOrganizationRoles } from "./orgs.js";
+import {
+  getOrganizationContextForUser,
+  seedDefaultOrganizationRoles,
+  validateOrganizationMemberRemovalForHook,
+  validateOrganizationMemberRoleUpdate,
+} from "./orgs.js";
 import {
   findEnterpriseAuthRequirementForEmail,
   findEnterpriseAuthRequirementForUserId,
@@ -80,11 +92,13 @@ export const DEN_MCP_RESOURCES = Array.from(new Set([
   `${env.betterAuthUrl}/mcp`,
   ...localMcpResourceAliases(DEN_MCP_RESOURCE),
 ]));
-export const DEN_MCP_SCOPES = ["openid", "profile", "email", "offline_access", "mcp:read", "mcp:write"];
 export const DEN_MCP_TOKEN_USE_CLAIM = "https://openworklabs.com/token_use";
 export const DEN_MCP_ORG_ID_CLAIM = "https://openworklabs.com/org_id";
 export const DEN_MCP_RESOURCE_CLAIM = "https://openworklabs.com/resource";
 export const DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX = "ow_mcp_at_";
+export { DEN_MCP_SCOPES } from "./mcp/scopes.js";
+
+type AuthMemberHookRow = typeof schema.MemberTable.$inferSelect;
 
 const socialProviders = {
   ...(env.github.clientId && env.github.clientSecret
@@ -145,6 +159,30 @@ function hasMcpScope(scopes: readonly string[]) {
   return scopes.some((scope) => scope.startsWith("mcp:"));
 }
 
+async function revokeOrganizationMemberCredentials(input: {
+  organizationId: string;
+  orgMembershipId: string;
+  userId: string | null;
+}) {
+  const organizationId = normalizeDenTypeId("organization", input.organizationId);
+  const orgMembershipId = normalizeDenTypeId("member", input.orgMembershipId);
+  const userId = input.userId ? normalizeDenTypeId("user", input.userId) : null;
+
+  await revokeOrganizationApiKeysForMember({
+    organizationId,
+    orgMembershipId,
+    userId,
+  });
+  await revokeMembershipSessionCredentials({
+    organizationId,
+    userId,
+  });
+}
+
+function throwMemberLifecycleError(message: string): never {
+  throw new APIError("BAD_REQUEST", { message });
+}
+
 function getBodyEmail(body: unknown) {
   if (!body || typeof body !== "object") {
     return null;
@@ -183,8 +221,28 @@ export const auth = betterAuth({
   session: {
     expiresIn: DEN_SESSION_EXPIRES_IN_SECONDS,
     updateAge: DEN_SESSION_UPDATE_AGE_IN_SECONDS,
+    freshAge: 15 * 60,
   },
   databaseHooks: {
+    member: {
+      delete: {
+        before: async (member: AuthMemberHookRow) => {
+          const validation = await validateOrganizationMemberRemovalForHook({
+            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            memberId: normalizeDenTypeId("member", member.id),
+          });
+          if (!validation.ok) {
+            throwMemberLifecycleError(validation.message);
+          }
+
+          await revokeOrganizationMemberCredentials({
+            organizationId: member.organizationId,
+            orgMembershipId: member.id,
+            userId: member.userId,
+          });
+        },
+      },
+    },
     session: {
       create: {
         before: async (session) => {
@@ -351,7 +409,7 @@ export const auth = betterAuth({
     },
   },
   plugins: [
-    jwt(),
+    jwt(getDenJwtOptions({ issuer: getDenAuthIssuer(env.betterAuthUrl) })),
     emailOTP({
       overrideDefaultEmailVerification: true,
       otpLength: 6,
@@ -399,11 +457,19 @@ export const auth = betterAuth({
           );
         },
         beforeRemoveMember: async ({ member }) => {
-          if (hasRole(member.role, "owner")) {
-            throw new APIError("BAD_REQUEST", {
-              message: "The organization owner cannot be removed.",
-            });
+          const validation = await validateOrganizationMemberRemovalForHook({
+            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            memberId: normalizeDenTypeId("member", member.id),
+          });
+          if (!validation.ok) {
+            throwMemberLifecycleError(validation.message);
           }
+
+          await revokeOrganizationMemberCredentials({
+            organizationId: member.organizationId,
+            orgMembershipId: member.id,
+            userId: member.userId,
+          });
         },
         beforeUpdateMemberRole: async ({ member, newRole }) => {
           if (hasRole(member.role, "owner")) {
@@ -416,6 +482,23 @@ export const auth = betterAuth({
             throw new APIError("BAD_REQUEST", {
               message:
                 "Owner can only be assigned during organization creation.",
+            });
+          }
+
+          const validation = await validateOrganizationMemberRoleUpdate({
+            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            memberId: normalizeDenTypeId("member", member.id),
+            nextRole: newRole,
+          });
+          if (!validation.ok) {
+            throwMemberLifecycleError(validation.message);
+          }
+
+          if (member.role !== newRole) {
+            await revokeOrganizationMemberCredentials({
+              organizationId: member.organizationId,
+              orgMembershipId: member.id,
+              userId: member.userId,
             });
           }
         },
@@ -432,7 +515,7 @@ export const auth = betterAuth({
       accessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       m2mAccessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       refreshTokenExpiresIn: DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
-      clientRegistrationDefaultScopes: ["openid", "profile", "email", "mcp:read", "mcp:write"],
+      clientRegistrationDefaultScopes: [...DEN_MCP_DEFAULT_CLIENT_SCOPES],
       clientRegistrationAllowedScopes: [...DEN_MCP_SCOPES],
       advertisedMetadata: {
         scopes_supported: [...DEN_MCP_SCOPES],

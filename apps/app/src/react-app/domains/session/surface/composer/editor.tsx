@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, type ForwardedRef } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer.js";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin.js";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable.js";
@@ -48,6 +48,10 @@ type EditorProps = {
   onDrop?: React.DragEventHandler<HTMLDivElement>;
   onDragOver?: React.DragEventHandler<HTMLDivElement>;
   onDragLeave?: React.DragEventHandler<HTMLDivElement>;
+};
+
+export type LexicalPromptEditorHandle = {
+  insertSkillAtSelection: (skillName: string) => void;
 };
 
 type SerializedComposerMentionNode = Spread<
@@ -416,7 +420,7 @@ function $createComposerPastedTextNode(label: string, lines: number) {
 
 type ComposerInlineTokenNode = ComposerMentionNode | ComposerSlashCommandNode | ComposerSkillNode | ComposerPastedTextNode;
 
-function setSelectionAfterNode(node: ComposerInlineTokenNode) {
+function setSelectionAfterNode(node: TextNode) {
   const parent = node.getParent();
   if (!parent || !$isElementNode(parent)) return;
   const selection = $createRangeSelection();
@@ -503,6 +507,29 @@ function setPrompt(value: string, mentions: Record<string, ComposerMentionKind>,
     }
     paragraph = appendSegmentWithNewlines(paragraph, segment);
   }
+}
+
+function appendSkillAtEnd(skillName: string) {
+  const root = $getRoot();
+  const lastChild = root.getLastChild();
+  const paragraph = $isElementNode(lastChild) ? lastChild : $createParagraphNode();
+  if (!$isElementNode(lastChild)) root.append(paragraph);
+  const skillNode = $createComposerSkillNode(skillName);
+  const spaceNode = $createTextNode(" ");
+  paragraph.append(skillNode, spaceNode);
+  setSelectionAfterNode(spaceNode);
+}
+
+function insertSkillAtSelection(skillName: string) {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) {
+    appendSkillAtEnd(skillName);
+    return;
+  }
+  const skillNode = $createComposerSkillNode(skillName);
+  const spaceNode = $createTextNode(" ");
+  selection.insertNodes([skillNode, spaceNode]);
+  setSelectionAfterNode(spaceNode);
 }
 
 // Serialize the current editor state to the external draft string. Lexical's
@@ -760,7 +787,20 @@ function MentionChipNavigationPlugin() {
   return null;
 }
 
-export function LexicalPromptEditor(props: EditorProps) {
+function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEditorHandle> }) {
+  const [editor] = useLexicalComposerContext();
+
+  useImperativeHandle(props.editorRef, () => ({
+    insertSkillAtSelection(skillName: string) {
+      editor.update(() => insertSkillAtSelection(skillName));
+      editor.focus();
+    },
+  }), [editor]);
+
+  return null;
+}
+
+export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorProps>(function LexicalPromptEditor(props, ref) {
   const valueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
 
@@ -853,7 +893,8 @@ export function LexicalPromptEditor(props: EditorProps) {
         <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />
         <PasteChipPlugin onPasteText={props.onPasteText} />
         <MentionChipNavigationPlugin />
+        <ImperativeHandlePlugin editorRef={ref} />
       </div>
     </LexicalComposer>
   );
-}
+});

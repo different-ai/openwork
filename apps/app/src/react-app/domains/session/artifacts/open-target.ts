@@ -34,7 +34,8 @@ const WORKSPACE_ID_PREFIX_PATTERN = /^workspace\/(?:ws_[^/]+|\d+|[0-9a-f-]{6,})\
 const FILE_PATTERN = /(?:^|[\s"'`([{])((?:\.{1,2}[/\\]|~[/\\]|[/\\])?[\w.\-]+(?:[/\\][\w.\-]+)+\.[a-z][a-z0-9]{0,9}|[\w.\-]+\.[a-z][a-z0-9]{0,9})/gi;
 const URL_PATTERN = /https?:\/\/[^\s)\]}>"'`]+/gi;
 const SOCKET_PATTERN = /(?:ws|wss):\/\/[^\s)\]}>"'`]+/gi;
-const ARTIFACT_FILE_PREVIEWS = new Set<OpenTargetPreview>(["markdown", "sheet", "slides", "image", "pdf", "html"]);
+const SIDEBAR_ARTIFACT_FILE_PREVIEWS = new Set<OpenTargetPreview>(["markdown", "sheet", "slides", "image", "pdf", "html"]);
+const MARKDOWN_LINK_PATTERN = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
 const ASSISTANT_ARTIFACT_MENTION_PATTERN = /\b(?:artifact|created|deck|deliverable|exported|file|generated|opened|presentation|saved|slides?|updated|wrote)\b/i;
 const DISCOVERY_TOOL_NAMES = new Set(["glob", "grep", "search", "find"]);
 const ARTIFACT_METADATA_TOOL_NAMES = new Set(["openwork_extension_call"]);
@@ -95,6 +96,14 @@ function shouldScanAssistantFileMentions(text: string) {
   return ASSISTANT_ARTIFACT_MENTION_PATTERN.test(text);
 }
 
+function textWithoutRedundantMarkdownLinkLabels(text: string) {
+  return text.replace(MARKDOWN_LINK_PATTERN, (match, label: string, href: string) => {
+    const cleanLabel = label.trim();
+    const cleanHref = href.trim();
+    return cleanLabel === basename(cleanHref) ? `[](${cleanHref})` : match;
+  });
+}
+
 function targetFromFile(path: string, confidence: number, reason: string): OpenTarget | null {
   const normalized = normalizePath(path).replace(/[.,;:]+$/, "");
   if (!normalized || normalized.length > 500 || !normalized.includes(".")) return null;
@@ -139,11 +148,15 @@ function addTarget(map: Map<string, OpenTarget>, target: OpenTarget | null) {
 }
 
 function isArtifactTarget(target: OpenTarget) {
-  return target.kind === "url" || ARTIFACT_FILE_PREVIEWS.has(target.preview);
+  return target.kind === "url" || target.kind === "file";
 }
 
 export function isCollectibleArtifactTarget(target: OpenTarget) {
-  return target.kind === "file" && target.exists === true && ARTIFACT_FILE_PREVIEWS.has(target.preview);
+  return target.kind === "file" && target.exists === true && SIDEBAR_ARTIFACT_FILE_PREVIEWS.has(target.preview);
+}
+
+export function isOpenableFileTarget(target: OpenTarget) {
+  return target.kind === "file" && target.exists === true;
 }
 
 export function isLocalhostBrowserTarget(target: OpenTarget) {
@@ -165,22 +178,39 @@ function scanText(
     return;
   }
 
+  let scanValue = text;
+
+  MARKDOWN_LINK_PATTERN.lastIndex = 0;
+  for (const match of text.matchAll(MARKDOWN_LINK_PATTERN)) {
+    const href = match[2];
+    if (!href) continue;
+    if (/^(?:https?|wss?):\/\//i.test(href)) {
+      addTarget(map, targetFromUrl(href, confidence, reason));
+    } else if (options.includeFiles) {
+      addTarget(map, targetFromFile(href, confidence, reason));
+    }
+  }
+
+  if (options.includeFiles) {
+    scanValue = textWithoutRedundantMarkdownLinkLabels(text);
+  }
+
   URL_PATTERN.lastIndex = 0;
 
-  for (const match of text.matchAll(URL_PATTERN)) {
+  for (const match of scanValue.matchAll(URL_PATTERN)) {
     if (match[0]) addTarget(map, targetFromUrl(match[0], confidence, reason));
   }
 
   SOCKET_PATTERN.lastIndex = 0;
 
-  for (const match of text.matchAll(SOCKET_PATTERN)) {
+  for (const match of scanValue.matchAll(SOCKET_PATTERN)) {
     if (match[0]) addTarget(map, targetFromUrl(match[0], confidence, reason));
   }
 
   if (!options.includeFiles) return;
 
   FILE_PATTERN.lastIndex = 0;
-  for (const match of text.matchAll(FILE_PATTERN)) {
+  for (const match of scanValue.matchAll(FILE_PATTERN)) {
     if (match[1]) addTarget(map, targetFromFile(match[1], confidence, reason));
   }
 }

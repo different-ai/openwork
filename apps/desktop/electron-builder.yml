@@ -21,6 +21,12 @@ extraResources:
     to: opencode-plugins
     filter:
       - "*.js"
+  - from: ../../packages/docs
+    to: openwork-docs
+    filter:
+      - "**/*.md"
+      - "**/*.mdx"
+      - "docs.json"
 asar: true
 asarUnpack:
   - node_modules/.pnpm/@lydell+node-pty*/**

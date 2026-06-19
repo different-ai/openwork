@@ -46,7 +46,8 @@ function ensureFreshPrivilegedSession(c: { get: (key: "session") => OrgRouteVari
   return {
     ok: false as const,
     response: {
-      error: "fresh_auth_required",
+      error: "reauth",
+      reason: "fresh_auth_required",
       message: "Sign in again before performing this privileged action.",
     },
   }
@@ -122,7 +123,7 @@ export function ensureOwner(c: PrivilegedOrgRouteContext) {
   return ensureFreshPrivilegedSession(c)
 }
 
-export function ensureInviteManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+export function ensureOrganizationAdmin(c: PrivilegedOrgRouteContext, message: string) {
   const payload = c.get("organizationContext")
   if (!payload) {
     return {
@@ -134,7 +135,31 @@ export function ensureInviteManager(c: { get: (key: "organizationContext") => Or
   }
 
   if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
-    return { ok: true as const }
+    return ensureFreshPrivilegedSession(c)
+  }
+
+  return {
+    ok: false as const,
+    response: {
+      error: "forbidden",
+      message,
+    },
+  }
+}
+
+export function ensureInviteManager(c: PrivilegedOrgRouteContext) {
+  const payload = c.get("organizationContext")
+  if (!payload) {
+    return {
+      ok: false as const,
+      response: {
+        error: "organization_not_found",
+      },
+    }
+  }
+
+  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+    return ensureFreshPrivilegedSession(c)
   }
 
   return {
@@ -146,7 +171,7 @@ export function ensureInviteManager(c: { get: (key: "organizationContext") => Or
   }
 }
 
-export function ensureMemberRemover(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+export function ensureMemberRemover(c: PrivilegedOrgRouteContext) {
   const payload = c.get("organizationContext")
   if (!payload) {
     return {
@@ -158,7 +183,7 @@ export function ensureMemberRemover(c: { get: (key: "organizationContext") => Or
   }
 
   if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
-    return { ok: true as const }
+    return ensureFreshPrivilegedSession(c)
   }
 
   return {
@@ -170,28 +195,8 @@ export function ensureMemberRemover(c: { get: (key: "organizationContext") => Or
   }
 }
 
-export function ensureTeamManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
-  const payload = c.get("organizationContext")
-  if (!payload) {
-    return {
-      ok: false as const,
-      response: {
-        error: "organization_not_found",
-      },
-    }
-  }
-
-  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
-    return { ok: true as const }
-  }
-
-  return {
-    ok: false as const,
-    response: {
-      error: "forbidden",
-      message: "Only workspace owners and admins can manage teams.",
-    },
-  }
+export function ensureTeamManager(c: PrivilegedOrgRouteContext) {
+  return ensureOrganizationAdmin(c, "Only workspace owners and admins can manage teams.")
 }
 
 export function ensureApiKeyManager(c: PrivilegedOrgRouteContext) {

@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { buildOrganizationAuditEvent, ORGANIZATION_AUDIT_ACTIONS } from "../src/audit-events.js"
+import {
+  buildOrganizationAuditAlertLogLine,
+  buildOrganizationAuditEvent,
+  isOrganizationAuditAlertAction,
+  ORGANIZATION_AUDIT_ACTIONS,
+} from "../src/audit-events.js"
 
 test("organization audit events normalize org ids and keep actor context", () => {
   const organizationId = createDenTypeId("organization")
@@ -144,6 +149,24 @@ test("organization audit events support SCIM management actions", () => {
     scimProviderId,
     providerId: "openwork-scim-org_id",
   })
+
+  const reconciliationEvent = buildOrganizationAuditEvent({
+    organizationId: createDenTypeId("organization"),
+    actorUserId: createDenTypeId("user"),
+    action: ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun,
+    payload: {
+      checked: 3,
+      repaired: 1,
+      failures: 0,
+    },
+  })
+
+  expect(reconciliationEvent.action).toBe("organization.scim.reconciliation_run")
+  expect(reconciliationEvent.payload).toEqual({
+    checked: 3,
+    repaired: 1,
+    failures: 0,
+  })
 })
 
 test("organization audit events support SSO management actions", () => {
@@ -170,4 +193,34 @@ test("organization audit events support SSO management actions", () => {
     issuer: "https://idp.example.com",
     domain: "example.com",
   })
+})
+
+test("organization audit alerting covers sensitive access changes", () => {
+  expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.apiKeyCreated)).toBe(true)
+  expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.invitationCreated)).toBe(true)
+  expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.memberRoleUpdated)).toBe(true)
+  expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.roleUpdated)).toBe(true)
+  expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.scimTokenRotated)).toBe(true)
+  expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered)).toBe(true)
+  expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun)).toBe(false)
+})
+
+test("organization audit alert log line is structured and secret-free", () => {
+  const event = buildOrganizationAuditEvent({
+    organizationId: createDenTypeId("organization"),
+    actorUserId: createDenTypeId("user"),
+    action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted,
+    payload: {
+      ssoConnectionId: createDenTypeId("ssoConnection"),
+      providerId: "openwork-sso-org_id",
+      domain: "example.com",
+    },
+  })
+
+  const logLine = buildOrganizationAuditAlertLogLine(event)
+  expect(logLine.startsWith("[audit-alert] ")).toBe(true)
+  expect(logLine).toContain("organization.sso.connection_deleted")
+  expect(logLine).toContain(event.org_id)
+  expect(logLine).not.toContain("secret")
+  expect(logLine).not.toContain("token")
 })

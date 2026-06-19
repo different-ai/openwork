@@ -143,6 +143,7 @@ function renderMarkdown(report) {
     `- Started: ${report.startedAt}`,
     `- CDP: ${report.cdpUrl}`,
     `- Result: ${report.summary.failed > 0 ? "FAILED" : "PASSED"} (${report.summary.passed} passed, ${report.summary.failed} failed, ${report.summary.skipped} skipped)`,
+    `- Frame index: index.html`,
     "",
   ];
   for (const flow of report.flows) {
@@ -161,6 +162,84 @@ function renderMarkdown(report) {
     lines.push("");
   }
   return lines.join("\n");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function renderFrameIndex(report) {
+  const flowSections = report.flows.map((flow) => {
+    const screenshots = flow.screenshots ?? [];
+    const frames = screenshots.length > 0
+      ? screenshots.map((screenshot) => `
+          <figure>
+            <a href="${escapeHtml(screenshot)}"><img src="${escapeHtml(screenshot)}" alt="${escapeHtml(screenshot)}" /></a>
+            <figcaption>${escapeHtml(screenshot)}</figcaption>
+          </figure>`).join("\n")
+      : `<p class="muted">No screenshots captured for this flow.</p>`;
+    const steps = (flow.steps ?? []).map((step) => `
+        <li class="${step.status === "passed" ? "passed" : "failed"}">
+          <strong>${escapeHtml(step.status.toUpperCase())}</strong>
+          ${escapeHtml(step.name)} (${Number(step.durationMs) || 0}ms)
+          ${step.error ? `<div class="error">${escapeHtml(step.error)}</div>` : ""}
+        </li>`).join("\n");
+    return `
+      <section>
+        <h2>${escapeHtml(flow.id)} - ${escapeHtml(flow.title)}</h2>
+        ${flow.spec ? `<p class="muted">Spec: ${escapeHtml(flow.spec)}</p>` : ""}
+        ${flow.skipReason ? `<p class="skipped">Skipped: ${escapeHtml(flow.skipReason)}</p>` : ""}
+        <ol>${steps}</ol>
+        <div class="grid">${frames}</div>
+      </section>`;
+  }).join("\n");
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenWork Eval Run ${escapeHtml(report.runId)}</title>
+  <style>
+    body { margin: 0; background: #f7f7f8; color: #171717; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { max-width: 1180px; margin: 0 auto; padding: 32px; }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    h2 { margin-top: 32px; }
+    .meta, .muted { color: #5f6368; }
+    .summary { display: inline-flex; gap: 12px; margin: 16px 0 8px; padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; background: white; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 18px; margin-top: 16px; }
+    figure { margin: 0; overflow: hidden; border: 1px solid #ddd; border-radius: 12px; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+    img { display: block; width: 100%; height: auto; }
+    figcaption { padding: 10px 12px; border-top: 1px solid #eee; font-size: 13px; color: #444; }
+    li { margin: 8px 0; }
+    .passed strong { color: #0a7f35; }
+    .failed strong, .error { color: #b42318; }
+    .skipped { color: #8a5a00; }
+    code { background: #ededf0; padding: 2px 5px; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>OpenWork Eval Run</h1>
+    <div class="meta">
+      Run ID: <code>${escapeHtml(report.runId)}</code><br />
+      Started: ${escapeHtml(report.startedAt)}<br />
+      Finished: ${escapeHtml(report.finishedAt ?? "") }<br />
+      CDP: <code>${escapeHtml(report.cdpUrl)}</code>
+    </div>
+    <div class="summary">
+      <span>Passed: ${report.summary.passed}</span>
+      <span>Failed: ${report.summary.failed}</span>
+      <span>Skipped: ${report.summary.skipped}</span>
+    </div>
+    ${flowSections}
+  </main>
+</body>
+</html>`;
 }
 
 async function main() {
@@ -235,12 +314,14 @@ async function main() {
   report.finishedAt = new Date().toISOString();
   await writeFile(join(outDir, "report.json"), JSON.stringify(report, null, 2));
   await writeFile(join(outDir, "report.md"), renderMarkdown(report));
+  await writeFile(join(outDir, "index.html"), renderFrameIndex(report));
 
   console.log("");
   console.log(
     `Result: ${report.summary.failed > 0 ? "FAILED" : "PASSED"} — ${report.summary.passed} passed, ${report.summary.failed} failed, ${report.summary.skipped} skipped`,
   );
   console.log(`Report: ${join(outDir, "report.md")}`);
+  console.log(`Frames: ${join(outDir, "index.html")}`);
 
   if (report.summary.failed > 0) process.exit(1);
 }

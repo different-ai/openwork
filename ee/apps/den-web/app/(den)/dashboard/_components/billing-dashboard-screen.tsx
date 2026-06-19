@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CreditCard } from "lucide-react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
-import { formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { getInferenceRoute } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
@@ -124,7 +124,7 @@ function parsePolarBilling(payload: unknown): PolarBilling | null {
 export function BillingDashboardScreen() {
   const router = useRouter();
   const { sessionHydrated, user } = useDenFlow();
-  const { activeOrg, orgContext } = useOrgDashboard();
+  const { activeOrg, orgContext, runReauthableAction } = useOrgDashboard();
   const [stripeBilling, setStripeBilling] = useState<StripeBilling | null>(null);
   const [polarBilling, setPolarBilling] = useState<PolarBilling | null>(null);
   const [stripeBusy, setStripeBusy] = useState(false);
@@ -208,18 +208,20 @@ export function BillingDashboardScreen() {
   }, [sessionHydrated, user, orgContext?.organization.id]);
 
   async function startSeatCheckout() {
-    setStripeActionBusy("seat-checkout");
     setStripeError(null);
     try {
-      const { response, payload } = await requestJson(
-        "/v1/billing/stripe/checkout",
-        { method: "POST", body: JSON.stringify({ type: "seat" }) },
-        12000,
-      );
-      if (!response.ok) throw new Error(getErrorMessage(payload, `Seat checkout failed (${response.status}).`));
-      const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
-      if (!url) throw new Error("Seat checkout response did not include a URL.");
-      window.location.href = url;
+      await runReauthableAction("seat-checkout", async () => {
+        setStripeActionBusy("seat-checkout");
+        const { response, payload } = await requestJson(
+          "/v1/billing/stripe/checkout",
+          { method: "POST", body: JSON.stringify({ type: "seat" }) },
+          12000,
+        );
+        if (!response.ok) throw getRequestError(payload, response, `Seat checkout failed (${response.status}).`);
+        const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
+        if (!url) throw new Error("Seat checkout response did not include a URL.");
+        window.location.href = url;
+      });
     } catch (error) {
       setStripeError(error instanceof Error ? error.message : "Could not start seat billing checkout.");
     } finally {
@@ -228,14 +230,16 @@ export function BillingDashboardScreen() {
   }
 
   async function openStripePortal() {
-    setStripeActionBusy("portal");
     setStripeError(null);
     try {
-      const { response, payload } = await requestJson("/v1/billing/stripe/portal", { method: "POST" }, 12000);
-      if (!response.ok) throw new Error(getErrorMessage(payload, `Billing portal failed (${response.status}).`));
-      const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
-      if (!url) throw new Error("Billing portal response did not include a URL.");
-      window.location.href = url;
+      await runReauthableAction("billing-portal", async () => {
+        setStripeActionBusy("portal");
+        const { response, payload } = await requestJson("/v1/billing/stripe/portal", { method: "POST" }, 12000);
+        if (!response.ok) throw getRequestError(payload, response, `Billing portal failed (${response.status}).`);
+        const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
+        if (!url) throw new Error("Billing portal response did not include a URL.");
+        window.location.href = url;
+      });
     } catch (error) {
       setStripeError(error instanceof Error ? error.message : "Could not open Stripe billing portal.");
     } finally {

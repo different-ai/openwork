@@ -111,6 +111,15 @@ describe("tool part mapper", () => {
     });
   });
 
+  test("maps env var request tools for rich chat rendering", () => {
+    const part = writeToolPart("running", { key: "NOTION_TOKEN" }, { tool: "request_env_var" });
+    expect(parseDynamicToolUIPart(part)).toMatchObject({
+      type: "dynamic-tool",
+      toolName: "request_env_var",
+      input: { key: "NOTION_TOKEN" },
+    });
+  });
+
   test("skips empty structured output while streaming", () => {
     const part = writeToolPart("running", {}, { tool: "StructuredOutput" });
     expect(parseStructuredOutputUIPart(part)).toBeNull();

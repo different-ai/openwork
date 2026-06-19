@@ -455,7 +455,7 @@ export function SessionRoute() {
     onSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
   });
 
-  const { engineReloadVersion, routeEngineInfo } = useEngineReload({
+  const { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi } = useEngineReload({
     client,
     workspaceId: selectedWorkspaceId,
     workspace: selectedWorkspace,
@@ -464,6 +464,31 @@ export function SessionRoute() {
     onError: setRouteError,
     refreshRouteState,
   });
+
+  const environmentRuntimeKey = useMemo(
+    () => buildOpenworkEnvRuntimeKey({
+      baseUrl: client?.baseUrl ?? null,
+      pid: openworkServerHostInfoState?.pid ?? null,
+      port: openworkServerHostInfoState?.port ?? null,
+    }),
+    [client?.baseUrl, openworkServerHostInfoState?.pid, openworkServerHostInfoState?.port],
+  );
+
+  const handleApplyEnvironmentChanges = useCallback(async () => {
+    if (!isDesktopRuntime()) {
+      throw new Error(t("settings.environment.apply_unavailable"));
+    }
+    if (activeReloadBlockingSessions.length > 0) {
+      throw new Error(t("settings.environment.apply_blocked_active_tasks"));
+    }
+    if (!selectedWorkspaceRoot) {
+      throw new Error(t("settings.environment.apply_no_local_workspace"));
+    }
+    const reloaded = await reloadWorkspaceEngineFromUi();
+    if (!reloaded) {
+      throw new Error(t("app.error_connect_first"));
+    }
+  }, [activeReloadBlockingSessions.length, reloadWorkspaceEngineFromUi, selectedWorkspaceRoot]);
 
   const shareWorkspaceState = useShareWorkspaceState({
     workspaces,
@@ -823,14 +848,9 @@ export function SessionRoute() {
         }
 
         const parts = await draftToParts(draft, selectedWorkspaceRoot);
-        const envRuntimeKey = buildOpenworkEnvRuntimeKey({
-          baseUrl: client?.baseUrl ?? null,
-          pid: openworkServerHostInfoState?.pid ?? null,
-          port: openworkServerHostInfoState?.port ?? null,
-        });
         const envSystemContext = await buildOpenworkEnvSystemContext(client, {
           cacheKey: targetSessionId,
-          runtimeKey: envRuntimeKey,
+          runtimeKey: environmentRuntimeKey,
         });
         const result = await opencodeClient.session.promptAsync({
           sessionID: targetSessionId,
@@ -922,12 +942,18 @@ export function SessionRoute() {
             : null,
         }));
       },
+      environmentRuntimeKey,
+      onApplyEnvironmentChanges: isDesktopRuntime() && selectedWorkspace?.workspaceType !== "remote"
+        ? handleApplyEnvironmentChanges
+        : undefined,
     };
   }, [
     client,
     modelPicker.compactOpen,
     handleOpenSettings,
     hasUsableModel,
+    handleApplyEnvironmentChanges,
+    environmentRuntimeKey,
     local,
     listAgents,
     listSlashCommands,
@@ -1511,6 +1537,7 @@ export function SessionRoute() {
       clientConnected={canCreateTask}
       openworkServerStatus={client ? "connected" : "disconnected"}
       openworkServerClient={selectedWorkspaceEndpoint?.client ?? client}
+      environmentClient={client}
       openworkServerToken={selectedWorkspaceServerToken}
       developerMode={developerMode}
       headerStatus={canCreateTask ? t("status.connected") : t("session.loading_detail")}

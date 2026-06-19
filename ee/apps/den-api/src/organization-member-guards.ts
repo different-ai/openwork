@@ -19,6 +19,33 @@ function splitRoles(value: string) {
     .filter(Boolean)
 }
 
+function addRole(roleValue: string, roleName: string) {
+  const roles = splitRoles(roleValue).filter((role) => role !== roleName)
+  return [roleName, ...roles].join(",")
+}
+
+function removeRole(roleValue: string, roleName: string) {
+  return splitRoles(roleValue).filter((role) => role !== roleName)
+}
+
+export function getRoleValueAfterOwnershipTransfer(input: {
+  currentRole: string
+  targetRole: string
+}) {
+  const currentRoles = removeRole(input.currentRole, "owner")
+  const previousOwnerRole = currentRoles.includes("admin")
+    ? currentRoles.join(",")
+    : addRole(currentRoles.join(","), "admin")
+  const targetRoles = removeRole(input.targetRole, "owner")
+    .filter((role) => role !== "admin" && role !== "member")
+  const newOwnerRole = addRole(targetRoles.join(","), "owner")
+
+  return {
+    previousOwnerRole,
+    newOwnerRole,
+  }
+}
+
 export function roleIncludesOwner(roleValue: string) {
   return splitRoles(roleValue).includes("owner")
 }

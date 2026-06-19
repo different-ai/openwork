@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ExternalLink, KeyRound, Trash2, Users } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getRequestError, requestJson } from "../../_lib/den-flow";
 import {
     getEditLlmProviderRoute,
     getLlmProvidersRoute,
@@ -39,7 +39,7 @@ export function LlmProviderDetailScreen({
     llmProviderId: string;
 }) {
     const router = useRouter();
-    const { orgId, orgSlug } = useOrgDashboard();
+    const { orgId, orgSlug, runReauthableAction } = useOrgDashboard();
     const { llmProviders, busy, error, reloadProviders } =
         useOrgLlmProviders(orgId);
     const [deleteBusy, setDeleteBusy] = useState(false);
@@ -63,27 +63,24 @@ export function LlmProviderDetailScreen({
             return;
         }
 
-        setDeleteBusy(true);
         setDeleteError(null);
         try {
-            const { response, payload } = await requestJson(
-                `/v1/llm-providers/${encodeURIComponent(provider.id)}`,
-                { method: "DELETE" },
-                12000,
-            );
-
-            if (response.status !== 204 && !response.ok) {
-                throw new Error(
-                    getErrorMessage(
-                        payload,
-                        `Failed to delete provider (${response.status}).`,
-                    ),
+            await runReauthableAction("delete-llm-provider", async () => {
+                setDeleteBusy(true);
+                const { response, payload } = await requestJson(
+                    `/v1/llm-providers/${encodeURIComponent(provider.id)}`,
+                    { method: "DELETE" },
+                    12000,
                 );
-            }
 
-            await reloadProviders();
-            router.push(getLlmProvidersRoute(orgSlug));
-            router.refresh();
+                if (response.status !== 204 && !response.ok) {
+                    throw getRequestError(payload, response, `Failed to delete provider (${response.status}).`);
+                }
+
+                await reloadProviders();
+                router.push(getLlmProvidersRoute(orgSlug));
+                router.refresh();
+            });
         } catch (nextError) {
             setDeleteError(
                 nextError instanceof Error

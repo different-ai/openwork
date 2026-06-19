@@ -4,6 +4,7 @@ type DenApiApp = typeof import("../src/app.js").default
 
 let app: DenApiApp | null = null
 let explicitAuthGuards = new Set<unknown>()
+let hasExplicitAuthGuardHandler: (handler: unknown) => boolean = () => false
 
 const routeGuardExceptions = new Map<string, string>([
   ["GET /", "public marketing redirect"],
@@ -20,6 +21,8 @@ const routeGuardExceptions = new Map<string, string>([
   ["POST /register", "MCP OAuth dynamic client registration policy validates the request"],
   ["POST /api/auth/oauth2/register", "MCP OAuth dynamic client registration policy validates the request"],
   ["GET /api/auth/oauth2/authorize", "Better Auth OAuth authorization endpoint"],
+  ["ALL /api/auth/sso/saml2/callback/*", "SAML response policy validates callback responses before Better Auth"],
+  ["ALL /api/auth/sso/saml2/sp/acs/*", "SAML response policy validates ACS responses before Better Auth"],
   ["GET /api/auth/*", "Better Auth route mount"],
   ["POST /api/auth/*", "Better Auth route mount"],
   ["PUT /api/auth/*", "Better Auth route mount"],
@@ -75,6 +78,7 @@ beforeAll(async () => {
     middlewareModule.resolveOrganizationContextMiddleware,
     middlewareModule.resolveUserOrganizationsMiddleware,
   ])
+  hasExplicitAuthGuardHandler = middlewareModule.hasExplicitAuthGuardHandler
 })
 
 function routeChains() {
@@ -106,7 +110,7 @@ test("registered den-api routes require an auth guard or explicit exception", ()
         return false
       }
 
-      return !handlers.some((handler) => explicitAuthGuards.has(handler))
+      return !handlers.some((handler) => explicitAuthGuards.has(handler) || hasExplicitAuthGuardHandler(handler))
     })
     .map(([key]) => key)
     .sort()

@@ -4,9 +4,10 @@ import { Copy, RefreshCw, Shield, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import {
   type DenOrgScimConnection,
+  type DenOrgScimHealth,
   getOrgAccessFlags,
   parseOrgScimPayload,
 } from "../../_lib/den-org";
@@ -26,13 +27,22 @@ function formatDateTime(value: string | null) {
 }
 
 export function ScimScreen() {
-  const { orgId, orgContext } = useOrgDashboard();
+  const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
   const [connection, setConnection] = useState<DenOrgScimConnection | null>(null);
+  const [health, setHealth] = useState<DenOrgScimHealth>({
+    unresolvedFailureCount: 0,
+    lastFailureAt: null,
+    lastFailureAction: null,
+    lastFailureMessage: null,
+    nextRetryAt: null,
+    lastSuccessfulSyncAt: null,
+  });
   const [visibleToken, setVisibleToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<"base-url" | "token" | null>(null);
 
@@ -41,8 +51,9 @@ export function ScimScreen() {
       getOrgAccessFlags(
         orgContext?.currentMember.role ?? "member",
         orgContext?.currentMember.isOwner ?? false,
+        orgContext?.roles,
       ),
-    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role],
+    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.roles],
   );
 
   async function loadScimConfig(isCurrent = () => true) {
@@ -50,6 +61,14 @@ export function ScimScreen() {
       if (isCurrent()) {
         setBaseUrl(null);
         setConnection(null);
+        setHealth({
+          unresolvedFailureCount: 0,
+          lastFailureAt: null,
+          lastFailureAction: null,
+          lastFailureMessage: null,
+          nextRetryAt: null,
+          lastSuccessfulSyncAt: null,
+        });
       }
       return;
     }
@@ -73,6 +92,7 @@ export function ScimScreen() {
       if (isCurrent()) {
         setBaseUrl(parsed.baseUrl);
         setConnection(parsed.connection);
+        setHealth(parsed.health);
       }
     } catch (nextError) {
       if (isCurrent()) {
@@ -123,37 +143,73 @@ export function ScimScreen() {
       return;
     }
 
-    setRotating(true);
     setError(null);
     setVisibleToken(null);
     try {
-      const { response, payload } = await requestJson(
-        "/v1/scim/token",
-        { method: "POST", body: JSON.stringify({}) },
-        12000,
-      );
+      await runReauthableAction("rotate-scim-token", async () => {
+        setRotating(true);
+        try {
+          const { response, payload } = await requestJson(
+            "/v1/scim/token",
+            { method: "POST", body: JSON.stringify({}) },
+            12000,
+          );
 
-      if (!response.ok) {
-        throw new Error(
-          getErrorMessage(payload, `Failed to rotate SCIM token (${response.status}).`),
-        );
-      }
+          if (!response.ok) {
+            throw getRequestError(payload, response, `Failed to rotate SCIM token (${response.status}).`);
+          }
 
-      const parsed = parseOrgScimPayload(payload);
-      if (!parsed.baseUrl || !parsed.connection || !parsed.scimToken) {
-        throw new Error("SCIM token rotation succeeded, but the response was incomplete.");
-      }
+          const parsed = parseOrgScimPayload(payload);
+          if (!parsed.baseUrl || !parsed.connection || !parsed.scimToken) {
+            throw new Error("SCIM token rotation succeeded, but the response was incomplete.");
+          }
 
-      setBaseUrl(parsed.baseUrl);
-      setConnection(parsed.connection);
-      setVisibleToken(parsed.scimToken);
-      setCopiedValue(null);
+          setBaseUrl(parsed.baseUrl);
+          setConnection(parsed.connection);
+          setHealth(parsed.health);
+          setVisibleToken(parsed.scimToken);
+          setCopiedValue(null);
+        } finally {
+          setRotating(false);
+        }
+      });
     } catch (nextError) {
       setError(
         nextError instanceof Error ? nextError.message : "Failed to rotate SCIM token.",
       );
-    } finally {
-      setRotating(false);
+    }
+  }
+
+  async function handleRunReconciliation() {
+    if (!orgId) {
+      setError("Organization not found.");
+      return;
+    }
+
+    setError(null);
+    try {
+      await runReauthableAction("reconcile-scim", async () => {
+        setReconciling(true);
+        try {
+          const { response, payload } = await requestJson(
+            "/v1/scim/reconcile",
+            { method: "POST", body: JSON.stringify({}) },
+            12000,
+          );
+
+          if (!response.ok) {
+            throw getRequestError(payload, response, `Failed to reconcile SCIM (${response.status}).`);
+          }
+
+          await loadScimConfig();
+        } finally {
+          setReconciling(false);
+        }
+      });
+    } catch (nextError) {
+      setError(
+        nextError instanceof Error ? nextError.message : "Failed to reconcile SCIM.",
+      );
     }
   }
 
@@ -167,31 +223,33 @@ export function ScimScreen() {
       return;
     }
 
-    setDeleting(true);
     setError(null);
     try {
-      const { response, payload } = await requestJson(
-        "/v1/scim",
-        { method: "DELETE" },
-        12000,
-      );
+      await runReauthableAction("delete-scim-connection", async () => {
+        setDeleting(true);
+        try {
+          const { response, payload } = await requestJson(
+            "/v1/scim",
+            { method: "DELETE" },
+            12000,
+          );
 
-      if (response.status !== 204 && !response.ok) {
-        throw new Error(
-          getErrorMessage(payload, `Failed to delete SCIM connection (${response.status}).`),
-        );
-      }
+          if (response.status !== 204 && !response.ok) {
+            throw getRequestError(payload, response, `Failed to delete SCIM connection (${response.status}).`);
+          }
 
-      setConnection(null);
-      setVisibleToken(null);
-      setCopiedValue(null);
-      await loadScimConfig();
+          setConnection(null);
+          setVisibleToken(null);
+          setCopiedValue(null);
+          await loadScimConfig();
+        } finally {
+          setDeleting(false);
+        }
+      });
     } catch (nextError) {
       setError(
         nextError instanceof Error ? nextError.message : "Failed to delete SCIM connection.",
       );
-    } finally {
-      setDeleting(false);
     }
   }
 
@@ -228,6 +286,30 @@ export function ScimScreen() {
           {error ? (
             <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
               {error}
+            </div>
+          ) : null}
+
+          {health.unresolvedFailureCount > 0 ? (
+            <div className="mb-6 rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900 dark:border-amber-800/30 dark:bg-amber-950/50 dark:text-amber-200">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="font-semibold">SCIM needs attention</p>
+                  <p className="mt-1 leading-6">
+                    {health.unresolvedFailureCount} SCIM sync issue{health.unresolvedFailureCount === 1 ? "" : "s"} still need retry or review.
+                  </p>
+                  {health.lastFailureMessage ? (
+                    <p className="mt-1 break-words text-[13px] leading-6">
+                      Last issue: {health.lastFailureMessage}
+                    </p>
+                  ) : null}
+                  <p className="mt-1 text-[13px] leading-6">
+                    Last failure {formatDateTime(health.lastFailureAt)} · Next retry {formatDateTime(health.nextRetryAt)}
+                  </p>
+                </div>
+                <DenButton variant="secondary" icon={RefreshCw} onClick={() => void handleRunReconciliation()} loading={reconciling}>
+                  Reconcile now
+                </DenButton>
+              </div>
             </div>
           ) : null}
 
@@ -311,6 +393,18 @@ export function ScimScreen() {
 
               <div className="rounded-[20px] border border-cyan-100 bg-cyan-50 p-4 text-[13px] leading-6 text-cyan-900 dark:border-cyan-800/30 dark:bg-cyan-950/50 dark:text-cyan-200">
                 SCIM deprovisioning removes workspace access and the SCIM provider account, but it does not blindly delete the global OpenWork user record.
+                <p className="mt-2">
+                  Last successful SCIM sync: {formatDateTime(health.lastSuccessfulSyncAt)}.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-[24px] border border-gray-200 bg-gray-50 p-4 text-[13px] leading-6 text-gray-600">
+              OpenWork records failed SCIM lifecycle work for retry, runs periodic reconciliation for local SCIM drift, and surfaces unresolved issues here so deprovisioning failures are not silent.
+              <div className="mt-3">
+                <DenButton variant="secondary" icon={RefreshCw} onClick={() => void handleRunReconciliation()} loading={reconciling}>
+                  Run reconciliation
+                </DenButton>
               </div>
             </div>
 
