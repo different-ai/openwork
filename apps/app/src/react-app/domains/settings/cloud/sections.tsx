@@ -312,7 +312,7 @@ function CloudWorkerListItem({ openingWorkerId, worker, onOpenWorker }: CloudWor
         <SettingsListItemDescription>
           {[
             worker.isMine ? t("den.worker_mine_badge") : null,
-            !worker.isMine && worker.isShared ? "Shared" : null,
+            !worker.isMine && worker.isShared ? t("den.worker_shared_badge") : null,
             worker.provider ? t("den.worker_provider_label", { provider: worker.provider }) : t("den.worker_secondary_cloud"),
             worker.instanceUrl,
           ].filter(Boolean).join(" · ")}
@@ -323,7 +323,7 @@ function CloudWorkerListItem({ openingWorkerId, worker, onOpenWorker }: CloudWor
         size="sm"
         onClick={() => void onOpenWorker(worker.workerId, worker.workerName)}
         disabled={[openingWorkerId !== null, !status.canOpen, !worker.isMine && !worker.isShared].some(Boolean)}
-        title={!worker.isMine && !worker.isShared ? "Only the worker owner can open connection tokens." : !status.canOpen ? t("den.worker_not_ready_title") : undefined}
+        title={!worker.isMine && !worker.isShared ? t("den.worker_owner_only_title") : !status.canOpen ? t("den.worker_not_ready_title") : undefined}
       >
         {openingWorkerId === worker.workerId ? t("den.opening") : t("den.open")}
       </Button>

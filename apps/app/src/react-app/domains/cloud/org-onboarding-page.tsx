@@ -412,6 +412,12 @@ export function ResourceSelectionPage() {
           </PageContent>
         ) : !hasResources ? (
           <PageContent>
+            {continueError ? (
+              <Alert variant="destructive" className="mb-4">
+                <CircleAlert />
+                <AlertDescription>{continueError}</AlertDescription>
+              </Alert>
+            ) : null}
             <Empty className="h-fit flex-none">
               <EmptyHeader>
                 <EmptyTitle>No resources have been configured for this organization yet.</EmptyTitle>
