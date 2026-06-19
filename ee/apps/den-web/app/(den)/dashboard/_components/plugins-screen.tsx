@@ -221,7 +221,7 @@ export function PluginsScreen() {
               <Link
                 key={plugin.id}
                 href={getPluginRoute(orgSlug, plugin.id)}
-                className="group block overflow-hidden rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] transition hover:-translate-y-0.5 hover:border-gray-200 dark:hover:border-gray-600 dark:border-gray-700 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] dark:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.4)]"
+                className="group block overflow-hidden rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] transition hover:-translate-y-0.5 hover:border-gray-200 dark:hover:border-gray-600 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] dark:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.4)]"
               >
                 <div className="flex items-stretch">
                   <div className="relative w-[68px] shrink-0 overflow-hidden">
@@ -429,10 +429,10 @@ function PrimitiveList({
         <Link
           key={row.id}
           href={row.href}
-          className="group flex min-w-0 flex-col gap-3 rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 py-4 transition hover:-translate-y-0.5 hover:border-gray-200 dark:hover:border-gray-600 dark:border-gray-700 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.08)] dark:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.3)]"
+          className="group flex min-w-0 flex-col gap-3 rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 py-4 transition hover:-translate-y-0.5 hover:border-gray-200 dark:hover:border-gray-600 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.08)] dark:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.3)]"
         >
           <div className="flex min-w-0 items-start gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-gray-50 dark:bg-gray-800/50 text-gray-500 group-hover:bg-gray-100 dark:hover:bg-gray-800 dark:bg-gray-700 group-hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 group-hover:bg-gray-100 dark:group-hover:bg-gray-700/50 group-hover:text-gray-700 dark:group-hover:text-gray-300">
               <Icon className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
@@ -444,19 +444,19 @@ function PrimitiveList({
                 {row.title}
               </p>
               {row.description ? (
-                <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-500">
+                <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500 dark:text-gray-400">
                   {row.description}
                 </p>
               ) : null}
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 border-t border-gray-50 pt-2.5">
-            <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-500">
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-gray-50 dark:border-gray-700/50 pt-2.5">
+            <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-400">
               <Puzzle className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-hidden />
               <span className="max-w-[160px] truncate">{row.pluginName}</span>
             </span>
             {row.meta ? (
-              <span className="rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-500">
+              <span className="rounded-full bg-gray-50 dark:bg-gray-800/50 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-400">
                 {row.meta}
               </span>
             ) : null}
