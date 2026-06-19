@@ -130,7 +130,7 @@ function SettingsToggle({
         "inline-flex shrink-0 h-7 w-12 items-center rounded-full border p-0.5 transition-colors",
         checked
           ? "justify-end border-[#0f172a] bg-[#0f172a] dark:border-gray-100 dark:bg-gray-100"
-          : "justify-start border-gray-200 dark:border-gray-700 bg-gray-200",
+          : "justify-start border-gray-200 dark:border-gray-700 bg-gray-200 dark:bg-gray-700",
         disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
       ].join(" ")}
     >
@@ -334,7 +334,7 @@ export function OrgSettingsScreen() {
   if (!activeOrg || !orgContext) {
     return (
       <div className="mx-auto max-w-[860px] p-8">
-        <div className="rounded-[28px] border border-red-200 bg-red-50 px-6 py-10 text-[15px] text-red-700">
+        <div className="rounded-[28px] border border-red-200 bg-red-50 px-6 py-10 text-[15px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
           {orgError ?? "Workspace settings are not available right now."}
         </div>
       </div>
@@ -407,12 +407,12 @@ export function OrgSettingsScreen() {
         <EnterprisePlanNotice feature="Enforced SSO and desktop version control" />
       ) : null}
       {pageError ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
+        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
           {pageError}
         </div>
       ) : null}
       {pageSuccess ? (
-        <div className="mb-6 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-700">
+        <div className="mb-6 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-700 dark:border-emerald-800/30 dark:bg-emerald-900/30 dark:text-emerald-400">
           {pageSuccess}
         </div>
       ) : null}
@@ -609,7 +609,7 @@ export function OrgSettingsScreen() {
           ) : null}
 
           {desktopVersionOptionsError ? (
-            <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-800">
+            <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-800 dark:border-amber-800/30 dark:bg-amber-950/50 dark:text-amber-200">
               {desktopVersionOptionsError}
             </div>
           ) : null}

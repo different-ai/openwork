@@ -255,7 +255,7 @@ function MarketplaceAccessSection({ marketplaceId }: { marketplaceId: string }) 
           disabled={grantMutation.isPending || revokeMutation.isPending}
           className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-gray-50 dark:hover:bg-gray-800/50 disabled:opacity-60"
         >
-          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${orgWideGrant ? "bg-emerald-50 text-emerald-600" : "bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 dark:text-gray-500"}`}>
+          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${orgWideGrant ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 dark:text-gray-500"}`}>
             <Globe className="h-4 w-4" aria-hidden />
           </div>
           <div className="min-w-0 flex-1">

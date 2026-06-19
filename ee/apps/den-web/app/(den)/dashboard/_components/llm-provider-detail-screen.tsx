@@ -105,7 +105,7 @@ export function LlmProviderDetailScreen({
     if (!provider) {
         return (
             <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-                <div className="rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[15px] text-red-700">
+                <div className="rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[15px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
                     {error ?? "That provider could not be found."}
                 </div>
             </div>
@@ -168,7 +168,7 @@ export function LlmProviderDetailScreen({
             </div>
 
             {deleteError ? (
-                <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
+                <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
                     {deleteError}
                 </div>
             ) : null}
@@ -182,7 +182,7 @@ export function LlmProviderDetailScreen({
                     </div>
 
                     <div
-                        className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium ${provider.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
+                        className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium ${provider.hasApiKey ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-200"}`}
                     >
                         <KeyRound className="h-4 w-4" />
                         {provider.hasApiKey

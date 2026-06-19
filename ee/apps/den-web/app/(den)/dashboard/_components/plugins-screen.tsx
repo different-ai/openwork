@@ -194,7 +194,7 @@ export function PluginsScreen() {
       </div>
 
       {error ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
+        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
           {error instanceof Error ? error.message : "Failed to load plugins."}
         </div>
       ) : null}

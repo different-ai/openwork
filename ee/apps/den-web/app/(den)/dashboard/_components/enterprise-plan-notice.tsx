@@ -11,7 +11,7 @@ type Props = {
 
 export function EnterprisePlanNotice(props: Props) {
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5">
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 dark:border-amber-800/30 dark:bg-amber-950/50">
       <div className="min-w-[260px] flex-1 text-[14px] text-amber-900">
         <p className="font-semibold">{props.feature} is part of the Enterprise plan.</p>
         <p className="mt-1">

@@ -496,8 +496,8 @@ function Toggle({
       disabled={busy}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-6 w-[42px] shrink-0 items-center rounded-full transition-colors ${
-        checked ? "bg-[#0f172a]" : "bg-gray-200"
-      } ${busy ? "opacity-60" : ""} focus:outline-none focus:ring-2 focus:ring-[#0f172a]/20 focus:ring-offset-2`}
+        checked ? "bg-[#0f172a] dark:bg-gray-100" : "bg-gray-200 dark:bg-gray-700"
+      } ${busy ? "opacity-60" : ""} focus:outline-none focus:ring-2 focus:ring-[#0f172a]/20 dark:focus:ring-gray-100/20 focus:ring-offset-2`}
     >
       <span
         className={`inline-block h-5 w-5 transform rounded-full bg-white dark:bg-[var(--dls-surface)] shadow-[0_2px_6px_-1px_rgba(15,23,42,0.3)] transition-transform ${
@@ -883,7 +883,7 @@ function RepositoryCard({
               </span>
             ) : null}
             {badge ? (
-              <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-emerald-700">
+              <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
                 {badge}
               </span>
             ) : null}
@@ -906,7 +906,7 @@ function RepositoryCard({
             aria-checked={selected}
             className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border transition ${
               selected
-                ? "border-[#0f172a] bg-[#0f172a] text-white"
+                ? "border-[#0f172a] bg-[#0f172a] text-white dark:border-gray-100 dark:bg-gray-100"
                 : "border-gray-300 dark:border-gray-600 bg-white dark:bg-[var(--dls-surface)] text-transparent group-hover:border-gray-500"
             }`}
           >
@@ -1021,12 +1021,12 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
       ) : discoveryQuery.data ? (
         <div className="space-y-5">
           {discoveryQuery.data.warnings.length > 0 ? (
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-800">
+            <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-800 dark:border-amber-800/30 dark:bg-amber-950/50 dark:text-amber-200">
               {discoveryQuery.data.warnings[0]}
             </div>
           ) : null}
           {discoveryQuery.data.treeSummary.truncated ? (
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-800">
+            <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-800 dark:border-amber-800/30 dark:bg-amber-950/50 dark:text-amber-200">
               GitHub truncated the tree response. Discovery is based on the paths GitHub returned so far.
             </div>
           ) : null}
@@ -1158,7 +1158,7 @@ function DiscoveredPluginCard({
                   {plugin.displayName}
                 </h3>
                 {!plugin.supported ? (
-                  <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-amber-700">
+                  <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
                     Unsupported
                   </span>
                 ) : null}
@@ -1181,7 +1181,7 @@ function DiscoveredPluginCard({
                   !plugin.supported
                     ? "border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-transparent"
                     : selected
-                      ? "border-[#0f172a] bg-[#0f172a] text-white"
+                      ? "border-[#0f172a] bg-[#0f172a] text-white dark:border-gray-100 dark:bg-gray-100"
                       : "border-gray-300 dark:border-gray-600 bg-white dark:bg-[var(--dls-surface)] text-transparent group-hover:border-gray-500"
                 }`}
               >
@@ -1235,7 +1235,7 @@ function DiscoveryAppliedState({
   return (
     <div className="overflow-hidden rounded-2xl border border-emerald-100 bg-white dark:bg-[var(--dls-surface)]">
       <div className="flex items-start gap-4 px-6 py-5">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
           <CheckCircle2 className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">

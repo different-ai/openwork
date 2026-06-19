@@ -105,7 +105,7 @@ function SummaryCard({
 }) {
   return (
     <div
-      className={`rounded-[24px] border px-5 py-4 ${tone === "dark" ? "border-[#0f172a] bg-[#0f172a] text-white" : "border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] text-gray-900 dark:text-gray-100"}`}
+      className={`rounded-[24px] border px-5 py-4 ${tone === "dark" ? "border-[#0f172a] bg-[#0f172a] text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900" : "border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] text-gray-900 dark:text-gray-100"}`}
     >
       <p
         className={`text-[12px] font-semibold uppercase tracking-[0.16em] ${tone === "dark" ? "text-white/60" : "text-gray-400 dark:text-gray-500"}`}
@@ -268,7 +268,7 @@ export function ManageMembersScreen() {
   if (!orgContext || !activeOrg) {
     return (
       <div className="mx-auto max-w-[1200px] px-6 py-8 md:px-8">
-        <div className="rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[15px] text-red-700">
+        <div className="rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[15px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
           {orgError ?? "Organization details are unavailable."}
         </div>
       </div>
@@ -443,7 +443,7 @@ export function ManageMembersScreen() {
                       }}
                       className={`flex items-start gap-3 rounded-[22px] border px-4 py-4 text-left transition ${
                         selected
-                          ? "border-[#0f172a] bg-[#0f172a] text-white"
+                          ? "border-[#0f172a] bg-[#0f172a] text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
                           : "border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-500 dark:border-gray-600"
                       }`}
                     >
@@ -645,7 +645,7 @@ export function ManageMembersScreen() {
       />
 
       {pageError ? (
-        <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
+        <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
           {pageError}
         </div>
       ) : null}

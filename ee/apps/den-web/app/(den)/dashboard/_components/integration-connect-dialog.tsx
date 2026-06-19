@@ -206,7 +206,7 @@ export function IntegrationConnectDialog({
 
         {/* Error */}
         {localError ? (
-          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
+          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
             {localError}
           </div>
         ) : null}
@@ -287,7 +287,7 @@ function AuthorizeStep({ providerName, scopes }: { providerName: string; scopes:
         {scopes.map((scope) => (
           <li key={scope} className="flex items-center gap-2">
             <Lock className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500" />
-            <code className="rounded bg-white dark:bg-[var(--dls-surface)] px-1.5 py-0.5 text-[12px] text-gray-700 dark:text-gray-300 ring-1 ring-gray-200">
+            <code className="rounded bg-white dark:bg-[var(--dls-surface)] px-1.5 py-0.5 text-[12px] text-gray-700 dark:text-gray-300 ring-1 ring-gray-200 dark:ring-gray-700">
               {scope}
             </code>
           </li>
@@ -397,7 +397,7 @@ function SelectReposStep({
                 leading={<GitBranch className="h-4 w-4 text-gray-400 dark:text-gray-500" />}
                 aside={
                   repo.hasPlugins ? (
-                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
                       has plugins
                     </span>
                   ) : null
@@ -442,8 +442,8 @@ function ConnectedStep({
   repoCount: number;
 }) {
   return (
-    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 px-5 py-6 text-center">
-      <CheckCircle2 className="mx-auto mb-2 h-8 w-8 text-emerald-700" />
+    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 px-5 py-6 text-center dark:border-emerald-800/30 dark:bg-emerald-950/30">
+      <CheckCircle2 className="mx-auto mb-2 h-8 w-8 text-emerald-700 dark:text-emerald-400" />
       <p className="text-[14px] font-medium text-gray-900 dark:text-gray-100">
         {providerName} connected{account ? ` · ${account.name}` : ""}
       </p>

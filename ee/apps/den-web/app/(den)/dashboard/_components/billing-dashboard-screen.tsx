@@ -261,13 +261,13 @@ export function BillingDashboardScreen() {
       colors={["#EFF6FF", "#1E3A5F", "#3B82F6", "#93C5FD"]}
     >
       {stripeError ? (
-        <div className="mb-6 rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
+        <div className="mb-6 rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
           {stripeError}
         </div>
       ) : null}
 
       {isOwner ? null : (
-        <div className="mb-6 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+        <div className="mb-6 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800 dark:border-amber-800/30 dark:bg-amber-950/50 dark:text-amber-200">
           Only workspace owners can start checkout or open billing portals. Other members can view the current billing state.
         </div>
       )}

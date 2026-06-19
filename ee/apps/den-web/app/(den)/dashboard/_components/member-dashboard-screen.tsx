@@ -81,9 +81,9 @@ function SummaryCard({
 }) {
   const toneClass = {
     blue: "bg-blue-50 dark:bg-blue-900/30 text-blue-700",
-    emerald: "bg-emerald-50 text-emerald-700",
-    violet: "bg-violet-50 text-violet-700",
-    amber: "bg-amber-50 text-amber-700",
+    emerald: "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+    violet: "bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400",
+    amber: "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-200",
   }[tone];
 
   return (
@@ -104,7 +104,7 @@ function SummaryCard({
 
 function ErrorNotice({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-5 text-amber-800">
+    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-5 text-amber-800 dark:border-amber-800/30 dark:bg-amber-950/50 dark:text-amber-200">
       {children}
     </div>
   );
@@ -246,7 +246,7 @@ export function MemberDashboardScreen() {
               <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">OpenWork Models</h2>
               <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Org-provided inference status.</p>
             </div>
-            <span className={`rounded-full px-3 py-1 text-[12px] font-medium ${inference?.enabled ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+            <span className={`rounded-full px-3 py-1 text-[12px] font-medium ${inference?.enabled ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-200"}`}>
               {inferenceLabel}
             </span>
           </div>

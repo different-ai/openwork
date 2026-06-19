@@ -378,7 +378,7 @@ export function LlmProviderEditorScreen({
     if (llmProviderId && !provider) {
         return (
             <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-                <div className="rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[15px] text-red-700">
+                <div className="rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[15px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
                     {error ?? "That provider could not be found."}
                 </div>
             </div>
@@ -442,7 +442,7 @@ export function LlmProviderEditorScreen({
             </div>
 
             {saveError ? (
-                <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
+                <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
                     {saveError}
                 </div>
             ) : null}
@@ -522,7 +522,7 @@ export function LlmProviderEditorScreen({
                                             NPM package
                                         </p>
                                         <p className="mt-2">
-                                            <span className="inline-flex max-w-full rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200">
+                                            <span className="inline-flex max-w-full rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200 dark:ring-gray-700">
                                                 {providerNpm ?? "Not set"}
                                             </span>
                                         </p>
@@ -532,7 +532,7 @@ export function LlmProviderEditorScreen({
                                             API base
                                         </p>
                                         <p className="mt-2">
-                                            <span className="inline-flex max-w-full break-all rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200">
+                                            <span className="inline-flex max-w-full break-all rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200 dark:ring-gray-700">
                                                 {providerApiBase ?? "Not set"}
                                             </span>
                                         </p>
@@ -546,7 +546,7 @@ export function LlmProviderEditorScreen({
                                                 {providerEnv.map((envName) => (
                                                     <span
                                                         key={envName}
-                                                        className="inline-flex max-w-full break-all rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200"
+                                                        className="inline-flex max-w-full break-all rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200 dark:ring-gray-700"
                                                     >
                                                         {envName}
                                                     </span>
@@ -554,7 +554,7 @@ export function LlmProviderEditorScreen({
                                             </div>
                                         ) : (
                                             <p className="mt-2">
-                                                <span className="inline-flex max-w-full rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200">
+                                                <span className="inline-flex max-w-full rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200 dark:ring-gray-700">
                                                     None listed
                                                 </span>
                                             </p>
@@ -565,7 +565,7 @@ export function LlmProviderEditorScreen({
                                             Docs
                                         </p>
                                         <p className="mt-2">
-                                            <span className="inline-flex max-w-full break-all rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200">
+                                            <span className="inline-flex max-w-full break-all rounded-md bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-200 dark:ring-gray-700">
                                                 {providerDoc ?? "Not set"}
                                             </span>
                                         </p>
@@ -606,7 +606,7 @@ export function LlmProviderEditorScreen({
                         </h2>
                     </div>
                     {provider?.hasApiKey ? (
-                        <span className="rounded-full bg-emerald-50 px-4 py-2 text-[13px] font-medium text-emerald-700">
+                        <span className="rounded-full bg-emerald-50 px-4 py-2 text-[13px] font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
                             Existing credential saved
                         </span>
                     ) : null}

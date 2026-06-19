@@ -278,13 +278,13 @@ export function ScimScreen() {
       colors={["#ECFEFF", "#155E75", "#06B6D4", "#A5F3FC"]}
     >
       {!access.canManageScim ? (
-        <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
+        <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900 dark:border-amber-800/30 dark:bg-amber-950/50 dark:text-amber-200">
           Only organization owners and admins can manage SCIM.
         </div>
       ) : (
         <>
           {error ? (
-            <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
+            <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
               {error}
             </div>
           ) : null}
@@ -409,7 +409,7 @@ export function ScimScreen() {
             </div>
 
             {visibleToken ? (
-              <div className="mt-5 rounded-[24px] bg-[#0f172a] p-6 text-white">
+              <div className="mt-5 rounded-[24px] bg-[#0f172a] p-6 text-white dark:border dark:border-gray-700 dark:bg-gray-900">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <p className="text-[16px] font-semibold tracking-[-0.03em]">

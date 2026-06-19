@@ -259,11 +259,11 @@ export function SsoScreen() {
   return (
     <DashboardPageTemplate icon={Shield} badgeLabel="Admin" title="SSO" description="Configure one enterprise SSO connection per workspace and share the generated sign-in URL with your team." colors={["#F5F3FF", "#4C1D95", "#8B5CF6", "#DDD6FE"]}>
       {!access.canManageSso ? (
-        <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">Only organization owners and admins can manage SSO.</div>
+        <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900 dark:border-amber-800/30 dark:bg-amber-950/50 dark:text-amber-200">Only organization owners and admins can manage SSO.</div>
       ) : (
         <>
           {!orgContext.entitlements.sso ? <EnterprisePlanNotice feature="SSO" /> : null}
-          {error ? <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">{error}</div> : null}
+          {error ? <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">{error}</div> : null}
 
           <div className="mb-6 rounded-[30px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
             <div className="flex flex-wrap items-center gap-3">
@@ -425,7 +425,7 @@ export function SsoScreen() {
                   </div>
                 ) : null}
 
-                {connection.lastError ? <div className="rounded-[20px] border border-red-200 bg-red-50 p-4 text-[14px] text-red-700">{connection.lastError}</div> : null}
+                {connection.lastError ? <div className="rounded-[20px] border border-red-200 bg-red-50 p-4 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">{connection.lastError}</div> : null}
               </div>
             ) : null}
           </div>

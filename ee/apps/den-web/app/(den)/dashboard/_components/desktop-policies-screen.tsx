@@ -80,9 +80,9 @@ export function DesktopPoliciesScreen() {
       </div>
 
       {orgContext && !orgContext.entitlements.desktopPolicies ? <EnterprisePlanNotice feature="Desktop policy management" /> : null}
-      {pageError ? <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">{pageError}</div> : null}
-      {pageSuccess ? <div className="mb-6 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-700">{pageSuccess}</div> : null}
-      {error ? <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">{error}</div> : null}
+      {pageError ? <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">{pageError}</div> : null}
+      {pageSuccess ? <div className="mb-6 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-700 dark:border-emerald-800/30 dark:bg-emerald-900/30 dark:text-emerald-400">{pageSuccess}</div> : null}
+      {error ? <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">{error}</div> : null}
 
       {busy ? (
         <div className="rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-6 py-10 text-[15px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Loading desktop policies...</div>
@@ -122,7 +122,7 @@ export function DesktopPoliciesScreen() {
                         </div>
                       </td>
                       <td className="whitespace-nowrap px-4 py-4">
-                        <span className={`inline-flex items-center rounded-full px-3 py-1 text-[12px] font-medium ${policy.isEnabled ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 dark:text-gray-500"}`}>
+                        <span className={`inline-flex items-center rounded-full px-3 py-1 text-[12px] font-medium ${policy.isEnabled ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 dark:text-gray-500"}`}>
                           {policy.isEnabled ? "Yes" : "No"}
                         </span>
                       </td>

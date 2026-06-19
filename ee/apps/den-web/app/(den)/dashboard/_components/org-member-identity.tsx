@@ -29,12 +29,12 @@ export function OrgMemberIdentity({
             {member.user.name}
           </p>
           {isAdmin ? (
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${inverted ? "bg-white dark:bg-white/15 text-white/80" : "bg-indigo-50 text-indigo-600"}`}>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${inverted ? "bg-white dark:bg-white/15 text-white/80" : "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400"}`}>
               Admin
             </span>
           ) : null}
           {isInvited ? (
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${inverted ? "bg-white dark:bg-white/15 text-white/80" : "bg-amber-50 text-amber-700"}`}>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${inverted ? "bg-white dark:bg-white/15 text-white/80" : "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-200"}`}>
               Invited
             </span>
           ) : null}

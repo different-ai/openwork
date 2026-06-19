@@ -40,9 +40,9 @@ type ConnectionDetails = {
 function getStatusBadgeClass(bucket: ReturnType<typeof getWorkerStatusMeta>["bucket"]) {
   switch (bucket) {
     case "ready":
-      return "border-emerald-100 bg-emerald-50 text-emerald-600";
+      return "border-emerald-100 bg-emerald-50 text-emerald-600 dark:border-emerald-800/30 dark:bg-emerald-900/30 dark:text-emerald-400";
     case "starting":
-      return "border-amber-100 bg-amber-50 text-amber-600";
+      return "border-amber-100 bg-amber-50 text-amber-600 dark:border-amber-800/30 dark:bg-amber-950/50 dark:text-amber-200";
     case "attention":
       return "border-rose-100 bg-rose-50 text-rose-600 dark:text-rose-400";
     default:
@@ -386,17 +386,17 @@ export function BackgroundAgentsScreen() {
       description="Run selected workflows in the background without asking each teammate to run them locally. Coming soon."
       colors={["#E9FFE0", "#3E9A1D", "#B3F750", "#51F0A3"]}
     >
-      <div className="mb-10 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[13px] leading-6 text-amber-800">
+      <div className="mb-10 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[13px] leading-6 text-amber-800 dark:border-amber-800/30 dark:bg-amber-950/50 dark:text-amber-200">
         New cloud workspaces are no longer available from this page. Existing workspaces remain available below.
       </div>
 
       {workersError ? (
-        <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
+        <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
           {workersError}
         </div>
       ) : null}
       {connectError ? (
-        <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
+        <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
           {connectError}
         </div>
       ) : null}
