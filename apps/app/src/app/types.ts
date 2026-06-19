@@ -2,12 +2,13 @@ import type {
   Message,
   Part,
   PermissionRequest as ApiPermissionRequest,
+  PermissionV2Request,
   QuestionRequest,
   ProviderListResponse,
   Session,
 } from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
-import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/desktop";
+import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/desktop-types";
 
 export type Client = ReturnType<typeof createClient>;
 
@@ -17,10 +18,14 @@ export type SidebarSessionItem = {
   id: string;
   title: string;
   slug?: string | null;
+  status?: unknown;
+  state?: unknown;
+  runStatus?: unknown;
   parentID?: string | null;
   time?: {
     updated?: number | null;
     created?: number | null;
+    archived?: number | null;
   };
   directory?: string | null;
 };
@@ -92,7 +97,10 @@ export type PromptMode = "prompt" | "shell";
 export type ComposerPart =
   | { type: "text"; text: string }
   | { type: "agent"; name: string }
+  | { type: "skill"; name: string }
   | { type: "file"; path: string; label?: string }
+  /** A macOS app targeted via Computer Use (composer "@App" mention). */
+  | { type: "app"; name: string }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 
 export type ComposerAttachment = {
@@ -169,24 +177,27 @@ export type EngineRuntime = "direct";
 
 export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 
-export type SettingsTab =
-  | "general"
-  | "ai"
-  | "preferences"
-  | "permissions"
-  | "shell"
-  | "cloud-account"
-  | "cloud-marketplaces"
-  | "cloud-workers"
-  | "cloud-providers"
-  | "skills"
-  | "extensions"
-  | "environment"
-  | "advanced"
-  | "appearance"
-  | "updates"
-  | "recovery"
-  | "debug";
+export const SETTINGS_TAB_VALUES = [
+  "general",
+  "ai",
+  "preferences",
+  "permissions",
+  "shell",
+  "cloud-account",
+  "cloud-marketplaces",
+  "cloud-workers",
+  "cloud-providers",
+  "skills",
+  "extensions",
+  "environment",
+  "advanced",
+  "appearance",
+  "updates",
+  "recovery",
+  "debug",
+] as const;
+
+export type SettingsTab = (typeof SETTINGS_TAB_VALUES)[number];
 
 export type WorkspacePreset = "starter" | "automation" | "minimal";
 
@@ -288,13 +299,12 @@ export type HubSkillCard = {
   };
 };
 
-/** OpenWork Cloud (Den) org skill surfaced in the Skills catalog (team hub + shared). */
+/** OpenWork Cloud (Den) org skill surfaced in the Skills catalog. */
 export type DenOrgSkillCard = {
   id: string;
   title: string;
   description: string | null;
   skillText: string;
-  hubName: string | null;
   shared: "org" | "public" | null;
   updatedAt: string | null;
 };
@@ -348,7 +358,7 @@ export type McpStatus =
 
 export type McpStatusMap = Record<string, McpStatus>;
 
-export type ReloadReason = "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
+export type { ReloadReason } from "./extensions";
 
 export type OpencodeConnectStatus = {
   at: number;
@@ -373,8 +383,11 @@ export type ReloadTrigger = {
   path?: string;
 };
 
-export type PendingPermission = ApiPermissionRequest & {
+export type PendingPermission = Omit<ApiPermissionRequest, "always"> & {
+  always: unknown;
   receivedAt: number;
+  protocol: "legacy" | "v2";
+  v2?: Pick<PermissionV2Request, "action" | "resources" | "save">;
 };
 
 export type PendingQuestion = QuestionRequest & {

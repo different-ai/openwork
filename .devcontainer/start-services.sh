@@ -20,7 +20,7 @@ cd /workspace
 
 # ── 1. Virtual display ──
 echo "==> Starting virtual display..."
-.devcontainer/start-display.sh
+.devcontainer/start-daytona-vnc.sh
 sleep 2
 
 # ── 2. Vite dev server on 0.0.0.0 (so Electron can reach it via 127.0.0.1) ──
@@ -32,11 +32,7 @@ sleep 3
 
 # ── 3. Electron app ──
 echo "==> Starting Electron app..."
-export DISPLAY=:99
-export ELECTRON_DISABLE_SANDBOX=1
-export OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=9825
-export OPENWORK_DEV_MODE=1
-nohup pnpm --filter @openwork/desktop dev:electron > /tmp/electron.log 2>&1 &
+bash .devcontainer/start-daytona-electron.sh --detach
 
 # ── 4. Wait for Electron to be ready ──
 echo "==> Waiting for Electron..."

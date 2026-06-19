@@ -12,11 +12,25 @@ directories:
 files:
   - electron/**/*
   - server/**/*
+  - "!server/dist/opencode-plugins/**"
   - package.json
 extraResources:
   - from: ../app/dist
     to: app-dist
+  - from: server/dist/opencode-plugins
+    to: opencode-plugins
+    filter:
+      - "*.js"
+  - from: ../../packages/docs
+    to: openwork-docs
+    filter:
+      - "**/*.md"
+      - "**/*.mdx"
+      - "docs.json"
 asar: true
+asarUnpack:
+  - node_modules/.pnpm/@lydell+node-pty*/**
+  - node_modules/node-pty/**
 npmRebuild: false
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs
@@ -34,6 +48,10 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   notarize: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: OpenWork uses the microphone when you start Voice Mode so you can speak commands to your agent.
   extraResources:
     - from: resources/sidecars
       to: sidecars
@@ -44,12 +62,13 @@ mac:
         - openwork-orchestrator
         - openwork-orchestrator-aarch64-apple-darwin
         - openwork-orchestrator-x86_64-apple-darwin
-        - chrome-devtools-mcp
-        - chrome-devtools-mcp-aarch64-apple-darwin
-        - chrome-devtools-mcp-x86_64-apple-darwin
         - versions.json
         - versions.json-aarch64-apple-darwin
         - versions.json-x86_64-apple-darwin
+    - from: resources/helpers
+      to: helpers
+      filter:
+        - "OpenWork Computer Use.app/**"
   target:
     - dmg
     - zip
@@ -65,9 +84,6 @@ linux:
         - openwork-orchestrator
         - openwork-orchestrator-aarch64-unknown-linux-gnu
         - openwork-orchestrator-x86_64-unknown-linux-gnu
-        - chrome-devtools-mcp
-        - chrome-devtools-mcp-aarch64-unknown-linux-gnu
-        - chrome-devtools-mcp-x86_64-unknown-linux-gnu
         - versions.json
         - versions.json-aarch64-unknown-linux-gnu
         - versions.json-x86_64-unknown-linux-gnu
@@ -86,9 +102,6 @@ win:
         - openwork-orchestrator.exe
         - openwork-orchestrator-aarch64-pc-windows-msvc.exe
         - openwork-orchestrator-x86_64-pc-windows-msvc.exe
-        - chrome-devtools-mcp.exe
-        - chrome-devtools-mcp-aarch64-pc-windows-msvc.exe
-        - chrome-devtools-mcp-x86_64-pc-windows-msvc.exe
         - versions.json
         - versions.json-aarch64-pc-windows-msvc.exe
         - versions.json-x86_64-pc-windows-msvc.exe

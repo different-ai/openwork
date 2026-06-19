@@ -489,7 +489,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
   },
   createMarketplace: {
     audience: "admin",
-    description: "Create a private-by-default marketplace.",
+    description: "Create a private-by-default marketplace. Most organizations need only one: list existing marketplaces first and prefer attaching plugins to an existing marketplace; only create a new one when explicitly asked.",
     method: "POST",
     path: pluginArchRoutePaths.marketplaces,
     request: { body: marketplaceCreateSchema },

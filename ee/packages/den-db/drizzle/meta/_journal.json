@@ -113,6 +113,69 @@
       "when": 1778739941884,
       "tag": "0016_uneven_puppet_master",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "5",
+      "when": 1779129600000,
+      "tag": "0017_desktop_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1779380000000,
+      "tag": "0018_invited_org_members",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "5",
+      "when": 1779754557313,
+      "tag": "0019_scim_sso_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "5",
+      "when": 1780426749385,
+      "tag": "0020_breezy_siren",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "5",
+      "when": 1781286597056,
+      "tag": "0021_telemetry_event",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "5",
+      "when": 1781288457546,
+      "tag": "0022_marketplace_logo_url",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "5",
+      "when": 1781298097472,
+      "tag": "0023_grandfather_enterprise_plans",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1781307676381,
+      "tag": "0024_violet_rawhide_kid",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1781543270137,
+      "tag": "0025_scim_sync_events",
+      "breakpoints": true
     }
   ]
 }

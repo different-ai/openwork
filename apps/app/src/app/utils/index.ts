@@ -162,13 +162,7 @@ export function formatModelLabel(model: ModelRef, providers: ProviderListItem[] 
   return `${providerLabel} · ${modelLabel}`;
 }
 
-export function isElectronRuntime() {
-  return typeof window !== "undefined" && (window as Window).__OPENWORK_ELECTRON__ != null;
-}
-
-export function isDesktopRuntime() {
-  return isElectronRuntime();
-}
+export { isDesktopRuntime, isElectronRuntime } from "../lib/runtime-env";
 
 export function isWindowsPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -810,6 +804,18 @@ function buildToolTitle(state: any, toolName: string): string {
     return "Task";
   }
 
+  if (lower === "question") {
+    const questions = Array.isArray(input.questions) ? input.questions : [];
+    const first = questions[0];
+    if (first && typeof first === "object") {
+      const record = first as Record<string, unknown>;
+      const header = normalizeStepText(record.header);
+      const question = normalizeStepText(record.question);
+      return truncateStepText(header || question || "Asked a question", 56);
+    }
+    return "Asked a question";
+  }
+
   if (lower === "todowrite") {
     return "Update todo list";
   }
@@ -870,6 +876,18 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
     if (description) return truncateStepText(description, 80);
     const agent = formatAgentLabel(pick("subagent_type"));
     if (agent) return `${agent} agent`;
+  }
+
+  if (lower === "question") {
+    const questions = Array.isArray(input.questions) ? input.questions.length : 0;
+    const answers = Array.isArray(state?.output)
+      ? state.output
+      : state?.output && typeof state.output === "object" && Array.isArray(state.output.answers)
+        ? state.output.answers
+        : null;
+    if (answers) return "Answered";
+    if (questions > 1) return `${questions} questions`;
+    return undefined;
   }
 
   if (lower === "todowrite" || lower === "todoread") {
@@ -1027,7 +1045,7 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
   if (part.type === "reasoning") {
     const record = part as any;
     const text = typeof record.text === "string" ? cleanReasoningText(record.text) : "";
-    if (!text) return { title: "Thinking", toolCategory: "tool" };
+    if (!text) return { title: "Reasoning", toolCategory: "tool" };
 
     const lines = text
       .split(/\r?\n/)
@@ -1035,6 +1053,9 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
         const trimmed = line.trim();
         return trimmed ? [trimmed] : [];
       });
+    if (/^(?:thinking|reasoning)\s*(?::|-|–|—)?\s*$/i.test(lines[0] ?? "")) {
+      lines.shift();
+    }
     const compact = lines.join(" ");
 
     let headline = "";
@@ -1053,8 +1074,8 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
       }
     }
 
-    headline = headline.replace(/^thinking[:\s-]*/i, "").trim();
-    const title = truncateStepText(headline || "Thinking", 96);
+    headline = headline.replace(/^(?:thinking|reasoning)\s*(?::|-|–|—)\s*/i, "").trim();
+    const title = truncateStepText(headline || "Reasoning", 96);
     return { title, detail: detail || undefined, toolCategory: "tool" };
   }
 

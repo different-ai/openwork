@@ -1,7 +1,7 @@
 import { render } from "@react-email/render"
 import nodemailer from "nodemailer"
 import { Resend } from "resend"
-import { emailSubjects, type EmailTemplate, type EmailTemplateProps, renderEmailTemplate } from "./templates/index.js"
+import { emailReplyTo, emailSubjects, type EmailTemplate, type EmailTemplateProps, renderEmailTemplate } from "./templates/index.js"
 
 export type EmailProvider = "dev" | "resend" | "nodemailer"
 
@@ -56,10 +56,11 @@ export async function sendEmail<Template extends EmailTemplate>(input: SendEmail
   }
 
   const subject = input.subject ?? emailSubjects[input.template](input.props)
+  const replyTo = emailReplyTo[input.template](input.props)?.trim() || undefined
   const provider = getEmailProvider(input.config)
 
   if (provider === "dev") {
-    console.info(`[email] dev email payload for ${to}: ${JSON.stringify({ template: input.template, subject, props: input.props })}`)
+    console.info(`[email] dev email payload for ${to}: ${JSON.stringify({ template: input.template, subject, replyTo, props: input.props })}`)
     return
   }
 
@@ -70,11 +71,11 @@ export async function sendEmail<Template extends EmailTemplate>(input: SendEmail
   ])
 
   if (provider === "resend") {
-    await sendViaResend({ to, subject, html, text, template: input.template, config: input.config })
+    await sendViaResend({ to, subject, replyTo, html, text, template: input.template, config: input.config })
     return
   }
 
-  await sendViaNodemailer({ to, subject, html, text, template: input.template, config: input.config })
+  await sendViaNodemailer({ to, subject, replyTo, html, text, template: input.template, config: input.config })
 }
 
 function getEmailProvider(config: EmailSendConfig): EmailProvider {
@@ -93,6 +94,7 @@ function getEmailProvider(config: EmailSendConfig): EmailProvider {
 async function sendViaResend(input: {
   to: string
   subject: string
+  replyTo?: string
   html: string
   text: string
   template: EmailTemplate
@@ -110,6 +112,7 @@ async function sendViaResend(input: {
       from,
       to: input.to,
       subject: input.subject,
+      replyTo: input.replyTo,
       html: input.html,
       text: input.text,
     })
@@ -134,6 +137,7 @@ async function sendViaResend(input: {
 async function sendViaNodemailer(input: {
   to: string
   subject: string
+  replyTo?: string
   html: string
   text: string
   template: EmailTemplate
@@ -162,6 +166,7 @@ async function sendViaNodemailer(input: {
       from,
       to: input.to,
       subject: input.subject,
+      replyTo: input.replyTo,
       html: input.html,
       text: input.text,
     })

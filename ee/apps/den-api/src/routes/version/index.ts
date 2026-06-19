@@ -1,6 +1,7 @@
 import type { Env, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { publicRoute } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
 import { denApiAppVersion } from "../../version.js"
 
@@ -20,6 +21,7 @@ export function registerVersionRoutes<T extends Env>(app: Hono<T>) {
         200: jsonResponse("Desktop app version metadata returned successfully.", appVersionResponseSchema),
       },
     }),
+    publicRoute,
     (c) => {
       return c.json(denApiAppVersion)
     },

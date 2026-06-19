@@ -1,15 +1,19 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowRight,
-  Building2,
+  ArrowUpRightIcon,
   Check,
-  Cloud,
-  Loader2,
-  Puzzle,
-  Server,
+  CircleAlert,
 } from "lucide-react";
+import {
+  BuildingOffice2Icon,
+  CloudIcon,
+  ServerStackIcon,
+  Square3Stack3DIcon,
+} from "@heroicons/react/24/solid";
 
 import {
   createDenClient,
@@ -20,23 +24,80 @@ import {
   type DenOrgMarketplace,
   type DenOrgSummary,
   type DenWorkerSummary,
-} from "../../../app/lib/den";
+} from "@/app/lib/den";
 import { usePlatform } from "../../kernel/platform";
-import { resolveModelDisplayName, resolveProviderDisplayName } from "../../../app/utils";
+import { useBootState } from "../../shell/boot-state";
+import { resolveModelDisplayName, resolveProviderDisplayName } from "@/app/utils";
 import { ProviderIcon } from "../../design-system/provider-icon";
 import { writeStoredDefaultModel } from "../../kernel/model-config";
-import { orgOnboardingVisibilityEvent, useReloadCoordinator } from "../../shell/reload-coordinator";
-import { dispatchNewProviders } from "../../../app/lib/provider-events";
+import { orgOnboardingVisibilityEvent } from "../../shell/reload-coordinator";
+import {
+  Page,
+  PageBackground,
+  PageContainer,
+  PageContent,
+  PageDescription,
+  PageFooter,
+  PageHeader,
+  PageLoading,
+  PageLoadingDescription,
+  PageLoadingSpinner,
+  PageTitle,
+  PageTitlebarRegion,
+} from "@/components/page";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { cn } from "@/lib/utils";
+import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
+import { Field, FieldLabel, FieldTitle } from "@/components/ui/field"
+import {
+  RadioGroup,
+  RadioGroupItem,
+} from "@/components/ui/radio-group"
 
 const RELOAD_AFTER_ONBOARDING_KEY = "openwork.reloadAfterOrgOnboarding";
 
+function useDenClient() {
+  const settings = useMemo(() => readDenSettings(), []);
+  const authToken = settings.authToken ?? "";
+  const denClient = useMemo(
+    () =>
+      createDenClient({
+        baseUrl: settings.baseUrl,
+        apiBaseUrl: settings.apiBaseUrl,
+        token: settings.authToken,
+      }),
+    [authToken, settings.apiBaseUrl, settings.baseUrl],
+  );
 
+  return {
+    authToken,
+    denClient,
+    orgId: settings.activeOrgId ?? "",
+    orgName: settings.activeOrgName ?? "",
+    settings,
+  };
+}
 
-type OrgResources = {
-  providers: DenOrgLlmProvider[];
-  marketplaces: DenOrgMarketplace[];
-  workers: DenWorkerSummary[];
-};
+function markProvidersSeen(providers: DenOrgLlmProvider[]) {
+  if (providers.length === 0) return;
+
+  try {
+    const raw = window.localStorage.getItem("openwork.seenProviderIds");
+    const existing: string[] = raw ? JSON.parse(raw) : [];
+    const ids = new Set(existing);
+    for (const provider of providers) ids.add(provider.id);
+    window.localStorage.setItem("openwork.seenProviderIds", JSON.stringify([...ids]));
+  } catch {}
+}
 
 /**
  * Full-screen onboarding page shown after sign-in + org selection.
@@ -47,31 +108,10 @@ type OrgResources = {
  */
 export function OrgOnboardingPage() {
   const navigate = useNavigate();
-  const platform = usePlatform();
-  const reloadCoordinator = useReloadCoordinator();
-  const [settings, setSettings] = useState(() => readDenSettings());
-  const orgId = settings.activeOrgId?.trim() ?? "";
-  const orgName = settings.activeOrgName?.trim() ?? "";
-  const authToken = settings.authToken?.trim() ?? "";
-
-  const [orgs, setOrgs] = useState<DenOrgSummary[]>([]);
-  const [selectedOrgId, setSelectedOrgId] = useState(orgId);
-  const [orgsLoading, setOrgsLoading] = useState(true);
-  const [orgSwitchBusy, setOrgSwitchBusy] = useState(false);
-  const [orgSelectionConfirmed, setOrgSelectionConfirmed] = useState(false);
-  const [resources, setResources] = useState<OrgResources>({
-    providers: [],
-    marketplaces: [],
-    workers: [],
-  });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedDefault, setSelectedDefault] = useState<{
-    providerId: string;
-    modelId: string;
-    label: string;
-  } | null>(null);
-
+  const { authToken, denClient, orgId, settings } = useDenClient();
+  const { markRouteReady } = useBootState();
+  const [hasSelectedOrganization, setHasSelectedOrganization] = useState(false);
+  
   useEffect(() => {
     window.dispatchEvent(new CustomEvent(orgOnboardingVisibilityEvent, { detail: { visible: true } }));
     return () => {
@@ -79,133 +119,141 @@ export function OrgOnboardingPage() {
     };
   }, []);
 
-  // Redirect if no auth — can't show onboarding without a signed-in session.
+  useEffect(() => {
+    markRouteReady();
+  }, [markRouteReady]);
+
   useEffect(() => {
     if (!authToken) {
       navigate("/session", { replace: true });
     }
   }, [authToken, navigate]);
 
-  // Load organizations before fetching org resources. If the user belongs to
-  // multiple orgs, require an explicit choice so we don't import the wrong org.
-  useEffect(() => {
-    if (!authToken) return;
-    let cancelled = false;
+  const { data, error, isPending } = useQuery({
+    queryKey: ["den-org-onboarding", settings.baseUrl, settings.apiBaseUrl, "orgs"],
+    enabled: Boolean(authToken),
+    queryFn: () => denClient.listOrgs(),
+  });
 
-    const client = createDenClient({
-      baseUrl: settings.baseUrl,
-      apiBaseUrl: settings.apiBaseUrl,
-      token: authToken,
-    });
+  if (!authToken) {
+    return null;
+  }
 
-    setOrgsLoading(true);
-    void client.listOrgs()
-      .then((response) => {
-        if (cancelled) return;
-        setOrgs(response.orgs);
-        const preferred =
-          response.orgs.find((org) => org.id === orgId) ??
-          response.orgs.find((org) => org.id === response.activeOrgId) ??
-          response.orgs[0] ??
-          null;
-        setSelectedOrgId(preferred?.id ?? "");
-        if (response.orgs.length <= 1) {
-          if (preferred) {
-            const nextSettings = {
-              ...settings,
-              authToken,
-              activeOrgId: preferred.id,
-              activeOrgSlug: preferred.slug,
-              activeOrgName: preferred.name,
-            };
-            writeDenSettings(nextSettings, { persistBootstrap: false });
-            setSettings(nextSettings);
-            void client.setActiveOrganization({ organizationId: preferred.id }).catch(() => undefined);
-          } else {
-            setLoading(false);
-          }
-          setOrgSelectionConfirmed(true);
+  if (isPending) {
+    return (
+      <Page>
+        <PageBackground />
+        <PageTitlebarRegion />
+        <PageContainer>
+          <PageHeader>
+            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
+              <BuildingOffice2Icon className="size-7 text-foreground" />
+            </div>
+            <PageTitle>Your organization</PageTitle>
+          </PageHeader>
+          <PageContent>
+            <PageLoading>
+              <PageLoadingSpinner />
+              <PageLoadingDescription>Loading organizations...</PageLoadingDescription>
+            </PageLoading>
+          </PageContent>
+        </PageContainer>
+      </Page>
+    );
+  }
+
+  if (error) {
+    return (
+      <Page>
+        <PageBackground />
+        <PageTitlebarRegion />
+        <PageContainer>
+          <PageHeader>
+            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
+              <BuildingOffice2Icon className="size-7 text-foreground" />
+            </div>
+            <PageTitle>Choose your organization</PageTitle>
+            <Alert variant="destructive">
+              <CircleAlert />
+              <AlertDescription>
+                {error instanceof Error ? error.message : "Unable to load organizations."}
+              </AlertDescription>
+            </Alert>
+          </PageHeader>
+        </PageContainer>
+      </Page>
+    );
+  }
+
+  if ((data?.orgs.length ?? 0) > 0 && !hasSelectedOrganization) {
+    return (
+      <OrganizationSelectionPage
+        orgs={data.orgs}
+        defaultOrganization={
+          data.orgs.find((org) => org.id === orgId) ??
+          data.orgs[0]
         }
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load organizations");
-      })
-      .finally(() => {
-        if (!cancelled) setOrgsLoading(false);
-      });
+        onContinue={() => setHasSelectedOrganization(true)}
+      />
+    );
+  }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [authToken, orgId, settings.apiBaseUrl, settings.baseUrl]);
+  return <ResourceSelectionPage />;
+}
 
-  const confirmOrgSelection = useCallback(async () => {
-    if (!authToken || !selectedOrgId || orgSwitchBusy) return;
-    const nextOrg = orgs.find((org) => org.id === selectedOrgId) ?? null;
-    if (!nextOrg) return;
+export function ResourceSelectionPage() {
+  const navigate = useNavigate();
+  const platform = usePlatform();
+  const { markRouteReady } = useBootState();
+  const { authToken, denClient, orgId, orgName, settings } = useDenClient();
 
-    setOrgSwitchBusy(true);
-    setError(null);
-    try {
-      const client = createDenClient({
-        baseUrl: settings.baseUrl,
-        apiBaseUrl: settings.apiBaseUrl,
-        token: authToken,
-      });
-      await client.setActiveOrganization({ organizationId: nextOrg.id });
-      const nextSettings = {
-        ...settings,
-        authToken,
-        activeOrgId: nextOrg.id,
-        activeOrgSlug: nextOrg.slug,
-        activeOrgName: nextOrg.name,
-      };
-      writeDenSettings(nextSettings, { persistBootstrap: false });
-      setSettings(nextSettings);
-      setResources({ providers: [], marketplaces: [], workers: [] });
-      setSelectedDefault(null);
-      setOrgSelectionConfirmed(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to select organization");
-    } finally {
-      setOrgSwitchBusy(false);
-    }
-  }, [authToken, orgSwitchBusy, orgs, selectedOrgId, settings]);
+  const [selectedDefault, setSelectedDefault] = useState<{
+    providerId: string;
+    modelId: string;
+    label: string;
+  } | null>(null);
 
-  // Fetch all org resources in parallel
+  // Redirect if no auth or no org — can't show onboarding without them
   useEffect(() => {
-    const resourceOrgId = orgId || selectedOrgId;
-    if (!authToken || !resourceOrgId || !orgSelectionConfirmed) return;
-    let cancelled = false;
+    markRouteReady();
+  }, [markRouteReady]);
 
-    const client = createDenClient({
-      baseUrl: settings.baseUrl,
-      apiBaseUrl: settings.apiBaseUrl,
-      token: authToken,
-    });
+  useEffect(() => {
+    if (!authToken || !orgId) {
+      navigate("/session", { replace: true });
+    }
+  }, [authToken, navigate, orgId]);
 
-    setLoading(true);
-    setError(null);
-    void Promise.all([
-      client.listOrgLlmProviders(resourceOrgId).catch(() => [] as DenOrgLlmProvider[]),
-      client.listOrgMarketplaces(resourceOrgId).catch(() => [] as DenOrgMarketplace[]),
-      client.listWorkers(resourceOrgId).catch(() => [] as DenWorkerSummary[]),
-    ])
-      .then(([providers, marketplaces, workers]) => {
-        if (cancelled) return;
-        setResources({ providers, marketplaces, workers });
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authToken, orgId, orgSelectionConfirmed, selectedOrgId, settings.apiBaseUrl, settings.baseUrl]);
+  const { providers, marketplaces, workers, loading, error } = useQueries({
+    queries: [
+      {
+        queryKey: ["den-org-onboarding", settings.baseUrl, settings.apiBaseUrl, orgId, "providers"],
+        enabled: Boolean(authToken && orgId),
+        queryFn: () => denClient.listOrgLlmProviders(orgId),
+      },
+      {
+        queryKey: ["den-org-onboarding", settings.baseUrl, settings.apiBaseUrl, orgId, "marketplaces"],
+        enabled: Boolean(authToken && orgId),
+        queryFn: () => denClient.listOrgMarketplaces(orgId),
+      },
+      {
+        queryKey: ["den-org-onboarding", settings.baseUrl, settings.apiBaseUrl, orgId, "workers"],
+        enabled: Boolean(authToken && orgId),
+        queryFn: () => denClient.listWorkers(orgId),
+      },
+    ],
+    combine: ([providersQuery, marketplacesQuery, workersQuery]) => ({
+      providers: providersQuery.data ?? [],
+      marketplaces: marketplacesQuery.data ?? [],
+      workers: workersQuery.data ?? [],
+      loading: providersQuery.isPending || marketplacesQuery.isPending || workersQuery.isPending,
+      error:
+        providersQuery.error?.message ??
+        marketplacesQuery.error?.message ??
+        workersQuery.error?.message ??
+        null,
+    }),
+  });
 
   const handleContinue = useCallback(() => {
     // If user picked a default model, write it
@@ -215,228 +263,198 @@ export function OrgOnboardingPage() {
         modelID: selectedDefault.modelId,
       });
     }
-    if (reloadCoordinator.reloadPending || resources.providers.length > 0) {
+    // Mark all providers shown on this page as "seen" so the global
+    // toast doesn't re-fire for them on the next sync interval.
+    markProvidersSeen(providers);
+    if (providers.length > 0) {
       try {
         window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
       } catch {}
     }
-    if (resources.providers.length > 0) {
-      dispatchNewProviders({
-        source: "sign_in",
-        providers: resources.providers.map((provider) => {
-          const firstModel = provider.models[0] ?? null;
-          return {
-            id: provider.id,
-            name: provider.name,
-            providerId: provider.providerId,
-            firstModelId: firstModel?.id,
-            firstModelName: firstModel?.name ?? firstModel?.id,
-          };
-        }),
-      });
-    }
     navigate("/session", { replace: true });
-  }, [navigate, reloadCoordinator.reloadPending, resources.providers, selectedDefault]);
+  }, [navigate, providers, selectedDefault]);
 
-  const { providers, marketplaces, workers } = resources;
-  const totalModels = providers.reduce((sum, p) => sum + p.models.length, 0);
+  const totalModels = providers.reduce((sum, provider) => sum + provider.models.length, 0);
   const hasResources = providers.length > 0 || marketplaces.length > 0 || workers.length > 0;
-  const needsOrgSelection = orgs.length > 1 && !orgSelectionConfirmed;
-  const selectedOrg = orgs.find((org) => org.id === selectedOrgId) ?? null;
 
   return (
-    <div className="relative h-screen overflow-y-auto bg-dls-background text-dls-text">
-      {/* Background texture */}
-      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-        <div className="absolute -left-[20%] -top-[30%] h-[70%] w-[60%] rounded-full bg-[radial-gradient(ellipse,rgba(14,51,217,0.06),transparent_70%)] blur-3xl" />
-        <div className="absolute -bottom-[20%] -right-[10%] h-[50%] w-[50%] rounded-full bg-[radial-gradient(ellipse,rgba(255,126,46,0.05),transparent_70%)] blur-3xl" />
-        <div className="absolute left-[30%] top-[60%] h-[40%] w-[40%] rounded-full bg-[radial-gradient(ellipse,rgba(255,227,64,0.04),transparent_70%)] blur-3xl" />
-      </div>
+    <Page>
+      <PageBackground />
+      <PageTitlebarRegion />
 
-      {/* Titlebar drag region */}
-      <div className="fixed inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
-
-      <div className="relative z-10 px-6 py-16">
-        <div className="mx-auto w-full max-w-lg space-y-8">
-          {/* Header */}
-          <div className="space-y-3 text-center">
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-              <Building2 size={28} className="text-dls-text" />
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-dls-text">
-              {needsOrgSelection ? "Choose your organization" : orgName || selectedOrg?.name || "Your organization"}
-            </h1>
-            {orgsLoading ? (
-              <p className="text-sm text-dls-secondary">Loading organizations...</p>
-            ) : needsOrgSelection ? (
-              <p className="text-sm text-dls-secondary">Select the org whose resources should be added to this workspace.</p>
-            ) : loading ? (
-              <p className="text-sm text-dls-secondary">Loading available resources...</p>
-            ) : error ? (
-              <p className="text-sm text-red-11">{error}</p>
-            ) : hasResources ? (
-              <p className="text-sm text-dls-secondary">
-                You have access to the following resources.
-              </p>
-            ) : null}
+      <PageContainer>
+        {/* Header */}
+        <PageHeader>
+          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
+            <BuildingOffice2Icon className="size-7 text-foreground" />
           </div>
+          <PageTitle>
+            {orgName || "Your organization"}
+          </PageTitle>
+          {loading ? (
+            null
+          ) : error ? (
+            <Alert variant="destructive">
+              <CircleAlert />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : hasResources ? (
+            <PageDescription>
+              You have access to the following resources.
+            </PageDescription>
+          ) : null}
+        </PageHeader>
 
-          {orgsLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 size={24} className="animate-spin text-dls-secondary" />
-            </div>
-          ) : needsOrgSelection ? (
-            <div className="space-y-3">
-              {orgs.map((org) => {
-                const selected = org.id === selectedOrgId;
-                return (
-                  <button
-                    key={org.id}
-                    type="button"
-                    className={`flex w-full items-center gap-3 rounded-xl border bg-dls-surface px-4 py-3 text-left transition-colors ${
-                      selected ? "border-green-6" : "border-dls-border hover:bg-dls-hover"
-                    }`}
-                    onClick={() => setSelectedOrgId(org.id)}
-                  >
-                    <Building2 size={18} className="shrink-0 text-dls-secondary" />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-dls-text">{org.name}</div>
-                      <div className="mt-0.5 text-xs text-dls-secondary">{org.slug}</div>
-                    </div>
-                    {selected ? <Check size={16} className="shrink-0 text-green-11" /> : null}
-                  </button>
-                );
-              })}
-              {error ? <p className="text-center text-sm text-red-11">{error}</p> : null}
-              <div className="flex justify-center pt-2">
-                <button
-                  type="button"
-                  className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-dls-accent px-8 text-sm font-semibold text-[var(--dls-accent-fg)] transition-all hover:bg-[var(--dls-accent-hover)] disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={() => void confirmOrgSelection()}
-                  disabled={!selectedOrgId || orgSwitchBusy}
-                >
-                  {orgSwitchBusy ? <Loader2 size={16} className="animate-spin" /> : null}
-                  Continue with {selectedOrg?.name ?? "organization"}
-                  <ArrowRight size={16} />
-                </button>
-              </div>
-            </div>
-          ) : loading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 size={24} className="animate-spin text-dls-secondary" />
-            </div>
-          ) : !hasResources ? (
-            <div className="rounded-2xl border border-dls-border bg-dls-surface px-6 py-10 text-center">
-              <p className="text-sm text-dls-secondary">
-                No resources have been configured for this organization yet.
-              </p>
-              <p className="mt-2 text-xs text-dls-secondary">
-                Add AI providers, marketplaces, or workers from the{" "}
-                <button
-                  type="button"
-                  className="font-medium text-dls-text underline underline-offset-2"
+        {loading ? (
+          <PageContent>
+            <PageLoading>
+              <PageLoadingSpinner />
+              <PageLoadingDescription>Loading available resources...</PageLoadingDescription>
+            </PageLoading>
+          </PageContent>
+        ) : !hasResources ? (
+          <PageContent>
+            <Empty className="h-fit flex-none">
+              <EmptyHeader>
+                <EmptyTitle>No resources have been configured for this organization yet.</EmptyTitle>
+                <EmptyDescription>
+                  Add AI providers, marketplaces, or workers from the OpenWork Cloud dashboard.
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button
+                  variant="outline"
                   onClick={() => platform.openLink(resolveDenBaseUrls(settings.baseUrl).baseUrl)}
                 >
-                  OpenWork Cloud dashboard
-                </button>
-                .
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* AI Providers */}
-              {providers.length > 0 ? (
-                <Section
-                  icon={<Cloud size={16} />}
-                  title="AI Providers"
-                  description="Models you can use in your workspace."
-                  count={totalModels > 0 ? `${totalModels} model${totalModels === 1 ? "" : "s"}` : null}
+                  Open OpenWork Cloud
+                  <ArrowUpRightIcon data-icon="inline-end" />
+                </Button>
+              </EmptyContent>
+            </Empty>
+          </PageContent>
+        ) : (
+          <PageContent>
+            <ScrollArea className="px-2.5">
+              <ScrollAreaViewport>
+                <Accordion
+                  multiple
+                  className="rounded-2xl border border-border bg-transparent shadow-none before:hidden"
                 >
-                  {providers.map((provider) => (
-                    <ProviderCard
-                      key={provider.id}
-                      provider={provider}
-                      selectedDefault={selectedDefault}
-                      onSelectDefault={setSelectedDefault}
-                    />
-                  ))}
-                </Section>
-              ) : null}
+                  {/* AI Providers */}
+                  {providers.length > 0 ? (
+                    <Section
+                      icon={<CloudIcon className="size-5 text-foreground/60" />}
+                      title="AI Providers"
+                      description="Models you can use in your workspace."
+                      count={`${totalModels} model${totalModels === 1 ? "" : "s"}`}
+                    >
+                      {providers.map((provider) => (
+                        <ProviderCard
+                          key={provider.id}
+                          provider={provider}
+                          selectedDefault={selectedDefault}
+                          onSelectDefault={setSelectedDefault}
+                        />
+                      ))}
+                    </Section>
+                  ) : null}
 
-              {/* Marketplaces */}
-              {marketplaces.length > 0 ? (
-                <Section
-                  icon={<Puzzle size={16} />}
-                  title="Marketplaces"
-                  description="App stores with extensions and plugins for your workspace."
-                  count={`${marketplaces.length} marketplace${marketplaces.length === 1 ? "" : "s"}`}
-                >
-                  {marketplaces.map((mp) => (
-                    <div key={mp.id} className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
-                      <Puzzle size={16} className="shrink-0 text-dls-secondary" />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-dls-text">{mp.name}</div>
-                        {mp.description ? (
-                          <div className="mt-0.5 truncate text-xs text-dls-secondary">{mp.description}</div>
-                        ) : null}
-                      </div>
-                      <span className="shrink-0 text-xs text-dls-secondary">{mp.pluginCount} plugin{mp.pluginCount === 1 ? "" : "s"}</span>
-                    </div>
-                  ))}
-                </Section>
-              ) : null}
+                  {/* Marketplaces */}
+                  {marketplaces.length > 0 ? (
+                    <Section
+                      icon={<Square3Stack3DIcon className="size-5 text-foreground/60" />}
+                      title="Marketplaces"
+                      description="App stores with extensions and plugins for your workspace."
+                      count={`${marketplaces.length} marketplace${marketplaces.length === 1 ? "" : "s"}`}
+                    >
+                      {marketplaces.map((mp) => (
+                        <MarketplaceCard key={mp.id} marketplace={mp} />
+                      ))}
+                    </Section>
+                  ) : null}
 
-              {/* Workers */}
-              {workers.length > 0 ? (
-                <Section
-                  icon={<Server size={16} />}
-                  title="Cloud Workers"
-                  description="Remote machines that can run tasks for you."
-                  count={`${workers.length} worker${workers.length === 1 ? "" : "s"}`}
-                >
-                  {workers.map((worker) => (
-                    <div key={worker.workerId} className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
-                      <Server size={16} className="shrink-0 text-dls-secondary" />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-dls-text">{worker.workerName}</div>
-                        <div className="mt-0.5 text-xs text-dls-secondary">
-                          {worker.status}{worker.provider ? ` · ${worker.provider}` : ""}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </Section>
-              ) : null}
-            </div>
-          )}
+                  {/* Workers */}
+                  {workers.length > 0 ? (
+                    <Section
+                      icon={<ServerStackIcon className="size-5 text-foreground/60" />}
+                      title="Cloud Workers"
+                      description="Remote machines that can run tasks for you."
+                      count={`${workers.length} worker${workers.length === 1 ? "" : "s"}`}
+                    >
+                      {workers.map((worker) => (
+                        <WorkerCard key={worker.workerId} worker={worker} />
+                      ))}
+                    </Section>
+                  ) : null}
+                </Accordion>
+              </ScrollAreaViewport>
+            </ScrollArea>
+            {/* Selected default indicator */}
+            {selectedDefault ? (
+              <div className="rounded-xl border border-green-6/30 bg-green-2/30 px-4 py-3 text-center text-sm text-green-11">
+                <Check size={14} className="mr-1 inline" />
+                {selectedDefault.label} will be set as your default model.
+              </div>
+            ) : null}
+          </PageContent>
+        )}
 
-          {/* Selected default indicator */}
-          {selectedDefault ? (
-            <div className="rounded-xl border border-green-6/30 bg-green-2/30 px-4 py-3 text-center text-sm text-green-11">
-              <Check size={14} className="mr-1 inline" />
-              {selectedDefault.label} will be set as your default model.
-            </div>
-          ) : null}
-
+        <PageFooter>
           {/* Footer hint */}
-          {!needsOrgSelection && !loading && hasResources ? (
-            <p className="text-center text-xs text-dls-secondary">
+          {!loading && hasResources ? (
+            <p className="text-center text-xs text-muted-foreground text-balance leading-relaxed tracking-wide">
               Providers are added to your workspace automatically. Marketplaces and workers are available from Cloud settings.
             </p>
           ) : null}
+          <Button
+            className="w-fit"
+            type="button"
+            size="lg"
+            onClick={handleContinue}
+            disabled={loading}
+          >
+            {hasResources ? "Continue to workspace" : "Continue"}
+            <ArrowRight data-icon="inline-end" />
+          </Button>
+        </PageFooter>
+      </PageContainer>
+    </Page>
+  );
+}
 
-          {/* Continue button */}
-          {!needsOrgSelection ? <div className="flex justify-center pt-2">
-            <button
-              type="button"
-              className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-dls-accent px-8 text-sm font-semibold text-[var(--dls-accent-fg)] transition-all hover:bg-[var(--dls-accent-hover)] disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={handleContinue}
-              disabled={loading}
-            >
-              {hasResources ? "Continue to workspace" : "Continue"}
-              <ArrowRight size={16} />
-            </button>
-          </div> : null}
+interface MarketplaceCardProps {
+  marketplace: DenOrgMarketplace;
+}
+
+function MarketplaceCard({ marketplace }: MarketplaceCardProps) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-border px-3 py-3 -mx-2">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-foreground">{marketplace.name}</div>
+        {marketplace.description ? (
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">
+            {marketplace.description}
+          </div>
+        ) : null}
+      </div>
+        <span className="shrink-0 text-xs text-muted-foreground">
+        {marketplace.pluginCount} plugin{marketplace.pluginCount === 1 ? "" : "s"}
+      </span>
+    </div>
+  );
+}
+
+interface WorkerCardProps {
+  worker: DenWorkerSummary;
+}
+
+function WorkerCard({ worker }: WorkerCardProps) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-border px-3 py-3 -mx-2">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-foreground">{worker.workerName}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          {worker.status}{worker.provider ? ` · ${worker.provider}` : ""}
         </div>
       </div>
     </div>
@@ -447,31 +465,34 @@ export function OrgOnboardingPage() {
 /*  Section wrapper                                                    */
 /* ------------------------------------------------------------------ */
 
-function Section({
-  icon,
-  title,
-  description,
-  count,
-  children,
-}: {
+interface SectionProps {
   icon: React.ReactNode;
   title: string;
   description: string;
-  count: string | null;
+  count: string;
   children: React.ReactNode;
-}) {
+}
+
+function Section({ icon, title, description, count, children }: SectionProps) {
   return (
-    <div className="space-y-2">
-      <div>
-        <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-dls-secondary">
-          {icon}
-          {title}
-          {count ? <span className="text-dls-secondary/60">{count}</span> : null}
+    <AccordionItem value={title}>
+      <AccordionTrigger className="items-center px-5 py-4 gap-4.75 hover:no-underline">
+        {icon}
+
+        <div className="min-w-0 flex-1 flex flex-col gap-1">
+          <h3 className="flex items-center gap-2 font-medium tracking-wide">
+            {title}
+            <span className="text-muted-foreground text-xs uppercase">{count}</span>
+          </h3>
+          <p className="text-sm font-normal normal-case tracking-normal text-muted-foreground">
+            {description}
+          </p>
         </div>
-        <div className="mt-0.5 pl-6 text-xs text-dls-secondary/80">{description}</div>
-      </div>
-      <div className="space-y-2">{children}</div>
-    </div>
+      </AccordionTrigger>
+      <AccordionContent className="space-y-2 pb-2">
+        {children}
+      </AccordionContent>
+    </AccordionItem>
   );
 }
 
@@ -479,15 +500,17 @@ function Section({
 /*  Provider card with "Use as default" option                         */
 /* ------------------------------------------------------------------ */
 
-function ProviderCard({
-  provider,
-  selectedDefault,
-  onSelectDefault,
-}: {
+interface ProviderCardProps {
   provider: DenOrgLlmProvider;
   selectedDefault: { providerId: string; modelId: string } | null;
-  onSelectDefault: (v: { providerId: string; modelId: string; label: string } | null) => void;
-}) {
+  onSelectDefault: (value: {
+    providerId: string;
+    modelId: string;
+    label: string;
+  } | null) => void;
+}
+
+function ProviderCard({ provider, selectedDefault, onSelectDefault }: ProviderCardProps) {
   // The local provider ID matches the cloud provider's org-level ID
   const localProviderId = provider.id.trim();
   const firstModel = provider.models[0] ?? null;
@@ -508,37 +531,37 @@ function ProviderCard({
 
   return (
     <div
-      className={`rounded-xl border bg-dls-surface px-4 py-3 transition-colors ${
-        isSelected ? "border-green-6" : "border-dls-border"
-      }`}
+      className={cn(
+        "rounded-xl border px-3 py-3 transition-colors -mx-2",
+        isSelected ? "border-green-6" : "border-border",
+      )}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-4.5">
         <ProviderIcon
           providerId={provider.providerId}
           providerName={provider.name}
           size={20}
-          className="text-dls-text"
+          className="text-foreground"
         />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-dls-text">
+          <div className="text-sm font-medium text-foreground">
             {resolveProviderDisplayName(provider.name || provider.providerId)}
           </div>
-          {provider.models.length > 0 ? (
-            <div className="mt-0.5 text-xs text-dls-secondary">
-              {provider.models.length === 1
-                ? "1 model"
-                : `${provider.models.length} models`}
-            </div>
-          ) : null}
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            {provider.models.length === 1
+              ? "1 model"
+              : `${provider.models.length} models`}
+          </div>
         </div>
         {firstModel ? (
           <button
             type="button"
-            className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-medium transition-colors ${
+            className={cn(
+              "shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-colors",
               isSelected
                 ? "bg-green-3 text-green-11"
-                : "border border-dls-border text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
-            }`}
+                : "border border-border text-muted-foreground hover:bg-hover hover:text-foreground",
+            )}
             onClick={handleUseAsDefault}
           >
             {isSelected ? "Default" : "Use as default"}
@@ -552,13 +575,13 @@ function ProviderCard({
           {provider.models.slice(0, 5).map((model) => (
             <span
               key={model.id}
-              className="inline-flex items-center rounded-md border border-dls-border bg-dls-hover px-2 py-0.5 font-mono text-[10px] text-dls-secondary"
+              className="inline-flex items-center rounded-md border border-border bg-hover px-2 py-0.5 font-mono text-xs text-muted-foreground"
             >
               {model.name || resolveModelDisplayName(model.id)}
             </span>
           ))}
           {provider.models.length > 5 ? (
-            <span className="inline-flex items-center rounded-md px-2 py-0.5 text-[10px] text-dls-secondary">
+            <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs text-muted-foreground">
               +{provider.models.length - 5} more
             </span>
           ) : null}
@@ -566,4 +589,134 @@ function ProviderCard({
       ) : null}
     </div>
   );
+}
+
+interface OrganizationSelectionPageProps {
+  orgs: DenOrgSummary[];
+  defaultOrganization: DenOrgSummary;
+  onContinue: () => void;
+}
+
+function OrganizationSelectionPage({
+  orgs,
+  defaultOrganization,
+  onContinue,
+}: OrganizationSelectionPageProps) {
+  const { authToken, denClient, settings } = useDenClient();
+  const [selected, setSelected] = useState(defaultOrganization);
+  const { error, isPending, mutate } = useMutation({
+    mutationFn: async (nextOrg: DenOrgSummary) => {
+      await denClient.setActiveOrganization({ organizationId: nextOrg.id });
+      return nextOrg;
+    },
+    onSuccess: (nextOrg) => {
+      writeDenSettings({
+        ...settings,
+        authToken: authToken || null,
+        activeOrgId: nextOrg.id,
+        activeOrgSlug: nextOrg.slug,
+        activeOrgName: nextOrg.name,
+      });
+
+      onContinue();
+    },
+  });
+
+  return (
+    <Page>
+      <PageBackground />
+      <PageTitlebarRegion />
+      <PageContainer>
+        <PageHeader>
+          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
+            <BuildingOffice2Icon className="size-7 text-foreground" />
+          </div>
+          <PageTitle>Choose your organization</PageTitle>
+          {error ? (
+            <Alert variant="destructive">
+              <CircleAlert />
+              <AlertDescription>
+                {error instanceof Error ? error.message : "Unable to select organization."}
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <PageDescription>
+              Select the organization whose cloud resources should be connected to this workspace.
+            </PageDescription>
+          )}
+        </PageHeader>
+
+        <PageContent>
+          <OrganizationList
+            orgs={orgs}
+            value={selected}
+            onValueChange={setSelected}
+          />
+        </PageContent>
+
+        <PageFooter>
+          <Button
+            className="w-fit"
+            type="button"
+            size="lg"
+            onClick={() => mutate(selected)}
+            disabled={isPending}
+          >
+            {isPending ? "Connecting..." : "Continue with organization"}
+            <ArrowRight data-icon="inline-end" />
+          </Button>
+        </PageFooter>
+      </PageContainer>
+    </Page>
+  );
+}
+
+interface OrganizationListProps {
+  orgs: DenOrgSummary[];
+  value: DenOrgSummary;
+  onValueChange: (value: DenOrgSummary) => void;
+}
+
+export function OrganizationList({ orgs, value, onValueChange }: OrganizationListProps) {
+  return (
+    <RadioGroup
+      value={value.id}
+      onValueChange={(nextOrgId) => {
+        const nextOrg = orgs.find((org) => org.id === nextOrgId);
+        if (nextOrg) onValueChange(nextOrg);
+      }}
+      aria-label="Organizations"
+    >
+      {orgs.map((org) => {
+        const fieldId = `organization-${org.id}`;
+
+        return (
+          <FieldLabel
+            key={org.id}
+            htmlFor={fieldId}
+            className="p-0! transition-colors hover:bg-input/10"
+          >
+            <Field orientation="horizontal">
+              <FieldTitle className="flex min-w-0 items-center gap-4">
+                <BuildingOffice2Icon className="size-6 shrink-0 text-muted-foreground" />
+                <div className="flex min-w-0 flex-col items-start">
+                  <span className="max-w-full truncate text-sm font-semibold">
+                    {org.name}
+                  </span>
+                  <span className="max-w-full truncate text-muted-foreground text-xs">
+                    {org.slug}
+                  </span>
+                </div>
+              </FieldTitle>
+              <RadioGroupItem
+                value={org.id}
+                id={fieldId}
+                className="group-hover/field-label:bg-foreground/25"
+              />
+            </Field>
+          </FieldLabel>
+        );
+      })}
+    </RadioGroup>
+  )
 }

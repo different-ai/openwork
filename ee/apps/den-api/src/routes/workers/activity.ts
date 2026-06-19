@@ -4,7 +4,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { jsonValidator, paramValidator } from "../../middleware/index.js"
+import { jsonValidator, paramValidator, tokenRoute } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
   activityHeartbeatSchema,
@@ -39,6 +39,7 @@ export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteV
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
+    tokenRoute,
     paramValidator(workerIdParamSchema),
     jsonValidator(activityHeartbeatSchema),
     async (c) => {

@@ -1,12 +1,11 @@
 import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, AuthUserTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { createHmac, timingSafeEqual } from "node:crypto"
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import type { MiddlewareHandler } from "hono"
 import { DEN_API_KEY_HEADER, getApiKeySessionById, type DenApiKeySession } from "./api-keys.js"
 import { auth } from "./auth.js"
 import { db } from "./db.js"
-import { env } from "./env.js"
 
 type AuthSessionLike = Awaited<ReturnType<typeof auth.api.getSession>>
 type AuthSessionValue = NonNullable<AuthSessionLike>
@@ -20,6 +19,13 @@ export type AuthContextVariables = {
 const INTERNAL_MCP_PRINCIPAL_HEADER = "x-den-internal-mcp-principal"
 const INTERNAL_MCP_PRINCIPAL_TTL_MS = 60_000
 
+// Per-process secret used exclusively to sign the internal MCP principal header.
+// It is generated fresh at startup, lives only in memory, and is never derived
+// from betterAuthSecret. This binds the header to in-process callers: even an
+// attacker who learns betterAuthSecret cannot forge a valid principal from an
+// external request, closing the impersonation trust boundary.
+const INTERNAL_MCP_PRINCIPAL_SECRET = new Uint8Array(randomBytes(32))
+
 type InternalMcpPrincipal = {
   userId: string
   organizationId: string
@@ -27,7 +33,7 @@ type InternalMcpPrincipal = {
 }
 
 function signPrincipalPayload(payload: string) {
-  return createHmac("sha256", env.betterAuthSecret).update(payload).digest("base64url")
+  return createHmac("sha256", INTERNAL_MCP_PRINCIPAL_SECRET).update(payload).digest("base64url")
 }
 
 function verifySignature(payload: string, signature: string) {
@@ -47,8 +53,11 @@ export function createInternalMcpPrincipalHeader(input: { userId: string; organi
   return `${payload}.${signPrincipalPayload(payload)}`
 }
 
-async function getSessionFromInternalMcpPrincipal(headers: Headers): Promise<(AuthSessionValue & { activeOrganizationId: string }) | null> {
-  const header = headers.get(INTERNAL_MCP_PRINCIPAL_HEADER)
+// Verifies and parses the internal MCP principal header WITHOUT any DB access.
+// Returns the principal only when the signature (per-process secret) and TTL are
+// valid. Exported for unit testing of the trust boundary. Returns null for any
+// missing, malformed, forged, or expired header.
+export function verifyInternalMcpPrincipalHeader(header: string | null): InternalMcpPrincipal | null {
   if (!header) {
     return null
   }
@@ -66,6 +75,15 @@ async function getSessionFromInternalMcpPrincipal(headers: Headers): Promise<(Au
   }
 
   if (typeof parsed.userId !== "string" || typeof parsed.organizationId !== "string" || typeof parsed.expiresAt !== "number" || parsed.expiresAt < Date.now()) {
+    return null
+  }
+
+  return parsed
+}
+
+async function getSessionFromInternalMcpPrincipal(headers: Headers): Promise<(AuthSessionValue & { activeOrganizationId: string }) | null> {
+  const parsed = verifyInternalMcpPrincipalHeader(headers.get(INTERNAL_MCP_PRINCIPAL_HEADER))
+  if (!parsed) {
     return null
   }
 

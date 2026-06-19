@@ -5,11 +5,10 @@
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=${OPENWORK_ELECTRON_REMOTE_DEBUG_PORT:-9823} pnpm --filter @openwork/desktop dev",
     "dev:electron": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev:electron",
-    "dev:windows": ".\\scripts\\dev-windows.cmd",
-    "dev:windows:x64": ".\\scripts\\dev-windows.cmd x64",
+    "dev:electron:two": "OPENWORK_DEV_MODE=1 node scripts/dev-two-electron-demo.mjs",
+    "dev:sandbox": "bash .devcontainer/dev-sandbox.sh",
     "dev:ui": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/app dev",
     "dev:ui-demo": "pnpm --filter @openwork/ui-demo dev",
-    "dev:story": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/story-book dev",
     "dev:web": "pnpm run dev:den:web",
     "dev:web-local": "pnpm run dev:den",
     "dev:den": "node scripts/dev-local.mjs",
@@ -40,6 +39,7 @@
     "test:session-switch": "pnpm --filter @openwork/app test:session-switch",
     "test:fs-engine": "pnpm --filter @openwork/app test:fs-engine",
     "test:e2e": "pnpm --filter @openwork/app test:e2e",
+    "evals": "node evals/runner/run.mjs",
     "test:orchestrator": "pnpm --filter openwork-orchestrator test:router",
     "bump:patch": "pnpm --filter @openwork/app bump:patch",
     "bump:minor": "pnpm --filter @openwork/app bump:minor",
@@ -54,17 +54,5 @@
   "devDependencies": {
     "turbo": "^2.5.5"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@whiskeysockets/baileys",
-      "better-sqlite3",
-      "electron",
-      "esbuild",
-      "protobufjs"
-    ],
-    "patchedDependencies": {
-      "@solidjs/router@0.15.4": "patches/@solidjs__router@0.15.4.patch"
-    }
-  },
-  "packageManager": "pnpm@10.27.0"
+  "packageManager": "pnpm@11.4.0"
 }

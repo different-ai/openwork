@@ -146,13 +146,11 @@ function SidebarProvider({
     <SidebarContext.Provider value={contextValue}>
       <div
         data-slot="sidebar-wrapper"
-        style={
-          {
-            "--sidebar-width": SIDEBAR_WIDTH,
-            "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
-            ...style,
-          } as React.CSSProperties
-        }
+        style={{
+          "--sidebar-width": SIDEBAR_WIDTH,
+          "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
+          ...style,
+        }}
         className={cn(
           "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar",
           className
@@ -189,11 +187,9 @@ function Sidebar({
           data-slot="sidebar"
           data-mobile="true"
           className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
-          style={
-            {
-              "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
-            } as React.CSSProperties
-          }
+          style={{
+            "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
+          }}
           side={side}
         >
           <SheetHeader className="sr-only">
@@ -379,7 +375,7 @@ function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="sidebar-content"
       data-sidebar="content"
       className={cn(
-        "no-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden",
+        "no-scrollbar flex min-h-0 flex-1 flex-col gap-px overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden",
         className
       )}
       {...props}
@@ -392,7 +388,7 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="sidebar-group"
       data-sidebar="group"
-      className={cn("relative flex w-full min-w-0 flex-col p-2", className)}
+      className={cn("relative flex w-full min-w-0 flex-col p-2 py-0", className)}
       {...props}
     />
   )
@@ -492,8 +488,8 @@ const sidebarMenuButtonVariants = cva(
           "bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]",
       },
       size: {
-        default: "h-8 text-sm",
-        sm: "h-8 text-xs",
+        default: "h-7 text-sm",
+        sm: "h-7 text-xs",
         lg: "h-14 px-3 text-sm group-data-[collapsible=icon]:p-0!",
       },
     },
@@ -621,7 +617,7 @@ function SidebarMenuSkeleton({
     <div
       data-slot="sidebar-menu-skeleton"
       data-sidebar="menu-skeleton"
-      className={cn("flex h-8 items-center gap-2 rounded-xl px-2", className)}
+      className={cn("flex h-7 items-center gap-2 rounded-xl px-2", className)}
       {...props}
     >
       {showIcon && (
@@ -633,11 +629,9 @@ function SidebarMenuSkeleton({
       <Skeleton
         className="h-4 max-w-(--skeleton-width) flex-1"
         data-sidebar="menu-skeleton-text"
-        style={
-          {
-            "--skeleton-width": width,
-          } as React.CSSProperties
-        }
+        style={{
+          "--skeleton-width": width,
+        }}
       />
     </div>
   )
@@ -649,7 +643,7 @@ function SidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
       data-slot="sidebar-menu-sub"
       data-sidebar="menu-sub"
       className={cn(
-        "flex min-w-0 translate-x-px rtl:-translate-x-px flex-col gap-1 group-data-[collapsible=icon]:hidden",
+        "flex min-w-0 translate-x-px rtl:-translate-x-px flex-col gap-px group-data-[collapsible=icon]:hidden",
         className
       )}
       {...props}

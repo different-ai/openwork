@@ -5,7 +5,7 @@ import { ChevronsUpDownIcon, XIcon } from "lucide-react";
 import type React from "react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 
 export const Autocomplete: typeof AutocompletePrimitive.Root =
   AutocompletePrimitive.Root;
@@ -225,14 +225,16 @@ export function AutocompleteList({
 }: AutocompletePrimitive.List.Props): React.ReactElement {
   return (
     <ScrollArea>
-      <AutocompletePrimitive.List
-        className={cn(
-          "not-empty:scroll-py-1 not-empty:p-1 in-data-has-overflow-y:pe-3",
-          className,
-        )}
-        data-slot="autocomplete-list"
-        {...props}
-      />
+      <ScrollAreaViewport>
+        <AutocompletePrimitive.List
+          className={cn(
+            "not-empty:scroll-py-1 not-empty:p-1 in-data-has-overflow-y:pe-3",
+            className,
+          )}
+          data-slot="autocomplete-list"
+          {...props}
+        />
+      </ScrollAreaViewport>
     </ScrollArea>
   );
 }

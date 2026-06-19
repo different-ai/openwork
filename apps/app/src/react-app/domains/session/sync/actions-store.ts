@@ -18,7 +18,6 @@ import {
   shellInSession,
   unrevertSession,
 } from "../../../../app/lib/opencode-session";
-import { trackSessionActive } from "../../../../app/lib/den-telemetry";
 import { finishPerf, perfNow, recordPerfLog } from "../../../../app/lib/perf-log";
 import { toSessionTransportDirectory } from "../../../../app/lib/session-scope";
 import { workspaceSessionRoute } from "../../../shell/workspace-routes";
@@ -32,6 +31,8 @@ import type {
 } from "../../../../app/types";
 import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, saveSessionDraft } from "./draft-store";
+import { firstLineLocalFileParts } from "./prompt-file-parts";
+import { appMentionInstruction } from "../surface/composer/app-mentions";
 
 type SessionModelConfig = {
   applyPendingSessionChoice: (sessionId: string) => void;
@@ -50,7 +51,7 @@ type SessionActionsSnapshot = {
 
 const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
 
-const fileToDataUrl = (file: File) =>
+const fileToDataUrl = (file: File, mimeType: string) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error(`Failed to read attachment: ${file.name}`));
@@ -58,8 +59,17 @@ const fileToDataUrl = (file: File) =>
       const result = typeof reader.result === "string" ? reader.result : "";
       resolve(result);
     };
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(new Blob([file], { type: mimeType }));
   });
+
+function attachmentMime(attachment: ComposerAttachment) {
+  if (attachment.kind === "image") return attachment.mimeType;
+  if (attachment.mimeType === "application/pdf") return attachment.mimeType;
+  // Everything else is sent as text. Unsupported binary mimes (e.g. Keynote)
+  // poison the server-side session history: every later prompt replays the
+  // provider's UnsupportedFunctionalityError and the session cannot recover.
+  return "text/plain";
+}
 
 export function createSessionActionsStore(options: {
   client: () => Client | null;
@@ -146,12 +156,15 @@ export function createSessionActionsStore(options: {
 
   type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
 
-  const attachmentToFilePart = async (attachment: ComposerAttachment): Promise<FilePartInput> => ({
-    type: "file",
-    url: await fileToDataUrl(attachment.file),
-    filename: attachment.name,
-    mime: attachment.mimeType,
-  });
+  const attachmentToFilePart = async (attachment: ComposerAttachment): Promise<FilePartInput> => {
+    const mime = attachmentMime(attachment);
+    return {
+      type: "file",
+      url: await fileToDataUrl(attachment.file, mime),
+      filename: attachment.name,
+      mime,
+    };
+  };
 
   const buildPromptParts = async (draft: ComposerDraft): Promise<PartInput[]> => {
     const parts: PartInput[] = [];
@@ -178,6 +191,10 @@ export function createSessionActionsStore(options: {
         parts.push({ type: "agent", name: part.name } as AgentPartInput);
         continue;
       }
+      if (part.type === "app") {
+        parts.push({ type: "text", text: appMentionInstruction(part.name) } as TextPartInput);
+        continue;
+      }
       if (part.type === "file") {
         const absolute = toAbsolutePath(part.path);
         if (!absolute) continue;
@@ -190,6 +207,7 @@ export function createSessionActionsStore(options: {
       }
     }
 
+    parts.push(...firstLineLocalFileParts(text, root));
     parts.push(...(await Promise.all(draft.attachments.map(attachmentToFilePart))));
     return parts;
   };
@@ -394,7 +412,6 @@ export function createSessionActionsStore(options: {
         mark("session:create:start");
         rawResult = await c.session.create({ directory });
         mark("session:create:ok");
-        trackSessionActive();
       } catch (createErr) {
         mark("session:create:error", {
           error: createErr instanceof Error ? createErr.message : safeStringify(createErr),

@@ -3,12 +3,13 @@
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
+import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
 import { readDenBootstrapConfig, readDenSettings } from "../../app/lib/den";
 import { denSettingsChangedEvent, denSessionUpdatedEvent } from "../../app/lib/den-session-events";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
-import { NewProvidersToast } from "./new-providers-toast";
+import { NewProvidersListener } from "./new-providers-listener";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
@@ -122,8 +123,18 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   return <>{children}</>;
 }
 
+let appOpenedCaptured = false;
+
 export function AppRoot() {
   useDesktopFontZoomBehavior();
+
+  // Module-level dedupe keeps StrictMode double-mounts from double-counting.
+  useEffect(() => {
+    if (appOpenedCaptured) return;
+    appOpenedCaptured = true;
+    initAnalytics();
+    captureAnalyticsEvent("app_opened", {});
+  }, []);
 
   return (
     <>
@@ -226,7 +237,7 @@ export function AppRoot() {
         self-renders for every real user-visible commit, masking the
         true app-level signal.
       */}
-      <NewProvidersToast />
+      <NewProvidersListener />
       <DevProfilerOverlay />
       <ReactRenderWatchdogOverlay />
     </>

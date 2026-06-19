@@ -53,6 +53,13 @@ vendor/opencode/
 
 # OpenWork workspace-local artifacts
 .opencode/openwork/
+.opencode/agents/openwork.md
+.opencode/openwork.json
+opencode.jsonc
 .vercel
 .env*.local
 .claude/*
+.security
+transcript-analysis
+# Eval runner output
+evals/results/

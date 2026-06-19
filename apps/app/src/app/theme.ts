@@ -1,18 +1,36 @@
 export type ThemeMode = "light" | "dark" | "system";
+export type ResolvedThemeMode = "light" | "dark";
 
-const THEME_PREF_KEY = "openwork.themePref";
+const THEME_PREF_KEY = "openwork.react.settings.theme-mode";
+const LEGACY_THEME_PREF_KEYS = ["openwork.themePref"];
 
 const mediaQuery = "(prefers-color-scheme: dark)";
+const listeners = new Set<() => void>();
+let currentMode: ThemeMode | null = null;
+let systemThemeCleanup: (() => void) | null = null;
 
 const getMediaQueryList = () =>
-  typeof window === "undefined" ? null : window.matchMedia(mediaQuery);
+  typeof window === "undefined" || typeof window.matchMedia !== "function"
+    ? null
+    : window.matchMedia(mediaQuery);
+
+const isThemeMode = (value: string | null): value is ThemeMode =>
+  value === "light" || value === "dark" || value === "system";
 
 const readStoredMode = (): ThemeMode => {
   if (typeof window === "undefined") return "system";
   try {
     const stored = window.localStorage.getItem(THEME_PREF_KEY);
-    if (stored === "light" || stored === "dark" || stored === "system") {
+    if (isThemeMode(stored)) {
       return stored;
+    }
+
+    for (const key of LEGACY_THEME_PREF_KEYS) {
+      const legacyStored = window.localStorage.getItem(key);
+      if (isThemeMode(legacyStored)) {
+        window.localStorage.setItem(THEME_PREF_KEY, legacyStored);
+        return legacyStored;
+      }
     }
   } catch {
     // ignore
@@ -20,7 +38,7 @@ const readStoredMode = (): ThemeMode => {
   return "system";
 };
 
-const resolveMode = (mode: ThemeMode) => {
+const resolveMode = (mode: ThemeMode): ResolvedThemeMode => {
   if (mode !== "system") return mode;
   return getMediaQueryList()?.matches ? "dark" : "light";
 };
@@ -32,14 +50,53 @@ const applyTheme = (mode: ThemeMode) => {
   document.documentElement.style.colorScheme = resolved;
 };
 
-export const bootstrapTheme = () => {
-  const mode = readStoredMode();
-  applyTheme(mode);
+const emitThemeChange = () => {
+  for (const listener of listeners) {
+    listener();
+  }
 };
 
-export const getInitialThemeMode = () => readStoredMode();
+const syncNativeTheme = (mode: ThemeMode) => {
+  if (typeof window === "undefined") return;
+  void window.__OPENWORK_ELECTRON__?.invokeDesktop?.("__setNativeTheme", mode);
+};
 
-export const persistThemeMode = (mode: ThemeMode) => {
+const getCurrentMode = () => {
+  if (currentMode === null) {
+    currentMode = readStoredMode();
+  }
+  return currentMode;
+};
+
+const handleSystemThemeChange = () => {
+  if (getCurrentMode() !== "system") return;
+  applyTheme("system");
+  syncNativeTheme("system");
+  emitThemeChange();
+};
+
+const ensureSystemThemeSubscription = () => {
+  if (systemThemeCleanup || typeof window === "undefined") return;
+
+  const list = getMediaQueryList();
+  if (!list) return;
+
+  list.addEventListener("change", handleSystemThemeChange);
+  systemThemeCleanup = () => list.removeEventListener("change", handleSystemThemeChange);
+};
+
+export const bootstrapTheme = () => {
+  const mode = getCurrentMode();
+  applyTheme(mode);
+  syncNativeTheme(mode);
+  ensureSystemThemeSubscription();
+};
+
+export const getInitialThemeMode = () => getCurrentMode();
+
+export const getResolvedThemeMode = () => resolveMode(getCurrentMode());
+
+const persistThemeMode = (mode: ThemeMode) => {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(THEME_PREF_KEY, mode);
@@ -48,15 +105,19 @@ export const persistThemeMode = (mode: ThemeMode) => {
   }
 };
 
-export const subscribeToSystemTheme = (onChange: (isDark: boolean) => void) => {
-  const list = getMediaQueryList();
-  if (!list) return () => undefined;
-
-  const handler = (event: MediaQueryListEvent) => onChange(event.matches);
-  list.addEventListener("change", handler);
-  return () => list.removeEventListener("change", handler);
+export const subscribeToTheme = (onChange: () => void) => {
+  ensureSystemThemeSubscription();
+  listeners.add(onChange);
+  return () => {
+    listeners.delete(onChange);
+  };
 };
 
-export const applyThemeMode = (mode: ThemeMode) => {
+export const setThemeMode = (mode: ThemeMode) => {
+  currentMode = mode;
+  persistThemeMode(mode);
   applyTheme(mode);
+  syncNativeTheme(mode);
+  ensureSystemThemeSubscription();
+  emitThemeChange();
 };

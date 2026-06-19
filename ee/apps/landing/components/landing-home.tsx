@@ -11,6 +11,7 @@ import {
   landingDemoFlows,
   landingDemoFlowTimes
 } from "./landing-demo-flows";
+import { LandingFaq } from "./landing-faq";
 import { LandingSharePackageCard } from "./landing-share-package-card";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
@@ -414,6 +415,8 @@ export function LandingHome(props: Props) {
               </div>
             </div>
           </section>
+
+          <LandingFaq />
 
           <SiteFooter />
         </div>

@@ -8,4 +8,13 @@ const nextConfig = {
   outputFileTracingRoot: path.join(__dirname, "../../.."),
 };
 
+const allowedDevOrigins = (process.env.DEN_WEB_ALLOWED_DEV_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+if (allowedDevOrigins.length > 0) {
+  nextConfig.allowedDevOrigins = allowedDevOrigins;
+}
+
 module.exports = nextConfig;

@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import * as React from "react";
+import { toast } from "@/components/ui/sonner";
 
 import {
   buildDenAuthUrl,
@@ -8,19 +9,19 @@ import {
   DEFAULT_DEN_BASE_URL,
   DenApiError,
   ensureDenActiveOrganization,
+  denOriginComparisonKey,
   normalizeDenBaseUrl,
   readDenSettings,
   resolveDenBaseUrls,
   writeDenSettings,
   type DenOrgSummary,
-} from "../../../../app/lib/den";
+} from "@/app/lib/den";
 import {
   denSessionUpdatedEvent,
   dispatchDenSessionUpdated,
   type DenSessionUpdatedDetail,
-} from "../../../../app/lib/den-session-events";
+} from "@/app/lib/den-session-events";
 import { t } from "@/i18n";
-import { useStatusToasts } from "../../shell-feedback/status-toasts";
 import { useCloudSession } from "./cloud-session-provider";
 
 type SettingsTone = "ready" | "warning" | "neutral" | "error";
@@ -67,7 +68,6 @@ export function useDenSession({
   developerMode,
   openLink,
 }: UseDenSessionProps) {
-  const { showToast } = useStatusToasts();
   const {
     authToken,
     baseUrl,
@@ -119,7 +119,11 @@ export function useDenSession({
   }, [authError, isSignedIn, sessionBusy]);
 
   const syncCurrentDenSettings = React.useCallback(() => {
-    const resolved = resolveDenBaseUrls(baseUrl);
+    const currentSettings = readDenSettings();
+    const resolved = resolveDenBaseUrls({
+      baseUrl,
+      apiBaseUrl: currentSettings.apiBaseUrl,
+    });
     writeDenSettings({
       baseUrl: resolved.baseUrl,
       apiBaseUrl: resolved.apiBaseUrl,
@@ -320,10 +324,7 @@ export function useDenSession({
           await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
         }
         if (!quiet && response.orgs.length > 0) {
-          showToast({
-            title: t("den.status_loaded_orgs", { count: response.orgs.length }),
-            tone: "info",
-          });
+          toast.info(t("den.status_loaded_orgs", { count: response.orgs.length }));
         }
       } catch (error) {
         setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
@@ -331,7 +332,7 @@ export function useDenSession({
         setOrgsBusy(false);
       }
     },
-    [activeOrgId, authToken, baseUrl, client, setActiveOrganization, showToast],
+    [activeOrgId, authToken, baseUrl, client, setActiveOrganization],
   );
 
   React.useEffect(() => {
@@ -384,7 +385,19 @@ export function useDenSession({
     setStatusMessage(t("den.signing_in"));
 
     try {
-      const result = await createDenClient({ baseUrl: nextBaseUrl }).exchangeDesktopHandoff(parsed.grant);
+      // When the pasted link targets the control plane we are already
+      // configured for, keep the configured apiBaseUrl. Deriving it from the
+      // link's base URL alone breaks deployments where the advertised proxy
+      // path does not match how this app actually reaches the Den API.
+      const settings = readDenSettings();
+      const targetKey = denOriginComparisonKey(nextBaseUrl);
+      const configuredApiBaseUrl =
+        denOriginComparisonKey(settings.baseUrl) === targetKey ||
+        denOriginComparisonKey(settings.apiBaseUrl ?? null) === targetKey
+          ? settings.apiBaseUrl ?? null
+          : null;
+      const exchangeClient = createDenClient({ baseUrl: nextBaseUrl, apiBaseUrl: configuredApiBaseUrl });
+      const result = await exchangeClient.exchangeDesktopHandoff(parsed.grant);
       if (!result.token) {
         throw new Error(t("den.error_no_token"));
       }
@@ -394,8 +407,11 @@ export function useDenSession({
         setBaseUrlDraft(nextBaseUrl);
       }
 
+      // Persist the API base URL the exchange actually succeeded against so
+      // relaunches reuse the same working endpoint (#1808).
       writeDenSettings({
         baseUrl: nextBaseUrl,
+        apiBaseUrl: exchangeClient.baseUrls.apiBaseUrl,
         authToken: result.token,
         activeOrgId: null,
         activeOrgSlug: null,
@@ -491,7 +507,7 @@ export function useDenSession({
 
       setOrgsBusy(false);
     },
-    [authToken, baseUrl, client, orgs, setActiveOrganization, showToast],
+    [authToken, baseUrl, client, orgs, setActiveOrganization],
   );
 
   // User is signed in, orgs loaded, multiple orgs available, but none selected yet.

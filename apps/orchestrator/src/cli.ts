@@ -1640,7 +1640,7 @@ function resolveExtraPathEntries(): string[] {
     dirname(process.execPath),
     join(dirname(process.execPath), "sidecars"),
     join(ORCHESTRATOR_ROOT_DIR, "dist"),
-    resolve(REPO_ROOT_DIR, "apps", "desktop", "src-tauri", "sidecars"),
+    resolve(REPO_ROOT_DIR, "apps", "desktop", "resources", "sidecars"),
   ];
   for (const candidate of sidecarCandidates) {
     pushPath(entries, candidate);
@@ -1703,7 +1703,7 @@ function resolveExtraPathEntries(): string[] {
 
 // Resolves ~/.config/openwork/env.json (or %APPDATA%\openwork\env.json on
 // Windows) — must agree byte-for-byte with apps/server/src/env-file.ts and
-// apps/desktop/src-tauri/src/env_file.rs. Honor OPENWORK_ENV_STORE override.
+// apps/desktop/electron/runtime.mjs. Honor OPENWORK_ENV_STORE override.
 function resolveUserEnvFilePath(): string {
   const override = (process.env.OPENWORK_ENV_STORE ?? "").trim();
   if (override) return resolve(override);

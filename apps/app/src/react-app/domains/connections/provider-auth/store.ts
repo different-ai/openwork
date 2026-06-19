@@ -32,8 +32,22 @@ import {
   filterProviderList,
 } from "../../../../app/utils/providers";
 import { getReactQueryClient } from "../../../infra/query-client";
-import { ensureProviderListQuery } from "../provider-list-query";
-import type { OpenworkServerStore } from "../openwork-server-store";
+import { ensureProviderListQuery } from "../../../infra/provider-list-query";
+import type { OpenworkServerStoreSnapshot } from "../openwork-server-store";
+
+/**
+ * The slice of the openwork-server store this store actually consumes.
+ * The settings route passes the full store; the session route passes a
+ * lightweight endpoint-backed adapter (previously forced through `as never`).
+ */
+export type ProviderAuthOpenworkServer = {
+  getSnapshot: () => Pick<
+    OpenworkServerStoreSnapshot,
+    "openworkServerStatus" | "openworkServerClient"
+  > & {
+    openworkServerCapabilities: { config?: { read?: boolean; write?: boolean } } | null;
+  };
+};
 import {
   denSessionUpdatedEvent,
   type DenSessionUpdatedDetail,
@@ -43,7 +57,12 @@ import {
   withWorkspaceCloudImports,
   type CloudImportedProvider,
 } from "../../../../app/cloud/import-state";
+import { refreshDesktopCloudSync } from "../../../../app/cloud/desktop-cloud-sync";
 import { dispatchNewProviders } from "../../../../app/lib/provider-events";
+import {
+  isDesktopProviderBlocked,
+  type DesktopAppRestrictionChecker,
+} from "../../../../app/cloud/desktop-app-restrictions";
 
 type ProviderReturnFocusTarget = "none" | "composer";
 type CloudProviderSyncReason = "sign_in" | "app_launch" | "interval" | "settings_cloud_opened";
@@ -87,10 +106,12 @@ type CreateProviderAuthStoreOptions = {
   providerDefaults: () => Record<string, string>;
   providerConnectedIds: () => string[];
   disabledProviders: () => string[];
+  checkDesktopAppRestriction: DesktopAppRestrictionChecker;
   selectedWorkspaceDisplay: () => WorkspaceDisplay;
   selectedWorkspaceRoot: () => string;
   runtimeWorkspaceId: () => string | null;
-  openworkServer: OpenworkServerStore;
+  ensureRuntimeWorkspaceId?: () => Promise<string | null | undefined>;
+  openworkServer: ProviderAuthOpenworkServer;
   setProviders: (value: ProviderListItem[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
@@ -170,6 +191,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     for (const provider of options.providers()) {
       const id = provider.id?.trim();
       if (!id) continue;
+      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) continue;
       merged.set(id, {
         id,
         name: provider.name?.trim() || id,
@@ -180,6 +202,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     for (const provider of state.cloudOrgProviders) {
       const id = provider.providerId.trim();
       if (!id || merged.has(id)) continue;
+      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) continue;
       merged.set(id, {
         id,
         name: provider.name.trim() || id,
@@ -188,6 +211,27 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     return Array.from(merged.values()).toSorted(compareProviders);
+  };
+
+  const resolveOpenworkConfigTarget = async (mode: "read" | "write") => {
+    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    let openworkWorkspaceId = options.runtimeWorkspaceId()?.trim() || null;
+    if (!openworkWorkspaceId && openworkSnapshot.openworkServerStatus === "connected" && openworkClient) {
+      openworkWorkspaceId = (await options.ensureRuntimeWorkspaceId?.())?.trim() || null;
+    }
+    const hasOpenworkTarget =
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      Boolean(openworkClient && openworkWorkspaceId);
+    const canUseOpenworkServer =
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.config?.[mode] !== false;
+    return {
+      openworkClient,
+      openworkWorkspaceId,
+      hasOpenworkTarget,
+      canUseOpenworkServer,
+    };
   };
 
   const refreshSnapshot = () => {
@@ -315,19 +359,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = openworkSnapshot.openworkServerCapabilities;
-    const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.read;
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+      await resolveOpenworkConfigTarget("read");
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       const config = await openworkClient.getConfig(openworkWorkspaceId);
       return config.openwork ?? {};
+    }
+
+    if (hasOpenworkTarget) {
+      return {};
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -345,19 +386,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = openworkSnapshot.openworkServerCapabilities;
-    const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.write;
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+      await resolveOpenworkConfigTarget("write");
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       await openworkClient.patchConfig(openworkWorkspaceId, { openwork: config });
       return true;
+    }
+
+    if (hasOpenworkTarget) {
+      return false;
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -394,9 +432,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   ) => {
     const config = await readWorkspaceOpenworkConfigRecord();
     const cloudImports = readWorkspaceCloudImports(config);
-    const nextConfig = withWorkspaceCloudImports(config, {
+    const nextCloudImports = {
       ...cloudImports,
       providers: nextProviders,
+    };
+    const nextConfig = withWorkspaceCloudImports(config, {
+      ...nextCloudImports,
     });
     const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
     if (!persisted) {
@@ -405,25 +446,26 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       );
     }
     setStateField("importedCloudProviders", nextProviders);
+    const target = await resolveOpenworkConfigTarget("write");
+    void refreshDesktopCloudSync({
+      openworkClient: target.openworkClient,
+      workspaceId: target.openworkWorkspaceId,
+    }).catch(() => null);
   };
 
   const readProjectConfigFile = async () => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = openworkSnapshot.openworkServerCapabilities;
-    const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.read &&
-      typeof openworkClient.readOpencodeConfigFile === "function";
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+      await resolveOpenworkConfigTarget("read");
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       return await openworkClient.readOpencodeConfigFile(openworkWorkspaceId, "project");
+    }
+
+    if (hasOpenworkTarget) {
+      throw new Error("OpenWork server config API is unavailable for this workspace.");
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -437,18 +479,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = openworkSnapshot.openworkServerCapabilities;
-    const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.write &&
-      typeof openworkClient.writeOpencodeConfigFile === "function";
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+      await resolveOpenworkConfigTarget("write");
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       const result = await openworkClient.writeOpencodeConfigFile(
         openworkWorkspaceId,
         "project",
@@ -458,6 +492,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         throw new Error(result.stderr || result.stdout || "Failed to write opencode.jsonc");
       }
       return true;
+    }
+
+    if (hasOpenworkTarget) {
+      throw new Error("OpenWork server config API is unavailable for this workspace.");
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -496,6 +534,99 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const next = fallbackUpdate(config);
     await c.config.update({ config: next });
     return true;
+  };
+
+  const normalizeDisabledProviders = (value: unknown) =>
+    Array.isArray(value)
+      ? [
+          ...new Set(
+            value
+              .filter((entry): entry is string => typeof entry === "string")
+              .map((entry) => entry.trim())
+              .filter(Boolean),
+          ),
+        ]
+      : [];
+
+  const formatConfigWithProviderDisabledState = (
+    raw: string,
+    providerId: string,
+    disabled: boolean,
+  ) => {
+    const resolvedProviderId = providerId.trim();
+    let updated = raw.trim()
+      ? raw
+      : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
+    const parsed = parse(updated) as Record<string, unknown> | undefined;
+    const currentDisabled = normalizeDisabledProviders(parsed?.disabled_providers);
+    const nextDisabled = disabled
+      ? [...currentDisabled.filter((entry) => entry !== resolvedProviderId), resolvedProviderId]
+      : currentDisabled.filter((entry) => entry !== resolvedProviderId);
+
+    const disabledEdits = modify(
+      updated,
+      ["disabled_providers"],
+      nextDisabled.length ? nextDisabled : undefined,
+      { formattingOptions: { insertSpaces: true, tabSize: 2 } },
+    );
+    updated = applyEdits(updated, disabledEdits);
+    return updated.endsWith("\n") ? updated : `${updated}\n`;
+  };
+
+  const ensureProjectProviderDisabledState = async (
+    providerId: string,
+    disabled: boolean,
+  ) => {
+    const resolvedProviderId = providerId.trim();
+    if (!resolvedProviderId) {
+      throw new Error(t("providers.provider_id_required"));
+    }
+
+    const currentDisabled = normalizeDisabledProviders(options.disabledProviders());
+    const nextDisabled = disabled
+      ? [...currentDisabled.filter((entry) => entry !== resolvedProviderId), resolvedProviderId]
+      : currentDisabled.filter((entry) => entry !== resolvedProviderId);
+
+    if (
+      nextDisabled.length === currentDisabled.length &&
+      nextDisabled.every((entry, index) => entry === currentDisabled[index])
+    ) {
+      return false;
+    }
+
+    const updatedConfig = await updateProjectConfigFile(
+      (raw) => formatConfigWithProviderDisabledState(raw, resolvedProviderId, disabled),
+      (config) => {
+        const nextConfig = { ...config };
+        if (nextDisabled.length) {
+          nextConfig.disabled_providers = nextDisabled;
+        } else {
+          delete nextConfig.disabled_providers;
+        }
+        return nextConfig;
+      },
+    );
+
+    if (!updatedConfig) {
+      throw new Error("Could not update opencode.jsonc for this workspace.");
+    }
+
+    options.setDisabledProviders(nextDisabled);
+    options.markOpencodeConfigReloadRequired();
+    refreshSnapshot();
+    emitChange();
+    return true;
+  };
+
+  const assertProviderAllowedByDesktopPolicy = (providerId: string) => {
+    if (
+      isDesktopProviderBlocked({
+        providerId,
+        checkRestriction: options.checkDesktopAppRestriction,
+      })
+    ) {
+      throw new Error(`${providerId} is blocked by your organization desktop policy.`);
+    }
   };
 
   const escapeRegExp = (value: string) =>
@@ -753,7 +884,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     // Detect newly connected providers and fire a global event so
-    // the NewProvidersToast shows — regardless of which route is active.
+    // the NewProvidersListener records a notification — regardless of
+    // which route is active.
     if (!opts?.suppressNewProviderEvent) {
       const newIds = nextConnected.filter((id) => !prevConnected.has(id));
       if (newIds.length > 0) {
@@ -928,6 +1060,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     for (const provider of availableProviders ?? []) {
       const id = provider.id?.trim();
       if (!id) continue;
+      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) continue;
       if (!Array.isArray(provider.env) || provider.env.length === 0) continue;
       const existing = merged[id] ?? [];
       if (existing.some((method) => method.type === "api")) continue;
@@ -936,6 +1069,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     const availableProvidersById = new Map((availableProviders ?? []).map((provider) => [provider.id, provider]));
     for (const [id, providerMethods] of Object.entries(merged)) {
+      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) {
+        delete merged[id];
+        continue;
+      }
       const provider = availableProvidersById.get(id);
       const normalizedId = id.trim().toLowerCase();
       const normalizedName = provider?.name?.trim().toLowerCase() ?? "";
@@ -952,6 +1089,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     for (const provider of cloudProviders) {
       const id = provider.providerId.trim();
       if (!id) continue;
+      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) continue;
       const existing = merged[id] ?? [];
       if (
         existing.some(
@@ -1007,6 +1145,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (!resolved) {
         throw new Error(t("providers.provider_id_required"));
       }
+      assertProviderAllowedByDesktopPolicy(resolved);
 
       const methods = authMethods[resolved];
       if (!methods || !methods.length) {
@@ -1044,10 +1183,34 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!c) return null;
 
     if (optionsArg?.dispose) {
+      // Prefer the OpenWork server engine reload: it disposes the engine AND
+      // re-registers runtime-DB MCPs, so non-primary workspaces and pending
+      // changes are picked up instead of silently dropping (toggles "turn
+      // off").
+      let reloaded = false;
       try {
-        unwrap(await c.instance.dispose());
+        const openworkSnapshot = options.openworkServer.getSnapshot();
+        const openworkClient = openworkSnapshot.openworkServerClient;
+        if (openworkSnapshot.openworkServerStatus === "connected" && openworkClient) {
+          const workspaceId =
+            options.runtimeWorkspaceId()?.trim() ||
+            (await options.ensureRuntimeWorkspaceId?.())?.trim() ||
+            "";
+          if (workspaceId) {
+            await openworkClient.reloadEngine(workspaceId);
+            reloaded = true;
+          }
+        }
       } catch {
-        // ignore dispose failures and try reading current state anyway
+        // fall back to a direct engine dispose below
+      }
+
+      if (!reloaded) {
+        try {
+          unwrap(await c.instance.dispose());
+        } catch {
+          // ignore dispose failures and try reading current state anyway
+        }
       }
 
       try {
@@ -1102,6 +1265,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!resolved) {
       throw new Error(t("providers.provider_id_required"));
     }
+    assertProviderAllowedByDesktopPolicy(resolved);
 
     if (!Number.isInteger(methodIndex) || methodIndex < 0) {
       throw new Error(t("providers.oauth_method_required"));
@@ -1176,6 +1340,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!trimmed) {
       throw new Error(t("providers.api_key_required"));
     }
+    assertProviderAllowedByDesktopPolicy(providerId);
 
     try {
       await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } });
@@ -1214,6 +1379,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         token,
       });
       const provider = await den.getOrgLlmProviderConnection(orgId, cloudProviderId);
+      assertProviderAllowedByDesktopPolicy(provider.providerId);
       const existingImported = state.importedCloudProviders[cloudProviderId] ?? null;
       const localProviderId = getCloudManagedProviderId(provider);
       const apiKey = provider.apiKey?.trim() ?? "";
@@ -1270,6 +1436,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         .filter((id) => id !== localProviderId && id !== existingImported?.providerId);
       options.setDisabledProviders(nextDisabledProviders);
       options.markOpencodeConfigReloadRequired();
+      await refreshProviders({ dispose: true });
       refreshSnapshot();
       emitChange();
       return `${t("status.connected")} ${provider.name}`;
@@ -1510,57 +1677,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return await removeCloudProvider(trackedImport.cloudProviderId);
     }
 
-    const provider = options.providers().find((entry) => entry.id === resolved) as
-      | (ProviderListItem & { source?: string })
-      | undefined;
-    // Allow disabling any provider — including built-in/env providers
-    // like "opencode" (Zen). The user should be able to hide any provider
-    // from the model list by adding it to disabled_providers in opencode.json.
-    const canDisableProvider = true;
-
-    const disableProvider = async () => {
-      const config = unwrap(await c.config.get());
-      const disabledProviders = Array.isArray(config.disabled_providers)
-        ? config.disabled_providers
-        : [];
-      if (disabledProviders.includes(resolved)) {
-        return false;
-      }
-
-      const next = [...disabledProviders, resolved];
-      options.setDisabledProviders(next);
-      try {
-        const result = await c.config.update({
-          config: { ...config, disabled_providers: next },
-        });
-        assertNoClientError(result);
-        options.markOpencodeConfigReloadRequired();
-      } catch (error) {
-        options.setDisabledProviders(disabledProviders);
-        throw error;
-      }
-      refreshSnapshot();
-      emitChange();
-      return true;
-    };
-
     try {
       await removeProviderAuthCredentials(resolved);
-      let updated = await refreshProviders({ dispose: true });
-      if (canDisableProvider && Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-        const disabled = await disableProvider();
-        if (disabled && updated) {
-          updated = filterProviderList(updated, options.disabledProviders() ?? []);
-          applyProviderListState(updated);
-        }
-        if (!Array.isArray(updated?.connected) || !updated.connected.includes(resolved)) {
-          return disabled
-            ? `${t("providers.disconnected_prefix")} ${resolved} ${t("providers.disabled_in_config_suffix")}`
-            : `${t("providers.disconnected_prefix")} ${resolved}.`;
-        }
-      }
-
+      const updated = await refreshProviders({ dispose: true });
       if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
+        // Provider is still connected (e.g. via env var). Just remove
+        // stored credentials; do NOT add to disabled_providers.
         return `Removed stored credentials for ${resolved}${t("providers.still_connected_suffix")}`;
       }
       removeProviderFromState(resolved);
@@ -1795,6 +1917,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     connectCloudProvider,
     removeCloudProvider,
     disconnectProvider,
+    ensureProjectProviderDisabledState,
     openProviderAuthModal,
     closeProviderAuthModal,
   };

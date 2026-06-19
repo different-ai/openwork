@@ -5,9 +5,9 @@ RUN corepack enable
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /app/
-COPY .npmrc /app/.npmrc
 COPY patches /app/patches
 COPY packages/types/package.json /app/packages/types/package.json
+COPY packages/email/package.json /app/packages/email/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
 COPY ee/packages/den-db/package.json /app/ee/packages/den-db/package.json
 COPY ee/apps/den-api/package.json /app/ee/apps/den-api/package.json
@@ -15,11 +15,13 @@ COPY ee/apps/den-api/package.json /app/ee/apps/den-api/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY packages/types /app/packages/types
+COPY packages/email /app/packages/email
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/den-db /app/ee/packages/den-db
 COPY ee/apps/den-api /app/ee/apps/den-api
 
 RUN pnpm --dir /app/ee/packages/utils run build
+RUN pnpm --dir /app/packages/email run build
 RUN pnpm --dir /app/ee/packages/den-db run build
 RUN pnpm --dir /app/ee/apps/den-api run build
 

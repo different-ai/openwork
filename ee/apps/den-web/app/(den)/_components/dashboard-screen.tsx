@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getWorkerStatusCopy, getWorkerStatusMeta } from "../_lib/den-flow";
+import { getBillingRoute } from "../_lib/den-org";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 type IconProps = {
@@ -162,9 +163,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
   const {
     user,
     sessionHydrated,
-    onboardingPending,
     onboardingDecisionBusy,
-    resolveUserLandingRoute,
     signOut,
     workers,
     filteredWorkers,
@@ -209,16 +208,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
       router.replace("/");
       return;
     }
-    if (!onboardingPending) {
-      return;
-    }
-
-    void resolveUserLandingRoute().then((target) => {
-      if (target === "/checkout") {
-        router.replace(target);
-      }
-    });
-  }, [onboardingPending, resolveUserLandingRoute, router, sessionHydrated, user]);
+  }, [router, sessionHydrated, user]);
 
   if (!sessionHydrated || !user || onboardingDecisionBusy) {
     return (
@@ -229,6 +219,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
   }
 
   const currentWorker = activeWorker ?? (selectedWorker ? { workerName: selectedWorker.workerName, status: selectedWorker.status } : null);
+  const billingRoute = getBillingRoute();
   const isReady = selectedStatusMeta.bucket === "ready";
   const isStarting = selectedStatusMeta.bucket === "starting";
   const webDisabled = !openworkAppConnectUrl || !isReady;
@@ -562,7 +553,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                       : "Billing gates are disabled in this environment."}
                   </p>
                   <Link
-                    href="/checkout"
+                    href={billingRoute}
                     className="mt-4 inline-flex rounded-[12px] border border-[var(--dls-border)] bg-[var(--dls-surface)] px-3 py-2 text-xs font-semibold text-[var(--dls-text-secondary)] transition hover:bg-[var(--dls-hover)] hover:text-[var(--dls-text-primary)]"
                   >
                     Open billing
@@ -575,9 +566,9 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
           <div className="rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] p-8">
             <div className="mx-auto max-w-[30rem] text-center">
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">No workers yet</h2>
-              <p className="mt-3 text-sm leading-6 text-[var(--dls-text-secondary)]">Launch a worker to unlock connection details and runtime controls.</p>
+              <p className="mt-3 text-sm leading-6 text-[var(--dls-text-secondary)]">Existing cloud workers will appear here when available.</p>
               <Link
-                href="/checkout"
+                href={billingRoute}
                 className="mt-5 inline-flex rounded-[12px] border border-[var(--dls-border)] bg-[var(--dls-surface)] px-3 py-2 text-xs font-semibold text-[var(--dls-text-secondary)] transition hover:bg-[var(--dls-hover)] hover:text-[var(--dls-text-primary)]"
               >
                 Open billing
@@ -649,7 +640,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                 })}
 
                 <Link
-                  href="/checkout"
+                  href={billingRoute}
                   className="rounded-2xl px-4 py-3 text-left text-sm font-medium text-[var(--dls-text-secondary)] transition-colors hover:bg-[var(--dls-surface)] hover:text-[var(--dls-text-primary)]"
                 >
                   Billing
@@ -666,7 +657,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
               Signed in as <span className="font-medium text-[var(--dls-text-primary)]">{user.email}</span>
               <div className="mt-2 text-xs text-[var(--dls-text-secondary)]">
                 {billingSummary?.featureGateEnabled && !billingSummary.hasActivePlan
-                  ? "Purchase required before the next launch."
+                  ? "New cloud worker launches are disabled."
                   : `${ownedWorkerCount} worker${ownedWorkerCount === 1 ? "" : "s"} in your account.`}
             </div>
           </div>

@@ -1,11 +1,3 @@
-export type CloudImportedSkillHub = {
-  hubId: string;
-  name: string;
-  skillNames: string[];
-  skillIds: string[];
-  importedAt: number | null;
-};
-
 export type CloudImportedSkill = {
   cloudSkillId: string;
   installedName: string;
@@ -24,6 +16,14 @@ export type CloudImportedProvider = {
   source: string | null;
   updatedAt: string | null;
   modelIds: string[];
+  importedAt: number | null;
+};
+
+export type CloudImportedMarketplace = {
+  marketplaceId: string;
+  name: string;
+  updatedAt: string | null;
+  pluginIds: string[];
   importedAt: number | null;
 };
 
@@ -47,9 +47,9 @@ export type CloudImportedPlugin = {
 };
 
 export type WorkspaceCloudImports = {
-  skillHubs: Record<string, CloudImportedSkillHub>;
   skills: Record<string, CloudImportedSkill>;
   providers: Record<string, CloudImportedProvider>;
+  marketplaces: Record<string, CloudImportedMarketplace>;
   plugins: Record<string, CloudImportedPlugin>;
 };
 
@@ -64,29 +64,10 @@ const readStringArray = (value: unknown) =>
 export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports {
   const root = isRecord(value) ? value : {};
   const cloudImports = isRecord(root.cloudImports) ? root.cloudImports : {};
-  const rawSkillHubs = isRecord(cloudImports.skillHubs) ? cloudImports.skillHubs : {};
   const rawSkills = isRecord(cloudImports.skills) ? cloudImports.skills : {};
   const rawProviders = isRecord(cloudImports.providers) ? cloudImports.providers : {};
+  const rawMarketplaces = isRecord(cloudImports.marketplaces) ? cloudImports.marketplaces : {};
   const rawPlugins = isRecord(cloudImports.plugins) ? cloudImports.plugins : {};
-
-  const skillHubs = Object.fromEntries(
-    Object.entries(rawSkillHubs).flatMap(([key, entry]) => {
-      if (!isRecord(entry)) return [];
-      const hubId = typeof entry.hubId === "string" ? entry.hubId.trim() : key.trim();
-      const name = typeof entry.name === "string" ? entry.name.trim() : hubId;
-      if (!hubId || !name) return [];
-      const imported = {
-        hubId,
-        name,
-        skillNames: readStringArray(entry.skillNames),
-        skillIds: readStringArray(entry.skillIds),
-        importedAt: typeof entry.importedAt === "number" && Number.isFinite(entry.importedAt)
-          ? entry.importedAt
-          : null,
-      } satisfies CloudImportedSkillHub;
-      return [[hubId, imported] as const];
-    }),
-  );
 
   const providers = Object.fromEntries(
     Object.entries(rawProviders).flatMap(([key, entry]) => {
@@ -140,6 +121,27 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
     }),
   );
 
+  const marketplaces = Object.fromEntries(
+    Object.entries(rawMarketplaces).flatMap(([key, entry]) => {
+      if (!isRecord(entry)) return [];
+      const marketplaceId = typeof entry.marketplaceId === "string"
+        ? entry.marketplaceId.trim()
+        : key.trim();
+      const name = typeof entry.name === "string" ? entry.name.trim() : marketplaceId;
+      if (!marketplaceId || !name) return [];
+      const imported = {
+        marketplaceId,
+        name,
+        updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt.trim() || null : null,
+        pluginIds: readStringArray(entry.pluginIds),
+        importedAt: typeof entry.importedAt === "number" && Number.isFinite(entry.importedAt)
+          ? entry.importedAt
+          : null,
+      } satisfies CloudImportedMarketplace;
+      return [[marketplaceId, imported] as const];
+    }),
+  );
+
   const plugins = Object.fromEntries(
     Object.entries(rawPlugins).flatMap(([key, entry]) => {
       if (!isRecord(entry)) return [];
@@ -181,7 +183,7 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
     }),
   );
 
-  return { skillHubs, skills, providers, plugins };
+  return { skills, providers, marketplaces, plugins };
 }
 
 export function withWorkspaceCloudImports(
@@ -191,9 +193,9 @@ export function withWorkspaceCloudImports(
   return {
     ...config,
     cloudImports: {
-      skillHubs: cloudImports.skillHubs,
       skills: cloudImports.skills,
       providers: cloudImports.providers,
+      marketplaces: cloudImports.marketplaces,
       plugins: cloudImports.plugins,
     },
   };

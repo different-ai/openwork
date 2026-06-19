@@ -9,17 +9,20 @@ import { requestId } from "hono/request-id"
 import { describeRoute, openAPIRouteHandler, resolver } from "hono-openapi"
 import { z } from "zod"
 import { env } from "./env.js"
+import { publicRoute } from "./middleware/index.js"
+import { registerAdminMcpRoutes } from "./mcp/admin.js"
+import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, emptyResponse, htmlResponse, jsonResponse } from "./openapi.js"
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
+import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
+import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
-import { registerMcpRoutes } from "./mcp/index.js"
-import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
 
@@ -42,7 +45,16 @@ const openApiDocumentSchema = z.object({
 
 const app = new Hono<{ Variables: AppVariables }>()
 
-app.use("*", logger())
+const requestLogger = logger()
+
+app.use("*", async (c, next) => {
+  if (c.req.path === "/health") {
+    await next()
+    return
+  }
+
+  return requestLogger(c, next)
+})
 app.use("*", requestId({
   headerName: "",
   generator: () => createDenTypeId("request"),
@@ -59,7 +71,7 @@ if (env.corsOrigins.length > 0) {
         origin: env.corsOrigins,
         credentials: true,
         allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id"],
-        allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         exposeHeaders: ["Content-Length", "X-Request-Id"],
         maxAge: 600,
     }),
@@ -79,6 +91,7 @@ app.get(
       302: emptyResponse("Redirect to the OpenWork marketing site."),
     },
   }),
+  publicRoute,
   (c) => {
     return c.redirect("https://openworklabs.com", 302)
   },
@@ -101,6 +114,7 @@ app.get(
       },
     },
   }),
+  publicRoute,
   (c) => {
     return c.json({ ok: true, service: "den-api" })
   },
@@ -113,7 +127,9 @@ registerOrgRoutes(app)
 registerVersionRoutes(app)
 registerWebhookRoutes(app)
 registerWorkerRoutes(app)
+registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
+registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
 
 app.get(
@@ -126,6 +142,7 @@ app.get(
       200: jsonResponse("OpenAPI document returned successfully.", openApiDocumentSchema),
     },
   }),
+  publicRoute,
   openAPIRouteHandler(app, {
     documentation: {
       openapi: "3.1.0",
@@ -151,6 +168,8 @@ app.get(
         { name: "Organizations", description: "Top-level organization creation and context routes." },
         { name: "Invitations", description: "Invitation preview, acceptance, creation, and cancellation routes." },
         { name: "API Keys", description: "Organization API key management routes." },
+        { name: "SCIM", description: "Organization SCIM connector management routes." },
+        { name: "SSO", description: "Organization single sign-on connector management routes." },
         { name: "Members", description: "Organization member management routes." },
         { name: "Roles", description: "Organization custom role management routes." },
         { name: "Teams", description: "Organization team management routes." },
@@ -203,6 +222,7 @@ app.get(
       200: htmlResponse("Swagger UI page returned successfully."),
     },
   }),
+  publicRoute,
   swaggerUI({
     url: "/openapi.json",
     persistAuthorization: true,

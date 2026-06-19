@@ -2,6 +2,7 @@ import { LandingHome } from "../components/landing-home";
 import { getGithubData } from "../lib/github";
 import { headers } from "next/headers";
 import { StructuredData } from "../components/structured-data";
+import { homeFaq } from "../lib/faq";
 import { baseOpenGraph } from "../lib/seo";
 
 export const metadata = {
@@ -36,6 +37,19 @@ const softwareApplicationSchema = {
   }
 };
 
+const faqSchema = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: homeFaq.map((entry) => ({
+    "@type": "Question",
+    name: entry.question,
+    acceptedAnswer: {
+      "@type": "Answer",
+      text: entry.answer
+    }
+  }))
+};
+
 export default async function Home() {
   const github = await getGithubData();
   const cal = process.env.NEXT_PUBLIC_CAL_URL || "/enterprise#book";
@@ -45,6 +59,7 @@ export default async function Home() {
   return (
     <>
       <StructuredData data={softwareApplicationSchema} />
+      <StructuredData data={faqSchema} />
       <LandingHome
         stars={github.stars}
         downloadHref={github.downloads.macos}

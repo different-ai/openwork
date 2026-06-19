@@ -2,10 +2,11 @@ import { minimatch } from "minimatch";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { McpItem } from "./types.js";
-import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel } from "./jsonc.js";
+import type { McpItem, ServerConfig } from "./types.js";
+import { readJsoncFile } from "./jsonc.js";
 import { opencodeConfigPath } from "./workspace-files.js";
 import { validateMcpConfig, validateMcpName } from "./validators.js";
+import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 
 function globalOpenCodeConfigPath(): string {
   const base = join(homedir(), ".config", "opencode");
@@ -37,12 +38,14 @@ function isMcpDisabledByTools(config: Record<string, unknown>, name: string): bo
   return patterns.some((pattern) => candidates.some((candidate) => minimatch(candidate, pattern)));
 }
 
-export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
-  const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
-  const { data: globalConfig } = await readJsoncFile(globalOpenCodeConfigPath(), {} as Record<string, unknown>);
+export async function listMcp(serverConfig: ServerConfig, workspaceId: string, workspaceRoot: string): Promise<McpItem[]> {
+  const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>, { allowInvalid: true });
+  const { data: globalConfig } = await readJsoncFile(globalOpenCodeConfigPath(), {} as Record<string, unknown>, { allowInvalid: true });
 
   const projectMcpMap = getMcpConfig(config);
   const globalMcpMap = getMcpConfig(globalConfig);
+  const runtimeConfig = await readRuntimeOpencodeConfig(serverConfig, workspaceId);
+  const runtimeMap = runtimeMcpMap(runtimeConfig);
 
   const items: McpItem[] = [];
 
@@ -60,6 +63,7 @@ export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
 
   // Project MCPs (highest priority).
   for (const [name, entry] of Object.entries(projectMcpMap)) {
+    if (Object.prototype.hasOwnProperty.call(runtimeMap, name)) continue;
     items.push({
       name,
       config: entry,
@@ -68,30 +72,41 @@ export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
     });
   }
 
+  // OpenWork-owned MCPs are stored by the server and injected at runtime.
+  for (const [name, entry] of Object.entries(runtimeMap)) {
+    items.push({
+      name,
+      config: entry,
+      source: "config.remote",
+      disabledByTools: isMcpDisabledByTools(config, name) || undefined,
+    });
+  }
+
   return items;
 }
 
 export async function addMcp(
-  workspaceRoot: string,
+  serverConfig: ServerConfig,
+  workspaceId: string,
   name: string,
   config: Record<string, unknown>,
 ): Promise<{ action: "added" | "updated" }> {
   validateMcpName(name);
   validateMcpConfig(config);
-  const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
-  const mcpMap = getMcpConfig(data);
+  const runtimeConfig = await readRuntimeOpencodeConfig(serverConfig, workspaceId);
+  const mcpMap = { ...runtimeMcpMap(runtimeConfig) };
   const existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
   mcpMap[name] = config;
-  await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
+  await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => ({ ...current, mcp: mcpMap }));
   return { action: existed ? "updated" : "added" };
 }
 
-export async function removeMcp(workspaceRoot: string, name: string): Promise<boolean> {
-  const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
-  const mcpMap = getMcpConfig(data);
+export async function removeMcp(serverConfig: ServerConfig, workspaceId: string, name: string): Promise<boolean> {
+  const runtimeConfig = await readRuntimeOpencodeConfig(serverConfig, workspaceId);
+  const mcpMap = { ...runtimeMcpMap(runtimeConfig) };
   if (!Object.prototype.hasOwnProperty.call(mcpMap, name)) return false;
   delete mcpMap[name];
-  await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
+  await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => ({ ...current, mcp: mcpMap }));
   return true;
 }
 
@@ -103,13 +118,14 @@ export async function removeMcp(workspaceRoot: string, name: string): Promise<bo
 // `updateJsoncPath` (vs `updateJsoncTopLevel`) preserves inline comments
 // inside the MCP entry — see the regression that motivated #1444.
 export async function setMcpEnabled(
-  workspaceRoot: string,
+  serverConfig: ServerConfig,
+  workspaceId: string,
   name: string,
   enabled: boolean,
 ): Promise<boolean> {
   validateMcpName(name);
-  const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
-  const mcpMap = getMcpConfig(data);
+  const runtimeConfig = await readRuntimeOpencodeConfig(serverConfig, workspaceId);
+  const mcpMap = { ...runtimeMcpMap(runtimeConfig) };
   if (!Object.prototype.hasOwnProperty.call(mcpMap, name)) return false;
   const current = mcpMap[name];
   if (!current || typeof current !== "object" || Array.isArray(current)) return false;
@@ -118,6 +134,7 @@ export async function setMcpEnabled(
   } catch {
     return false;
   }
-  await updateJsoncPath(opencodeConfigPath(workspaceRoot), ["mcp", name, "enabled"], enabled);
+  mcpMap[name] = { ...(current as Record<string, unknown>), enabled };
+  await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (currentConfig) => ({ ...currentConfig, mcp: mcpMap }));
   return true;
 }

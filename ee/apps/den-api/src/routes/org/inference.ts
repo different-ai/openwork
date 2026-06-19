@@ -2,10 +2,8 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { getInferenceStatus, setInferenceEnabled } from "../../inference.js"
-import { createInferenceCheckoutSession, organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
-import { getRequiredUserEmail } from "../../user.js"
-import { env } from "../../env.js"
-import { jsonValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
+import { jsonValidator, orgMemberRoute, orgRoleRoute } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOwner } from "./shared.js"
@@ -35,7 +33,6 @@ const inferenceStatusSchema = z.object({
 
 const inferenceStatusResponseSchema = z.object({
   inference: inferenceStatusSchema,
-  checkoutUrl: z.string().nullable().optional(),
 }).meta({ ref: "InferenceStatusResponse" })
 
 const inferenceProviderMissingSchema = z.object({
@@ -55,8 +52,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
         401: jsonResponse("The caller must be signed in to read inference settings.", unauthorizedSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const payload = c.get("organizationContext")
       return c.json({
@@ -81,8 +77,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
         403: jsonResponse("Only workspace owners can update inference settings.", forbiddenSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgRoleRoute(["owner"]),
     jsonValidator(inferenceSettingsSchema),
     async (c) => {
       const permission = ensureOwner(c)
@@ -96,26 +91,11 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
       if (input.enabled) {
         const subscribed = await organizationHasActiveInferenceSubscription(payload.organization.id)
         if (!subscribed) {
-          const user = c.get("user")
-          const email = getRequiredUserEmail(user)
-          if (!email) {
-            return c.json({ error: "user_email_required" }, 400)
-          }
-          const origin = new URL(c.req.raw.url).origin
-          const session = await createInferenceCheckoutSession({
-            organizationId: payload.organization.id,
-            orgMemberId: payload.currentMember.id,
-            email,
-            name: user.name ?? email,
-            successUrl: env.stripe.billingSuccessUrl ?? `${origin}/dashboard/billing/stripe/checking?session_id={CHECKOUT_SESSION_ID}`,
-            cancelUrl: env.stripe.billingCancelUrl ?? `${origin}/dashboard/billing`,
-          })
           return c.json({
             inference: {
               ...await getInferenceStatus(payload.organization.id),
               subscribed: false,
             },
-            checkoutUrl: session.url,
           })
         }
       }

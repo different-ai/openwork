@@ -1,5 +1,6 @@
 export * from "./admin.js"
 export * from "./current-user.js"
+export * from "./route-access.js"
 export * from "./user-organizations.js"
 export * from "./organization-context.js"
 export * from "./member-teams.js"

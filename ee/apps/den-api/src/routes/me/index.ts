@@ -1,13 +1,17 @@
+import { eq } from "@openwork-ee/den-db/drizzle"
+import { AuthAccountTable } from "@openwork-ee/den-db/schema"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
-import { desktopConfigSchema } from "@openwork/types/den/desktop-app-restrictions"
 import { z } from "zod"
-import { jsonValidator, requireUserMiddleware, resolveOrganizationContextMiddleware, resolveUserOrganizationsMiddleware, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
+import { db } from "../../db.js"
+import { authenticatedRoute, jsonValidator, orgMemberRoute, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { resolveUserOrganizations, setSessionActiveOrganization } from "../../orgs.js"
 import type { AuthContextVariables } from "../../session.js"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { calculateDesktopPolicyForOrgMember } from "../../desktop-policies.js"
 
 const meResponseSchema = z.object({
   user: z.object({}).passthrough(),
@@ -39,6 +43,20 @@ const activeOrganizationResponseSchema = z.object({
   activeOrgSlug: z.string().nullable(),
 }).meta({ ref: "ActiveOrganizationResponse" })
 
+function normalizeAuthProvider(providerId: string) {
+  const normalized = providerId.trim().toLowerCase()
+  if (normalized === "credential" || normalized === "email-password") {
+    return "email"
+  }
+  if (normalized.startsWith("openwork-sso-")) {
+    return "sso"
+  }
+  if (normalized.startsWith("openwork-scim-")) {
+    return "scim"
+  }
+  return normalized || "unknown"
+}
+
 export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   app.get(
     "/v1/me",
@@ -51,10 +69,25 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         401: jsonResponse("The caller must be signed in to read profile data.", unauthorizedSchema),
       },
     }),
-    requireUserMiddleware,
-    (c) => {
+    authenticatedRoute(),
+    async (c) => {
+    const user = c.get("user")
+    if (!user) {
+      return c.json({ error: "unauthorized" }, 401)
+    }
+
+    const accounts = await db
+      .select({ providerId: AuthAccountTable.providerId })
+      .from(AuthAccountTable)
+      .where(eq(AuthAccountTable.userId, normalizeDenTypeId("user", user.id)))
+
+    const authProviders = [...new Set(accounts.map((account) => normalizeAuthProvider(account.providerId)))].sort()
+
     return c.json({
-      user: c.get("user"),
+      user: {
+        ...user,
+        authProviders,
+      },
       session: c.get("session"),
     })
     },
@@ -70,7 +103,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         200: jsonResponse("Current user organizations returned successfully.", meOrganizationsResponseSchema),
       },
     }),
-    resolveUserOrganizationsMiddleware,
+    orgMemberRoute({ useUserOrganizations: true }),
     (c) => {
     const orgs = (c.get("userOrganizations") ?? []) as NonNullable<UserOrganizationsContext["userOrganizations"]>
 
@@ -99,7 +132,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         403: jsonResponse("The caller cannot switch this kind of session.", forbiddenSchema),
       },
     }),
-    requireUserMiddleware,
+    authenticatedRoute(),
     jsonValidator(setActiveOrganizationSchema),
     async (c) => {
       const user = c.get("user")
@@ -141,14 +174,18 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         401: jsonResponse("The caller must be signed in to read desktop config.", unauthorizedSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
-    (c) => {
+    orgMemberRoute(),
+    async (c) => {
       const organization = c.get("organizationContext").organization
+      const currentMember = c.get("organizationContext").currentMember
       const metadata = normalizeOrganizationMetadata(organization.metadata).metadata
+      const desktopPolicy = await calculateDesktopPolicyForOrgMember({
+        organizationId: organization.id,
+        orgMemberId: currentMember.id,
+      })
 
       return c.json({
-        ...organization.desktopAppRestrictions,
+        ...desktopPolicy,
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }
           : {}),

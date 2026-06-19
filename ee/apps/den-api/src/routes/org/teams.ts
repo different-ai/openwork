@@ -1,4 +1,4 @@
-import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   MemberTable,
   SkillHubMemberTable,
@@ -12,15 +12,15 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import {
   jsonValidator,
+  orgRoleRoute,
   paramValidator,
-  requireUserMiddleware,
-  resolveOrganizationContextMiddleware,
 } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import {
   ensureTeamManager,
   idParamSchema,
+  orgAccessFailureStatus,
 } from "./shared.js"
 
 const createTeamSchema = z.object({
@@ -76,7 +76,7 @@ async function ensureMembersBelongToOrganization(input: {
   const rows = await db
     .select({ id: MemberTable.id })
     .from(MemberTable)
-    .where(eq(MemberTable.organizationId, input.organizationId))
+    .where(and(eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
 
   const memberIds = new Set(rows.map((row) => row.id))
   return input.memberIds.every((memberId) => memberIds.has(memberId))
@@ -97,13 +97,12 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         404: jsonResponse("The organization or a referenced member could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgRoleRoute(["admin"]),
     jsonValidator(createTeamSchema),
     async (c) => {
       const permission = ensureTeamManager(c)
       if (!permission.ok) {
-        return c.json(permission.response, 403)
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
 
       const payload = c.get("organizationContext")
@@ -185,14 +184,13 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         404: jsonResponse("The team, organization, or a referenced member could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
+    orgRoleRoute(["admin"]),
     paramValidator(orgTeamParamsSchema),
-    resolveOrganizationContextMiddleware,
     jsonValidator(updateTeamSchema),
     async (c) => {
       const permission = ensureTeamManager(c)
       if (!permission.ok) {
-        return c.json(permission.response, 403)
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
 
       const payload = c.get("organizationContext")
@@ -289,13 +287,12 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         404: jsonResponse("The team or organization could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
+    orgRoleRoute(["admin"]),
     paramValidator(orgTeamParamsSchema),
-    resolveOrganizationContextMiddleware,
     async (c) => {
       const permission = ensureTeamManager(c)
       if (!permission.ok) {
-        return c.json(permission.response, 403)
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
 
       const payload = c.get("organizationContext")

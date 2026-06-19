@@ -30,6 +30,15 @@ type McpStatusEntry = {
   error?: string;
 };
 
+function isSlackMcpEntry(entry: McpDirectoryInfo, slug: string): boolean {
+  return slug === "slack" || entry.serverName === "slack" || entry.url === "https://mcp.slack.com/mcp";
+}
+
+function isDynamicClientRegistrationError(message: string | undefined): boolean {
+  const normalized = message?.toLowerCase() ?? "";
+  return normalized.includes("dynamic client registration") && normalized.includes("does not support");
+}
+
 export type McpAuthModalProps = {
   open: boolean;
   onClose: () => void;
@@ -69,6 +78,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
   const authCopyTimeoutRef = useRef<number | null>(null);
   const previousOpenRef = useRef(false);
   const previousEntryNameRef = useRef<string | null>(null);
+  const reloadAuthRunRef = useRef(false);
 
   const stopStatusPolling = () => {
     if (statusPollRef.current !== null) {
@@ -224,6 +234,10 @@ export function McpAuthModal(props: McpAuthModalProps) {
       }
 
       const statusEntry = await fetchMcpStatus(slug);
+      if (isSlackMcpEntry(props.entry, slug) && isDynamicClientRegistrationError(statusEntry?.error)) {
+        setError(t("mcp.auth.slack_client_registration_required"));
+        return;
+      }
       if (props.reloadRequired && !reloadSatisfied && !statusEntry) {
         setNeedsReload(true);
         setReloadNotice(
@@ -281,7 +295,10 @@ export function McpAuthModal(props: McpAuthModalProps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : t("mcp.auth.failed_to_start_oauth");
 
-      if (message.toLowerCase().includes("does not support oauth")) {
+      if (isSlackMcpEntry(props.entry, slug) && isDynamicClientRegistrationError(message)) {
+        setNeedsReload(false);
+        setError(t("mcp.auth.slack_client_registration_required"));
+      } else if (message.toLowerCase().includes("does not support oauth")) {
         const serverSlug = props.entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "server";
         const canAutoReload =
           allowAutoReload && !props.isRemoteWorkspace && !props.reloadBlocked && Boolean(props.onReloadEngine);
@@ -376,13 +393,14 @@ export function McpAuthModal(props: McpAuthModalProps) {
   }, [props.open, props.entry, props.client, props.reloadRequired]);
 
   useEffect(() => {
-    if (!props.open || !awaitingReload || props.reloadBlocked || !props.onReloadEngine || !props.entry || reloadStarting) {
+    if (!props.open || !awaitingReload || props.reloadBlocked || !props.onReloadEngine || !props.entry || reloadAuthRunRef.current) {
       return;
     }
 
     let cancelled = false;
 
     void (async () => {
+      reloadAuthRunRef.current = true;
       setReloadStarting(true);
       setError(null);
       setNeedsReload(false);
@@ -417,6 +435,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
         setNeedsReload(true);
         setError(message);
       } finally {
+        reloadAuthRunRef.current = false;
         if (!cancelled) {
           setReloadStarting(false);
         }
@@ -425,8 +444,9 @@ export function McpAuthModal(props: McpAuthModalProps) {
 
     return () => {
       cancelled = true;
+      reloadAuthRunRef.current = false;
     };
-  }, [props.open, awaitingReload, props.reloadBlocked, props.onReloadEngine, props.entry, reloadStarting]);
+  }, [props.open, awaitingReload, props.reloadBlocked, props.onReloadEngine, props.entry]);
 
   const handleRetry = () => {
     void startAuth(true);

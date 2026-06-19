@@ -1,6 +1,7 @@
-import { and, desc, eq, inArray, isNotNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
+  InvitationTable,
   LlmProviderAccessTable,
   LlmProviderModelTable,
   LlmProviderTable,
@@ -12,21 +13,20 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { CustomProviderConfigError, normalizeCustomProviderConfig } from "../../llm/custom-provider.js"
 import {
   jsonValidator,
+  orgMemberRoute,
   paramValidator,
   queryValidator,
-  requireUserMiddleware,
   resolveMemberTeamsMiddleware,
-  resolveOrganizationContextMiddleware,
 } from "../../middleware/index.js"
 import { getModelsDevProvider, listModelsDevProviders } from "../../llm/models-dev.js"
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { idParamSchema, memberHasRole } from "./shared.js"
+import { ensureOrganizationAdmin, idParamSchema, memberHasRole, orgAccessFailureStatus } from "./shared.js"
 
-type JsonRecord = Record<string, unknown>
 type LlmProviderId = typeof LlmProviderTable.$inferSelect.id
 type LlmProviderAccessId = typeof LlmProviderAccessTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -39,6 +39,11 @@ type RouteFailure = {
   message?: string
 }
 
+function getInvitedMemberName(email: string) {
+  const [localPart, domain = "invited"] = email.split("@")
+  return `${localPart} ${domain.split(".")[0] ?? "invited"}`.trim()
+}
+
 const providerCatalogParamsSchema = z.object({
   providerId: z.string().trim().min(1).max(255),
 })
@@ -49,27 +54,13 @@ const llmProviderListQuerySchema = z.object({
   scope: z.enum(["usable", "manageable"]).optional().default("usable"),
 })
 
-const customModelSchema = z.object({
-  id: z.string().trim().min(1).max(255),
-  name: z.string().trim().min(1).max(255),
-}).passthrough()
-
-const customProviderSchema = z.object({
-  id: z.string().trim().min(1).max(255),
-  name: z.string().trim().min(1).max(255),
-  npm: z.string().trim().min(1).max(255),
-  env: z.array(z.string().trim().min(1).max(255)).min(1),
-  doc: z.string().trim().min(1).max(2048),
-  api: z.string().trim().min(1).max(2048).optional(),
-  models: z.array(customModelSchema).min(1),
-}).passthrough()
-
 const llmProviderWriteSchema = z.object({
   name: z.string().trim().min(1).max(255),
   source: z.enum(["models_dev", "custom"]),
   providerId: z.string().trim().min(1).max(255).optional(),
   modelIds: z.array(z.string().trim().min(1).max(255)).min(1).optional(),
   customConfigText: z.string().trim().min(1).optional(),
+  customConfig: z.unknown().optional(),
   apiKey: z.string().trim().max(65535).optional(),
   memberIds: z.array(denTypeIdSchema("member")).max(500).optional().default([]),
   teamIds: z.array(denTypeIdSchema("team")).max(500).optional().default([]),
@@ -92,7 +83,7 @@ const llmProviderWriteSchema = z.object({
     }
   }
 
-  if (value.source === "custom" && !value.customConfigText) {
+  if (value.source === "custom" && !value.customConfigText && value.customConfig === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["customConfigText"],
@@ -229,7 +220,7 @@ async function resolveMemberIds(input: {
   const rows = await db
     .select({ id: MemberTable.id })
     .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), inArray(MemberTable.id, memberIds)))
+    .where(and(eq(MemberTable.organizationId, input.organizationId), inArray(MemberTable.id, memberIds), isNull(MemberTable.removedAt)))
 
   if (rows.length !== memberIds.length) {
     throw createFailure(404, "member_not_found")
@@ -300,35 +291,26 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
     }
   }
 
-  let parsed: unknown
   try {
-    parsed = JSON.parse(input.customConfigText ?? "")
-  } catch {
-    throw createFailure(400, "invalid_custom_provider_config", "Custom provider config must be valid JSON.")
-  }
+    const customProvider = normalizeCustomProviderConfig({
+      customConfigText: input.customConfigText,
+      customConfig: input.customConfig,
+    })
 
-  const customProvider = customProviderSchema.safeParse(parsed)
-  if (!customProvider.success) {
-    throw createFailure(
-      400,
-      "invalid_custom_provider_config",
-      customProvider.error.issues[0]?.message ?? "Custom provider config is invalid.",
-    )
-  }
+    return {
+      source: input.source,
+      providerId: customProvider.providerId,
+      name: input.name,
+      providerConfig: customProvider.providerConfig,
+      models: customProvider.models,
+      apiKey: input.apiKey?.trim() || null,
+    }
+  } catch (error) {
+    if (error instanceof CustomProviderConfigError) {
+      throw createFailure(400, "invalid_custom_provider_config", error.message)
+    }
 
-  const { models, ...providerConfig } = customProvider.data
-
-  return {
-    source: input.source,
-    providerId: customProvider.data.id,
-    name: input.name,
-    providerConfig: providerConfig as JsonRecord,
-    models: models.map((model) => ({
-      id: model.id,
-      name: model.name,
-      config: model as JsonRecord,
-    })),
-    apiKey: input.apiKey?.trim() || null,
+    throw error
   }
 }
 
@@ -395,11 +377,15 @@ async function loadLlmProviders(input: {
         email: AuthUserTable.email,
         image: AuthUserTable.image,
       },
+      invitation: {
+        email: InvitationTable.email,
+      },
     })
     .from(LlmProviderAccessTable)
     .innerJoin(MemberTable, eq(LlmProviderAccessTable.orgMembershipId, MemberTable.id))
-    .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
-    .where(and(inArray(LlmProviderAccessTable.llmProviderId, providerIds), isNotNull(LlmProviderAccessTable.orgMembershipId)))
+    .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
+    .leftJoin(InvitationTable, eq(MemberTable.inviteId, InvitationTable.id))
+    .where(and(inArray(LlmProviderAccessTable.llmProviderId, providerIds), isNotNull(LlmProviderAccessTable.orgMembershipId), isNull(MemberTable.removedAt)))
 
   const teamAccessRows = await db
     .select({
@@ -464,13 +450,21 @@ async function loadLlmProviders(input: {
       }))
       .sort((left, right) => left.name.localeCompare(right.name)),
     access: {
-      members: (memberAccessByProviderId.get(provider.id) ?? []).map((row) => ({
-        id: row.access.id,
-        orgMembershipId: row.member.id,
-        role: row.member.role,
-        user: row.user,
-        createdAt: row.access.createdAt,
-      })),
+      members: (memberAccessByProviderId.get(provider.id) ?? []).map((row) => {
+        const email = row.user?.email ?? row.invitation?.email ?? "invited@example.com"
+        return {
+          id: row.access.id,
+          orgMembershipId: row.member.id,
+          role: row.member.role,
+          user: {
+            id: row.user?.id ?? row.member.id,
+            name: row.user?.name ?? getInvitedMemberName(email),
+            email,
+            image: row.user?.image ?? null,
+          },
+          createdAt: row.access.createdAt,
+        }
+      }),
       teams: (teamAccessByProviderId.get(provider.id) ?? []).map((row) => ({
         id: row.access.id,
         teamId: row.team.id,
@@ -497,8 +491,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         502: jsonResponse("The external provider catalog was unavailable.", providerCatalogUnavailableSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       try {
         const providers = await listModelsDevProviders()
@@ -526,9 +519,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         502: jsonResponse("The external provider catalog was unavailable.", providerCatalogUnavailableSchema),
       },
     }),
-    requireUserMiddleware,
+    orgMemberRoute(),
     paramValidator(providerCatalogParamsSchema),
-    resolveOrganizationContextMiddleware,
     async (c) => {
       const params = c.req.valid("param")
 
@@ -571,9 +563,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         401: jsonResponse("The caller must be signed in to list organization LLM providers.", unauthorizedSchema),
       },
     }),
-    requireUserMiddleware,
+    orgMemberRoute(),
     queryValidator(llmProviderListQuerySchema),
-    resolveOrganizationContextMiddleware,
     resolveMemberTeamsMiddleware,
     async (c) => {
       const query = c.req.valid("query")
@@ -611,9 +602,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         404: jsonResponse("The provider could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
+    orgMemberRoute(),
     paramValidator(orgLlmProviderParamsSchema),
-    resolveOrganizationContextMiddleware,
     resolveMemberTeamsMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
@@ -678,7 +668,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Create organization LLM provider",
-      description: "Creates a new organization-scoped LLM provider from either a models.dev provider template or a pasted custom configuration.",
+      description: "Creates a new organization-scoped LLM provider from either a models.dev provider template, pasted JSON/JSONC custom configuration, or MCP-supplied customConfig object.",
       responses: {
         201: jsonResponse("Organization LLM provider created successfully.", llmProviderResponseSchema),
         400: jsonResponse("The provider creation request was invalid.", invalidRequestSchema),
@@ -686,8 +676,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         404: jsonResponse("A referenced provider, model, member, or team could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     jsonValidator(llmProviderWriteSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -789,7 +778,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Update organization LLM provider",
-      description: "Updates an existing organization LLM provider, including its provider config, selected models, secret, and access grants.",
+      description: "Updates an existing organization LLM provider, including its provider config, selected models, secret, and access grants. Custom providers accept JSON/JSONC text or an MCP-supplied customConfig object.",
       responses: {
         200: jsonResponse("Organization LLM provider updated successfully.", llmProviderResponseSchema),
         400: jsonResponse("The provider update request was invalid.", invalidRequestSchema),
@@ -798,9 +787,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         404: jsonResponse("The provider or a referenced resource could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
+    orgMemberRoute(),
     paramValidator(orgLlmProviderParamsSchema),
-    resolveOrganizationContextMiddleware,
     jsonValidator(llmProviderWriteSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -830,6 +818,13 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
           error: "forbidden",
           message: "Only the provider creator or a workspace admin can update providers.",
         }, 403)
+      }
+
+      if (isOrganizationAdmin(payload)) {
+        const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can update providers.")
+        if (!permission.ok) {
+          return c.json(permission.response, orgAccessFailureStatus(permission.response))
+        }
       }
 
       try {
@@ -934,9 +929,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         404: jsonResponse("The provider could not be found.", notFoundSchema),
       },
     }),
-    requireUserMiddleware,
+    orgMemberRoute(),
     paramValidator(orgLlmProviderParamsSchema),
-    resolveOrganizationContextMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
       const params = c.req.valid("param")
@@ -966,6 +960,13 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         }, 403)
       }
 
+      if (isOrganizationAdmin(payload)) {
+        const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can delete providers.")
+        if (!permission.ok) {
+          return c.json(permission.response, orgAccessFailureStatus(permission.response))
+        }
+      }
+
       await db.transaction(async (tx) => {
         await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, provider.id))
         await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, provider.id))
@@ -991,9 +992,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         409: jsonResponse("The request tried to remove a protected provider access entry.", conflictSchema),
       },
     }),
-    requireUserMiddleware,
+    orgMemberRoute(),
     paramValidator(orgLlmProviderParamsSchema.extend(idParamSchema("accessId", "llmProviderAccess").shape)),
-    resolveOrganizationContextMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
       const params = c.req.valid("param")
@@ -1020,6 +1020,13 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
       if (!canManageLlmProvider(payload, provider)) {
         return c.json({ error: "forbidden", message: "Only the provider creator or a workspace admin can manage access." }, 403)
+      }
+
+      if (isOrganizationAdmin(payload)) {
+        const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can manage access.")
+        if (!permission.ok) {
+          return c.json(permission.response, orgAccessFailureStatus(permission.response))
+        }
       }
 
       const accessRows = await db

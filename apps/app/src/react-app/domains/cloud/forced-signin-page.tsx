@@ -125,9 +125,10 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
     setStatusMessage(t("den.signing_in"));
 
     try {
-      const result = await createDenClient({
+      const client = createDenClient({
         baseUrl: nextBaseUrl,
-      }).exchangeDesktopHandoff(parsed.grant);
+      });
+      const result = await client.exchangeDesktopHandoff(parsed.grant);
       if (!result.token) {
         throw new Error(t("den.error_no_token"));
       }
@@ -137,8 +138,11 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
         setBaseUrlDraft(nextBaseUrl);
       }
 
+      // Persist the API base URL the exchange actually succeeded against so
+      // relaunches reuse the same working endpoint (#1808).
       writeDenSettings({
         baseUrl: nextBaseUrl,
+        apiBaseUrl: client.baseUrls.apiBaseUrl,
         authToken: result.token,
         activeOrgId: null,
         activeOrgSlug: null,

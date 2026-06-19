@@ -44,9 +44,9 @@ const stackItems = [
   },
   {
     id: "skill-hub",
-    title: "Skill Hub",
+    title: "Extension Marketplace",
     description:
-      "Publish reusable workflows and team-specific skill packs from one place.",
+      "Publish reusable skills, MCPs, and plugins for your team from one place.",
     icon: PlugZap,
     imageSrc: "/stack-skill-hub.png"
   },
@@ -207,6 +207,10 @@ export function LandingEnterprise(props: Props) {
                   local-first, permission-aware architecture built for privacy,
                   access control, and deployment flexibility across HIPAA, SOC 2
                   Type II, ISO 27001, CCPA, and GDPR-sensitive environments.
+                  Enterprise plans add SSO / SAML with SCIM provisioning and
+                  desktop policies — admins decide which providers, models,
+                  extensions, and app versions employees can use, enforced
+                  automatically by the desktop app.
                 </p>
               </div>
 
@@ -223,6 +227,20 @@ export function LandingEnterprise(props: Props) {
                   managed rollout, with your gateway, MCP servers, skills, and
                   internal data sources connected.
                 </p>
+                <ul className="mt-4 space-y-2 text-[14px] leading-relaxed text-slate-600">
+                  <li>
+                    <span className="font-medium text-[#011627]">Managed deployment</span>{" "}
+                    — we run it, or guide your self-hosted install
+                  </li>
+                  <li>
+                    <span className="font-medium text-[#011627]">Skill development</span>{" "}
+                    — custom skills built for your team&apos;s workflows
+                  </li>
+                  <li>
+                    <span className="font-medium text-[#011627]">MCP consulting</span>{" "}
+                    — your internal tools and data, connected as MCP servers
+                  </li>
+                </ul>
               </div>
             </div>
 

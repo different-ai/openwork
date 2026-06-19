@@ -14,10 +14,10 @@ function normalizeCommandFrontmatter(data: Record<string, unknown>): Record<stri
   );
 }
 
-async function repairLegacyCommandFile(filePath: string, content: string): Promise<{ data: Record<string, unknown>; body: string }> {
+async function repairLegacyCommandFile(filePath: string, content: string): Promise<{ data: Record<string, unknown>; body: string; changed: boolean }> {
   const parsed = parseFrontmatter(content);
   if (parsed.data.model !== null) {
-    return parsed;
+    return { ...parsed, changed: false };
   }
 
   const nextContent = buildFrontmatter(normalizeCommandFrontmatter(parsed.data)) + parsed.body.replace(/^\n?/, "\n");
@@ -25,6 +25,7 @@ async function repairLegacyCommandFile(filePath: string, content: string): Promi
   return {
     data: normalizeCommandFrontmatter(parsed.data),
     body: parsed.body,
+    changed: true,
   };
 }
 
@@ -103,8 +104,19 @@ export async function upsertCommand(
   return path;
 }
 
-export async function repairCommands(workspaceRoot: string): Promise<void> {
-  await listCommandsInDir(projectCommandsDir(workspaceRoot), "workspace");
+export async function repairCommands(workspaceRoot: string): Promise<boolean> {
+  const dir = projectCommandsDir(workspaceRoot);
+  if (!(await exists(dir))) return false;
+  const entries = await readdir(dir, { withFileTypes: true });
+  let changed = false;
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const filePath = join(dir, entry.name);
+    const content = await readFile(filePath, "utf8");
+    const result = await repairLegacyCommandFile(filePath, content);
+    changed ||= result.changed;
+  }
+  return changed;
 }
 
 export async function deleteCommand(workspaceRoot: string, name: string): Promise<void> {

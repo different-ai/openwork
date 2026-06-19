@@ -4,7 +4,9 @@ import {
   useMemo,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
+import type { Agent } from "@opencode-ai/sdk/v2/client";
 
 import { t } from "@/i18n";
 import {
@@ -22,18 +24,27 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
-import { ChevronLeftIcon } from "lucide-react";
+import { Check, ChevronLeftIcon, FileText, Globe, Zap } from "lucide-react";
 
 export type PaletteItem = {
   id: string;
   title: string;
   detail?: string;
   meta?: string;
+  icon?: ReactNode;
   searchText?: string;
   action: () => void;
 };
 
-type PaletteMode = "root" | "sessions";
+export type AccessibleTargetOption = {
+  id: string;
+  kind: "url" | "file";
+  value: string;
+  name: string;
+  preview: string;
+};
+
+type PaletteMode = "root" | "sessions" | "accessible-items" | "agents";
 
 export type SessionOption = {
   workspaceId: string;
@@ -44,6 +55,25 @@ export type SessionOption = {
   searchText: string;
   isActive: boolean;
 };
+
+function targetIcon(target: AccessibleTargetOption) {
+  if (target.kind === "url") return <Globe className="size-4 text-primary" />;
+  if (target.preview === "sheet") {
+    return (
+      <span className="inline-flex h-4 min-w-6 shrink-0 items-center justify-center rounded-[4px] border border-emerald-500/30 bg-emerald-500/10 px-0.5 text-[7px] font-bold leading-none text-emerald-700">
+        XLS
+      </span>
+    );
+  }
+  if (target.preview === "markdown") {
+    return (
+      <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-primary/25 bg-primary/10 text-[8px] font-bold leading-none text-primary">
+        MD
+      </span>
+    );
+  }
+  return <FileText className="size-4 text-primary" />;
+}
 
 export type CommandPaletteProps = {
   open: boolean;
@@ -56,8 +86,17 @@ export type CommandPaletteProps = {
   onOpenSettings: (route?: string) => void;
   /** Optional — open a URL in the user's browser. Falls back to window.open. */
   onOpenUrl?: (url: string) => void;
+  /** Optional: current session servers/artifacts exposed through Cmd/Ctrl+K. */
+  accessibleTargets?: AccessibleTargetOption[];
+  onOpenAccessibleTarget?: (target: AccessibleTargetOption) => void;
+  onHideAccessibleTarget?: (target: AccessibleTargetOption) => void;
   /** Optional: sessions for the second mode. */
   sessions: SessionOption[];
+  extraItems?: PaletteItem[];
+  /** Optional: agent picker submode (Switch agent). */
+  listAgents?: () => Promise<Agent[]>;
+  selectedAgent?: string | null;
+  onSelectAgent?: (agent: string | null) => void;
 };
 
 /**
@@ -68,12 +107,30 @@ export type CommandPaletteProps = {
  */
 export function CommandPalette(props: CommandPaletteProps) {
   const [mode, setMode] = useState<PaletteMode>("root");
+  const [agents, setAgents] = useState<Agent[]>([]);
 
   useEffect(() => {
     if (!props.open) {
       setMode("root");
     }
   }, [props.open]);
+
+  // Fetch agents lazily when the submode opens so the palette stays instant.
+  const listAgents = props.listAgents;
+  useEffect(() => {
+    if (mode !== "agents" || !listAgents) return;
+    let cancelled = false;
+    void listAgents()
+      .then((next) => {
+        if (!cancelled) setAgents(next);
+      })
+      .catch(() => {
+        if (!cancelled) setAgents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, listAgents]);
 
   const openUrl = (url: string) => {
     if (props.onOpenUrl) {
@@ -82,6 +139,8 @@ export function CommandPalette(props: CommandPaletteProps) {
       window.open(url, "_blank", "noopener");
     }
   };
+
+  const accessibleTargetCount = props.accessibleTargets?.length ?? 0;
 
   const rootItems = useMemo<PaletteItem[]>(() => [
     {
@@ -105,6 +164,32 @@ export function CommandPalette(props: CommandPaletteProps) {
         setMode("sessions");
       },
     },
+    ...(props.listAgents
+      ? [{
+          id: "agents",
+          title: t("session.cmd_agents_title"),
+          detail: t("session.cmd_agents_detail"),
+          meta: props.selectedAgent
+            ? props.selectedAgent.charAt(0).toUpperCase() + props.selectedAgent.slice(1)
+            : t("session.default_agent"),
+          searchText: "agent agents switch pick select default build plan",
+          action: () => {
+            setMode("agents");
+          },
+        }]
+      : []),
+    {
+      id: "accessible-items",
+      title: "Accessible items",
+      detail: accessibleTargetCount > 0
+        ? `Open ${accessibleTargetCount.toLocaleString()} servers and artifacts detected in this session`
+        : "No servers or artifacts detected in this session yet",
+      meta: "Session",
+      action: () => {
+        setMode("accessible-items");
+      },
+    },
+    ...(props.extraItems ?? []),
     {
       id: "open-settings",
       title: t("settings.tab_general"),
@@ -187,7 +272,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         props.onOpenSettings("/settings/updates");
       },
     },
-  ], [props]);
+  ], [accessibleTargetCount, props]);
 
   const sessionItems = useMemo<PaletteItem[]>(
     () =>
@@ -206,6 +291,66 @@ export function CommandPalette(props: CommandPaletteProps) {
       })),
     [props],
   );
+
+  const accessibleItems = useMemo<PaletteItem[]>(() => {
+    const targets = props.accessibleTargets ?? [];
+    return [
+      ...targets.map((target) => ({
+        id: `accessible:${target.id}`,
+        title: target.name || target.value,
+        detail: target.value,
+        meta: target.kind === "url" ? "Server" : "Artifact",
+        icon: targetIcon(target),
+        searchText: `${target.name} ${target.value} ${target.preview}`.toLowerCase(),
+        action: () => {
+          props.onClose();
+          props.onOpenAccessibleTarget?.(target);
+        },
+      })),
+      ...targets.map((target) => ({
+        id: `accessible-hide:${target.id}`,
+        title: `Stop tracking ${target.name || target.value}`,
+        detail: target.value,
+        meta: "Hide",
+        icon: targetIcon(target),
+        searchText: `stop tracking hide ${target.name} ${target.value} ${target.preview}`.toLowerCase(),
+        action: () => {
+          props.onClose();
+          props.onHideAccessibleTarget?.(target);
+        },
+      })),
+    ];
+  }, [props]);
+
+  const agentItems = useMemo<PaletteItem[]>(() => {
+    const selectAgent = (name: string | null) => {
+      props.onSelectAgent?.(name);
+      props.onClose();
+    };
+    return [
+      {
+        id: "agent:default",
+        title: t("session.default_agent"),
+        detail: t("session.cmd_agent_default_detail"),
+        meta: props.selectedAgent == null ? t("session.cmd_agent_active") : undefined,
+        icon: props.selectedAgent == null
+          ? <Check className="size-4 text-primary" />
+          : <Zap className="size-4 text-muted-foreground" />,
+        action: () => selectAgent(null),
+      },
+      ...agents.map((agent) => ({
+        id: `agent:${agent.name}`,
+        title: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
+        detail: agent.description,
+        meta: props.selectedAgent === agent.name ? t("session.cmd_agent_active") : undefined,
+        icon: props.selectedAgent === agent.name
+          ? <Check className="size-4 text-primary" />
+          : <Zap className="size-4 text-muted-foreground" />,
+        searchText: `agent ${agent.name} ${agent.description ?? ""}`.toLowerCase(),
+        action: () => selectAgent(agent.name),
+      })),
+    ];
+  }, [agents, props]);
 
   const handleEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
@@ -236,7 +381,13 @@ export function CommandPalette(props: CommandPaletteProps) {
     }
   };
 
-  const items = mode === "sessions" ? sessionItems : rootItems;
+  const items = mode === "sessions"
+    ? sessionItems
+    : mode === "accessible-items"
+      ? accessibleItems
+      : mode === "agents"
+        ? agentItems
+        : rootItems;
 
   return (
     <CommandDialog open={props.open} onOpenChange={handleOpenChange}>
@@ -244,12 +395,16 @@ export function CommandPalette(props: CommandPaletteProps) {
         <CommandDialogTitle>
           {mode === "sessions"
             ? t("session.palette_title_sessions")
-            : t("session.palette_title_actions")
+            : mode === "accessible-items"
+              ? "Accessible items"
+              : mode === "agents"
+                ? t("session.cmd_agents_title")
+                : t("session.palette_title_actions")
           }
         </CommandDialogTitle>
         <Command key={mode} items={items}>
           <CommandHeader className="flex items-center gap-0">
-            {mode === "sessions" && (
+            {mode !== "root" && (
               <Button variant="outline" size="icon-sm" className="rounded-xl" onClick={() => setMode("root")}>
                 <ChevronLeftIcon className="size-4" />
                 <span className="sr-only">{t("common.back")}</span>
@@ -260,13 +415,17 @@ export function CommandPalette(props: CommandPaletteProps) {
               placeholder={
                 mode === "sessions"
                   ? t("session.palette_placeholder_sessions")
-                  : t("session.palette_placeholder_actions")
+                  : mode === "accessible-items"
+                    ? "Search servers and artifacts..."
+                    : mode === "agents"
+                      ? t("session.palette_placeholder_agents")
+                      : t("session.palette_placeholder_actions")
               }
               onKeyDown={handleBackspace}
             />
           </CommandHeader>
           <CommandPanel>
-            <CommandEmpty>{t("session.palette_no_matches")}</CommandEmpty>
+            <CommandEmpty>{mode === "accessible-items" ? "No accessible items found for this session." : t("session.palette_no_matches")}</CommandEmpty>
             <CommandList>
               {(item: PaletteItem) => (
                 <CommandItem
@@ -274,6 +433,7 @@ export function CommandPalette(props: CommandPaletteProps) {
                   value={item.id}
                   onClick={item.action}
                 >
+                  {item.icon ? <span className="mr-2 shrink-0">{item.icon}</span> : null}
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{item.title}</div>
                     {item.detail ? (

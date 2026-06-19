@@ -28,6 +28,7 @@
               "start-here/connect-your-stack/add-anthropic-api-key",
               "start-here/connect-your-stack/add-a-custom-llm",
               "start-here/connect-your-stack/add-an-mcp-server",
+              "start-here/connect-your-stack/connect-slack-mcp",
               "start-here/connect-your-stack/enable-exa-search"
             ]
           },
@@ -36,6 +37,8 @@
             "pages": [
               "start-here/do-work-with-it/control-the-browser",
               "start-here/do-work-with-it/import-a-skill",
+              "start-here/do-work-with-it/cross-chat-memory",
+              "start-here/do-work-with-it/workflows",
               "start-here/do-work-with-it/share-your-setup"
             ]
           },
@@ -62,7 +65,7 @@
             "group": "Share with your team",
             "pages": [
               "cloud/share-with-your-team/team-templates",
-              "cloud/share-with-your-team/skill-hubs",
+              "cloud/share-with-your-team/desktop-policies",
               "cloud/share-with-your-team/managed-llm-provider",
               "cloud/share-with-your-team/custom-llm-provider"
             ]
@@ -71,11 +74,11 @@
             "group": "Run in the cloud",
             "pages": [
               "cloud/run-in-the-cloud/shared-workspace",
-              "cloud/run-in-the-cloud/cloud-mcp",
-              "cloud/run-in-the-cloud/connect-slack"
+              "cloud/run-in-the-cloud/cloud-mcp"
             ]
           },
           "cloud/members-and-rbac",
+          "cloud/security-and-operations",
           "cloud/enterprise"
         ]
       },

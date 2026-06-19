@@ -1,0 +1,133 @@
+---
+title: "Security and operations"
+description: "Review OpenWork Cloud security posture, access governance, and availability expectations"
+---
+
+This page summarizes the security and operational controls that matter when a team runs OpenWork Cloud or a private OpenWork deployment.
+
+OpenWork is local-first, but Cloud adds shared identity, members, RBAC, hosted workers, shared providers, and organization policy. Treat Cloud as the control plane for team access and shared runtime state.
+
+## Encryption and transport
+
+Production deployments should enforce encrypted transport and encrypted storage:
+
+- Use HTTPS for the Cloud app, Den API, OAuth callbacks, webhook ingress, and worker-control traffic.
+- Terminate TLS at the edge or load balancer and forward only through trusted private networking.
+- Enable encryption at rest for the production database, object storage, backups, and logs that may contain operational metadata.
+- Keep local development defaults local-only. Example development database URLs and local secrets in repository scripts are not production settings.
+
+OpenWork Cloud's hosted Den database runs on PlanetScale. PlanetScale encrypts database storage and backups at rest, and PlanetScale database connection strings require TLS before SQL commands can be issued. OpenWork's production migration workflow also configures strict TLS verification for PlanetScale MySQL-protocol connections.
+
+OpenWork also encrypts selected sensitive database columns, such as provider secrets and SSO configuration, with application-level AES-256-GCM encryption using `DEN_DB_ENCRYPTION_KEY`. This is an additional control and does not replace provider-managed storage encryption at rest.
+
+For private or self-hosted deployments, the operator is responsible for enabling TLS certificates, database storage encryption, backup encryption, and private network policy in the target environment.
+
+## Secrets and keys
+
+Production secrets should live in a managed secrets system or KMS-backed environment, not in committed files or shared shell history.
+
+Use separate secrets per environment for:
+
+- Better Auth signing and session secrets
+- database encryption material
+- OAuth, SSO, SCIM, and webhook secrets
+- provider API keys and worker provisioning tokens
+
+OpenWork stores organization API keys and SCIM bearer tokens as hashes. SSO provider configuration is stored encrypted. Rotate production secrets on a defined schedule and immediately after suspected exposure or emergency access use. SCIM token rotation invalidates the previous bearer token; update the identity provider immediately after rotating.
+
+## Identity and access governance
+
+Use the Cloud member model as the source of truth for organization access:
+
+- Keep at least two `Owner` members.
+- Use `Admin` for day-to-day operators.
+- Keep most people as `Member`.
+- Use custom roles only when the built-in roles are too broad.
+- Use teams for resource access to marketplaces and providers.
+
+SSO just-in-time provisioning uses `Member` as the safe default for first-login users. OpenWork does not convert IdP attributes such as `role`, `groups`, or `admin` into organization roles during SSO sign-in. Elevation to `Admin`, `Owner`, or a custom role should be an explicit, reviewed, and audited change in OpenWork.
+
+For access reviews, export the current member list, roles, teams, pending invitations, API keys, SSO configuration, and SCIM configuration on a regular cadence. Reconfirm that each member still needs their current role and team access.
+
+## MFA and step-up controls
+
+For production organizations, use SSO with identity-provider MFA as the primary step-up control:
+
+- Enable enforced SSO for organizations that have owners, admins, SCIM, SSO, API keys, or shared production providers.
+- Require MFA, phishing-resistant factors where available, and conditional-access policy in the identity provider before users reach OpenWork Cloud.
+- Keep SSO, SCIM, and API-key management behind the `security_configuration.manage` permission. Owners receive that permission by default and can delegate it through a custom role; default admins do not receive it automatically.
+- Invitation role assignment is bounded by the inviter's own permissions, so default admins can invite standard admins or members but cannot grant delegated security-configuration access unless they already hold that permission.
+- The server requires a session created in the last 15 minutes before privileged routes can change SSO, SCIM, API keys, organization settings, custom roles, member roles, billing, or inference settings.
+- Do not rely on standalone email/password accounts for production owner access unless the deployment has an equivalent MFA and recovery control outside OpenWork.
+
+Native factor enrollment and in-product reauthentication should be treated as product work before replacing SSO-enforced MFA as the production control.
+
+## Standard email/password protections
+
+The standard OpenWork Cloud email/password path is protected server-side against high-volume guessing and known-compromised passwords:
+
+- Email/password sign-in is rate limited. The default sign-in rule allows 5 attempts in a 5-minute window, in addition to the global Better Auth rate limit.
+- Failed email/password sign-ins are tracked by a hashed account identifier. After 5 recent failures, the account enters progressive lockout: 5 minutes first, then longer lockouts for continued failures, capped at 1 hour. Successful sign-in clears the failure counter.
+- Password creation and password reset requests screen the proposed password against the Have I Been Pwned Pwned Passwords range API. OpenWork sends only the first 5 characters of the SHA-1 password hash, uses the k-anonymity response to compare suffixes locally, and rejects known-compromised passwords.
+- If password screening is temporarily unavailable, password creation or reset fails closed and asks the user to try again later.
+
+OpenWork does not call the breached-password service during normal sign-in. Existing-password sign-in should be protected by rate limiting, lockout, identity-provider controls, monitoring, and a forced reset process if a credential is later suspected to be compromised.
+
+For mover and leaver handling:
+
+- Change roles when responsibilities change.
+- Remove members when access is no longer needed.
+- Cancel stale invitations.
+- Rotate or revoke organization API keys that were issued for the affected member.
+- Prefer SCIM deprovisioning where an identity provider is the system of record.
+
+SCIM lifecycle failures should not be treated as successful offboarding. OpenWork records failed SCIM provisioning and deprovisioning work for retry, runs periodic local SCIM drift reconciliation, and surfaces unresolved SCIM health issues in the organization SCIM screen. Operators should monitor those health indicators and route Den API logs that include `[scim][sync_failure_recorded]` or `[scim][maintenance_failed]` to their alerting system.
+
+## Emergency access
+
+Plan emergency access before it is needed.
+
+Recommended pattern:
+
+- Maintain a break-glass `Owner` account or equivalent recovery path.
+- Protect it with the strongest authentication available in the deployment.
+- Store credentials in a controlled emergency vault.
+- Alert on any use.
+- Review the audit trail after use.
+- Rotate credentials or signing material if emergency access exposed them.
+
+Do not use break-glass accounts for routine administration.
+
+## Audit events
+
+OpenWork records structured organization audit events for privileged Cloud actions, including:
+
+- API key creation and deletion
+- member role changes and removals
+- invitation creation, refresh, and cancellation
+- custom role creation, updates, and deletion
+- SCIM token rotation and connection deletion
+- SSO registration and deletion
+
+Audit payloads avoid bearer tokens, API key secrets, SCIM tokens, SAML certificates, and OIDC client secrets. Sensitive access changes also emit structured `[audit-alert]` log lines so operators can route SSO, SCIM, API-key, role, invitation, and member-change events into alerting. For private deployments, export audit data and audit-alert logs through the deployment's database or logging pipeline into the organization's retention and SIEM process.
+
+## Availability and failover
+
+OpenWork Cloud treats Den API as the logical control plane for identity, RBAC, hosted workers, shared providers, and organization policy. The hosted deployment avoids making that logical control plane a single physical chokepoint:
+
+- Render runs the Cloud app and Den API as scaled services with a minimum of two instances for production traffic.
+- Render load balances requests across healthy instances, stops routing to instances that fail health checks, and restarts failed instances.
+- Den API instances are stateless application replicas; shared state lives in PlanetScale and external managed services.
+- PlanetScale production clusters provide one primary and at least two replicas across three availability zones, with automated failover managed by PlanetScale.
+- PlanetScale automated backups run at least every 12 hours on the Base plan; operators should also define retention, restore testing, and point-in-time recovery expectations for their plan.
+
+Production and private deployments should avoid a single-node control plane:
+
+- Run the Cloud app and Den API behind health checks.
+- Run more than one API instance where the platform supports it.
+- Use a managed database with automated backups and failover, such as PlanetScale production branches or an equivalent MySQL-compatible HA service.
+- Monitor API health, worker provisioning, queue depth, webhook failures, sign-in failures, and database connectivity.
+- Define recovery objectives for the database, object storage, and worker state.
+- Test restore and failover procedures before an incident.
+
+For self-hosted deployments, document the exact topology: ingress, app, API, worker provisioning, database, backups, failover owner, restore owner, and the person or team responsible for each part.

@@ -15,6 +15,8 @@ import {
   createDenClient,
   DenApiError,
   ensureDenActiveOrganization,
+  denOriginComparisonKey,
+  normalizeDenBaseUrl,
   readDenSettings,
   writeDenSettings,
   type DenUser,
@@ -134,15 +136,32 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         if (!parsed || handledGrantsRef.current.has(parsed.grant)) continue;
         handledGrantsRef.current.add(parsed.grant);
 
-        void createDenClient({ baseUrl: parsed.denBaseUrl })
+        // Keep the configured apiBaseUrl when the deep link targets the
+        // control plane we are already pointed at; deriving from the link's
+        // base URL alone breaks deployments where the advertised proxy path
+        // does not match how this app actually reaches the Den API.
+        const settings = readDenSettings();
+        const targetKey = denOriginComparisonKey(parsed.denBaseUrl);
+        const sameControlPlane =
+          denOriginComparisonKey(settings.baseUrl) === targetKey ||
+          denOriginComparisonKey(settings.apiBaseUrl ?? null) === targetKey;
+        const client = createDenClient({
+          baseUrl: parsed.denBaseUrl,
+          apiBaseUrl: sameControlPlane ? settings.apiBaseUrl ?? null : null,
+        });
+        void client
           .exchangeDesktopHandoff(parsed.grant)
           .then((result) => {
             if (!result.token) {
               throw new Error("Failed to sign in to OpenWork Cloud.");
             }
 
+            // Persist the API base URL the exchange actually succeeded
+            // against; re-deriving it from the web URL on relaunch breaks
+            // deployments where den-web only proxies under /api/den (#1808).
             writeDenSettings({
               baseUrl: parsed.denBaseUrl,
+              apiBaseUrl: client.baseUrls.apiBaseUrl,
               authToken: result.token,
               activeOrgId: null,
               activeOrgSlug: null,

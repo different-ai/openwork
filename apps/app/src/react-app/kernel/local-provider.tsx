@@ -25,6 +25,12 @@ export type LocalPreferences = {
   modelVariant: string | null;
   defaultModel: ModelRef | null;
   /**
+   * Name of the opencode agent used for new prompts (null = the server's
+   * default, usually "build"). Persisted so a reload does not silently
+   * fall back to the default agent (#2101).
+   */
+  selectedAgent: string | null;
+  /**
    * Release channel the desktop app is subscribed to. Defaults to
    * "stable". Alpha is only honored on macOS; the updater helper falls
    * back to stable elsewhere.
@@ -39,6 +45,11 @@ export type LocalPreferences = {
    * workspace list is empty, the app redirects to /welcome.
    */
   hasCompletedOnboarding: boolean;
+  /**
+   * Anonymous product analytics (PostHog). On by default with a visible
+   * opt-out in Settings -> Preferences. Never includes message content.
+   */
+  analyticsEnabled: boolean;
 };
 
 type LocalContextValue = {
@@ -53,15 +64,18 @@ const LocalContext = createContext<LocalContextValue | undefined>(undefined);
 
 const UI_STORAGE_KEY = "openwork.ui";
 const PREFS_STORAGE_KEY = "openwork.preferences";
+export const DEFAULT_SHOW_THINKING = true;
 
 const INITIAL_UI: LocalUIState = { view: "settings", tab: "general" };
 const INITIAL_PREFS: LocalPreferences = {
-  showThinking: false,
+  showThinking: DEFAULT_SHOW_THINKING,
   modelVariant: null,
   defaultModel: null,
+  selectedAgent: null,
   releaseChannel: "stable",
   featureFlags: { microsandboxCreateSandbox: true },
   hasCompletedOnboarding: false,
+  analyticsEnabled: true,
 };
 
 function readPersisted<T>(key: string, fallback: T): T {

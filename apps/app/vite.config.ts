@@ -92,7 +92,11 @@ export default defineConfig({
       },
     },
     tailwindcss(),
-    react(),
+    react({
+      babel: {
+        plugins: [["babel-plugin-react-compiler", { compilationMode: "annotation" }]],
+      },
+    }),
   ],
   server: {
     port: devPort,
@@ -101,6 +105,12 @@ export default defineConfig({
   },
   build: {
     target: "esnext",
+    rollupOptions: {
+      input: {
+        app: resolve(appRoot, "index.html"),
+        overlay: resolve(appRoot, "overlay.html"),
+      },
+    },
   },
   resolve: {
     alias: {

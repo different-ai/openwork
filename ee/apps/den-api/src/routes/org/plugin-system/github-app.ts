@@ -486,6 +486,83 @@ export async function getGithubRepositoryTextFile(input: {
   return Buffer.from(response.body.content.replace(/\n/g, ""), "base64").toString("utf8")
 }
 
+export type GithubImportFilePlan = {
+  lastSeenSourceRevisionRef: string | null
+  path: string
+  sourceFileRevisionRef: string | null
+  sourceRevisionRef: string
+}
+
+export type GithubImportFileFetchResult =
+  | { error: unknown; status: "failed" }
+  | { rawSourceText: string | null; status: "fetched" }
+  | { status: "skipped_unchanged" }
+
+export async function fetchGithubImportFilesWithRevisionGuard(input: {
+  concurrencyLimit?: number
+  fetchFile: (path: string) => Promise<string | null>
+  files: GithubImportFilePlan[]
+}): Promise<GithubImportFileFetchResult[]> {
+  const results = new Array<GithubImportFileFetchResult>(input.files.length)
+  let nextIndex = 0
+  const workerCount = Math.max(1, Math.min(input.concurrencyLimit ?? 6, input.files.length))
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < input.files.length) {
+      const index = nextIndex
+      nextIndex += 1
+      const file = input.files[index]
+      if (file.lastSeenSourceRevisionRef !== null
+        && (file.lastSeenSourceRevisionRef === file.sourceFileRevisionRef || file.lastSeenSourceRevisionRef === file.sourceRevisionRef)) {
+        // The bound source file already matches this revision: skip the contents API call entirely.
+        results[index] = { status: "skipped_unchanged" }
+        continue
+      }
+      try {
+        results[index] = { rawSourceText: await input.fetchFile(file.path), status: "fetched" }
+      } catch (error) {
+        // One file failing must not abort the others; the caller decides how to surface it.
+        results[index] = { error, status: "failed" }
+      }
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+/**
+ * Resolve the current head commit SHA of a branch with a single commits API
+ * call. Used as a cheap staleness probe for the discovery cache: a branch
+ * name alone says nothing about content (#1871).
+ */
+export async function getGithubRepositoryHeadSha(input: {
+  branch: string
+  config: GithubConnectorAppConfig
+  fetchFn?: GithubFetch
+  installationId: number
+  repositoryFullName: string
+  token?: string
+}) {
+  const repositoryParts = splitRepositoryFullName(input.repositoryFullName)
+  if (!repositoryParts) {
+    throw new GithubConnectorRequestError("GitHub repository full name is invalid.", 400)
+  }
+
+  const token = input.token ?? await createGithubInstallationAccessToken(input)
+  const commitResponse = await requestGithubJson<{ sha?: string }>({
+    fetchFn: input.fetchFn,
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    path: `/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/commits/${encodeURIComponent(input.branch.trim())}`,
+  })
+
+  const headSha = typeof commitResponse.body.sha === "string" ? commitResponse.body.sha : ""
+  if (!headSha) {
+    throw new GithubConnectorRequestError("GitHub commit response was missing the head sha.", 502, commitResponse.body)
+  }
+  return headSha
+}
+
 export async function getGithubRepositoryTree(input: {
   branch: string
   config: GithubConnectorAppConfig
