@@ -114,7 +114,7 @@ export function OrganizationScreen() {
 
   if (!sessionHydrated || busy) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#fafafa] dark:bg-gray-950">
+      <div className="flex min-h-screen items-center justify-center bg-[#fafafa] dark:bg-gray-950" suppressHydrationWarning>
         <p className="text-sm text-gray-500 dark:text-gray-500">Loading organizations...</p>
       </div>
     );
