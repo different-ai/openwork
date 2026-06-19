@@ -444,7 +444,7 @@ export function ManageMembersScreen() {
                       className={`flex items-start gap-3 rounded-[22px] border px-4 py-4 text-left transition ${
                         selected
                           ? "border-[#0f172a] bg-[#0f172a] text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
-                          : "border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-500 dark:border-gray-600"
+                          : "border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-500"
                       }`}
                     >
                       {selected ? (

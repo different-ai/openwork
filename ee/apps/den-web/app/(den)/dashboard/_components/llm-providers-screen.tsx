@@ -164,7 +164,7 @@ export function LlmProvidersScreen() {
               <Link
                 key={provider.id}
                 href={getLlmProviderRoute(orgSlug, provider.id)}
-                className="block overflow-hidden rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 transition hover:-translate-y-0.5 hover:border-gray-300 dark:hover:border-gray-500 dark:border-gray-600 hover:shadow-[0_18px_40px_-24px_rgba(15,23,42,0.25)] dark:shadow-[0_18px_40px_-24px_rgba(0,0,0,0.4)]"
+                className="block overflow-hidden rounded-[28px] border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-6 transition hover:-translate-y-0.5 hover:border-gray-300 dark:hover:border-gray-500 hover:shadow-[0_18px_40px_-24px_rgba(15,23,42,0.25)] dark:shadow-[0_18px_40px_-24px_rgba(0,0,0,0.4)]"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div>

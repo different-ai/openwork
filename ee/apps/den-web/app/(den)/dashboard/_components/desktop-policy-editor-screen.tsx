@@ -307,7 +307,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
           <div className="flex flex-wrap justify-end gap-3">
             <Link
               href={listRoute}
-              className="inline-flex h-10 items-center justify-center rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 text-[13px] font-medium text-gray-700 transition-colors hover:border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
+              className="inline-flex h-10 items-center justify-center rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-5 text-[13px] font-medium text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
             >
               Cancel
             </Link>

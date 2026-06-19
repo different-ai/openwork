@@ -70,13 +70,13 @@ function CredentialField({
         <input
           readOnly
           value={value}
-          className="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-2 text-[12px] font-mono text-gray-600 dark:text-gray-400 dark:text-gray-500 outline-none shadow-sm transition-colors focus:border-gray-300 dark:focus:border-gray-600 dark:border-gray-600"
+          className="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-2 text-[12px] font-mono text-gray-600 dark:text-gray-500 outline-none shadow-sm transition-colors focus:border-gray-300 dark:focus:border-gray-600"
           onClick={(event) => event.currentTarget.select()}
         />
         <button
           type="button"
           onClick={() => onCopy(id, value)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] text-gray-400 shadow-sm transition-colors hover:border-gray-300 dark:hover:border-gray-500 dark:border-gray-600 hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] text-gray-400 shadow-sm transition-colors hover:border-gray-300 dark:hover:border-gray-500 hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
           aria-label={`Copy ${label}`}
         >
           {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
