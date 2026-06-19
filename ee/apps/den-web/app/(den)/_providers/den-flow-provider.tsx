@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, createElement, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { countOwnedDenWorkers } from "@openwork/types/den/workers";
 import {
   AUTH_TOKEN_STORAGE_KEY,
   DEFAULT_AUTH_NAME,
@@ -246,7 +247,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     activeWorker?.workerName ?? null,
     { autoConnect: true }
   );
-  const ownedWorkerCount = workers.filter((item) => item.isMine).length;
+  const ownedWorkerCount = countOwnedDenWorkers(workers);
   const additionalWorkerNeedsPlan = Boolean(
     user &&
       ownedWorkerCount > 0 &&
@@ -713,6 +714,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
             provider: summary.provider,
             instanceUrl: summary.instanceUrl,
             isMine: summary.isMine,
+            isShared: summary.isShared,
           }
         : entry,
     ));

@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
+import { isDenWorkerReady, selectOwnedReadyDenWorker } from "@openwork/types/den/workers";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowRight,
@@ -25,8 +26,19 @@ import {
   type DenOrgSummary,
   type DenWorkerSummary,
 } from "@/app/lib/den";
+import {
+  resolveWorkspaceListSelectedId,
+  workspaceCreateRemote,
+  workspaceSetRuntimeActive,
+  workspaceSetSelected,
+  type WorkspaceList,
+} from "@/app/lib/desktop";
+import { writeOpenworkServerSettings } from "@/app/lib/openwork-server";
 import { usePlatform } from "../../kernel/platform";
+import { useLocal } from "../../kernel/local-provider";
 import { useBootState } from "../../shell/boot-state";
+import { writeActiveWorkspaceId } from "../../shell/session-memory";
+import { workspaceSessionRoute } from "../../shell/workspace-routes";
 import { resolveModelDisplayName, resolveProviderDisplayName } from "@/app/utils";
 import { ProviderIcon } from "../../design-system/provider-icon";
 import { writeStoredDefaultModel } from "../../kernel/model-config";
@@ -97,6 +109,25 @@ function markProvidersSeen(providers: DenOrgLlmProvider[]) {
     for (const provider of providers) ids.add(provider.id);
     window.localStorage.setItem("openwork.seenProviderIds", JSON.stringify([...ids]));
   } catch {}
+}
+
+function stripOpenworkWorkspaceMount(baseUrl: string) {
+  try {
+    const url = new URL(baseUrl);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    if (mountIndex >= 0 && segments[mountIndex + 1]) {
+      const prefix = segments.slice(0, mountIndex).join("/");
+      url.pathname = prefix ? `/${prefix}` : "/";
+      return url.toString().replace(/\/+$/, "");
+    }
+  } catch {
+    // Fall through to the already-normalized value below.
+  }
+
+  return baseUrl.replace(/\/+$/, "");
 }
 
 /**
@@ -203,6 +234,7 @@ export function OrgOnboardingPage() {
 
 export function ResourceSelectionPage() {
   const navigate = useNavigate();
+  const local = useLocal();
   const platform = usePlatform();
   const { markRouteReady } = useBootState();
   const { authToken, denClient, orgId, orgName, settings } = useDenClient();
@@ -212,6 +244,8 @@ export function ResourceSelectionPage() {
     modelId: string;
     label: string;
   } | null>(null);
+  const [continueBusy, setContinueBusy] = useState(false);
+  const [continueError, setContinueError] = useState<string | null>(null);
 
   // Redirect if no auth or no org — can't show onboarding without them
   useEffect(() => {
@@ -255,24 +289,88 @@ export function ResourceSelectionPage() {
     }),
   });
 
-  const handleContinue = useCallback(() => {
-    // If user picked a default model, write it
-    if (selectedDefault) {
-      writeStoredDefaultModel({
-        providerID: selectedDefault.providerId,
-        modelID: selectedDefault.modelId,
+  const connectHealthyWorker = useCallback(async () => {
+    let healthyWorker = selectOwnedReadyDenWorker(workers);
+    if (!healthyWorker) {
+      const launchedWorker = await denClient.createWorker(orgId, {
+        name: "OpenWork workspace",
+        source: "signup_auto",
       });
+      if (!isDenWorkerReady(launchedWorker)) {
+        throw new Error("Your private workspace is still provisioning. Try again in a moment.");
+      }
+      healthyWorker = launchedWorker;
     }
-    // Mark all providers shown on this page as "seen" so the global
-    // toast doesn't re-fire for them on the next sync interval.
-    markProvidersSeen(providers);
-    if (providers.length > 0) {
-      try {
-        window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
-      } catch {}
+
+    const tokens = await denClient.getWorkerTokens(healthyWorker.workerId, orgId);
+    const openworkUrl = tokens.openworkUrl?.trim() ?? "";
+    const openworkHostUrl = stripOpenworkWorkspaceMount(openworkUrl);
+    const accessToken = tokens.clientToken?.trim() || "";
+    if (!openworkUrl || !accessToken) {
+      throw new Error("Your private workspace is not ready yet.");
     }
-    navigate("/session", { replace: true });
-  }, [navigate, providers, selectedDefault]);
+
+    const list = await workspaceCreateRemote({
+      baseUrl: openworkUrl,
+      openworkHostUrl: openworkHostUrl || openworkUrl,
+      openworkToken: accessToken,
+      openworkClientToken: tokens.clientToken?.trim() || null,
+      displayName: healthyWorker.workerName,
+      directory: null,
+      remoteType: "openwork",
+    }) as WorkspaceList;
+
+    const createdId =
+      resolveWorkspaceListSelectedId(list) ||
+      list.workspaces[list.workspaces.length - 1]?.id ||
+      "";
+
+    if (createdId) {
+      await workspaceSetSelected(createdId).catch(() => undefined);
+      await workspaceSetRuntimeActive(createdId).catch(() => undefined);
+      writeActiveWorkspaceId(createdId);
+    }
+
+    writeOpenworkServerSettings({
+      urlOverride: openworkHostUrl || openworkUrl,
+      token: accessToken,
+    });
+    try {
+      window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+    } catch {
+      // Best-effort only.
+    }
+
+    return createdId || null;
+  }, [denClient, orgId, settings.apiBaseUrl, settings.baseUrl, workers]);
+
+  const handleContinue = useCallback(async () => {
+    setContinueBusy(true);
+    setContinueError(null);
+    try {
+      if (selectedDefault) {
+        writeStoredDefaultModel({
+          providerID: selectedDefault.providerId,
+          modelID: selectedDefault.modelId,
+        });
+      }
+
+      markProvidersSeen(providers);
+      if (providers.length > 0) {
+        try {
+          window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
+        } catch {}
+      }
+
+      const workspaceId = await connectHealthyWorker();
+      local.setPrefs((previous) => ({ ...previous, hasCompletedOnboarding: true }));
+      navigate(workspaceId ? workspaceSessionRoute(workspaceId) : "/session", { replace: true });
+    } catch (error) {
+      setContinueError(error instanceof Error ? error.message : "Could not connect your private workspace.");
+    } finally {
+      setContinueBusy(false);
+    }
+  }, [connectHealthyWorker, local, navigate, providers, selectedDefault]);
 
   const totalModels = providers.reduce((sum, provider) => sum + provider.models.length, 0);
   const hasResources = providers.length > 0 || marketplaces.length > 0 || workers.length > 0;
@@ -334,6 +432,12 @@ export function ResourceSelectionPage() {
           </PageContent>
         ) : (
           <PageContent>
+            {continueError ? (
+              <Alert variant="destructive" className="mb-4">
+                <CircleAlert />
+                <AlertDescription>{continueError}</AlertDescription>
+              </Alert>
+            ) : null}
             <ScrollArea className="px-2.5">
               <ScrollAreaViewport>
                 <Accordion
@@ -411,9 +515,9 @@ export function ResourceSelectionPage() {
             type="button"
             size="lg"
             onClick={handleContinue}
-            disabled={loading}
+            disabled={loading || continueBusy}
           >
-            {hasResources ? "Continue to workspace" : "Continue"}
+            {continueBusy ? "Connecting..." : hasResources ? "Continue to workspace" : "Continue"}
             <ArrowRight data-icon="inline-end" />
           </Button>
         </PageFooter>

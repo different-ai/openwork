@@ -139,6 +139,18 @@ export function canReadStaticWorkerTokensForMember(payload: {
   userId: UserId
   currentMember?: { isOwner: boolean; role: string } | null
 }) {
+  return (
+    (payload.worker.created_by_user_id === null && Boolean(payload.currentMember))
+    || payload.worker.created_by_user_id === payload.userId
+    || (payload.currentMember ? canAttachStaticWorkerForMember({ currentMember: payload.currentMember }) : false)
+  )
+}
+
+export function canManageStaticWorkerForMember(payload: {
+  worker: Pick<WorkerRow, "created_by_user_id">
+  userId: UserId
+  currentMember?: { isOwner: boolean; role: string } | null
+}) {
   return payload.worker.created_by_user_id === payload.userId || (payload.currentMember ? canAttachStaticWorkerForMember({ currentMember: payload.currentMember }) : false)
 }
 
@@ -939,6 +951,7 @@ export function toWorkerResponse(row: WorkerRow, userId: string) {
     orgId: row.org_id,
     createdByUserId: row.created_by_user_id,
     isMine: row.created_by_user_id === userId,
+    isShared: row.created_by_user_id === null,
     name: row.name,
     description: row.description,
     destination: row.destination,

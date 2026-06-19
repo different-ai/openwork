@@ -5,7 +5,7 @@ import { jsonValidator, orgMemberRoute, paramValidator } from "../../middleware/
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { roleIncludesOwner } from "../../orgs.js"
 import type { WorkerRouteVariables } from "./shared.js"
-import { canReadStaticWorkerTokensForMember, fetchWorkerRuntimeJson, getLatestWorkerInstance, getWorkerByIdForOrg, parseWorkerIdParam, workerIdParamSchema } from "./shared.js"
+import { canManageStaticWorkerForMember, canReadStaticWorkerTokensForMember, fetchWorkerRuntimeJson, getLatestWorkerInstance, getWorkerByIdForOrg, parseWorkerIdParam, workerIdParamSchema } from "./shared.js"
 
 const workerRuntimeResponseSchema = z.object({}).passthrough().meta({ ref: "WorkerRuntimeResponse" })
 
@@ -134,12 +134,19 @@ export function registerWorkerRuntimeRoutes<T extends { Variables: WorkerRouteVa
     }
 
     const instance = await getLatestWorkerInstance(worker.id)
-    if (instance?.provider === "static" && !canReadStaticWorkerTokensForMember({
-      worker,
-      userId: user.id,
-      currentMember,
-    })) {
-      return c.json({ error: "forbidden", message: "Only the worker creator, organization owners, and admins can access static worker runtime operations." }, 403)
+    if (instance?.provider === "static") {
+      if (!canManageStaticWorkerForMember({
+        worker,
+        userId: user.id,
+        currentMember,
+      })) {
+        return c.json({ error: "forbidden", message: "Only the worker creator, organization owners, and admins can access static worker runtime operations." }, 403)
+      }
+    } else if (worker.created_by_user_id !== user.id) {
+      return c.json({
+        error: "forbidden",
+        message: "Only the worker owner can upgrade this worker runtime.",
+      }, 403)
     }
 
     const runtime = await fetchWorkerRuntimeJson({

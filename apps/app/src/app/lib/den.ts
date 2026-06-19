@@ -106,6 +106,7 @@ export type DenWorkerSummary = {
   instanceUrl: string | null;
   provider: string | null;
   isMine: boolean;
+  isShared: boolean;
   createdAt: string | null;
 };
 
@@ -987,6 +988,7 @@ function getWorkers(payload: unknown): DenWorkerSummary[] {
         instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
         provider: instance && typeof instance.provider === "string" ? instance.provider : null,
         isMine: Boolean(entry.isMine),
+        isShared: Boolean(entry.isShared),
         createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
       } satisfies DenWorkerSummary,
     ];

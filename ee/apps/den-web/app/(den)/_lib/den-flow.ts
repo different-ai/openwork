@@ -105,6 +105,7 @@ export type WorkerSummary = {
   instanceUrl: string | null;
   provider: string | null;
   isMine: boolean;
+  isShared: boolean;
 };
 
 export type WorkerTokens = {
@@ -122,6 +123,7 @@ export type WorkerListItem = {
   instanceUrl: string | null;
   provider: string | null;
   isMine: boolean;
+  isShared: boolean;
   createdAt: string | null;
 };
 
@@ -535,7 +537,8 @@ export function getWorkerSummary(payload: unknown): WorkerSummary | null {
     status: getEffectiveWorkerStatus(worker.status, instance),
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
-    isMine: worker.isMine === true
+    isMine: worker.isMine === true,
+    isShared: worker.isShared === true
   };
 }
 
@@ -717,6 +720,7 @@ function parseWorkerListItem(value: unknown): WorkerListItem | null {
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
     isMine: value.isMine === true,
+    isShared: value.isShared === true,
     createdAt
   };
 }

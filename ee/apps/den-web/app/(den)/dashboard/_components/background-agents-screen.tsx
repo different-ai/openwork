@@ -27,6 +27,7 @@ import {
   requestJson,
   type WorkerListItem,
 } from "../../_lib/den-flow";
+import { canConnectDenWorker } from "@openwork/types/den/workers";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 
 type ConnectionDetails = {
@@ -108,7 +109,7 @@ function SandboxCard({
   const [showTokens, setShowTokens] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const meta = getWorkerStatusMeta(sandbox.status);
-  const canConnect = meta.bucket === "ready";
+  const canConnect = canConnectDenWorker(sandbox);
   const connectionUrl = details?.openworkUrl ?? sandbox.instanceUrl ?? null;
   const ownerToken = details?.ownerToken ?? null;
   const clientToken = details?.clientToken ?? null;
@@ -161,6 +162,7 @@ function SandboxCard({
               onToggle();
             }}
             disabled={!canConnect}
+            title={!sandbox.isMine && !sandbox.isShared ? "Only the worker owner can connect to this worker." : meta.bucket !== "ready" ? "This worker is not ready yet." : undefined}
             className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors ${
               expanded
                 ? "bg-gray-100 text-gray-900 hover:bg-gray-200"
@@ -276,7 +278,7 @@ function SandboxCard({
             </div>
           ) : (
             <p className="mt-4 text-[12px] text-gray-500">
-              Connection details will appear once this workspace is ready.
+              {sandbox.isMine || sandbox.isShared ? "Connection details will appear once this workspace is ready." : "Only the worker owner can connect to this worker."}
             </p>
           )}
         </div>
@@ -363,7 +365,7 @@ export function BackgroundAgentsScreen() {
 
   async function toggleSandbox(worker: WorkerListItem) {
     const meta = getWorkerStatusMeta(worker.status);
-    if (meta.bucket !== "ready") {
+    if (!canConnectDenWorker(worker)) {
       return;
     }
 

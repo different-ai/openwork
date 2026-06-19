@@ -630,9 +630,9 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                         <span className="truncate text-sm font-semibold text-[var(--dls-text-primary)]">{item.workerName}</span>
                         <span className="text-xs text-[var(--dls-text-secondary)]">{meta.label}</span>
                       </span>
-                      {item.isMine ? (
+                      {item.isMine || item.isShared ? (
                           <span className={`shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${selected ? "bg-[var(--dls-surface)] text-[var(--dls-text-primary)]" : "bg-[var(--dls-hover)] text-[var(--dls-text-secondary)]"}`}>
-                            Yours
+                            {item.isMine ? "Yours" : "Shared"}
                           </span>
                       ) : null}
                     </button>

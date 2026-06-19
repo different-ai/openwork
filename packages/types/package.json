@@ -24,6 +24,11 @@
       "development": "./src/den/inference.ts",
       "default": "./src/den/inference.ts"
     },
+    "./den/workers": {
+      "types": "./src/den/workers.ts",
+      "development": "./src/den/workers.ts",
+      "default": "./src/den/workers.ts"
+    },
     "./workspace": {
       "types": "./src/workspace.ts",
       "development": "./src/workspace.ts",

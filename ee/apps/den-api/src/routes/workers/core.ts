@@ -18,6 +18,7 @@ import {
   continueCloudProvisioning,
   attachStaticWorkerSchema,
   canAttachStaticWorkerForMember,
+  canManageStaticWorkerForMember,
   canReadStaticWorkerTokensForMember,
   createWorkerSchema,
   deleteWorkerCascade,
@@ -55,6 +56,7 @@ const workerSchema = z.object({
   orgId: denTypeIdSchema("organization"),
   createdByUserId: denTypeIdSchema("user").nullable(),
   isMine: z.boolean(),
+  isShared: z.boolean(),
   name: z.string(),
   description: z.string().nullable(),
   destination: z.string(),
@@ -82,8 +84,8 @@ const workerResponseSchema = z.object({
 const workerCreateResponseSchema = z.object({
   worker: workerSchema,
   tokens: z.object({
-    owner: z.string(),
-    host: z.string(),
+    owner: z.string().nullable(),
+    host: z.string().nullable(),
     client: z.string(),
   }),
   instance: workerInstanceSchema,
@@ -104,8 +106,8 @@ const staticWorkerAttachResponseSchema = z.object({
 
 const workerTokensResponseSchema = z.object({
   tokens: z.object({
-    owner: z.string(),
-    host: z.string(),
+    owner: z.string().nullable(),
+    host: z.string().nullable(),
     client: z.string(),
   }),
   connect: z.object({
@@ -376,7 +378,7 @@ export function registerStaticWorkerAttachRoute(app: Hono<{ Variables: WorkerRou
       await tx.insert(WorkerTable).values({
         id: workerId,
         org_id: normalizedOrgId,
-        created_by_user_id: normalizedUserId,
+        created_by_user_id: null,
         name: input.name,
         description: input.description?.trim() || null,
         destination: "cloud",
@@ -437,7 +439,7 @@ export function registerStaticWorkerAttachRoute(app: Hono<{ Variables: WorkerRou
         {
           id: workerId,
           org_id: normalizedOrgId,
-          created_by_user_id: normalizedUserId,
+          created_by_user_id: null,
           name: input.name,
           description: input.description?.trim() || null,
           destination: "cloud",
@@ -958,6 +960,21 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       })
     }
 
+    if (
+      instance?.provider === "static"
+      && worker.created_by_user_id === null
+      && !canManageStaticWorkerForMember({ worker, userId: user.id, currentMember })
+    ) {
+      return c.json({
+        ...resolved,
+        tokens: {
+          owner: null,
+          host: null,
+          client: resolved.tokens.client,
+        },
+      })
+    }
+
     return c.json(resolved)
     },
   )
@@ -1004,12 +1021,19 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     }
 
     const instance = await getLatestWorkerInstance(worker.id)
-    if (instance?.provider === "static" && !canReadStaticWorkerTokensForMember({
-      worker,
-      userId: user.id,
-      currentMember,
-    })) {
-      return c.json({ error: "forbidden", message: "Only the worker creator, organization owners, and admins can delete static workers." }, 403)
+    if (instance?.provider === "static") {
+      if (!canManageStaticWorkerForMember({
+        worker,
+        userId: user.id,
+        currentMember,
+      })) {
+        return c.json({ error: "forbidden", message: "Only the worker creator, organization owners, and admins can delete static workers." }, 403)
+      }
+    } else if (worker.created_by_user_id !== user.id) {
+      return c.json({
+        error: "forbidden",
+        message: "Only the worker owner can delete this worker.",
+      }, 403)
     }
 
     await deleteWorkerCascade(worker)

@@ -409,8 +409,10 @@ test("static attach route succeeds for organization admin without token echo", a
   expect(response.status).toBe(201)
   expect(payload.worker).toBeTruthy()
   expect(payload.instance).toBeTruthy()
+  expect((payload.worker as Record<string, unknown>).isShared).toBe(true)
   expect(JSON.stringify(payload).includes("valid-client-token")).toBe(false)
   expect(JSON.stringify(payload).includes("valid-host-token")).toBe(false)
+  expect(store.workers[0]?.created_by_user_id).toBeNull()
   expect(store.tokens.map((entry) => entry.scope).sort()).toEqual(["activity", "client", "host"])
 })
 
@@ -769,15 +771,18 @@ test("static runtime versions uses the client bearer token", async () => {
   }
 })
 
-test("static token reads are limited to creator, owners, and admins", () => {
+test("static token reads allow shared workers while private workers stay owner-scoped", () => {
   const creatorId = createDenTypeId("user")
   const otherUserId = createDenTypeId("user")
   const worker = { created_by_user_id: creatorId }
+  const sharedWorker = { created_by_user_id: null }
 
   expect(workersSharedModule.canReadStaticWorkerTokensForMember({ worker, userId: creatorId, currentMember: { isOwner: false, role: "member" } })).toBe(true)
   expect(workersSharedModule.canReadStaticWorkerTokensForMember({ worker, userId: otherUserId, currentMember: { isOwner: true, role: "member" } })).toBe(true)
   expect(workersSharedModule.canReadStaticWorkerTokensForMember({ worker, userId: otherUserId, currentMember: { isOwner: false, role: "admin" } })).toBe(true)
   expect(workersSharedModule.canReadStaticWorkerTokensForMember({ worker, userId: otherUserId, currentMember: { isOwner: false, role: "member" } })).toBe(false)
+  expect(workersSharedModule.canReadStaticWorkerTokensForMember({ worker: sharedWorker, userId: otherUserId, currentMember: { isOwner: false, role: "member" } })).toBe(true)
+  expect(workersSharedModule.canManageStaticWorkerForMember({ worker: sharedWorker, userId: otherUserId, currentMember: { isOwner: false, role: "member" } })).toBe(false)
 })
 
 test("static pool health checks preserve pinned host headers", async () => {
