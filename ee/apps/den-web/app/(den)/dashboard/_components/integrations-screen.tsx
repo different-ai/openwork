@@ -248,7 +248,7 @@ function ConnectionRow({
           <button
             type="button"
             onClick={onConfigureNewRepo}
-            className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-200 dark:border-gray-700 px-3 py-2 text-[13px] font-medium text-gray-500 transition hover:border-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
+            className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-200 dark:border-gray-700 px-3 py-2 text-[13px] font-medium text-gray-500 transition hover:border-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50 dark:bg-gray-800/50 hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
           >
             <Plus className="h-4 w-4" aria-hidden />
             Add new repo

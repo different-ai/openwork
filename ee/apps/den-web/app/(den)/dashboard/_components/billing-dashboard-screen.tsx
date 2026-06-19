@@ -273,7 +273,7 @@ export function BillingDashboardScreen() {
       )}
 
       {stripeReturnChecking ? (
-        <div className="mb-6 rounded-[20px] border border-blue-200 bg-blue-50 dark:bg-blue-900/30 px-4 py-3 text-[13px] text-blue-800">
+        <div className="mb-6 rounded-[20px] border border-blue-200 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/30 px-4 py-3 text-[13px] text-blue-800 dark:text-blue-200">
           We&apos;re checking your Stripe subscription. This page will refresh automatically.
         </div>
       ) : null}

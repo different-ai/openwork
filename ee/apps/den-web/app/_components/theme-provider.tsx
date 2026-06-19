@@ -41,12 +41,6 @@ type ThemeContextValue = {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-function getSnapshot(): Theme {
-  const stored = getStoredTheme();
-  if (stored !== "system") return stored;
-  return resolveTheme(stored) === "dark" ? "dark" : "light";
-}
-
 function subscribe(callback: () => void) {
   const cb = () => { callback(); };
   window.addEventListener("storage", cb);

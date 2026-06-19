@@ -428,7 +428,7 @@ export function ScimScreen() {
                   </DenButton>
                 </div>
 
-                <div className="mt-5 rounded-[20px] border border-white/10 bg-white dark:bg-white/5 p-4">
+                <div className="mt-5 rounded-[20px] border border-white/10 bg-white/5 p-4">
                   <code className="block break-all text-[13px] leading-6 text-cyan-200">
                     {visibleToken}
                   </code>
