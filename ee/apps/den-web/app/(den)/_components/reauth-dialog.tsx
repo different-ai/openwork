@@ -172,26 +172,26 @@ export function ReauthDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6">
-      <div role="dialog" aria-modal="true" className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]">
+      <div role="dialog" aria-modal="true" className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)] dark:border-gray-700 dark:bg-[var(--dls-surface)]">
         <div className="grid gap-3">
           <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">Re-authentication required</p>
           <div className="grid gap-2">
-            <h2 className="text-[24px] font-semibold tracking-[-0.03em] text-gray-950">Sign in again to continue</h2>
-            <p className="text-[15px] leading-7 text-gray-600">
+            <h2 className="text-[24px] font-semibold tracking-[-0.03em] text-gray-950 dark:text-gray-100">Sign in again to continue</h2>
+            <p className="text-[15px] leading-7 text-gray-600 dark:text-gray-300">
               This admin action needs a recent sign-in. Password verification retries automatically; redirect sign-ins return you here to retry safely.
             </p>
           </div>
         </div>
 
         {error ? (
-          <div className="mt-5 rounded-[18px] border border-red-200 bg-red-50 px-4 py-3 text-[14px] text-red-700">
+          <div className="mt-5 rounded-[18px] border border-red-200 bg-red-50 px-4 py-3 text-[14px] text-red-700 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-400">
             {error}
           </div>
         ) : null}
 
         <div className="mt-6 grid gap-4">
           {loadingMethods ? (
-            <div className="rounded-[18px] border border-gray-200 bg-gray-50 px-4 py-3 text-[14px] text-gray-500">
+            <div className="rounded-[18px] border border-gray-200 bg-gray-50 px-4 py-3 text-[14px] text-gray-500 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400">
               Checking available sign-in methods...
             </div>
           ) : null}
@@ -217,7 +217,7 @@ export function ReauthDialog({
           {hasPassword ? (
             <form className="grid gap-3" onSubmit={submitPassword}>
               <label className="grid gap-2">
-                <span className="text-[13px] font-medium text-gray-700">Password for {user?.email ?? "your account"}</span>
+                <span className="text-[13px] font-medium text-gray-700 dark:text-gray-300">Password for {user?.email ?? "your account"}</span>
                 <DenInput
                   type="password"
                   value={password}
