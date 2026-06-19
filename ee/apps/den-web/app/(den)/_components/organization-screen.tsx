@@ -114,14 +114,14 @@ export function OrganizationScreen() {
 
   if (!sessionHydrated || busy) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#fafafa]">
+      <div className="flex min-h-screen items-center justify-center bg-[#fafafa] dark:bg-gray-950">
         <p className="text-sm text-gray-500 dark:text-gray-500">Loading organizations...</p>
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#fafafa]">
+    <div className="flex min-h-screen flex-col bg-[#fafafa] dark:bg-gray-950">
       <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-4 sm:px-6">
         <div className="flex items-center gap-2">
           <span className="text-[14px] font-medium text-gray-900 dark:text-gray-100">OpenWork Cloud</span>
@@ -130,7 +130,7 @@ export function OrganizationScreen() {
           <span className="min-w-0 truncate text-sm text-gray-500 dark:text-gray-500">{user?.email}</span>
           <button
             onClick={() => void signOut()}
-            className="text-gray-400 transition-colors hover:text-gray-900 dark:hover:text-gray-100 dark:text-gray-100"
+            className="text-gray-400 transition-colors hover:text-gray-900 dark:hover:text-white dark:text-gray-100"
             aria-label="Log out"
           >
             <LogOut className="h-4 w-4" />
@@ -183,7 +183,7 @@ export function OrganizationScreen() {
                   <button
                     type="submit"
                     disabled={createBusy || !createName.trim()}
-                    className="w-full rounded-2xl bg-gray-900 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50 sm:w-auto"
+                    className="w-full rounded-2xl bg-gray-900 dark:bg-gray-100 px-5 py-3 text-sm font-medium text-white dark:text-gray-900 transition-colors hover:bg-gray-800 dark:hover:bg-gray-200 disabled:opacity-50 sm:w-auto"
                   >
                     {createBusy ? "Creating..." : "Continue"}
                   </button>
@@ -205,7 +205,7 @@ export function OrganizationScreen() {
                 onClick={() => setActiveTab("profile")}
                 className={`border-b-2 pb-3 text-sm font-medium transition-colors ${
                   activeTab === "profile"
-                    ? "border-gray-900 text-gray-900 dark:text-gray-100"
+                    ? "border-gray-900 dark:border-gray-100 text-gray-900 dark:text-gray-100"
                     : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
                 }`}
               >
@@ -216,7 +216,7 @@ export function OrganizationScreen() {
                 onClick={() => setActiveTab("organizations")}
                 className={`border-b-2 pb-3 text-sm font-medium transition-colors ${
                   activeTab === "organizations"
-                    ? "border-gray-900 text-gray-900 dark:text-gray-100"
+                    ? "border-gray-900 dark:border-gray-100 text-gray-900 dark:text-gray-100"
                     : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
                 }`}
               >
@@ -225,7 +225,7 @@ export function OrganizationScreen() {
             </div>
 
             {error ? (
-              <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+              <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 dark:border-red-800/60 dark:bg-red-900/30 p-4 text-sm text-rose-900 dark:text-red-400">
                 {error}
               </div>
             ) : null}
@@ -292,7 +292,7 @@ export function OrganizationScreen() {
                   </p>
                   <button
                     onClick={() => setShowCreate(true)}
-                    className="w-full shrink-0 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gray-800 sm:w-auto"
+                    className="w-full shrink-0 rounded-xl bg-gray-900 dark:bg-gray-100 px-4 py-2.5 text-sm font-medium text-white dark:text-gray-900 transition-colors hover:bg-gray-800 dark:hover:bg-gray-200 sm:w-auto"
                   >
                     + Create New Organization
                   </button>
@@ -323,14 +323,14 @@ export function OrganizationScreen() {
                             setCreateName("");
                             setCreateError(null);
                           }}
-                          className="rounded-xl border border-gray-200 dark:border-gray-700 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
+                          className="rounded-xl border border-gray-200 dark:border-gray-700 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50"
                         >
                           Cancel
                         </button>
                         <button
                           type="submit"
                           disabled={createBusy || !createName.trim()}
-                          className="rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50"
+                          className="rounded-xl bg-gray-900 dark:bg-gray-100 px-4 py-2.5 text-sm font-medium text-white dark:text-gray-900 transition-colors hover:bg-gray-800 dark:hover:bg-gray-200 disabled:opacity-50"
                         >
                           {createBusy ? "Creating..." : "Create"}
                         </button>
@@ -352,7 +352,7 @@ export function OrganizationScreen() {
                           </p>
                         </div>
                         {org.isActive ? (
-                          <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
+                          <span className="shrink-0 rounded-full bg-emerald-50 dark:bg-emerald-900/30 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
                             Current
                           </span>
                         ) : null}
@@ -360,13 +360,13 @@ export function OrganizationScreen() {
                       <div className="mt-4 flex gap-2">
                         <button
                           onClick={() => handleSwitch(org.slug)}
-                          className="flex-1 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 shadow-sm transition hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
+                          className="flex-1 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 shadow-sm transition hover:bg-gray-50 dark:hover:bg-gray-700/50"
                         >
                           {org.isActive ? "Open" : "Switch"}
                         </button>
                         <button
                           onClick={() => handleSwitch(org.slug)}
-                          className="inline-flex items-center justify-center rounded-xl border border-gray-200 dark:border-gray-700 px-3 py-2.5 text-gray-500 transition hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50 hover:text-gray-800 dark:text-gray-200"
+                          className="inline-flex items-center justify-center rounded-xl border border-gray-200 dark:border-gray-700 px-3 py-2.5 text-gray-500 transition hover:bg-gray-50 dark:hover:bg-gray-700/50 dark:bg-gray-800/50 hover:text-gray-800 dark:hover:text-gray-100 dark:text-gray-200"
                           aria-label="Organization settings"
                         >
                           <Settings className="h-4 w-4" />
@@ -379,7 +379,7 @@ export function OrganizationScreen() {
                 <div className="hidden overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] shadow-sm md:block">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
-                      <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50/50">
+                      <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/30">
                         <tr>
                           <th className="px-6 py-4 font-medium text-gray-500 dark:text-gray-500">Organization</th>
                           <th className="px-6 py-4 font-medium text-gray-500 dark:text-gray-500">Seat Type</th>
@@ -400,20 +400,20 @@ export function OrganizationScreen() {
                             </td>
                             <td className="px-6 py-4 text-right">
                               {org.isActive ? (
-                                <span className="inline-flex cursor-default items-center rounded-lg bg-gray-100 dark:bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-500">
+                                <span className="inline-flex cursor-default items-center rounded-lg bg-gray-100 dark:bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-300">
                                   Current Organization
                                 </span>
                               ) : (
                                 <button
                                   onClick={() => handleSwitch(org.slug)}
-                                  className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 shadow-sm transition hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
+                                  className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 shadow-sm transition hover:bg-gray-50 dark:hover:bg-gray-700/50"
                                 >
                                   Switch
                                 </button>
                               )}
                               <button
                                 onClick={() => handleSwitch(org.slug)}
-                                className="ml-2 inline-flex items-center justify-center rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 dark:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-300 dark:text-gray-300"
+                                className="ml-2 inline-flex items-center justify-center rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 dark:bg-gray-700 hover:text-gray-700 dark:hover:text-white dark:text-gray-300"
                                 aria-label="Organization settings"
                               >
                                 <Settings className="h-4 w-4" />
