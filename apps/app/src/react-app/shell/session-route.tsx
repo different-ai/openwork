@@ -122,7 +122,7 @@ import {
 } from "@/react-app/domains/workspace/remote-workspace-diagnostics";
 import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
-import { CommandPalette, type PaletteItem, type SessionOption as PaletteSessionOption } from "./command-palette";
+import { CommandPalette, type PaletteItem, type SessionGroupOption, type SessionOption as PaletteSessionOption } from "./command-palette";
 import { SessionSearchDialog } from "./session-search-dialog";
 import type { SessionMessageFetcher } from "@/react-app/domains/session/search/session-search";
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
@@ -512,6 +512,10 @@ export function SessionRoute() {
     [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces],
   );
   useSessionGroupSync({ workspaces, endpointForWorkspace });
+  const selectedWorkspaceGroupState = sessionManagementStore((state) => (
+    selectedWorkspaceId ? state.groupsByWorkspace[selectedWorkspaceId] : undefined
+  ));
+  const assignSessionToGroup = sessionManagementStore((state) => state.assignGroup);
   const seedWorkspaceActivitySessions = useSessionActivityStore((state) => state.seedWorkspaceSessions);
   const sessionActivityByWorkspaceId = useSessionActivityStore((state) => state.statusesByWorkspaceId);
 
@@ -1291,6 +1295,27 @@ export function SessionRoute() {
     return out;
   }, [sessionsByWorkspaceId, selectedWorkspaceId, workspaces]);
 
+  const paletteSessionGroups = useMemo<SessionGroupOption[]>(
+    () => selectedWorkspaceGroupState?.groups ?? [],
+    [selectedWorkspaceGroupState?.groups],
+  );
+
+  const currentSessionForGroupMove = useMemo(() => {
+    if (!selectedWorkspaceId || !selectedSessionId) return null;
+    return paletteSessionOptions.find(
+      (session) => session.workspaceId === selectedWorkspaceId && session.sessionId === selectedSessionId,
+    ) ?? null;
+  }, [paletteSessionOptions, selectedSessionId, selectedWorkspaceId]);
+
+  const currentSessionGroupId = selectedSessionId
+    ? selectedWorkspaceGroupState?.assignments[selectedSessionId] ?? null
+    : null;
+
+  const handleMoveCurrentSessionToGroup = useCallback((groupId: string) => {
+    if (!selectedWorkspaceId || !selectedSessionId) return;
+    assignSessionToGroup(selectedWorkspaceId, selectedSessionId, groupId);
+  }, [assignSessionToGroup, selectedSessionId, selectedWorkspaceId]);
+
   const sessionSearchFetcher = useMemo<SessionMessageFetcher | null>(() => {
     if (!client) return null;
     // Cap the transcript fetch to keep multi-workspace scans fast; matches in
@@ -1869,6 +1894,10 @@ export function SessionRoute() {
         }
       }}
       sessions={paletteSessionOptions}
+      sessionGroups={paletteSessionGroups}
+      currentSessionForGroupMove={currentSessionForGroupMove}
+      currentSessionGroupId={currentSessionGroupId}
+      onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
       extraItems={[sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem]}
       listAgents={listAgents}
       selectedAgent={selectedAgent}

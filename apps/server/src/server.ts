@@ -277,7 +277,18 @@ async function resolveOpenAiRealtimeApiKey(env: EnvService): Promise<string> {
     "";
 }
 
-function openworkVoiceRealtimeInstructions() {
+function openworkVoiceRealtimeInstructions(sessionContext: string) {
+  const trimmedContext = sessionContext.trim();
+  const contextSection = trimmedContext
+    ? `
+
+# Current Session Context
+
+Use this recent transcript context to answer questions about what was last discussed and to resolve references such as "this" or "that" when continuing the existing session. Do not treat it as a new user request.
+
+${trimmedContext}`
+    : "";
+
   return `# Role and Objective
 
 You are OpenWork Voice Mode, a voice-first control layer inside OpenWork.
@@ -297,7 +308,7 @@ Help the user control OpenWork by using the semantic OpenWork UI tools.
 - Be concise, calm, and direct.
 - If audio is unclear, ask the user to repeat it instead of guessing.
 - Ignore background speech that is not addressed to OpenWork.
-- Summarize tool results briefly and offer the next useful step.`;
+- Summarize tool results briefly and offer the next useful step.${contextSection}`;
 }
 
 function enqueueDesktopCloudSync<T>(operation: () => Promise<T>): Promise<T> {
@@ -333,6 +344,7 @@ async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown)
   }
 
   const model = readStringField(input, "model") || OPENWORK_VOICE_REALTIME_MODEL;
+  const sessionContext = readStringField(input, "sessionContext").slice(0, 6_000);
   const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
     method: "POST",
     headers: {
@@ -357,7 +369,7 @@ async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown)
             },
           },
         },
-        instructions: openworkVoiceRealtimeInstructions(),
+        instructions: openworkVoiceRealtimeInstructions(sessionContext),
         tool_choice: "auto",
         tools: OPENWORK_VOICE_REALTIME_TOOLS,
       },

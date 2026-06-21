@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, Loader2, Mic2, MicOff, Radio, SendHorizontal
 import { PaperGrainGradient } from "@openwork/ui/react";
 
 import { desktopFetch } from "@/app/lib/desktop";
-import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import type { OpenworkServerClient, OpenworkSessionMessage } from "@/app/lib/openwork-server";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group";
@@ -37,6 +37,7 @@ type VoiceRuntimeSnapshot = {
 
 type VoicePanelProps = {
   client: OpenworkServerClient | null;
+  workspaceId: string | null;
   sessionId: string | null;
   onClose: () => void;
 };
@@ -158,6 +159,55 @@ function voiceTextArgument(args: unknown) {
 function voiceAudioArgument(args: unknown) {
   if (!isRecord(args)) return "";
   return typeof args.pcm16Base64 === "string" ? args.pcm16Base64.trim() : "";
+}
+
+function messageText(message: OpenworkSessionMessage) {
+  return message.parts
+    .flatMap((part) => {
+      if (part.type !== "text") return [];
+      if (part.synthetic || part.ignored) return [];
+      const text = part.text.trim();
+      return text ? [text] : [];
+    })
+    .join("\n")
+    .trim();
+}
+
+function buildVoiceSessionContext(messages: OpenworkSessionMessage[]) {
+  const transcript = messages.flatMap((message, index) => {
+    const role = message.info.role;
+    if (role !== "user" && role !== "assistant") return [];
+    const text = messageText(message);
+    return text ? [{ index, role, text }] : [];
+  });
+
+  const included = new Set<number>();
+  let assistantCount = 0;
+  for (let index = transcript.length - 1; index >= 0 && assistantCount < 3; index -= 1) {
+    const item = transcript[index];
+    if (!item || item.role !== "assistant") continue;
+    included.add(item.index);
+    assistantCount += 1;
+    const previous = transcript[index - 1];
+    if (previous?.role === "user") included.add(previous.index);
+  }
+
+  const entries = transcript.filter((item) => included.has(item.index));
+  if (!entries.length) return "";
+  return entries
+    .map((item) => `${item.role === "assistant" ? "Assistant" : "User"}: ${item.text}`)
+    .join("\n\n")
+    .slice(0, 6_000);
+}
+
+async function loadVoiceSessionContext(client: OpenworkServerClient, workspaceId: string | null, sessionId: string | null) {
+  if (!workspaceId || !sessionId) return "";
+  try {
+    const response = await client.getSessionMessages(workspaceId, sessionId, { limit: 40 });
+    return buildVoiceSessionContext(response.items);
+  } catch {
+    return "";
+  }
 }
 
 function waitForDataChannelOpen(channel: RTCDataChannel) {
@@ -483,7 +533,8 @@ export function VoicePanel(props: VoicePanelProps) {
 
     disconnectRealtime(true);
     setRuntimeStatus("connecting", "Minting Realtime session...");
-    const realtimeSession = await client.createVoiceRealtimeSession();
+    const sessionContext = await loadVoiceSessionContext(client, props.workspaceId, props.sessionId);
+    const realtimeSession = await client.createVoiceRealtimeSession({ sessionContext });
 
     const peer = new RTCPeerConnection();
     voiceRealtime.peer = peer;
@@ -543,7 +594,7 @@ export function VoicePanel(props: VoicePanelProps) {
     setRuntimeStatus("listening", audioInput ? undefined : "Connected. Send a typed voice command.");
     addEntry("system", `Realtime connected with ${realtimeSession.model} and ${realtimeSession.tools.length} OpenWork tools.`);
     recordInspectorEvent("voice.connected", { sessionId: props.sessionId, model: realtimeSession.model });
-  }, [addEntry, disconnectRealtime, handleRealtimeMessage, props.client, props.sessionId, setRuntimeStatus]);
+  }, [addEntry, disconnectRealtime, handleRealtimeMessage, props.client, props.sessionId, props.workspaceId, setRuntimeStatus]);
 
   const startVoice = useCallback(async () => {
     try {

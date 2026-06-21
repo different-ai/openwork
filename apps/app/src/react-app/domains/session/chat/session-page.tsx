@@ -1251,6 +1251,7 @@ export function SessionPage(props: SessionPageProps) {
                   ) : activeSidePanel === "voice" ? (
                     <VoicePanel
                       client={props.openworkServerClient}
+                      workspaceId={props.runtimeWorkspaceId}
                       sessionId={props.selectedSessionId}
                       onClose={closeRightPane}
                     />

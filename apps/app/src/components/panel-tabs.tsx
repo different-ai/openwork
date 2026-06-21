@@ -31,7 +31,7 @@ function PanelTabItem({ className, ...props }: React.ComponentProps<typeof Reord
       layout="position"
       dragElastic={0}
       dragListener={false}
-      className={cn("group relative w-44 min-w-0 shrink-0", className)}
+      className={cn("group relative w-36 min-w-0 shrink-0", className)}
       {...props}
     />
   );
