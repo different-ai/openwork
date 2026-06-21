@@ -14,6 +14,11 @@ import {
 
 type ThemeMode = AppearanceViewProps["themeMode"];
 
+export const THEME_PREVIEW_CLASSES: Record<"light" | "dark", string> = {
+  light: "bg-white",
+  dark: "bg-black",
+};
+
 interface ThemeSectionProps
   extends Pick<AppearanceViewProps, "busy" | "themeMode" | "setThemeMode"> {}
 
@@ -69,14 +74,14 @@ function ThemePicker(props: ThemePickerProps) {
         value="light"
         label={t("settings.theme_light")}
       >
-        <ThemePreview value="light" className="bg-white" />
+        <ThemePreview value="light" className={THEME_PREVIEW_CLASSES.light} />
         <ThemePickerLabel>{t("settings.theme_light")}</ThemePickerLabel>
       </ThemePickerItem>
       <ThemePickerItem
         value="dark"
         label={t("settings.theme_dark")}
       >
-        <ThemePreview value="dark" className="bg-zinc-950" />
+        <ThemePreview value="dark" className={THEME_PREVIEW_CLASSES.dark} />
         <ThemePickerLabel>{t("settings.theme_dark")}</ThemePickerLabel>
       </ThemePickerItem>
     </ToggleGroup>
@@ -116,8 +121,8 @@ function ThemePreview(props: ThemePreviewProps) {
     >
       {props.value === "system" && (
         <div className="flex h-full">
-          <div className="w-1/2 bg-white" />
-          <div className="w-1/2 bg-zinc-950" />
+          <div className={cn("w-1/2", THEME_PREVIEW_CLASSES.light)} />
+          <div className={cn("w-1/2", THEME_PREVIEW_CLASSES.dark)} />
         </div>
       )}
     </div>
