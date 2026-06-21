@@ -191,35 +191,37 @@ async function chargeVoiceSession(input: {
   const costAmount = env.voiceSessionCostUnits
   const entryId = createDenTypeId("inferenceUsageLedgerEntry")
 
-  await db.insert(InferenceUsageLedgerEntryTable).values({
-    id: entryId,
-    organization_id: input.inferenceKey.organization_id,
-    org_membership_id: input.inferenceKey.org_membership_id,
-    inference_key_id: input.inferenceKey.id,
-    external_job_id: input.openworkRequestId,
-    external_event_id: null,
-    cost_amount: costAmount,
-    event_type: "voice_realtime_session",
-    occurred_at: new Date(),
-  })
-
-  const bucketLimits = input.limits.bucketLimits as Record<string, number | undefined>
-  for (const [windowType, bucketId] of Object.entries(input.limits.bucketIds)) {
-    if (!bucketId) continue
-    const limitAmount = bucketLimits[windowType]
-    if (limitAmount === undefined) continue
-
-    await db.insert(InferenceUsageLedgerBucketChargeTable).values({
-      id: createDenTypeId("inferenceUsageLedgerBucketCharge"),
-      ledger_entry_id: entryId,
-      bucket_id: bucketId,
-      amount: costAmount,
+  await db.transaction(async (tx) => {
+    await tx.insert(InferenceUsageLedgerEntryTable).values({
+      id: entryId,
+      organization_id: input.inferenceKey.organization_id,
+      org_membership_id: input.inferenceKey.org_membership_id,
+      inference_key_id: input.inferenceKey.id,
+      external_job_id: input.openworkRequestId,
+      external_event_id: null,
+      cost_amount: costAmount,
+      event_type: "voice_realtime_session",
+      occurred_at: new Date(),
     })
-    await db.update(InferenceOrgUsageBucketTable).set({
-      limit_amount: limitAmount,
-      used_amount: sql`${InferenceOrgUsageBucketTable.used_amount} + ${costAmount}`,
-    }).where(eq(InferenceOrgUsageBucketTable.id, bucketId))
-  }
+
+    const bucketLimits = input.limits.bucketLimits as Record<string, number | undefined>
+    for (const [windowType, bucketId] of Object.entries(input.limits.bucketIds)) {
+      if (!bucketId) continue
+      const limitAmount = bucketLimits[windowType]
+      if (limitAmount === undefined) continue
+
+      await tx.insert(InferenceUsageLedgerBucketChargeTable).values({
+        id: createDenTypeId("inferenceUsageLedgerBucketCharge"),
+        ledger_entry_id: entryId,
+        bucket_id: bucketId,
+        amount: costAmount,
+      })
+      await tx.update(InferenceOrgUsageBucketTable).set({
+        limit_amount: limitAmount,
+        used_amount: sql`${InferenceOrgUsageBucketTable.used_amount} + ${costAmount}`,
+      }).where(eq(InferenceOrgUsageBucketTable.id, bucketId))
+    }
+  })
 }
 
 export function registerVoiceRoutes(app: Hono) {

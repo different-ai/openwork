@@ -407,10 +407,25 @@ async function createManagedVoiceSession(config: { baseUrl: string; apiKey: stri
     const message = typeof errorPayload?.message === "string" ? errorPayload.message : response.statusText;
     throw new ApiError(response.status, "openwork_models_voice_failed", message || "OpenWork Models could not create a voice session");
   }
-  if (!isRecord(payload) || payload.ok !== true || typeof payload.clientSecret !== "string") {
-    throw new ApiError(502, "openwork_models_voice_invalid_response", "OpenWork Models did not return a usable Realtime client secret");
+  if (
+    !isRecord(payload) ||
+    payload.ok !== true ||
+    typeof payload.clientSecret !== "string" ||
+    typeof payload.model !== "string" ||
+    !Array.isArray(payload.tools) ||
+    payload.tools.some((tool) => typeof tool !== "string")
+  ) {
+    throw new ApiError(502, "openwork_models_voice_invalid_response", "OpenWork Models did not return a usable Realtime session payload");
   }
-  return payload;
+  return {
+    ok: true,
+    clientSecret: payload.clientSecret,
+    expiresAt: typeof payload.expiresAt === "number" ? payload.expiresAt : null,
+    model: payload.model,
+    transcriptionModel: typeof payload.transcriptionModel === "string" ? payload.transcriptionModel : OPENWORK_VOICE_TRANSCRIPTION_MODEL,
+    tools: payload.tools,
+    ...(typeof payload.source === "string" ? { source: payload.source } : {}),
+  };
 }
 
 async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {

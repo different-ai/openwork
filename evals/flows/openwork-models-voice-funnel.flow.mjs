@@ -479,11 +479,12 @@ export default {
           ).catch(() => false);
           if (!savedViaUI) {
             ctx.log(`UI save for ${key} did not persist — falling back to API.`);
-            await fetch(`${serverConfig.baseUrl}/env`, {
+            const envResponse = await fetch(`${serverConfig.baseUrl}/env`, {
               method: "PUT",
               headers: { "x-openwork-host-token": serverConfig.hostToken, "content-type": "application/json" },
               body: JSON.stringify({ entries: [{ key, value }] }),
             });
+            ctx.assert(envResponse.ok, `Fallback env write for ${key} failed: ${envResponse.status} ${await envResponse.text().catch(() => "")}`);
             await sleep(1_000);
             await ctx.eval("window.location.reload()");
             await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000, label: "control API after env reload" });
