@@ -37,6 +37,27 @@ type CacheEntry = {
   failedAt?: number;
 };
 
+type QueryToken = {
+  value: string;
+};
+
+type WordRange = {
+  value: string;
+  start: number;
+  end: number;
+};
+
+type TokenRange = {
+  start: number;
+  end: number;
+  score: number;
+};
+
+type TokenizedMatch = {
+  ranges: TokenRange[];
+  score: number;
+};
+
 export type SessionMessageFetcher = (
   workspaceId: string,
   sessionId: string,
@@ -46,6 +67,23 @@ const SNIPPET_BEFORE = 36;
 const SNIPPET_AFTER = 72;
 const DEFAULT_CONCURRENCY = 6;
 const FAILURE_RETRY_MS = 30_000;
+const MIN_TOKEN_LENGTH = 2;
+const WORD_PATTERN = /[a-z0-9_./-]+/g;
+const STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "for",
+  "in",
+  "is",
+  "of",
+  "on",
+  "or",
+  "the",
+  "to",
+  "with",
+]);
 
 function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ");
@@ -55,9 +93,125 @@ function collapseWhitespace(value: string): string {
 export function buildSnippet(text: string, index: number, length: number): SessionSearchSnippet {
   const start = Math.max(0, index - SNIPPET_BEFORE);
   const end = Math.min(text.length, index + length + SNIPPET_AFTER);
-  const before = `${start > 0 ? "…" : ""}${collapseWhitespace(text.slice(start, index)).trimStart()}`;
-  const after = `${collapseWhitespace(text.slice(index + length, end)).trimEnd()}${end < text.length ? "…" : ""}`;
+  const before = `${start > 0 ? "..." : ""}${collapseWhitespace(text.slice(start, index)).trimStart()}`;
+  const after = `${collapseWhitespace(text.slice(index + length, end)).trimEnd()}${end < text.length ? "..." : ""}`;
   return { before, match: text.slice(index, index + length), after };
+}
+
+function tokenizeQuery(query: string): QueryToken[] {
+  const seen = new Set<string>();
+  const tokens: QueryToken[] = [];
+  for (const match of query.toLowerCase().matchAll(WORD_PATTERN)) {
+    const value = match[0];
+    if (value.length < MIN_TOKEN_LENGTH || STOP_WORDS.has(value) || seen.has(value)) continue;
+    seen.add(value);
+    tokens.push({ value });
+  }
+  return tokens;
+}
+
+function wordRanges(lower: string): WordRange[] {
+  const ranges: WordRange[] = [];
+  for (const match of lower.matchAll(WORD_PATTERN)) {
+    ranges.push({
+      value: match[0],
+      start: match.index,
+      end: match.index + match[0].length,
+    });
+  }
+  return ranges;
+}
+
+function editDistanceWithin(left: string, right: string, maxDistance: number): boolean {
+  if (Math.abs(left.length - right.length) > maxDistance) return false;
+
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    let rowBest = current[0];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+      const value = Math.min(
+        previous[rightIndex] + 1,
+        current[rightIndex - 1] + 1,
+        previous[rightIndex - 1] + cost,
+      );
+      current[rightIndex] = value;
+      rowBest = Math.min(rowBest, value);
+    }
+    if (rowBest > maxDistance) return false;
+    previous = current;
+  }
+
+  return previous[right.length] <= maxDistance;
+}
+
+function scoreWordForToken(word: WordRange, token: QueryToken): TokenRange | null {
+  if (word.value === token.value) {
+    return { start: word.start, end: word.end, score: 120 };
+  }
+  if (word.value.startsWith(token.value)) {
+    return { start: word.start, end: word.end, score: 95 };
+  }
+
+  const index = word.value.indexOf(token.value);
+  if (index >= 0) {
+    return {
+      start: word.start + index,
+      end: word.start + index + token.value.length,
+      score: 75,
+    };
+  }
+
+  const maxDistance = token.value.length >= 7 ? 2 : 1;
+  if (editDistanceWithin(token.value, word.value, maxDistance)) {
+    return { start: word.start, end: word.end, score: 55 };
+  }
+
+  return null;
+}
+
+function findBestTokenRange(words: WordRange[], token: QueryToken): TokenRange | null {
+  let best: TokenRange | null = null;
+  for (const word of words) {
+    const range = scoreWordForToken(word, token);
+    if (!range) continue;
+    if (!best || range.score > best.score) {
+      best = range;
+    }
+  }
+  return best;
+}
+
+function matchTokenizedQuery(lower: string, tokens: QueryToken[]): TokenizedMatch | null {
+  if (tokens.length === 0) return null;
+
+  const words = wordRanges(lower);
+  const ranges: TokenRange[] = [];
+  for (const token of tokens) {
+    const range = findBestTokenRange(words, token);
+    if (!range) return null;
+    ranges.push(range);
+  }
+
+  const sorted = [...ranges].sort((a, b) => a.start - b.start);
+  const span = sorted[sorted.length - 1].end - sorted[0].start;
+  const proximityBonus = Math.max(0, 120 - span);
+  const score = ranges.reduce((sum, range) => sum + range.score, 0) + proximityBonus;
+
+  return { ranges: sorted, score };
+}
+
+function buildTokenSnippet(text: string, ranges: TokenRange[]): SessionSearchSnippet {
+  const first = ranges[0];
+  const last = ranges[ranges.length - 1];
+  const start = Math.max(0, first.start - SNIPPET_BEFORE);
+  const end = Math.min(text.length, last.end + SNIPPET_AFTER);
+  return {
+    before: `${start > 0 ? "..." : ""}${collapseWhitespace(text.slice(start, first.start)).trimStart()}`,
+    match: collapseWhitespace(text.slice(first.start, last.end)),
+    after: `${collapseWhitespace(text.slice(last.end, end)).trimEnd()}${end < text.length ? "..." : ""}`,
+  };
 }
 
 function toCacheEntry(updatedAt: number, messages: OpenworkSessionMessage[]): CacheEntry {
@@ -79,23 +233,24 @@ function toCacheEntry(updatedAt: number, messages: OpenworkSessionMessage[]): Ca
 function matchEntry(
   session: SearchableSession,
   entry: CacheEntry,
-  queryLower: string,
+  queryTokens: QueryToken[],
 ): SessionSearchMatch | null {
-  // Prefer the user's own prompts: they are usually what people remember typing.
-  let fallback: SessionSearchMatch | null = null;
+  let best: { match: SessionSearchMatch; score: number } | null = null;
   for (const item of entry.texts) {
-    const index = item.lower.indexOf(queryLower);
-    if (index < 0) continue;
+    const tokenMatch = matchTokenizedQuery(item.lower, queryTokens);
+    if (!tokenMatch) continue;
+    const score = tokenMatch.score + (item.role === "user" ? 50 : 0);
     const match: SessionSearchMatch = {
       session,
       kind: "message",
       role: item.role,
-      snippet: buildSnippet(item.text, index, queryLower.length),
+      snippet: buildTokenSnippet(item.text, tokenMatch.ranges),
     };
-    if (item.role === "user") return match;
-    if (!fallback) fallback = match;
+    if (!best || score > best.score) {
+      best = { match, score };
+    }
   }
-  return fallback;
+  return best?.match ?? null;
 }
 
 export type SessionSearchRun = {
@@ -138,9 +293,7 @@ export function createSessionSearcher(fetchMessages: SessionMessageFetcher): Ses
       const messages = await fetchMessages(session.workspaceId, session.sessionId);
       entry = toCacheEntry(session.updatedAt, messages);
     } catch {
-      // Unreachable session (stale workspace, server hiccup): record an empty
-      // entry with a cool-down so one bad session cannot stall every later
-      // keystroke, but still gets retried once the cool-down expires.
+      // Keep one stale workspace or server hiccup from blocking every keystroke.
       entry = { ...toCacheEntry(session.updatedAt, []), failedAt: Date.now() };
     }
     cache.set(session.sessionId, entry);
@@ -149,7 +302,7 @@ export function createSessionSearcher(fetchMessages: SessionMessageFetcher): Ses
 
   return {
     search({ query, sessions, onMatch, onProgress, concurrency = DEFAULT_CONCURRENCY }) {
-      const queryLower = query.trim().toLowerCase();
+      const queryTokens = tokenizeQuery(query);
       let cancelled = false;
 
       // Scan newest sessions first so the most relevant hits stream in early.
@@ -169,14 +322,14 @@ export function createSessionSearcher(fetchMessages: SessionMessageFetcher): Ses
           const entry = await getEntry(session);
           if (cancelled) return;
           scanned += 1;
-          const match = matchEntry(session, entry, queryLower);
+          const match = matchEntry(session, entry, queryTokens);
           if (match) onMatch(match);
           report();
         }
       };
 
       const done = (async () => {
-        if (!queryLower) {
+        if (queryTokens.length === 0) {
           scanned = total;
           report();
           return;
