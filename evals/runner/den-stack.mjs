@@ -45,6 +45,10 @@ const DEN_ENV = {
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: `${DEN_BASE_URL},http://localhost:5173,http://127.0.0.1:5173`,
   CORS_ORIGINS: `${DEN_BASE_URL},http://localhost:5173,http://127.0.0.1:5173`,
   PROVISIONER_MODE: "stub",
+  STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY ?? "sk_test_openwork_eval",
+  STRIPE_INFERENCE_PRICE_ID: process.env.STRIPE_INFERENCE_PRICE_ID ?? "price_openwork_models_eval",
+  STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET ?? "whsec_openwork_eval",
+  INFERENCE_PROXY_BASE_URL: process.env.INFERENCE_PROXY_BASE_URL ?? "http://127.0.0.1:8791",
 };
 
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));

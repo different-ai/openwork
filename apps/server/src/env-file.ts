@@ -19,6 +19,12 @@ const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // tampered file cannot shadow auth credentials, token paths, or process
 // identity.
 const RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
+const PERSISTABLE_INTERNAL_KEYS = new Set([
+  "OPENWORK_API_KEY",
+  "OPENWORK_MODELS_API_KEY",
+  "OPENWORK_INFERENCE_BASE_URL",
+  "OPENWORK_MODELS_BASE_URL",
+]);
 
 export type EnvRecord = {
   key: string;
@@ -37,6 +43,10 @@ export function isValidEnvKey(key: string): boolean {
 }
 
 export function isReservedEnvKey(key: string): boolean {
+  return isInternalEnvKey(key) && !PERSISTABLE_INTERNAL_KEYS.has(key);
+}
+
+function isInternalEnvKey(key: string): boolean {
   return RESERVED_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
 
@@ -233,7 +243,7 @@ export class EnvService {
     const store = await readStore(path, { tolerateInvalid: true });
     const out: Record<string, string> = {};
     for (const entry of store.variables) {
-      if (isReservedEnvKey(entry.key)) continue;
+      if (isInternalEnvKey(entry.key)) continue;
       out[entry.key] = entry.value;
     }
     return out;

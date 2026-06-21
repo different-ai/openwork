@@ -47,6 +47,7 @@ export async function spawnOpencodeServe({
   hostname = "127.0.0.1",
   port,
   corsOrigins = [],
+  env = {},
 }) {
   assert.ok(directory && directory.trim(), "directory is required");
   assert.ok(Number.isInteger(port) && port > 0, "port must be a positive integer");
@@ -62,6 +63,7 @@ export async function spawnOpencodeServe({
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      ...env,
       // Make it explicit we're a non-TUI client.
       OPENCODE_CLIENT: "openwork-test",
     },

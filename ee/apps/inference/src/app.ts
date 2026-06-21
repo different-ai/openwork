@@ -8,6 +8,7 @@ import { logger } from "hono/logger";
 import { z } from "zod";
 import { env } from "./env.js";
 import { registerProxyRoutes } from "./proxy.js";
+import { registerVoiceRoutes } from "./voice.js";
 import { registerWebhookRoutes } from "./webhooks.js";
 
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
@@ -65,6 +66,7 @@ if (shouldServeLocalModelCatalog) {
 }
 
 registerProxyRoutes(app);
+registerVoiceRoutes(app);
 registerWebhookRoutes(app);
 
 app.onError((error, c) => {

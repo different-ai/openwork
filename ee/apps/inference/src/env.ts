@@ -14,9 +14,12 @@ const EnvSchema = z
     DEN_DB_ENCRYPTION_KEY: z.string().trim().min(32),
     INFERENCE_PROXY_BASE_URL: z.string().optional(),
     OPENROUTER_UPSTREAM_URL: z.string().optional(),
+    OPENAI_REALTIME_API_KEY: z.string().optional(),
+    OPENAI_API_KEY: z.string().optional(),
     INFERENCE_ADMIN_TOKEN: z.string().optional(),
     INFERENCE_WEBHOOK_SECRET: z.string().optional(),
     INFERENCE_CREDITS_PER_DOLLAR: z.string().optional(),
+    VOICE_SESSION_COST_UNITS: z.string().optional(),
   })
   .superRefine((value, ctx) => {
     const mode =
@@ -97,6 +100,14 @@ function parseCreditsPerDollar(value: string | undefined) {
   return credits;
 }
 
+function parseVoiceSessionCostUnits(value: string | undefined) {
+  const units = Number(value ?? "50000000");
+  if (!Number.isFinite(units) || units <= 0) {
+    throw new Error("VOICE_SESSION_COST_UNITS must be a positive number");
+  }
+  return units;
+}
+
 const planetscale: PlanetScaleCredentials | null =
   parsed.DATABASE_HOST &&
   parsed.DATABASE_USERNAME &&
@@ -120,7 +131,9 @@ export const env = {
   openRouterUpstreamUrl: normalizeUrl(
     parsed.OPENROUTER_UPSTREAM_URL ?? "https://openrouter.ai/api/v1",
   ),
+  openAiRealtimeApiKey: optionalString(parsed.OPENAI_REALTIME_API_KEY) ?? optionalString(parsed.OPENAI_API_KEY),
   adminToken: optionalString(parsed.INFERENCE_ADMIN_TOKEN),
   webhookSecret: optionalString(parsed.INFERENCE_WEBHOOK_SECRET),
   creditsPerDollar: parseCreditsPerDollar(parsed.INFERENCE_CREDITS_PER_DOLLAR),
+  voiceSessionCostUnits: parseVoiceSessionCostUnits(parsed.VOICE_SESSION_COST_UNITS),
 };

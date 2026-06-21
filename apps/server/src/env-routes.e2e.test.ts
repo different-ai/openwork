@@ -17,6 +17,8 @@ const dirs: string[] = [];
 const priorEnvStore = process.env.OPENWORK_ENV_STORE;
 const priorTokenStore = process.env.OPENWORK_TOKEN_STORE;
 const priorOpenAiApiKey = process.env.OPENAI_API_KEY;
+const priorOpenWorkApiKey = process.env.OPENWORK_API_KEY;
+const priorOpenWorkInferenceBaseUrl = process.env.OPENWORK_INFERENCE_BASE_URL;
 const nativeFetch = globalThis.fetch;
 
 function baseConfig(): ServerConfig {
@@ -81,6 +83,16 @@ afterEach(async () => {
     delete process.env.OPENAI_API_KEY;
   } else {
     process.env.OPENAI_API_KEY = priorOpenAiApiKey;
+  }
+  if (priorOpenWorkApiKey === undefined) {
+    delete process.env.OPENWORK_API_KEY;
+  } else {
+    process.env.OPENWORK_API_KEY = priorOpenWorkApiKey;
+  }
+  if (priorOpenWorkInferenceBaseUrl === undefined) {
+    delete process.env.OPENWORK_INFERENCE_BASE_URL;
+  } else {
+    process.env.OPENWORK_INFERENCE_BASE_URL = priorOpenWorkInferenceBaseUrl;
   }
   globalThis.fetch = nativeFetch;
 });
@@ -353,6 +365,210 @@ describe("env routes", () => {
       clientSecret: "rt-secret",
       expiresAt: 123,
     });
+  });
+
+  test("voice realtime session prefers OpenWork Models broker when configured", async () => {
+    process.env.OPENAI_API_KEY = "sk-should-not-be-used";
+    const { base } = await boot();
+
+    const envPut = await fetch(`${base}/env`, {
+      method: "PUT",
+      headers: hostAuth(),
+      body: JSON.stringify({
+        entries: [
+          { key: "OPENWORK_API_KEY", value: "ow_inf_test" },
+          { key: "OPENWORK_INFERENCE_BASE_URL", value: "https://inference.example.test" },
+        ],
+      }),
+    });
+    expect(envPut.status).toBe(200);
+
+    globalThis.fetch = ((input, init) => {
+      const url = String(input);
+      if (url === "https://inference.example.test/voice/realtime/session") {
+        expect(init?.headers).toMatchObject({ Authorization: "Bearer ow_inf_test" });
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: true,
+          clientSecret: "managed-rt-secret",
+          expiresAt: 456,
+          model: "gpt-realtime-2",
+          transcriptionModel: "gpt-4o-transcribe",
+          tools: ["openwork_snapshot"],
+          source: "openwork-models",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }));
+      }
+      if (url === "https://api.openai.com/v1/realtime/client_secrets") {
+        return Promise.resolve(new Response("direct OpenAI should not be called", { status: 500 }));
+      }
+      return nativeFetch(input, init);
+    }) as typeof fetch;
+
+    const issued = await fetch(`${base}/tokens`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify({ scope: "owner", label: "managed voice owner" }),
+    });
+    const tokenBody = (await issued.json()) as { token: string };
+
+    const response = await fetch(`${base}/voice/realtime/session`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenBody.token}`, "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      clientSecret: "managed-rt-secret",
+      expiresAt: 456,
+      source: "openwork-models",
+    });
+  });
+
+  test("voice realtime session falls back to direct OpenAI when broker returns 503", async () => {
+    process.env.OPENAI_API_KEY = "sk-direct-fallback";
+    const { base } = await boot();
+
+    await fetch(`${base}/env`, {
+      method: "PUT",
+      headers: hostAuth(),
+      body: JSON.stringify({
+        entries: [
+          { key: "OPENWORK_API_KEY", value: "ow_inf_test" },
+          { key: "OPENWORK_INFERENCE_BASE_URL", value: "https://inference.example.test" },
+        ],
+      }),
+    });
+
+    globalThis.fetch = ((input, init) => {
+      const url = String(input);
+      if (url === "https://inference.example.test/voice/realtime/session") {
+        return Promise.resolve(new Response(JSON.stringify({
+          error: { message: "Managed voice is not configured.", code: "openai_realtime_key_missing" },
+        }), { status: 503, headers: { "content-type": "application/json" } }));
+      }
+      if (url === "https://api.openai.com/v1/realtime/client_secrets") {
+        expect(init?.headers).toMatchObject({ Authorization: "Bearer sk-direct-fallback" });
+        return Promise.resolve(new Response(JSON.stringify({
+          client_secret: { value: "direct-fallback-secret", expires_at: 789 },
+        }), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      return nativeFetch(input, init);
+    }) as typeof fetch;
+
+    const issued = await fetch(`${base}/tokens`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify({ scope: "owner", label: "fallback voice owner" }),
+    });
+    const tokenBody = (await issued.json()) as { token: string };
+
+    const response = await fetch(`${base}/voice/realtime/session`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenBody.token}`, "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      clientSecret: "direct-fallback-secret",
+    });
+  });
+
+  test("voice realtime session shows clear error when broker 503 and no local key", async () => {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_REALTIME_API_KEY;
+    delete process.env.OPENWORK_OPENAI_REALTIME_API_KEY;
+    const { base } = await boot();
+
+    await fetch(`${base}/env`, {
+      method: "PUT",
+      headers: hostAuth(),
+      body: JSON.stringify({
+        entries: [
+          { key: "OPENWORK_API_KEY", value: "ow_inf_test" },
+          { key: "OPENWORK_INFERENCE_BASE_URL", value: "https://inference.example.test" },
+        ],
+      }),
+    });
+
+    globalThis.fetch = ((input, init) => {
+      const url = String(input);
+      if (url === "https://inference.example.test/voice/realtime/session") {
+        return Promise.resolve(new Response(JSON.stringify({
+          error: { message: "Managed voice is not configured.", code: "openai_realtime_key_missing" },
+        }), { status: 503, headers: { "content-type": "application/json" } }));
+      }
+      return nativeFetch(input, init);
+    }) as typeof fetch;
+
+    const issued = await fetch(`${base}/tokens`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify({ scope: "owner", label: "no key voice owner" }),
+    });
+    const tokenBody = (await issued.json()) as { token: string };
+
+    const response = await fetch(`${base}/voice/realtime/session`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenBody.token}`, "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(503);
+    const body = (await response.json()) as { code: string; message: string };
+    expect(body.code).toBe("openwork_models_voice_unavailable");
+    expect(body.message).toContain("not fully configured");
+  });
+
+  test("voice realtime session does not fall back on non-503 broker errors", async () => {
+    process.env.OPENAI_API_KEY = "sk-should-not-be-used";
+    const { base } = await boot();
+
+    await fetch(`${base}/env`, {
+      method: "PUT",
+      headers: hostAuth(),
+      body: JSON.stringify({
+        entries: [
+          { key: "OPENWORK_API_KEY", value: "ow_inf_test" },
+          { key: "OPENWORK_INFERENCE_BASE_URL", value: "https://inference.example.test" },
+        ],
+      }),
+    });
+
+    globalThis.fetch = ((input, init) => {
+      const url = String(input);
+      if (url === "https://inference.example.test/voice/realtime/session") {
+        return Promise.resolve(new Response(JSON.stringify({
+          error: { message: "Rate limit exceeded", code: "rate_limit_exceeded" },
+        }), { status: 429, headers: { "content-type": "application/json" } }));
+      }
+      if (url === "https://api.openai.com/v1/realtime/client_secrets") {
+        return Promise.resolve(new Response("should not fall back on 429", { status: 500 }));
+      }
+      return nativeFetch(input, init);
+    }) as typeof fetch;
+
+    const issued = await fetch(`${base}/tokens`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify({ scope: "owner", label: "rate limited voice owner" }),
+    });
+    const tokenBody = (await issued.json()) as { token: string };
+
+    const response = await fetch(`${base}/voice/realtime/session`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenBody.token}`, "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(429);
+    const body = (await response.json()) as { code: string };
+    expect(body.code).toBe("openwork_models_voice_failed");
   });
 
   test("values persist across server restart", async () => {

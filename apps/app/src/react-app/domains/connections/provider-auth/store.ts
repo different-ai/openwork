@@ -353,6 +353,27 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return next;
   };
 
+  const readCloudProviderBaseUrl = (provider: DenOrgLlmProviderConnection) => {
+    const options = provider.providerConfig.options;
+    if (options && typeof options === "object" && !Array.isArray(options)) {
+      const baseURL = "baseURL" in options ? options.baseURL : undefined;
+      if (typeof baseURL === "string" && baseURL.trim()) return baseURL.trim().replace(/\/api\/v1\/?$/, "");
+    }
+    const api = provider.providerConfig.api;
+    if (typeof api === "string" && api.trim()) return api.trim().replace(/\/api\/v1\/?$/, "");
+    return "";
+  };
+
+  const mirrorOpenWorkModelsVoiceEnv = async (provider: DenOrgLlmProviderConnection, apiKey: string) => {
+    if (provider.source !== "openwork" || !apiKey.trim()) return;
+    const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
+    if (!openworkClient) return;
+    const baseUrl = readCloudProviderBaseUrl(provider);
+    const entries = [{ key: "OPENWORK_API_KEY", value: apiKey.trim() }];
+    if (baseUrl) entries.push({ key: "OPENWORK_INFERENCE_BASE_URL", value: baseUrl });
+    await openworkClient.upsertUserEnv(entries);
+  };
+
   const readWorkspaceOpenworkConfigRecord = async (): Promise<
     Record<string, unknown>
   > => {
@@ -1395,6 +1416,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           providerID: localProviderId,
           auth: { type: "api", key: apiKey },
         });
+        await mirrorOpenWorkModelsVoiceEnv(provider, apiKey);
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         try {

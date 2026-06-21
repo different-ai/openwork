@@ -102,6 +102,22 @@ describe("env-file", () => {
     await expect(promise).rejects.toMatchObject({ code: "reserved_env_key" });
   });
 
+  test("upsertMany accepts managed voice keys but does not inject them", async () => {
+    const svc = new EnvService({ path });
+    await svc.upsertMany([
+      { key: "OPENWORK_API_KEY", value: "ow_inf_test" },
+      { key: "OPENWORK_INFERENCE_BASE_URL", value: "https://inference.example.test" },
+      { key: "ANTHROPIC_API_KEY", value: "sk-ant" },
+    ]);
+
+    expect((await svc.list()).map((entry) => entry.key)).toEqual([
+      "ANTHROPIC_API_KEY",
+      "OPENWORK_API_KEY",
+      "OPENWORK_INFERENCE_BASE_URL",
+    ]);
+    expect(await EnvService.readForInjection(path)).toEqual({ ANTHROPIC_API_KEY: "sk-ant" });
+  });
+
   test("delete returns false when the key is missing", async () => {
     const svc = new EnvService({ path });
     await svc.upsertMany([{ key: "FOO", value: "x" }]);

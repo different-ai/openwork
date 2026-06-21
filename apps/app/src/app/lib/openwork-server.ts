@@ -1805,6 +1805,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         model: string;
         transcriptionModel: string;
         tools: string[];
+        source?: string;
       }>(baseUrl, "/voice/realtime/session", {
         token,
         hostToken,
