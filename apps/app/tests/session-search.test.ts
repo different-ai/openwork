@@ -70,4 +70,14 @@ describe("session transcript search", () => {
 
     expect(results.length).toBe(1);
   });
+
+  test("matches non-ASCII query terms", async () => {
+    const fetchMessages: SessionMessageFetcher = async () => [
+      message("assistant", "Summarized the café menu translation notes."),
+    ];
+
+    const results = await search("café", fetchMessages);
+
+    expect(results.length).toBe(1);
+  });
 });

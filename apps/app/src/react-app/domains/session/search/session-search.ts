@@ -68,7 +68,7 @@ const SNIPPET_AFTER = 72;
 const DEFAULT_CONCURRENCY = 6;
 const FAILURE_RETRY_MS = 30_000;
 const MIN_TOKEN_LENGTH = 2;
-const WORD_PATTERN = /[a-z0-9_./-]+/g;
+const WORD_PATTERN = /[\p{L}\p{N}_./-]+/gu;
 const STOP_WORDS = new Set([
   "a",
   "an",
