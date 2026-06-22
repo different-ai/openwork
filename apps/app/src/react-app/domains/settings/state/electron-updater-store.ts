@@ -69,13 +69,80 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
   let isDownloadProgressSubscribed = false;
   let unsubDownloadProgress: (() => void) | null = null;
   
-  let activeCheckPromise: Promise<void> | null = null;
+  let activeCheckPromise: Promise<{
+    result: any;
+    currentVersion: string | null;
+  }> | null = null;
   let activeCheckChannel: ReleaseChannel | null = null;
   let currentCheckId = 0;
-  let activeCheckCalls: Parameters<ElectronUpdaterStore["checkForUpdates"]>[0][] = [];
 
-  let activeDownloadPromise: Promise<void> | null = null;
-  let activeDownloadCalls: Parameters<ElectronUpdaterStore["downloadUpdate"]>[0][] = [];
+  let activeDownloadPromise: Promise<{ ok: boolean; reason?: string }> | null = null;
+
+  async function handleCheckResult(params: {
+    result: any;
+    currentVersion: string | null;
+    releaseChannel: ReleaseChannel;
+    desktopConfig: DenDesktopConfig | null | undefined;
+    updateAutoDownload?: boolean;
+    onReleaseChannelChange?: (channel: ReleaseChannel) => void;
+    setError?: (message: string | null) => void;
+  }) {
+    const { result, currentVersion, releaseChannel, desktopConfig, updateAutoDownload, onReleaseChannelChange, setError } = params;
+    const currentStatus = get().updateStatus;
+    
+    set({ appVersion: currentVersion });
+    if (result.channel && result.channel !== releaseChannel) {
+      onReleaseChannelChange?.(result.channel);
+    }
+    if (result.reason === "unavailable") {
+      set({
+        updateStatus: {
+          state: "idle",
+          message: "Auto-updates are available in packaged builds only.",
+        },
+      });
+      return;
+    }
+    if (result.reason) {
+      set({ updateStatus: { state: "error", message: result.reason } });
+      setError?.(result.reason);
+      return;
+    }
+
+    const checkedReleaseChannel = result.channel ?? releaseChannel;
+    const availableAllowed = result.available && result.latestVersion
+      ? checkedReleaseChannel === "alpha"
+        ? await isAlphaUpdateAllowed(result.latestVersion, desktopConfig)
+        : await isUpdateAllowed(result.latestVersion, desktopConfig)
+      : result.available;
+
+    const parsedNotes = releaseNotesToText(result.releaseNotes);
+    const nextStatus: Exclude<SettingsUpdateStatus, null> = availableAllowed
+      ? {
+          state: "available",
+          lastCheckedAt: Date.now(),
+          version: result.latestVersion ?? undefined,
+          date: result.releaseDate ?? undefined,
+          notes: parsedNotes,
+        }
+      : {
+          state: "idle",
+          lastCheckedAt: Date.now(),
+          version: result.latestVersion ?? undefined,
+          date: result.releaseDate ?? undefined,
+          notes: parsedNotes,
+          message: currentStatus?.message ?? undefined,
+        };
+
+    set({ updateStatus: nextStatus });
+    if (availableAllowed && updateAutoDownload) {
+      void get().downloadUpdate({
+        releaseChannel: checkedReleaseChannel,
+        desktopConfig,
+        setError,
+      });
+    }
+  }
 
   return {
     appVersion: null,
@@ -96,8 +163,27 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
       const { releaseChannel, desktopConfig, updateAutoDownload, onReleaseChannelChange, setError } = options;
 
       if (activeCheckPromise && activeCheckChannel === releaseChannel) {
-        activeCheckCalls.push(options);
-        return activeCheckPromise;
+        const checkIdSnapshot = currentCheckId;
+        try {
+          const { result, currentVersion } = await activeCheckPromise;
+          if (checkIdSnapshot !== currentCheckId) return;
+
+          await handleCheckResult({
+            result,
+            currentVersion,
+            releaseChannel,
+            desktopConfig,
+            updateAutoDownload,
+            onReleaseChannelChange,
+            setError,
+          });
+        } catch (error) {
+          if (checkIdSnapshot !== currentCheckId) return;
+          const msg = describeError(error);
+          set({ updateStatus: { state: "error", message: msg } });
+          setError?.(msg);
+        }
+        return;
       }
 
       const currentStatus = get().updateStatus;
@@ -119,113 +205,57 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
       const checkFn = bridge.check;
 
       set({ updateStatus: { state: "checking" } });
+      activeCheckChannel = releaseChannel;
 
       const checkId = ++currentCheckId;
-      activeCheckChannel = releaseChannel;
-      activeCheckCalls = [options];
 
       activeCheckPromise = (async () => {
-        try {
-          const result = await checkFn(releaseChannel);
-          if (checkId !== currentCheckId) return;
-
-          const currentCalls = [...activeCheckCalls];
-
-          set({ appVersion: result.currentVersion ?? null });
-          if (result.channel && result.channel !== releaseChannel) {
-            for (const call of currentCalls) {
-              call.onReleaseChannelChange?.(result.channel);
-            }
-          }
-          if (result.reason === "unavailable") {
-            set({
-              updateStatus: {
-                state: "idle",
-                message: "Auto-updates are available in packaged builds only.",
-              },
-            });
-            return;
-          }
-          if (result.reason) {
-            set({ updateStatus: { state: "error", message: result.reason } });
-            for (const call of currentCalls) {
-              call.setError?.(result.reason);
-            }
-            return;
-          }
-
-          const checkedReleaseChannel = result.channel ?? releaseChannel;
-          
-          let availableAllowed = false;
-          for (const call of currentCalls) {
-            const allowed = result.available && result.latestVersion
-              ? checkedReleaseChannel === "alpha"
-                ? await isAlphaUpdateAllowed(result.latestVersion, call.desktopConfig)
-                : await isUpdateAllowed(result.latestVersion, call.desktopConfig)
-              : result.available;
-            if (allowed) {
-              availableAllowed = true;
-            }
-          }
-
-          const parsedNotes = releaseNotesToText(result.releaseNotes);
-          const nextStatus: Exclude<SettingsUpdateStatus, null> = availableAllowed
-            ? {
-                state: "available",
-                lastCheckedAt: Date.now(),
-                version: result.latestVersion ?? undefined,
-                date: result.releaseDate ?? undefined,
-                notes: parsedNotes,
-              }
-            : {
-                state: "idle",
-                lastCheckedAt: Date.now(),
-                version: result.latestVersion ?? undefined,
-                date: result.releaseDate ?? undefined,
-                notes: parsedNotes,
-              };
-
-          set({ updateStatus: nextStatus });
-          
-          const anyAutoDownload = currentCalls.some(c => c.updateAutoDownload);
-          if (availableAllowed && anyAutoDownload) {
-            const combinedSetError = (msg: string | null) => {
-              for (const call of currentCalls) {
-                call.setError?.(msg);
-              }
-            };
-            void get().downloadUpdate({
-              releaseChannel: checkedReleaseChannel,
-              desktopConfig,
-              setError: combinedSetError,
-            });
-          }
-        } catch (error) {
-          if (checkId !== currentCheckId) return;
-          const currentCalls = [...activeCheckCalls];
-          const msg = describeError(error);
-          set({ updateStatus: { state: "error", message: msg } });
-          for (const call of currentCalls) {
-            call.setError?.(msg);
-          }
-        }
+        const result = await checkFn(releaseChannel);
+        return {
+          result,
+          currentVersion: result.currentVersion ?? null,
+        };
       })();
 
       try {
-        await activeCheckPromise;
+        const { result, currentVersion } = await activeCheckPromise;
+        if (checkId !== currentCheckId) return;
+
+        await handleCheckResult({
+          result,
+          currentVersion,
+          releaseChannel,
+          desktopConfig,
+          updateAutoDownload,
+          onReleaseChannelChange,
+          setError,
+        });
+      } catch (error) {
+        if (checkId !== currentCheckId) return;
+        const msg = describeError(error);
+        set({ updateStatus: { state: "error", message: msg } });
+        setError?.(msg);
       } finally {
         if (checkId === currentCheckId) {
           activeCheckPromise = null;
           activeCheckChannel = null;
-          activeCheckCalls = [];
         }
       }
     },
 
     downloadUpdate: async (options) => {
+      const { releaseChannel, desktopConfig, setError } = options;
+
       if (activeDownloadPromise) {
-        activeDownloadCalls.push(options);
-        return activeDownloadPromise;
+        try {
+          const result = await activeDownloadPromise;
+          if (!result.ok) {
+            setError?.(result.reason ?? "Update download failed.");
+          }
+        } catch (error) {
+          setError?.(describeError(error));
+        }
+        return;
       }
 
       const currentStatus = get().updateStatus;
@@ -233,7 +263,6 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
         return;
       }
 
-      const { releaseChannel, desktopConfig, setError } = options;
       const bridge = electronUpdaterBridge();
       if (!bridge?.download) {
         const message = "Electron updater downloads are available only in the Electron desktop app.";
@@ -279,47 +308,39 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
         };
       });
 
-      activeDownloadCalls = [options];
-
       activeDownloadPromise = (async () => {
-        try {
-          const result = await downloadFn();
-          const currentCalls = [...activeDownloadCalls];
-          if (!result?.ok) {
-            const reason = result?.reason ?? "Update download failed.";
-            set({ updateStatus: { state: "error", message: reason } });
-            for (const call of currentCalls) {
-              call.setError?.(reason);
-            }
-            return;
-          }
+        const result = await downloadFn();
+        if (!result?.ok) {
+          return { ok: false, reason: result?.reason ?? "Update download failed." };
+        }
+        return { ok: true };
+      })();
+
+      try {
+        const result = await activeDownloadPromise;
+        if (!result.ok) {
+          const reason = result.reason ?? "Update download failed.";
+          set({ updateStatus: { state: "error", message: reason } });
+          setError?.(reason);
+        } else {
           set((state) => ({
             updateStatus: {
               ...(state.updateStatus ?? {}),
               state: "ready",
             },
           }));
-        } catch (error) {
-          const currentCalls = [...activeDownloadCalls];
-          const msg = describeError(error);
-          set({ updateStatus: { state: "error", message: msg } });
-          for (const call of currentCalls) {
-            call.setError?.(msg);
-          }
-        } finally {
-          if (unsubDownloadProgress) {
-            unsubDownloadProgress();
-            unsubDownloadProgress = null;
-            isDownloadProgressSubscribed = false;
-          }
         }
-      })();
-
-      try {
-        await activeDownloadPromise;
+      } catch (error) {
+        const msg = describeError(error);
+        set({ updateStatus: { state: "error", message: msg } });
+        setError?.(msg);
       } finally {
         activeDownloadPromise = null;
-        activeDownloadCalls = [];
+        if (unsubDownloadProgress) {
+          unsubDownloadProgress();
+          unsubDownloadProgress = null;
+          isDownloadProgressSubscribed = false;
+        }
       }
     },
 
