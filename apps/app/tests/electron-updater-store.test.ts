@@ -2,10 +2,13 @@ import { beforeEach, describe, expect, test, mock } from "bun:test";
 import type { ReleaseChannel } from "../src/app/types";
 
 // Mock version-gate module before importing the store
+let isAlphaUpdateAllowedMock = async (version: string, config: any) => true;
+let isUpdateAllowedMock = async (version: string, config: any) => true;
+
 mock.module("../src/app/lib/version-gate", () => {
   return {
-    isAlphaUpdateAllowed: async () => true,
-    isUpdateAllowed: async () => true,
+    isAlphaUpdateAllowed: async (version: any, config: any) => isAlphaUpdateAllowedMock(version, config),
+    isUpdateAllowed: async (version: any, config: any) => isUpdateAllowedMock(version, config),
   };
 });
 
@@ -75,6 +78,8 @@ function resetStore() {
   mockCheck.mockClear();
   mockDownload.mockClear();
   storage.clear();
+  isAlphaUpdateAllowedMock = async () => true;
+  isUpdateAllowedMock = async () => true;
 }
 
 describe("electron updater store", () => {
@@ -327,5 +332,73 @@ describe("electron updater store", () => {
     });
 
     expect(checkError).toHaveBeenCalledWith("auto download failed");
+  });
+
+  test("runs a new check and discards stale check when version gate validation yields and channel changes", async () => {
+    let resolveCheckStable: any;
+    const checkPromiseStable = new Promise<any>((resolve) => {
+      resolveCheckStable = resolve;
+    });
+
+    let resolveCheckAlpha: any;
+    const checkPromiseAlpha = new Promise<any>((resolve) => {
+      resolveCheckAlpha = resolve;
+    });
+
+    mockCheck.mockImplementation(async (channel: string) => {
+      if (channel === "stable") return await checkPromiseStable;
+      return await checkPromiseAlpha;
+    });
+
+    let resolveGatingStable: any;
+    const gatingPromiseStable = new Promise<boolean>((resolve) => {
+      resolveGatingStable = resolve;
+    });
+
+    isUpdateAllowedMock = mock(async () => {
+      return await gatingPromiseStable;
+    });
+
+    // Start checking stable
+    const checkStable = useElectronUpdaterStore.getState().checkForUpdates({
+      releaseChannel: "stable",
+      desktopConfig: null,
+    });
+
+    // Resolve stable check from bridge. This will call handleCheckResult and yield on isUpdateAllowed.
+    resolveCheckStable({
+      currentVersion: "1.0.0",
+      latestVersion: "1.2.0",
+      available: true,
+      channel: "stable",
+    });
+    
+    // Wait a tick to allow handleCheckResult to execute synchronously up to the isUpdateAllowed await
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Now start a second check for alpha (e.g. channel switched), which increments currentCheckId
+    const checkAlpha = useElectronUpdaterStore.getState().checkForUpdates({
+      releaseChannel: "alpha",
+      desktopConfig: null,
+    });
+
+    // Now resolve the version gating check of the first check
+    resolveGatingStable(true);
+    await checkStable;
+
+    // The first check status update must have been ignored, and the state should still be "checking" (from the alpha check)
+    expect(useElectronUpdaterStore.getState().updateStatus?.state).toBe("checking");
+
+    // Resolve alpha check with new results
+    resolveCheckAlpha({
+      currentVersion: "1.0.0",
+      latestVersion: "1.3.0-alpha.1",
+      available: true,
+      channel: "alpha",
+    });
+    await checkAlpha;
+
+    expect(useElectronUpdaterStore.getState().updateStatus?.state).toBe("available");
+    expect(useElectronUpdaterStore.getState().updateStatus?.version).toBe("1.3.0-alpha.1");
   });
 });

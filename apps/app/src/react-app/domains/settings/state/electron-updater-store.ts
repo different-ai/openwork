@@ -86,8 +86,10 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
     updateAutoDownload?: boolean;
     onReleaseChannelChange?: (channel: ReleaseChannel) => void;
     setError?: (message: string | null) => void;
+    checkId: number;
   }) {
-    const { result, currentVersion, releaseChannel, desktopConfig, updateAutoDownload, onReleaseChannelChange, setError } = params;
+    const { result, currentVersion, releaseChannel, desktopConfig, updateAutoDownload, onReleaseChannelChange, setError, checkId } = params;
+    if (checkId !== currentCheckId) return;
     const currentStatus = get().updateStatus;
     
     set({ appVersion: currentVersion });
@@ -115,6 +117,8 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
         ? await isAlphaUpdateAllowed(result.latestVersion, desktopConfig)
         : await isUpdateAllowed(result.latestVersion, desktopConfig)
       : result.available;
+
+    if (checkId !== currentCheckId) return;
 
     const parsedNotes = releaseNotesToText(result.releaseNotes);
     const nextStatus: Exclude<SettingsUpdateStatus, null> = availableAllowed
@@ -176,6 +180,7 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
             updateAutoDownload,
             onReleaseChannelChange,
             setError,
+            checkId: checkIdSnapshot,
           });
         } catch (error) {
           if (checkIdSnapshot !== currentCheckId) return;
@@ -229,6 +234,7 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
           updateAutoDownload,
           onReleaseChannelChange,
           setError,
+          checkId,
         });
       } catch (error) {
         if (checkId !== currentCheckId) return;
