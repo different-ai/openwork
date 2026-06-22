@@ -205,4 +205,80 @@ describe("electron updater store", () => {
     expect(mockDownload).toHaveBeenCalledTimes(1);
     expect(useElectronUpdaterStore.getState().updateStatus?.state).toBe("ready");
   });
+
+  test("propagates options and callbacks (e.g. setError, onReleaseChannelChange) to all concurrent callers", async () => {
+    let resolveCheck: any;
+    const checkPromise = new Promise<any>((resolve) => {
+      resolveCheck = resolve;
+    });
+    mockCheck.mockImplementation(async () => {
+      return await checkPromise;
+    });
+
+    const error1 = mock((msg: string | null) => {});
+    const error2 = mock((msg: string | null) => {});
+    const channelChange1 = mock((channel: ReleaseChannel) => {});
+    const channelChange2 = mock((channel: ReleaseChannel) => {});
+
+    const check1 = useElectronUpdaterStore.getState().checkForUpdates({
+      releaseChannel: "stable",
+      desktopConfig: null,
+      setError: error1,
+      onReleaseChannelChange: channelChange1,
+    });
+    const check2 = useElectronUpdaterStore.getState().checkForUpdates({
+      releaseChannel: "stable",
+      desktopConfig: null,
+      setError: error2,
+      onReleaseChannelChange: channelChange2,
+    });
+
+    resolveCheck({
+      currentVersion: "1.0.0",
+      latestVersion: "1.2.0",
+      available: true,
+      channel: "alpha", // channel changed!
+    });
+
+    await Promise.all([check1, check2]);
+
+    expect(channelChange1).toHaveBeenCalledWith("alpha");
+    expect(channelChange2).toHaveBeenCalledWith("alpha");
+
+    // Test download error propagation to all concurrent callers
+    useElectronUpdaterStore.setState({
+      updateStatus: {
+        state: "available",
+        version: "1.2.0",
+      },
+    });
+
+    let resolveDownload: any;
+    const downloadPromise = new Promise<any>((resolve) => {
+      resolveDownload = resolve;
+    });
+    mockDownload.mockImplementation(async () => {
+      return await downloadPromise;
+    });
+
+    const dlError1 = mock((msg: string | null) => {});
+    const dlError2 = mock((msg: string | null) => {});
+
+    const dl1 = useElectronUpdaterStore.getState().downloadUpdate({
+      releaseChannel: "stable",
+      desktopConfig: null,
+      setError: dlError1,
+    });
+    const dl2 = useElectronUpdaterStore.getState().downloadUpdate({
+      releaseChannel: "stable",
+      desktopConfig: null,
+      setError: dlError2,
+    });
+
+    resolveDownload({ ok: false, reason: "disk full" });
+    await Promise.all([dl1, dl2]);
+
+    expect(dlError1).toHaveBeenCalledWith("disk full");
+    expect(dlError2).toHaveBeenCalledWith("disk full");
+  });
 });

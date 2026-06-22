@@ -68,10 +68,14 @@ export type ElectronUpdaterStore = {
 export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) => {
   let isDownloadProgressSubscribed = false;
   let unsubDownloadProgress: (() => void) | null = null;
+  
   let activeCheckPromise: Promise<void> | null = null;
   let activeCheckChannel: ReleaseChannel | null = null;
   let currentCheckId = 0;
+  let activeCheckCalls: Parameters<ElectronUpdaterStore["checkForUpdates"]>[0][] = [];
+
   let activeDownloadPromise: Promise<void> | null = null;
+  let activeDownloadCalls: Parameters<ElectronUpdaterStore["downloadUpdate"]>[0][] = [];
 
   return {
     appVersion: null,
@@ -92,6 +96,7 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
       const { releaseChannel, desktopConfig, updateAutoDownload, onReleaseChannelChange, setError } = options;
 
       if (activeCheckPromise && activeCheckChannel === releaseChannel) {
+        activeCheckCalls.push(options);
         return activeCheckPromise;
       }
 
@@ -117,6 +122,7 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
 
       const checkId = ++currentCheckId;
       activeCheckChannel = releaseChannel;
+      activeCheckCalls = [options];
 
       activeCheckPromise = (async () => {
         try {
@@ -125,7 +131,9 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
 
           set({ appVersion: result.currentVersion ?? null });
           if (result.channel && result.channel !== releaseChannel) {
-            onReleaseChannelChange?.(result.channel);
+            for (const call of activeCheckCalls) {
+              call.onReleaseChannelChange?.(result.channel);
+            }
           }
           if (result.reason === "unavailable") {
             set({
@@ -138,16 +146,25 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
           }
           if (result.reason) {
             set({ updateStatus: { state: "error", message: result.reason } });
-            setError?.(result.reason);
+            for (const call of activeCheckCalls) {
+              call.setError?.(result.reason);
+            }
             return;
           }
 
           const checkedReleaseChannel = result.channel ?? releaseChannel;
-          const availableAllowed = result.available && result.latestVersion
-            ? checkedReleaseChannel === "alpha"
-              ? await isAlphaUpdateAllowed(result.latestVersion, desktopConfig)
-              : await isUpdateAllowed(result.latestVersion, desktopConfig)
-            : result.available;
+          
+          let availableAllowed = false;
+          for (const call of activeCheckCalls) {
+            const allowed = result.available && result.latestVersion
+              ? checkedReleaseChannel === "alpha"
+                ? await isAlphaUpdateAllowed(result.latestVersion, call.desktopConfig)
+                : await isUpdateAllowed(result.latestVersion, call.desktopConfig)
+              : result.available;
+            if (allowed) {
+              availableAllowed = true;
+            }
+          }
 
           const parsedNotes = releaseNotesToText(result.releaseNotes);
           const nextStatus: Exclude<SettingsUpdateStatus, null> = availableAllowed
@@ -167,18 +184,27 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
               };
 
           set({ updateStatus: nextStatus });
-          if (availableAllowed && updateAutoDownload) {
+          
+          const anyAutoDownload = activeCheckCalls.some(c => c.updateAutoDownload);
+          if (availableAllowed && anyAutoDownload) {
+            const combinedSetError = (msg: string | null) => {
+              for (const call of activeCheckCalls) {
+                call.setError?.(msg);
+              }
+            };
             void get().downloadUpdate({
               releaseChannel: checkedReleaseChannel,
               desktopConfig,
-              setError,
+              setError: combinedSetError,
             });
           }
         } catch (error) {
           if (checkId !== currentCheckId) return;
           const msg = describeError(error);
           set({ updateStatus: { state: "error", message: msg } });
-          setError?.(msg);
+          for (const call of activeCheckCalls) {
+            call.setError?.(msg);
+          }
         }
       })();
 
@@ -188,12 +214,16 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
         if (checkId === currentCheckId) {
           activeCheckPromise = null;
           activeCheckChannel = null;
+          activeCheckCalls = [];
         }
       }
     },
 
     downloadUpdate: async (options) => {
-      if (activeDownloadPromise) return activeDownloadPromise;
+      if (activeDownloadPromise) {
+        activeDownloadCalls.push(options);
+        return activeDownloadPromise;
+      }
 
       const currentStatus = get().updateStatus;
       if (currentStatus?.state !== "available") {
@@ -246,12 +276,17 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
         };
       });
 
+      activeDownloadCalls = [options];
+
       activeDownloadPromise = (async () => {
         try {
           const result = await downloadFn();
           if (!result?.ok) {
-            set({ updateStatus: { state: "error", message: result?.reason ?? "Update download failed." } });
-            setError?.(result?.reason ?? "Update download failed.");
+            const reason = result?.reason ?? "Update download failed.";
+            set({ updateStatus: { state: "error", message: reason } });
+            for (const call of activeDownloadCalls) {
+              call.setError?.(reason);
+            }
             return;
           }
           set((state) => ({
@@ -263,7 +298,9 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
         } catch (error) {
           const msg = describeError(error);
           set({ updateStatus: { state: "error", message: msg } });
-          setError?.(msg);
+          for (const call of activeDownloadCalls) {
+            call.setError?.(msg);
+          }
         } finally {
           if (unsubDownloadProgress) {
             unsubDownloadProgress();
@@ -277,6 +314,7 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
         await activeDownloadPromise;
       } finally {
         activeDownloadPromise = null;
+        activeDownloadCalls = [];
       }
     },
 
