@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 
-import { useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
@@ -14,6 +14,11 @@ import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
+import { useLocal } from "../kernel/local-provider";
+import { useDesktopConfig } from "../domains/cloud/desktop-config-provider";
+import { useElectronUpdaterStore } from "../domains/settings/state/electron-updater-store";
+import { notifyAlert } from "./notifications";
+import { t } from "@/i18n";
 import { AppMenuProvider } from "./app-menu";
 import { OpenworkControlProvider, OpenworkRouteControlActions } from "./control/control-provider";
 import { SessionRoute } from "./session-route";
@@ -123,6 +128,75 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   return <>{children}</>;
 }
 
+const SETTINGS_UPDATE_AUTO_CHECK_KEY = "openwork.react.settings.update-auto-check";
+const SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY = "openwork.react.settings.update-auto-download";
+
+function readStoredBoolean(key: string, fallback: boolean): boolean {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === "true") return true;
+    if (raw === "false") return false;
+  } catch {}
+  return fallback;
+}
+
+function BackgroundUpdater() {
+  const local = useLocal();
+  const desktopConfig = useDesktopConfig();
+  const store = useElectronUpdaterStore();
+  const releaseChannel = local.prefs.releaseChannel ?? "stable";
+
+  useEffect(() => {
+    const autoCheck = readStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, true);
+    const autoDownload = readStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, false);
+    if (!autoCheck) return;
+
+    const check = () => {
+      void store.checkForUpdates({
+        releaseChannel,
+        desktopConfig: desktopConfig.config,
+        updateAutoDownload: autoDownload,
+        onReleaseChannelChange: (next) => {
+          local.setPrefs((previous) => ({ ...previous, releaseChannel: next }));
+        },
+      });
+    };
+
+    // Run first check on startup after 5 seconds to let application fully initialize
+    const delayId = setTimeout(check, 5000);
+
+    // Re-check periodically every 4 hours
+    const intervalId = setInterval(check, 4 * 60 * 60 * 1000);
+
+    return () => {
+      clearTimeout(delayId);
+      clearInterval(intervalId);
+    };
+  }, [releaseChannel, desktopConfig.config, local, store]);
+
+  // Listen for updateState changes to show the notification alert
+  const updateStatus = store.updateStatus;
+  const lastStateRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!updateStatus) return;
+    if (updateStatus.state === "available" && lastStateRef.current !== "available") {
+      notifyAlert({
+        kind: "update",
+        severity: "info",
+        title: t("notifications.updater_available_title", undefined, { version: updateStatus.version ?? "" }),
+        body: t("notifications.updater_available_body"),
+        dedupeKey: "updater-available",
+        action: { type: "navigate", path: "/settings/updates" },
+        actionLabel: t("notifications.updater_view_button"),
+      });
+    }
+    lastStateRef.current = updateStatus.state;
+  }, [updateStatus]);
+
+  return null;
+}
+
 let appOpenedCaptured = false;
 
 export function AppRoot() {
@@ -138,6 +212,7 @@ export function AppRoot() {
 
   return (
     <>
+      <BackgroundUpdater />
       <DevProfiler id="AppRoot">
         <ShellConfigProvider>
         <AppMenuProvider>

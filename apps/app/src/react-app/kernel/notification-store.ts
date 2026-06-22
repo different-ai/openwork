@@ -23,7 +23,8 @@ export type NotificationKind =
 
 export type NotificationAction =
   | { type: "open-model-picker"; providerIds: string[] }
-  | { type: "reload-engine" };
+  | { type: "reload-engine" }
+  | { type: "navigate"; path: string };
 
 export type AppNotification = {
   id: string;
@@ -88,6 +89,10 @@ function isAction(value: unknown): value is NotificationAction {
   if (type === "open-model-picker") {
     const providerIds = Reflect.get(value, "providerIds");
     return Array.isArray(providerIds) && providerIds.every((id) => typeof id === "string");
+  }
+  if (type === "navigate") {
+    const path = Reflect.get(value, "path");
+    return typeof path === "string";
   }
   return false;
 }

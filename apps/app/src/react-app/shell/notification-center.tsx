@@ -9,6 +9,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { useNavigate } from "react-router-dom";
+
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -56,6 +58,7 @@ function formatTimeAgo(timestamp: number): string {
  */
 export function NotificationBell() {
   const { config } = useShellConfig();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const notifications = useNotificationStore((state) => state.notifications);
   const markAllRead = useNotificationStore((state) => state.markAllRead);
@@ -91,9 +94,11 @@ export function NotificationBell() {
         requestOpenModelPicker(action.providerIds);
       } else if (action.type === "reload-engine") {
         void reloadCoordinator.reloadWorkspaceEngine();
+      } else if (action.type === "navigate") {
+        navigate(action.path);
       }
     },
-    [markAllRead, reloadCoordinator],
+    [markAllRead, reloadCoordinator, navigate],
   );
 
   if (!config.notifications) return null;

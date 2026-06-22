@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { buildDenAuthUrl, readDenBootstrapConfig } from "@/app/lib/den";
+import { useElectronUpdaterStore } from "../../settings/state/electron-updater-store";
 import { usePlatform } from "../../../kernel/platform";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
@@ -147,6 +148,8 @@ export type StatusBarProps = {
 };
 
 export function StatusBar(props: StatusBarProps) {
+  const store = useElectronUpdaterStore();
+  const updateStatus = store.updateStatus;
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const navigate = useNavigate();
@@ -358,13 +361,19 @@ export function StatusBar(props: StatusBarProps) {
                 render={(
                   <Button
                     ref={settingsButtonRef}
-                    className="text-muted-foreground gap-2"
+                    className="relative text-muted-foreground gap-2"
                     variant="ghost"
                     size="icon-xs"
                     onClick={props.onOpenSettings}
                     aria-label={props.settingsOpen ? t("status.back") : t("status.settings")}
                   >
                     <Settings className="size-3.5" />
+                    {updateStatus && ["available", "ready"].includes(updateStatus.state) ? (
+                      <span className={cn(
+                        "absolute right-1 top-1 flex h-2 w-2 rounded-full",
+                        updateStatus.state === "ready" ? "bg-green-9 animate-pulse" : "bg-sky-9"
+                      )} />
+                    ) : null}
                   </Button>
                 )}
               />

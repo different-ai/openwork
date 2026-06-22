@@ -33,6 +33,8 @@ import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
+import { useElectronUpdaterStore } from "../../settings/state/electron-updater-store";
+import { Markdown } from "@/components/ui/markdown";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import {
@@ -277,7 +279,71 @@ function controlStringArg(args: unknown, key: string) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+type WhatsNewModalProps = {
+  open: boolean;
+  onClose: () => void;
+  version: string;
+  notes: string;
+};
+
+function WhatsNewModal({ open, onClose, version, notes }: WhatsNewModalProps) {
+  return (
+    <Dialog open={open} onOpenChange={(val) => { if (!val) onClose(); }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-6 rounded-2xl gap-4">
+        <DialogHeader className="border-b pb-3 flex-shrink-0">
+          <DialogTitle className="text-xl font-bold flex items-center gap-2 text-foreground">
+            🎉 What's New in OpenWork <span className="text-sm font-normal font-mono px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">v{version}</span>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto pr-1 py-2">
+          <Markdown className="prose dark:prose-invert max-w-none text-foreground/80 text-sm leading-relaxed space-y-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:my-2">
+            {notes}
+          </Markdown>
+        </div>
+        <DialogFooter className="border-t pt-3 flex-shrink-0 flex items-center justify-end">
+          <Button onClick={onClose} className="rounded-xl px-5">
+            Awesome!
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function SessionPage(props: SessionPageProps) {
+  const store = useElectronUpdaterStore();
+  const updateStatus = store.updateStatus;
+  const appVersion = store.appVersion;
+
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const [whatsNewVersion, setWhatsNewVersion] = useState("");
+  const [whatsNewNotes, setWhatsNewNotes] = useState("");
+
+  useEffect(() => {
+    if (!appVersion) return;
+    const lastSeenVersion = localStorage.getItem("openwork:last-seen-version");
+    
+    // If it's a first time startup, we just record the current version
+    if (!lastSeenVersion) {
+      localStorage.setItem("openwork:last-seen-version", appVersion);
+      return;
+    }
+    
+    if (lastSeenVersion !== appVersion) {
+      const pendingVersion = localStorage.getItem("openwork:pending-release-version");
+      const pendingNotes = localStorage.getItem("openwork:pending-release-notes");
+      
+      // If we updated to the pending version, show the pending notes
+      if (pendingVersion === appVersion && pendingNotes) {
+        setWhatsNewVersion(appVersion);
+        setWhatsNewNotes(pendingNotes);
+        setWhatsNewOpen(true);
+      }
+      // Regardless, update last-seen-version so we don't prompt again
+      localStorage.setItem("openwork:last-seen-version", appVersion);
+    }
+  }, [appVersion]);
+
   const { config: shellConfig } = useShellConfig();
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
   const setSidebarOpen = useUiStateStore((state) => state.setSidebarOpen);
@@ -1326,7 +1392,7 @@ export function SessionPage(props: SessionPageProps) {
               variant="ghost"
               size="icon-sm"
               className={cn(
-                "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
+                "relative rounded-xl transition-colors hover:bg-muted hover:text-foreground",
                 extensionsRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
               )}
               onClick={props.settingsSlot ? openExtensionsRailPane : props.onOpenSettings}
@@ -1335,12 +1401,25 @@ export function SessionPage(props: SessionPageProps) {
               aria-pressed={extensionsRailActive}
             >
               <Settings2 size={17} />
+              {updateStatus && ["available", "ready"].includes(updateStatus.state) ? (
+                <span className={cn(
+                  "absolute right-1.5 top-1.5 flex h-2 w-2 rounded-full",
+                  updateStatus.state === "ready" ? "bg-green-9 animate-pulse" : "bg-sky-9"
+                )} />
+              ) : null}
             </Button>
           </aside>
           </div>
         </SidebarInset>
         {shellConfig.sidebar ? <SidebarTrigger className="hidden mac:absolute mac:left-[64px] top-[3px] z-50 mac:flex titlebar-no-drag" /> : null}
       </SidebarProvider>
+
+      <WhatsNewModal
+        open={whatsNewOpen}
+        version={whatsNewVersion}
+        notes={whatsNewNotes}
+        onClose={() => setWhatsNewOpen(false)}
+      />
 
       {props.providerAuthModal ? <ProviderAuthModal {...props.providerAuthModal} /> : null}
 
