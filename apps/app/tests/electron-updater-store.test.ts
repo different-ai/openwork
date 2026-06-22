@@ -281,4 +281,51 @@ describe("electron updater store", () => {
     expect(dlError1).toHaveBeenCalledWith("disk full");
     expect(dlError2).toHaveBeenCalledWith("disk full");
   });
+
+  test("propagates download failure to check callers if auto-download is enabled", async () => {
+    let resolveCheck: any;
+    const checkPromise = new Promise<any>((resolve) => {
+      resolveCheck = resolve;
+    });
+    mockCheck.mockImplementation(async () => {
+      return await checkPromise;
+    });
+
+    let resolveDownload: any;
+    const downloadPromise = new Promise<any>((resolve) => {
+      resolveDownload = resolve;
+    });
+    mockDownload.mockImplementation(async () => {
+      return await downloadPromise;
+    });
+
+    const checkError = mock((msg: string | null) => {});
+
+    const check = useElectronUpdaterStore.getState().checkForUpdates({
+      releaseChannel: "stable",
+      desktopConfig: null,
+      updateAutoDownload: true,
+      setError: checkError,
+    });
+
+    resolveCheck({
+      currentVersion: "1.0.0",
+      latestVersion: "1.2.0",
+      available: true,
+      channel: "stable",
+    });
+
+    await check;
+
+    // Resolve download with a failure
+    resolveDownload({ ok: false, reason: "auto download failed" });
+
+    // Wait for download to complete
+    await useElectronUpdaterStore.getState().downloadUpdate({
+      releaseChannel: "stable",
+      desktopConfig: null,
+    });
+
+    expect(checkError).toHaveBeenCalledWith("auto download failed");
+  });
 });

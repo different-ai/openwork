@@ -129,9 +129,11 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
           const result = await checkFn(releaseChannel);
           if (checkId !== currentCheckId) return;
 
+          const currentCalls = [...activeCheckCalls];
+
           set({ appVersion: result.currentVersion ?? null });
           if (result.channel && result.channel !== releaseChannel) {
-            for (const call of activeCheckCalls) {
+            for (const call of currentCalls) {
               call.onReleaseChannelChange?.(result.channel);
             }
           }
@@ -146,7 +148,7 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
           }
           if (result.reason) {
             set({ updateStatus: { state: "error", message: result.reason } });
-            for (const call of activeCheckCalls) {
+            for (const call of currentCalls) {
               call.setError?.(result.reason);
             }
             return;
@@ -155,7 +157,7 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
           const checkedReleaseChannel = result.channel ?? releaseChannel;
           
           let availableAllowed = false;
-          for (const call of activeCheckCalls) {
+          for (const call of currentCalls) {
             const allowed = result.available && result.latestVersion
               ? checkedReleaseChannel === "alpha"
                 ? await isAlphaUpdateAllowed(result.latestVersion, call.desktopConfig)
@@ -185,10 +187,10 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
 
           set({ updateStatus: nextStatus });
           
-          const anyAutoDownload = activeCheckCalls.some(c => c.updateAutoDownload);
+          const anyAutoDownload = currentCalls.some(c => c.updateAutoDownload);
           if (availableAllowed && anyAutoDownload) {
             const combinedSetError = (msg: string | null) => {
-              for (const call of activeCheckCalls) {
+              for (const call of currentCalls) {
                 call.setError?.(msg);
               }
             };
@@ -200,9 +202,10 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
           }
         } catch (error) {
           if (checkId !== currentCheckId) return;
+          const currentCalls = [...activeCheckCalls];
           const msg = describeError(error);
           set({ updateStatus: { state: "error", message: msg } });
-          for (const call of activeCheckCalls) {
+          for (const call of currentCalls) {
             call.setError?.(msg);
           }
         }
@@ -281,10 +284,11 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
       activeDownloadPromise = (async () => {
         try {
           const result = await downloadFn();
+          const currentCalls = [...activeDownloadCalls];
           if (!result?.ok) {
             const reason = result?.reason ?? "Update download failed.";
             set({ updateStatus: { state: "error", message: reason } });
-            for (const call of activeDownloadCalls) {
+            for (const call of currentCalls) {
               call.setError?.(reason);
             }
             return;
@@ -296,9 +300,10 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
             },
           }));
         } catch (error) {
+          const currentCalls = [...activeDownloadCalls];
           const msg = describeError(error);
           set({ updateStatus: { state: "error", message: msg } });
-          for (const call of activeDownloadCalls) {
+          for (const call of currentCalls) {
             call.setError?.(msg);
           }
         } finally {
