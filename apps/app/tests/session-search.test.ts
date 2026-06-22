@@ -23,12 +23,17 @@ function message(role: "user" | "assistant", text: string) {
 
 async function search(query: string, fetchMessages: SessionMessageFetcher) {
   const searcher = createSessionSearcher(fetchMessages);
-  const results: string[] = [];
+  const results: Array<{ role: string; match: string; before: string; after: string }> = [];
   const run = searcher.search({
     query,
     sessions: [session],
     onMatch: (match) => {
-      results.push(`${match.role ?? "unknown"}:${match.snippet?.match ?? ""}`);
+      results.push({
+        role: match.role ?? "unknown",
+        match: match.snippet?.match ?? "",
+        before: match.snippet?.before ?? "",
+        after: match.snippet?.after ?? "",
+      });
     },
     onProgress: () => undefined,
     concurrency: 1,
@@ -45,9 +50,11 @@ describe("session transcript search", () => {
 
     const results = await search("auth redirect", fetchMessages);
 
-    expect(results).toEqual([
-      "assistant:redirect failed after the authentication",
-    ]);
+    expect(results[0]).toMatchObject({
+      role: "assistant",
+      match: "redirect",
+    });
+    expect(results[0]?.after).toContain("authentication");
   });
 
   test("prefers the user's own matching message", async () => {
@@ -58,17 +65,40 @@ describe("session transcript search", () => {
 
     const results = await search("deploy vercel", fetchMessages);
 
-    expect(results[0]?.startsWith("user:")).toBe(true);
+    expect(results[0]?.role).toBe("user");
   });
 
-  test("matches small typos", async () => {
+  test("does not highlight the full span when remembered words are far apart", async () => {
     const fetchMessages: SessionMessageFetcher = async () => [
-      message("assistant", "Updated the environment variable configuration."),
+      message("assistant", `deploy ${"lorem ipsum ".repeat(80)} vercel`),
     ];
 
-    const results = await search("enviroment config", fetchMessages);
+    const results = await search("deploy vercel", fetchMessages);
 
     expect(results.length).toBe(1);
+    expect(results[0]?.match).toBe("deploy");
+    expect(results[0]?.match).not.toContain("vercel");
+    expect(results[0]?.match.length).toBeLessThan(20);
+  });
+
+  test("does not fuzzy-match short identifiers or numeric ids", async () => {
+    const searcher = createSessionSearcher(async () => [
+      message("assistant", "Investigated issue 2331 in the node startup path."),
+    ]);
+    const results: string[] = [];
+
+    for (const query of ["2332", "code"]) {
+      const run = searcher.search({
+        query,
+        sessions: [session],
+        onMatch: (match) => results.push(match.snippet?.match ?? ""),
+        onProgress: () => undefined,
+        concurrency: 1,
+      });
+      await run.done;
+    }
+
+    expect(results).toEqual([]);
   });
 
   test("matches non-ASCII query terms", async () => {

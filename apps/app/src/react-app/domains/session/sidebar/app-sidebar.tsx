@@ -12,6 +12,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  Search,
   Share2,
   Trash2,
   RefreshCw,
@@ -33,6 +34,7 @@ import {
   isRemoteConnectionErrorMessage,
   getWorkspaceTaskLoadErrorDisplay,
   isRemoteConnectionWorkspace,
+  isMacPlatform,
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
@@ -573,6 +575,7 @@ export type AppSidebarProps = {
   onOpenDeleteSession?: (sessionId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean) => void;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
+  onOpenSessionSearch?: () => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
@@ -663,6 +666,7 @@ export function AppSidebar(props: AppSidebarProps) {
       [workspaceId]: Math.min((current[workspaceId] ?? MAX_SESSIONS_PREVIEW) + MAX_SESSIONS_PREVIEW, totalRoots),
     }));
   };
+  const sessionSearchShortcut = isMacPlatform() ? "Cmd+Shift+F" : "Ctrl+Shift+F";
 
   React.useEffect(() => {
     const workspaceId = props.selectedWorkspaceId.trim();
@@ -709,6 +713,7 @@ export function AppSidebar(props: AppSidebarProps) {
     onOpenDeleteSession: props.onOpenDeleteSession,
     onArchiveSession: props.onArchiveSession,
     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
+    onOpenSessionSearch: props.onOpenSessionSearch,
     onOpenRenameWorkspace: props.onOpenRenameWorkspace,
     onShareWorkspace: props.onShareWorkspace,
     onRevealWorkspace: props.onRevealWorkspace,
@@ -760,6 +765,18 @@ export function AppSidebar(props: AppSidebarProps) {
 
         <SidebarFooter>
           <SidebarMenu>
+            {props.onOpenSessionSearch ? (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  onClick={props.onOpenSessionSearch}
+                  aria-label={`${t("session.cmd_sessions_title")} (${sessionSearchShortcut})`}
+                  title={`${t("session.cmd_sessions_title")} (${sessionSearchShortcut})`}
+                >
+                  <Search className="size-4" />
+                  {t("session.cmd_sessions_title")}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ) : null}
             <SidebarMenuItem>
               <SidebarMenuButton onClick={props.onOpenCreateWorkspace}>
                 <Plus className="size-4" />

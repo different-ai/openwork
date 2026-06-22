@@ -32,7 +32,7 @@ export type SessionSearchProgress = {
 type CacheEntry = {
   updatedAt: number;
   /** One entry per message that contains searchable text. */
-  texts: Array<{ role: "user" | "assistant"; text: string; lower: string }>;
+  texts: Array<{ role: "user" | "assistant"; text: string; words: WordRange[] }>;
   /** Set when the transcript fetch failed; retried after a short cool-down. */
   failedAt?: number;
 };
@@ -89,15 +89,6 @@ function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ");
 }
 
-/** Build a compact snippet centered on the first occurrence of the query. */
-export function buildSnippet(text: string, index: number, length: number): SessionSearchSnippet {
-  const start = Math.max(0, index - SNIPPET_BEFORE);
-  const end = Math.min(text.length, index + length + SNIPPET_AFTER);
-  const before = `${start > 0 ? "..." : ""}${collapseWhitespace(text.slice(start, index)).trimStart()}`;
-  const after = `${collapseWhitespace(text.slice(index + length, end)).trimEnd()}${end < text.length ? "..." : ""}`;
-  return { before, match: text.slice(index, index + length), after };
-}
-
 function tokenizeQuery(query: string): QueryToken[] {
   const seen = new Set<string>();
   const tokens: QueryToken[] = [];
@@ -122,30 +113,6 @@ function wordRanges(lower: string): WordRange[] {
   return ranges;
 }
 
-function editDistanceWithin(left: string, right: string, maxDistance: number): boolean {
-  if (Math.abs(left.length - right.length) > maxDistance) return false;
-
-  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
-    const current = [leftIndex];
-    let rowBest = current[0];
-    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
-      const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
-      const value = Math.min(
-        previous[rightIndex] + 1,
-        current[rightIndex - 1] + 1,
-        previous[rightIndex - 1] + cost,
-      );
-      current[rightIndex] = value;
-      rowBest = Math.min(rowBest, value);
-    }
-    if (rowBest > maxDistance) return false;
-    previous = current;
-  }
-
-  return previous[right.length] <= maxDistance;
-}
-
 function scoreWordForToken(word: WordRange, token: QueryToken): TokenRange | null {
   if (word.value === token.value) {
     return { start: word.start, end: word.end, score: 120 };
@@ -163,11 +130,6 @@ function scoreWordForToken(word: WordRange, token: QueryToken): TokenRange | nul
     };
   }
 
-  const maxDistance = token.value.length >= 7 ? 2 : 1;
-  if (editDistanceWithin(token.value, word.value, maxDistance)) {
-    return { start: word.start, end: word.end, score: 55 };
-  }
-
   return null;
 }
 
@@ -183,10 +145,9 @@ function findBestTokenRange(words: WordRange[], token: QueryToken): TokenRange |
   return best;
 }
 
-function matchTokenizedQuery(lower: string, tokens: QueryToken[]): TokenizedMatch | null {
+function matchTokenizedQuery(words: WordRange[], tokens: QueryToken[]): TokenizedMatch | null {
   if (tokens.length === 0) return null;
 
-  const words = wordRanges(lower);
   const ranges: TokenRange[] = [];
   for (const token of tokens) {
     const range = findBestTokenRange(words, token);
@@ -203,14 +164,16 @@ function matchTokenizedQuery(lower: string, tokens: QueryToken[]): TokenizedMatc
 }
 
 function buildTokenSnippet(text: string, ranges: TokenRange[]): SessionSearchSnippet {
-  const first = ranges[0];
-  const last = ranges[ranges.length - 1];
-  const start = Math.max(0, first.start - SNIPPET_BEFORE);
-  const end = Math.min(text.length, last.end + SNIPPET_AFTER);
+  const highlight = ranges.reduce((best, range) => {
+    if (range.score !== best.score) return range.score > best.score ? range : best;
+    return range.start < best.start ? range : best;
+  }, ranges[0]);
+  const start = Math.max(0, highlight.start - SNIPPET_BEFORE);
+  const end = Math.min(text.length, highlight.end + SNIPPET_AFTER);
   return {
-    before: `${start > 0 ? "..." : ""}${collapseWhitespace(text.slice(start, first.start)).trimStart()}`,
-    match: collapseWhitespace(text.slice(first.start, last.end)),
-    after: `${collapseWhitespace(text.slice(last.end, end)).trimEnd()}${end < text.length ? "..." : ""}`,
+    before: `${start > 0 ? "…" : ""}${collapseWhitespace(text.slice(start, highlight.start)).trimStart()}`,
+    match: collapseWhitespace(text.slice(highlight.start, highlight.end)),
+    after: `${collapseWhitespace(text.slice(highlight.end, end)).trimEnd()}${end < text.length ? "…" : ""}`,
   };
 }
 
@@ -224,7 +187,8 @@ function toCacheEntry(updatedAt: number, messages: OpenworkSessionMessage[]): Ca
       if (part.synthetic || part.ignored) continue;
       const text = part.text.trim();
       if (!text) continue;
-      texts.push({ role, text, lower: text.toLowerCase() });
+      const lower = text.toLowerCase();
+      texts.push({ role, text, words: wordRanges(lower) });
     }
   }
   return { updatedAt, texts };
@@ -237,7 +201,7 @@ function matchEntry(
 ): SessionSearchMatch | null {
   let best: { match: SessionSearchMatch; score: number } | null = null;
   for (const item of entry.texts) {
-    const tokenMatch = matchTokenizedQuery(item.lower, queryTokens);
+    const tokenMatch = matchTokenizedQuery(item.words, queryTokens);
     if (!tokenMatch) continue;
     const score = tokenMatch.score + (item.role === "user" ? 50 : 0);
     const match: SessionSearchMatch = {

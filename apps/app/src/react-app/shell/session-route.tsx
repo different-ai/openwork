@@ -1671,6 +1671,7 @@ export function SessionRoute() {
         onCreateTaskInWorkspace: (workspaceId) => {
           void handleCreateTaskInWorkspace(workspaceId);
         },
+        onOpenSessionSearch: () => setSessionSearchOpen(true),
         onCreateTaskWithPrompt: (workspaceId, prompt) => {
           void (async () => {
             const workspace = workspaces.find((item) => item.id === workspaceId);
