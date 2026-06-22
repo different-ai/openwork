@@ -46,7 +46,7 @@ function getStatusBadgeClass(bucket: ReturnType<typeof getWorkerStatusMeta>["buc
     case "attention":
       return "border-rose-100 bg-rose-50 text-rose-600 dark:border-rose-800/30 dark:bg-rose-950/30 dark:text-rose-400";
     default:
-      return "border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 dark:text-gray-500";
+      return "border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-500";
   }
 }
 
@@ -65,7 +65,7 @@ function CredentialField({
 }) {
   return (
     <div>
-      <label className="mb-1.5 block text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">{label}</label>
+      <label className="mb-1.5 block text-[12px] text-gray-500 dark:text-gray-500">{label}</label>
       <div className="flex items-center gap-2">
         <input
           readOnly
@@ -223,7 +223,7 @@ function SandboxCard({
               <button
                 type="button"
                 onClick={() => setShowTokens((current) => !current)}
-                className="flex w-full items-center justify-between rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/50 px-4 py-2.5 text-[12px] font-medium text-gray-600 dark:text-gray-400 dark:text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
+                className="flex w-full items-center justify-between rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/50 px-4 py-2.5 text-[12px] font-medium text-gray-600 dark:text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50 dark:bg-gray-800/50"
               >
                 <span className="flex items-center gap-2">
                   <KeyRound size={14} className="text-gray-400 dark:text-gray-500" />
@@ -239,7 +239,7 @@ function SandboxCard({
               {showTokens ? (
                 <div className="mt-2 space-y-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/50 p-5">
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-[1px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                    <span className="text-[10px] font-semibold uppercase tracking-[1px] text-gray-500 dark:text-gray-500">
                       Access Tokens
                     </span>
                     <button
@@ -265,7 +265,7 @@ function SandboxCard({
                       />
                     ))
                   ) : (
-                    <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                    <p className="text-[12px] text-gray-500 dark:text-gray-500">
                       {connectBusy
                         ? "Loading connection credentials..."
                         : "Connection credentials will appear here once the workspace is ready."}
@@ -275,7 +275,7 @@ function SandboxCard({
               ) : null}
             </div>
           ) : (
-            <p className="mt-4 text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="mt-4 text-[12px] text-gray-500 dark:text-gray-500">
               Connection details will appear once this workspace is ready.
             </p>
           )}
@@ -419,11 +419,11 @@ export function BackgroundAgentsScreen() {
 
         <div className="space-y-3">
           {!workersLoadedOnce ? (
-            <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 text-[13px] text-gray-500 dark:text-gray-500">
               Loading workspaces...
             </div>
           ) : filteredWorkers.length === 0 ? (
-            <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 text-[13px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[var(--dls-surface)] p-5 text-[13px] text-gray-500 dark:text-gray-500">
               {workerQuery.trim()
                 ? "No workspaces match that search yet."
                 : "No workspaces launched yet."}

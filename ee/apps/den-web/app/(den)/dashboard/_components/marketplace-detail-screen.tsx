@@ -479,7 +479,7 @@ function AccessAddPicker({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={`Search ${label.toLowerCase()}...`}
-              className="w-full bg-transparent text-[12.5px] text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:text-gray-500 focus:outline-none"
+              className="w-full bg-transparent text-[12.5px] text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none"
               autoFocus
             />
           </div>

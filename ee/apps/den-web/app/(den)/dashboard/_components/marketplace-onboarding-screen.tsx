@@ -96,7 +96,7 @@ export function MarketplaceOnboardingScreen() {
                 <button
                   type="button"
                   onClick={() => setStep(1)}
-                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/15 px-4 py-3 text-[14px] font-semibold text-white transition hover:bg-white dark:bg-white/10"
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/15 px-4 py-3 text-[14px] font-semibold text-white transition hover:bg-white/10 dark:bg-white/10"
                 >
                   Next <ArrowRight className="h-4 w-4" />
                 </button>
@@ -231,7 +231,7 @@ export function MarketplaceOnboardingScreen() {
                 <Link href={getMarketplacesRoute(orgSlug)} className="inline-flex items-center justify-center gap-2 rounded-full bg-white dark:bg-[var(--dls-surface)] px-4 py-2.5 text-[13px] font-semibold text-[#07192C] dark:text-gray-100 transition hover:bg-white dark:bg-gray-900/90">
                   View marketplaces <ArrowRight className="h-4 w-4" />
                 </Link>
-                <Link href={getOrgDashboardRoute(orgSlug)} className="inline-flex items-center justify-center gap-2 rounded-full border border-white/15 px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-white dark:bg-white/10">
+                <Link href={getOrgDashboardRoute(orgSlug)} className="inline-flex items-center justify-center gap-2 rounded-full border border-white/15 px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-white/10 dark:bg-white/10">
                   Go to dashboard
                 </Link>
               </div>

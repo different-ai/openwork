@@ -94,7 +94,7 @@ export function IntegrationsScreen() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-[15px] font-semibold text-gray-900 dark:text-gray-100">{meta.name}</h2>
                       {meta.provider === "bitbucket" ? (
-                        <span className="inline-flex rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                        <span className="inline-flex rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-500">
                           Coming soon
                         </span>
                       ) : isConnected ? (
@@ -103,13 +103,13 @@ export function IntegrationsScreen() {
                           Connected
                         </span>
                       ) : (
-                        <span className="inline-flex rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                        <span className="inline-flex rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-500">
                           Not connected
                         </span>
                       )}
                     </div>
                     {!isConnected ? (
-                      <p className="mt-1 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-400 dark:text-gray-500">{meta.description}</p>
+                      <p className="mt-1 text-[13px] leading-[1.55] text-gray-500 dark:text-gray-500">{meta.description}</p>
                     ) : null}
                   </div>
 
@@ -201,11 +201,11 @@ function ConnectionRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="truncate text-[14px] font-semibold text-gray-900 dark:text-gray-100">@{accountLogin}</p>
-            <span className="inline-flex items-center rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <span className="inline-flex items-center rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-500">
               {connection.account.kind === "user" ? "Personal" : "Organization"}
             </span>
           </div>
-          <p className="mt-0.5 truncate text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">
+          <p className="mt-0.5 truncate text-[12px] text-gray-500 dark:text-gray-500">
             {connectedBy ? `Added by ${connectedBy}` : "Added recently"}
             <span className="text-gray-400 dark:text-gray-500"> · {formatIntegrationTimestamp(connection.connectedAt)}</span>
           </p>
@@ -327,10 +327,10 @@ function DisconnectConfirmDialog({
             <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-100">
               Remove @{accountLogin}?
             </h2>
-            <p className="mt-1 text-[13px] leading-6 text-gray-600 dark:text-gray-400 dark:text-gray-500">
+            <p className="mt-1 text-[13px] leading-6 text-gray-600 dark:text-gray-500">
               This will permanently delete everything OpenWork imported from this GitHub account, including:
             </p>
-            <ul className="mt-3 space-y-1.5 text-[13px] leading-6 text-gray-600 dark:text-gray-400 dark:text-gray-500">
+            <ul className="mt-3 space-y-1.5 text-[13px] leading-6 text-gray-600 dark:text-gray-500">
               <li className="flex gap-2">
                 <span className="text-gray-400 dark:text-gray-500">•</span>
                 <span>
@@ -346,7 +346,7 @@ function DisconnectConfirmDialog({
                 <span>All imported config objects, versions and source bindings</span>
               </li>
             </ul>
-            <p className="mt-3 text-[12px] leading-5 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="mt-3 text-[12px] leading-5 text-gray-500 dark:text-gray-500">
               The GitHub App installation itself stays on GitHub. You can remove it from your GitHub account settings if you also want to revoke access.
             </p>
           </div>

@@ -399,7 +399,7 @@ export function ApiKeysScreen() {
                             apiKeys.map((apiKey) => (
                                 <div
                                     key={apiKey.id}
-                                    className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_180px_120px] items-center gap-4 border-b border-gray-100 dark:border-gray-700 px-6 py-4 transition hover:bg-gray-50 dark:hover:bg-gray-800/50/70 last:border-b-0"
+                                    className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_180px_120px] items-center gap-4 border-b border-gray-100 dark:border-gray-700 px-6 py-4 transition hover:bg-gray-50 dark:hover:bg-gray-800/70 last:border-b-0"
                                 >
                                     <div className="min-w-0">
                                         <p className="truncate text-[14px] font-medium text-gray-900 dark:text-gray-100">

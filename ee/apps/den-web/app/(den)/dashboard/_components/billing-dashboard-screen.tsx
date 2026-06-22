@@ -302,7 +302,7 @@ export function BillingDashboardScreen() {
           <div>
             <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Stripe</p>
             <h2 className="text-[20px] font-medium text-gray-950 dark:text-gray-100">OpenWork Users</h2>
-            <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500 dark:text-gray-500">
               The first {seatBilling?.freeSeatCount ?? DEFAULT_FREE_SEAT_COUNT} users in your organization are free. Additional users are billed at {seatPrice}/user/month.
             </p>
           </div>
@@ -313,19 +313,19 @@ export function BillingDashboardScreen() {
 
         <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-4">
           <div className="rounded-[16px] border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4">
-            <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Included users</p>
+            <p className="text-[12px] text-gray-500 dark:text-gray-500">Included users</p>
             <p className="mt-1 text-[20px] font-semibold text-gray-950 dark:text-gray-100">{seatBilling?.freeSeatCount ?? DEFAULT_FREE_SEAT_COUNT}</p>
           </div>
           <div className="rounded-[16px] border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4">
-            <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Active users</p>
+            <p className="text-[12px] text-gray-500 dark:text-gray-500">Active users</p>
             <p className="mt-1 text-[20px] font-semibold text-gray-950 dark:text-gray-100">{activeMemberCount}</p>
           </div>
           <div className="rounded-[16px] border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4">
-            <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Billable users</p>
+            <p className="text-[12px] text-gray-500 dark:text-gray-500">Billable users</p>
             <p className="mt-1 text-[20px] font-semibold text-gray-950 dark:text-gray-100">{seatBilling?.billableSeatCount ?? Math.max(0, activeMemberCount - DEFAULT_FREE_SEAT_COUNT)}</p>
           </div>
           <div className="rounded-[16px] border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4">
-            <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Status</p>
+            <p className="text-[12px] text-gray-500 dark:text-gray-500">Status</p>
             <p className="mt-1 text-[20px] font-semibold text-gray-950 dark:text-gray-100">
               {seatBilling?.hasActiveSubscription ? formatSubscriptionStatus(seatBilling.subscription?.status ?? "active") : "Not subscribed"}
             </p>
@@ -361,7 +361,7 @@ export function BillingDashboardScreen() {
           <div>
             <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Stripe</p>
             <h2 className="text-[20px] font-medium text-gray-950 dark:text-gray-100">OpenWork Models</h2>
-            <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500 dark:text-gray-400 dark:text-gray-500">
+            <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500 dark:text-gray-500">
               Model access is billed at $10/user/month
             </p>
           </div>
@@ -372,15 +372,15 @@ export function BillingDashboardScreen() {
 
         <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="rounded-[16px] border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4">
-            <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Price</p>
-            <p className="mt-1 text-[20px] font-semibold text-gray-950 dark:text-gray-100">{stripePrice}<span className="text-[13px] font-medium text-gray-500 dark:text-gray-400 dark:text-gray-500">/user/month</span></p>
+            <p className="text-[12px] text-gray-500 dark:text-gray-500">Price</p>
+            <p className="mt-1 text-[20px] font-semibold text-gray-950 dark:text-gray-100">{stripePrice}<span className="text-[13px] font-medium text-gray-500 dark:text-gray-500">/user/month</span></p>
           </div>
           <div className="rounded-[16px] border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4">
-            <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Active members</p>
+            <p className="text-[12px] text-gray-500 dark:text-gray-500">Active members</p>
             <p className="mt-1 text-[20px] font-semibold text-gray-950 dark:text-gray-100">{stripeBilling?.memberCount ?? orgContext?.members.length ?? 0}</p>
           </div>
           <div className="rounded-[16px] border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4">
-            <p className="text-[12px] text-gray-500 dark:text-gray-400 dark:text-gray-500">Status</p>
+            <p className="text-[12px] text-gray-500 dark:text-gray-500">Status</p>
             <p className="mt-1 text-[20px] font-semibold text-gray-950 dark:text-gray-100">
               {stripeBilling?.hasActiveSubscription ? formatSubscriptionStatus(stripeBilling.subscription?.status ?? "active") : "Not subscribed"}
             </p>
