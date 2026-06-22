@@ -68,6 +68,10 @@ export type ElectronUpdaterStore = {
 export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) => {
   let isDownloadProgressSubscribed = false;
   let unsubDownloadProgress: (() => void) | null = null;
+  let activeCheckPromise: Promise<void> | null = null;
+  let activeCheckChannel: ReleaseChannel | null = null;
+  let currentCheckId = 0;
+  let activeDownloadPromise: Promise<void> | null = null;
 
   return {
     appVersion: null,
@@ -86,6 +90,20 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
 
     checkForUpdates: async (options) => {
       const { releaseChannel, desktopConfig, updateAutoDownload, onReleaseChannelChange, setError } = options;
+
+      if (activeCheckPromise && activeCheckChannel === releaseChannel) {
+        return activeCheckPromise;
+      }
+
+      const currentStatus = get().updateStatus;
+      if (
+        activeDownloadPromise ||
+        currentStatus?.state === "downloading" ||
+        currentStatus?.state === "ready"
+      ) {
+        return;
+      }
+
       const bridge = electronUpdaterBridge();
       if (!bridge?.check) {
         const message = "Electron update checks are available only in the Electron desktop app.";
@@ -93,69 +111,95 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
         setError?.(message);
         return;
       }
+      const checkFn = bridge.check;
 
       set({ updateStatus: { state: "checking" } });
+
+      const checkId = ++currentCheckId;
+      activeCheckChannel = releaseChannel;
+
+      activeCheckPromise = (async () => {
+        try {
+          const result = await checkFn(releaseChannel);
+          if (checkId !== currentCheckId) return;
+
+          set({ appVersion: result.currentVersion ?? null });
+          if (result.channel && result.channel !== releaseChannel) {
+            onReleaseChannelChange?.(result.channel);
+          }
+          if (result.reason === "unavailable") {
+            set({
+              updateStatus: {
+                state: "idle",
+                message: "Auto-updates are available in packaged builds only.",
+              },
+            });
+            return;
+          }
+          if (result.reason) {
+            set({ updateStatus: { state: "error", message: result.reason } });
+            setError?.(result.reason);
+            return;
+          }
+
+          const checkedReleaseChannel = result.channel ?? releaseChannel;
+          const availableAllowed = result.available && result.latestVersion
+            ? checkedReleaseChannel === "alpha"
+              ? await isAlphaUpdateAllowed(result.latestVersion, desktopConfig)
+              : await isUpdateAllowed(result.latestVersion, desktopConfig)
+            : result.available;
+
+          const parsedNotes = releaseNotesToText(result.releaseNotes);
+          const nextStatus: Exclude<SettingsUpdateStatus, null> = availableAllowed
+            ? {
+                state: "available",
+                lastCheckedAt: Date.now(),
+                version: result.latestVersion ?? undefined,
+                date: result.releaseDate ?? undefined,
+                notes: parsedNotes,
+              }
+            : {
+                state: "idle",
+                lastCheckedAt: Date.now(),
+                version: result.latestVersion ?? undefined,
+                date: result.releaseDate ?? undefined,
+                notes: parsedNotes,
+              };
+
+          set({ updateStatus: nextStatus });
+          if (availableAllowed && updateAutoDownload) {
+            void get().downloadUpdate({
+              releaseChannel: checkedReleaseChannel,
+              desktopConfig,
+              setError,
+            });
+          }
+        } catch (error) {
+          if (checkId !== currentCheckId) return;
+          const msg = describeError(error);
+          set({ updateStatus: { state: "error", message: msg } });
+          setError?.(msg);
+        }
+      })();
+
       try {
-        const result = await bridge.check(releaseChannel);
-        set({ appVersion: result.currentVersion ?? null });
-        if (result.channel && result.channel !== releaseChannel) {
-          onReleaseChannelChange?.(result.channel);
+        await activeCheckPromise;
+      } finally {
+        if (checkId === currentCheckId) {
+          activeCheckPromise = null;
+          activeCheckChannel = null;
         }
-        if (result.reason === "unavailable") {
-          set({
-            updateStatus: {
-              state: "idle",
-              message: "Auto-updates are available in packaged builds only.",
-            },
-          });
-          return;
-        }
-        if (result.reason) {
-          set({ updateStatus: { state: "error", message: result.reason } });
-          setError?.(result.reason);
-          return;
-        }
-
-        const checkedReleaseChannel = result.channel ?? releaseChannel;
-        const availableAllowed = result.available && result.latestVersion
-          ? checkedReleaseChannel === "alpha"
-            ? await isAlphaUpdateAllowed(result.latestVersion, desktopConfig)
-            : await isUpdateAllowed(result.latestVersion, desktopConfig)
-          : result.available;
-
-        const parsedNotes = releaseNotesToText(result.releaseNotes);
-        const nextStatus: Exclude<SettingsUpdateStatus, null> = availableAllowed
-          ? {
-              state: "available",
-              lastCheckedAt: Date.now(),
-              version: result.latestVersion ?? undefined,
-              date: result.releaseDate ?? undefined,
-              notes: parsedNotes,
-            }
-          : {
-              state: "idle",
-              lastCheckedAt: Date.now(),
-              version: result.latestVersion ?? undefined,
-              date: result.releaseDate ?? undefined,
-              notes: parsedNotes,
-            };
-
-        set({ updateStatus: nextStatus });
-        if (availableAllowed && updateAutoDownload) {
-          void get().downloadUpdate({
-            releaseChannel: checkedReleaseChannel,
-            desktopConfig,
-            setError,
-          });
-        }
-      } catch (error) {
-        const msg = describeError(error);
-        set({ updateStatus: { state: "error", message: msg } });
-        setError?.(msg);
       }
     },
 
     downloadUpdate: async (options) => {
+      if (activeDownloadPromise) return activeDownloadPromise;
+
+      const currentStatus = get().updateStatus;
+      if (currentStatus?.state !== "available") {
+        return;
+      }
+
       const { releaseChannel, desktopConfig, setError } = options;
       const bridge = electronUpdaterBridge();
       if (!bridge?.download) {
@@ -164,10 +208,10 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
         setError?.(message);
         return;
       }
+      const downloadFn = bridge.download;
 
       // Store pending release notes and version to localStorage right before we start/complete downloading,
       // so on reboot we can check if version matches and display What's New modal.
-      const currentStatus = get().updateStatus;
       if (currentStatus?.version && currentStatus?.notes) {
         localStorage.setItem("openwork:pending-release-version", currentStatus.version);
         localStorage.setItem("openwork:pending-release-notes", currentStatus.notes);
@@ -202,29 +246,37 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
         };
       });
 
+      activeDownloadPromise = (async () => {
+        try {
+          const result = await downloadFn();
+          if (!result?.ok) {
+            set({ updateStatus: { state: "error", message: result?.reason ?? "Update download failed." } });
+            setError?.(result?.reason ?? "Update download failed.");
+            return;
+          }
+          set((state) => ({
+            updateStatus: {
+              ...(state.updateStatus ?? {}),
+              state: "ready",
+            },
+          }));
+        } catch (error) {
+          const msg = describeError(error);
+          set({ updateStatus: { state: "error", message: msg } });
+          setError?.(msg);
+        } finally {
+          if (unsubDownloadProgress) {
+            unsubDownloadProgress();
+            unsubDownloadProgress = null;
+            isDownloadProgressSubscribed = false;
+          }
+        }
+      })();
+
       try {
-        const result = await bridge.download();
-        if (!result?.ok) {
-          set({ updateStatus: { state: "error", message: result?.reason ?? "Update download failed." } });
-          setError?.(result?.reason ?? "Update download failed.");
-          return;
-        }
-        set((state) => ({
-          updateStatus: {
-            ...(state.updateStatus ?? {}),
-            state: "ready",
-          },
-        }));
-      } catch (error) {
-        const msg = describeError(error);
-        set({ updateStatus: { state: "error", message: msg } });
-        setError?.(msg);
+        await activeDownloadPromise;
       } finally {
-        if (unsubDownloadProgress) {
-          unsubDownloadProgress();
-          unsubDownloadProgress = null;
-          isDownloadProgressSubscribed = false;
-        }
+        activeDownloadPromise = null;
       }
     },
 
