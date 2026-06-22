@@ -3,6 +3,23 @@ import { resolve } from "node:path";
 import { OpenWorkCapabilitiesKnowledge } from "./openwork-capabilities-knowledge.js";
 
 describe("OpenWork capabilities knowledge plugin", () => {
+  test("adds capabilities knowledge to the system prompt", async () => {
+    const plugin = await OpenWorkCapabilitiesKnowledge();
+    const output = {
+      system: [
+        "You are OpenWork.",
+        "",
+      ],
+    };
+
+    await plugin["experimental.chat.system.transform"]({}, output);
+
+    expect(output.system).toHaveLength(3);
+    expect(output.system[0]).toBe("You are OpenWork.");
+    expect(output.system[2]).toContain("You are running inside OpenWork");
+    expect(output.system[2]).toContain("OpenWork product questions");
+  });
+
   test("retrieves Slack connection guidance from bundled docs", async () => {
     process.env.OPENWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
 

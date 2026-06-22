@@ -204,6 +204,13 @@ export const OpenWorkExtensionsPreview = async () => ({
   "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
     output.system.push(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
     output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);
+
+    // Strict OpenAI-compatible proxies reject multiple system messages.
+    // Keep the guidance, but send it as one provider-safe system prompt.
+    // Mutate the array in-place to ensure the framework sees the change
+    const merged = output.system.filter((entry) => entry.trim().length > 0).join("\n\n");
+    output.system.length = 0;
+    if (merged) output.system.push(merged);
   },
   tool: {
     openwork_extension_list_actions: {

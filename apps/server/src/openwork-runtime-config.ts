@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import {
   openworkExtensionsPreviewPluginPath,
   openworkCapabilitiesKnowledgePluginPath,
+  openworkSystemPromptNormalizerPluginPath,
   openworkAnthropicAdaptiveThinkingPluginPath,
   openworkAnthropicToolSchemaPluginPath,
 } from "./openwork-extensions-plugin-path.js";
@@ -89,6 +90,7 @@ export async function buildOpenworkRuntimeConfigObject(
       openworkAnthropicAdaptiveThinkingPluginPath(),
       openworkAnthropicToolSchemaPluginPath(),
       ...runtimePluginList(runtimeConfig),
+      openworkSystemPromptNormalizerPluginPath(),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
     mcp: runtimeMcpMap(runtimeConfig),

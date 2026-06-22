@@ -214,6 +214,13 @@ function excerpt(content: string, query: string): string {
 export const OpenWorkCapabilitiesKnowledge = async () => ({
   "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
     output.system.push(OPENWORK_CAPABILITIES_KNOWLEDGE);
+
+    // Strict OpenAI-compatible proxies reject multiple system messages.
+    // Keep the knowledge, but send it as one provider-safe system prompt.
+    // Mutate the array in-place to ensure the framework sees the change
+    const merged = output.system.filter((entry) => entry.trim().length > 0).join("\n\n");
+    output.system.length = 0;
+    if (merged) output.system.push(merged);
   },
   tool: {
     openwork_docs_search: {
