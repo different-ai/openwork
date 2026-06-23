@@ -45,9 +45,9 @@ export function SafeHtmlRenderer({ content, className }: SafeHtmlRendererProps) 
   const sanitizedHtml = useMemo(() => {
     if (!content) return "";
     // Parse to html if it is markdown
-    const rawHtml = marked.parse(content) as string;
+    const rawHtml = marked.parse(content, { async: false }) as string;
     return DOMPurify.sanitize(rawHtml, {
-      ADD_ATTR: ["target", "rel", "class"],
+      ADD_ATTR: ["target", "rel"],
     });
   }, [content]);
 
