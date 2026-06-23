@@ -8,6 +8,14 @@ export type SafeHtmlRendererProps = {
   className?: string;
 };
 
+if (typeof window !== "undefined") {
+  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    if (node instanceof HTMLAnchorElement && node.target === "_blank") {
+      node.rel = "noopener noreferrer";
+    }
+  });
+}
+
 export function SafeHtmlRenderer({ content, className }: SafeHtmlRendererProps) {
   const sanitizedHtml = useMemo(() => {
     if (!content) return "";

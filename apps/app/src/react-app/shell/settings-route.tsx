@@ -268,7 +268,7 @@ function readStoredBoolean(key: string, fallback: boolean) {
   try {
     const raw = window.localStorage.getItem(key);
     if (raw == null) return fallback;
-    return raw === "1";
+    return raw === "1" || raw === "true";
   } catch {
     return fallback;
   }
@@ -1088,13 +1088,23 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [hideTitlebar]);
 
   useEffect(() => {
-    writeStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, updateAutoCheck);
-    window.dispatchEvent(new CustomEvent("openwork:update-settings-changed"));
+    const prev = readStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, true);
+    if (prev !== updateAutoCheck) {
+      writeStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, updateAutoCheck);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("openwork:update-settings-changed"));
+      }
+    }
   }, [updateAutoCheck]);
 
   useEffect(() => {
-    writeStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, updateAutoDownload);
-    window.dispatchEvent(new CustomEvent("openwork:update-settings-changed"));
+    const prev = readStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, false);
+    if (prev !== updateAutoDownload) {
+      writeStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, updateAutoDownload);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("openwork:update-settings-changed"));
+      }
+    }
   }, [updateAutoDownload]);
 
   const { markRouteReady: markBootRouteReady } = useBootState();
