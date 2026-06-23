@@ -214,7 +214,7 @@ export function UpdatesView(props: UpdatesViewProps) {
 
             {["available", "downloading", "ready"].includes(updateState) && updateNotes ? (
               <LayoutSectionItem className="max-h-80 overflow-auto border border-border/50 rounded-lg p-4 bg-muted/30 text-sm">
-                <h4 className="font-semibold mb-2 text-foreground text-xs uppercase tracking-wider text-muted-foreground">Release Notes</h4>
+                <h4 className="font-semibold mb-2 text-xs uppercase tracking-wider text-muted-foreground">Release Notes</h4>
                 <SafeHtmlRenderer
                   content={updateNotes}
                   className="prose dark:prose-invert max-w-none text-foreground/80 text-xs leading-relaxed space-y-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1 [&_p]:my-1 break-words [word-break:break-word] whitespace-normal [&_a]:text-primary [&_a]:underline hover:[&_a]:text-primary/80"

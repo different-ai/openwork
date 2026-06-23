@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { ReleaseChannel } from "../../../../app/types";
 import { isAlphaUpdateAllowed, isUpdateAllowed } from "../../../../app/lib/version-gate";
-import { isElectronRuntime, safeStringify } from "../../../../app/utils";
+import { safeStringify } from "../../../../app/utils";
 import type { SettingsUpdateStatus } from "./electron-updater-state";
 import type { DenDesktopConfig } from "../../../../app/lib/den";
 
@@ -292,7 +292,7 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
       // Store pending release notes and version to localStorage right before we start/complete downloading,
       // so on reboot we can check if version matches and display What's New modal.
       if (currentStatus?.version && currentStatus?.notes) {
-        localStorage.setItem("openwork:pending-release-version", currentStatus.version);
+        localStorage.setItem("openwork.react.settings.pending-release-version", currentStatus.version);
         localStorage.setItem("openwork:pending-release-notes", currentStatus.notes);
       }
 
@@ -386,6 +386,15 @@ declare global {
   }
 }
 
-if (typeof window !== "undefined") {
+if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
   window.__useElectronUpdaterStore = useElectronUpdaterStore;
+}
+
+if (typeof window !== "undefined") {
+  const bridge = window.__OPENWORK_ELECTRON__?.updater;
+  if (bridge?.getChannel) {
+    void bridge.getChannel().then((state) => {
+      useElectronUpdaterStore.getState().setAppVersion(state.currentVersion ?? null);
+    }).catch(() => {});
+  }
 }

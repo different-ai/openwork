@@ -3,6 +3,8 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { useMemo } from "react";
 
+const purify = typeof window !== "undefined" ? DOMPurify(window) : DOMPurify;
+
 export type SafeHtmlRendererProps = {
   content: string;
   className?: string;
@@ -16,7 +18,7 @@ declare global {
 
 if (typeof window !== "undefined" && !window.__OPENWORK_DOMPURIFY_LINK_HOOK_REGISTERED__) {
   window.__OPENWORK_DOMPURIFY_LINK_HOOK_REGISTERED__ = true;
-  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  purify.addHook("afterSanitizeAttributes", (node) => {
     if (node instanceof HTMLAnchorElement && node.target) {
       const existingRel = node.rel || "";
       const relParts = existingRel
@@ -33,20 +35,13 @@ if (typeof window !== "undefined" && !window.__OPENWORK_DOMPURIFY_LINK_HOOK_REGI
     }
   });
 }
-      if (!relParts.includes("noreferrer")) {
-        relParts.push("noreferrer");
-      }
-      node.rel = relParts.join(" ");
-    }
-  });
-}
 
 export function SafeHtmlRenderer({ content, className }: SafeHtmlRendererProps) {
   const sanitizedHtml = useMemo(() => {
     if (!content) return "";
     // Parse to html if it is markdown
     const rawHtml = marked.parse(content, { async: false }) as string;
-    return DOMPurify.sanitize(rawHtml, {
+    return purify.sanitize(rawHtml, {
       ADD_ATTR: ["target", "rel"],
     });
   }, [content]);

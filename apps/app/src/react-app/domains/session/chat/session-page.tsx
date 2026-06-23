@@ -20,6 +20,7 @@ import type {
 } from "../../../../app/types";
 import type { ShareWorkspaceModalProps } from "../../workspace/types";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogClose,
@@ -289,10 +290,10 @@ type WhatsNewModalProps = {
 function WhatsNewModal({ open, onClose, version, notes }: WhatsNewModalProps) {
   return (
     <Dialog open={open} onOpenChange={(val) => { if (!val) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-6 rounded-2xl gap-4">
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col rounded-4xl gap-4">
         <DialogHeader className="border-b pb-3 flex-shrink-0">
           <DialogTitle className="text-xl font-bold flex items-center gap-2 text-foreground">
-            What's New in OpenWork <span className="text-sm font-normal font-mono px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">v{version}</span>
+            What's New in OpenWork <Badge variant="outline" className="font-mono">v{version}</Badge>
           </DialogTitle>
         </DialogHeader>
         <div className="flex-1 overflow-y-auto pr-1 py-2">
@@ -301,7 +302,7 @@ function WhatsNewModal({ open, onClose, version, notes }: WhatsNewModalProps) {
             className="prose dark:prose-invert max-w-none text-foreground/80 text-sm leading-relaxed space-y-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:my-2 break-words [word-break:break-word] whitespace-normal [&_a]:text-primary [&_a]:underline hover:[&_a]:text-primary/80"
           />
         </div>
-        <DialogFooter className="border-t pt-3 flex-shrink-0 flex items-center justify-end">
+        <DialogFooter className="shrink-0">
           <Button onClick={onClose} className="rounded-xl px-5">
             Awesome!
           </Button>
@@ -312,9 +313,8 @@ function WhatsNewModal({ open, onClose, version, notes }: WhatsNewModalProps) {
 }
 
 export function SessionPage(props: SessionPageProps) {
-  const store = useElectronUpdaterStore();
-  const updateStatus = store.updateStatus;
-  const appVersion = store.appVersion;
+  const updateStatus = useElectronUpdaterStore(s => s.updateStatus);
+  const appVersion = useElectronUpdaterStore(s => s.appVersion);
 
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const [whatsNewVersion, setWhatsNewVersion] = useState("");
@@ -331,7 +331,7 @@ export function SessionPage(props: SessionPageProps) {
     }
     
     if (lastSeenVersion !== appVersion) {
-      const pendingVersion = localStorage.getItem("openwork:pending-release-version");
+      const pendingVersion = localStorage.getItem("openwork.react.settings.pending-release-version");
       const pendingNotes = localStorage.getItem("openwork:pending-release-notes");
       
       // If we updated to the pending version, show the pending notes

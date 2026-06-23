@@ -148,8 +148,7 @@ export type StatusBarProps = {
 };
 
 export function StatusBar(props: StatusBarProps) {
-  const store = useElectronUpdaterStore();
-  const updateStatus = store.updateStatus;
+  const updateStatus = useElectronUpdaterStore(s => s.updateStatus);
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const navigate = useNavigate();

@@ -44,6 +44,19 @@ type NotifyAlertOptions = {
 export function notifyAlert(input: NotificationInput, options?: NotifyAlertOptions): void {
   useNotificationStore.getState().add({ severity: "error", ...input });
 
+  if (input.kind === "update") {
+    const severity = input.severity ?? "error";
+    const show =
+      severity === "error" ? toast.error : severity === "warning" ? toast.warning : toast.info;
+    show(input.title, {
+      id: "openwork-notification-update",
+      description: input.body,
+      action: options?.toastAction,
+      onClick: options?.onClick,
+    });
+    return;
+  }
+
   const now = Date.now();
   if (now - lastAlertAt > ALERT_BURST_WINDOW_MS) {
     alertBurstCount = 0;
