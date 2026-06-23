@@ -386,7 +386,9 @@ declare global {
   }
 }
 
-if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
+const isDev = typeof import.meta !== "undefined" && !!import.meta.env?.DEV;
+
+if (typeof window !== "undefined" && isDev) {
   window.__useElectronUpdaterStore = useElectronUpdaterStore;
 }
 
