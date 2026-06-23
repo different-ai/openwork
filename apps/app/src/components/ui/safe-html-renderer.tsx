@@ -8,10 +8,25 @@ export type SafeHtmlRendererProps = {
   className?: string;
 };
 
-if (typeof window !== "undefined") {
+declare global {
+  interface Window {
+    __OPENWORK_DOMPURIFY_LINK_HOOK_REGISTERED__?: boolean;
+  }
+}
+
+if (typeof window !== "undefined" && !window.__OPENWORK_DOMPURIFY_LINK_HOOK_REGISTERED__) {
+  window.__OPENWORK_DOMPURIFY_LINK_HOOK_REGISTERED__ = true;
   DOMPurify.addHook("afterSanitizeAttributes", (node) => {
     if (node instanceof HTMLAnchorElement && node.target === "_blank") {
-      node.rel = "noopener noreferrer";
+      const existingRel = node.rel || "";
+      const relParts = existingRel.split(/\s+/).filter(Boolean);
+      if (!relParts.includes("noopener")) {
+        relParts.push("noopener");
+      }
+      if (!relParts.includes("noreferrer")) {
+        relParts.push("noreferrer");
+      }
+      node.rel = relParts.join(" ");
     }
   });
 }
