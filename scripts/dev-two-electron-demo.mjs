@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -8,7 +8,35 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const desktopRoot = path.join(repoRoot, "apps", "desktop");
 const desktopScriptsRoot = path.join(desktopRoot, "scripts");
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-const demoRoot = path.join(os.homedir(), ".openwork", "two-electron-demo");
+const demoRoot =
+  process.env.OPENWORK_ELECTRON_DEMO_ROOT?.trim() ||
+  path.join(os.homedir(), ".openwork", "two-electron-demo");
+const appProfiles = {
+  admin: {
+    appIdentifier: "com.differentai.openwork.demo.admin",
+    appName: "OpenWork Demo A",
+    bootstrapName: "admin-bootstrap.json",
+    cdpFlag: "--admin-cdp",
+    cdpPort: "9823",
+    label: "demo-a",
+    portFlag: "--admin-port",
+    port: "5173",
+    requireSignin: false,
+    userDataName: "admin-userdata",
+  },
+  consumer: {
+    appIdentifier: "com.differentai.openwork.demo.consumer",
+    appName: "OpenWork Demo B",
+    bootstrapName: "consumer-bootstrap.json",
+    cdpFlag: "--consumer-cdp",
+    cdpPort: "9824",
+    label: "demo-b",
+    portFlag: "--consumer-port",
+    port: "5174",
+    requireSignin: true,
+    userDataName: "consumer-userdata",
+  },
+};
 
 function argValue(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -116,53 +144,69 @@ async function writeBootstrap(filePath, requireSignin, baseUrl, apiBaseUrl) {
   );
 }
 
+async function resetDemoData() {
+  await rm(demoRoot, { recursive: true, force: true });
+}
+
+function demoEnv(profile, bootstrapPath, port, cdpPort) {
+  const userDataDir = path.join(demoRoot, profile.userDataName);
+  return {
+    OPENWORK_DATA_DIR: path.join(userDataDir, "openwork-orchestrator-data"),
+    OPENWORK_DESKTOP_BOOTSTRAP_PATH: bootstrapPath,
+    OPENWORK_ELECTRON_APP_IDENTIFIER: profile.appIdentifier,
+    OPENWORK_ELECTRON_APP_NAME: profile.appName,
+    OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort,
+    OPENWORK_ELECTRON_SKIP_SHARED_PREPARE: "1",
+    OPENWORK_ELECTRON_USERDATA: userDataDir,
+    PORT: port,
+  };
+}
+
 async function main() {
   if (flag("--help") || flag("-h")) {
-    console.log(`Usage: pnpm dev:electron:two [options]\n\nStarts two isolated Electron dev instances for a local Den demo.\n\nOptions:\n  --den-web-url <url>     Den Web URL (default: http://localhost:3005)\n  --den-api-url <url>     Den API URL (default: http://localhost:8788)\n  --admin-port <port>     Admin Vite port (default: 5173)\n  --consumer-port <port>  Consumer Vite port (default: 5174)\n  --admin-cdp <port>      Admin Electron CDP port (default: 9823)\n  --consumer-cdp <port>   Consumer Electron CDP port (default: 9824)\n`);
+    console.log(`Usage: pnpm dev:electron:two [options]\n\nStarts two isolated Electron dev instances for a local Den demo.\n\nOptions:\n  --reset                 Delete demo profile data before launching\n  --reset-only            Delete demo profile data and exit\n  --den-web-url <url>     Den Web URL (default: http://localhost:3005)\n  --den-api-url <url>     Den API URL (default: http://localhost:8788)\n  --admin-port <port>     Demo A Vite port (default: 5173)\n  --consumer-port <port>  Demo B Vite port (default: 5174)\n  --admin-cdp <port>      Demo A Electron CDP port (default: 9823)\n  --consumer-cdp <port>   Demo B Electron CDP port (default: 9824)\n`);
     return;
   }
 
+  if (flag("--reset") || flag("--reset-only")) {
+    await resetDemoData();
+    console.log(`Reset demo data at ${demoRoot}`);
+  }
+  if (flag("--reset-only")) return;
+
   const denWebUrl = argValue("--den-web-url", "http://localhost:3005");
   const denApiUrl = argValue("--den-api-url", "http://localhost:8788");
-  const adminPort = argValue("--admin-port", "5173");
-  const consumerPort = argValue("--consumer-port", "5174");
-  const adminCdp = argValue("--admin-cdp", "9823");
-  const consumerCdp = argValue("--consumer-cdp", "9824");
-  const adminBootstrap = path.join(demoRoot, "admin-bootstrap.json");
-  const consumerBootstrap = path.join(demoRoot, "consumer-bootstrap.json");
+  const adminPort = argValue(appProfiles.admin.portFlag, appProfiles.admin.port);
+  const consumerPort = argValue(appProfiles.consumer.portFlag, appProfiles.consumer.port);
+  const adminCdp = argValue(appProfiles.admin.cdpFlag, appProfiles.admin.cdpPort);
+  const consumerCdp = argValue(appProfiles.consumer.cdpFlag, appProfiles.consumer.cdpPort);
+  const adminBootstrap = path.join(demoRoot, appProfiles.admin.bootstrapName);
+  const consumerBootstrap = path.join(demoRoot, appProfiles.consumer.bootstrapName);
 
-  await writeBootstrap(adminBootstrap, false, denWebUrl, denApiUrl);
-  await writeBootstrap(consumerBootstrap, true, denWebUrl, denApiUrl);
-  await mkdir(path.join(demoRoot, "admin-userdata"), { recursive: true });
-  await mkdir(path.join(demoRoot, "consumer-userdata"), { recursive: true });
+  await writeBootstrap(adminBootstrap, appProfiles.admin.requireSignin, denWebUrl, denApiUrl);
+  await writeBootstrap(consumerBootstrap, appProfiles.consumer.requireSignin, denWebUrl, denApiUrl);
+  await mkdir(path.join(demoRoot, appProfiles.admin.userDataName), { recursive: true });
+  await mkdir(path.join(demoRoot, appProfiles.consumer.userDataName), { recursive: true });
 
   prepareSharedElectronResources();
 
   children = [
-    startElectron("admin", {
-      OPENWORK_ELECTRON_USERDATA: path.join(demoRoot, "admin-userdata"),
-      OPENWORK_DESKTOP_BOOTSTRAP_PATH: adminBootstrap,
-      OPENWORK_ELECTRON_SKIP_SHARED_PREPARE: "1",
-      OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: adminCdp,
-      PORT: adminPort,
-    }),
-    startElectron("consumer", {
-      OPENWORK_ELECTRON_USERDATA: path.join(demoRoot, "consumer-userdata"),
-      OPENWORK_DESKTOP_BOOTSTRAP_PATH: consumerBootstrap,
-      OPENWORK_ELECTRON_SKIP_SHARED_PREPARE: "1",
-      OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: consumerCdp,
-      PORT: consumerPort,
-    }),
+    startElectron(appProfiles.admin.label, demoEnv(appProfiles.admin, adminBootstrap, adminPort, adminCdp)),
+    startElectron(appProfiles.consumer.label, demoEnv(appProfiles.consumer, consumerBootstrap, consumerPort, consumerCdp)),
   ];
 
   console.log("\nTwo Electron demo is starting.");
   console.log(`Den Web:       ${denWebUrl}`);
   console.log(`Den API:       ${denApiUrl}`);
-  console.log(`Admin CDP:     http://127.0.0.1:${adminCdp}`);
-  console.log(`Consumer CDP:  http://127.0.0.1:${consumerCdp}`);
-  console.log(`Admin data:    ${path.join(demoRoot, "admin-userdata")}`);
-  console.log(`Consumer data: ${path.join(demoRoot, "consumer-userdata")}`);
-  console.log(`Den startup:   OPENWORK_EXTRA_APP_PORTS=${adminPort},${consumerPort} pnpm dev:den`);
+  console.log(`Demo A CDP:    http://127.0.0.1:${adminCdp}`);
+  console.log(`Demo B CDP:    http://127.0.0.1:${consumerCdp}`);
+  console.log(`Demo A data:   ${path.join(demoRoot, appProfiles.admin.userDataName)}`);
+  console.log(`Demo B data:   ${path.join(demoRoot, appProfiles.consumer.userDataName)}`);
+  const denStartup =
+    adminPort === appProfiles.admin.port && consumerPort === appProfiles.consumer.port
+      ? "pnpm demo:den"
+      : `OPENWORK_EXTRA_APP_PORTS=${adminPort},${consumerPort} pnpm dev:den`;
+  console.log(`Den startup:   ${denStartup}`);
   console.log("Press Ctrl-C to stop both instances.\n");
 }
 
