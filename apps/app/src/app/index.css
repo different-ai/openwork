@@ -11,6 +11,8 @@
 
 @import "@fontsource-variable/ibm-plex-sans";
 
+@import "@c15t/react/styles.css";
+
 @custom-variant dark (&:is(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
 @custom-variant electron {
   html.openwork-electron & {

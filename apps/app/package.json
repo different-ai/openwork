@@ -39,6 +39,7 @@
   "dependencies": {
     "@ai-sdk/react": "^3.0.148",
     "@base-ui/react": "^1.4.1",
+    "@c15t/react": "2.1.0",
     "@codemirror/commands": "^6.8.0",
     "@codemirror/lang-markdown": "^6.3.3",
     "@codemirror/language": "^6.11.0",

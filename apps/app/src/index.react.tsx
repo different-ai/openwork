@@ -15,6 +15,7 @@ import {
   createDefaultPlatform,
   PlatformProvider,
 } from "./react-app/kernel/platform";
+import { CookieConsentProvider } from "./react-app/shell/cookie-consent-provider";
 import { AppProviders } from "./react-app/shell/providers";
 import { AppRoot } from "./react-app/shell/app-root";
 import { startDeepLinkBridge } from "./react-app/shell/startup-deep-links";
@@ -35,20 +36,23 @@ root.dataset.openworkDeployment = getOpenWorkDeployment();
 
 const platform = createDefaultPlatform();
 const queryClient = getReactQueryClient();
-const Router = isDesktopRuntime() ? HashRouter : BrowserRouter;
+const desktopRuntime = isDesktopRuntime();
+const Router = desktopRuntime ? HashRouter : BrowserRouter;
 
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <PlatformProvider value={platform}>
-          <AppProviders>
-            <Router>
-              <AppRoot />
-            </Router>
-          </AppProviders>
-        </PlatformProvider>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <CookieConsentProvider enabled={!desktopRuntime}>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <PlatformProvider value={platform}>
+            <AppProviders>
+              <Router>
+                <AppRoot />
+              </Router>
+            </AppProviders>
+          </PlatformProvider>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </CookieConsentProvider>
   </React.StrictMode>,
 );
