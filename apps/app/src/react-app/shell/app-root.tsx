@@ -143,21 +143,38 @@ function readStoredBoolean(key: string, fallback: boolean): boolean {
 function BackgroundUpdater() {
   const local = useLocal();
   const desktopConfig = useDesktopConfig();
-  const store = useElectronUpdaterStore();
+  const navigate = useNavigate();
+  const checkForUpdates = useElectronUpdaterStore((state) => state.checkForUpdates);
+  const updateStatus = useElectronUpdaterStore((state) => state.updateStatus);
   const releaseChannel = local.prefs.releaseChannel ?? "stable";
+
+  const checkOptionsRef = useRef({
+    releaseChannel,
+    desktopConfig: desktopConfig.config,
+    local,
+  });
+
+  useEffect(() => {
+    checkOptionsRef.current = {
+      releaseChannel,
+      desktopConfig: desktopConfig.config,
+      local,
+    };
+  });
 
   useEffect(() => {
     const autoCheck = readStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, true);
-    const autoDownload = readStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, false);
     if (!autoCheck) return;
 
     const check = () => {
-      void store.checkForUpdates({
-        releaseChannel,
-        desktopConfig: desktopConfig.config,
+      const { releaseChannel: channel, desktopConfig: config, local: loc } = checkOptionsRef.current;
+      const autoDownload = readStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, false);
+      void checkForUpdates({
+        releaseChannel: channel,
+        desktopConfig: config,
         updateAutoDownload: autoDownload,
         onReleaseChannelChange: (next) => {
-          local.setPrefs((previous) => ({ ...previous, releaseChannel: next }));
+          loc.setPrefs((previous) => ({ ...previous, releaseChannel: next }));
         },
       });
     };
@@ -172,27 +189,35 @@ function BackgroundUpdater() {
       clearTimeout(delayId);
       clearInterval(intervalId);
     };
-  }, [releaseChannel, desktopConfig.config, local, store]);
+  }, [checkForUpdates]);
 
   // Listen for updateState changes to show the notification alert
-  const updateStatus = store.updateStatus;
   const lastStateRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!updateStatus) return;
     if (updateStatus.state === "available" && lastStateRef.current !== "available") {
-      notifyAlert({
-        kind: "update",
-        severity: "info",
-        title: t("notifications.updater_available_title", undefined, { version: updateStatus.version ?? "" }),
-        body: t("notifications.updater_available_body"),
-        dedupeKey: "updater-available",
-        action: { type: "navigate", path: "/settings/updates" },
-        actionLabel: t("notifications.updater_view_button"),
-      });
+      notifyAlert(
+        {
+          kind: "update",
+          severity: "info",
+          title: t("notifications.updater_available_title", undefined, { version: updateStatus.version ?? "" }),
+          body: t("notifications.updater_available_body"),
+          dedupeKey: "updater-available",
+          action: { type: "navigate", path: "/settings/updates" },
+          actionLabel: t("notifications.updater_view_button"),
+        },
+        {
+          onClick: () => navigate("/settings/updates"),
+          toastAction: {
+            label: t("notifications.updater_view_button") || "View",
+            onClick: () => navigate("/settings/updates"),
+          },
+        }
+      );
     }
     lastStateRef.current = updateStatus.state;
-  }, [updateStatus]);
+  }, [updateStatus, navigate]);
 
   return null;
 }

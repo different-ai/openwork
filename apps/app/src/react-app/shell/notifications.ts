@@ -38,6 +38,7 @@ type NotifyAlertOptions = {
   /** Optional button on the immediate toast (closures are fine here; the
    *  persistent center entry uses the serializable `action` instead). */
   toastAction?: { label: string; onClick: () => void };
+  onClick?: () => void;
 };
 
 export function notifyAlert(input: NotificationInput, options?: NotifyAlertOptions): void {
@@ -68,5 +69,6 @@ export function notifyAlert(input: NotificationInput, options?: NotifyAlertOptio
     id: ALERT_TOAST_ID,
     description: input.body,
     action: options?.toastAction,
+    onClick: options?.onClick,
   });
 }

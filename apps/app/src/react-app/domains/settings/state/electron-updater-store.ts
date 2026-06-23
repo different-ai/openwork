@@ -14,6 +14,17 @@ function electronUpdaterBridge(): ElectronUpdaterBridge | null {
   return window.__OPENWORK_ELECTRON__?.updater ?? null;
 }
 
+export type CheckResult = {
+  available: boolean;
+  currentVersion?: string;
+  latestVersion?: string | null;
+  releaseDate?: string | null;
+  releaseNotes?: unknown;
+  channel?: "stable" | "alpha";
+  feedUrl?: string;
+  reason?: string;
+};
+
 function releaseNotesToText(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
@@ -70,7 +81,7 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
   let unsubDownloadProgress: (() => void) | null = null;
   
   let activeCheckPromise: Promise<{
-    result: any;
+    result: CheckResult;
     currentVersion: string | null;
   }> | null = null;
   let activeCheckChannel: ReleaseChannel | null = null;
@@ -79,7 +90,7 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
   let activeDownloadPromise: Promise<{ ok: boolean; reason?: string }> | null = null;
 
   async function handleCheckResult(params: {
-    result: any;
+    result: CheckResult;
     currentVersion: string | null;
     releaseChannel: ReleaseChannel;
     desktopConfig: DenDesktopConfig | null | undefined;
@@ -369,6 +380,12 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
   };
 });
 
+declare global {
+  interface Window {
+    __useElectronUpdaterStore?: typeof useElectronUpdaterStore;
+  }
+}
+
 if (typeof window !== "undefined") {
-  (window as any).__useElectronUpdaterStore = useElectronUpdaterStore;
+  window.__useElectronUpdaterStore = useElectronUpdaterStore;
 }

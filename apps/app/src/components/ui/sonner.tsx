@@ -67,6 +67,7 @@ interface ToastOptions {
   action?: ToastAction
   cancel?: ToastAction
   duration?: number
+  onClick?: () => void
 }
 
 const TOAST_ICONS: Record<Exclude<ToastType, "default">, LucideIcon> = {
@@ -129,17 +130,37 @@ interface ToastCardProps {
   action?: ToastAction
   cancel?: ToastAction
   notification?: boolean
+  onClick?: () => void
 }
 
-function ToastCard({ id, type, title, description, action, cancel, notification }: ToastCardProps) {
+function ToastCard({ id, type, title, description, action, cancel, notification, onClick }: ToastCardProps) {
+  const handleClick = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest("button")) return
+    if (onClick) {
+      onClick()
+      sonnerToast.dismiss(id)
+    }
+  }
+
   if (notification) {
     return (
-      <div className={cn("flex w-full gap-3 rounded-2xl border border-border bg-popover/95 backdrop-blur-sm p-4 text-popover-foreground shadow-md md:max-w-sm ring-1 ring-popover-border/20 items-center")}>
+      <div
+        onClick={onClick ? handleClick : undefined}
+        className={cn(
+          "flex w-full gap-3 rounded-2xl border border-border bg-popover/95 backdrop-blur-sm p-4 text-popover-foreground shadow-md md:max-w-sm ring-1 ring-popover-border/20 items-start",
+          onClick && "cursor-pointer hover:bg-popover/90"
+        )}
+      >
         <ToastIcon type={type} size="sm" />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-medium">{title}</p>
-            <Button variant="ghost" size="sm" onClick={() => sonnerToast.dismiss(id)}>
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-sm font-medium flex-1">{title}</p>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="-mr-2 -mt-1 h-6 w-6 text-muted-foreground hover:text-foreground shrink-0"
+              onClick={() => sonnerToast.dismiss(id)}
+            >
               <XIcon className="size-4" />
             </Button>
           </div>
@@ -150,13 +171,24 @@ function ToastCard({ id, type, title, description, action, cancel, notification 
   }
 
   return (
-    <div className={cn("flex w-full items-start gap-3 rounded-2xl border border-border bg-popover/95 backdrop-blur-sm p-4 text-popover-foreground shadow-md md:max-w-sm ring-1 ring-popover-border/20")}>
+    <div
+      onClick={onClick ? handleClick : undefined}
+      className={cn(
+        "flex w-full items-start gap-3 rounded-2xl border border-border bg-popover/95 backdrop-blur-sm p-4 text-popover-foreground shadow-md md:max-w-sm ring-1 ring-popover-border/20",
+        onClick && "cursor-pointer hover:bg-popover/90"
+      )}
+    >
       <ToastIcon type={type} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-center gap-2">
-         <p className="text-sm font-medium">{title}</p>
-         <Button variant="ghost" size="sm" onClick={() => sonnerToast.dismiss(id)}>
-          <XIcon className="size-4" />
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-sm font-medium flex-1">{title}</p>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="-mr-2 -mt-1 h-6 w-6 text-muted-foreground hover:text-foreground shrink-0"
+            onClick={() => sonnerToast.dismiss(id)}
+          >
+            <XIcon className="size-4" />
           </Button>
         </div>
         {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
@@ -205,6 +237,7 @@ function showToast(type: ToastType, message: React.ReactNode, options?: ToastOpt
         action={options?.action}
         cancel={options?.cancel}
         notification={notification}
+        onClick={options?.onClick}
       />
     ),
     {

@@ -34,7 +34,7 @@ import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connection
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
 import { useElectronUpdaterStore } from "../../settings/state/electron-updater-store";
-import { Markdown } from "@/components/ui/markdown";
+import { SafeHtmlRenderer } from "@/components/ui/safe-html-renderer";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import {
@@ -292,13 +292,14 @@ function WhatsNewModal({ open, onClose, version, notes }: WhatsNewModalProps) {
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-6 rounded-2xl gap-4">
         <DialogHeader className="border-b pb-3 flex-shrink-0">
           <DialogTitle className="text-xl font-bold flex items-center gap-2 text-foreground">
-            🎉 What's New in OpenWork <span className="text-sm font-normal font-mono px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">v{version}</span>
+            What's New in OpenWork <span className="text-sm font-normal font-mono px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">v{version}</span>
           </DialogTitle>
         </DialogHeader>
         <div className="flex-1 overflow-y-auto pr-1 py-2">
-          <Markdown className="prose dark:prose-invert max-w-none text-foreground/80 text-sm leading-relaxed space-y-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:my-2">
-            {notes}
-          </Markdown>
+          <SafeHtmlRenderer
+            content={notes}
+            className="prose dark:prose-invert max-w-none text-foreground/80 text-sm leading-relaxed space-y-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:my-2 break-words [word-break:break-word] whitespace-normal"
+          />
         </div>
         <DialogFooter className="border-t pt-3 flex-shrink-0 flex items-center justify-end">
           <Button onClick={onClose} className="rounded-xl px-5">

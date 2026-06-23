@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, test, mock } from "bun:test";
 import type { ReleaseChannel } from "../src/app/types";
+import type { CheckResult } from "../src/react-app/domains/settings/state/electron-updater-store";
 
 // Mock version-gate module before importing the store
-let isAlphaUpdateAllowedMock = async (version: string, config: any) => true;
-let isUpdateAllowedMock = async (version: string, config: any) => true;
+let isAlphaUpdateAllowedMock = async (version: string, config: unknown) => true;
+let isUpdateAllowedMock = async (version: string, config: unknown) => true;
 
 mock.module("../src/app/lib/version-gate", () => {
   return {
-    isAlphaUpdateAllowed: async (version: any, config: any) => isAlphaUpdateAllowedMock(version, config),
-    isUpdateAllowed: async (version: any, config: any) => isUpdateAllowedMock(version, config),
+    isAlphaUpdateAllowed: async (version: string, config: unknown) => isAlphaUpdateAllowedMock(version, config),
+    isUpdateAllowed: async (version: string, config: unknown) => isUpdateAllowedMock(version, config),
   };
 });
 
@@ -42,10 +43,12 @@ Object.defineProperty(globalThis, "window", {
 // Setup mock bridge
 const mockCheck = mock(async (channel: string) => {
   return {
+    available: true,
     currentVersion: "1.0.0",
     latestVersion: "1.1.0",
-    available: true,
-    channel,
+    releaseDate: "2026-06-23T02:00:00Z",
+    releaseNotes: "Update notes",
+    channel: channel as "stable" | "alpha",
   };
 });
 
@@ -56,14 +59,14 @@ const mockDownload = mock(async () => {
 const mockUpdaterBridge = {
   check: mockCheck,
   download: mockDownload,
-  getChannel: mock(async () => ({ channel: "stable", currentVersion: "1.0.0" })),
-  setChannel: mock(async (channel: string) => ({ channel, currentVersion: "1.0.0" })),
-  onDownloadProgress: mock((callback: any) => {
+  getChannel: mock(async () => ({ channel: "stable" as const, currentVersion: "1.0.0" })),
+  setChannel: mock(async (channel: string) => ({ channel: channel as "stable" | "alpha", currentVersion: "1.0.0" })),
+  onDownloadProgress: mock((callback: (data: { transferred: number; total: number; percent: number; bytesPerSecond: number }) => void) => {
     return () => {};
   }),
 };
 
-(globalThis as any).__OPENWORK_ELECTRON__ = {
+(globalThis as typeof globalThis & { __OPENWORK_ELECTRON__?: unknown }).__OPENWORK_ELECTRON__ = {
   updater: mockUpdaterBridge,
 };
 
@@ -86,8 +89,8 @@ describe("electron updater store", () => {
   beforeEach(resetStore);
 
   test("coalesces concurrent checkForUpdates calls for the same channel", async () => {
-    let resolveCheck: any;
-    const checkPromise = new Promise<any>((resolve) => {
+    let resolveCheck: (value: CheckResult) => void;
+    const checkPromise = new Promise<CheckResult>((resolve) => {
       resolveCheck = resolve;
     });
     mockCheck.mockImplementation(async () => {
@@ -103,7 +106,7 @@ describe("electron updater store", () => {
       desktopConfig: null,
     });
 
-    resolveCheck({
+    resolveCheck!({
       currentVersion: "1.0.0",
       latestVersion: "1.2.0",
       available: true,
@@ -118,13 +121,13 @@ describe("electron updater store", () => {
   });
 
   test("runs a new check and discards stale check when release channel changes", async () => {
-    let resolveCheckStable: any;
-    const checkPromiseStable = new Promise<any>((resolve) => {
+    let resolveCheckStable: (value: CheckResult) => void;
+    const checkPromiseStable = new Promise<CheckResult>((resolve) => {
       resolveCheckStable = resolve;
     });
 
-    let resolveCheckAlpha: any;
-    const checkPromiseAlpha = new Promise<any>((resolve) => {
+    let resolveCheckAlpha: (value: CheckResult) => void;
+    const checkPromiseAlpha = new Promise<CheckResult>((resolve) => {
       resolveCheckAlpha = resolve;
     });
 
@@ -146,7 +149,7 @@ describe("electron updater store", () => {
     });
 
     // Resolve stable check first with old results
-    resolveCheckStable({
+    resolveCheckStable!({
       currentVersion: "1.0.0",
       latestVersion: "1.2.0",
       available: true,
@@ -158,7 +161,7 @@ describe("electron updater store", () => {
     expect(useElectronUpdaterStore.getState().updateStatus?.state).toBe("checking");
 
     // Resolve alpha check with new results
-    resolveCheckAlpha({
+    resolveCheckAlpha!({
       currentVersion: "1.0.0",
       latestVersion: "1.3.0-alpha.1",
       available: true,
@@ -187,8 +190,8 @@ describe("electron updater store", () => {
       },
     });
 
-    let resolveDownload: any;
-    const downloadPromise = new Promise<any>((resolve) => {
+    let resolveDownload: (value: { ok: boolean; reason?: string }) => void;
+    const downloadPromise = new Promise<{ ok: boolean; reason?: string }>((resolve) => {
       resolveDownload = resolve;
     });
     mockDownload.mockImplementation(async () => {
@@ -204,7 +207,7 @@ describe("electron updater store", () => {
       desktopConfig: null,
     });
 
-    resolveDownload({ ok: true });
+    resolveDownload!({ ok: true });
     await Promise.all([download1, download2]);
 
     expect(mockDownload).toHaveBeenCalledTimes(1);
@@ -212,8 +215,8 @@ describe("electron updater store", () => {
   });
 
   test("propagates options and callbacks (e.g. setError, onReleaseChannelChange) to all concurrent callers", async () => {
-    let resolveCheck: any;
-    const checkPromise = new Promise<any>((resolve) => {
+    let resolveCheck: (value: CheckResult) => void;
+    const checkPromise = new Promise<CheckResult>((resolve) => {
       resolveCheck = resolve;
     });
     mockCheck.mockImplementation(async () => {
@@ -238,7 +241,7 @@ describe("electron updater store", () => {
       onReleaseChannelChange: channelChange2,
     });
 
-    resolveCheck({
+    resolveCheck!({
       currentVersion: "1.0.0",
       latestVersion: "1.2.0",
       available: true,
@@ -258,8 +261,8 @@ describe("electron updater store", () => {
       },
     });
 
-    let resolveDownload: any;
-    const downloadPromise = new Promise<any>((resolve) => {
+    let resolveDownload: (value: { ok: boolean; reason?: string }) => void;
+    const downloadPromise = new Promise<{ ok: boolean; reason?: string }>((resolve) => {
       resolveDownload = resolve;
     });
     mockDownload.mockImplementation(async () => {
@@ -280,7 +283,7 @@ describe("electron updater store", () => {
       setError: dlError2,
     });
 
-    resolveDownload({ ok: false, reason: "disk full" });
+    resolveDownload!({ ok: false, reason: "disk full" });
     await Promise.all([dl1, dl2]);
 
     expect(dlError1).toHaveBeenCalledWith("disk full");
@@ -288,16 +291,16 @@ describe("electron updater store", () => {
   });
 
   test("propagates download failure to check callers if auto-download is enabled", async () => {
-    let resolveCheck: any;
-    const checkPromise = new Promise<any>((resolve) => {
+    let resolveCheck: (value: CheckResult) => void;
+    const checkPromise = new Promise<CheckResult>((resolve) => {
       resolveCheck = resolve;
     });
     mockCheck.mockImplementation(async () => {
       return await checkPromise;
     });
 
-    let resolveDownload: any;
-    const downloadPromise = new Promise<any>((resolve) => {
+    let resolveDownload: (value: { ok: boolean; reason?: string }) => void;
+    const downloadPromise = new Promise<{ ok: boolean; reason?: string }>((resolve) => {
       resolveDownload = resolve;
     });
     mockDownload.mockImplementation(async () => {
@@ -313,7 +316,7 @@ describe("electron updater store", () => {
       setError: checkError,
     });
 
-    resolveCheck({
+    resolveCheck!({
       currentVersion: "1.0.0",
       latestVersion: "1.2.0",
       available: true,
@@ -323,7 +326,7 @@ describe("electron updater store", () => {
     await check;
 
     // Resolve download with a failure
-    resolveDownload({ ok: false, reason: "auto download failed" });
+    resolveDownload!({ ok: false, reason: "auto download failed" });
 
     // Wait for download to complete
     await useElectronUpdaterStore.getState().downloadUpdate({
@@ -335,13 +338,13 @@ describe("electron updater store", () => {
   });
 
   test("runs a new check and discards stale check when version gate validation yields and channel changes", async () => {
-    let resolveCheckStable: any;
-    const checkPromiseStable = new Promise<any>((resolve) => {
+    let resolveCheckStable: (value: CheckResult) => void;
+    const checkPromiseStable = new Promise<CheckResult>((resolve) => {
       resolveCheckStable = resolve;
     });
 
-    let resolveCheckAlpha: any;
-    const checkPromiseAlpha = new Promise<any>((resolve) => {
+    let resolveCheckAlpha: (value: CheckResult) => void;
+    const checkPromiseAlpha = new Promise<CheckResult>((resolve) => {
       resolveCheckAlpha = resolve;
     });
 
@@ -350,7 +353,7 @@ describe("electron updater store", () => {
       return await checkPromiseAlpha;
     });
 
-    let resolveGatingStable: any;
+    let resolveGatingStable: (value: boolean) => void;
     const gatingPromiseStable = new Promise<boolean>((resolve) => {
       resolveGatingStable = resolve;
     });
@@ -366,7 +369,7 @@ describe("electron updater store", () => {
     });
 
     // Resolve stable check from bridge. This will call handleCheckResult and yield on isUpdateAllowed.
-    resolveCheckStable({
+    resolveCheckStable!({
       currentVersion: "1.0.0",
       latestVersion: "1.2.0",
       available: true,
@@ -383,14 +386,14 @@ describe("electron updater store", () => {
     });
 
     // Now resolve the version gating check of the first check
-    resolveGatingStable(true);
+    resolveGatingStable!(true);
     await checkStable;
 
     // The first check status update must have been ignored, and the state should still be "checking" (from the alpha check)
     expect(useElectronUpdaterStore.getState().updateStatus?.state).toBe("checking");
 
     // Resolve alpha check with new results
-    resolveCheckAlpha({
+    resolveCheckAlpha!({
       currentVersion: "1.0.0",
       latestVersion: "1.3.0-alpha.1",
       available: true,
