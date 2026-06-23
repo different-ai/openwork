@@ -1089,10 +1089,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   useEffect(() => {
     writeStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, updateAutoCheck);
+    window.dispatchEvent(new CustomEvent("openwork:update-settings-changed"));
   }, [updateAutoCheck]);
 
   useEffect(() => {
     writeStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, updateAutoDownload);
+    window.dispatchEvent(new CustomEvent("openwork:update-settings-changed"));
   }, [updateAutoDownload]);
 
   const { markRouteReady: markBootRouteReady } = useBootState();

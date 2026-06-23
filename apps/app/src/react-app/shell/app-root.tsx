@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 
-import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
@@ -134,8 +134,8 @@ const SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY = "openwork.react.settings.update-auto-d
 function readStoredBoolean(key: string, fallback: boolean): boolean {
   try {
     const raw = localStorage.getItem(key);
-    if (raw === "true") return true;
-    if (raw === "false") return false;
+    if (raw === "true" || raw === "1") return true;
+    if (raw === "false" || raw === "0") return false;
   } catch {}
   return fallback;
 }
@@ -161,6 +161,19 @@ function BackgroundUpdater() {
       local,
     };
   });
+
+  const [settingsVersion, setSettingsVersion] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleSettingsChange = () => {
+      setSettingsVersion((prev) => prev + 1);
+    };
+    window.addEventListener("openwork:update-settings-changed", handleSettingsChange);
+    return () => {
+      window.removeEventListener("openwork:update-settings-changed", handleSettingsChange);
+    };
+  }, []);
 
   useEffect(() => {
     const autoCheck = readStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, true);
@@ -189,7 +202,7 @@ function BackgroundUpdater() {
       clearTimeout(delayId);
       clearInterval(intervalId);
     };
-  }, [checkForUpdates]);
+  }, [checkForUpdates, settingsVersion]);
 
   // Listen for updateState changes to show the notification alert
   const lastStateRef = useRef<string | null>(null);
