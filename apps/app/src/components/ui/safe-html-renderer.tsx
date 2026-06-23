@@ -17,7 +17,7 @@ declare global {
 if (typeof window !== "undefined" && !window.__OPENWORK_DOMPURIFY_LINK_HOOK_REGISTERED__) {
   window.__OPENWORK_DOMPURIFY_LINK_HOOK_REGISTERED__ = true;
   DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-    if (node instanceof HTMLAnchorElement && node.target === "_blank") {
+    if (node instanceof HTMLAnchorElement && node.target) {
       const existingRel = node.rel || "";
       const relParts = existingRel
         .split(/\s+/)
@@ -26,6 +26,13 @@ if (typeof window !== "undefined" && !window.__OPENWORK_DOMPURIFY_LINK_HOOK_REGI
       if (!relParts.includes("noopener")) {
         relParts.push("noopener");
       }
+      if (!relParts.includes("noreferrer")) {
+        relParts.push("noreferrer");
+      }
+      node.rel = relParts.join(" ");
+    }
+  });
+}
       if (!relParts.includes("noreferrer")) {
         relParts.push("noreferrer");
       }
