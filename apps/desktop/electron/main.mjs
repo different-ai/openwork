@@ -393,6 +393,7 @@ const pendingDeepLinks = [];
 const browserPanel = createBrowserPanel({
   remoteDebugPort,
   getWindow: () => mainWindow,
+  onDeepLink: (urls) => queueDeepLinks(urls),
 });
 
 const workspaceStore = createWorkspaceStore({

@@ -18,8 +18,9 @@ import {
   type AppNotification,
   type NotificationSeverity,
 } from "@/react-app/kernel/notification-store";
+import { useNavigate } from "react-router-dom";
 import { requestOpenModelPicker } from "./new-providers-listener";
-import { openNotificationCenterEvent } from "./notifications";
+import { openNotificationCenterEvent, requestOpenMarketplacePlugin } from "./notifications";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { useShellConfig } from "./shell-config";
 
@@ -61,6 +62,7 @@ export function NotificationBell() {
   const markAllRead = useNotificationStore((state) => state.markAllRead);
   const clearAll = useNotificationStore((state) => state.clearAll);
   const reloadCoordinator = useReloadCoordinator();
+  const navigate = useNavigate();
 
   const unreadCount = useMemo(
     () => notifications.filter((notification) => notification.readAt === null).length,
@@ -91,9 +93,17 @@ export function NotificationBell() {
         requestOpenModelPicker(action.providerIds);
       } else if (action.type === "reload-engine") {
         void reloadCoordinator.reloadWorkspaceEngine();
+      } else if (action.type === "open-extensions-marketplace") {
+        if (action.pluginName) {
+          requestOpenMarketplacePlugin(action.pluginName);
+        }
+        navigate("/settings/cloud-marketplaces");
+      } else if (action.type === "install-marketplace-plugin") {
+        requestOpenMarketplacePlugin(action.pluginName);
+        navigate("/settings/cloud-marketplaces");
       }
     },
-    [markAllRead, reloadCoordinator],
+    [markAllRead, navigate, reloadCoordinator],
   );
 
   if (!config.notifications) return null;

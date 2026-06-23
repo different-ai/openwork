@@ -146,6 +146,8 @@ export function ManageMembersScreen() {
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [openMemberMenuId, setOpenMemberMenuId] = useState<string | null>(null);
   const [memberRoleDraft, setMemberRoleDraft] = useState("member");
+  const [editingMemberTeamsId, setEditingMemberTeamsId] = useState<string | null>(null);
+  const [memberTeamsDraft, setMemberTeamsDraft] = useState<Set<string>>(new Set());
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [teamNameDraft, setTeamNameDraft] = useState("");
@@ -702,8 +704,8 @@ export function ManageMembersScreen() {
                   : access.canManageMembers || access.canRemoveMembers;
 
               return (
+                <div key={member.id}>
                 <div
-                  key={member.id}
                   className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] items-center gap-4 border-b border-gray-100 px-6 py-3.5 transition hover:bg-gray-50/60 last:border-b-0"
                 >
                   <OrgMemberIdentity member={member} />
@@ -800,6 +802,25 @@ export function ManageMembersScreen() {
                                 Edit role
                               </button>
                             ) : null}
+                            {!isInvited && access.canManageTeams ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const currentTeamIds = new Set(
+                                    (orgContext?.teams ?? [])
+                                      .filter((team) => team.memberIds.includes(member.id))
+                                      .map((team) => team.id),
+                                  );
+                                  setEditingMemberTeamsId(member.id);
+                                  setMemberTeamsDraft(currentTeamIds);
+                                  setOpenMemberMenuId(null);
+                                }}
+                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50"
+                              >
+                                <Users className="h-3.5 w-3.5" />
+                                Manage teams
+                              </button>
+                            ) : null}
                             {!isInvited && access.canRemoveMembers ? (
                               <button
                                 type="button"
@@ -829,6 +850,82 @@ export function ManageMembersScreen() {
                       <span className="text-[13px] text-gray-400">Read only</span>
                     )}
                   </div>
+                </div>
+                {editingMemberTeamsId === member.id ? (
+                  <div className="col-span-full border-b border-gray-100 bg-gray-50/50 px-6 py-4">
+                    <div className="flex flex-wrap items-start gap-4">
+                      <div className="flex-1">
+                        <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-gray-400">
+                          Teams for {member.user.name}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {(orgContext?.teams ?? []).map((team) => {
+                            const selected = memberTeamsDraft.has(team.id);
+                            return (
+                              <button
+                                key={team.id}
+                                type="button"
+                                onClick={() => {
+                                  setMemberTeamsDraft((current) => {
+                                    const next = new Set(current);
+                                    if (next.has(team.id)) {
+                                      next.delete(team.id);
+                                    } else {
+                                      next.add(team.id);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition ${selected ? "border-blue-300 bg-blue-50 text-blue-700" : "border-gray-200 bg-white text-gray-500 hover:border-gray-300"}`}
+                              >
+                                {selected ? (
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                ) : (
+                                  <Circle className="h-3.5 w-3.5" />
+                                )}
+                                {team.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 pt-5">
+                        <button
+                          type="button"
+                          onClick={() => setEditingMemberTeamsId(null)}
+                          className="inline-flex h-8 items-center rounded-full border border-gray-200 bg-white px-3.5 text-[13px] font-medium text-gray-600 transition hover:bg-gray-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={mutationBusy === "update-team"}
+                          onClick={async () => {
+                            setPageError(null);
+                            try {
+                              // For each team, update its member list to add or remove this member.
+                              for (const team of orgContext?.teams ?? []) {
+                                const wasInTeam = team.memberIds.includes(member.id);
+                                const shouldBeInTeam = memberTeamsDraft.has(team.id);
+                                if (wasInTeam === shouldBeInTeam) continue;
+                                const nextMemberIds = shouldBeInTeam
+                                  ? [...team.memberIds, member.id]
+                                  : team.memberIds.filter((id) => id !== member.id);
+                                await updateTeam(team.id, { memberIds: nextMemberIds });
+                              }
+                              setEditingMemberTeamsId(null);
+                            } catch (error) {
+                              setPageError(error instanceof Error ? error.message : "Could not update teams.");
+                            }
+                          }}
+                          className="inline-flex h-8 items-center rounded-full bg-gray-900 px-3.5 text-[13px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Save teams
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
                 </div>
               );
             })}

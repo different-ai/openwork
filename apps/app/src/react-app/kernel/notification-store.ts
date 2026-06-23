@@ -23,7 +23,9 @@ export type NotificationKind =
 
 export type NotificationAction =
   | { type: "open-model-picker"; providerIds: string[] }
-  | { type: "reload-engine" };
+  | { type: "reload-engine" }
+  | { type: "open-extensions-marketplace"; pluginName?: string }
+  | { type: "install-marketplace-plugin"; pluginName: string };
 
 export type AppNotification = {
   id: string;
@@ -85,6 +87,8 @@ function isAction(value: unknown): value is NotificationAction {
   if (typeof value !== "object" || value === null) return false;
   const type = Reflect.get(value, "type");
   if (type === "reload-engine") return true;
+  if (type === "open-extensions-marketplace") return true;
+  if (type === "install-marketplace-plugin") return true;
   if (type === "open-model-picker") {
     const providerIds = Reflect.get(value, "providerIds");
     return Array.isArray(providerIds) && providerIds.every((id) => typeof id === "string");
