@@ -322,7 +322,8 @@ export function SessionPage(props: SessionPageProps) {
 
   useEffect(() => {
     if (!appVersion) return;
-    const lastSeenVersion = localStorage.getItem("openwork.react.settings.last-seen-version");
+    const lastSeenVersion = localStorage.getItem("openwork.react.settings.last-seen-version")
+      ?? localStorage.getItem("openwork:last-seen-version");
     
     // If it's a first time startup, we just record the current version
     if (!lastSeenVersion) {
