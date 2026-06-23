@@ -19,7 +19,10 @@ if (typeof window !== "undefined" && !window.__OPENWORK_DOMPURIFY_LINK_HOOK_REGI
   DOMPurify.addHook("afterSanitizeAttributes", (node) => {
     if (node instanceof HTMLAnchorElement && node.target === "_blank") {
       const existingRel = node.rel || "";
-      const relParts = existingRel.split(/\s+/).filter(Boolean);
+      const relParts = existingRel
+        .split(/\s+/)
+        .filter(Boolean)
+        .filter((t) => t.toLowerCase() !== "opener");
       if (!relParts.includes("noopener")) {
         relParts.push("noopener");
       }
