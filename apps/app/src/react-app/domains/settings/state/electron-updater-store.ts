@@ -293,7 +293,7 @@ export const useElectronUpdaterStore = create<ElectronUpdaterStore>((set, get) =
       // so on reboot we can check if version matches and display What's New modal.
       if (currentStatus?.version && currentStatus?.notes) {
         localStorage.setItem("openwork.react.settings.pending-release-version", currentStatus.version);
-        localStorage.setItem("openwork:pending-release-notes", currentStatus.notes);
+        localStorage.setItem("openwork.react.settings.pending-release-notes", currentStatus.notes);
       }
 
       if (bridge.onDownloadProgress && !isDownloadProgressSubscribed) {

@@ -322,17 +322,17 @@ export function SessionPage(props: SessionPageProps) {
 
   useEffect(() => {
     if (!appVersion) return;
-    const lastSeenVersion = localStorage.getItem("openwork:last-seen-version");
+    const lastSeenVersion = localStorage.getItem("openwork.react.settings.last-seen-version");
     
     // If it's a first time startup, we just record the current version
     if (!lastSeenVersion) {
-      localStorage.setItem("openwork:last-seen-version", appVersion);
+      localStorage.setItem("openwork.react.settings.last-seen-version", appVersion);
       return;
     }
     
     if (lastSeenVersion !== appVersion) {
       const pendingVersion = localStorage.getItem("openwork.react.settings.pending-release-version");
-      const pendingNotes = localStorage.getItem("openwork:pending-release-notes");
+      const pendingNotes = localStorage.getItem("openwork.react.settings.pending-release-notes");
       
       // If we updated to the pending version, show the pending notes
       if (pendingVersion === appVersion && pendingNotes) {
@@ -341,7 +341,7 @@ export function SessionPage(props: SessionPageProps) {
         setWhatsNewOpen(true);
       }
       // Regardless, update last-seen-version so we don't prompt again
-      localStorage.setItem("openwork:last-seen-version", appVersion);
+      localStorage.setItem("openwork.react.settings.last-seen-version", appVersion);
     }
   }, [appVersion]);
 
