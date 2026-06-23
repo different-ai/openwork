@@ -15,7 +15,7 @@ export function SafeHtmlRenderer({ content, className }: SafeHtmlRendererProps) 
     // Parse to html if it is markdown
     const rawHtml = isHtml ? content : (marked.parse(content) as string);
     return DOMPurify.sanitize(rawHtml, {
-      ADD_ATTR: ["target", "rel"],
+      ADD_ATTR: ["target", "rel", "class"],
     });
   }, [content]);
 

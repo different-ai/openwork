@@ -298,7 +298,7 @@ function WhatsNewModal({ open, onClose, version, notes }: WhatsNewModalProps) {
         <div className="flex-1 overflow-y-auto pr-1 py-2">
           <SafeHtmlRenderer
             content={notes}
-            className="prose dark:prose-invert max-w-none text-foreground/80 text-sm leading-relaxed space-y-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:my-2 break-words [word-break:break-word] whitespace-normal"
+            className="prose dark:prose-invert max-w-none text-foreground/80 text-sm leading-relaxed space-y-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:my-2 break-words [word-break:break-word] whitespace-normal [&_a]:text-primary [&_a]:underline hover:[&_a]:text-primary/80"
           />
         </div>
         <DialogFooter className="border-t pt-3 flex-shrink-0 flex items-center justify-end">
