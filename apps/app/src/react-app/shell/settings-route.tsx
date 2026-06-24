@@ -89,6 +89,7 @@ import { useMessagingViewProps } from "@/react-app/domains/settings/state/messag
 import { useElectronUpdaterState } from "@/react-app/domains/settings/state/electron-updater-state";
 import { CloudSessionProvider, useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
+import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useBootState } from "./boot-state";
 import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "@/react-app/domains/settings/state/extensions-store";
@@ -1434,6 +1435,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       openworkServerStore.dispose();
     };
   }, [connectionsStore, extensionsStore, openworkServerStore, providerAuthStore]);
+
+  const refreshMarketplaceAction = useMemo<OpenworkControlAction>(() => ({
+    id: "extensions.refresh-marketplace",
+    label: "Refresh marketplace extensions",
+    description: "Force a fresh sync of organization marketplace plugins from the cloud.",
+    sideEffect: "mutation",
+    execute: async () => {
+      await extensionsStore.refreshCloudOrgMarketplaces({ force: true });
+      return { marketplaceCount: extensionsStore.cloudOrgMarketplaces().length };
+    },
+  }), [extensionsStore]);
+  useControlAction(refreshMarketplaceAction);
 
   // Periodically reconcile workspace-imported cloud providers from Den while
   // signed in (dev #1509 "auto-sync cloud providers"). Mounted here because

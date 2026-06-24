@@ -1544,6 +1544,22 @@ export function SessionRoute() {
     }
   }, [baseUrl, client, local, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, token]);
 
+  const createWorkspaceControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "workspace.create",
+    label: "Create a local workspace",
+    description: "Create a workspace at the given folder path without showing the file picker dialog.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [{ name: "path", type: "string", required: true, description: "Absolute folder path for the new workspace." }],
+    execute: async (args) => {
+      const folder = (args as { path?: string } | undefined)?.path?.trim();
+      if (!folder) return { ok: false, error: "path is required" };
+      await handleCreateWorkspace("starter", folder);
+      return { path: folder };
+    },
+  }), [handleCreateWorkspace]);
+  useControlAction(createWorkspaceControlAction);
+
   const handleCreateRemoteWorkspace = useCallback(async (input: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;

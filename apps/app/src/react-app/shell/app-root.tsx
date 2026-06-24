@@ -1,11 +1,20 @@
 /** @jsxImportSource react */
 
-import { useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
-import { readDenBootstrapConfig, readDenSettings } from "../../app/lib/den";
-import { denSettingsChangedEvent, denSessionUpdatedEvent } from "../../app/lib/den-session-events";
+import {
+  createDenClient,
+  readDenBootstrapConfig,
+  readDenSettings,
+  writeDenSettings,
+} from "../../app/lib/den";
+import {
+  denSettingsChangedEvent,
+  denSessionUpdatedEvent,
+  dispatchDenSessionUpdated,
+} from "../../app/lib/den-session-events";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
@@ -15,7 +24,12 @@ import { LoadingOverlay } from "./loading-overlay";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { AppMenuProvider } from "./app-menu";
-import { OpenworkControlProvider, OpenworkRouteControlActions } from "./control/control-provider";
+import {
+  OpenworkControlProvider,
+  OpenworkRouteControlActions,
+  useControlAction,
+  type OpenworkControlAction,
+} from "./control/control-provider";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { ShellConfigProvider } from "./shell-config";
@@ -123,6 +137,66 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   return <>{children}</>;
 }
 
+/**
+ * Control actions for cloud auth. Placed inside OpenworkControlProvider so
+ * the actions are available on every route (including /welcome and /signin).
+ */
+function DenAuthControlActions() {
+  const denAuth = useDenAuth();
+
+  const exchangeGrantAction = useMemo<OpenworkControlAction>(() => ({
+    id: "auth.exchange-grant",
+    label: "Sign in with a handoff grant",
+    description: "Exchange a desktop handoff grant string to sign in without the browser flow.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [
+      { name: "grant", type: "string", required: true, description: "The raw handoff grant string." },
+      { name: "baseUrl", type: "string", required: false, description: "Optional Den base URL." },
+    ],
+    execute: async (args) => {
+      const { grant, baseUrl: argBaseUrl } = (args ?? {}) as { grant?: string; baseUrl?: string };
+      if (!grant?.trim()) return { ok: false, error: "grant is required" };
+      const settings = readDenSettings();
+      const targetBaseUrl = argBaseUrl?.trim() || settings.baseUrl;
+      const client = createDenClient({ baseUrl: targetBaseUrl, apiBaseUrl: settings.apiBaseUrl });
+      const result = await client.exchangeDesktopHandoff(grant.trim());
+      if (!result.token) return { ok: false, error: "No token returned" };
+      writeDenSettings({
+        baseUrl: targetBaseUrl,
+        apiBaseUrl: client.baseUrls.apiBaseUrl,
+        authToken: result.token,
+        activeOrgId: null,
+        activeOrgSlug: null,
+        activeOrgName: null,
+      });
+      dispatchDenSessionUpdated({
+        status: "success",
+        baseUrl: targetBaseUrl,
+        token: result.token,
+        user: result.user,
+        email: result.user?.email ?? null,
+      });
+      return { email: result.user?.email };
+    },
+  }), []);
+  useControlAction(exchangeGrantAction);
+
+  const authStatusAction = useMemo<OpenworkControlAction>(() => ({
+    id: "auth.status",
+    label: "Get auth status",
+    description: "Return the current cloud sign-in status and user.",
+    sideEffect: "none",
+    execute: () => ({
+      status: denAuth.status,
+      user: denAuth.user ? { email: denAuth.user.email, name: denAuth.user.name } : null,
+    }),
+  }), [denAuth.status, denAuth.user]);
+  useControlAction(authStatusAction);
+
+  return null;
+}
+
 let appOpenedCaptured = false;
 
 export function AppRoot() {
@@ -143,6 +217,7 @@ export function AppRoot() {
         <AppMenuProvider>
         <OpenworkControlProvider>
           <OpenworkRouteControlActions />
+          <DenAuthControlActions />
           <DenSigninGate>
             <Routes>
               <Route
