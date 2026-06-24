@@ -15,7 +15,6 @@ import {
   OrganizationTable,
   OrgSubscriptionTable,
   ScimSyncEventTable,
-  SsoProviderTable,
   TelemetryEventTable,
   WorkerTable,
   AdminAllowlistTable,
@@ -280,7 +279,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await tx.delete(DesktopHandoffGrantTable).where(eq(DesktopHandoffGrantTable.user_id, userId))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
         await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.userId, userId))
-        await tx.delete(SsoProviderTable).where(eq(SsoProviderTable.userId, userId))
         await tx.update(MemberTable).set({ removedAt }).where(eq(MemberTable.userId, userId))
         await tx.update(WorkerTable).set({ created_by_user_id: null }).where(eq(WorkerTable.created_by_user_id, userId))
         await tx.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
