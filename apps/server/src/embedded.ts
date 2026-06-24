@@ -9,7 +9,7 @@ import { mkdir } from "node:fs/promises";
 import { resolveServerConfig, type CliArgs } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer, type OpencodeExecutionSnapshot } from "./managed-opencode.js";
 import { startServer, syncAllWorkspacesRuntimeMcpToEngine } from "./server.js";
-import { ensureWorkspaceFiles } from "./workspace-init.js";
+import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
@@ -47,9 +47,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   let managedOpencode: ManagedOpencodeServer | null = null;
 
   if (!config.readOnly) {
-    for (const workspace of config.workspaces) {
-      await ensureWorkspaceFiles(workspace.path, workspace.preset ?? "starter");
-    }
+    await ensureLocalWorkspaceFiles(config.workspaces);
   }
 
   if (!config.opencodeBaseUrl && options.manageOpencode) {

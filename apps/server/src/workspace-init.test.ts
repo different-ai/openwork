@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir, stat } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ensureWorkspaceFiles } from "./workspace-init.js";
+import { ensureWorkspaceFiles, ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { openworkExtensionsPreviewPluginPath, openworkPluginPath } from "./openwork-extensions-plugin-path.js";
 
 async function withWorkspace(fn: (root: string) => Promise<void>) {
@@ -130,5 +130,35 @@ describe("ensureWorkspaceFiles", () => {
 `);
       expect(result.reloadReasons).not.toContain("config");
     });
+  });
+});
+
+describe("ensureLocalWorkspaceFiles", () => {
+  test("provisions local workspaces and skips remote ones", async () => {
+    await withWorkspace(async (root) => {
+      await ensureLocalWorkspaceFiles([
+        { path: root, preset: "starter", workspaceType: "local" },
+        { path: "", preset: "remote", workspaceType: "remote" },
+      ]);
+      const openwork = await readFile(join(root, ".opencode", "openwork.json"), "utf8");
+      expect(openwork).toContain('"authorizedRoots"');
+    });
+  });
+
+  test("does not throw when a remote workspace has an empty path", async () => {
+    // Regression: a remote workspace is persisted with an empty path, which used
+    // to reach ensureWorkspaceFiles() and throw invalid_workspace_path, aborting
+    // server startup so local workspaces could never connect to the engine.
+    await expect(
+      ensureLocalWorkspaceFiles([{ path: "", preset: "remote", workspaceType: "remote" }]),
+    ).resolves.toBeUndefined();
+  });
+
+  test("skips a non-remote workspace that has no local path", async () => {
+    // A legacy/migrated entry can default to workspaceType "local" with an empty
+    // path; it has no local files to provision and must be skipped, not crash.
+    await expect(
+      ensureLocalWorkspaceFiles([{ path: "", preset: "starter", workspaceType: "local" }]),
+    ).resolves.toBeUndefined();
   });
 });

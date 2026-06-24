@@ -5,7 +5,7 @@ import { ensureDir, exists } from "./utils.js";
 import { ApiError } from "./errors.js";
 import { openworkConfigPath, opencodeConfigPath } from "./workspace-files.js";
 import { readJsoncFile } from "./jsonc.js";
-import type { ReloadReason } from "./types.js";
+import type { ReloadReason, WorkspaceInfo } from "./types.js";
 
 type WorkspaceOpenworkConfig = {
   version: number;
@@ -72,6 +72,25 @@ export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: s
     changed: openworkConfigChanged || reloadReasons.size > 0,
     reloadReasons: Array.from(reloadReasons),
   };
+}
+
+/**
+ * Provision workspace files for every workspace that has local files to set up.
+ *
+ * Skips remote workspaces (which live on a host and may even carry a non-empty
+ * remote `directory`) and any workspace without a resolved local path. Either
+ * would otherwise reach ensureWorkspaceFiles() — which throws
+ * `invalid_workspace_path` on a blank path — and abort server startup. Local
+ * workspaces are always created with a validated path, so they are unaffected.
+ * Shared by the embedded-server and CLI boot paths.
+ */
+export async function ensureLocalWorkspaceFiles(
+  workspaces: ReadonlyArray<Pick<WorkspaceInfo, "path" | "preset" | "workspaceType">>,
+): Promise<void> {
+  for (const workspace of workspaces) {
+    if (workspace.workspaceType === "remote" || !workspace.path.trim()) continue;
+    await ensureWorkspaceFiles(workspace.path, workspace.preset);
+  }
 }
 
 export async function readRawOpencodeConfig(path: string): Promise<{ exists: boolean; content: string | null }> {

@@ -5,7 +5,7 @@ import { mkdir } from "node:fs/promises";
 import { parseCliArgs, printHelp, resolveServerConfig } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
 import { createServerLogger, startServer, syncAllWorkspacesRuntimeMcpToEngine } from "./server.js";
-import { ensureWorkspaceFiles } from "./workspace-init.js";
+import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -27,9 +27,7 @@ const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.hos
 let managedOpencode: ManagedOpencodeServer | null = null;
 
 if (!config.readOnly) {
-  for (const workspace of config.workspaces) {
-    await ensureWorkspaceFiles(workspace.path, workspace.preset ?? "starter");
-  }
+  await ensureLocalWorkspaceFiles(config.workspaces);
 }
 
 if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
