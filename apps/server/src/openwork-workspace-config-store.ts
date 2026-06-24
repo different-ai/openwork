@@ -108,6 +108,31 @@ export async function writeOpenworkWorkspaceConfig(
   return next;
 }
 
+export async function hasOpenworkWorkspaceConfig(
+  config: ServerConfig,
+  workspaceId: string,
+): Promise<boolean> {
+  const db = await workspaceConfigDb(config);
+  return Boolean(db.get(workspaceId));
+}
+
+/**
+ * Seed the DB-backed openwork config for a workspace if no row exists yet.
+ * Used at workspace creation and as the migrate-on-read landing spot for
+ * legacy `.opencode/openwork.json` files. No-op when a row is already present,
+ * so it never clobbers live provisioning state.
+ */
+export async function seedOpenworkWorkspaceConfigIfEmpty(
+  config: ServerConfig,
+  workspaceId: string,
+  seed: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (await hasOpenworkWorkspaceConfig(config, workspaceId)) {
+    return readOpenworkWorkspaceConfig(config, workspaceId);
+  }
+  return writeOpenworkWorkspaceConfig(config, workspaceId, () => seed);
+}
+
 export function mergeOpenworkWorkspaceConfigs(
   legacy: Record<string, unknown>,
   stored: Record<string, unknown>,

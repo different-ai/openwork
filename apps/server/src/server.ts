@@ -68,8 +68,10 @@ import {
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 import {
+  hasOpenworkWorkspaceConfig,
   mergeOpenworkWorkspaceConfigs,
   readOpenworkWorkspaceConfig,
+  seedOpenworkWorkspaceConfigIfEmpty,
   writeOpenworkWorkspaceConfig,
 } from "./openwork-workspace-config-store.js";
 import { buildOpenworkRuntimeConfigObject } from "./openwork-runtime-config.js";
@@ -1352,10 +1354,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const openwork = mergeOpenworkWorkspaceConfigs(
-      await readOpenworkConfig(workspace.path),
-      await readOpenworkWorkspaceConfig(config, workspace.id),
-    );
+    const openwork = await readOpenworkConfigForWorkspace(config, workspace);
     const opencode = mergeOpencodeConfigs(
       await readOpencodeConfig(workspace.path),
       await readRuntimeOpencodeConfig(config, workspace.id),
@@ -1366,10 +1365,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/desktop-cloud-sync", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const openwork = mergeOpenworkWorkspaceConfigs(
-      await readOpenworkConfig(workspace.path),
-      await readOpenworkWorkspaceConfig(config, workspace.id),
-    );
+    const openwork = await readOpenworkConfigForWorkspace(config, workspace);
     return jsonResponse(readDesktopCloudSyncState(openwork));
   });
 
@@ -1384,10 +1380,7 @@ function createRoutes(
     }
 
     const result = await enqueueDesktopCloudSync(async () => {
-      const openwork = mergeOpenworkWorkspaceConfigs(
-        await readOpenworkConfig(workspace.path),
-        await readOpenworkWorkspaceConfig(config, workspace.id),
-      );
+      const openwork = await readOpenworkConfigForWorkspace(config, workspace);
       const cloudImports = await readInstalledCloudPlugins(config, workspace.id);
       const next = syncDesktopCloudResources({ openwork: { ...openwork, cloudImports }, snapshot });
       await writeOpenworkWorkspaceConfig(config, workspace.id, () => next.openwork);
@@ -1646,18 +1639,31 @@ function createRoutes(
       paths: [configPath],
     });
 
-    const openwork = await readOpenworkConfigForStatus(workspace.path);
-    const legacy = legacyRuntimeConfigFromOpenworkConfig(openwork.data);
+    // Resolve the effective openwork config (DB, migrating any legacy file
+    // contents in on read) so legacy runtime keys are detected wherever they
+    // currently live.
+    let openworkError: string | null = null;
+    let openworkData: Record<string, unknown> = {};
+    try {
+      openworkData = await readOpenworkConfigForWorkspace(config, workspace);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "invalid_json") {
+        openworkError = error.message;
+      } else {
+        throw error;
+      }
+    }
+    const legacy = legacyRuntimeConfigFromOpenworkConfig(openworkData);
     const user = userRuntimeConfigFromOpencodeConfig(await readOpencodeConfig(workspace.path));
     if (!legacy.keys.length && !user.keys.length) {
-      return jsonResponse({ migrated: false, keys: [], legacyKeys: [], userOpencodeKeys: [], updatedAt: null, legacyError: openwork.error });
+      return jsonResponse({ migrated: false, keys: [], legacyKeys: [], userOpencodeKeys: [], updatedAt: null, legacyError: openworkError });
     }
 
     await writeRuntimeOpencodeConfig(config, workspace.id, (current) => (
       mergeLegacyRuntimeConfig(mergeLegacyRuntimeConfig(current, legacy.config), user.config)
     ));
-    if (legacy.keys.length && !openwork.error) {
-      await writeOpenworkConfig(workspace.path, removeLegacyRuntimeConfig(openwork.data), false);
+    if (legacy.keys.length && !openworkError) {
+      await writeOpenworkConfigForWorkspace(config, workspace, removeLegacyRuntimeConfig(openworkData), false);
     }
     await removeUserRuntimeConfigFromOpencode(workspace.path, user.keys);
 
@@ -1674,15 +1680,18 @@ function createRoutes(
     });
     emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(configPath));
 
-    return jsonResponse({ migrated: true, keys, legacyKeys: legacy.keys, userOpencodeKeys: user.keys, updatedAt, legacyError: openwork.error });
+    return jsonResponse({ migrated: true, keys, legacyKeys: legacy.keys, userOpencodeKeys: user.keys, updatedAt, legacyError: openworkError });
   });
 
   addRoute(routes, "GET", "/workspace/:id/runtime-config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const runtime = await readRuntimeOpencodeConfig(config, workspace.id);
-    const openwork = await readOpenworkConfigForStatus(workspace.path);
-    const openworkConfig = openwork.data;
-    const legacy = legacyRuntimeConfigFromOpenworkConfig(openworkConfig);
+    // Report legacy runtime keys from the effective (DB-backed) openwork config
+    // so the status reflects post-migration state, while still surfacing parse
+    // errors from a malformed legacy file.
+    const fileStatus = await readOpenworkConfigForStatus(workspace.path);
+    const effectiveOpenwork = fileStatus.error ? {} : await readOpenworkConfigForWorkspace(config, workspace);
+    const legacy = legacyRuntimeConfigFromOpenworkConfig(effectiveOpenwork);
     const rawOpencode = await readRawOpencodeConfig(opencodeConfigPath(workspace.path));
     const persistedOpencode = await readOpencodeConfig(workspace.path);
     const globalOpencodePath = resolveOpencodeConfigFilePath("global", workspace.path);
@@ -1720,7 +1729,7 @@ function createRoutes(
       legacyOpenwork: {
         path: openworkConfigPath(workspace.path),
         keys: legacy.keys,
-        error: openwork.error,
+        error: fileStatus.error,
       },
       userOpencode: {
         path: opencodeConfigPath(workspace.path),
@@ -2390,7 +2399,7 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/export", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sensitiveMode = parseWorkspaceExportSensitiveMode(ctx.url.searchParams.get("sensitive"));
-    const exportPayload = await exportWorkspace(workspace, { sensitiveMode });
+    const exportPayload = await exportWorkspace(config, workspace, { sensitiveMode });
     return jsonResponse(exportPayload);
   });
 
@@ -2454,7 +2463,7 @@ function createRoutes(
       );
     }
     const configFingerprintBefore = await computeReloadFingerprint(workspace.path, "config");
-    await importWorkspace(workspace, body, latestPreview);
+    await importWorkspace(config, workspace, body, latestPreview);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -2680,6 +2689,45 @@ async function readOpenworkConfigForStatus(workspaceRoot: string): Promise<{
     }
     throw error;
   }
+}
+
+/**
+ * Resolve the effective per-workspace openwork config from the runtime DB,
+ * migrating a legacy `.opencode/openwork.json` file into the DB on first read.
+ *
+ * The DB is the source of truth. The file is only consulted to seed the DB
+ * once (back-compat for workspaces created before the file->DB migration), and
+ * is never written afterwards. Returns the merged view ({...file, ...db}) so a
+ * partially-migrated install still surfaces every key.
+ */
+async function readOpenworkConfigForWorkspace(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+): Promise<Record<string, unknown>> {
+  const stored = await readOpenworkWorkspaceConfig(config, workspace.id);
+  if (Object.keys(stored).length > 0 || (await hasOpenworkWorkspaceConfig(config, workspace.id))) {
+    return stored;
+  }
+  const legacy = await readOpenworkConfigForStatus(workspace.path);
+  if (Object.keys(legacy.data).length === 0) return {};
+  // Migrate-on-read: copy the legacy file contents into the DB once.
+  await seedOpenworkWorkspaceConfigIfEmpty(config, workspace.id, legacy.data);
+  return mergeOpenworkWorkspaceConfigs(legacy.data, await readOpenworkWorkspaceConfig(config, workspace.id));
+}
+
+/**
+ * Persist a full openwork config document for a workspace to the runtime DB.
+ * Replaces the legacy file write path; the file is no longer written.
+ */
+async function writeOpenworkConfigForWorkspace(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  payload: Record<string, unknown>,
+  merge: boolean,
+): Promise<void> {
+  await writeOpenworkWorkspaceConfig(config, workspace.id, (current) =>
+    merge ? { ...current, ...payload } : payload,
+  );
 }
 
 function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
@@ -2915,13 +2963,6 @@ async function disconnectMcpFromOpencodeEngine(
   }
 }
 
-async function writeOpenworkConfig(workspaceRoot: string, payload: Record<string, unknown>, merge: boolean): Promise<void> {
-  const path = openworkConfigPath(workspaceRoot);
-  const next = merge ? { ...(await readOpenworkConfig(workspaceRoot)), ...payload } : payload;
-  await ensureDir(join(workspaceRoot, ".opencode"));
-  await writeFile(path, JSON.stringify(next, null, 2) + "\n", "utf8");
-}
-
 async function requireApproval(
   ctx: RequestContext,
   input: Omit<ApprovalRequest, "id" | "createdAt" | "actor">,
@@ -2937,13 +2978,14 @@ async function requireApproval(
 }
 
 async function exportWorkspace(
+  config: ServerConfig,
   workspace: WorkspaceInfo,
   options?: { sensitiveMode?: WorkspaceExportSensitiveMode },
 ) {
   const sensitiveMode = options?.sensitiveMode ?? "auto";
   const rawOpencode = await readOpencodeConfig(workspace.path);
   let opencode = sanitizePortableOpencodeConfig(rawOpencode);
-  const openwork = sanitizeOpenworkTemplateConfig(await readOpenworkConfig(workspace.path));
+  const openwork = sanitizeOpenworkTemplateConfig(await readOpenworkConfigForWorkspace(config, workspace));
   const skills = await listSkills(workspace.path, false);
   const commands = await listCommands(workspace.path, "workspace");
   let files = await listPortableFiles(workspace.path);
@@ -3013,7 +3055,7 @@ function workspaceImportRelativePath(workspace: WorkspaceInfo, path: string): st
   return relative(workspace.path, path).replaceAll("\\", "/");
 }
 
-async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string, unknown>, preview: WorkspaceImportPlan): Promise<void> {
+async function importWorkspace(config: ServerConfig, workspace: WorkspaceInfo, payload: Record<string, unknown>, preview: WorkspaceImportPlan): Promise<void> {
   const input = normalizeWorkspaceImportPayload(workspace.path, payload);
   const changed = new Set(
     preview.changes
@@ -3038,9 +3080,9 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
     changedPath("openwork", workspaceImportRelativePath(workspace, openworkConfigPath(workspace.path)))
   ) {
     if (input.modes.openwork === "replace") {
-      await writeOpenworkConfig(workspace.path, input.openwork, false);
+      await writeOpenworkConfigForWorkspace(config, workspace, input.openwork, false);
     } else {
-      await writeOpenworkConfig(workspace.path, input.openwork, true);
+      await writeOpenworkConfigForWorkspace(config, workspace, input.openwork, true);
     }
   }
 
@@ -3097,7 +3139,7 @@ async function materializeBlueprintSessions(config: ServerConfig, workspace: Wor
   existing: Array<{ templateId: string; sessionId: string }>;
   openSessionId: string | null;
 }> {
-  const openwork = await readOpenworkConfig(workspace.path);
+  const openwork = await readOpenworkConfigForWorkspace(config, workspace);
   const templates = normalizeBlueprintSessionTemplates(openwork);
   if (!templates.length) {
     return { ok: true, created: [], existing: [], openSessionId: null };
@@ -3135,7 +3177,7 @@ async function materializeBlueprintSessions(config: ServerConfig, workspace: Wor
     created.map(({ templateId, sessionId }) => ({ templateId, sessionId })),
     now,
   );
-  await writeOpenworkConfig(workspace.path, nextOpenwork, false);
+  await writeOpenworkConfigForWorkspace(config, workspace, nextOpenwork, false);
 
   const preferredTemplate = templates.find((template) => template.openOnFirstLoad) ?? templates[0] ?? null;
   const openSessionId = preferredTemplate

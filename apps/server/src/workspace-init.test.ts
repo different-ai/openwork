@@ -3,7 +3,11 @@ import { mkdtemp, readFile, rm, writeFile, mkdir, stat } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ensureWorkspaceFiles, ensureLocalWorkspaceFiles } from "./workspace-init.js";
+import {
+  defaultWorkspaceOpenworkConfig,
+  ensureWorkspaceFiles,
+  ensureLocalWorkspaceFiles,
+} from "./workspace-init.js";
 import { openworkExtensionsPreviewPluginPath, openworkPluginPath } from "./openwork-extensions-plugin-path.js";
 
 async function withWorkspace(fn: (root: string) => Promise<void>) {
@@ -16,16 +20,28 @@ async function withWorkspace(fn: (root: string) => Promise<void>) {
 }
 
 describe("ensureWorkspaceFiles", () => {
-  test("creates OpenWork workspace config without writing opencode config", async () => {
+  test("does not write an openwork.json file (config is DB-backed now)", async () => {
     await withWorkspace(async (root) => {
       const result = await ensureWorkspaceFiles(root, "starter");
-      const openwork = await readFile(join(root, ".opencode", "openwork.json"), "utf8");
+      // openwork config no longer lands on disk; it is seeded into the runtime
+      // DB by the workspace-creation route.
+      await expect(
+        readFile(join(root, ".opencode", "openwork.json"), "utf8"),
+      ).rejects.toThrow();
       await expect(readFile(join(root, "opencode.jsonc"), "utf8")).rejects.toThrow();
-      expect(openwork).toContain('"authorizedRoots"');
       expect(result.reloadReasons).toEqual([]);
 
       const secondResult = await ensureWorkspaceFiles(root, "starter");
       expect(secondResult).toEqual({ changed: false, reloadReasons: [] });
+    });
+  });
+
+  test("defaultWorkspaceOpenworkConfig carries authorizedRoots + workspace metadata", async () => {
+    await withWorkspace(async (root) => {
+      const config = defaultWorkspaceOpenworkConfig(root, "starter");
+      expect(config.authorizedRoots).toEqual([root]);
+      expect(config.workspace?.preset).toBe("starter");
+      expect(config.version).toBe(1);
     });
   });
 
@@ -140,8 +156,11 @@ describe("ensureLocalWorkspaceFiles", () => {
         { path: root, preset: "starter", workspaceType: "local" },
         { path: "", preset: "remote", workspaceType: "remote" },
       ]);
-      const openwork = await readFile(join(root, ".opencode", "openwork.json"), "utf8");
-      expect(openwork).toContain('"authorizedRoots"');
+      // No openwork.json file is written; provisioning does not crash on the
+      // remote (empty-path) entry.
+      await expect(
+        readFile(join(root, ".opencode", "openwork.json"), "utf8"),
+      ).rejects.toThrow();
     });
   });
 

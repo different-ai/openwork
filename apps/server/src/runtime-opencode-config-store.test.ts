@@ -195,7 +195,10 @@ describe("runtime OpenCode config store", () => {
         expect(runtime.permission?.external_directory?.["/legacy/*"]).toBe("allow");
         expect(runtime.provider?.legacy).toEqual({ npm: "legacy-provider" });
 
-        const openwork = JSON.parse(await readFile(openworkPath, "utf8")) as Record<string, unknown>;
+        // The legacy file is migrated into the runtime DB and never rewritten.
+        // The cleaned config (legacy runtime keys stripped, metadata kept)
+        // now lives in the DB-backed openwork config.
+        const openwork = await readOpenworkWorkspaceConfig(config, WORKSPACE_ID);
         expect(openwork.version).toBe(1);
         expect(openwork.workspace).toEqual({ name: "Test" });
         expect(openwork.plugin).toBeUndefined();

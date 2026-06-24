@@ -1,9 +1,9 @@
-import { basename, join } from "node:path";
-import { readFile, writeFile } from "node:fs/promises";
+import { basename } from "node:path";
+import { readFile } from "node:fs/promises";
 
 import { ensureDir, exists } from "./utils.js";
 import { ApiError } from "./errors.js";
-import { openworkConfigPath, opencodeConfigPath } from "./workspace-files.js";
+import { opencodeConfigPath } from "./workspace-files.js";
 import { readJsoncFile } from "./jsonc.js";
 import type { ReloadReason, WorkspaceInfo } from "./types.js";
 
@@ -32,23 +32,24 @@ function normalizePreset(preset: string | null | undefined): string {
   return trimmed;
 }
 
-async function ensureWorkspaceOpenworkConfig(workspaceRoot: string, preset: string): Promise<boolean> {
-  const path = openworkConfigPath(workspaceRoot);
-  if (await exists(path)) return false;
-  const now = Date.now();
-  const config: WorkspaceOpenworkConfig = {
+/**
+ * Build the default per-workspace openwork config metadata. The openwork
+ * config is now stored in the runtime DB (see
+ * `seedOpenworkWorkspaceConfigIfEmpty`), not in `.opencode/openwork.json`, so
+ * this no longer writes a file. Exposed so the workspace-creation route can
+ * seed the DB row with the same defaults.
+ */
+export function defaultWorkspaceOpenworkConfig(workspaceRoot: string, preset: string): WorkspaceOpenworkConfig {
+  return {
     version: 1,
     workspace: {
       name: basename(workspaceRoot) || "Workspace",
-      createdAt: now,
+      createdAt: Date.now(),
       preset,
     },
     authorizedRoots: [workspaceRoot],
     reload: null,
   };
-  await ensureDir(join(workspaceRoot, ".opencode"));
-  await writeFile(path, JSON.stringify(config, null, 2) + "\n", "utf8");
-  return true;
 }
 
 async function ensureOpencodeConfig(workspaceRoot: string): Promise<boolean> {
@@ -67,9 +68,11 @@ export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: s
   await ensureDir(workspaceRoot);
   const reloadReasons = new Set<ReloadReason>();
   if (await ensureOpencodeConfig(workspaceRoot)) reloadReasons.add("config");
-  const openworkConfigChanged = await ensureWorkspaceOpenworkConfig(workspaceRoot, preset);
+  // openwork config is seeded into the runtime DB by the caller, not written
+  // as a file here.
+  void preset;
   return {
-    changed: openworkConfigChanged || reloadReasons.size > 0,
+    changed: reloadReasons.size > 0,
     reloadReasons: Array.from(reloadReasons),
   };
 }
