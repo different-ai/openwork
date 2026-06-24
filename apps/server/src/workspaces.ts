@@ -70,3 +70,18 @@ export function buildWorkspaceInfos(
     };
   });
 }
+
+/**
+ * Pick the workspace the server-managed OpenCode engine should boot in.
+ *
+ * The engine serves every workspace but needs one local directory to start in.
+ * `config.workspaces[0]` is not reliably that: a freshly added remote worker is
+ * prepended to the list, so index 0 can be a remote workspace (no local path)
+ * even when local workspaces exist — which would leave the engine unstarted.
+ * Select the first non-remote workspace with a resolved local path so the engine
+ * starts regardless of ordering; returns undefined for remote-only setups (which
+ * need no local engine).
+ */
+export function findManagedEngineWorkspace(workspaces: WorkspaceInfo[]): WorkspaceInfo | undefined {
+  return workspaces.find((workspace) => workspace.workspaceType !== "remote" && workspace.path.trim() !== "");
+}

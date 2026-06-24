@@ -10,6 +10,7 @@ import { resolveServerConfig, type CliArgs } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer, type OpencodeExecutionSnapshot } from "./managed-opencode.js";
 import { startServer, syncAllWorkspacesRuntimeMcpToEngine } from "./server.js";
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
+import { findManagedEngineWorkspace } from "./workspaces.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
@@ -51,8 +52,8 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   }
 
   if (!config.opencodeBaseUrl && options.manageOpencode) {
-    const workspace = config.workspaces[0];
-    if (workspace?.path) {
+    const workspace = findManagedEngineWorkspace(config.workspaces);
+    if (workspace) {
       // Server-managed config file: the engine re-reads it from disk on every
       // instance rebuild, and keepOpenworkRuntimeConfigFileFresh rewrites it
       // on every runtime-DB write — so disposes always pick up current state.
