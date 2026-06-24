@@ -147,7 +147,7 @@ function renderMarkdown(report) {
     `- Started: ${report.startedAt}`,
     `- CDP: ${report.cdpUrl}`,
     `- Result: ${report.summary.failed > 0 ? "FAILED" : "PASSED"} (${report.summary.passed} passed, ${report.summary.failed} failed, ${report.summary.skipped} skipped)`,
-    `- Frame index: index.html`,
+    `- fraimz: fraimz.html`,
     "",
   ];
   for (const flow of report.flows) {
@@ -205,7 +205,7 @@ function renderFrameIndex(report) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OpenWork Eval Run ${escapeHtml(report.runId)}</title>
+  <title>fraimz · OpenWork Eval Run ${escapeHtml(report.runId)}</title>
   <style>
     body { margin: 0; background: #f7f7f8; color: #171717; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     main { max-width: 1180px; margin: 0 auto; padding: 32px; }
@@ -234,7 +234,8 @@ function renderFrameIndex(report) {
 </head>
 <body>
   <main>
-    <h1>OpenWork Eval Run</h1>
+    <h1>fraimz</h1>
+    <p class="muted">Frame-by-frame proof of the flow, as the end user experienced it.</p>
     <div class="meta">
       Run ID: <code>${escapeHtml(report.runId)}</code><br />
       Started: ${escapeHtml(report.startedAt)}<br />
@@ -352,14 +353,19 @@ async function main() {
   report.finishedAt = new Date().toISOString();
   await writeFile(join(outDir, "report.json"), JSON.stringify(report, null, 2));
   await writeFile(join(outDir, "report.md"), renderMarkdown(report));
-  await writeFile(join(outDir, "index.html"), renderFrameIndex(report));
+  // fraimz.html is the canonical human-readable artifact (frame-by-frame proof:
+  // claim + action + assertion + screenshot per step). `index.html` is kept as
+  // a back-compat alias.
+  const fraimz = renderFrameIndex(report);
+  await writeFile(join(outDir, "fraimz.html"), fraimz);
+  await writeFile(join(outDir, "index.html"), fraimz);
 
   console.log("");
   console.log(
     `Result: ${report.summary.failed > 0 ? "FAILED" : "PASSED"} — ${report.summary.passed} passed, ${report.summary.failed} failed, ${report.summary.skipped} skipped`,
   );
   console.log(`Report: ${join(outDir, "report.md")}`);
-  console.log(`Frames: ${join(outDir, "index.html")}`);
+  console.log(`fraimz: ${join(outDir, "fraimz.html")}`);
 
   if (report.summary.failed > 0) process.exit(1);
 }

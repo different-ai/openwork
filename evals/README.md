@@ -28,6 +28,24 @@ pnpm evals --flow app-smoke       # run one flow
 pnpm evals --all --cdp-url http://127.0.0.1:9825   # explicit CDP endpoint
 ```
 
+### fraimz — the deliverable
+
+Every run writes **`fraimz.html`** to `evals/results/<run-id>/`: the
+frame-by-frame proof where each frame binds a **claim**, the **action** the end
+user took, the **assertion** that witnesses the side effect, and a validated
+**screenshot**. fraimz is the atomic artifact a human looks at to understand the
+experience at a glance — it is what we review, and we can fine-tune what each
+frame captures over time. (`index.html` is kept as a back-compat alias.)
+
+"Make fraimz for this flow" runs the whole loop — create/pick the eval, drive
+it as the end user, validate and repair, output `fraimz.html`. Trigger it with
+the `/fraimz` command or:
+
+```bash
+pnpm fraimz --flow <id>           # same runner; headline output is fraimz.html
+pnpm fraimz --flow core-flow --cdp-url http://127.0.0.1:9825
+```
+
 The runner probes `http://127.0.0.1:9825` (Daytona) then `:9823` (local
 `pnpm dev`) by default. Flows that need cloud credentials declare
 `requiredEnv` and are skipped (not failed) when the env is missing — e.g.

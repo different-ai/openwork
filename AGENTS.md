@@ -61,13 +61,25 @@ may skip — but say so explicitly.
    `evals/flows/*.flow.mjs`. The end user is the protagonist (driven via
    CDP). REST/DB/filesystem checks are *only* how you witness the expected
    side effects, never the thing being tested.
-3. **Drive it for real** with `pnpm evals --flow <id>` (Daytona preferred,
+3. **Drive it for real** with `pnpm fraimz --flow <id>` (Daytona preferred,
    local Electron fallback). Observe → act → observe → assert.
 4. **Validate, repair, repeat.** If a frame does not support the claim, fix
    the visible state or the code and rerun. Every claim needs an observable
    assertion via `ctx.prove("claim", { action, assert, screenshot })`.
-5. **Verdict**: `Passed` only when proof exists; otherwise `Incomplete` or
-   `Failed`, stated honestly with repro steps.
+5. **Output fraimz and give a verdict.** The deliverable is
+   **fraimz** — `evals/results/<run-id>/fraimz.html`, the frame-by-frame proof
+   where each frame binds a claim, the user action, the assertion, and a
+   validated screenshot. It is the atomic artifact a human looks at to
+   understand the experience at a glance. Report `Passed` only when fraimz
+   exists and every claim is backed by an observable assertion; otherwise
+   `Incomplete` / `Failed`, stated honestly with repro steps.
+
+### Make fraimz
+
+"Make fraimz for this flow" is the trigger for the whole loop: it creates or
+picks the eval, drives it as the end user, validates and repairs, and outputs
+`fraimz.html`. Run it via the `/fraimz` command or `pnpm fraimz --flow <id>`.
+fraimz is what we look at; we can fine-tune what each frame captures over time.
 
 ### The core flow
 

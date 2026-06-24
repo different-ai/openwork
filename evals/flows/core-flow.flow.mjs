@@ -164,15 +164,17 @@ export default {
             });
           },
           assert: async () => {
-            // Same session id restored.
+            // Prove the session persisted: it must still be listed after the
+            // reopen (this reads persisted state, not in-memory).
             await ctx.waitFor(
-              `(() => {
-                const route = window.__openworkControl.snapshot().route || "";
-                return route.includes(${JSON.stringify(before)});
-              })()`,
-              { timeoutMs: 45_000, label: `restored session ${before}` },
+              "window.__openworkControl.listActions().some((a) => a.id === 'session.list_sessions')",
+              { timeoutMs: 45_000, label: "session.list_sessions available" },
             );
-            // Message history persisted (not an in-memory artifact).
+            const sessions = await ctx.control("session.list_sessions");
+            const listed = Array.isArray(sessions) && sessions.some((s) => s.sessionId === before);
+            ctx.assert(listed, `Session ${before} was not listed after reopen (not persisted).`);
+            // Open it explicitly and confirm its message history is retrievable.
+            await ctx.control("session.open", { sessionId: before });
             await ctx.waitForText("core-flow ok", { timeoutMs: 45_000 });
           },
           screenshot: { name: "reopened-session", requireText: ["core-flow ok"] },

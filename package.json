@@ -46,6 +46,7 @@
     "test:fs-engine": "pnpm --filter @openwork/app test:fs-engine",
     "test:e2e": "pnpm --filter @openwork/app test:e2e",
     "evals": "node evals/runner/run.mjs",
+    "fraimz": "node evals/runner/run.mjs",
     "test:orchestrator": "pnpm --filter openwork-orchestrator test:router",
     "bump:patch": "pnpm --filter @openwork/app bump:patch",
     "bump:minor": "pnpm --filter @openwork/app bump:minor",
