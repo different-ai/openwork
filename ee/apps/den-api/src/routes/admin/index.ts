@@ -1,12 +1,21 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthAccountTable,
+  AuthApiKeyTable,
   AuthSessionTable,
   AuthUserTable,
+  DesktopHandoffGrantTable,
+  ExternalIdentityTable,
   InvitationTable,
   MemberTable,
+  OAuthAccessTokenTable,
+  OAuthClientTable,
+  OAuthConsentTable,
+  OAuthRefreshTokenTable,
   OrganizationTable,
   OrgSubscriptionTable,
+  ScimSyncEventTable,
+  SsoProviderTable,
   TelemetryEventTable,
   WorkerTable,
   AdminAllowlistTable,
@@ -178,6 +187,10 @@ function isOrganizationId(value: string): value is OrganizationId {
   return value.startsWith("org_")
 }
 
+function isUserId(value: string): value is UserId {
+  return value.startsWith("user_")
+}
+
 async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item: T) => Promise<R>) {
   if (items.length === 0) {
     return [] as R[]
@@ -224,6 +237,65 @@ function shouldReplaceBillingStatus(current: AdminBillingStatus, candidate: Admi
 }
 
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  app.delete(
+    "/v1/admin/users/:userId",
+    adminRoute(),
+    async (c) => {
+      const currentUser = c.get("user")
+      const userId = c.req.param("userId")
+      if (!isUserId(userId)) {
+        return c.json({ error: "invalid_request", message: "Invalid user id." }, 400)
+      }
+
+      if (userId === currentUser.id) {
+        return c.json({ error: "invalid_request", message: "You cannot delete your own admin user." }, 400)
+      }
+
+      const rows = await db
+        .select({ id: AuthUserTable.id, email: AuthUserTable.email })
+        .from(AuthUserTable)
+        .where(eq(AuthUserTable.id, userId))
+        .limit(1)
+
+      const targetUser = rows[0]
+      if (!targetUser) {
+        return c.json({ error: "not_found", message: "User not found." }, 404)
+      }
+
+      const activeMembershipRows = await db
+        .select({ organizationId: MemberTable.organizationId })
+        .from(MemberTable)
+        .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
+
+      await db.transaction(async (tx) => {
+        const removedAt = new Date()
+
+        await tx.delete(OAuthAccessTokenTable).where(eq(OAuthAccessTokenTable.userId, userId))
+        await tx.delete(OAuthRefreshTokenTable).where(eq(OAuthRefreshTokenTable.userId, userId))
+        await tx.delete(OAuthConsentTable).where(eq(OAuthConsentTable.userId, userId))
+        await tx.update(OAuthClientTable).set({ userId: null }).where(eq(OAuthClientTable.userId, userId))
+        await tx.delete(AuthApiKeyTable).where(eq(AuthApiKeyTable.referenceId, userId))
+        await tx.delete(AuthSessionTable).where(eq(AuthSessionTable.userId, userId))
+        await tx.delete(AuthAccountTable).where(eq(AuthAccountTable.userId, userId))
+        await tx.delete(DesktopHandoffGrantTable).where(eq(DesktopHandoffGrantTable.user_id, userId))
+        await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
+        await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.userId, userId))
+        await tx.delete(SsoProviderTable).where(eq(SsoProviderTable.userId, userId))
+        await tx.update(MemberTable).set({ removedAt }).where(eq(MemberTable.userId, userId))
+        await tx.update(WorkerTable).set({ created_by_user_id: null }).where(eq(WorkerTable.created_by_user_id, userId))
+        await tx.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
+      })
+
+      const organizationIds = Array.from(new Set(activeMembershipRows.map((row) => row.organizationId).filter(isOrganizationId)))
+      for (const organizationId of organizationIds) {
+        const seatCounts = await getOrganizationSeatBillingCounts({ organizationId })
+        await syncSeatSubscriptionQuantityAfterMemberChange({ organizationId, memberCount: seatCounts.total })
+      }
+
+      return c.json({ ok: true, user: { id: targetUser.id, email: targetUser.email } })
+    },
+  )
+
   app.patch(
     "/v1/admin/organizations/:organizationId/plan",
     adminRoute(),

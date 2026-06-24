@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Copy, Pencil } from "lucide-react";
+import { Copy, Pencil, Trash2 } from "lucide-react";
 
 type AccessState = "loading" | "ready" | "signed-out" | "forbidden" | "error";
 type WorkerFilter = "all" | "with-workers" | "without-workers";
@@ -428,6 +428,29 @@ async function patchJson(path: string, body: unknown) {
   return { response, payload };
 }
 
+async function deleteJson(path: string) {
+  const response = await fetch(`/api/den${path}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  const text = await response.text();
+  let payload: unknown = null;
+
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
+    }
+  }
+
+  return { response, payload };
+}
+
 function formatDateTime(value: string | null): string {
   if (!value) {
     return "-";
@@ -773,6 +796,8 @@ export function DenAdminPanel() {
   const [savingOrgId, setSavingOrgId] = useState<string | null>(null);
   const [freeSeatsDialog, setFreeSeatsDialog] = useState<{ org: AdminOrganization; totalFreeSeats: string } | null>(null);
   const [savingFreeSeatsOrgId, setSavingFreeSeatsOrgId] = useState<string | null>(null);
+  const [deleteUserDialog, setDeleteUserDialog] = useState<AdminUser | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
   const loadOverview = useCallback(async (loadBilling: boolean) => {
     setRefreshing(true);
@@ -1037,6 +1062,32 @@ export function DenAdminPanel() {
       setSavingFreeSeatsOrgId(null);
     }
   }, [freeSeatsDialog, includeBilling, loadOverview]);
+
+  const deleteUser = useCallback(async () => {
+    if (!deleteUserDialog) {
+      return;
+    }
+
+    setDeletingUserId(deleteUserDialog.id);
+    setError(null);
+
+    try {
+      const { response, payload: nextPayload } = await deleteJson(`/v1/admin/users/${deleteUserDialog.id}`);
+
+      if (!response.ok) {
+        setError(getErrorMessage(nextPayload, `Could not delete ${deleteUserDialog.email}.`));
+        return;
+      }
+
+      setDeleteUserDialog(null);
+      setSelectedUserId(null);
+      await loadOverview(includeBilling);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
+    } finally {
+      setDeletingUserId(null);
+    }
+  }, [deleteUserDialog, includeBilling, loadOverview]);
 
   const exportCsv = useCallback(() => {
     const date = new Date().toISOString().slice(0, 10);
@@ -1637,6 +1688,24 @@ export function DenAdminPanel() {
                         ) : null}
                       </div>
 
+                      <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-red-950">Delete user</p>
+                            <p className="mt-1 text-sm leading-6 text-red-700">Removes this user account, active sessions, auth records, and org memberships.</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteUserDialog(user)}
+                            disabled={deletingUserId === user.id}
+                            className="inline-flex items-center justify-center gap-2 rounded-full border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 transition hover:border-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <Trash2 size={15} aria-hidden="true" />
+                            {deletingUserId === user.id ? "Deleting..." : "Delete user"}
+                          </button>
+                        </div>
+                      </div>
+
                       {user.organizations.length > 0 ? (
                         <div className="mt-3 grid gap-2">
                           {user.organizations.map((org) => (
@@ -1745,6 +1814,46 @@ export function DenAdminPanel() {
                 className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {savingFreeSeatsOrgId === freeSeatsDialog.org.id ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteUserDialog ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-user-dialog-title"
+          onClick={() => setDeleteUserDialog(null)}
+        >
+          <div className="w-full max-w-md rounded-3xl border border-red-100 bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-red-500">Danger zone</p>
+            <h2 id="delete-user-dialog-title" className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950">
+              Delete {deleteUserDialog.email}?
+            </h2>
+            <p className="mt-3 text-sm leading-7 text-slate-600">
+              This permanently removes the user account and revokes their sessions. Organization memberships are marked removed.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteUserDialog(null)}
+                disabled={deletingUserId === deleteUserDialog.id}
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void deleteUser();
+                }}
+                disabled={deletingUserId === deleteUserDialog.id}
+                className="inline-flex items-center justify-center rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {deletingUserId === deleteUserDialog.id ? "Deleting..." : "Delete user"}
               </button>
             </div>
           </div>
