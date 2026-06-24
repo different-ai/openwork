@@ -26,6 +26,8 @@ apps/desktop/server/
 .env
 .env.*
 !.env.example
+# Committed local-dev defaults (throwaway secrets) loaded by scripts/dev-local.mjs.
+!.env.dev
 # The migration-release fragment is committed only on the tagged
 # migration-release commit and removed by 03-post-migration-cleanup.mjs.
 # Allow git to see it so `cut-migration-release` can commit it.

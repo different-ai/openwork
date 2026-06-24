@@ -64,9 +64,39 @@ type StatusIndicatorProps = {
   mcpConnectedCount: number;
   loading?: boolean;
   initializing: boolean;
+  reloadBusy?: boolean;
+  reloadError?: string | null;
 };
 
 function StatusIndicator(props: StatusIndicatorProps) {
+  if (props.reloadBusy) {
+    return (
+      <div className="flex min-w-0 items-center gap-2.5">
+        <StatusDot variant="loading" />
+        <span className="shrink-0 font-medium text-foreground text-xs">
+          {t("status.reloading_config")}
+        </span>
+        <span className="truncate text-muted-foreground text-xs">
+          {t("config.reload_now_desc")}
+        </span>
+      </div>
+    );
+  }
+
+  if (props.reloadError) {
+    return (
+      <div className="flex min-w-0 items-center gap-2.5">
+        <StatusDot variant="disconnected" />
+        <span className="shrink-0 font-medium text-foreground text-xs">
+          {t("system.reload_failed")}
+        </span>
+        <span className="truncate text-muted-foreground text-xs">
+          {props.reloadError}
+        </span>
+      </div>
+    );
+  }
+
   if (props.loading || (props.openworkServerStatus === "disconnected" && props.initializing)) {
     return (
       <div className="flex min-w-0 items-center gap-2.5">
@@ -145,6 +175,8 @@ export type StatusBarProps = {
   loading?: boolean;
   showSettingsButton?: boolean;
   initializing?: boolean;
+  reloadBusy?: boolean;
+  reloadError?: string | null;
 };
 
 export function StatusBar(props: StatusBarProps) {
@@ -276,6 +308,8 @@ export function StatusBar(props: StatusBarProps) {
           mcpConnectedCount={props.mcpConnectedCount}
           loading={props.loading}
           initializing={initializing}
+          reloadBusy={props.reloadBusy}
+          reloadError={props.reloadError}
         />
 
         <div className="flex items-center gap-1">

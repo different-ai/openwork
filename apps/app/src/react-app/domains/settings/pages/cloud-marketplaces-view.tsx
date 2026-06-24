@@ -31,6 +31,11 @@ import {
   SettingsListEmptyState,
   SettingsListSearchInput,
 } from "@/react-app/domains/settings/settings-list";
+import {
+  drainPendingMarketplacePlugin,
+  openMarketplacePluginEvent,
+  type OpenMarketplacePluginDetail,
+} from "@/react-app/shell/notifications";
 
 type AsyncResult = { ok: boolean; message: string };
 type MarketplacePackageStatus = "available" | "installed" | "update_available";
@@ -188,8 +193,27 @@ export function CloudMarketplacesView({
   const [resolvedPlugins, setResolvedPlugins] = React.useState<Record<string, DenOrgPluginResolved>>({});
   const [detailLoadingId, setDetailLoadingId] = React.useState<string | null>(null);
   const [detailError, setDetailError] = React.useState<string | null>(null);
+  const [highlightPluginName, setHighlightPluginName] = React.useState<string | null>(null);
   const activeOrgId = activeOrg?.id ?? "";
   const canShowRows = shouldShowMarketplaceRows(isSignedIn, activeOrgId);
+
+  // Listen for "open marketplace plugin" requests from notifications.
+  React.useEffect(() => {
+    const pending = drainPendingMarketplacePlugin();
+    if (pending) {
+      setSearch(pending);
+      setHighlightPluginName(pending);
+    }
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<OpenMarketplacePluginDetail>).detail;
+      if (detail?.pluginName) {
+        setSearch(detail.pluginName);
+        setHighlightPluginName(detail.pluginName);
+      }
+    };
+    window.addEventListener(openMarketplacePluginEvent, handler);
+    return () => window.removeEventListener(openMarketplacePluginEvent, handler);
+  }, []);
 
   const marketplaces = extensions.cloudOrgMarketplaces();
   const importedPlugins = extensions.importedCloudPlugins();
@@ -537,17 +561,22 @@ export function CloudMarketplacesView({
 
       {visibleRows.length > 0 ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3">
-          {visibleRows.map((row) => (
-            <MarketplaceCard
-              key={row.source === "cloud" ? `${row.marketplaceId}:${row.plugin.id}` : `${row.marketplaceId}:${row.entry.id ?? row.entry.name}`}
-              actionId={actionId}
-              row={row}
-              onOpenDetail={setDetailRow}
-              onUpdatePlugin={importPlugin}
-              builtInDisabled={builtInExtensionsDisabled}
-              builtInConnectingName={builtInConnectingName}
-            />
-          ))}
+          {visibleRows.map((row) => {
+            const pluginName = row.source === "cloud" ? row.plugin.name : row.entry.name;
+            const isHighlighted = highlightPluginName != null && pluginName === highlightPluginName;
+            return (
+              <MarketplaceCard
+                key={row.source === "cloud" ? `${row.marketplaceId}:${row.plugin.id}` : `${row.marketplaceId}:${row.entry.id ?? row.entry.name}`}
+                actionId={actionId}
+                row={row}
+                onOpenDetail={setDetailRow}
+                onUpdatePlugin={importPlugin}
+                builtInDisabled={builtInExtensionsDisabled}
+                builtInConnectingName={builtInConnectingName}
+                highlighted={isHighlighted}
+              />
+            );
+          })}
         </div>
       ) : null}
 
@@ -601,27 +630,41 @@ function MarketplaceCard(props: {
   onUpdatePlugin: (marketplaceId: string | null, plugin: DenOrgPlugin) => void | Promise<void>;
   builtInDisabled: boolean;
   builtInConnectingName: string | null;
+  highlighted?: boolean;
 }) {
   const { actionId, row, onOpenDetail, onUpdatePlugin } = props;
+  const highlightRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (props.highlighted && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [props.highlighted]);
+
+  const highlightClass = props.highlighted
+    ? "ring-2 ring-primary ring-offset-2 ring-offset-dls-background rounded-2xl transition-shadow"
+    : "";
 
   if (row.source === "built-in") {
     const actionBusy = props.builtInConnectingName === row.entry.name;
     return (
-      <ExtensionCard
-        name={row.entry.name}
-        description={row.entry.description}
-        iconSlug={row.entry.iconSlug}
-        iconSrc={row.entry.iconSrc}
-        kind={row.entry.kind ?? "extension"}
-        preview={row.entry.preview}
-        connected={row.active}
-        connectedLabel={row.entry.defaultEnabled ? "Ready" : "Active"}
-        connecting={actionBusy}
-        disabled={props.builtInDisabled}
-        disabledReason={props.builtInDisabled ? "Disabled by organization" : null}
-        actionLabel={row.active ? "Manage" : "View setup"}
-        onClick={() => onOpenDetail(row)}
-      />
+      <div ref={highlightRef} className={highlightClass}>
+        <ExtensionCard
+          name={row.entry.name}
+          description={row.entry.description}
+          iconSlug={row.entry.iconSlug}
+          iconSrc={row.entry.iconSrc}
+          kind={row.entry.kind ?? "extension"}
+          preview={row.entry.preview}
+          connected={row.active}
+          connectedLabel={row.entry.defaultEnabled ? "Ready" : "Active"}
+          connecting={actionBusy}
+          disabled={props.builtInDisabled}
+          disabledReason={props.builtInDisabled ? "Disabled by organization" : null}
+          actionLabel={row.active ? "Manage" : "View setup"}
+          onClick={() => onOpenDetail(row)}
+        />
+      </div>
     );
   }
 
@@ -631,7 +674,7 @@ function MarketplaceCard(props: {
   const updateAvailable = !cloudBuiltIn && row.status === "update_available";
 
   return (
-    <div className="flex flex-col gap-2">
+    <div ref={highlightRef} className={`flex flex-col gap-2 ${highlightClass}`}>
       <ExtensionCard
         name={row.plugin.name}
         description={row.plugin.description || `Marketplace extension from ${row.marketplaceName}.`}

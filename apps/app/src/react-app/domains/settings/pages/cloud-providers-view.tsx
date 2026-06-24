@@ -25,6 +25,7 @@ export type CloudProvidersViewProps = {
   importedCloudProviders: Record<string, CloudImportedProvider>;
   onOpenAccount: () => void;
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
+  refreshImportedCloudProviders: () => Promise<Record<string, CloudImportedProvider>>;
   removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   session: CloudProvidersSession;
 };
@@ -41,6 +42,7 @@ export function CloudProvidersView({
   importedCloudProviders,
   onOpenAccount,
   refreshCloudOrgProviders,
+  refreshImportedCloudProviders,
   removeCloudProvider,
   session,
 }: CloudProvidersViewProps) {
@@ -97,7 +99,10 @@ export function CloudProvidersView({
 
       try {
         session.syncCurrentDenSettings();
-        const items = await refreshCloudOrgProviders({ force: !quiet });
+        const [items] = await Promise.all([
+          refreshCloudOrgProviders({ force: !quiet }),
+          refreshImportedCloudProviders(),
+        ]);
         if (!quiet) {
           toast.info(
             items.length > 0
@@ -115,6 +120,7 @@ export function CloudProvidersView({
     },
     [
       refreshCloudOrgProviders,
+      refreshImportedCloudProviders,
       activeOrg,
       activeOrgId,
       authToken,

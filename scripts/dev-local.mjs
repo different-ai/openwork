@@ -7,6 +7,14 @@ import { fileURLToPath } from "node:url"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, "..")
+
+// Load committed local-dev defaults. Real env vars take precedence (loadEnvFile
+// never overwrites variables that are already set).
+try {
+  process.loadEnvFile(path.join(rootDir, ".env.dev"))
+} catch {
+  // .env.dev is optional; the inline fallbacks below still apply.
+}
 const composeFile = path.join(rootDir, "packaging", "docker", "docker-compose.web-local.yml")
 const composeProject = "openwork-den-local"
 
@@ -182,7 +190,7 @@ async function main() {
   }
 
   console.log("[den] Syncing Den schema...")
-  await run("bash", ["-lc", "pnpm --filter @openwork-ee/den-db build && pnpm --filter @openwork-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts --force"], {
+  await run("bash", ["-c", "pnpm --filter @openwork-ee/den-db build && pnpm --filter @openwork-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts --force"], {
     env: {
       ...process.env,
       DATABASE_URL: databaseUrl,
@@ -211,10 +219,8 @@ async function main() {
       detached: process.platform !== "win32",
       env: {
         ...process.env,
-        OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE?.trim() || "1",
         DATABASE_URL: databaseUrl,
         DEN_DB_ENCRYPTION_KEY: dbEncryptionKey,
-        BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET?.trim() || "local-dev-secret-not-for-production-use!!",
         BETTER_AUTH_URL: process.env.BETTER_AUTH_URL?.trim() || `http://localhost:${webPort}`,
         DEN_MCP_RESOURCE_URL: process.env.DEN_MCP_RESOURCE_URL?.trim() || `http://127.0.0.1:${apiPort}/mcp`,
         DEN_BETTER_AUTH_TRUSTED_ORIGINS: process.env.DEN_BETTER_AUTH_TRUSTED_ORIGINS?.trim() || webOrigins,
@@ -224,13 +230,10 @@ async function main() {
         DEN_WORKER_PROXY_PORT: workerProxyPort,
         INFERENCE_PORT: inferencePort,
         INFERENCE_PROXY_BASE_URL: process.env.INFERENCE_PROXY_BASE_URL?.trim() || `http://127.0.0.1:${inferencePort}`,
-        INFERENCE_ADMIN_TOKEN: process.env.INFERENCE_ADMIN_TOKEN?.trim() || "local-dev-admin-token",
-        INFERENCE_WEBHOOK_SECRET: process.env.INFERENCE_WEBHOOK_SECRET?.trim() || "local-dev-webhook-secret",
         DEN_WEB_PORT: webPort,
         DEN_API_BASE: process.env.DEN_API_BASE?.trim() || `http://127.0.0.1:${apiPort}`,
         DEN_AUTH_ORIGIN: process.env.DEN_AUTH_ORIGIN?.trim() || `http://localhost:${webPort}`,
         DEN_AUTH_FALLBACK_BASE: process.env.DEN_AUTH_FALLBACK_BASE?.trim() || `http://127.0.0.1:${apiPort}`,
-        PROVISIONER_MODE: process.env.PROVISIONER_MODE?.trim() || "stub",
       },
     },
   )

@@ -17,6 +17,10 @@ export const OPENWORK_MODELS_PROMO_SHOW_DELAY_MS = 4_000;
 export const OPENWORK_MODELS_PROMO_VISIBLE_MS = 14_000;
 export const OPENWORK_MODELS_PROMO_REPEAT_MS = 6 * 60 * 60 * 1000;
 
+export function areOpenWorkModelsPromosDisabled() {
+  return /^(1|true|yes|on)$/i.test(String(import.meta.env.VITE_DISABLE_OPENWORK_MODELS ?? "").trim());
+}
+
 export type OpenWorkModelPreview = {
   id: string;
   title: string;
@@ -49,6 +53,7 @@ export function getOpenWorkModelsActionUrl(
 }
 
 export function isOpenWorkModelsPromoHidden() {
+  if (areOpenWorkModelsPromosDisabled()) return true;
   if (typeof window === "undefined") return false;
   try {
     return window.localStorage.getItem(OPENWORK_MODELS_PROMO_HIDDEN_KEY) === "1";
@@ -66,6 +71,7 @@ export function hideOpenWorkModelsPromo() {
 }
 
 export function wasOpenWorkModelsStartupPromoShown() {
+  if (areOpenWorkModelsPromosDisabled()) return true;
   if (typeof window === "undefined") return true;
   try {
     return window.localStorage.getItem(OPENWORK_MODELS_STARTUP_PROMO_SHOWN_KEY) === "1";
@@ -82,7 +88,7 @@ export function markOpenWorkModelsStartupPromoShown() {
 }
 
 export function shouldShowOpenWorkModelsPromo(now = Date.now()) {
-  if (typeof window === "undefined" || isOpenWorkModelsPromoHidden()) return false;
+  if (areOpenWorkModelsPromosDisabled() || typeof window === "undefined" || isOpenWorkModelsPromoHidden()) return false;
   try {
     const lastShown = Number(window.localStorage.getItem(OPENWORK_MODELS_PROMO_LAST_SHOWN_KEY) ?? "0");
     return !Number.isFinite(lastShown) || now - lastShown >= OPENWORK_MODELS_PROMO_REPEAT_MS;

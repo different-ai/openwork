@@ -76,7 +76,7 @@ const STARTUP_SKELETON_ROWS = [
 const GLOBAL_VOICE_SIDE_PANEL_KEY = "__openwork_voice__";
 const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
 
-type OpenSessionTab = {
+export type OpenSessionTab = {
   workspaceId: string;
   sessionId: string;
 };
@@ -86,6 +86,8 @@ type StatusBarOverrides = Pick<
   | "loading"
   | "showSettingsButton"
   | "settingsOpen"
+  | "reloadBusy"
+  | "reloadError"
 >;
 
 export type SessionPageHistoryControls = {
@@ -187,6 +189,7 @@ export type SessionPageProps = {
   settingsSlot?: React.ReactNode;
   terminalOpen?: boolean;
   onTerminalOpenChange?: (open: boolean) => void;
+  onSessionTabsChange?: (tabs: OpenSessionTab[]) => void;
 };
 
 function getSidebarInitialLoading(props: SessionPageSidebarProps) {
@@ -726,6 +729,9 @@ export function SessionPage(props: SessionPageProps) {
       ));
     });
   }, [props.selectedSessionId, props.selectedWorkspaceId, props.sidebar.workspaceSessionGroups]);
+  useEffect(() => {
+    props.onSessionTabsChange?.(sessionTabs);
+  }, [sessionTabs, props.onSessionTabsChange]);
   useEffect(() => {
     if (!splitSessionId) return;
     if (splitSessionId === props.selectedSessionId) {
@@ -1298,6 +1304,8 @@ export function SessionPage(props: SessionPageProps) {
               mcpConnectedCount={props.mcpConnectedCount}
               loading={props.statusBar?.loading ?? false}
               showSettingsButton={props.statusBar?.showSettingsButton}
+              reloadBusy={props.statusBar?.reloadBusy}
+              reloadError={props.statusBar?.reloadError}
             />
           ) : null}
               </main>

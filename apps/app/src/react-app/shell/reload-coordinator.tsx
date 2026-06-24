@@ -141,6 +141,8 @@ type ReloadCoordinatorContextValue = {
   reloadWorkspaceEngine: () => Promise<void>;
   canReloadWorkspaceEngine: boolean;
   reloadPending: boolean;
+  reloadBusy: boolean;
+  reloadError: string | null;
   registerWorkspaceReloadControls: (controls: WorkspaceReloadControls | null) => () => void;
 };
 
@@ -345,6 +347,8 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       reloadWorkspaceEngine: systemState.reloadWorkspaceEngine,
       canReloadWorkspaceEngine: systemState.canReloadWorkspaceEngine,
       reloadPending: systemState.reload.reloadPending,
+      reloadBusy: systemState.reload.reloadBusy,
+      reloadError: systemState.reload.reloadError,
       registerWorkspaceReloadControls,
     }),
     [
@@ -353,6 +357,8 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       systemState.clearReloadRequired,
       systemState.markReloadRequired,
       systemState.reload.reloadPending,
+      systemState.reload.reloadBusy,
+      systemState.reload.reloadError,
       systemState.reloadWorkspaceEngine,
     ],
   );

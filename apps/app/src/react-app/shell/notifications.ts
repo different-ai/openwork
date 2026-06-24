@@ -19,9 +19,43 @@ import {
 /** Window event that asks the notification bell to open its panel. */
 export const openNotificationCenterEvent = "openwork-open-notification-center";
 
+/** Window event that asks the marketplace view to highlight a plugin. */
+export const openMarketplacePluginEvent = "openwork-open-marketplace-plugin";
+
+const PENDING_MARKETPLACE_PLUGIN_KEY = "openwork:pending-marketplace-plugin";
+
+export type OpenMarketplacePluginDetail = {
+  pluginName: string;
+};
+
 export function openNotificationCenter(): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(openNotificationCenterEvent));
+}
+
+/** Navigate to the marketplace and pre-fill search with a plugin name. */
+export function requestOpenMarketplacePlugin(pluginName: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(PENDING_MARKETPLACE_PLUGIN_KEY, pluginName);
+  } catch { /* localStorage unavailable */ }
+  window.dispatchEvent(
+    new CustomEvent<OpenMarketplacePluginDetail>(openMarketplacePluginEvent, {
+      detail: { pluginName },
+    }),
+  );
+}
+
+/** Read and clear a pending marketplace plugin name from localStorage. */
+export function drainPendingMarketplacePlugin(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const value = localStorage.getItem(PENDING_MARKETPLACE_PLUGIN_KEY);
+    if (value) localStorage.removeItem(PENDING_MARKETPLACE_PLUGIN_KEY);
+    return value?.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 export function notifyEvent(input: NotificationInput): void {

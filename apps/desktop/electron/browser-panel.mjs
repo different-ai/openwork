@@ -19,7 +19,7 @@ const MENU_OVERLAY_WIDTH = 196;
 const MENU_OVERLAY_HEIGHT = 176;
 const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
 
-export function createBrowserPanel({ getWindow, remoteDebugPort }) {
+export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   const browserTabs = new Map();
   let browserTabOrder = [];
   let activeBrowserTabId = null;
@@ -496,6 +496,25 @@ export function createBrowserPanel({ getWindow, remoteDebugPort }) {
       // data: loads are internal plumbing (CDP target-marker pages), not
       // user-visible navigations — don't surface the panel for them.
       if (target === "about:blank" || target.startsWith("data:")) return;
+      // Intercept openwork:// deep links (e.g. den-auth handoff grants) so
+      // in-app browser auth works without the system protocol handler.
+      if (target.startsWith("openwork://") || target.startsWith("openwork-dev://")) {
+        if (typeof onDeepLink === "function") {
+          onDeepLink([target]);
+        }
+        // Navigate the tab to about:blank to prevent the custom-scheme load
+        // from erroring, then hide the panel. Avoid closing the tab
+        // synchronously during a navigation event to prevent renderer crashes.
+        setTimeout(() => {
+          try {
+            if (!view.webContents.isDestroyed()) {
+              view.webContents.loadURL("about:blank");
+            }
+            hideBrowserView();
+          } catch { /* tab already gone */ }
+        }, 200);
+        return;
+      }
       // Agent-driven CDP navigation can target a background tab whose view is
       // detached. Bring that tab on screen, otherwise navigation "succeeds"
       // while the visible tab stays on about:blank (#2015).

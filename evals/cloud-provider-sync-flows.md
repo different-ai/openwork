@@ -65,7 +65,15 @@ curl -H "authorization: Bearer $TOKEN" \
 
 - The changed provider metadata is visible in the desktop UI.
 - `opencode.jsonc` reflects the new model list after sync.
+- The `lpr_*` provider block's `models` map is rewritten to match Den exactly:
+  newly added models appear and removed models are dropped (not the
+  first-import snapshot — see #2346).
+- The newly added model is selectable in the composer model picker.
 - Removed models are not left as stale selectable models.
+
+> Regression coverage: `apps/app/tests/cloud-provider-reimport.test.ts`
+> asserts the `lpr_*` `models` map is rewritten (adds new, drops removed) on
+> re-import, and that out-of-sync detection flags a changed Den model list.
 
 ## Flow 3: Provider delete sync
 

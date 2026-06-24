@@ -113,7 +113,7 @@ echo "Den web:        $DEN_WEB_ORIGIN"
     BETTER_AUTH_URL="$BETTER_AUTH_URL" \
     CORS_ORIGINS="$WEB_CORS_ORIGINS" \
     PORT="$DEN_API_PORT" \
-    sh -lc 'pnpm run build:den-db && exec pnpm exec tsx watch src/index.ts'
+    sh -c 'pnpm run build:den-db && exec pnpm exec tsx watch src/index.ts'
 ) &
 DEN_PID=$!
 

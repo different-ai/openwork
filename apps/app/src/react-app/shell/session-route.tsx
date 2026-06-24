@@ -89,7 +89,7 @@ import {
 } from "@/react-app/shell/route-workspaces";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
-import { SessionPage } from "@/react-app/domains/session/chat/session-page";
+import { SessionPage, type OpenSessionTab } from "@/react-app/domains/session/chat/session-page";
 import { isDesktopProviderBlocked, DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID } from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
@@ -1169,12 +1169,12 @@ export function SessionRoute() {
     }
   }, [baseUrl, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, token, workspaces]);
 
-  // Latest session-list state for prev/next session tab navigation. Updated
-  // during render (see below, after `paletteSessionOptions` is computed) so the
-  // stable callbacks below always read fresh data without re-subscribing the
-  // global keydown listener.
+  // Latest session-list state for prev/next session tab navigation. The
+  // `options` field is updated by `onSessionTabsChange` from SessionPage so we
+  // only cycle through tabs the user actually opened (not artifact sessions).
+  // The remaining fields are refreshed during render.
   const sessionTabNavRef = useRef<{
-    options: PaletteSessionOption[];
+    options: OpenSessionTab[];
     workspaceId: string;
     sessionId: string | null;
     navigate: (workspaceId: string, sessionId?: string | null) => void;
@@ -1326,11 +1326,10 @@ export function SessionRoute() {
     return out;
   }, [sessionsByWorkspaceId, selectedWorkspaceId, workspaces]);
 
-  // Keep the prev/next session tab navigation ref in sync with the latest
-  // session list, current selection, and navigator. Read by the stable
-  // callbacks above so the global keydown handler never goes stale.
+  // Refresh the non-tab fields of the nav ref during render. The `options`
+  // field is maintained by the `onSessionTabsChange` callback from SessionPage.
   sessionTabNavRef.current = {
-    options: paletteSessionOptions,
+    options: sessionTabNavRef.current.options,
     workspaceId: selectedWorkspaceId,
     sessionId: selectedSessionId,
     navigate: navigateToWorkspaceSession,
@@ -1431,6 +1430,21 @@ export function SessionRoute() {
       goToPrevSessionTab();
     },
   }), [goToPrevSessionTab]);
+
+  const reloadConfigPaletteItem = useMemo<PaletteItem>(() => ({
+    id: "reload-opencode-config",
+    title: t("session.cmd_reload_config_title"),
+    detail: t("session.cmd_reload_config_detail"),
+    meta: reloadCoordinator.canReloadWorkspaceEngine
+      ? t("config.reload_engine")
+      : t("system.reload_unavailable"),
+    searchText: "reload opencode config providers models mcp jsonc refresh re-read engine restart",
+    action: () => {
+      setCommandPaletteOpen(false);
+      if (!reloadCoordinator.canReloadWorkspaceEngine) return;
+      void reloadCoordinator.reloadWorkspaceEngine();
+    },
+  }), [reloadCoordinator.canReloadWorkspaceEngine, reloadCoordinator.reloadWorkspaceEngine]);
 
   const handleReorderWorkspaces = useCallback((workspaceIds: string[]) => {
     const activeWorkspaceIds = new Set(workspacesRef.current.map((workspace) => workspace.id));
@@ -1544,6 +1558,22 @@ export function SessionRoute() {
       setCreateWorkspaceBusy(false);
     }
   }, [baseUrl, client, local, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, token]);
+
+  const createWorkspaceControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "workspace.create",
+    label: "Create a local workspace",
+    description: "Create a workspace at the given folder path without showing the file picker dialog.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [{ name: "path", type: "string", required: true, description: "Absolute folder path for the new workspace." }],
+    execute: async (args) => {
+      const folder = (args as { path?: string } | undefined)?.path?.trim();
+      if (!folder) return { ok: false, error: "path is required" };
+      await handleCreateWorkspace("starter", folder);
+      return { path: folder };
+    },
+  }), [handleCreateWorkspace]);
+  useControlAction(createWorkspaceControlAction);
 
   const handleCreateRemoteWorkspace = useCallback(async (input: {
     openworkHostUrl?: string | null;
@@ -1697,6 +1727,9 @@ export function SessionRoute() {
       }
       terminalOpen={terminalOpen}
       onTerminalOpenChange={setTerminalOpen}
+      onSessionTabsChange={(tabs) => {
+        sessionTabNavRef.current = { ...sessionTabNavRef.current, options: tabs };
+      }}
       sidebar={{
         workspaceSessionGroups,
         selectedWorkspaceId,
@@ -1878,7 +1911,7 @@ export function SessionRoute() {
           : undefined
       }
       onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
-      statusBar={{ loading: showPreparingStatus }}
+      statusBar={{ loading: showPreparingStatus, reloadBusy: reloadCoordinator.reloadBusy, reloadError: reloadCoordinator.reloadError }}
       notFoundMessage={routeNotFoundMessage}
       onAccessibleTargetsChange={setPaletteAccessibleTargets}
     />
@@ -1963,7 +1996,7 @@ export function SessionRoute() {
       currentSessionForGroupMove={currentSessionForGroupMove}
       currentSessionGroupId={currentSessionGroupId}
       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
-      extraItems={[sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem]}
+      extraItems={[sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
       listAgents={listAgents}
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}

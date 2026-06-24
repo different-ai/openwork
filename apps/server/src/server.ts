@@ -129,7 +129,7 @@ function readStringField(value: unknown, key: string): string {
 }
 
 const LEGACY_RUNTIME_CONFIG_KEYS = ["plugin", "mcp", "permission", "provider"] as const;
-const USER_OPENCODE_RUNTIME_CONFIG_KEYS = ["default_agent", "plugin", "disabled_providers", "provider"] as const;
+const USER_OPENCODE_RUNTIME_CONFIG_KEYS = ["default_agent", "plugin", "mcp", "disabled_providers", "provider"] as const;
 
 type LegacyRuntimeConfigKey = typeof LEGACY_RUNTIME_CONFIG_KEYS[number];
 type UserOpencodeRuntimeConfigKey = typeof USER_OPENCODE_RUNTIME_CONFIG_KEYS[number];
@@ -181,6 +181,12 @@ function userRuntimeConfigFromOpencodeConfig(opencode: Record<string, unknown>):
   const keys: UserOpencodeRuntimeConfigKey[] = [];
   const defaultAgent = opencode.default_agent === "openwork" ? "openwork" : undefined;
   const plugin = Array.isArray(opencode.plugin) ? opencode.plugin.filter((item) => typeof item === "string") : undefined;
+  const mcp: Record<string, Record<string, unknown>> = {};
+  if (isRecord(opencode.mcp)) {
+    for (const [name, value] of Object.entries(opencode.mcp)) {
+      if (isRecord(value)) mcp[name] = value;
+    }
+  }
   const disabledProviders = Array.isArray(opencode.disabled_providers)
     ? opencode.disabled_providers.filter((item) => typeof item === "string")
     : undefined;
@@ -188,6 +194,7 @@ function userRuntimeConfigFromOpencodeConfig(opencode: Record<string, unknown>):
 
   if (defaultAgent) keys.push("default_agent");
   if (Array.isArray(opencode.plugin)) keys.push("plugin");
+  if (Object.keys(mcp).length) keys.push("mcp");
   if (Array.isArray(opencode.disabled_providers)) keys.push("disabled_providers");
   if (isRecord(opencode.provider)) keys.push("provider");
 
@@ -196,6 +203,7 @@ function userRuntimeConfigFromOpencodeConfig(opencode: Record<string, unknown>):
     config: {
       ...(defaultAgent ? { default_agent: defaultAgent } : {}),
       ...(plugin?.length ? { plugin } : {}),
+      ...(Object.keys(mcp).length ? { mcp } : {}),
       ...(disabledProviders?.length ? { disabled_providers: disabledProviders } : {}),
       ...(provider && Object.keys(provider).length ? { provider } : {}),
     },
