@@ -339,4 +339,28 @@ describe("runtime MCP engine sync", () => {
       else process.env.OPENWORK_RUNTIME_DB = previousDb;
     }
   });
+
+  // Repro for "Failed to reload the engine": when the OpenCode engine process
+  // is not running (engine.running === false in runtime diagnostics), the reload
+  // POST to /instance/dispose throws ECONNREFUSED. The reload endpoint must not
+  // 5xx on a connection error — a down engine is reloadable, not a server fault.
+  test("engine reload succeeds when the engine is unreachable", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const openwork = await startOpenworkServer(workspaceRoot, "http://127.0.0.1:9");
+
+      const response = await fetch(`${openwork.base}/workspace/ws_1/engine/reload`, {
+        method: "POST",
+        headers: auth(openwork.token),
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as { ok: boolean };
+      expect(body.ok).toBe(true);
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    }
+  });
 });

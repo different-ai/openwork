@@ -2785,7 +2785,17 @@ async function reloadOpencodeEngine(config: ServerConfig, workspace: WorkspaceIn
   const auth = connection.authHeader ?? null;
   if (auth) headers.Authorization = auth;
 
-  const response = await fetch(targetUrl, { method: "POST", headers });
+  let response: Response;
+  try {
+    response = await fetch(targetUrl, { method: "POST", headers });
+  } catch {
+    // The engine process isn't running (e.g. it crashed or was never started),
+    // so the dispose POST throws ECONNREFUSED. There's no live instance to
+    // dispose — the engine rebuilds from the on-disk config on the next request
+    // — so a reload is a no-op success here, not a server fault. Surfacing this
+    // as a 5xx is what produces the user-facing "Failed to reload the engine".
+    return;
+  }
   if (!response.ok) {
     const body = parseOpencodeErrorBody(await response.text());
     throw new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
