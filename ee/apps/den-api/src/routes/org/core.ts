@@ -11,6 +11,7 @@ import { env } from "../../env.js"
 import { findEnterpriseAuthRequirementForEmail } from "../../enterprise-auth-requirement.js"
 import { authenticatedRoute, jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator, resolveMemberTeamsMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
   acceptInvitationForUser,
@@ -219,7 +220,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         200: jsonResponse("Invitation accepted successfully.", invitationAcceptedResponseSchema),
         400: jsonResponse("The invitation acceptance request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to accept an invitation.", unauthorizedSchema),
-        403: jsonResponse("API keys cannot accept organization invitations.", forbiddenSchema),
+        403: jsonResponse("API keys cannot accept invitations, or the account email is unverified.", forbiddenSchema),
         409: jsonResponse("The current account email is not allowed to join this organization.", accountEmailDomainNotAllowedSchema),
         404: jsonResponse("The invitation could not be found.", notFoundSchema),
       },
@@ -240,6 +241,11 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
     if (!email) {
       return c.json({ error: "user_email_required" }, 400)
+    }
+
+    const verification = validateInvitationAcceptVerification({ emailVerified: user.emailVerified })
+    if (!verification.ok) {
+      return c.json({ error: verification.error, message: verification.message }, 403)
     }
 
     let accepted
