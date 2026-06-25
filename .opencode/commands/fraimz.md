@@ -43,5 +43,6 @@ Run the full loop, in order, and stop on any failure:
    dead engine, no CDP), say so explicitly and give the exact commands to
    reproduce.
 
-The mechanics live in `evals/README.md` and the `run-evals` /
+The loop and its pitfalls live in the **`fraimz` skill** (load it first); the
+deeper mechanics live in `evals/README.md` and the `run-evals` /
 `daytona-flow-validator` skills — use them as the source of truth.
