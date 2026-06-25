@@ -349,7 +349,10 @@ export async function openDesktopPath(target: string): Promise<void> {
 }
 
 export async function revealDesktopItemInDir(target: string): Promise<void> {
-  await invokeElectronHelper("__revealItemInDir", target);
+  const result = await invokeElectronHelper("__revealItemInDir", target);
+  if (typeof result === "string" && result.trim()) {
+    throw new Error(result);
+  }
 }
 
 export async function getDesktopFileIcon(target: string, size?: "small" | "normal" | "large"): Promise<string | null> {

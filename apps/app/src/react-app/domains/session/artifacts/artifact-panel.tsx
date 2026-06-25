@@ -7,11 +7,12 @@ import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { getDesktopFileIcon, openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
 import { isElectronRuntime } from "@/app/utils";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatFileSize } from "@/lib/utils";
 import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
 import { isCollectibleArtifactTarget, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
-import { HTMLPreview, ImagePreview, MarkdownPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
+import { HTMLPreview, ImagePreview, MarkdownPreview, PdfPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
 
 const ArtifactTextEditor = lazy(() =>
   import("./artifact-text-editor").then((module) => ({ default: module.ArtifactTextEditor })),
@@ -128,12 +129,13 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
       return;
     }
 
-    const url = URL.createObjectURL(new Blob([data.data], { type: data.contentType ?? "application/octet-stream" }));
+    const fallbackType = target.preview === "pdf" ? "application/pdf" : "application/octet-stream";
+    const url = URL.createObjectURL(new Blob([data.data], { type: data.contentType ?? fallbackType }));
 
     setBinaryObjectUrl(url);
 
     return () => URL.revokeObjectURL(url);
-  }, [data]);
+  }, [data, target.preview]);
 
   useEffect(() => {
     setEditing(false);
@@ -195,7 +197,11 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
       return;
     }
     else if (!isRemoteWorkspace) {
-      void openDesktopPath(externalPath);
+      try {
+        await openDesktopPath(externalPath);
+      } catch (cause) {
+        toast.error(cause instanceof Error ? cause.message : "Could not open this file.");
+      }
 
       return;
     }
@@ -205,7 +211,11 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
 
   const revealExternal = async () => {
     if (target.kind !== "file" || isRemoteWorkspace) return;
-    await revealDesktopItemInDir(externalPath);
+    try {
+      await revealDesktopItemInDir(externalPath);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Could not show this file in your file manager.");
+    }
   };
 
   const save = () => {
@@ -358,7 +368,9 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
           <HTMLPreview type="text" title={target.name} content={data.data} />
         ) : target.preview === "image" && data?.kind === "binary" && binaryObjectUrl ? (
           <ImagePreview src={binaryObjectUrl} alt={target.name} />
-        ) : data?.kind === "binary" && binaryObjectUrl && (target.preview === "pdf" || target.preview === "html") ? (
+        ) : target.preview === "pdf" && data?.kind === "binary" && binaryObjectUrl ? (
+          <PdfPreview url={binaryObjectUrl} title={target.name} />
+        ) : data?.kind === "binary" && binaryObjectUrl && target.preview === "html" ? (
           <HTMLPreview type="binary" title={target.name} url={binaryObjectUrl} />
         ) : data?.kind === "text" ? (
           <PlainText content={data.data} />

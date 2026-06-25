@@ -1268,9 +1268,19 @@ const desktopCommandHandlers = {
   },
   "__revealItemInDir": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
-      if (!target) return undefined;
-      shell.showItemInFolder(target);
-      return undefined;
+      if (!target) return "Path is required.";
+      if (existsSync(target)) {
+        shell.showItemInFolder(target);
+        return undefined;
+      }
+      // The exact file may not exist yet (or path is slightly off); fall back to
+      // opening the containing directory so the user still lands in the right place.
+      const parent = path.dirname(target);
+      if (parent && parent !== target && existsSync(parent)) {
+        const error = await shell.openPath(parent);
+        return error && error.trim() ? error : undefined;
+      }
+      return `Could not find "${target}" on disk.`;
   },
   "__getFileIcon": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
@@ -1447,6 +1457,9 @@ async function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // Enable Chromium's built-in PDF viewer so PDFs render inside the
+      // artifact panel (<embed> pointed at a blob URL).
+      plugins: true,
     },
   });
   applicationMenu.applyVisibility(mainWindow);

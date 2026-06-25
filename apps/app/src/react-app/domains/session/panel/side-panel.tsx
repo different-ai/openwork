@@ -461,6 +461,51 @@ export function SidePanel({
   }, [client, sessionId, workspaceId]);
   useControlAction(seedArtifactOverflowControlAction);
 
+  const seedPdfArtifactControlAction = React.useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.artifact_tabs.seed_pdf",
+      label: "Seed a PDF artifact",
+      description: "Write a small valid PDF and open it as an artifact tab to verify inline PDF rendering.",
+      sideEffect: "mutation",
+      disabled: !client || !workspaceId,
+      execute: async () => {
+        if (!client || !workspaceId) return { ok: false, error: "Workspace client is not ready." };
+
+        // Minimal single-page PDF that draws "OpenWork PDF" — base64 encoded.
+        const pdfBase64 =
+          "JVBERi0xLjQKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvUGFyZW50IDIgMCBSL01lZGlhQm94WzAgMCAzMDAgMTQ0XS9SZXNvdXJjZXM8PC9Gb250PDwvRjEgNCAwIFI+Pj4+L0NvbnRlbnRzIDUgMCBSPj4KZW5kb2JqCjQgMCBvYmoKPDwvVHlwZS9Gb250L1N1YnR5cGUvVHlwZTEvQmFzZUZvbnQvSGVsdmV0aWNhPj4KZW5kb2JqCjUgMCBvYmoKPDwvTGVuZ3RoIDQ0Pj4Kc3RyZWFtCkJUCi9GMSAyNCBUZgo3MiA3MCBUZAooT3BlbldvcmsgUERGKSBUagpFVAplbmRzdHJlYW0KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDU4IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDI0MSAwMDAwMCBuIAowMDAwMDAwMzEyIDAwMDAwIG4gCnRyYWlsZXIKPDwvU2l6ZSA2L1Jvb3QgMSAwIFI+PgpzdGFydHhyZWYKNDA2CiUlRU9G";
+        const binary = atob(pdfBase64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+
+        const value = "artifacts/sample-document.pdf";
+        await client.writeWorkspaceBinaryFile(workspaceId, { path: value, data: bytes.buffer, baseUpdatedAt: null });
+
+        const target: OpenTarget = {
+          id: `file:${value}`,
+          kind: "file",
+          value,
+          name: "sample-document.pdf",
+          preview: "pdf",
+          confidence: 100,
+          reason: "eval",
+          exists: true,
+          size: bytes.length,
+        };
+
+        const store = usePanelTabStore.getState();
+        store.syncTranscriptArtifacts(sessionId, [target]);
+        store.openTab(sessionId, { id: target.id, type: "artifact", label: target.name, preview: target.preview });
+        store.selectTab(sessionId, target.id);
+
+        return { ok: true, activeTabId: target.id };
+      },
+    };
+  }, [client, sessionId, workspaceId]);
+  useControlAction(seedPdfArtifactControlAction);
+
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!event.ctrlKey || event.altKey || event.metaKey || event.key !== "Tab" || tabs.length < 2) {
