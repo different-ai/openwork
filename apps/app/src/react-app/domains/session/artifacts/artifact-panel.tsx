@@ -242,13 +242,14 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
             {fileIcon ? (
               <img src={fileIcon} alt="" className="h-4 w-4 shrink-0 object-contain" />
             ) : null}
-            <h3 className="text-sm font-medium text-foreground">
-              <span className="truncate">{target.name}</span>
+            <h3 className="min-w-0 truncate text-sm font-medium text-foreground">
+              {target.name}
             </h3>
-            <span className="truncate text-xs text-muted-foreground">
+            <span className="shrink-0 text-xs text-muted-foreground">
               {target.exists === false ? "missing" : target.size !== undefined ? `${formatFileSize(target.size)}` : ""}
             </span>
           </div>
+          <div className="flex shrink-0 items-center gap-2">
           {isTextContent(target) && data?.kind === "text" ? (
             editing || isDirectTextEdit ? (
               <>
@@ -336,6 +337,7 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
             />
             <TooltipContent>Close artifact</TooltipContent>
           </Tooltip>
+          </div>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
