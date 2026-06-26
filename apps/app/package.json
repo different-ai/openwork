@@ -48,7 +48,7 @@
     "@fontsource-variable/ibm-plex-sans": "^5.2.8",
     "@heroicons/react": "^2.2.0",
     "@lexical/react": "^0.35.0",
-    "@opencode-ai/sdk": "^1.17.3",
+    "@opencode-ai/sdk": "^1.17.11",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
     "@paper-design/shaders-react": "0.0.72",
