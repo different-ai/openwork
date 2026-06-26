@@ -25,7 +25,7 @@ async function getCatalog(app: Hono, env: unknown) {
   return catalog
 }
 
-function protectedResourceMetadata(request: Request) {
+export function protectedResourceMetadata(request: Request) {
   const resource = getMcpResourceUrl(request)
   return {
     resource,

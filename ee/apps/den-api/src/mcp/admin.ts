@@ -6,8 +6,9 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { db } from "../db.js"
 import { isAdminEmailAllowed } from "../middleware/admin.js"
-import { tokenRoute } from "../middleware/index.js"
+import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
+import { protectedResourceMetadata } from "./index.js"
 import { DEN_ADMIN_MCP_VERSION, registerAdminMcpTools } from "./admin-tools.js"
 
 /**
@@ -24,6 +25,19 @@ import { DEN_ADMIN_MCP_VERSION, registerAdminMcpTools } from "./admin-tools.js"
  * /mcp exposure policy keeps blocking everything tagged Admin.
  */
 export function registerAdminMcpRoutes<T extends { Variables: Record<string, unknown> }>(app: Hono<T>) {
+  // OAuth protected-resource discovery for the admin endpoint. A spec-compliant
+  // MCP client connecting to `<origin>/mcp/admin` may self-construct the
+  // metadata URL (RFC 9728) instead of following the 401 WWW-Authenticate
+  // header — the SDK requests `/.well-known/oauth-protected-resource/mcp/admin`
+  // first. Serve the same metadata there so discovery resolves either way.
+  // The metadata declares `resource: <origin>/mcp` (admin reuses the canonical
+  // /mcp resource), which the SDK's checkResourceAllowed accepts as a parent
+  // path of /mcp/admin, so the minted token's audience matches.
+  app.get("/.well-known/oauth-protected-resource/mcp/admin", publicRoute, (c) =>
+    c.json(protectedResourceMetadata(c.req.raw)))
+  app.get("/mcp/admin/.well-known/oauth-protected-resource", publicRoute, (c) =>
+    c.json(protectedResourceMetadata(c.req.raw)))
+
   app.all("/mcp/admin", tokenRoute, async (c) => {
     const principal = await verifyMcpRequest(c.req.raw.headers, getMcpResourceUrl(c.req.raw))
     if (principal instanceof Response) {

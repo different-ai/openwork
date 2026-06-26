@@ -29,6 +29,11 @@ const MCP_JWT_SIGNING_ALGORITHMS = [DEN_JWT_SIGNING_ALGORITHM]
 
 export function getMcpResourceUrl(request: Request) {
   const url = new URL(request.url)
+  // The admin MCP lives at /mcp/admin but reuses the canonical /mcp resource
+  // (same minted token, same audience) — admin access is gated server-side by
+  // the platform-admin allowlist, not by a distinct OAuth resource. Collapse
+  // the /admin suffix so the 401 challenge and protected-resource metadata
+  // both advertise the resource the desktop app already holds a token for.
   const requestResource = `${url.origin}/mcp`
   return DEN_MCP_RESOURCES.includes(requestResource) ? requestResource : DEN_MCP_RESOURCE
 }
