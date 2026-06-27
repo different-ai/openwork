@@ -14120,6 +14120,29 @@
           "cache_write": 0
         }
       },
+      "glm-5.2": {
+        "id": "glm-5.2",
+        "name": "GLM-5.2",
+        "family": "glm",
+        "attachment": false,
+        "reasoning": true,
+        "reasoning_options": [{ "type": "effort", "values": ["high", "max"] }],
+        "tool_call": true,
+        "interleaved": { "field": "reasoning_content" },
+        "structured_output": true,
+        "temperature": true,
+        "release_date": "2026-06-13",
+        "last_updated": "2026-06-13",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": false,
+        "limit": { "context": 1000000, "output": 131072 },
+        "cost": {
+          "input": 1.4,
+          "output": 4.4,
+          "cache_read": 0.26,
+          "cache_write": 0
+        }
+      },
       "glm-5v-turbo": {
         "id": "glm-5v-turbo",
         "name": "GLM-5V-Turbo",
@@ -35068,10 +35091,10 @@
         "interleaved": { "field": "reasoning_content" },
         "structured_output": true,
         "temperature": true,
-        "release_date": "2026-03-27",
-        "last_updated": "2026-03-27",
+        "release_date": "2026-04-07",
+        "last_updated": "2026-04-07",
         "modalities": { "input": ["text"], "output": ["text"] },
-        "open_weights": false,
+        "open_weights": true,
         "limit": { "context": 200000, "output": 131072 },
         "cost": {
           "input": 1.4,
@@ -35099,6 +35122,29 @@
           "input": 0.6,
           "output": 2.2,
           "cache_read": 0.11,
+          "cache_write": 0
+        }
+      },
+      "glm-5.2": {
+        "id": "glm-5.2",
+        "name": "GLM-5.2",
+        "family": "glm",
+        "attachment": false,
+        "reasoning": true,
+        "reasoning_options": [{ "type": "effort", "values": ["high", "max"] }],
+        "tool_call": true,
+        "interleaved": { "field": "reasoning_content" },
+        "structured_output": true,
+        "temperature": true,
+        "release_date": "2026-06-13",
+        "last_updated": "2026-06-13",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": true,
+        "limit": { "context": 1000000, "output": 131072 },
+        "cost": {
+          "input": 1.4,
+          "output": 4.4,
+          "cache_read": 0.26,
           "cache_write": 0
         }
       },
@@ -35213,8 +35259,8 @@
         "tool_call": true,
         "interleaved": { "field": "reasoning_content" },
         "temperature": true,
-        "release_date": "2026-02-11",
-        "last_updated": "2026-02-11",
+        "release_date": "2026-02-12",
+        "last_updated": "2026-02-12",
         "modalities": { "input": ["text"], "output": ["text"] },
         "open_weights": true,
         "limit": { "context": 204800, "output": 131072 },
