@@ -1,5 +1,4 @@
 import { SiteFooter } from "./site-footer";
-import { LandingBackground } from "./landing-background";
 import { SiteNav } from "./site-nav";
 import {
   dataHandlingRows,
@@ -54,8 +53,6 @@ export function LandingTrustOverview(props: SharedProps) {
 
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
-      <LandingBackground />
-
       <div className="relative z-10 flex min-h-screen flex-col items-center pb-3 pt-1 md:pb-4 md:pt-2">
         <div className="w-full">
           <SiteNav

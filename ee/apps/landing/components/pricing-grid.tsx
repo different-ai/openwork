@@ -13,7 +13,6 @@ import {
   SlidersHorizontal,
   Users,
 } from "lucide-react";
-import { ResponsiveGrain } from "./responsive-grain";
 
 type PricingGridProps = {
   callUrl: string;
@@ -30,9 +29,6 @@ type PricingCard = {
   external?: boolean;
   features: Array<{ text: string; icon: typeof Download }>;
   footer?: string;
-  gradientColors: string[];
-  gradientBack: string;
-  gradientShape: "corners" | "wave" | "dots" | "truchet" | "ripple" | "blob" | "sphere";
   isCustomPricing?: boolean;
   badge?: string;
 };
@@ -43,21 +39,7 @@ function PricingCardView({ card }: { card: PricingCard }) {
   return (
     <div className="flex h-full flex-col relative group">
       {/* ── Header card ── */}
-      <div className="relative p-5 rounded-[20px] overflow-hidden mb-6 flex-shrink-0 bg-[#F4F4F4] text-gray-900 group-hover:text-white transition-colors duration-300">
-        {/* Shader layer — hidden by default, revealed on hover */}
-        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-          <ResponsiveGrain
-            colors={card.gradientColors}
-            colorBack={card.gradientBack}
-            softness={0.6}
-            intensity={0.35}
-            noise={0.06}
-            shape={card.gradientShape}
-            speed={0.4}
-          />
-          <div className="absolute inset-0 bg-black/10 mix-blend-overlay" />
-        </div>
-
+      <div className="relative p-5 rounded-[20px] overflow-hidden mb-6 flex-shrink-0 bg-[#F4F4F4] text-gray-900 group-hover:bg-gray-950 group-hover:text-white transition-colors duration-300">
         <div className="relative z-10 flex flex-col h-full min-h-[160px] justify-between">
           <div>
             <div className="flex justify-between items-start mb-6">
@@ -138,9 +120,6 @@ export function PricingGrid(props: PricingGridProps) {
         { text: "Bring your own keys", icon: KeyRound },
       ],
       footer: "Free forever",
-      gradientColors: ["#7C3AED", "#A855F7", "#6D28D9", "#4338CA"],
-      gradientBack: "#1E1B4B",
-      gradientShape: "wave",
     },
     {
       id: "cloud-workers",
@@ -158,9 +137,6 @@ export function PricingGrid(props: PricingGridProps) {
         { text: "Bring your own LLM keys, distributed to your team", icon: KeyRound },
       ],
       footer: "Billed monthly. Cancel anytime.",
-      gradientColors: ["#2563EB", "#0284C7", "#0EA5E9", "#0F172A"],
-      gradientBack: "#0C1220",
-      gradientShape: "ripple",
     },
     {
       id: "enterprise-license",
@@ -181,9 +157,6 @@ export function PricingGrid(props: PricingGridProps) {
         { text: "Enterprise rollout support and custom commercial terms", icon: FileText },
       ],
       footer: "For org-wide rollout and custom terms",
-      gradientColors: ["#F97316", "#E11D48", "#9333EA", "#4338CA"],
-      gradientBack: "#111827",
-      gradientShape: "corners",
     },
   ];
 
