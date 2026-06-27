@@ -176,6 +176,13 @@
       "when": 1781543270137,
       "tag": "0025_scim_sync_events",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "5",
+      "when": 1782534851983,
+      "tag": "0026_sloppy_puppet_master",
+      "breakpoints": true
     }
   ]
 }

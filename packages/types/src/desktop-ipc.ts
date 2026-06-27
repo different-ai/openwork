@@ -140,6 +140,13 @@ export type DesktopBootstrapConfig = {
   baseUrl: string;
   apiBaseUrl?: string | null;
   requireSignin: boolean;
+  claimLinks?: Array<{
+    id: string;
+    role: string;
+    token?: string;
+    url: string;
+    expiresAt: string;
+  }> | null;
   handoff?: (DesktopBootstrapOrgSkill & {
     grant: string;
     denBaseUrl: string;

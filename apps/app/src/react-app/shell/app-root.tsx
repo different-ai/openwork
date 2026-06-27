@@ -80,6 +80,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     const onSignin = path === "/signin" || path.startsWith("/signin/");
 
     const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
+    const hasPreparedBootstrap = Boolean(readDenBootstrapConfig().prepared);
 
     if (requireSignin) {
       if (!denAuth.isSignedIn && !onSignin) {
@@ -90,10 +91,12 @@ function DenSigninGate({ children }: DenSigninGateProps) {
       }
     } else if (onSignin) {
       navigate("/session", { replace: true });
+    } else if (!denAuth.isSignedIn && hasPreparedBootstrap && !onOnboarding) {
+      navigate("/onboarding", { replace: true });
     }
 
     // If on /onboarding but not signed in, bounce to signin or session
-    if (onOnboarding && !denAuth.isSignedIn) {
+    if (onOnboarding && !denAuth.isSignedIn && !hasPreparedBootstrap) {
       navigate(requireSignin ? "/signin" : "/session", { replace: true });
     }
   }, [

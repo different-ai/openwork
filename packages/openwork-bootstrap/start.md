@@ -59,6 +59,24 @@ openwork-bootstrap doctor --app --json
 
 ## 3. Create Cloud Workspace
 
+For agent-first setup where email identity should not block desktop readiness,
+create a provisional workspace first. This does not create an email/password
+account. It writes claim links to the local desktop bootstrap file so a human can
+claim ownership later.
+
+```bash
+openwork cloud bootstrap-workspace \
+  --base-url https://api.openworklabs.com \
+  --workspace-name "<workspace-name>" \
+  --skill-name "First OpenWork Skill" \
+  --claim-roles owner \
+  --prepare-desktop \
+  --json
+```
+
+Use the email-based flow below only when the user explicitly wants the account
+created during setup.
+
 Ask the user for:
 
 - owner email
@@ -71,7 +89,7 @@ password or token in the final response.
 ```bash
 OPENWORK_OWNER_PASSWORD="<generated-password>" \
 openwork-bootstrap cloud onboard \
-  --base-url https://app.openworklabs.com \
+  --base-url https://api.openworklabs.com \
   --owner-email "<owner-email>" \
   --org-name "<workspace-name>" \
   --invite-email "<teammate-email>" \

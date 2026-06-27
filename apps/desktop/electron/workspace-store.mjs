@@ -210,11 +210,22 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const normalizedPrepared = prepared?.orgId && prepared.orgName && prepared.skillId && prepared.skillTitle && prepared.skillPath
       ? prepared
       : null;
+    const claimLinksInput = Array.isArray(input?.claimLinks) ? input.claimLinks : [];
+    const claimLinks = claimLinksInput.flatMap((link) => {
+      if (!link || typeof link !== "object") return [];
+      const id = typeof link.id === "string" ? link.id.trim() : "";
+      const role = typeof link.role === "string" ? link.role.trim() : "";
+      const token = typeof link.token === "string" ? link.token.trim() : "";
+      const url = typeof link.url === "string" ? link.url.trim() : "";
+      const expiresAt = typeof link.expiresAt === "string" ? link.expiresAt.trim() : "";
+      return id && role && url && expiresAt ? [{ id, role, ...(token ? { token } : {}), url, expiresAt }] : [];
+    });
 
     return {
       baseUrl,
       apiBaseUrl,
       requireSignin: forceRequireSignin || input?.requireSignin === true,
+      ...(claimLinks.length > 0 ? { claimLinks } : {}),
       ...(normalizedHandoff ? { handoff: normalizedHandoff } : {}),
       ...(normalizedPrepared ? { prepared: normalizedPrepared } : {}),
     };

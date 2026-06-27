@@ -18,6 +18,7 @@ import type { MemberTeamsContext, OrganizationContextVariables, UserOrganization
 import { buildOperationId, emptyResponse, htmlResponse, jsonResponse } from "./openapi.js"
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
+import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
@@ -159,6 +160,7 @@ app.get(
 
 registerAdminRoutes(app)
 registerAuthRoutes(app)
+registerBootstrapRoutes(app)
 registerMeRoutes(app)
 registerOrgRoutes(app)
 registerVersionRoutes(app)
@@ -218,6 +220,7 @@ app.get(
         { name: "Telemetry", description: "Telemetry event ingestion and adoption analytics." },
         { name: "Admin", description: "Administrative reporting routes." },
         { name: "Users", description: "Current user and membership routes." },
+        { name: "Bootstrap", description: "Agent-first provisional workspace setup routes." },
       ],
       components: {
         securitySchemes: {

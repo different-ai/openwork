@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { createHash } from "node:crypto"
+import { createHash, generateKeyPairSync } from "node:crypto"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -71,12 +71,14 @@ function printHelp() {
     "  openwork-bootstrap install app --manifest <url-or-file> [--app-dir <path>] [--json]",
     "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
     "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--claim-roles owner,member] [--prepare-desktop] [--json]",
     "",
     "Commands:",
     "  install          Install the openwork-bootstrap CLI into a user bin dir",
     "  install app      Download and install the desktop app from a manifest",
     "  doctor           Check CLI installation and optional Den API health",
     "  cloud onboard    Sign up, create an org, invite a teammate, and create a skill",
+    "  cloud bootstrap-workspace  Create a provisional workspace without email/password auth",
     "",
     "Options:",
     "  --json           Print machine-readable JSON",
@@ -121,6 +123,10 @@ function defaultDesktopBootstrapPath() {
 
 function defaultSkillsDir() {
   return process.env.OPENWORK_SKILLS_DIR || join(configHomeDir(), "opencode", "skills")
+}
+
+function defaultDeviceKeyPath() {
+  return process.env.OPENWORK_DEVICE_KEY_PATH || join(configHomeDir(), "openwork", "bootstrap-device-key.json")
 }
 
 function slugifySkillName(value) {
@@ -569,12 +575,15 @@ function writePreparedDesktop(input) {
     skillPath,
     preparedAt,
   }
-  writeFileSync(bootstrapPath, `${JSON.stringify({
+  const bootstrap = {
     baseUrl: input.baseUrl,
     apiBaseUrl: input.apiBaseUrl,
     requireSignin: false,
     prepared,
-    handoff: {
+    ...(input.claimLinks ? { claimLinks: input.claimLinks } : {}),
+  }
+  if (input.handoff) {
+    bootstrap.handoff = {
       grant: input.handoff.grant,
       denBaseUrl: input.baseUrl,
       orgId: prepared.orgId,
@@ -583,17 +592,42 @@ function writePreparedDesktop(input) {
       skillId: prepared.skillId,
       skillTitle: prepared.skillTitle,
       createdAt: preparedAt,
-    },
-  }, null, 2)}\n`, "utf8")
+    }
+  } else {
+    bootstrap.handoff = null
+  }
+
+  writeFileSync(bootstrapPath, `${JSON.stringify(bootstrap, null, 2)}\n`, "utf8")
 
   return {
     prepared: true,
     bootstrapPath,
     skillsDir: resolve(input.skillsDir),
     skillPath,
-    handoffExpiresAt: input.handoff.expiresAt,
-    handoffGrant: "written-to-bootstrap-file",
+    ...(input.handoff ? { handoffExpiresAt: input.handoff.expiresAt, handoffGrant: "written-to-bootstrap-file" } : {}),
+    ...(input.claimLinks ? { claimLinks: input.claimLinks.map((link) => ({ id: link.id, role: link.role, expiresAt: link.expiresAt, url: "written-to-bootstrap-file" })) } : {}),
   }
+}
+
+function ensureDeviceKey(filePath) {
+  const keyPath = resolve(filePath)
+  if (existsSync(keyPath)) {
+    const stored = JSON.parse(readFileSync(keyPath, "utf8"))
+    if (typeof stored.publicKey === "string" && stored.publicKey.trim()) {
+      return { path: keyPath, publicKey: stored.publicKey.trim(), reused: true }
+    }
+  }
+
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  })
+  mkdirSync(dirname(keyPath), { recursive: true })
+  writeFileSync(keyPath, `${JSON.stringify({ publicKey, privateKey, createdAt: new Date().toISOString() }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 })
+  try {
+    chmodSync(keyPath, 0o600)
+  } catch {}
+  return { path: keyPath, publicKey, reused: false }
 }
 
 async function resolveOwnerPassword(flags) {
@@ -706,6 +740,93 @@ async function runCloudOnboard(args) {
   }, json)
 }
 
+async function runCloudBootstrapWorkspace(args) {
+  const json = hasFlag(args.flags, "json")
+  const baseUrl = getFlag(args.flags, "base-url", "https://api.openworklabs.com")?.replace(/\/$/, "")
+  const workspaceName = getFlag(args.flags, "workspace-name")
+  const skillName = getFlag(args.flags, "skill-name", "First OpenWork Skill")
+  const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
+  const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
+  const skillsDir = getFlag(args.flags, "skills-dir", defaultSkillsDir())
+  const deviceKeyPath = getFlag(args.flags, "device-key-path", defaultDeviceKeyPath())
+  const claimRoles = String(getFlag(args.flags, "claim-roles", "owner"))
+    .split(",")
+    .map((role) => role.trim())
+    .filter(Boolean)
+
+  for (const [name, value] of Object.entries({ baseUrl, workspaceName })) {
+    if (!value) throw new Error(`missing_required_flag: --${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`)
+  }
+
+  const health = await request(baseUrl, "/health", { method: "GET" })
+  if (health.status !== 200 || health.body?.ok !== true) {
+    throw new Error(`den_api_unhealthy: ${health.status} ${JSON.stringify(health.body)}`)
+  }
+
+  const deviceKey = ensureDeviceKey(deviceKeyPath)
+  const response = await request(baseUrl, "/v1/bootstrap/workspace", {
+    method: "POST",
+    body: JSON.stringify({
+      workspaceName,
+      skillName,
+      devicePublicKey: deviceKey.publicKey,
+      claimRoles,
+    }),
+  })
+  if (response.status !== 200 || response.body?.ok !== true || !response.body?.organization?.id || !response.body?.skill?.id) {
+    throw new Error(`workspace_bootstrap_failed: ${response.status} ${JSON.stringify(response.body)}`)
+  }
+
+  const skill = {
+    ...response.body.skill,
+    skillText: skillText(response.body.skill.title, response.body.skill.output || "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED"),
+  }
+
+  const skillRun = runBootstrapSkill(skill, { trigger: "bootstrap.verify" })
+  if (!skillRun.triggered || skillRun.output !== "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED") {
+    throw new Error(`skill_trigger_failed: ${JSON.stringify(skillRun)}`)
+  }
+
+  let desktop = null
+  if (prepareDesktop) {
+    desktop = writePreparedDesktop({
+      baseUrl,
+      apiBaseUrl: baseUrl,
+      bootstrapPath: desktopBootstrapPath,
+      skillsDir,
+      organization: response.body.organization,
+      skill,
+      claimLinks: response.body.claimLinks,
+    })
+  }
+
+  jsonOut({
+    ok: true,
+    message: "OpenWork workspace bootstrap complete",
+    organization: response.body.organization,
+    setup: response.body.setup,
+    skill: response.body.skill,
+    skillRun,
+    claimLinks: response.body.claimLinks.map((link) => ({ id: link.id, role: link.role, expiresAt: link.expiresAt, url: "written-to-bootstrap-file" })),
+    device: { publicKeyPath: deviceKey.path, reused: deviceKey.reused },
+    desktop,
+  }, json)
+}
+
+async function runCloud(args) {
+  const subcommand = args.positionals[1]
+  if (subcommand === "onboard") {
+    await runCloudOnboard(args)
+    return
+  }
+  if (subcommand === "bootstrap-workspace") {
+    await runCloudBootstrapWorkspace(args)
+    return
+  }
+  printHelp()
+  process.exitCode = 1
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (hasFlag(args.flags, "help") || args.positionals[0] === "help") {
@@ -727,7 +848,7 @@ async function main() {
     return
   }
   if (command === "cloud") {
-    await runCloudOnboard(args)
+    await runCloud(args)
     return
   }
 
