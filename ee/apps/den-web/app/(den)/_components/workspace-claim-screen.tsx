@@ -52,11 +52,35 @@ function parseAcceptedClaim(payload: unknown): AcceptedClaim | null {
   };
 }
 
-export function WorkspaceClaimScreen({ token }: { token: string }) {
+function pluralize(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+async function inviteTeammates(inviteEmails: readonly string[]): Promise<string> {
+  const results = await Promise.allSettled(
+    inviteEmails.map((email) =>
+      requestJson("/v1/invitations", { method: "POST", body: JSON.stringify({ email, role: "member" }) }, 12000),
+    ),
+  );
+
+  const succeeded = results.filter((result) => result.status === "fulfilled" && result.value.response.ok).length;
+  const failed = inviteEmails.length - succeeded;
+
+  if (failed === 0) {
+    return `Invited ${pluralize(succeeded, "teammate")}.`;
+  }
+  if (succeeded === 0) {
+    return `Could not invite ${pluralize(failed, "teammate")}. You can invite them later from Manage Members.`;
+  }
+  return `Invited ${pluralize(succeeded, "teammate")}; ${pluralize(failed, "invite")} did not go through. You can retry from Manage Members.`;
+}
+
+export function WorkspaceClaimScreen({ token, inviteEmails = [] }: { token: string; inviteEmails?: string[] }) {
   const router = useRouter();
   const { user, sessionHydrated, signOut } = useDenFlow();
   const [claimBusy, setClaimBusy] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
+  const [inviteSummary, setInviteSummary] = useState<string | null>(null);
 
   // Persist the token so sign-in / sign-up returns the user to this page.
   useEffect(() => {
@@ -107,6 +131,19 @@ export function WorkspaceClaimScreen({ token }: { token: string }) {
       }
 
       const accepted = parseAcceptedClaim(payload);
+
+      if (inviteEmails.length > 0) {
+        // The claim above just made this account the owner (and set it as
+        // the session's active organization), so it can now invite
+        // teammates through the same endpoint Manage Members uses. Show the
+        // result briefly before moving on - this is best-effort: a failed
+        // invite never blocks the claim, the owner can always retry from
+        // Manage Members.
+        const summary = await inviteTeammates(inviteEmails);
+        setInviteSummary(summary);
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 1400));
+      }
+
       router.replace(getOrgDashboardRoute(accepted?.organizationSlug ?? null));
     } catch (error) {
       setClaimError(error instanceof Error ? error.message : "Could not claim the workspace.");
@@ -203,6 +240,12 @@ export function WorkspaceClaimScreen({ token }: { token: string }) {
           <p className="den-copy">
             Claiming attaches this account as the owner of the workspace and unlocks billing and teammates.
           </p>
+          {inviteEmails.length > 0 ? (
+            <div className="den-frame-inset rounded-[1.5rem] px-4 py-3">
+              <p className="den-label">Will invite on claim</p>
+              <p className="m-0 text-sm text-[var(--dls-text-primary)]">{inviteEmails.join(", ")}</p>
+            </div>
+          ) : null}
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
@@ -210,7 +253,7 @@ export function WorkspaceClaimScreen({ token }: { token: string }) {
               onClick={() => void handleClaim()}
               disabled={claimBusy}
             >
-              {claimBusy ? "Claiming..." : "Claim this workspace"}
+              {claimBusy ? (inviteSummary ?? "Claiming...") : "Claim this workspace"}
             </button>
             <button
               type="button"
@@ -223,6 +266,7 @@ export function WorkspaceClaimScreen({ token }: { token: string }) {
           </div>
         </div>
 
+        {inviteSummary ? <div className="den-notice is-info">{inviteSummary}</div> : null}
         {claimError ? <div className="den-notice is-error">{claimError}</div> : null}
       </div>
     </section>

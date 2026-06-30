@@ -63,6 +63,11 @@ create a provisional workspace first. This does not create an email/password
 account. It writes claim links to the local desktop bootstrap file so a human can
 claim ownership later.
 
+Optionally ask the user for teammate email addresses to invite. Invites only go
+out once the workspace is claimed (a provisional workspace has no authenticated
+owner yet to send them as) - they fire automatically the moment a human claims
+ownership.
+
 ```bash
 openwork-bootstrap cloud bootstrap-workspace \
   --base-url https://api.openworklabs.com \
@@ -70,6 +75,7 @@ openwork-bootstrap cloud bootstrap-workspace \
   --skill-name "First OpenWork Skill" \
   --claim-roles owner \
   --prepare-desktop \
+  [--teammate-emails "<email1>,<email2>"] \
   --json
 ```
 
@@ -98,8 +104,10 @@ friendly, human message that gives momentum:
    is open — try typing: 'summarize the files in my Downloads folder' and hit
    Run."
 3. Offer the next steps as things you can do FOR them, as a short menu: invite a
-   teammate, claim the workspace (to attach billing + a human owner), or suggest
-   another first task idea.
+   teammate (if emails were already given, mention they'll be invited
+   automatically once the workspace is claimed; otherwise offer to collect
+   emails and re-run step 3 with --teammate-emails), claim the workspace (to
+   attach billing + a human owner), or suggest another first task idea.
 4. End with a single question like "Want me to invite someone or help with your
    first task?" so the conversation keeps going.
 

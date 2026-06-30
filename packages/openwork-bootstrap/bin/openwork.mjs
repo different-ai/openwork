@@ -71,7 +71,7 @@ function printHelp() {
     "  openwork-bootstrap install app --manifest <url-or-file> [--app-dir <path>] [--json]",
     "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
     "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--prepare-desktop] [--json]",
-    "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--claim-roles owner,member] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--teammate-emails a@x.com,b@y.com] [--claim-roles owner,member] [--prepare-desktop] [--json]",
     "  openwork-bootstrap cloud claim-link [--role owner] [--desktop-bootstrap-path <path>] [--json]",
     "",
     "Commands:",
@@ -790,6 +790,10 @@ async function runCloudBootstrapWorkspace(args) {
     .split(",")
     .map((role) => role.trim())
     .filter(Boolean)
+  const teammateEmails = String(getFlag(args.flags, "teammate-emails", ""))
+    .split(",")
+    .map((email) => email.trim())
+    .filter(Boolean)
 
   for (const [name, value] of Object.entries({ baseUrl, workspaceName })) {
     if (!value) throw new Error(`missing_required_flag: --${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`)
@@ -808,6 +812,7 @@ async function runCloudBootstrapWorkspace(args) {
       skillName,
       devicePublicKey: deviceKey.publicKey,
       claimRoles,
+      ...(teammateEmails.length > 0 ? { teammateEmails } : {}),
     }),
   })
   if (response.status !== 200 || response.body?.ok !== true || !response.body?.organization?.id || !response.body?.skill?.id) {
