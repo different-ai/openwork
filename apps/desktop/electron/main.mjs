@@ -304,16 +304,24 @@ const explicitCdpPort = Number.parseInt(
   process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
   10,
 );
-const remoteDebugPort = Number.isFinite(explicitCdpPort) && explicitCdpPort > 0
-  ? explicitCdpPort
-  : await findFreeCdpPort([9223, 9224, 9225, 9226, 9227]);
+const remoteDebugPort = envFlagEnabled("OPENWORK_DISABLE_BUILTIN_MCP")
+  ? 0
+  : Number.isFinite(explicitCdpPort) && explicitCdpPort > 0
+    ? explicitCdpPort
+    : await findFreeCdpPort([9223, 9224, 9225, 9226, 9227]);
 if (remoteDebugPort > 0) {
   app.commandLine.appendSwitch("remote-debugging-port", String(remoteDebugPort));
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
 }
 // Make the resolved port available to the embedded server so it flows into
-// agent instructions via ensureOpenworkAgent → resolveAgentTemplate.
-process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
+// agent instructions via ensureOpenworkAgent → resolveAgentTemplate. Skipping
+// the env override when disabled keeps the opencode-chrome-devtools plugin
+// from advertising a port that was never bound.
+if (remoteDebugPort > 0) {
+  process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
+} else {
+  delete process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT;
+}
 
 // Apply extra Chromium flags from ELECTRON_EXTRA_LAUNCH_ARGS.
 // Used in headless/Daytona environments to pass e.g. --disable-gpu.
@@ -335,6 +343,7 @@ const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
 const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
 const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
+const DISABLE_BUILTIN_MCP = envFlagEnabled("OPENWORK_DISABLE_BUILTIN_MCP");
 
 function envFlagEnabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
@@ -390,11 +399,13 @@ const IDLE_ROUTER_INFO = Object.freeze({
 let mainWindow = null;
 const pendingDeepLinks = [];
 
-const browserPanel = createBrowserPanel({
-  remoteDebugPort,
-  getWindow: () => mainWindow,
-  onDeepLink: (urls) => queueDeepLinks(urls),
-});
+const browserPanel = DISABLE_BUILTIN_MCP
+  ? null
+  : createBrowserPanel({
+      remoteDebugPort,
+      getWindow: () => mainWindow,
+      onDeepLink: (urls) => queueDeepLinks(urls),
+    });
 
 const workspaceStore = createWorkspaceStore({
   app,
@@ -1481,7 +1492,7 @@ async function createMainWindow() {
   });
 
   mainWindow.on("closed", () => {
-    browserPanel.destroy();
+    browserPanel?.destroy();
     mainWindow = null;
   });
 
@@ -1507,6 +1518,7 @@ async function createMainWindow() {
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!browserPanel) return;
     if (browserPanel.isMainWindowAllowedNavigation(url)) return;
     event.preventDefault();
     browserPanel.routeBlockedMainWindowNavigation(url);
@@ -1520,6 +1532,7 @@ async function createMainWindow() {
   // reroute the URL into a built-in browser tab instead.
   mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
     if (!isMainFrame || isInPlace) return;
+    if (!browserPanel) return;
     if (browserPanel.isMainWindowAllowedNavigation(url)) return;
     try {
       mainWindow?.webContents.stop();
@@ -1614,7 +1627,7 @@ ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
   killTerminal(String(terminalId));
 });
 
-browserPanel.registerIpc(ipcMain);
+browserPanel?.registerIpc(ipcMain);
 
 registerMigrationIpc({ app, ipcMain });
 const { ensureAutoUpdater } = registerUpdaterIpc({ app, ipcMain, getMainWindow: () => mainWindow });
@@ -1655,9 +1668,13 @@ if (!app.requestSingleInstanceLock()) {
     // Electron see the same workspace list. Import the short-lived
     // Electron-only filename only when the shared file is missing.
     await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
-    await uiControlServer.start().catch((error) => {
-      console.warn("[ui-control] failed to start", error);
-    });
+    if (DISABLE_BUILTIN_MCP) {
+      console.log("[ui-control] Skipped (OPENWORK_DISABLE_BUILTIN_MCP=1)");
+    } else {
+      await uiControlServer.start().catch((error) => {
+        console.warn("[ui-control] failed to start", error);
+      });
+    }
     runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
       ok: false,
       error: error instanceof Error ? error.message : String(error),

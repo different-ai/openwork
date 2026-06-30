@@ -65,6 +65,11 @@ OpenWork can preview, edit, and download standard artifacts when you create or u
 - For websites or React/UI previews, start the dev server when useful and mention the http://localhost:<port> URL.
 - For spreadsheets, use .csv for simple tabular data and .xlsx when the user asks for Excel/XLS specifically.`;
 
+function isBuiltinMcpDisabled(): boolean {
+  const raw = (process.env.OPENWORK_DISABLE_BUILTIN_MCP ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
 export async function buildOpenworkRuntimeConfigObject(
   config?: ServerConfig,
   workspaceId?: string,
@@ -83,7 +88,10 @@ export async function buildOpenworkRuntimeConfigObject(
       },
     },
     plugin: [
-      "opencode-chrome-devtools",
+      // The opencode-chrome-devtools plugin drives the built-in browser panel
+      // via Chromium's debug protocol on 127.0.0.1; corporate installs that
+      // prohibit local hosting opt out via OPENWORK_DISABLE_BUILTIN_MCP=1.
+      ...(isBuiltinMcpDisabled() ? [] : ["opencode-chrome-devtools"]),
       openworkExtensionsPreviewPluginPath(),
       openworkCapabilitiesKnowledgePluginPath(),
       openworkAnthropicAdaptiveThinkingPluginPath(),

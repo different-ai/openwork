@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+const DISABLE_BUILTIN_MCP = (() => {
+  const raw = (process.env.OPENWORK_DISABLE_BUILTIN_MCP ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+})();
+
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
@@ -104,42 +109,49 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       };
     },
   },
-  browser: {
-    show(bounds) { return ipcRenderer.invoke("openwork:browser:show", bounds); },
-    hide() { return ipcRenderer.invoke("openwork:browser:hide"); },
-    openUrl(url, provider) { return ipcRenderer.invoke("openwork:browser:openUrl", url, provider); },
-    navigate(url) { return ipcRenderer.invoke("openwork:browser:navigate", url); },
-    back() { return ipcRenderer.invoke("openwork:browser:back"); },
-    forward() { return ipcRenderer.invoke("openwork:browser:forward"); },
-    reload() { return ipcRenderer.invoke("openwork:browser:reload"); },
-    setBounds(bounds) { return ipcRenderer.invoke("openwork:browser:bounds", bounds); },
-    getState() { return ipcRenderer.invoke("openwork:browser:state"); },
-    createTab(url) { return ipcRenderer.invoke("openwork:browser:createTab", url); },
-    closeTab(tabId) { return ipcRenderer.invoke("openwork:browser:closeTab", tabId); },
-    closeAllTabs() { return ipcRenderer.invoke("openwork:browser:closeAllTabs"); },
-    selectTab(tabId) { return ipcRenderer.invoke("openwork:browser:selectTab", tabId); },
-    reorderTabs(tabIds) { return ipcRenderer.invoke("openwork:browser:reorderTabs", tabIds); },
-    listTabs() { return ipcRenderer.invoke("openwork:browser:listTabs"); },
-    setProxy(proxy) { return ipcRenderer.invoke("openwork:browser:setProxy", proxy); },
-    getProxy() { return ipcRenderer.invoke("openwork:browser:getProxy"); },
-    showTabContextMenu(tabId, point) { return ipcRenderer.invoke("openwork:browser:tabContextMenu", tabId, point); },
-    destroy() { return ipcRenderer.invoke("openwork:browser:destroy"); },
-    onStateChange(callback) {
-      const handler = (_event, state) => callback(state);
-      ipcRenderer.on("openwork:browser:state", handler);
-      return () => ipcRenderer.removeListener("openwork:browser:state", handler);
-    },
-    onPanelOpened(callback) {
-      const handler = () => callback();
-      ipcRenderer.on("openwork:browser:panel-opened", handler);
-      return () => ipcRenderer.removeListener("openwork:browser:panel-opened", handler);
-    },
-    onPanelClosed(callback) {
-      const handler = () => callback();
-      ipcRenderer.on("openwork:browser:panel-closed", handler);
-      return () => ipcRenderer.removeListener("openwork:browser:panel-closed", handler);
-    },
-  },
+  // Built-in browser bridge is omitted when OPENWORK_DISABLE_BUILTIN_MCP=1 so
+  // the renderer's `window.__OPENWORK_ELECTRON__?.browser` short-circuits and
+  // no IPC handlers exist to bind in the main process either.
+  ...(DISABLE_BUILTIN_MCP
+    ? {}
+    : {
+        browser: {
+          show(bounds) { return ipcRenderer.invoke("openwork:browser:show", bounds); },
+          hide() { return ipcRenderer.invoke("openwork:browser:hide"); },
+          openUrl(url, provider) { return ipcRenderer.invoke("openwork:browser:openUrl", url, provider); },
+          navigate(url) { return ipcRenderer.invoke("openwork:browser:navigate", url); },
+          back() { return ipcRenderer.invoke("openwork:browser:back"); },
+          forward() { return ipcRenderer.invoke("openwork:browser:forward"); },
+          reload() { return ipcRenderer.invoke("openwork:browser:reload"); },
+          setBounds(bounds) { return ipcRenderer.invoke("openwork:browser:bounds", bounds); },
+          getState() { return ipcRenderer.invoke("openwork:browser:state"); },
+          createTab(url) { return ipcRenderer.invoke("openwork:browser:createTab", url); },
+          closeTab(tabId) { return ipcRenderer.invoke("openwork:browser:closeTab", tabId); },
+          closeAllTabs() { return ipcRenderer.invoke("openwork:browser:closeAllTabs"); },
+          selectTab(tabId) { return ipcRenderer.invoke("openwork:browser:selectTab", tabId); },
+          reorderTabs(tabIds) { return ipcRenderer.invoke("openwork:browser:reorderTabs", tabIds); },
+          listTabs() { return ipcRenderer.invoke("openwork:browser:listTabs"); },
+          setProxy(proxy) { return ipcRenderer.invoke("openwork:browser:setProxy", proxy); },
+          getProxy() { return ipcRenderer.invoke("openwork:browser:getProxy"); },
+          showTabContextMenu(tabId, point) { return ipcRenderer.invoke("openwork:browser:tabContextMenu", tabId, point); },
+          destroy() { return ipcRenderer.invoke("openwork:browser:destroy"); },
+          onStateChange(callback) {
+            const handler = (_event, state) => callback(state);
+            ipcRenderer.on("openwork:browser:state", handler);
+            return () => ipcRenderer.removeListener("openwork:browser:state", handler);
+          },
+          onPanelOpened(callback) {
+            const handler = () => callback();
+            ipcRenderer.on("openwork:browser:panel-opened", handler);
+            return () => ipcRenderer.removeListener("openwork:browser:panel-opened", handler);
+          },
+          onPanelClosed(callback) {
+            const handler = () => callback();
+            ipcRenderer.on("openwork:browser:panel-closed", handler);
+            return () => ipcRenderer.removeListener("openwork:browser:panel-closed", handler);
+          },
+        },
+      }),
   terminal: {
     create(options) { return ipcRenderer.invoke("openwork:terminal:create", options); },
     write(terminalId, data) { return ipcRenderer.invoke("openwork:terminal:write", terminalId, data); },
