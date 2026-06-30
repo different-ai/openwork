@@ -94,6 +94,8 @@ export type CommandPaletteProps = {
   selectedModelLabel?: string;
   /** Optional — open a URL in the user's browser. Falls back to window.open. */
   onOpenUrl?: (url: string) => void;
+  /** Optional — opens the workflow graph modal for the current workspace. */
+  onOpenWorkflowGraph?: () => void;
   /** Optional: current session servers/artifacts exposed through Cmd/Ctrl+K. */
   accessibleTargets?: AccessibleTargetOption[];
   onOpenAccessibleTarget?: (target: AccessibleTargetOption) => void;
@@ -315,6 +317,21 @@ export function CommandPalette(props: CommandPaletteProps) {
         props.onOpenSettings("/settings/updates");
       },
     },
+    ...(props.onOpenWorkflowGraph
+      ? [
+          {
+            id: "view-workflow-graph",
+            title: t("session.cmd_workflow_graph_title"),
+            detail: t("session.cmd_workflow_graph_detail"),
+            meta: t("session.cmd_settings_meta"),
+            action: () => {
+              const handler = props.onOpenWorkflowGraph;
+              props.onClose();
+              handler?.();
+            },
+          } satisfies PaletteItem,
+        ]
+      : []),
   ], [accessibleTargetCount, canMoveCurrentSessionToGroup, props, sessionGroupCount]);
 
   const sessionItems = useMemo<PaletteItem[]>(

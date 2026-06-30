@@ -122,6 +122,7 @@ import {
 } from "@/react-app/domains/workspace/remote-workspace-diagnostics";
 import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
+import { WorkflowGraphModal } from "@/react-app/domains/session/modals/workflow-graph-modal";
 import { CommandPalette, type PaletteItem, type SessionGroupOption, type SessionOption as PaletteSessionOption } from "./command-palette";
 import { SessionSearchDialog } from "./session-search-dialog";
 import type { SessionMessageFetcher } from "@/react-app/domains/session/search/session-search";
@@ -1219,6 +1220,7 @@ export function SessionRoute() {
     onNextSessionTab: goToNextSessionTab,
     onPrevSessionTab: goToPrevSessionTab,
   });
+  const [workflowGraphOpen, setWorkflowGraphOpen] = useState(false);
   useReactRenderWatchdog("SessionRoute", {
     selectedSessionId,
     selectedWorkspaceId,
@@ -2007,6 +2009,23 @@ export function SessionRoute() {
       listAgents={listAgents}
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}
+      onOpenWorkflowGraph={
+        selectedWorkspaceId ? () => setWorkflowGraphOpen(true) : undefined
+      }
+    />
+    <WorkflowGraphModal
+      open={workflowGraphOpen}
+      workspaceTitle={selectedWorkspace ? workspaceLabel(selectedWorkspace) : null}
+      sessions={
+        workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId)
+          ?.sessions ?? []
+      }
+      onSelectSession={(sessionId) => {
+        if (selectedWorkspaceId) {
+          navigateToWorkspaceSession(selectedWorkspaceId, sessionId);
+        }
+      }}
+      onClose={() => setWorkflowGraphOpen(false)}
     />
     <SessionSearchDialog
       open={sessionSearchOpen}
