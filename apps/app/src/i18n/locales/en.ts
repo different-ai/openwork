@@ -814,6 +814,8 @@ export default {
   "session.cmd_agent_default_detail": "Use the engine's default agent",
   "session.cmd_agents_detail": "Choose which agent runs your prompts",
   "session.cmd_agents_title": "Switch agent",
+  "session.cmd_add_mcp_detail": "Open the Apps & MCP page to connect a new integration",
+  "session.cmd_add_mcp_title": "Add MCP",
   "session.cmd_current_workspace": "Current workspace",
   "session.cmd_new_session_detail": "Start a fresh task in the current workspace",
   "session.cmd_new_session_meta": "Create",

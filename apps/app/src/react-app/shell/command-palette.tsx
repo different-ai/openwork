@@ -286,6 +286,16 @@ export function CommandPalette(props: CommandPaletteProps) {
       },
     },
     {
+      id: "settings-add-mcp",
+      title: t("session.cmd_add_mcp_title"),
+      detail: t("session.cmd_add_mcp_detail"),
+      meta: t("session.cmd_settings_meta"),
+      action: () => {
+        props.onClose();
+        props.onOpenSettings("/settings/extensions/mcp");
+      },
+    },
+    {
       id: "settings-appearance",
       title: t("settings.tab_appearance"),
       detail: t("settings.tab_description_appearance"),
