@@ -140,6 +140,11 @@ plugin (configured in `.opencode/opencode.json`). Every tool takes
   `__reactFiber$` → reducer dispatch pattern documented in `daytona-flows.md`.
 - Prefer poll-until-condition waits (`ctx.waitFor`, `ctx.waitForText`) over
   fixed sleeps.
+- The runner forces **light mode** by default before every flow runs
+  (`ctx.ensureLightMode()`, called automatically in `runner/run.mjs`) so
+  screenshot evidence stays readable regardless of the host machine's OS theme.
+  A flow that is itself testing theme/dark-mode behavior can opt out with
+  `preserveTheme: true` on the flow definition; no current flow needs this.
 
 ## Evidence and repair standard
 
