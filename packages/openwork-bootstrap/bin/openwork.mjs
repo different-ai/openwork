@@ -72,6 +72,7 @@ function printHelp() {
     "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
     "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--prepare-desktop] [--json]",
     "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--claim-roles owner,member] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap cloud claim-link [--role owner] [--desktop-bootstrap-path <path>] [--json]",
     "",
     "Commands:",
     "  install          Install the openwork-bootstrap CLI into a user bin dir",
@@ -79,6 +80,9 @@ function printHelp() {
     "  doctor           Check CLI installation and optional Den API health",
     "  cloud onboard    Sign up, create an org, invite a teammate, and create a skill",
     "  cloud bootstrap-workspace  Create a provisional workspace without email/password auth",
+    "  cloud claim-link Retrieve a claim link saved by --prepare-desktop. Only run",
+    "                   this when you are ready to hand the link to a human; do",
+    "                   not print claim links preemptively.",
     "",
     "Options:",
     "  --json           Print machine-readable JSON",
@@ -628,8 +632,17 @@ function writePreparedDesktop(input) {
     bootstrapPath,
     skillsDir: resolve(input.skillsDir),
     skillPath,
-    ...(input.handoff ? { handoffExpiresAt: input.handoff.expiresAt, handoffGrant: "written-to-bootstrap-file" } : {}),
-    ...(input.claimLinks ? { claimLinks: input.claimLinks.map((link) => ({ id: link.id, role: link.role, expiresAt: link.expiresAt, url: "written-to-bootstrap-file" })) } : {}),
+    ...(input.handoff ? { handoffExpiresAt: input.handoff.expiresAt, handoffGrant: "redacted: saved to bootstrapPath" } : {}),
+    ...(input.claimLinks
+      ? {
+          claimLinks: input.claimLinks.map((link) => ({
+            id: link.id,
+            role: link.role,
+            expiresAt: link.expiresAt,
+            url: `redacted: run "openwork-bootstrap cloud claim-link --role ${link.role}" to view`,
+          })),
+        }
+      : {}),
   }
 }
 
@@ -831,14 +844,54 @@ async function runCloudBootstrapWorkspace(args) {
     setup: response.body.setup,
     skill: response.body.skill,
     skillRun,
-    claimLinks: response.body.claimLinks.map((link) => ({ id: link.id, role: link.role, expiresAt: link.expiresAt, url: "written-to-bootstrap-file" })),
+    claimLinks: response.body.claimLinks.map((link) => ({
+      id: link.id,
+      role: link.role,
+      expiresAt: link.expiresAt,
+      url: prepareDesktop
+        ? `redacted: run "openwork-bootstrap cloud claim-link --role ${link.role}" to view`
+        : "discarded: rerun with --prepare-desktop to persist this link, otherwise it cannot be retrieved later",
+    })),
     device: { publicKeyPath: deviceKey.path, reused: deviceKey.reused },
     desktop,
   }, json)
 }
 
+function runCloudClaimLink(args) {
+  const json = hasFlag(args.flags, "json")
+  const desktopBootstrapPath = resolve(getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath()))
+  const roleFilter = getFlag(args.flags, "role")
+
+  if (!existsSync(desktopBootstrapPath)) {
+    throw new Error(`desktop_bootstrap_not_found: ${desktopBootstrapPath} (run cloud bootstrap-workspace --prepare-desktop first)`)
+  }
+
+  const bootstrap = JSON.parse(readFileSync(desktopBootstrapPath, "utf8"))
+  const allLinks = Array.isArray(bootstrap.claimLinks) ? bootstrap.claimLinks : []
+  const claimLinks = roleFilter ? allLinks.filter((link) => link.role === roleFilter) : allLinks
+
+  if (claimLinks.length === 0) {
+    throw new Error(
+      allLinks.length === 0
+        ? `no_claim_links: ${desktopBootstrapPath} has no claim links (this workspace may have been bootstrapped without --prepare-desktop, or claimRoles was empty)`
+        : `no_claim_links_for_role: no claim link with role "${roleFilter}" in ${desktopBootstrapPath}`,
+    )
+  }
+
+  jsonOut({
+    ok: true,
+    message: "Claim link retrieved. Share this URL only with the person who should own this workspace.",
+    bootstrapPath: desktopBootstrapPath,
+    claimLinks,
+  }, json)
+}
+
 async function runCloud(args) {
   const subcommand = args.positionals[1]
+  if (subcommand === "claim-link") {
+    runCloudClaimLink(args)
+    return
+  }
   if (subcommand === "onboard") {
     await runCloudOnboard(args)
     return
