@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * "Copy Prompt" CTA with animated glyphs and a hover preview.
+ * "Copy Prompt" CTA with animated glyphs that morph into a copied state.
  *
  * The button markup, the four animated SVG glyphs, the hover-preview tooltip,
  * and the data-feedback / data-copy-error driven feedback states are ported
@@ -13,6 +13,9 @@
  *  - converted Astro markup + inline <script> to a React component (state-driven
  *    feedback instead of dataset mutation via querySelector)
  *  - relabeled the copied-feedback copy and the prompt text for OpenWork
+ *  - replaced Flue's hover-preview tooltip with an in-button "Copied" morph so
+ *    it stays legible over the dark grain corner (the full prompt now lives in
+ *    the button's native title tooltip)
  *  - kept Flue's `.squircle-button` shape and glyph hover animations verbatim
  */
 
@@ -55,7 +58,7 @@ export function CopyPromptButton({ className }: { className?: string }) {
     resetTimer.current = setTimeout(() => {
       setFeedback(false);
       resetTimer.current = null;
-    }, 5000);
+    }, 2500);
   };
 
   return (
@@ -68,8 +71,10 @@ export function CopyPromptButton({ className }: { className?: string }) {
         type="button"
         onClick={onClick}
         aria-label="Copy the agent setup prompt"
-        className="squircle-button group inline-flex cursor-pointer items-center gap-2.5 border border-[#011627] bg-[#011627] px-5 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#102638]"
+        title={AGENT_START_PROMPT}
+        className="squircle-button group relative inline-flex cursor-pointer items-center justify-center border border-[#011627] bg-[#011627] px-5 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#102638]"
       >
+        <span className="inline-flex items-center gap-2.5 transition-all duration-200 ease-out group-data-[feedback=true]/copy:scale-90 group-data-[feedback=true]/copy:opacity-0">
         <span
           className="relative flex h-5 w-[94px] shrink-0 items-center justify-start text-white"
           aria-hidden="true"
@@ -114,30 +119,26 @@ export function CopyPromptButton({ className }: { className?: string }) {
           </svg>
         </span>
         <span className="copy-prompt-label">Copy Prompt</span>
-      </button>
-      <span
-        aria-live="polite"
-        className="pointer-events-none absolute left-0 top-full mt-3 hidden max-w-[min(90vw,28rem)] whitespace-normal font-[JetBrains_Mono,monospace] text-xs opacity-0 translate-y-1 transition-all duration-200 ease-out group-hover/copy:translate-y-0 group-hover/copy:opacity-100 group-focus-within/copy:translate-y-0 group-focus-within/copy:opacity-100 group-data-[feedback=true]/copy:translate-y-0 group-data-[feedback=true]/copy:opacity-100 sm:inline-flex"
-      >
-        <span className="relative inline-flex">
-          <span className="inline-flex items-start gap-1 text-gray-500 transition-all duration-200 ease-out group-data-[feedback=true]/copy:-translate-y-1 group-data-[feedback=true]/copy:opacity-0">
-            <span className="relative top-px inline-flex w-3 shrink-0 justify-center text-sm leading-none text-blue-300">&ldquo;</span>
-            <span>
-              {AGENT_START_PROMPT}
-              <span className="relative top-px ml-1 text-sm leading-none text-blue-300">&rdquo;</span>
-            </span>
-          </span>
-          <span className="absolute left-0 top-0 inline-flex translate-y-1 items-center gap-1 opacity-0 transition-all duration-200 ease-out group-data-[feedback=true]/copy:translate-y-0 group-data-[feedback=true]/copy:opacity-100">
-            <span className="inline-flex w-3 shrink-0 justify-center text-blue-500 group-data-[copy-error=true]/copy:hidden">&#x2713;</span>
-            <span className="hidden w-3 shrink-0 justify-center text-gray-500 group-data-[copy-error=true]/copy:inline-flex">!</span>
-            <span className="text-blue-600 group-data-[copy-error=true]/copy:hidden">
-              Copied — now paste this into your coding agent and it installs OpenWork for you.
-            </span>
-            <span className="hidden text-gray-600 group-data-[copy-error=true]/copy:inline">
-              Could not copy prompt
-            </span>
-          </span>
         </span>
+        <span className="pointer-events-none absolute inset-0 flex scale-90 items-center justify-center gap-2 opacity-0 transition-all duration-200 ease-out group-data-[feedback=true]/copy:scale-100 group-data-[feedback=true]/copy:opacity-100">
+          <svg
+            className="h-[18px] w-[18px] group-data-[copy-error=true]/copy:hidden"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+          <span className="copy-prompt-label group-data-[copy-error=true]/copy:hidden">Copied</span>
+          <span className="copy-prompt-label hidden group-data-[copy-error=true]/copy:inline">Couldn&rsquo;t copy</span>
+        </span>
+      </button>
+      <span aria-live="polite" className="sr-only">
+        {feedback ? (copyError ? "Couldn't copy the prompt" : "Prompt copied to clipboard") : ""}
       </span>
     </div>
   );
