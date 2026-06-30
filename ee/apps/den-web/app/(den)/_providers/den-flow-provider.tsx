@@ -58,9 +58,11 @@ import {
 import { EMPTY_RUNTIME_CONFIG, getRuntimeConfig, type DenWebRuntimeConfig } from "../_lib/runtime-config";
 import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
+  PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
   getInferenceRoute,
   getJoinOrgRoute,
   getOrgDashboardRoute,
+  getWorkspaceClaimRoute,
   parseOrgListPayload,
 } from "../_lib/den-org";
 
@@ -160,6 +162,15 @@ function getPendingOrgInvitationId() {
 
   const invitationId = window.sessionStorage.getItem(PENDING_ORG_INVITATION_STORAGE_KEY)?.trim() ?? "";
   return invitationId || null;
+}
+
+function getPendingWorkspaceClaimToken() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const token = window.sessionStorage.getItem(PENDING_WORKSPACE_CLAIM_STORAGE_KEY)?.trim() ?? "";
+  return token || null;
 }
 
 function getPendingAuthIntent() {
@@ -491,7 +502,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    if (authenticatedUser && getPendingOrgInvitationId()) {
+    if (authenticatedUser && (getPendingWorkspaceClaimToken() || getPendingOrgInvitationId())) {
       return "join-org";
     }
 
@@ -1029,6 +1040,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
+    const pendingClaimToken = getPendingWorkspaceClaimToken();
+    if (pendingClaimToken) {
+      return getWorkspaceClaimRoute(pendingClaimToken);
+    }
+
     const pendingInvitationId = getPendingOrgInvitationId();
     if (pendingInvitationId) {
       return getJoinOrgRoute(pendingInvitationId);
@@ -1276,6 +1292,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);
       window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
       window.sessionStorage.removeItem(PENDING_ORG_INVITATION_STORAGE_KEY);
+      window.sessionStorage.removeItem(PENDING_WORKSPACE_CLAIM_STORAGE_KEY);
     }
   }
 
