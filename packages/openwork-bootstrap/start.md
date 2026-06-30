@@ -63,6 +63,10 @@ create a provisional workspace first. This does not create an email/password
 account. It writes claim links to the local desktop bootstrap file so a human can
 claim ownership later.
 
+Optionally ask the user for their own email address first. It is only used to
+pre-fill the claim page later (not a security boundary, not an account, no
+password) - skip it if the user does not want to share it.
+
 ```bash
 openwork-bootstrap cloud bootstrap-workspace \
   --base-url https://api.openworklabs.com \
@@ -70,6 +74,7 @@ openwork-bootstrap cloud bootstrap-workspace \
   --skill-name "First OpenWork Skill" \
   --claim-roles owner \
   --prepare-desktop \
+  [--owner-email "<email-if-given>"] \
   --json
 ```
 

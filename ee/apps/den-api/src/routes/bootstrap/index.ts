@@ -32,6 +32,11 @@ const bootstrapWorkspaceSchema = z.object({
   skillName: z.string().trim().min(1).max(120).default("First OpenWork Skill"),
   devicePublicKey: z.string().trim().min(16).max(4096).optional(),
   claimRoles: z.array(z.enum(["owner", "admin", "member"])).min(1).max(3).default(["owner"]),
+  // Optional. Not persisted and not a security boundary - the claim token is
+  // the only thing that authorizes a claim. This is purely passed through
+  // into the owner claim link so the claim page can pre-fill (not lock) the
+  // email field for a smoother human handoff.
+  ownerEmail: z.string().trim().toLowerCase().email().max(255).optional(),
 })
 
 const acceptClaimSchema = z.object({
@@ -85,8 +90,9 @@ function requestAddress(headers: Headers) {
   return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
 }
 
-function claimUrl(token: string) {
-  return `${env.betterAuthUrl}/workspace-claim?token=${encodeURIComponent(token)}`
+function claimUrl(token: string, prefillEmail?: string | null) {
+  const url = `${env.betterAuthUrl}/workspace-claim?token=${encodeURIComponent(token)}`
+  return prefillEmail ? `${url}&email=${encodeURIComponent(prefillEmail)}` : url
 }
 
 function starterSkillText(name: string) {
@@ -220,7 +226,13 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
             status: "pending",
             expiresAt,
           })
-          claimLinks.push({ id, role, token, url: claimUrl(token), expiresAt: expiresAt.toISOString() })
+          claimLinks.push({
+            id,
+            role,
+            token,
+            url: claimUrl(token, role === "owner" ? input.ownerEmail : null),
+            expiresAt: expiresAt.toISOString(),
+          })
         }
 
         return {

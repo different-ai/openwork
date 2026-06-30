@@ -52,7 +52,7 @@ function parseAcceptedClaim(payload: unknown): AcceptedClaim | null {
   };
 }
 
-export function WorkspaceClaimScreen({ token }: { token: string }) {
+export function WorkspaceClaimScreen({ token, prefilledEmail }: { token: string; prefilledEmail?: string }) {
   const router = useRouter();
   const { user, sessionHydrated, signOut } = useDenFlow();
   const [claimBusy, setClaimBusy] = useState(false);
@@ -163,6 +163,11 @@ export function WorkspaceClaimScreen({ token }: { token: string }) {
 
         <AuthPanel
           eyebrow="Claim workspace"
+          // Prefill only - never locked. The claim token (not the email) is
+          // what authorizes accepting this claim, so the human can still
+          // claim with a different email if they want to.
+          prefilledEmail={prefilledEmail}
+          prefillKey={token}
           signUpContent={{
             title: "Claim your workspace.",
             copy: "Create an account to take ownership.",

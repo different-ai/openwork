@@ -71,7 +71,7 @@ function printHelp() {
     "  openwork-bootstrap install app --manifest <url-or-file> [--app-dir <path>] [--json]",
     "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
     "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--prepare-desktop] [--json]",
-    "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--claim-roles owner,member] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--owner-email <email>] [--claim-roles owner,member] [--prepare-desktop] [--json]",
     "",
     "Commands:",
     "  install          Install the openwork-bootstrap CLI into a user bin dir",
@@ -769,6 +769,7 @@ async function runCloudBootstrapWorkspace(args) {
   const baseUrl = getFlag(args.flags, "base-url", "https://api.openworklabs.com")?.replace(/\/$/, "")
   const workspaceName = getFlag(args.flags, "workspace-name")
   const skillName = getFlag(args.flags, "skill-name", "First OpenWork Skill")
+  const ownerEmail = getFlag(args.flags, "owner-email")
   const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
   const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
   const skillsDir = getFlag(args.flags, "skills-dir", defaultSkillsDir())
@@ -795,6 +796,7 @@ async function runCloudBootstrapWorkspace(args) {
       skillName,
       devicePublicKey: deviceKey.publicKey,
       claimRoles,
+      ...(ownerEmail ? { ownerEmail } : {}),
     }),
   })
   if (response.status !== 200 || response.body?.ok !== true || !response.body?.organization?.id || !response.body?.skill?.id) {
