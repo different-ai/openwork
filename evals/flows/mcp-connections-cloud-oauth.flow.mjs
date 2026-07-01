@@ -87,11 +87,19 @@ export default {
     {
       name: "Sign in to den-web",
       run: async (ctx) => {
-        const alreadySignedIn = await ctx.hasText("Dashboard");
-        if (alreadySignedIn) {
-          ctx.log("Already signed in; reusing session.");
+        // "Signed in" isn't enough — the browser may hold a NON-admin session
+        // from another flow (e.g. mcp-connections-member-scoped signs in as a
+        // member). This flow needs the admin's nav, so check for the
+        // admin-gated MCP Connections link specifically.
+        const signedInAsAdmin = (await ctx.hasText("Dashboard"))
+          && (await ctx.eval("Boolean([...document.querySelectorAll('a')].find((a) => a.getAttribute('href')?.endsWith('/mcp-connections')))"));
+        if (signedInAsAdmin) {
+          ctx.log("Already signed in as an admin; reusing session.");
           return;
         }
+        await ctx.eval(`fetch('/api/auth/sign-out', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(() => true).catch(() => true)`, { awaitPromise: true });
+        await ctx.eval(`(() => { window.location.href = ${JSON.stringify(DEN_WEB_URL)}; return true; })()`);
+        await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
         await ctx.clickText("Sign in", { timeoutMs: 20_000 });
         await ctx.fill("input[type=\"email\"], input", DEMO_EMAIL);
         await ctx.clickText("Next", { timeoutMs: 15_000 });

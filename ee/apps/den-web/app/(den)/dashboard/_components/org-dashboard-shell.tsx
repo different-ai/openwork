@@ -40,6 +40,7 @@ import {
   getInferenceRoute,
   getMcpConnectionsRoute,
   getMembersRoute,
+  getYourConnectionsRoute,
   getOrgDashboardRoute,
   getOrgSettingsRoute,
   getMarketplacesRoute,
@@ -157,6 +158,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getMcpConnectionsRoute(orgSlug))) {
     return "MCP Connections";
+  }
+  if (pathname.startsWith(getYourConnectionsRoute(orgSlug))) {
+    return "Your Connections";
   }
   if (pathname.startsWith(getBillingRoute(orgSlug))) {
     return "Billing";
@@ -298,6 +302,14 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       href: activeOrg ? getOrgDashboardRoute(activeOrg.slug) : "#",
       label: "Dashboard",
       icon: Home,
+    },
+    // Member-visible (not admin-gated): where each person connects their own
+    // account for per-member MCP connections shared with them.
+    {
+      href: activeOrg ? getYourConnectionsRoute(activeOrg.slug) : "#",
+      label: "Your Connections",
+      icon: Plug,
+      badge: "New",
     },
     ...adminNavItems,
     ...securityNavItems,

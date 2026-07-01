@@ -7,7 +7,9 @@ import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities } from "./search.js"
-import { executeExternalCapability, parseExternalCapabilityName, searchExternalCapabilities } from "./external-capabilities.js"
+import { executeExternalCapability, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities } from "./external-capabilities.js"
+import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
+import { env } from "../env.js"
 
 export const EXECUTE_CAPABILITY_TOOL_NAME = "execute_capability"
 
@@ -42,6 +44,13 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
     }
 
     const catalog = await getCatalog(app as unknown as Hono, c.env)
+    // External MCP connections are scoped to the calling MEMBER (grants +
+    // per-member credentials), not just the org — resolve who this token's
+    // user is within the org once per request.
+    const memberIdentity = await resolveMcpMemberIdentity({
+      userId: principal.userId,
+      organizationId: principal.organizationId,
+    })
     const server = new McpServer({
       name: "openwork-den-api-agent",
       version: "1.0.0",
@@ -70,8 +79,9 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         // up here exactly like any native capability, ranked together.
         const externalMatches = await searchExternalCapabilities({
           organizationId: principal.organizationId,
+          member: memberIdentity,
           query,
-          redirectUriBase: new URL(c.req.raw.url).origin,
+          redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
           limit: boundedLimit,
         })
         const matches = [...restMatches, ...externalMatches]
@@ -109,10 +119,11 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             : {}) as Record<string, unknown>
           const result = await executeExternalCapability({
             organizationId: principal.organizationId,
+            member: memberIdentity,
             connectionId: external.connectionId,
             toolName: external.toolName,
             args,
-            redirectUriBase: new URL(c.req.raw.url).origin,
+            redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
           })
           if (!result.ok) {
             return {

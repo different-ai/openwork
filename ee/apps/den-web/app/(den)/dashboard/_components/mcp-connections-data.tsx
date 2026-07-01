@@ -5,14 +5,25 @@ import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 export type ExternalMcpAuthType = "oauth" | "apikey" | "none";
+export type ExternalMcpCredentialMode = "shared" | "per_member";
+export type ExternalMcpConnectionScope = "usable" | "manageable";
+
+export type ExternalMcpAccessSummary = {
+  orgWide: boolean;
+  memberIds: string[];
+  teamIds: string[];
+};
 
 export type ExternalMcpConnection = {
   id: string;
   name: string;
   url: string;
   authType: ExternalMcpAuthType;
+  credentialMode: ExternalMcpCredentialMode;
   connected: boolean;
   connectedAt: string | null;
+  connectedForMe: boolean;
+  access: ExternalMcpAccessSummary | null;
 };
 
 export type ExternalMcpPreset = {
@@ -25,12 +36,13 @@ export type ExternalMcpPreset = {
 
 export const mcpConnectionQueryKeys = {
   all: ["mcp-connections"] as const,
-  list: (orgId?: string | null) => [...mcpConnectionQueryKeys.all, "list", orgId ?? "none"] as const,
+  list: (orgId?: string | null, scope?: ExternalMcpConnectionScope) =>
+    [...mcpConnectionQueryKeys.all, "list", orgId ?? "none", scope ?? "usable"] as const,
   presets: () => [...mcpConnectionQueryKeys.all, "presets"] as const,
 };
 
-async function fetchConnections(): Promise<ExternalMcpConnection[]> {
-  const { response, payload } = await requestJson("/v1/mcp-connections", {}, 15000);
+async function fetchConnections(scope: ExternalMcpConnectionScope): Promise<ExternalMcpConnection[]> {
+  const { response, payload } = await requestJson(`/v1/mcp-connections?scope=${scope}`, {}, 15000);
   if (!response.ok) {
     throw getRequestError(payload, response, `Failed to load MCP connections (${response.status}).`);
   }
@@ -38,12 +50,12 @@ async function fetchConnections(): Promise<ExternalMcpConnection[]> {
   return record.connections ?? [];
 }
 
-export function useMcpConnections() {
+export function useMcpConnections(scope: ExternalMcpConnectionScope = "manageable") {
   const { orgId } = useOrgDashboard();
   return useQuery({
     enabled: Boolean(orgId),
-    queryKey: mcpConnectionQueryKeys.list(orgId),
-    queryFn: fetchConnections,
+    queryKey: mcpConnectionQueryKeys.list(orgId, scope),
+    queryFn: () => fetchConnections(scope),
   });
 }
 
@@ -61,11 +73,19 @@ export function useMcpConnectionPresets() {
   });
 }
 
+export type McpConnectionAccessInput = {
+  orgWide: boolean;
+  memberIds: string[];
+  teamIds: string[];
+};
+
 export type CreateMcpConnectionInput = {
   name: string;
   url: string;
   authType: ExternalMcpAuthType;
+  credentialMode: ExternalMcpCredentialMode;
   apiKey?: string;
+  access: McpConnectionAccessInput;
 };
 
 export function useCreateMcpConnection() {
@@ -90,7 +110,34 @@ export function useCreateMcpConnection() {
       return created;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.list(orgId) });
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
+    },
+  });
+}
+
+export function useReplaceMcpConnectionAccess() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { connectionId: string; access: McpConnectionAccessInput }): Promise<string> => {
+      let result: string | null = null;
+      await runReauthableAction("replace-mcp-connection-access", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/mcp-connections/${encodeURIComponent(input.connectionId)}/access`,
+          { method: "PUT", body: JSON.stringify({ access: input.access }) },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to update connection access (${response.status}).`);
+        }
+        result = input.connectionId;
+      });
+      if (!result) throw new Error("Update connection access response was incomplete.");
+      return result;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
     },
   });
 }
@@ -133,7 +180,7 @@ export function useDeleteMcpConnection() {
       return result;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.list(orgId) });
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
     },
   });
 }

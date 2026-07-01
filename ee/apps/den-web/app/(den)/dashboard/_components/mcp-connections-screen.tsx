@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Check, Loader2, Plug, Plus, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, Loader2, Plug, Plus, Trash2, Users } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type CreateMcpConnectionInput,
   type ExternalMcpAuthType,
   type ExternalMcpConnection,
+  type ExternalMcpCredentialMode,
   type ExternalMcpPreset,
+  type McpConnectionAccessInput,
   formatMcpConnectedTimestamp,
   useCreateMcpConnection,
   useDeleteMcpConnection,
@@ -75,7 +78,10 @@ export function McpConnectionsScreen() {
     const created = await createConnection.mutateAsync(input);
     setFormOpen(false);
     setFormPreset(null);
-    if (input.authType === "oauth") {
+    // Shared-credential OAuth: the admin authorizes the org's single account
+    // right now. Per-member: nothing to authorize here — each granted person
+    // connects their own account from Your Connections.
+    if (input.authType === "oauth" && input.credentialMode === "shared") {
       await handleConnectOAuth(created.id);
     }
   }
@@ -177,6 +183,16 @@ export function McpConnectionsScreen() {
   );
 }
 
+function accessSummaryLabel(connection: ExternalMcpConnection): string {
+  const access = connection.access;
+  if (!access) return "";
+  if (access.orgWide) return "Everyone in the org";
+  const parts: string[] = [];
+  if (access.teamIds.length > 0) parts.push(`${access.teamIds.length} ${access.teamIds.length === 1 ? "team" : "teams"}`);
+  if (access.memberIds.length > 0) parts.push(`${access.memberIds.length} ${access.memberIds.length === 1 ? "person" : "people"}`);
+  return parts.length > 0 ? parts.join(", ") : "Nobody yet";
+}
+
 function ConnectionRow({
   connection,
   polling,
@@ -192,14 +208,20 @@ function ConnectionRow({
   onRemove: () => void;
   removing: boolean;
 }) {
-  const needsOAuthConnect = connection.authType === "oauth" && !connection.connected;
+  const isPerMember = connection.credentialMode === "per_member";
+  const needsOAuthConnect = !isPerMember && connection.authType === "oauth" && !connection.connected;
 
   return (
     <div className="flex items-center justify-between gap-4 px-6 py-4">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
-          {connection.connected ? (
+          {isPerMember ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+              <Users className="h-3 w-3" />
+              Per-member accounts
+            </span>
+          ) : connection.connected ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
               <Check className="h-3 w-3" />
               Connected
@@ -214,6 +236,11 @@ function ConnectionRow({
               Not connected
             </span>
           )}
+          {connection.access ? (
+            <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+              {accessSummaryLabel(connection)}
+            </span>
+          ) : null}
         </div>
         <p className="mt-0.5 truncate text-[12px] text-gray-500">
           {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
@@ -256,22 +283,46 @@ function AddConnectionDialog({
   onClose: () => void;
   onSubmit: (input: CreateMcpConnectionInput) => void;
 }) {
+  const { orgContext } = useOrgDashboard();
   const [name, setName] = useState(preset?.displayName ?? "");
   const [url, setUrl] = useState(preset?.url ?? "");
   const [authType, setAuthType] = useState<ExternalMcpAuthType>(preset?.authType ?? "oauth");
+  const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("shared");
   const [apiKey, setApiKey] = useState("");
+  const [accessMode, setAccessMode] = useState<"everyone" | "teams" | "people">("everyone");
+  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (!open) return;
     setName(preset?.displayName ?? "");
     setUrl(preset?.url ?? "");
     setAuthType(preset?.authType ?? "oauth");
+    setCredentialMode("shared");
     setApiKey("");
+    setAccessMode("everyone");
+    setSelectedTeamIds([]);
+    setSelectedMemberIds([]);
   }, [open, preset]);
+
+  const teams = useMemo(() => orgContext?.teams ?? [], [orgContext?.teams]);
+  const members = useMemo(
+    () => (orgContext?.members ?? []).filter((member) => Boolean(member.userId)),
+    [orgContext?.members],
+  );
+
+  function toggle(list: string[], id: string): string[] {
+    return list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id];
+  }
 
   if (!open) {
     return null;
   }
+
+  const access: McpConnectionAccessInput = accessMode === "everyone"
+    ? { orgWide: true, memberIds: [], teamIds: [] }
+    : { orgWide: false, memberIds: accessMode === "people" ? selectedMemberIds : [], teamIds: accessMode === "teams" ? selectedTeamIds : [] };
+  const accessIncomplete = accessMode === "teams" ? selectedTeamIds.length === 0 : accessMode === "people" ? selectedMemberIds.length === 0 : false;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
@@ -327,6 +378,97 @@ function AddConnectionDialog({
               <DenInput type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-..." />
             </div>
           ) : null}
+
+          {authType === "oauth" ? (
+            <div>
+              <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Account</label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCredentialMode("shared")}
+                  className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
+                    credentialMode === "shared" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-300"
+                  }`}
+                >
+                  One shared account
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCredentialMode("per_member")}
+                  className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
+                    credentialMode === "per_member" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-300"
+                  }`}
+                >
+                  Each person connects their own
+                </button>
+              </div>
+              <p className="mt-1.5 text-[12px] leading-5 text-gray-500">
+                {credentialMode === "shared"
+                  ? "You'll authorize a single account now; everyone granted access acts as it."
+                  : "You publish the connection; each person authorizes their own account from Your Connections and acts as themselves."}
+              </p>
+            </div>
+          ) : null}
+
+          <div>
+            <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Who can use this?</label>
+            <div className="flex gap-2">
+              {(["everyone", "teams", "people"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => setAccessMode(option)}
+                  className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
+                    accessMode === option ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-300"
+                  }`}
+                >
+                  {option === "everyone" ? "Everyone in the org" : option === "teams" ? "Specific teams" : "Specific people"}
+                </button>
+              ))}
+            </div>
+            {accessMode === "teams" ? (
+              <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-xl border border-gray-100 p-2">
+                {teams.length === 0 ? (
+                  <p className="px-2 py-1 text-[12px] text-gray-400">No teams in this org yet.</p>
+                ) : (
+                  teams.map((team) => (
+                    <button
+                      key={team.id}
+                      type="button"
+                      onClick={() => setSelectedTeamIds((current) => toggle(current, team.id))}
+                      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] transition ${
+                        selectedTeamIds.includes(team.id) ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                      <span className="truncate">{team.name}</span>
+                      {selectedTeamIds.includes(team.id) ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+            {accessMode === "people" ? (
+              <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-xl border border-gray-100 p-2">
+                {members.length === 0 ? (
+                  <p className="px-2 py-1 text-[12px] text-gray-400">No members in this org yet.</p>
+                ) : (
+                  members.map((member) => (
+                    <button
+                      key={member.id}
+                      type="button"
+                      onClick={() => setSelectedMemberIds((current) => toggle(current, member.id))}
+                      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] transition ${
+                        selectedMemberIds.includes(member.id) ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                      <span className="truncate">{member.user.name || member.user.email}</span>
+                      {selectedMemberIds.includes(member.id) ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {error ? (
@@ -340,13 +482,15 @@ function AddConnectionDialog({
           <DenButton
             variant="primary"
             loading={submitting}
-            disabled={!name.trim() || !url.trim() || (authType === "apikey" && !apiKey.trim())}
+            disabled={!name.trim() || !url.trim() || (authType === "apikey" && !apiKey.trim()) || accessIncomplete}
             onClick={() =>
               onSubmit({
                 name: name.trim(),
                 url: url.trim(),
                 authType,
+                credentialMode: authType === "oauth" ? credentialMode : "shared",
                 apiKey: authType === "apikey" ? apiKey.trim() : undefined,
+                access,
               })
             }
           >

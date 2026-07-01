@@ -1,5 +1,6 @@
 import { relations, sql } from "drizzle-orm"
 import {
+  boolean,
   index,
   json,
   mysqlEnum,
@@ -108,6 +109,9 @@ export const ConnectedAccountTable = mysqlTable(
 export const externalMcpAuthTypeValues = ["oauth", "apikey", "none"] as const
 export type ExternalMcpAuthType = (typeof externalMcpAuthTypeValues)[number]
 
+export const externalMcpCredentialModeValues = ["shared", "per_member"] as const
+export type ExternalMcpCredentialMode = (typeof externalMcpCredentialModeValues)[number]
+
 /**
  * "Add any MCP" — an org-level registration of a third-party MCP server.
  * This is what makes Notion (or anything else) just an example rather than a
@@ -126,6 +130,19 @@ export const ExternalMcpConnectionTable = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     url: varchar("url", { length: 2048 }).notNull(),
     authType: mysqlEnum("auth_type", externalMcpAuthTypeValues).notNull(),
+    /**
+     * How the connection's credential relates to people:
+     * - "shared": one org-level credential (this row's token columns, or
+     *   apiKey). Everyone granted access acts as that single account —
+     *   right for service-account/bot-style integrations.
+     * - "per_member": the connection (and its dynamically-registered OAuth
+     *   client) is org-level, but each member authorizes their own account;
+     *   tokens live in ConnectedAccountTable keyed by
+     *   (orgMembershipId, providerId = this row's id). The agent then acts
+     *   as the calling member, preserving the provider's own ACLs and audit
+     *   trail — right for Notion/Linear-style personal-permission SaaS.
+     */
+    credentialMode: mysqlEnum("credential_mode", externalMcpCredentialModeValues).notNull().default("shared"),
     /** Only set when authType = "apikey". Sent as a Bearer token. */
     apiKey: encryptedTextColumn("api_key"),
     /**
@@ -161,6 +178,52 @@ export const ExternalMcpConnectionTable = mysqlTable(
   ],
 )
 
+/**
+ * Who in the org can USE a connection (see it in search_capabilities and
+ * call it via execute_capability). One row = one grant to a member, a team,
+ * or the whole org (exactly one of orgMembershipId / teamId / orgWide per
+ * row). Deliberately naive vs the plugin-arch grant tables: no role column
+ * (use = use; managing connections stays admin-only) and hard-delete
+ * (mirrors LlmProviderAccessTable). Access is never implicit: zero rows
+ * means nobody (but org admins) can use the connection.
+ */
+export const ExternalMcpConnectionAccessGrantTable = mysqlTable(
+  "external_mcp_connection_access_grant",
+  {
+    id: denTypeIdColumn("externalMcpConnectionAccessGrant", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn(
+      "organization",
+      "organization_id",
+    ).notNull(),
+    externalMcpConnectionId: denTypeIdColumn(
+      "externalMcpConnection",
+      "external_mcp_connection_id",
+    ).notNull(),
+    orgMembershipId: denTypeIdColumn("member", "org_membership_id"),
+    teamId: denTypeIdColumn("team", "team_id"),
+    orgWide: boolean("org_wide").notNull().default(false),
+    createdByOrgMembershipId: denTypeIdColumn(
+      "member",
+      "created_by_org_membership_id",
+    ).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("emc_access_grant_organization_id").on(table.organizationId),
+    index("emc_access_grant_connection_id").on(table.externalMcpConnectionId),
+    index("emc_access_grant_org_membership_id").on(table.orgMembershipId),
+    index("emc_access_grant_team_id").on(table.teamId),
+    uniqueIndex("emc_access_grant_connection_member").on(
+      table.externalMcpConnectionId,
+      table.orgMembershipId,
+    ),
+    uniqueIndex("emc_access_grant_connection_team").on(
+      table.externalMcpConnectionId,
+      table.teamId,
+    ),
+  ],
+)
+
 export const orgOAuthClientRelations = relations(OrgOAuthClientTable, ({ one }) => ({
   organization: one(OrganizationTable, {
     fields: [OrgOAuthClientTable.organizationId],
@@ -183,13 +246,33 @@ export const connectedAccountRelations = relations(ConnectedAccountTable, ({ one
   }),
 }))
 
-export const externalMcpConnectionRelations = relations(ExternalMcpConnectionTable, ({ one }) => ({
+export const externalMcpConnectionRelations = relations(ExternalMcpConnectionTable, ({ one, many }) => ({
   organization: one(OrganizationTable, {
     fields: [ExternalMcpConnectionTable.organizationId],
     references: [OrganizationTable.id],
   }),
   createdByOrgMembership: one(MemberTable, {
     fields: [ExternalMcpConnectionTable.createdByOrgMembershipId],
+    references: [MemberTable.id],
+  }),
+  accessGrants: many(ExternalMcpConnectionAccessGrantTable),
+}))
+
+export const externalMcpConnectionAccessGrantRelations = relations(ExternalMcpConnectionAccessGrantTable, ({ one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [ExternalMcpConnectionAccessGrantTable.organizationId],
+    references: [OrganizationTable.id],
+  }),
+  connection: one(ExternalMcpConnectionTable, {
+    fields: [ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId],
+    references: [ExternalMcpConnectionTable.id],
+  }),
+  orgMembership: one(MemberTable, {
+    fields: [ExternalMcpConnectionAccessGrantTable.orgMembershipId],
+    references: [MemberTable.id],
+  }),
+  createdByOrgMembership: one(MemberTable, {
+    fields: [ExternalMcpConnectionAccessGrantTable.createdByOrgMembershipId],
     references: [MemberTable.id],
   }),
 }))

@@ -10,13 +10,19 @@ import type {
   OAuthClientInformationMixed,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js"
+import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
 import {
   getExternalMcpConnection,
   saveExternalMcpPendingCodeVerifier,
   saveExternalMcpTokens,
 } from "./external-mcp-connections.js"
-import { getOrgOAuthClient, upsertOrgOAuthClient } from "./oauth-credentials.js"
+import {
+  getConnectedAccount,
+  getOrgOAuthClient,
+  upsertConnectedAccount,
+  upsertOrgOAuthClient,
+} from "./oauth-credentials.js"
 
 /**
  * Real MCP client for "add any MCP server" (External MCP Connections) —
@@ -36,17 +42,44 @@ import { getOrgOAuthClient, upsertOrgOAuthClient } from "./oauth-credentials.js"
 
 const CLIENT_NAME = "OpenWork"
 
+/**
+ * Which member's credential this session should use, for connections with
+ * credentialMode "per_member". Absent for "shared" connections (tokens live
+ * on the connection row itself).
+ */
+export type ExternalMcpMemberContext = {
+  orgMembershipId: DenTypeId<"member">
+}
+
 export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   private connection: ExternalMcpConnectionRow
   private readonly redirectUri: string
   private readonly signedState?: string
+  private readonly member?: ExternalMcpMemberContext
   /** Captured by redirectToAuthorization so the HTTP route can hand it back to the admin's browser instead of actually redirecting anything server-side. */
   lastAuthorizeUrl: string | null = null
 
-  constructor(connection: ExternalMcpConnectionRow, redirectUri: string, signedState?: string) {
+  constructor(connection: ExternalMcpConnectionRow, redirectUri: string, signedState?: string, member?: ExternalMcpMemberContext) {
     this.connection = connection
     this.redirectUri = redirectUri
     this.signedState = signedState
+    this.member = member
+    if (connection.credentialMode === "per_member" && connection.authType === "oauth" && !member) {
+      throw new Error(`Connection "${connection.id}" uses per-member credentials; a member context is required.`)
+    }
+  }
+
+  private get isPerMember(): boolean {
+    return this.connection.credentialMode === "per_member"
+  }
+
+  private async memberAccount() {
+    if (!this.member) return null
+    return getConnectedAccount({
+      organizationId: this.connection.organizationId,
+      orgMembershipId: this.member.orgMembershipId,
+      providerId: this.connection.id,
+    })
   }
 
   get redirectUrl(): string {
@@ -99,7 +132,17 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     })
   }
 
-  tokens(): OAuthTokens | undefined {
+  async tokens(): Promise<OAuthTokens | undefined> {
+    if (this.isPerMember) {
+      const account = await this.memberAccount()
+      if (!account?.accessToken) return undefined
+      return {
+        access_token: account.accessToken,
+        token_type: account.tokenType ?? "Bearer",
+        refresh_token: account.refreshToken ?? undefined,
+        scope: account.scopes?.join(" ") ?? undefined,
+      }
+    }
     if (!this.connection.accessToken) return undefined
     return {
       access_token: this.connection.accessToken,
@@ -111,10 +154,25 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
     const expiresAt = tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null
+    if (this.isPerMember && this.member) {
+      const existing = await this.memberAccount()
+      await upsertConnectedAccount({
+        organizationId: this.connection.organizationId,
+        orgMembershipId: this.member.orgMembershipId,
+        providerId: this.connection.id,
+        accessToken: tokens.access_token,
+        // Most providers omit refresh_token on refresh responses; keep the existing one.
+        refreshToken: tokens.refresh_token ?? existing?.refreshToken ?? null,
+        tokenType: tokens.token_type ?? null,
+        scopes: tokens.scope ? tokens.scope.split(" ") : null,
+        expiresAt,
+        pendingCodeVerifier: null,
+      })
+      return
+    }
     await saveExternalMcpTokens({
       connectionId: this.connection.id,
       accessToken: tokens.access_token,
-      // Most providers omit refresh_token on refresh responses; keep the existing one.
       refreshToken: tokens.refresh_token ?? this.connection.refreshToken ?? null,
       tokenType: tokens.token_type ?? null,
       scope: tokens.scope ?? null,
@@ -134,10 +192,26 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
+    if (this.isPerMember && this.member) {
+      await upsertConnectedAccount({
+        organizationId: this.connection.organizationId,
+        orgMembershipId: this.member.orgMembershipId,
+        providerId: this.connection.id,
+        pendingCodeVerifier: codeVerifier,
+      })
+      return
+    }
     await saveExternalMcpPendingCodeVerifier({ connectionId: this.connection.id, codeVerifier })
   }
 
-  codeVerifier(): string {
+  async codeVerifier(): Promise<string> {
+    if (this.isPerMember) {
+      const account = await this.memberAccount()
+      if (!account?.pendingCodeVerifier) {
+        throw new Error("No pending PKCE code verifier for this member on this external MCP connection.")
+      }
+      return account.pendingCodeVerifier
+    }
     if (!this.connection.pendingCodeVerifier) {
       throw new Error("No pending PKCE code verifier for this external MCP connection.")
     }
@@ -145,8 +219,8 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 }
 
-function buildTransport(connection: ExternalMcpConnectionRow, redirectUri: string, signedState?: string) {
-  const provider = connection.authType === "oauth" ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState) : undefined
+function buildTransport(connection: ExternalMcpConnectionRow, redirectUri: string, signedState?: string, member?: ExternalMcpMemberContext) {
+  const provider = connection.authType === "oauth" ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member) : undefined
   const transport = new StreamableHTTPClientTransport(new URL(connection.url), {
     authProvider: provider,
     requestInit: connection.authType === "apikey" && connection.apiKey
@@ -174,9 +248,9 @@ export type ExternalMcpConnectResult =
  * standard OAuth `state` param, since that's the only param guaranteed to
  * round-trip back to connect/callback on any spec-compliant server.
  */
-export async function connectExternalMcp(connection: ExternalMcpConnectionRow, redirectUri: string, signedState?: string): Promise<ExternalMcpConnectResult> {
+export async function connectExternalMcp(connection: ExternalMcpConnectionRow, redirectUri: string, signedState?: string, member?: ExternalMcpMemberContext): Promise<ExternalMcpConnectResult> {
   const client = buildClient()
-  const { transport, provider } = buildTransport(connection, redirectUri, signedState)
+  const { transport, provider } = buildTransport(connection, redirectUri, signedState, member)
   try {
     await client.connect(transport)
     await client.close()
@@ -189,15 +263,15 @@ export async function connectExternalMcp(connection: ExternalMcpConnectionRow, r
   }
 }
 
-/** Completes the OAuth code exchange after the admin's browser is redirected back with `code`. */
-export async function completeExternalMcpAuth(connection: ExternalMcpConnectionRow, code: string, redirectUri: string): Promise<void> {
-  const { transport } = buildTransport(connection, redirectUri)
+/** Completes the OAuth code exchange after the browser is redirected back with `code`. For per-member connections, `member` (from the signed state token) decides whose account the tokens are saved against. */
+export async function completeExternalMcpAuth(connection: ExternalMcpConnectionRow, code: string, redirectUri: string, member?: ExternalMcpMemberContext): Promise<void> {
+  const { transport } = buildTransport(connection, redirectUri, undefined, member)
   await transport.finishAuth(code)
 }
 
-export async function listExternalMcpTools(connection: ExternalMcpConnectionRow, redirectUri: string) {
+export async function listExternalMcpTools(connection: ExternalMcpConnectionRow, redirectUri: string, member?: ExternalMcpMemberContext) {
   const client = buildClient()
-  const { transport } = buildTransport(connection, redirectUri)
+  const { transport } = buildTransport(connection, redirectUri, undefined, member)
   await client.connect(transport)
   try {
     const { tools } = await client.listTools()
@@ -212,9 +286,10 @@ export async function callExternalMcpTool(input: {
   redirectUri: string
   toolName: string
   args: Record<string, unknown>
+  member?: ExternalMcpMemberContext
 }) {
   const client = buildClient()
-  const { transport } = buildTransport(input.connection, input.redirectUri)
+  const { transport } = buildTransport(input.connection, input.redirectUri, undefined, input.member)
   await client.connect(transport)
   try {
     return await client.callTool({ name: input.toolName, arguments: input.args })
