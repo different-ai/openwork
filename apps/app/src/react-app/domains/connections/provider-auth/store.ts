@@ -67,6 +67,13 @@ import {
   isCloudManagedProviderKey,
   isCloudProviderOutOfSync,
 } from "./cloud-provider-config";
+import {
+  buildCustomProviderConfig,
+  formatConfigWithCustomProvider,
+  normalizeCustomProviderInput,
+  validateCustomProviderInput,
+  type CustomProviderInput,
+} from "./custom-provider-config";
 import { refreshDesktopCloudSync } from "../../../../app/cloud/desktop-cloud-sync";
 import { dispatchNewProviders } from "../../../../app/lib/provider-events";
 import {
@@ -1260,6 +1267,77 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
+  async function addCustomProvider(input: CustomProviderInput) {
+    setStateField("providerAuthError", null);
+    try {
+      const normalized = normalizeCustomProviderInput(input);
+      const validationError = validateCustomProviderInput(normalized);
+      if (validationError) {
+        throw new Error(validationError);
+      }
+      if (options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" })) {
+        throw new Error("Adding custom providers is disabled by your organization.");
+      }
+      assertProviderAllowedByDesktopPolicy(normalized.providerId);
+      if (isCloudManagedProviderKey(normalized.providerId)) {
+        throw new Error(
+          `${normalized.providerId} is reserved for cloud-managed providers. Choose a different provider ID.`,
+        );
+      }
+      // Re-adding an existing config-defined provider (source "config" or
+      // "custom") is a safe reconcile (update baseURL/models/key). Only block
+      // IDs owned by other sources (built-ins connected via env or API key).
+      const existingSource = options
+        .providers()
+        .find((provider) => provider.id === normalized.providerId)?.source;
+      if (
+        options.providerConnectedIds().includes(normalized.providerId) &&
+        existingSource !== "custom" &&
+        existingSource !== "config"
+      ) {
+        throw new Error(
+          `${normalized.providerId} is already connected in this workspace. Choose a different provider ID.`,
+        );
+      }
+
+      // `updateProjectConfigFile` returns false when the provider block is
+      // already present with identical content — treat that as success so
+      // retries stay idempotent.
+      await updateProjectConfigFile(
+        (raw) => formatConfigWithCustomProvider(raw, normalized),
+        (config) => {
+          const currentProvider = isRecord(config.provider) ? config.provider : {};
+          return {
+            ...config,
+            provider: {
+              ...currentProvider,
+              [normalized.providerId]: buildCustomProviderConfig(normalized),
+            },
+          };
+        },
+      );
+
+      if (normalized.apiKey) {
+        const c = options.client();
+        if (!c) {
+          throw new Error(t("providers.not_connected"));
+        }
+        await c.auth.set({
+          providerID: normalized.providerId,
+          auth: { type: "api", key: normalized.apiKey },
+        });
+      }
+
+      options.markOpencodeConfigReloadRequired();
+      await refreshProviders({ dispose: true });
+      return `${t("status.connected")} ${normalized.name}`;
+    } catch (error) {
+      const message = describeProviderError(error, "Failed to add custom provider.");
+      setStateField("providerAuthError", message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  }
+
   async function connectCloudProviderInternal(
     cloudProviderId: string,
     optionsArg?: { silent?: boolean },
@@ -1584,10 +1662,40 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return await removeCloudProvider(trackedImport.cloudProviderId);
     }
 
+    // Providers defined by a `provider.<id>` block in opencode.jsonc are
+    // reported with source "config"/"custom". Removing credentials alone
+    // leaves them connected forever, so disconnecting one also removes the
+    // config block — otherwise the only way out is hand-editing the file.
+    const providerSource = options
+      .providers()
+      .find((provider) => provider.id === resolved)?.source;
+    const isConfigDefined = providerSource === "config" || providerSource === "custom";
+
     try {
-      await removeProviderAuthCredentials(resolved);
-      const updated = await refreshProviders({ dispose: true });
-      if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
+      try {
+        await removeProviderAuthCredentials(resolved);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error ?? "");
+        // Config-defined providers may have no stored credential (e.g. local Ollama).
+        if (!isConfigDefined || !/not found|unknown auth|404/i.test(message.toLowerCase())) {
+          throw error;
+        }
+      }
+      let updated = await refreshProviders({ dispose: true });
+      let stillConnected =
+        Array.isArray(updated?.connected) && updated.connected.includes(resolved);
+      if (stillConnected && isConfigDefined) {
+        const removedBlock = await updateProjectConfigFile((raw) =>
+          formatConfigWithoutCloudProvider(raw, resolved, options.disabledProviders()),
+        );
+        if (removedBlock) {
+          options.markOpencodeConfigReloadRequired();
+          updated = await refreshProviders({ dispose: true });
+          stillConnected =
+            Array.isArray(updated?.connected) && updated.connected.includes(resolved);
+        }
+      }
+      if (stillConnected) {
         // Provider is still connected (e.g. via env var). Just remove
         // stored credentials; do NOT add to disabled_providers.
         return `Removed stored credentials for ${resolved}${t("providers.still_connected_suffix")}`;
@@ -1822,6 +1930,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     refreshProviders,
     completeProviderAuthOAuth,
     submitProviderApiKey,
+    addCustomProvider,
     connectCloudProvider,
     removeCloudProvider,
     disconnectProvider,
