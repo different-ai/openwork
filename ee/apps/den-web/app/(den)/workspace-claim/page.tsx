@@ -8,6 +8,19 @@ function firstParamValue(value: string | string[] | undefined): string {
       : "";
 }
 
+function parseInviteEmails(value: string | string[] | undefined): string[] {
+  const raw = firstParamValue(value);
+  if (!raw) {
+    return [];
+  }
+
+  return raw
+    .split(",")
+    .map((email) => email.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
 export default async function WorkspaceClaimPage({
   searchParams,
 }: {
@@ -18,6 +31,7 @@ export default async function WorkspaceClaimPage({
   // Optional prefill only - never a security boundary. The claim token is
   // the only thing that authorizes accepting this claim.
   const prefilledEmail = firstParamValue(params.email);
+  const inviteEmails = parseInviteEmails(params.invite);
 
-  return <WorkspaceClaimScreen token={token} prefilledEmail={prefilledEmail} />;
+  return <WorkspaceClaimScreen token={token} prefilledEmail={prefilledEmail} inviteEmails={inviteEmails} />;
 }

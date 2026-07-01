@@ -632,8 +632,8 @@ export function createConnectionsStore(options: {
 
       // Signed-in cloud users connect the Den MCPs with a first-party token —
       // no browser OAuth round-trip. Signed-out users fall back to OAuth.
-      // The same minted token works for both /mcp (openwork-cloud) and
-      // /mcp/admin (openwork-admin); den-api enforces the platform-admin
+      // The same minted token works for /mcp/agent (openwork-cloud), /mcp,
+      // and /mcp/admin (openwork-admin); den-api enforces the platform-admin
       // allowlist on the admin endpoint server-side.
       if (entry.serverName === "openwork-cloud" || entry.serverName === "openwork-admin") {
         try {
@@ -642,9 +642,13 @@ export function createConnectionsStore(options: {
             if (entry.serverName === "openwork-cloud") {
               // Never trust `minted.resource` verbatim: older den-api builds
               // mint the bare web-app origin (https://app.openworklabs.com/mcp)
-              // where MCP 404s. Heal it, falling back to the entry's
-              // bootstrap-derived URL.
-              resolvedUrl = resolveCloudMcpResourceUrl(minted.resource) ?? resolvedUrl;
+              // where MCP 404s. Heal it to the canonical /mcp origin, then
+              // route the desktop app to the minimal, harness-facing
+              // /mcp/agent surface (search_capabilities + execute_capability
+              // only) rather than the full catalog — falling back to the
+              // entry's bootstrap-derived URL (which already targets /agent).
+              const healed = resolveCloudMcpResourceUrl(minted.resource);
+              resolvedUrl = healed ? `${healed}/agent` : resolvedUrl;
             }
             resolvedHeaders = { Authorization: `Bearer ${minted.token}` };
           }

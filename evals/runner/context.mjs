@@ -143,6 +143,40 @@ export class EvalContext {
   }
 
   /**
+   * Force light mode for screenshot readability, reloading only if the app
+   * isn't already light. fraimz frame proofs are reviewed as images (in
+   * fraimz.html and exported to docs/PRs); the OS-following "system" default
+   * renders dark-on-dark text illegible whenever the host machine is in dark
+   * mode. Light mode is the readable baseline for evidence, so the runner
+   * applies it automatically unless a flow opts out via `preserveTheme: true`
+   * (for a flow that is itself testing theme/dark-mode behavior).
+   */
+  async ensureLightMode() {
+    await this.waitFor("Boolean(window.__openworkControl)", {
+      timeoutMs: 30_000,
+      label: "control API before theme check",
+    });
+    const currentTheme = await this.eval("document.documentElement.dataset.theme").catch(() => null);
+    if (currentTheme === "light") {
+      return;
+    }
+    await this.eval(`(() => {
+      localStorage.setItem('openwork.react.settings.theme-mode', 'light');
+      return true;
+    })()`);
+    await this.eval("location.reload()");
+    await this.waitFor("Boolean(window.__openworkControl)", {
+      timeoutMs: 30_000,
+      label: "control API after forcing light mode",
+    });
+    await this.waitFor("document.documentElement.dataset.theme === 'light'", {
+      timeoutMs: 10_000,
+      label: "light theme applied",
+    });
+    this.log(`Forced light mode for screenshot readability (was: ${currentTheme ?? "unknown"}).`);
+  }
+
+  /**
    * Poll until the page's visible text contains `text`.
    */
   async waitForText(text, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {

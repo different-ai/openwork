@@ -37,6 +37,12 @@ const bootstrapWorkspaceSchema = z.object({
   // into the owner claim link so the claim page can pre-fill (not lock) the
   // email field for a smoother human handoff.
   ownerEmail: z.string().trim().toLowerCase().email().max(255).optional(),
+  // Optional teammate emails to invite as soon as the workspace is claimed.
+  // Not actionable until a human claims ownership (a provisional workspace
+  // has no authenticated member yet), so these ride along on the owner
+  // claim link and are sent through the existing /v1/invitations endpoint
+  // by the claim page right after a successful claim.
+  teammateEmails: z.array(z.string().trim().toLowerCase().email().max(255)).max(10).optional(),
 })
 
 const acceptClaimSchema = z.object({
@@ -90,9 +96,15 @@ function requestAddress(headers: Headers) {
   return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
 }
 
-function claimUrl(token: string, prefillEmail?: string | null) {
-  const url = `${env.betterAuthUrl}/workspace-claim?token=${encodeURIComponent(token)}`
-  return prefillEmail ? `${url}&email=${encodeURIComponent(prefillEmail)}` : url
+function claimUrl(token: string, options?: { prefillEmail?: string | null; inviteEmails?: readonly string[] | null }) {
+  let url = `${env.betterAuthUrl}/workspace-claim?token=${encodeURIComponent(token)}`
+  if (options?.prefillEmail) {
+    url += `&email=${encodeURIComponent(options.prefillEmail)}`
+  }
+  if (options?.inviteEmails && options.inviteEmails.length > 0) {
+    url += `&invite=${encodeURIComponent(options.inviteEmails.join(","))}`
+  }
+  return url
 }
 
 function starterSkillText(name: string) {
@@ -230,7 +242,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
             id,
             role,
             token,
-            url: claimUrl(token, role === "owner" ? input.ownerEmail : null),
+            url: claimUrl(token, role === "owner" ? { prefillEmail: input.ownerEmail, inviteEmails: input.teammateEmails } : undefined),
             expiresAt: expiresAt.toISOString(),
           })
         }

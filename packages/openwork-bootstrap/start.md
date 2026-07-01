@@ -65,7 +65,10 @@ claim ownership later.
 
 Optionally ask the user for their own email address first. It is only used to
 pre-fill the claim page later (not a security boundary, not an account, no
-password) - skip it if the user does not want to share it.
+password) - skip it if the user does not want to share it. Also optionally ask
+for teammate email addresses to invite. Invites only go out once the workspace
+is claimed (a provisional workspace has no authenticated owner yet to send them
+as) - they fire automatically the moment a human claims ownership.
 
 ```bash
 openwork-bootstrap cloud bootstrap-workspace \
@@ -75,6 +78,7 @@ openwork-bootstrap cloud bootstrap-workspace \
   --claim-roles owner \
   --prepare-desktop \
   [--owner-email "<email-if-given>"] \
+  [--teammate-emails "<email1>,<email2>"] \
   --json
 ```
 
@@ -103,15 +107,30 @@ friendly, human message that gives momentum:
    is open — try typing: 'summarize the files in my Downloads folder' and hit
    Run."
 3. Offer the next steps as things you can do FOR them, as a short menu: invite a
-   teammate, claim the workspace (to attach billing + a human owner), or suggest
-   another first task idea.
+   teammate (if emails were already given, mention they'll be invited
+   automatically once the workspace is claimed; otherwise offer to collect
+   emails and re-run step 3 with --teammate-emails), claim the workspace (to
+   attach billing + a human owner), or suggest another first task idea.
 4. End with a single question like "Want me to invite someone or help with your
    first task?" so the conversation keeps going.
 
 Keep it to a few sentences. Warm, concrete, action-oriented. No JSON, no
 checklists, no internal flag names in the final message.
 
-## 6. Success Criteria (internal — do not show the user)
+## 6. Retrieving the Claim Link
+
+Do not print the claim URL preemptively. Only retrieve it when the user
+explicitly says they want to claim the workspace now (for example, after
+asking "claim the workspace").
+
+```bash
+openwork-bootstrap cloud claim-link --role owner --json
+```
+
+Then open the returned `url` for the user (for example `open <url>` on macOS)
+instead of pasting the raw link into chat.
+
+## 7. Success Criteria (internal — do not show the user)
 
 You are done only when all are true:
 
@@ -133,7 +152,7 @@ You are done only when all are true:
   green "Setup complete" banner, the organization name, a "First skill ready"
   tile, and a "Claim this workspace" action.
 
-## 7. If Something Fails
+## 8. If Something Fails
 
 - If CLI install fails: report OS, shell, command, and stderr.
 - If the `openwork-bootstrap` command is not found after install: ensure
@@ -144,14 +163,14 @@ You are done only when all are true:
   the app, and use `Claim this workspace` so email verification happens in the
   browser/app instead of in the CLI.
 
-## 8. Constraints
+## 9. Constraints
 
 - Do not require admin privileges.
 - Prefer user-local install paths.
 - Do not print passwords or tokens in final output.
 - Report exactly what was installed and where.
 
-## 9. Security note: desktop preparation
+## 10. Security note: desktop preparation
 
 `--prepare-desktop` writes machine-local setup state to
 `desktop-bootstrap.json`. For passwordless workspace bootstrap, this includes

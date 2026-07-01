@@ -89,6 +89,17 @@ async function runFlow(flow, { cdpBaseUrl, outDir, env }) {
   const ctx = new EvalContext({ client, outDir, flowId: flow.id, env });
 
   try {
+    // Force light mode by default so screenshot evidence is readable. Flows
+    // that are themselves testing theme/dark-mode behavior can opt out with
+    // `preserveTheme: true` in the flow definition.
+    if (!flow.preserveTheme) {
+      try {
+        await ctx.ensureLightMode();
+      } catch (error) {
+        ctx.log(`Could not force light mode (continuing anyway): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     if (typeof flow.precondition === "function") {
       const startedAt = Date.now();
       try {
