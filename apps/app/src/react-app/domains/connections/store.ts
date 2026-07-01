@@ -845,8 +845,13 @@ export function createConnectionsStore(options: {
    * signed in to OpenWork Cloud with an active org, keep the
    * `openwork-cloud` MCP entry configured with a fresh first-party token.
    * Quiet by design — a failed mint never opens the OAuth modal.
+   *
+   * `force` bypasses the freshness marker: used by the user-facing Refresh
+   * button so "make my cloud connection current NOW" is one click (re-mint
+   * token + rewrite config + reconnect) instead of sign-out/sign-in or
+   * waiting for the marker to expire.
    */
-  async function syncCloudControlMcp(): Promise<"synced" | "unchanged" | "skipped"> {
+  async function syncCloudControlMcp(options?: { force?: boolean }): Promise<"synced" | "unchanged" | "skipped"> {
     const settings = readDenSettings();
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!orgId || !settings.authToken?.trim()) return "skipped";
@@ -885,7 +890,7 @@ export function createConnectionsStore(options: {
     // on every visit — endless "Reload to connect" toasts. If a user
     // manually removed the entry, we respect that until the marker expires
     // instead of silently re-adding it.
-    if (markerFresh && !shouldRemintForHealth && !hasLegacyUrl) {
+    if (!options?.force && markerFresh && !shouldRemintForHealth && !hasLegacyUrl) {
       return "unchanged";
     }
     if (shouldRemintForHealth) {

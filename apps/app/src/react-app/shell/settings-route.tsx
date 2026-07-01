@@ -2071,7 +2071,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               navigateSettingsPath(path);
             }}
             onRefresh={() => {
-              void connectionsStore.refreshMcpServers();
+              // Force-sync the cloud MCP first (re-mint token + rewrite
+              // config, bypassing the freshness marker) so Refresh really
+              // means "make everything current now", then refresh the rest.
+              void connectionsStore.syncCloudControlMcp({ force: true }).then(() => {
+                void connectionsStore.refreshMcpServers();
+              });
               void extensionsStore.refreshPlugins();
               void extensionsStore.refreshCloudOrgMarketplaces({ force: true });
             }}
