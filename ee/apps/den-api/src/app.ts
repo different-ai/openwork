@@ -13,6 +13,7 @@ import { db } from "./db.js"
 import { env } from "./env.js"
 import { publicRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
+import { registerAgentMcpRoutes } from "./mcp/agent.js"
 import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, emptyResponse, htmlResponse, jsonResponse } from "./openapi.js"
@@ -168,6 +169,7 @@ registerWebhookRoutes(app)
 registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
+registerAgentMcpRoutes(app)
 registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
 
