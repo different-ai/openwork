@@ -3,17 +3,6 @@ title: "Add a custom LLM"
 description: "How to connect a custom provider with OpenWork"
 ---
 
-## Add it from the app (recommended)
-
-You can connect any OpenAI-compatible endpoint — Azure AI Foundry, LiteLLM, vLLM, Ollama, an internal gateway — directly from the app:
-
-1. Go to `Settings -> AI -> Connect provider`.
-2. Pick `Add custom provider` at the bottom of the list.
-3. Enter a name, the base URL of your endpoint, an API key (if it needs one), and the model IDs it serves — on Azure AI Foundry these are your deployment names.
-4. Click `Add provider`. OpenWork writes the provider into your workspace `opencode.jsonc`, stores the key locally, and the models appear in the model picker.
-
-## Add it by editing the config file
-
 Because `OpenWork` is built on `OpenCode` primitives, we support everything that you could modify in `.opencode.json`, like adding a [model](https://opencode.ai/docs/models/). However, our recommendation is to add it to `/path-to-your-workspace/.config/opencode/opencode.json` instead of modifying `~/.config/opencode/opencode.json`.
 
 Inside `/path-to-your-workspace/.config/opencode/opencode.json`:

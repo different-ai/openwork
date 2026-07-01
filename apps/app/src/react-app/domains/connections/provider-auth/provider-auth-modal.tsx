@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   ChevronRight,
   Loader2,
-  Plus,
   Search,
 } from "lucide-react";
 import {
@@ -34,11 +33,6 @@ import type {
   ProviderAuthProvider,
   ProviderOAuthStartResult,
 } from "./store";
-import {
-  isValidCustomProviderId,
-  slugifyProviderId,
-  type CustomProviderInput,
-} from "./custom-provider-config";
 
 type ProviderAuthEntry = {
   id: string;
@@ -76,7 +70,6 @@ export type ProviderAuthModalProps = {
   authMethods: Record<string, ProviderAuthMethod[]>;
   onSelect: (providerId: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   onSubmitApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
-  onSubmitCustomProvider?: (input: CustomProviderInput) => Promise<string | void>;
   onConnectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   onSubmitOAuth: (
     providerId: string,
@@ -94,7 +87,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const isRemoteWorker = workerType === "remote";
 
   const [view, setView] = useState<
-    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto" | "openwork-subscribe" | "custom"
+    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto" | "openwork-subscribe"
   >("list");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [selectedCloudMethod, setSelectedCloudMethod] = useState<ProviderAuthMethod | null>(null);
@@ -108,13 +101,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [oauthAutoBusy, setOauthAutoBusy] = useState(false);
   const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
-  const [customName, setCustomName] = useState("");
-  const [customProviderId, setCustomProviderId] = useState("");
-  const [customProviderIdTouched, setCustomProviderIdTouched] = useState(false);
-  const [customBaseUrl, setCustomBaseUrl] = useState("");
-  const [customApiKey, setCustomApiKey] = useState("");
-  const [customModels, setCustomModels] = useState("");
-  const [customBusy, setCustomBusy] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const providerPollRef = useRef<number | null>(null);
@@ -232,7 +218,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     [entries, selectedProviderId],
   );
 
-  const resolvedView = view === "custom" ? "custom" : selectedEntry ? view : "list";
+  const resolvedView = selectedEntry ? view : "list";
   const errorMessage = localError ?? props.error;
 
   const filteredEntries = useMemo(() => {
@@ -267,20 +253,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const methodLabel = (method: ProviderAuthMethod) =>
     method.label || (method.type === "oauth" ? "OAuth" : "API key");
 
-  const actionDisabled = props.loading || props.submitting || customBusy;
-
-  const customResolvedProviderId = customProviderIdTouched
-    ? customProviderId.trim()
-    : slugifyProviderId(customName);
-  const customModelIds = customModels
-    .split(/[\n,]+/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const customFormReady =
-    Boolean(customResolvedProviderId) &&
-    isValidCustomProviderId(customResolvedProviderId) &&
-    /^https?:\/\//i.test(customBaseUrl.trim()) &&
-    customModelIds.length > 0;
+  const actionDisabled = props.loading || props.submitting;
 
   const resetState = () => {
     if (oauthCodeCopiedResetRef.current !== null && typeof window !== "undefined") {
@@ -298,12 +271,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     setOauthCodeCopied(false);
     setOauthBrowserOpened(false);
-    setCustomName("");
-    setCustomProviderId("");
-    setCustomProviderIdTouched(false);
-    setCustomBaseUrl("");
-    setCustomApiKey("");
-    setCustomModels("");
   };
 
   const stopProviderPolling = () => {
@@ -599,28 +566,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
   };
 
-  const handleCustomSubmit = async () => {
-    if (!props.onSubmitCustomProvider || actionDisabled || !customFormReady) return;
-
-    setLocalError(null);
-    setCustomBusy(true);
-    try {
-      await props.onSubmitCustomProvider({
-        providerId: customResolvedProviderId,
-        name: customName,
-        baseURL: customBaseUrl,
-        apiKey: customApiKey,
-        modelIds: customModelIds,
-      });
-      props.onClose();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to add custom provider";
-      setLocalError(message);
-    } finally {
-      setCustomBusy(false);
-    }
-  };
-
   const handleCloudSubmit = async () => {
     if (!selectedCloudMethod?.cloudProviderId || actionDisabled) return;
 
@@ -647,7 +592,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleBack = () => {
-    if (resolvedView === "openwork-subscribe" || resolvedView === "custom") {
+    if (resolvedView === "openwork-subscribe") {
       resetState();
       return;
     }
@@ -683,7 +628,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const submittingLabel = () => {
-    if (customBusy) return "Adding custom provider...";
     if (!props.submitting) return null;
     if (resolvedView === "api") return "Saving API key...";
     if (resolvedView === "cloud") return "Connecting organization provider...";
@@ -867,36 +811,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </div>
                   )}
 
-                  {props.onSubmitCustomProvider ? (
-                    <button
-                      type="button"
-                      className="w-full group flex items-start gap-3.5 rounded-xl border border-dashed border-gray-6/70 px-3.5 py-3 text-left transition-all duration-200 hover:bg-gray-3/30 disabled:opacity-60 disabled:cursor-not-allowed"
-                      disabled={actionDisabled}
-                      onClick={() => {
-                        setLocalError(null);
-                        setView("custom");
-                      }}
-                    >
-                      <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-gray-5/60 bg-gray-2 shadow-sm">
-                        <Plus size={16} className="text-gray-11" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-[14px] font-medium text-gray-12 tracking-tight">
-                            Add custom provider
-                          </div>
-                          <div className="text-[12px] font-medium text-gray-9 group-hover:text-gray-12 transition-colors flex items-center gap-0.5 opacity-80 group-hover:opacity-100">
-                            Set up
-                            <ChevronRight size={14} className="opacity-0 -ml-2 group-hover:opacity-100 group-hover:ml-0 transition-all duration-200" />
-                          </div>
-                        </div>
-                        <div className="text-[11px] text-gray-9 mt-0.5">
-                          Connect any OpenAI-compatible endpoint — Azure AI Foundry, LiteLLM, vLLM, Ollama, and more.
-                        </div>
-                      </div>
-                    </button>
-                  ) : null}
-
                   <div className="text-[11px] text-gray-9">Arrow keys to navigate, Enter to select.</div>
                 </div>
               ) : null}
@@ -988,106 +902,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       disabled={actionDisabled || !apiKeyInput.trim()}
                     >
                       {props.submitting ? "Saving…" : "Save key"}
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
-
-              {resolvedView === "custom" ? (
-                <div className="rounded-xl border border-gray-6/40 bg-gray-2/50 shadow-sm p-5 space-y-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <div className="text-sm font-medium text-gray-12">Custom provider</div>
-                      <div className="text-xs text-gray-10 mt-1">
-                        Connect any OpenAI-compatible endpoint by name, URL, and model IDs.
-                      </div>
-                    </div>
-                    <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
-                      Back
-                    </Button>
-                  </div>
-                  <TextInput
-                    label="Name"
-                    type="text"
-                    placeholder="Azure AI Foundry"
-                    value={customName}
-                    onChange={(event) => {
-                      setCustomName(event.currentTarget.value);
-                      if (localError) setLocalError(null);
-                    }}
-                    autoComplete="off"
-                    spellCheck={false}
-                    disabled={actionDisabled}
-                  />
-                  <TextInput
-                    label="Provider ID"
-                    type="text"
-                    placeholder="azure-foundry"
-                    value={customProviderIdTouched ? customProviderId : customResolvedProviderId}
-                    onChange={(event) => {
-                      setCustomProviderId(event.currentTarget.value);
-                      setCustomProviderIdTouched(true);
-                      if (localError) setLocalError(null);
-                    }}
-                    autoComplete="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    disabled={actionDisabled}
-                  />
-                  <TextInput
-                    label="Base URL"
-                    type="text"
-                    placeholder="https://my-resource.openai.azure.com/openai/v1"
-                    value={customBaseUrl}
-                    onChange={(event) => {
-                      setCustomBaseUrl(event.currentTarget.value);
-                      if (localError) setLocalError(null);
-                    }}
-                    autoComplete="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    disabled={actionDisabled}
-                  />
-                  <TextInput
-                    label="API key (optional)"
-                    type="password"
-                    placeholder="sk-..."
-                    value={customApiKey}
-                    onChange={(event) => {
-                      setCustomApiKey(event.currentTarget.value);
-                      if (localError) setLocalError(null);
-                    }}
-                    autoComplete="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    disabled={actionDisabled}
-                  />
-                  <TextInput
-                    label="Model IDs"
-                    type="text"
-                    placeholder="gpt-5.2, my-deployment-name"
-                    value={customModels}
-                    onChange={(event) => {
-                      setCustomModels(event.currentTarget.value);
-                      if (localError) setLocalError(null);
-                    }}
-                    autoComplete="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    disabled={actionDisabled}
-                  />
-                  <div className="text-[11px] text-gray-9">
-                    Comma-separated. Use the model IDs your endpoint serves — on Azure AI Foundry these are your deployment names.
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-[11px] text-gray-9">
-                      Saved to opencode.jsonc in this workspace. Keys are stored locally.
-                    </div>
-                    <Button
-                      onClick={() => void handleCustomSubmit()}
-                      disabled={actionDisabled || !customFormReady}
-                    >
-                      {customBusy ? "Adding…" : "Add provider"}
                     </Button>
                   </div>
                 </div>
@@ -1275,7 +1089,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
         <DialogFooter className="shrink-0 flex-col gap-3">
           <div className="min-h-[16px] text-xs text-gray-10">
-            {submittingLabel()}
+            {props.submitting ? submittingLabel() : null}
           </div>
           <DialogClose
             disabled={actionDisabled}
