@@ -14,6 +14,7 @@ import {
   createOAuthStateToken,
   createPkcePair,
   exchangeCodeForTokens,
+  resolvePublicOrigin,
   verifyOAuthStateToken,
 } from "../../capability-sources/generic-oauth.js"
 import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
@@ -64,8 +65,8 @@ const oauthStatusResponseSchema = z.object({
 }).meta({ ref: "OAuthProviderStatusResponse" })
 
 function callbackRedirectUri(request: Request, providerId: string) {
-  const url = new URL(request.url)
-  return `${url.origin}/v1/oauth-providers/${encodeURIComponent(providerId)}/connect/callback`
+  const origin = resolvePublicOrigin(request, env.apiPublicUrl)
+  return `${origin}/v1/oauth-providers/${encodeURIComponent(providerId)}/connect/callback`
 }
 
 /**

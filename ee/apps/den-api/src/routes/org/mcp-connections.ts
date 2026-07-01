@@ -10,7 +10,7 @@ import {
   publicRoute,
 } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
-import { createOAuthStateToken, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
+import { createOAuthStateToken, resolvePublicOrigin, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
 import {
   connectExternalMcp,
   completeExternalMcpAuth,
@@ -83,8 +83,8 @@ function toConnectionResponse(row: { id: string; name: string; url: string; auth
 }
 
 function callbackRedirectUri(request: Request, connectionId: string) {
-  const url = new URL(request.url)
-  return `${url.origin}/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/callback`
+  const origin = resolvePublicOrigin(request, env.apiPublicUrl)
+  return `${origin}/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/callback`
 }
 
 /**

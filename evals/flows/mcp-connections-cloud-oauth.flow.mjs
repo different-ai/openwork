@@ -107,11 +107,19 @@ export default {
     {
       name: "Open Settings -> MCP Connections",
       run: async (ctx) => {
-        await ctx.eval(`(() => {
-          const link = [...document.querySelectorAll('a')].find((a) => a.getAttribute('href')?.includes('mcp-connections'));
-          link?.click();
-          return Boolean(link);
-        })()`);
+        // Retry the click: on a fresh page load (especially over higher cloud
+        // latency), the very first click can land before Next.js has finished
+        // hydrating and attaching the link's handler.
+        await ctx.waitFor(
+          `(() => {
+            const link = [...document.querySelectorAll('a')].find((a) => a.getAttribute('href')?.includes('mcp-connections'));
+            if (!link) return false;
+            if (window.location.pathname.includes('mcp-connections')) return true;
+            link.click();
+            return false;
+          })()`,
+          { timeoutMs: 30_000, label: "MCP Connections nav link clicked" },
+        );
         await ctx.waitFor("window.location.pathname.includes('mcp-connections')", {
           timeoutMs: 20_000,
           label: "MCP Connections route",

@@ -23,6 +23,21 @@ function base64UrlEncode(input: Buffer | string) {
   return buffer.toString("base64url")
 }
 
+/**
+ * The origin an external OAuth server should redirect back to. Behind a
+ * reverse proxy (e.g. Daytona's port-forwarding proxy), `request.url`
+ * reflects the *internal* bind address (http://127.0.0.1:8788) rather than
+ * the public URL the browser actually called, since the proxy doesn't
+ * rewrite the request's own URL — only `DEN_API_PUBLIC_URL`, when set,
+ * reliably gives the real public origin in that case.
+ */
+export function resolvePublicOrigin(request: Request, apiPublicUrl: string | undefined): string {
+  if (apiPublicUrl) {
+    return new URL(apiPublicUrl).origin
+  }
+  return new URL(request.url).origin
+}
+
 export function createPkcePair() {
   const verifier = base64UrlEncode(randomBytes(32))
   const challenge = base64UrlEncode(createHash("sha256").update(verifier).digest())
