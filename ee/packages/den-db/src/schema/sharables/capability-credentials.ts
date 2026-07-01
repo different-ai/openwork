@@ -128,6 +128,25 @@ export const ExternalMcpConnectionTable = mysqlTable(
     authType: mysqlEnum("auth_type", externalMcpAuthTypeValues).notNull(),
     /** Only set when authType = "apikey". Sent as a Bearer token. */
     apiKey: encryptedTextColumn("api_key"),
+    /**
+     * OAuth tokens for authType = "oauth". Unlike ConnectedAccountTable,
+     * this is deliberately org-level, not per-member: an external MCP
+     * connection (Notion, Linear, ...) is a shared org integration, like an
+     * LLM provider key, not one person's personal grant. Populated by the
+     * MCP SDK's own OAuthClientProvider machinery (client/auth.ts), which
+     * also handles silent refresh via StreamableHTTPClientTransport.
+     */
+    accessToken: encryptedTextColumn("access_token"),
+    refreshToken: encryptedTextColumn("refresh_token"),
+    tokenType: varchar("token_type", { length: 64 }),
+    scope: varchar("scope", { length: 1024 }),
+    expiresAt: timestamp("expires_at", { fsp: 3 }),
+    /**
+     * Transient PKCE code verifier, present only between connect/start and
+     * connect/callback. Cleared once tokens are saved.
+     */
+    pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
+    connectedAt: timestamp("connected_at", { fsp: 3 }),
     createdByOrgMembershipId: denTypeIdColumn(
       "member",
       "created_by_org_membership_id",

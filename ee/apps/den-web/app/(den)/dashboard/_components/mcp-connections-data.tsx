@@ -1,0 +1,146 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getRequestError, requestJson } from "../../_lib/den-flow";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+
+export type ExternalMcpAuthType = "oauth" | "apikey" | "none";
+
+export type ExternalMcpConnection = {
+  id: string;
+  name: string;
+  url: string;
+  authType: ExternalMcpAuthType;
+  connected: boolean;
+  connectedAt: string | null;
+};
+
+export type ExternalMcpPreset = {
+  presetId: string;
+  displayName: string;
+  description: string;
+  url: string;
+  authType: ExternalMcpAuthType;
+};
+
+export const mcpConnectionQueryKeys = {
+  all: ["mcp-connections"] as const,
+  list: (orgId?: string | null) => [...mcpConnectionQueryKeys.all, "list", orgId ?? "none"] as const,
+  presets: () => [...mcpConnectionQueryKeys.all, "presets"] as const,
+};
+
+async function fetchConnections(): Promise<ExternalMcpConnection[]> {
+  const { response, payload } = await requestJson("/v1/mcp-connections", {}, 15000);
+  if (!response.ok) {
+    throw getRequestError(payload, response, `Failed to load MCP connections (${response.status}).`);
+  }
+  const record = payload as { connections?: ExternalMcpConnection[] };
+  return record.connections ?? [];
+}
+
+export function useMcpConnections() {
+  const { orgId } = useOrgDashboard();
+  return useQuery({
+    enabled: Boolean(orgId),
+    queryKey: mcpConnectionQueryKeys.list(orgId),
+    queryFn: fetchConnections,
+  });
+}
+
+export function useMcpConnectionPresets() {
+  return useQuery({
+    queryKey: mcpConnectionQueryKeys.presets(),
+    queryFn: async (): Promise<ExternalMcpPreset[]> => {
+      const { response, payload } = await requestJson("/v1/mcp-connections/presets", {}, 15000);
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to load MCP presets (${response.status}).`);
+      }
+      const record = payload as { presets?: ExternalMcpPreset[] };
+      return record.presets ?? [];
+    },
+  });
+}
+
+export type CreateMcpConnectionInput = {
+  name: string;
+  url: string;
+  authType: ExternalMcpAuthType;
+  apiKey?: string;
+};
+
+export function useCreateMcpConnection() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: CreateMcpConnectionInput): Promise<ExternalMcpConnection> => {
+      let created: ExternalMcpConnection | null = null;
+      await runReauthableAction("create-mcp-connection", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/mcp-connections",
+          { method: "POST", body: JSON.stringify(input) },
+          20000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to add MCP connection (${response.status}).`);
+        }
+        created = payload as ExternalMcpConnection;
+      });
+      if (!created) throw new Error("Create MCP connection response was incomplete.");
+      return created;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.list(orgId) });
+    },
+  });
+}
+
+export function useStartMcpConnectionOAuth() {
+  return useMutation({
+    mutationFn: async (connectionId: string): Promise<{ status: "connected" | "needs_auth"; authorizeUrl: string | null }> => {
+      const { response, payload } = await requestJson(
+        `/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/start`,
+        {},
+        20000,
+      );
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to start OAuth (${response.status}).`);
+      }
+      return payload as { status: "connected" | "needs_auth"; authorizeUrl: string | null };
+    },
+  });
+}
+
+export function useDeleteMcpConnection() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (connectionId: string): Promise<string> => {
+      let result: string | null = null;
+      await runReauthableAction("delete-mcp-connection", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/mcp-connections/${encodeURIComponent(connectionId)}`,
+          { method: "DELETE" },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to remove MCP connection (${response.status}).`);
+        }
+        result = connectionId;
+      });
+      if (!result) throw new Error("Delete MCP connection response was incomplete.");
+      return result;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.list(orgId) });
+    },
+  });
+}
+
+export function formatMcpConnectedTimestamp(value: string | null): string {
+  if (!value) return "Not connected";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not connected";
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(date);
+}

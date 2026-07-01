@@ -7,6 +7,7 @@ import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities } from "./search.js"
+import { executeExternalCapability, parseExternalCapabilityName, searchExternalCapabilities } from "./external-capabilities.js"
 
 export const EXECUTE_CAPABILITY_TOOL_NAME = "execute_capability"
 
@@ -61,7 +62,21 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         }),
       },
       async ({ query, limit }) => {
-        const matches = searchCapabilities(catalog, query, limit ?? 5)
+        const boundedLimit = limit ?? 5
+        const restMatches = searchCapabilities(catalog, query, boundedLimit)
+        // Merged in from each connected External MCP Connection's live
+        // tools/list (capability-sources/external-mcp-client.ts) — a
+        // Notion/Linear/Stripe/... connection an admin added in Den shows
+        // up here exactly like any native capability, ranked together.
+        const externalMatches = await searchExternalCapabilities({
+          organizationId: principal.organizationId,
+          query,
+          redirectUriBase: new URL(c.req.raw.url).origin,
+          limit: boundedLimit,
+        })
+        const matches = [...restMatches, ...externalMatches]
+          .sort((a, b) => b.score - a.score)
+          .slice(0, boundedLimit)
         const text = matches.length > 0
           ? JSON.stringify({ matches }, null, 2)
           : JSON.stringify({ matches: [], hint: "No matches. Try broader or different keywords." }, null, 2)
@@ -86,6 +101,34 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         }),
       },
       async ({ name, path, query, body }) => {
+        const external = parseExternalCapabilityName(name)
+        if (external) {
+          const normalizedBody = normalizeToolBody(body)
+          const args = (typeof normalizedBody === "object" && normalizedBody !== null && !Array.isArray(normalizedBody)
+            ? normalizedBody
+            : {}) as Record<string, unknown>
+          const result = await executeExternalCapability({
+            organizationId: principal.organizationId,
+            connectionId: external.connectionId,
+            toolName: external.toolName,
+            args,
+            redirectUriBase: new URL(c.req.raw.url).origin,
+          })
+          if (!result.ok) {
+            return {
+              isError: true,
+              content: [{ type: "text" as const, text: JSON.stringify({ error: result.error, message: result.message }) }],
+            }
+          }
+          // The SDK's callTool() can return either the standard {content:[...]}
+          // shape or a legacy-compatibility {toolResult} shape; normalize to
+          // what McpServer's own tool callback contract requires.
+          const content = Array.isArray((result.result as { content?: unknown[] }).content)
+            ? (result.result as { content: { type: "text"; text: string }[] }).content
+            : [{ type: "text" as const, text: JSON.stringify(result.result) }]
+          return { content }
+        }
+
         const operation = catalog.find((candidate) => candidate.name === name)
         if (!operation) {
           return {

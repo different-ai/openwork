@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { captureScreenshot, evaluate } from "./cdp.mjs";
+import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets } from "./cdp.mjs";
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const POLL_INTERVAL_MS = 250;
@@ -31,11 +31,12 @@ function slug(value) {
  * fast machines and resilient on slow sandboxes.
  */
 export class EvalContext {
-  constructor({ client, outDir, flowId, env }) {
+  constructor({ client, outDir, flowId, env, cdpBaseUrl }) {
     this.client = client;
     this.outDir = outDir;
     this.flowId = flowId;
     this.env = env;
+    this.cdpBaseUrl = cdpBaseUrl ?? null;
     this.screenshots = [];
     this.evidenceFrames = [];
     this.logs = [];
@@ -43,6 +44,46 @@ export class EvalContext {
     this.currentStepName = null;
     this.currentStepEvidence = [];
     this.lastScreenshotHash = null;
+    this.tabStack = [];
+  }
+
+  /**
+   * Waits for a new browser tab/page target to appear (e.g. an OAuth
+   * `window.open` popup) and switches ctx.eval/screenshot/etc to it. Push
+   * the previous target with switchBack() once done with the new tab.
+   * Requires cdpBaseUrl (set automatically by the runner); not available
+   * against a raw client-only context.
+   */
+  async switchToNewTab({ match, timeoutMs = DEFAULT_TIMEOUT_MS, label } = {}) {
+    if (!this.cdpBaseUrl) {
+      throw new EvalError("switchToNewTab requires cdpBaseUrl on the context.");
+    }
+    const before = await listTargets(this.cdpBaseUrl);
+    const beforeIds = new Set(before.map((entry) => entry.id));
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const targets = await listTargets(this.cdpBaseUrl);
+      const candidate = targets.find(
+        (entry) => entry.type === "page" && entry.webSocketDebuggerUrl && !beforeIds.has(entry.id) && (!match || match(entry)),
+      );
+      if (candidate) {
+        const newClient = await connect(debuggerUrlFor(this.cdpBaseUrl, candidate));
+        this.tabStack.push(this.client);
+        this.client = newClient;
+        this.log(`Switched to new tab: ${candidate.title || candidate.url}`);
+        return candidate;
+      }
+      await sleep(POLL_INTERVAL_MS);
+    }
+    throw new EvalError(`Timed out after ${timeoutMs}ms waiting for a new tab${label ? ` (${label})` : ""}.`);
+  }
+
+  /** Returns focus to whichever tab was active before the last switchToNewTab(). */
+  switchBack() {
+    const previous = this.tabStack.pop();
+    if (previous) {
+      this.client = previous;
+    }
   }
 
   beginStep(name) {

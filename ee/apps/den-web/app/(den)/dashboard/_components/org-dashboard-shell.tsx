@@ -16,6 +16,7 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  Plug,
   Puzzle,
   Shield,
   SlidersHorizontal,
@@ -37,6 +38,7 @@ import {
   getOrgAccessFlags,
   getIntegrationsRoute,
   getInferenceRoute,
+  getMcpConnectionsRoute,
   getMembersRoute,
   getOrgDashboardRoute,
   getOrgSettingsRoute,
@@ -153,6 +155,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getIntegrationsRoute(orgSlug))) {
     return "Integrations";
   }
+  if (pathname.startsWith(getMcpConnectionsRoute(orgSlug))) {
+    return "MCP Connections";
+  }
   if (pathname.startsWith(getBillingRoute(orgSlug))) {
     return "Billing";
   }
@@ -223,6 +228,12 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           href: activeOrg ? getIntegrationsRoute(activeOrg.slug) : "#",
           label: "Integrations",
           icon: Cable,
+          badge: "New",
+        },
+        {
+          href: activeOrg ? getMcpConnectionsRoute(activeOrg.slug) : "#",
+          label: "MCP Connections",
+          icon: Plug,
           badge: "New",
         },
         {
