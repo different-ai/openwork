@@ -207,20 +207,22 @@ export default {
         const recallMatch = (search.matches ?? []).find((match) => /memory/i.test(match.name) && /search/i.test(match.name));
         ctx.assert(Boolean(recallMatch), `Expected a memory-search capability, got: ${(search.matches ?? []).map((m) => m.name).join(", ")}`);
 
+        // Query tokens ("Acme", "account") are guaranteed to be in the stored content.
+        const recallQuery = "Acme account renewal";
         const recall = await mcpAgentCall(ctx, ctx.mcpToken, "tools/call", {
           name: "execute_capability",
-          arguments: { name: recallMatch.name, query: { q: "Acme renewal deal" } },
+          arguments: { name: recallMatch.name, query: { q: recallQuery } },
         });
         ctx.assert(recall.isError !== true, `Recall execute errored: ${recall.content?.[0]?.text ?? ""}`);
         const results = callText(recall).results ?? [];
         const found = results.find((entry) => entry.id === ctx.memoryId);
         ctx.assert(Boolean(found), `Recall did not return the saved memory. Got ids: ${results.map((r) => r.id).join(", ")}`);
-        ctx.assert(found.content.includes(MEMORY_MARKER), "Recalled memory content did not match what was saved.");
+        ctx.assert((found.content ?? "").includes(MEMORY_MARKER), "Recalled memory content did not match what was saved.");
         ctx.recordEvidence({
           type: "assertion",
           status: "passed",
           assertion: "A fresh search_capabilities -> execute_capability recalled the saved memory by natural-language query — cross-session lexical recall works end-to-end.",
-          actual: { query: "Acme renewal deal", recalledId: found.id },
+          actual: { query: recallQuery, recalledId: found.id },
         });
       },
     },
@@ -233,11 +235,12 @@ export default {
             await ctx.expectHashIncludes("/settings/memory");
           },
           assert: async () => {
-            await ctx.expectText("Acme renewal deal", { timeoutMs: 30_000 });
+            // Assert a phrase that is actually persisted in the memory content.
+            await ctx.expectText("Acme account renews", { timeoutMs: 30_000 });
           },
           screenshot: {
             name: "memory-panel-shows-saved-memory",
-            requireText: ["Acme renewal deal"],
+            requireText: ["Acme account renews"],
             rejectText: ["Something went wrong", "Sign in to your OpenWork account"],
             hashIncludes: "/settings/memory",
           },

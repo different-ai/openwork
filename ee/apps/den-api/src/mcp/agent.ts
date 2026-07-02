@@ -4,7 +4,7 @@ import type { Hono } from "hono"
 import { z } from "zod"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
-import { invokeMcpOperation, normalizeToolBody } from "./invoke.js"
+import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities } from "./search.js"
 
@@ -80,8 +80,8 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         ].join(" "),
         inputSchema: z.object({
           name: z.string().min(1).describe("The exact tool name returned by search_capabilities."),
-          path: z.record(z.string(), z.unknown()).optional().describe("Path parameters, only if the match's pathParams is non-empty."),
-          query: z.record(z.string(), z.unknown()).optional().describe("Query parameters, only if the match's queryParams is non-empty."),
+          path: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Path parameters, only if the match's pathParams is non-empty."),
+          query: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Query parameters, only if the match's queryParams is non-empty."),
           body: z.unknown().optional().describe("JSON body, only if the match's hasBody is true."),
         }),
       },
@@ -105,7 +105,11 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
           env: c.env,
           operation,
           principal,
-          toolInput: { path, query, body: normalizeToolBody(body) },
+          toolInput: {
+            path: normalizeToolRecord(path),
+            query: normalizeToolRecord(query),
+            body: normalizeToolBody(body),
+          },
         })
       },
     )
