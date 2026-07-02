@@ -122,7 +122,12 @@ function defaultAppDir() {
 
 function configHomeDir() {
   if (process.env.XDG_CONFIG_HOME) return process.env.XDG_CONFIG_HOME
-  if (process.platform === "win32" && process.env.APPDATA) return process.env.APPDATA
+  if (process.platform === "win32") {
+    // Match the Electron shell (apps/desktop/electron/workspace-store.mjs):
+    // APPDATA, then the conventional Roaming dir — never ~/.config on Windows.
+    if (process.env.APPDATA) return process.env.APPDATA
+    return join(process.env.USERPROFILE || process.env.HOME || process.cwd(), "AppData", "Roaming")
+  }
   return join(process.env.HOME || process.cwd(), ".config")
 }
 
