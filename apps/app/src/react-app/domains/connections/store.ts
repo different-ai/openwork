@@ -39,11 +39,22 @@ import type {
 import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
 
 import type { OpenworkServerStore } from "./openwork-server-store";
+import {
+  CLOUD_MCP_SERVER_NAME,
+  clearCloudMcpUserState,
+  isCloudMcpSyncMarkerFresh,
+  readCloudMcpUserState,
+  writeCloudMcpUserState,
+} from "./cloud-mcp-user-state";
 
 type SetStateAction<T> = T | ((current: T) => T);
 
 const CLOUD_MCP_SYNC_MARKER_KEY = "openwork.den.mcp.sync";
-const CLOUD_MCP_REFRESH_MARGIN_MS = 7 * 24 * 60 * 60 * 1000;
+// Re-mint when less than a day of token validity remains. Must be well
+// below the minted token TTL (7 days, DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS in
+// den-api): when the two were equal, the marker was stale the instant it
+// was written and every sync tick re-wrote the MCP config.
+const CLOUD_MCP_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
 
 type CloudMcpSyncMarker = { orgId: string; expiresAt: string };
 
@@ -809,6 +820,11 @@ export function createConnectionsStore(options: {
       }
 
       await refreshMcpServers();
+      if (slug === CLOUD_MCP_SERVER_NAME) {
+        // An explicit connect overrides any earlier disable/remove intent,
+        // letting the background reconciler manage the entry again.
+        clearCloudMcpUserState();
+      }
       finishPerf(options.developerMode(), "mcp.connect", "done", startedAt, {
         name: entry.name,
         type: entryType,
@@ -851,15 +867,27 @@ export function createConnectionsStore(options: {
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!orgId || !settings.authToken?.trim()) return "skipped";
 
-    const entry = MCP_QUICK_CONNECT.find((candidate) => candidate.serverName === "openwork-cloud");
+    const entry = MCP_QUICK_CONNECT.find((candidate) => candidate.serverName === CLOUD_MCP_SERVER_NAME);
     if (!entry) return "skipped";
     const slug = entry.id ?? getMcpServerName(entry);
+
+    // Respect explicit user intent: a Cloud Control MCP the user disabled
+    // or removed must stay that way. Without this guard the reconciler
+    // rewrote the entry with `enabled: true` on every tick, making it
+    // impossible to turn off. Any explicit reconnect clears the record.
+    if (readCloudMcpUserState() !== null) return "skipped";
+    const configuredEntry = snapshot.mcpServers.find((server) => server.name === slug);
+    if (configuredEntry?.config.enabled === false) return "skipped";
 
     const marker = readCloudMcpSyncMarker();
     const markerFresh =
       marker !== null &&
       marker.orgId === orgId &&
-      new Date(marker.expiresAt).getTime() - Date.now() > CLOUD_MCP_REFRESH_MARGIN_MS;
+      isCloudMcpSyncMarkerFresh({
+        expiresAt: marker.expiresAt,
+        now: Date.now(),
+        refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
+      });
 
     // A revoked/expired token surfaces as needs_auth or failed from opencode;
     // while signed in, that means re-mint instead of standing pat — but only
@@ -874,7 +902,6 @@ export function createConnectionsStore(options: {
     // Builds before #2116's follow-up wrote the MCP URL against the bare
     // web-app origin (https://app.openworklabs.com/mcp), which 404s.
     // Reconfigure those entries even when the marker is still fresh.
-    const configuredEntry = snapshot.mcpServers.find((server) => server.name === slug);
     const hasLegacyUrl =
       configuredEntry?.config.type === "remote" && isLegacyWebAppMcpUrl(configuredEntry.config.url);
 
@@ -1030,6 +1057,9 @@ export function createConnectionsStore(options: {
         await removeMcpFromConfig(projectDir, name);
       }
 
+      if (name === CLOUD_MCP_SERVER_NAME) {
+        writeCloudMcpUserState("removed");
+      }
       options.markReloadRequired?.("mcp", { type: "mcp", name, action: "removed" });
       await refreshMcpServers();
       if (snapshot.selectedMcp === name) {
@@ -1097,6 +1127,13 @@ export function createConnectionsStore(options: {
       }
 
       await openworkClient.setMcpEnabled(openworkWorkspaceId, name, enabled);
+      if (name === CLOUD_MCP_SERVER_NAME) {
+        if (enabled) {
+          clearCloudMcpUserState();
+        } else {
+          writeCloudMcpUserState("disabled");
+        }
+      }
       options.markReloadRequired?.("mcp", { type: "mcp", name, action: "updated" });
       await refreshMcpServers();
     } catch (error) {
