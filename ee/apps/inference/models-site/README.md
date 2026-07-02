@@ -10,4 +10,6 @@ Cloudflare Pages can deploy this directory directly:
 
 The generated `models/api.json` file is ignored by git. It is rebuilt from `src/models/base.json` and the active OpenWork overlay by `scripts/build-models.mjs`.
 
+OpenWork-specific models live in `src/models/openwork-models.json`. `scripts/build-models.mjs` turns that list into the OpenWork provider overlay at build time and switches the provider API URL based on `OPENWORK_DEV_MODE`.
+
 Local development still serves the generated catalog from the inference Hono app at `/models/api.json` so one local service can provide both the proxy API and model catalog during dev.

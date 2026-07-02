@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { createHash } from "node:crypto"
+import { createHash, generateKeyPairSync } from "node:crypto"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const VERSION = "0.1.0"
+// The installed command name. Deliberately NOT "openwork" so it never collides
+// with the openwork-orchestrator npm package, which also installs an "openwork"
+// binary onto the user's PATH.
+const COMMAND_NAME = "openwork-bootstrap"
+const executableBasename = () => (process.platform === "win32" ? `${COMMAND_NAME}.cmd` : COMMAND_NAME)
 const here = dirname(fileURLToPath(import.meta.url))
 const selfPath = fileURLToPath(import.meta.url)
 
@@ -59,21 +64,32 @@ function jsonOut(value, json) {
 
 function printHelp() {
   console.log([
-    "openwork bootstrap",
+    "openwork-bootstrap",
     "",
     "Usage:",
-    "  openwork install [--bin-dir <path>] [--install-dir <path>] [--source <path>] [--json]",
-    "  openwork install app --manifest <url-or-file> [--app-dir <path>] [--json]",
-    "  openwork doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
-    "  OPENWORK_OWNER_PASSWORD=<password> openwork cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap install [--bin-dir <path>] [--install-dir <path>] [--source <path>] [--json]",
+    "  openwork-bootstrap install app --manifest <url-or-file> [--app-dir <path>] [--json]",
+    "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
+    "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--owner-email <email>] [--teammate-emails a@x.com,b@y.com] [--claim-roles owner,member] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap cloud claim-link [--role owner] [--desktop-bootstrap-path <path>] [--json]",
     "",
     "Commands:",
-    "  install          Install the lightweight openwork CLI into a user bin dir",
+    "  install          Install the openwork-bootstrap CLI into a user bin dir",
     "  install app      Download and install the desktop app from a manifest",
     "  doctor           Check CLI installation and optional Den API health",
     "  cloud onboard    Sign up, create an org, invite a teammate, and create a skill",
+    "  cloud bootstrap-workspace  Create a provisional workspace without email/password auth",
+    "  cloud claim-link Retrieve a claim link saved by --prepare-desktop. Only run",
+    "                   this when you are ready to hand the link to a human; do",
+    "                   not print claim links preemptively.",
     "",
     "Options:",
+    "  --web-base-url   Browser-facing origin written into --prepare-desktop's",
+    "                   config (used for the app's Sign In button and claim",
+    "                   links). Defaults to https://app.openworklabs.com when",
+    "                   --base-url is the hosted API (api.openworklabs.com);",
+    "                   set explicitly for self-hosted/custom deployments.",
     "  --json           Print machine-readable JSON",
     "  --version        Print version",
     "  --help           Show help",
@@ -106,7 +122,12 @@ function defaultAppDir() {
 
 function configHomeDir() {
   if (process.env.XDG_CONFIG_HOME) return process.env.XDG_CONFIG_HOME
-  if (process.platform === "win32" && process.env.APPDATA) return process.env.APPDATA
+  if (process.platform === "win32") {
+    // Match the Electron shell (apps/desktop/electron/workspace-store.mjs):
+    // APPDATA, then the conventional Roaming dir — never ~/.config on Windows.
+    if (process.env.APPDATA) return process.env.APPDATA
+    return join(process.env.USERPROFILE || process.env.HOME || process.cwd(), "AppData", "Roaming")
+  }
   return join(process.env.HOME || process.cwd(), ".config")
 }
 
@@ -116,6 +137,32 @@ function defaultDesktopBootstrapPath() {
 
 function defaultSkillsDir() {
   return process.env.OPENWORK_SKILLS_DIR || join(configHomeDir(), "opencode", "skills")
+}
+
+function defaultDeviceKeyPath() {
+  return process.env.OPENWORK_DEVICE_KEY_PATH || join(configHomeDir(), "openwork", "bootstrap-device-key.json")
+}
+
+// The desktop app's `desktop-bootstrap.json` `baseUrl` field is the WEB origin
+// it opens in the user's browser for sign-in (e.g. for "Sign in" and claim
+// links) - it is a different host than the API origin used for CLI/API calls
+// (`--base-url`, `apiBaseUrl`). Reusing the API host here breaks sign-in: the
+// browser opens `https://api.openworklabs.com/?mode=sign-in...` and shows raw
+// API JSON instead of the sign-in page. Derive the correct web host instead
+// of assuming it equals the API host.
+function deriveWebBaseUrl(apiBaseUrl) {
+  try {
+    const url = new URL(apiBaseUrl)
+    if (url.hostname === "api.openworklabs.com") {
+      return "https://app.openworklabs.com"
+    }
+    // Local/self-hosted dev: den-web commonly proxies the API at a different
+    // port on the same host (see ee/apps/den-web's /api/den proxy). Callers
+    // that need this to be exact should pass --web-base-url explicitly.
+    return apiBaseUrl
+  } catch {
+    return apiBaseUrl
+  }
 }
 
 function slugifySkillName(value) {
@@ -143,7 +190,7 @@ function runInstall(args) {
   copyFileSync(source, installedCli)
   chmodSync(installedCli, 0o755)
 
-  const executable = join(binDir, process.platform === "win32" ? "openwork.cmd" : "openwork")
+  const executable = join(binDir, executableBasename())
   if (process.platform === "win32") {
     writeFileSync(executable, `@echo off\r\nnode "${installedCli}" %*\r\n`)
   } else {
@@ -250,12 +297,36 @@ function findInstallCandidate(root, expectedName) {
   throw new Error(`app_not_found_in_archive: ${expectedName}`)
 }
 
+// Copy an installed artifact into place. macOS .app bundles contain internal
+// framework symlinks (e.g. Versions/Current, the framework binary/Resources
+// links) that a naive recursive copy can break — leaving dangling links into a
+// now-unmounted DMG, which makes Gatekeeper report the app as "damaged". Use
+// `ditto` on macOS, which is the Apple-supported way to copy bundles while
+// preserving relative symlinks and the code signature.
+function copyArtifact(source, target) {
+  if (process.platform === "darwin") {
+    try {
+      execFileSync("ditto", [source, target], { stdio: "pipe" })
+    } catch {
+      // Fall back to cp -R (also preserves bundle symlinks) before giving up.
+      execFileSync("cp", ["-R", source, target], { stdio: "pipe" })
+    }
+    // Remove the quarantine flag so Gatekeeper does not block the freshly
+    // installed (already-notarized) app on first launch. Best-effort.
+    try {
+      execFileSync("xattr", ["-dr", "com.apple.quarantine", target], { stdio: "pipe" })
+    } catch {}
+    return
+  }
+  cpSync(source, target, { recursive: true })
+}
+
 function installFromDirectory(input) {
   const source = findInstallCandidate(input.sourceDir, input.appName)
   mkdirSync(input.appDir, { recursive: true })
   const target = join(input.appDir, input.appName)
   rmSync(target, { recursive: true, force: true })
-  cpSync(source, target, { recursive: true })
+  copyArtifact(source, target)
   if (input.executable) chmodSync(target, 0o755)
   return target
 }
@@ -279,7 +350,7 @@ function installDmg(input) {
     mkdirSync(input.appDir, { recursive: true })
     const targetApp = join(input.appDir, appName)
     rmSync(targetApp, { recursive: true, force: true })
-    cpSync(sourceApp, targetApp, { recursive: true })
+    copyArtifact(sourceApp, targetApp)
     return targetApp
   } finally {
     if (mounted) {
@@ -391,7 +462,7 @@ async function runDoctor(args) {
   checks.push({ name: "installDir", ok: existsSync(installDir), value: installDir })
   checks.push({ name: "binDir", ok: existsSync(binDir), value: binDir })
 
-  const executable = join(binDir, process.platform === "win32" ? "openwork.cmd" : "openwork")
+  const executable = join(binDir, executableBasename())
   const executableOk = existsSync(executable) && statSync(executable).isFile()
   checks.push({ name: "openworkExecutable", ok: executableOk, value: executable })
 
@@ -564,12 +635,15 @@ function writePreparedDesktop(input) {
     skillPath,
     preparedAt,
   }
-  writeFileSync(bootstrapPath, `${JSON.stringify({
+  const bootstrap = {
     baseUrl: input.baseUrl,
     apiBaseUrl: input.apiBaseUrl,
     requireSignin: false,
     prepared,
-    handoff: {
+    ...(input.claimLinks ? { claimLinks: input.claimLinks } : {}),
+  }
+  if (input.handoff) {
+    bootstrap.handoff = {
       grant: input.handoff.grant,
       denBaseUrl: input.baseUrl,
       orgId: prepared.orgId,
@@ -578,17 +652,51 @@ function writePreparedDesktop(input) {
       skillId: prepared.skillId,
       skillTitle: prepared.skillTitle,
       createdAt: preparedAt,
-    },
-  }, null, 2)}\n`, "utf8")
+    }
+  } else {
+    bootstrap.handoff = null
+  }
+
+  writeFileSync(bootstrapPath, `${JSON.stringify(bootstrap, null, 2)}\n`, "utf8")
 
   return {
     prepared: true,
     bootstrapPath,
     skillsDir: resolve(input.skillsDir),
     skillPath,
-    handoffExpiresAt: input.handoff.expiresAt,
-    handoffGrant: "written-to-bootstrap-file",
+    ...(input.handoff ? { handoffExpiresAt: input.handoff.expiresAt, handoffGrant: "redacted: saved to bootstrapPath" } : {}),
+    ...(input.claimLinks
+      ? {
+          claimLinks: input.claimLinks.map((link) => ({
+            id: link.id,
+            role: link.role,
+            expiresAt: link.expiresAt,
+            url: `redacted: run "openwork-bootstrap cloud claim-link --role ${link.role}" to view`,
+          })),
+        }
+      : {}),
   }
+}
+
+function ensureDeviceKey(filePath) {
+  const keyPath = resolve(filePath)
+  if (existsSync(keyPath)) {
+    const stored = JSON.parse(readFileSync(keyPath, "utf8"))
+    if (typeof stored.publicKey === "string" && stored.publicKey.trim()) {
+      return { path: keyPath, publicKey: stored.publicKey.trim(), reused: true }
+    }
+  }
+
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  })
+  mkdirSync(dirname(keyPath), { recursive: true })
+  writeFileSync(keyPath, `${JSON.stringify({ publicKey, privateKey, createdAt: new Date().toISOString() }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 })
+  try {
+    chmodSync(keyPath, 0o600)
+  } catch {}
+  return { path: keyPath, publicKey, reused: false }
 }
 
 async function resolveOwnerPassword(flags) {
@@ -626,6 +734,7 @@ async function runCloudOnboard(args) {
   const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
   const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
   const skillsDir = getFlag(args.flags, "skills-dir", defaultSkillsDir())
+  const webBaseUrl = getFlag(args.flags, "web-base-url", deriveWebBaseUrl(baseUrl))?.replace(/\/$/, "")
 
   for (const [name, value] of Object.entries({ baseUrl, ownerEmail, ownerPassword, orgName, inviteEmail })) {
     if (!value) throw new Error(`missing_required_flag: --${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`)
@@ -679,7 +788,7 @@ async function runCloudOnboard(args) {
   if (prepareDesktop) {
     const handoff = await createDesktopHandoff(baseUrl, auth)
     desktop = writePreparedDesktop({
-      baseUrl,
+      baseUrl: webBaseUrl,
       apiBaseUrl: baseUrl,
       bootstrapPath: desktopBootstrapPath,
       skillsDir,
@@ -699,6 +808,141 @@ async function runCloudOnboard(args) {
     skillRun,
     desktop,
   }, json)
+}
+
+async function runCloudBootstrapWorkspace(args) {
+  const json = hasFlag(args.flags, "json")
+  const baseUrl = getFlag(args.flags, "base-url", "https://api.openworklabs.com")?.replace(/\/$/, "")
+  const workspaceName = getFlag(args.flags, "workspace-name")
+  const skillName = getFlag(args.flags, "skill-name", "First OpenWork Skill")
+  const ownerEmail = getFlag(args.flags, "owner-email")
+  const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
+  const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
+  const skillsDir = getFlag(args.flags, "skills-dir", defaultSkillsDir())
+  const deviceKeyPath = getFlag(args.flags, "device-key-path", defaultDeviceKeyPath())
+  const webBaseUrl = getFlag(args.flags, "web-base-url", deriveWebBaseUrl(baseUrl))?.replace(/\/$/, "")
+  const claimRoles = String(getFlag(args.flags, "claim-roles", "owner"))
+    .split(",")
+    .map((role) => role.trim())
+    .filter(Boolean)
+  const teammateEmails = String(getFlag(args.flags, "teammate-emails", ""))
+    .split(",")
+    .map((email) => email.trim())
+    .filter(Boolean)
+
+  for (const [name, value] of Object.entries({ baseUrl, workspaceName })) {
+    if (!value) throw new Error(`missing_required_flag: --${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`)
+  }
+
+  const health = await request(baseUrl, "/health", { method: "GET" })
+  if (health.status !== 200 || health.body?.ok !== true) {
+    throw new Error(`den_api_unhealthy: ${health.status} ${JSON.stringify(health.body)}`)
+  }
+
+  const deviceKey = ensureDeviceKey(deviceKeyPath)
+  const response = await request(baseUrl, "/v1/bootstrap/workspace", {
+    method: "POST",
+    body: JSON.stringify({
+      workspaceName,
+      skillName,
+      devicePublicKey: deviceKey.publicKey,
+      claimRoles,
+      ...(ownerEmail ? { ownerEmail } : {}),
+      ...(teammateEmails.length > 0 ? { teammateEmails } : {}),
+    }),
+  })
+  if (response.status !== 200 || response.body?.ok !== true || !response.body?.organization?.id || !response.body?.skill?.id) {
+    throw new Error(`workspace_bootstrap_failed: ${response.status} ${JSON.stringify(response.body)}`)
+  }
+
+  const skill = {
+    ...response.body.skill,
+    skillText: skillText(response.body.skill.title, response.body.skill.output || "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED"),
+  }
+
+  const skillRun = runBootstrapSkill(skill, { trigger: "bootstrap.verify" })
+  if (!skillRun.triggered || skillRun.output !== "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED") {
+    throw new Error(`skill_trigger_failed: ${JSON.stringify(skillRun)}`)
+  }
+
+  let desktop = null
+  if (prepareDesktop) {
+    desktop = writePreparedDesktop({
+      baseUrl: webBaseUrl,
+      apiBaseUrl: baseUrl,
+      bootstrapPath: desktopBootstrapPath,
+      skillsDir,
+      organization: response.body.organization,
+      skill,
+      claimLinks: response.body.claimLinks,
+    })
+  }
+
+  jsonOut({
+    ok: true,
+    message: "OpenWork workspace bootstrap complete",
+    organization: response.body.organization,
+    setup: response.body.setup,
+    skill: response.body.skill,
+    skillRun,
+    claimLinks: response.body.claimLinks.map((link) => ({
+      id: link.id,
+      role: link.role,
+      expiresAt: link.expiresAt,
+      url: prepareDesktop
+        ? `redacted: run "openwork-bootstrap cloud claim-link --role ${link.role}" to view`
+        : "discarded: rerun with --prepare-desktop to persist this link, otherwise it cannot be retrieved later",
+    })),
+    device: { publicKeyPath: deviceKey.path, reused: deviceKey.reused },
+    desktop,
+  }, json)
+}
+
+function runCloudClaimLink(args) {
+  const json = hasFlag(args.flags, "json")
+  const desktopBootstrapPath = resolve(getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath()))
+  const roleFilter = getFlag(args.flags, "role")
+
+  if (!existsSync(desktopBootstrapPath)) {
+    throw new Error(`desktop_bootstrap_not_found: ${desktopBootstrapPath} (run cloud bootstrap-workspace --prepare-desktop first)`)
+  }
+
+  const bootstrap = JSON.parse(readFileSync(desktopBootstrapPath, "utf8"))
+  const allLinks = Array.isArray(bootstrap.claimLinks) ? bootstrap.claimLinks : []
+  const claimLinks = roleFilter ? allLinks.filter((link) => link.role === roleFilter) : allLinks
+
+  if (claimLinks.length === 0) {
+    throw new Error(
+      allLinks.length === 0
+        ? `no_claim_links: ${desktopBootstrapPath} has no claim links (this workspace may have been bootstrapped without --prepare-desktop, or claimRoles was empty)`
+        : `no_claim_links_for_role: no claim link with role "${roleFilter}" in ${desktopBootstrapPath}`,
+    )
+  }
+
+  jsonOut({
+    ok: true,
+    message: "Claim link retrieved. Share this URL only with the person who should own this workspace.",
+    bootstrapPath: desktopBootstrapPath,
+    claimLinks,
+  }, json)
+}
+
+async function runCloud(args) {
+  const subcommand = args.positionals[1]
+  if (subcommand === "claim-link") {
+    runCloudClaimLink(args)
+    return
+  }
+  if (subcommand === "onboard") {
+    await runCloudOnboard(args)
+    return
+  }
+  if (subcommand === "bootstrap-workspace") {
+    await runCloudBootstrapWorkspace(args)
+    return
+  }
+  printHelp()
+  process.exitCode = 1
 }
 
 async function main() {
@@ -722,7 +966,7 @@ async function main() {
     return
   }
   if (command === "cloud") {
-    await runCloudOnboard(args)
+    await runCloud(args)
     return
   }
 

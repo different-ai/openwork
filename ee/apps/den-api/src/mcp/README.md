@@ -7,6 +7,7 @@ The MCP catalog is generated from `openapi.json`, then filtered by `policy.ts` b
 Every tagged Den API product surface is allowed unless it is listed under blocked tags or blocked operation IDs:
 
 - `API Keys`
+- `Capability Sources`
 - `Config Objects`
 - `Connectors`
 - `GitHub`
@@ -57,6 +58,8 @@ These individual operations are blocked even though their tags may otherwise be 
 - `deleteV1OrgsByOrgId`: defensive block for organization deletion if a route is added.
 - `postWorkersByWorkerIdTokens`: worker token minting returns credentials and should stay behind explicit UI/API flows.
 - `postV1WorkersByWorkerIdTokens`: generated OpenAPI ID for worker token minting.
+- `postOauthProvidersByProviderIdDisconnect`: removing a connected OAuth credential is a mutation that should stay behind explicit UI/API flows, not an agent-callable tool.
+- `postV1OauthProvidersByProviderIdDisconnect`: generated OpenAPI ID for disconnecting an OAuth provider.
 
 ## Untagged Operations
 

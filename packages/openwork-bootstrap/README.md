@@ -1,16 +1,16 @@
 # OpenWork Bootstrap CLI
 
-Script-installable `openwork` command for agent-first onboarding.
+Script-installable `openwork-bootstrap` command for agent-first onboarding.
 
 This package is intentionally small and does not assume npm is the install
 channel. A bootstrap script can place `bin/openwork.mjs` on disk, then run:
 
 ```bash
-openwork install --bin-dir ~/.local/bin --install-dir ~/.openwork/bootstrap
-openwork doctor --json
-openwork install app --manifest https://example.com/openwork-install-manifest.json
-openwork doctor --app --json
-OPENWORK_OWNER_PASSWORD='<generated-password>' openwork cloud onboard --base-url https://den.example.com --owner-email ada@example.com --org-name 'Ada Workspace' --invite-email teammate@example.com --skill-name 'First skill' --json
+openwork-bootstrap install --bin-dir ~/.local/bin --install-dir ~/.openwork/bootstrap
+openwork-bootstrap doctor --json
+openwork-bootstrap install app --manifest https://example.com/openwork-install-manifest.json
+openwork-bootstrap doctor --app --json
+OPENWORK_OWNER_PASSWORD='<generated-password>' openwork-bootstrap cloud onboard --base-url https://den.example.com --owner-email ada@example.com --org-name 'Ada Workspace' --invite-email teammate@example.com --skill-name 'First skill' --json
 ```
 
 Current scope:

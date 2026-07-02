@@ -133,8 +133,8 @@ try {
   const installAndDoctor = dockerRun([
     "set -euo pipefail",
     "node /package/bin/openwork.mjs install --install-dir /tmp/openwork/install --bin-dir /tmp/openwork/bin --json >/tmp/install.json",
-    "/tmp/openwork/bin/openwork install app --manifest /fixture/install-manifest.json --app-dir /tmp/openwork/apps --json >/tmp/app-install.json",
-    "/tmp/openwork/bin/openwork doctor --install-dir /tmp/openwork/install --bin-dir /tmp/openwork/bin --app --app-dir /tmp/openwork/apps --json",
+    "/tmp/openwork/bin/openwork-bootstrap install app --manifest /fixture/install-manifest.json --app-dir /tmp/openwork/apps --json >/tmp/app-install.json",
+    "/tmp/openwork/bin/openwork-bootstrap doctor --install-dir /tmp/openwork/install --bin-dir /tmp/openwork/bin --app --app-dir /tmp/openwork/apps --json",
   ].join(" && "), { timeout: 60_000 })
   prove("Linux can install the CLI and app artifact, then doctor the app", {
     action: "Run openwork install, openwork install app, and openwork doctor --app inside Linux",
@@ -148,8 +148,8 @@ try {
   const onboard = dockerRun([
     "set -euo pipefail",
     "node /package/bin/openwork.mjs install --install-dir /tmp/openwork/install --bin-dir /tmp/openwork/bin --json >/tmp/install.json",
-    `/tmp/openwork/bin/openwork cloud onboard --base-url "$DEN_API_E2E_BASE_URL" --owner-email ${JSON.stringify(ownerEmail)} --org-name ${JSON.stringify(`Linux CLI Org ${runId}`)} --invite-email ${JSON.stringify(inviteEmail)} --skill-name ${JSON.stringify(skillName)} --prepare-desktop --desktop-bootstrap-path /tmp/openwork/desktop-bootstrap.json --skills-dir /tmp/openwork/skills --json >/tmp/onboard.json`,
-    "/tmp/openwork/bin/openwork doctor --install-dir /tmp/openwork/install --bin-dir /tmp/openwork/bin --desktop-bootstrap --desktop-bootstrap-path /tmp/openwork/desktop-bootstrap.json --json >/tmp/doctor.json",
+    `/tmp/openwork/bin/openwork-bootstrap cloud onboard --base-url "$DEN_API_E2E_BASE_URL" --owner-email ${JSON.stringify(ownerEmail)} --org-name ${JSON.stringify(`Linux CLI Org ${runId}`)} --invite-email ${JSON.stringify(inviteEmail)} --skill-name ${JSON.stringify(skillName)} --prepare-desktop --desktop-bootstrap-path /tmp/openwork/desktop-bootstrap.json --skills-dir /tmp/openwork/skills --json >/tmp/onboard.json`,
+    "/tmp/openwork/bin/openwork-bootstrap doctor --install-dir /tmp/openwork/install --bin-dir /tmp/openwork/bin --desktop-bootstrap --desktop-bootstrap-path /tmp/openwork/desktop-bootstrap.json --json >/tmp/doctor.json",
     "node -e \"const fs=require('fs'); console.log(JSON.stringify({onboard:JSON.parse(fs.readFileSync('/tmp/onboard.json','utf8')),doctor:JSON.parse(fs.readFileSync('/tmp/doctor.json','utf8'))}, null, 2))\"",
   ].join(" && "), {
     env: ["-e", `OPENWORK_OWNER_PASSWORD=${randomPassword()}`],

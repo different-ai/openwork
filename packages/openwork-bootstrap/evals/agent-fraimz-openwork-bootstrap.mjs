@@ -28,7 +28,7 @@ const cli = join(packageRoot, "bin", "openwork.mjs")
 const temp = mkdtempSync(join(tmpdir(), "openwork-bootstrap-e2e-"))
 const installDir = join(temp, "install")
 const binDir = join(temp, "bin")
-const installedOpenwork = join(binDir, process.platform === "win32" ? "openwork.cmd" : "openwork")
+const installedOpenwork = join(binDir, process.platform === "win32" ? "openwork-bootstrap.cmd" : "openwork-bootstrap")
 const outDir = join(repoRoot, "evals", "results", "openwork-bootstrap-cli")
 mkdirSync(outDir, { recursive: true })
 

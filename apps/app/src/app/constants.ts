@@ -155,13 +155,15 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     serverName: "openwork-cloud",
     get description() { return t("mcp.quick_connect_openwork_cloud_desc"); },
     get url() {
-      // The Den MCP server is hosted by den-api (see
-      // packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx), never at the
-      // web app's root — getDenMcpUrl heals stale web-app origins.
+      // The desktop app connects to the minimal, harness-facing surface
+      // (/mcp/agent: search_capabilities + execute_capability only), not the
+      // full catalog at bare /mcp. getDenMcpUrl heals stale web-app origins;
+      // never at the web app's root (see
+      // packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx).
       try {
-        return getDenMcpUrl();
+        return `${getDenMcpUrl()}/agent`;
       } catch {
-        return "https://api.openworklabs.com/mcp";
+        return "https://api.openworklabs.com/mcp/agent";
       }
     },
     type: "remote",

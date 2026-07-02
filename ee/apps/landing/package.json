@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 next dev --hostname 0.0.0.0",
-    "prebuild": "pnpm --dir ../../../packages/email build && pnpm --dir ../../../packages/ui build",
+    "prebuild": "pnpm --dir ../../../packages/email build && pnpm --dir ../../../packages/ui build && node scripts/copy-bootstrap-cli.mjs",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "lint": "next lint"

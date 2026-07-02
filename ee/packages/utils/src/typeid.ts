@@ -76,6 +76,11 @@ export const idTypesMapNameToPrefix = {
   workerBundle: "wkb",
   auditEvent: "aev",
   telemetryEvent: "tev",
+  workspaceBootstrap: "wbt",
+  workspaceClaim: "wcl",
+  orgOAuthClient: "ooc",
+  connectedAccount: "cta",
+  externalMcpConnection: "emc",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

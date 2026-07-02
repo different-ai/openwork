@@ -87,6 +87,49 @@ export const InvitationTable = mysqlTable(
   ],
 )
 
+export const WorkspaceBootstrapTable = mysqlTable(
+  "workspace_bootstrap",
+  {
+    id: denTypeIdColumn("workspaceBootstrap", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    setupMemberId: denTypeIdColumn("member", "setup_member_id").notNull(),
+    devicePublicKey: text("device_public_key"),
+    deviceKeyFingerprint: varchar("device_key_fingerprint", { length: 128 }),
+    status: varchar("status", { length: 32 }).notNull().default("provisional"),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    claimedAt: timestamp("claimed_at", { fsp: 3 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("workspace_bootstrap_organization_id").on(table.organizationId),
+    index("workspace_bootstrap_status").on(table.status),
+    index("workspace_bootstrap_expires_at").on(table.expiresAt),
+  ],
+)
+
+export const WorkspaceClaimTable = mysqlTable(
+  "workspace_claim",
+  {
+    id: denTypeIdColumn("workspaceClaim", "id").notNull().primaryKey(),
+    bootstrapId: denTypeIdColumn("workspaceBootstrap", "bootstrap_id").notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    tokenHash: varchar("token_hash", { length: 128 }).notNull(),
+    role: varchar("role", { length: 255 }).notNull(),
+    status: varchar("status", { length: 32 }).notNull().default("pending"),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    claimedByUserId: denTypeIdColumn("user", "claimed_by_user_id"),
+    claimedAt: timestamp("claimed_at", { fsp: 3 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("workspace_claim_token_hash").on(table.tokenHash),
+    index("workspace_claim_bootstrap_id").on(table.bootstrapId),
+    index("workspace_claim_organization_id").on(table.organizationId),
+    index("workspace_claim_status").on(table.status),
+    index("workspace_claim_expires_at").on(table.expiresAt),
+  ],
+)
+
 export const OrganizationRoleTable = mysqlTable(
   "organization_role",
   {
@@ -127,4 +170,6 @@ export const organizationRoleRelations = relations(OrganizationRoleTable, ({ one
 export const organization = OrganizationTable
 export const member = MemberTable
 export const invitation = InvitationTable
+export const workspaceBootstrap = WorkspaceBootstrapTable
+export const workspaceClaim = WorkspaceClaimTable
 export const organizationRole = OrganizationRoleTable

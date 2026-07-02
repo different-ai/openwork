@@ -17,6 +17,7 @@ tmp/
 
 # Local git worktrees
 _worktrees/
+.worktrees/
 
 # Desktop sidecars
 apps/desktop/resources/sidecars/

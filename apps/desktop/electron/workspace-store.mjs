@@ -101,6 +101,26 @@ async function readJsonFile(targetPath, fallback) {
   }
 }
 
+// The bootstrap CLI (packages/openwork-bootstrap) and this app must agree on
+// where desktop-bootstrap.json lives: %APPDATA% on Windows, XDG_CONFIG_HOME
+// (falling back to ~/.config) elsewhere. Resolved once at module load so a
+// mid-session process.env mutation (runtime.mjs buildChildEnv ->
+// Object.assign(process.env)) can never retarget reads to a different file.
+const DEFAULT_DESKTOP_BOOTSTRAP_PATH = (() => {
+  // Same precedence as the CLI's configHomeDir(): XDG_CONFIG_HOME everywhere,
+  // then APPDATA on Windows, then ~/.config.
+  const configHome =
+    process.env.XDG_CONFIG_HOME?.trim() ||
+    (process.platform === "win32" ? process.env.APPDATA?.trim() : "") ||
+    path.join(os.homedir(), process.platform === "win32" ? path.join("AppData", "Roaming") : ".config");
+  return path.join(configHome, "openwork", "desktop-bootstrap.json");
+})();
+
+// Older builds resolved the default as ~/.config on every OS, ignoring
+// APPDATA and XDG_CONFIG_HOME. Keep reading that file when the canonical one
+// is missing so existing installs keep their deployment config.
+const LEGACY_DESKTOP_BOOTSTRAP_PATH = path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
+
 export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSignin, forceRequireSignin }) {
   function desktopBootstrapPath() {
     if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
@@ -120,7 +140,15 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
         "desktop-bootstrap.json",
       );
     }
-    return path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
+    return DEFAULT_DESKTOP_BOOTSTRAP_PATH;
+  }
+
+  function legacyDesktopBootstrapPath() {
+    const primary = desktopBootstrapPath();
+    if (primary === DEFAULT_DESKTOP_BOOTSTRAP_PATH && LEGACY_DESKTOP_BOOTSTRAP_PATH !== primary) {
+      return LEGACY_DESKTOP_BOOTSTRAP_PATH;
+    }
+    return null;
   }
 
   function workspaceStatePath() {
@@ -210,11 +238,22 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const normalizedPrepared = prepared?.orgId && prepared.orgName && prepared.skillId && prepared.skillTitle && prepared.skillPath
       ? prepared
       : null;
+    const claimLinksInput = Array.isArray(input?.claimLinks) ? input.claimLinks : [];
+    const claimLinks = claimLinksInput.flatMap((link) => {
+      if (!link || typeof link !== "object") return [];
+      const id = typeof link.id === "string" ? link.id.trim() : "";
+      const role = typeof link.role === "string" ? link.role.trim() : "";
+      const token = typeof link.token === "string" ? link.token.trim() : "";
+      const url = typeof link.url === "string" ? link.url.trim() : "";
+      const expiresAt = typeof link.expiresAt === "string" ? link.expiresAt.trim() : "";
+      return id && role && url && expiresAt ? [{ id, role, ...(token ? { token } : {}), url, expiresAt }] : [];
+    });
 
     return {
       baseUrl,
       apiBaseUrl,
       requireSignin: forceRequireSignin || input?.requireSignin === true,
+      ...(claimLinks.length > 0 ? { claimLinks } : {}),
       ...(normalizedHandoff ? { handoff: normalizedHandoff } : {}),
       ...(normalizedPrepared ? { prepared: normalizedPrepared } : {}),
     };
@@ -225,10 +264,32 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     try {
       const raw = await readFile(configPath, "utf8");
       return normalizeDesktopBootstrapConfig(JSON.parse(raw));
-    } catch (error) {
+    } catch (primaryError) {
+      const legacyPath = legacyDesktopBootstrapPath();
+      if (legacyPath) {
+        try {
+          const raw = await readFile(legacyPath, "utf8");
+          const normalized = normalizeDesktopBootstrapConfig(JSON.parse(raw));
+          // One-time migration: rewrite to the canonical path so future reads
+          // and writes (setDesktopBootstrapConfig) target the same file.
+          try {
+            await mkdir(path.dirname(configPath), { recursive: true });
+            await writeFile(configPath, raw, "utf8");
+            console.info("[desktop-bootstrap] migrated legacy config", {
+              from: legacyPath,
+              to: configPath,
+            });
+          } catch (migrationError) {
+            console.warn("[desktop-bootstrap] legacy config migration failed", migrationError);
+          }
+          return normalized;
+        } catch {
+          // Fall through to defaults below.
+        }
+      }
       console.warn("[desktop-bootstrap] falling back to defaults", {
         path: configPath,
-        error: error instanceof Error ? error.message : String(error),
+        error: primaryError instanceof Error ? primaryError.message : String(primaryError),
       });
       return {
         baseUrl: defaultDenBaseUrl,
@@ -240,8 +301,11 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
 
   async function debugDesktopBootstrapConfig() {
     const configPath = desktopBootstrapPath();
+    const legacyPath = legacyDesktopBootstrapPath();
     const result = {
       path: configPath,
+      legacyPath,
+      legacyExists: legacyPath ? existsSync(legacyPath) : false,
       home: os.homedir(),
       envHome: process.env.HOME ?? null,
       envOverride: process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH ?? null,
@@ -935,6 +999,10 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   async function resetOpenworkState() {
     await rm(workspaceStatePath(), { force: true });
     await rm(desktopBootstrapPath(), { force: true });
+    const legacyPath = legacyDesktopBootstrapPath();
+    if (legacyPath) {
+      await rm(legacyPath, { force: true });
+    }
     return undefined;
   }
 

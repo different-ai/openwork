@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "openwork": "bin/openwork.mjs"
+    "openwork-bootstrap": "bin/openwork.mjs"
   },
   "files": [
     "bin",

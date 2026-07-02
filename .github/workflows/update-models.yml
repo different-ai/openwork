@@ -1,0 +1,178 @@
+name: Update Models
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_branch:
+        description: Branch to update from and open the pull request against
+        required: false
+        default: dev
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.base_branch }}
+  cancel-in-progress: false
+
+env:
+  MODELS_PATH: ee/apps/inference/src/models/base.json
+  MODELS_URL: https://models.dev/api.json
+  BASE_BRANCH: ${{ inputs.base_branch }}
+  BRANCH_NAME: automation/update-models-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  update-models:
+    if: github.repository == 'different-ai/openwork'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Download and validate models
+        run: |
+          set -euo pipefail
+
+          node --input-type=module <<'NODE'
+          import { writeFile } from "node:fs/promises"
+
+          const modelsPath = process.env.MODELS_PATH
+          const modelsUrl = process.env.MODELS_URL
+
+          function fail(message) {
+            throw new Error(`Refusing to update ${modelsPath}: ${message}`)
+          }
+
+          function isRecord(value) {
+            return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+          }
+
+          function isStringArray(value) {
+            return Array.isArray(value) && value.every((item) => typeof item === "string")
+          }
+
+          function validateModel(providerId, modelId, model) {
+            if (!isRecord(model)) {
+              fail(`model ${providerId}.${modelId} was not an object`)
+            }
+
+            if (model.id !== modelId) {
+              fail(`model ${providerId}.${modelId} was missing a matching id`)
+            }
+
+            if (typeof model.name !== "string" || model.name.length === 0) {
+              fail(`model ${providerId}.${modelId} was missing a name`)
+            }
+
+            if (!isRecord(model.modalities)) {
+              fail(`model ${providerId}.${modelId} was missing modalities`)
+            }
+
+            if (!isStringArray(model.modalities.input) || model.modalities.input.length === 0) {
+              fail(`model ${providerId}.${modelId} was missing input modalities`)
+            }
+
+            if (!isStringArray(model.modalities.output) || model.modalities.output.length === 0) {
+              fail(`model ${providerId}.${modelId} was missing output modalities`)
+            }
+
+            if (!isRecord(model.limit)) {
+              fail(`model ${providerId}.${modelId} was missing limits`)
+            }
+          }
+
+          const response = await fetch(modelsUrl, {
+            headers: { accept: "application/json" },
+          })
+
+          if (!response.ok) {
+            fail(`GET ${modelsUrl} returned ${response.status} ${response.statusText}`)
+          }
+
+          const body = await response.text()
+          let parsed
+          try {
+            parsed = JSON.parse(body)
+          } catch (error) {
+            fail(error instanceof Error ? error.message : "response was not valid JSON")
+          }
+
+          if (!isRecord(parsed)) {
+            fail("response was not a JSON object")
+          }
+
+          const providers = Object.entries(parsed)
+          if (providers.length === 0) {
+            fail("response did not include any providers")
+          }
+
+          for (const [providerId, provider] of providers) {
+            if (!isRecord(provider)) {
+              fail(`provider ${providerId} was not an object`)
+            }
+
+            if (provider.id !== providerId) {
+              fail(`provider ${providerId} was missing a matching id`)
+            }
+
+            if (typeof provider.name !== "string" || provider.name.length === 0) {
+              fail(`provider ${providerId} was missing a name`)
+            }
+
+            if (!isRecord(provider.models) || Object.keys(provider.models).length === 0) {
+              fail(`provider ${providerId} did not include models`)
+            }
+
+            for (const [modelId, model] of Object.entries(provider.models)) {
+              validateModel(providerId, modelId, model)
+            }
+          }
+
+          await writeFile(modelsPath, `${JSON.stringify(parsed)}\n`)
+          NODE
+
+      - name: Check for changes
+        id: changes
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- "$MODELS_PATH"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open pull request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git switch -c "$BRANCH_NAME"
+          git add "$MODELS_PATH"
+          git commit -m "chore: update models snapshot"
+          git push --set-upstream origin "$BRANCH_NAME"
+          pr_url="$(gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH_NAME" \
+            --title "chore: update models snapshot" \
+            --body "Updates \`$MODELS_PATH\` from \`$MODELS_URL\`.\n\nThe workflow validated the response before replacing the file and wrote the snapshot as minified JSON.")"
+          gh pr merge "$pr_url" --auto --squash --delete-branch
+
+      - name: No model changes
+        if: steps.changes.outputs.changed == 'false'
+        run: echo "No model changes found."

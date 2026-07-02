@@ -10,7 +10,6 @@ import {
 import { useState } from "react";
 import { BookCallForm } from "./book-call-form";
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
-import { LandingBackground } from "./landing-background";
 import { LandingEnterpriseHero } from "./landing-enterprise-hero";
 import {
   defaultLandingDemoFlowId,
@@ -65,8 +64,6 @@ export function LandingEnterprise(props: Props) {
 
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
-      <LandingBackground />
-
       <div className="relative z-10 flex min-h-screen flex-col items-center pb-3 pt-1 md:pb-4 md:pt-2">
         <div className="w-full">
           <SiteNav

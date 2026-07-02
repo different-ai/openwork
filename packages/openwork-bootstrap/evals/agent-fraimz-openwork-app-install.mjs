@@ -29,7 +29,7 @@ const binDir = join(temp, "bin")
 const appDir = join(temp, "Applications")
 const dmgPath = join(temp, "OpenWork.dmg")
 const manifestPath = join(temp, "openwork-install-manifest.json")
-const installedOpenwork = join(binDir, "openwork")
+const installedOpenwork = join(binDir, "openwork-bootstrap")
 mkdirSync(outDir, { recursive: true })
 
 const frames = []

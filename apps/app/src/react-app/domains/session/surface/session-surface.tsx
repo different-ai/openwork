@@ -32,6 +32,7 @@ import {
   recordInspectorEvent,
 } from "@/app/lib/app-inspector";
 import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
+import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
 import { ReactSessionComposer } from "./composer/composer";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge } from "@/app/lib/desktop";
@@ -1075,6 +1076,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setToolMcpServers(servers);
     setToolMcpStatuses(statuses);
     setToolMcpStatus(status);
+
+    // Quiet self-heal: remote OAuth connectors whose access token expired
+    // show "Sign in needed" even though the stored refresh token still
+    // works. `mcp.connect` retries the refresh grant on a fresh transport
+    // without ever opening a browser; on success the badge flips live.
+    const directory = props.workspaceRoot.trim();
+    if (directory && servers.length) {
+      void attemptSilentMcpReauth({ client: opencodeClient, directory, servers, statuses })
+        .then(async (attempted) => {
+          if (!attempted) return;
+          const healed = unwrap(await opencodeClient.mcp.status({ directory })) as McpStatusMap;
+          setToolMcpStatuses(healed);
+        })
+        .catch(() => {
+          // Best-effort; the manual Sign in path is unaffected.
+        });
+    }
+
     return { servers, statuses, status };
   };
 

@@ -109,6 +109,13 @@ export type DenBootstrapPrepared = DenBootstrapOrgSkill & {
 
 export type DenBootstrapConfig = DenBaseUrls & {
   requireSignin: boolean;
+  claimLinks?: Array<{
+    id: string;
+    role: string;
+    token?: string;
+    url: string;
+    expiresAt: string;
+  }> | null;
   handoff?: DenBootstrapHandoff | null;
   prepared?: DenBootstrapPrepared | null;
 };

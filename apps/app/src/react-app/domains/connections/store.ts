@@ -39,11 +39,23 @@ import type {
 import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
 
 import type { OpenworkServerStore } from "./openwork-server-store";
+import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
+import {
+  CLOUD_MCP_SERVER_NAME,
+  clearCloudMcpUserState,
+  isCloudMcpSyncMarkerFresh,
+  readCloudMcpUserState,
+  writeCloudMcpUserState,
+} from "./cloud-mcp-user-state";
 
 type SetStateAction<T> = T | ((current: T) => T);
 
 const CLOUD_MCP_SYNC_MARKER_KEY = "openwork.den.mcp.sync";
-const CLOUD_MCP_REFRESH_MARGIN_MS = 7 * 24 * 60 * 60 * 1000;
+// Re-mint when less than a day of token validity remains. Must be well
+// below the minted token TTL (7 days, DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS in
+// den-api): when the two were equal, the marker was stale the instant it
+// was written and every sync tick re-wrote the MCP config.
+const CLOUD_MCP_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
 
 type CloudMcpSyncMarker = { orgId: string; expiresAt: string };
 
@@ -387,6 +399,37 @@ export function createConnectionsStore(options: {
     return undefined;
   };
 
+  /**
+   * Quiet self-heal for remote OAuth MCPs stuck in "Sign in needed": the
+   * engine only refreshes tokens reactively (once per transport), so an
+   * expired access token strands the entry until the user clicks Sign in.
+   * `mcp.connect` retries the stored refresh-token grant on a fresh
+   * transport — silently, never opening a browser or modal. Mirrors
+   * syncCloudControlMcp, but for user-added connectors.
+   */
+  async function healUnhealthyMcpEntries(servers: McpServerEntry[], statuses: McpStatusMap) {
+    if (disposed || snapshot.mcpAuthModalOpen || snapshot.mcpConnectingName) return;
+    const activeClient = options.client();
+    const projectDir = options.projectDir().trim();
+    if (!activeClient || !projectDir) return;
+    const attempted = await attemptSilentMcpReauth({
+      client: activeClient,
+      directory: projectDir,
+      servers,
+      statuses,
+    }).catch(() => false);
+    if (!attempted || disposed) return;
+    try {
+      const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
+      setStateField(
+        "mcpStatuses",
+        filterConfiguredStatuses(status as McpStatusMap, snapshot.mcpServers),
+      );
+    } catch {
+      // Post-heal status refresh is best-effort; the next refresh picks it up.
+    }
+  }
+
   async function refreshMcpServers() {
     if (disposed) return;
 
@@ -411,6 +454,7 @@ export function createConnectionsStore(options: {
             ? `Some MCPs could not be registered with the engine: ${failedNames}. They may appear disconnected — try reloading the engine.`
             : serverResult.next.length ? null : "No MCP servers configured yet.",
         }));
+        void healUnhealthyMcpEntries(serverResult.next, serverResult.nextStatuses);
         return;
       }
     } catch (error) {
@@ -528,6 +572,7 @@ export function createConnectionsStore(options: {
         mcpStatuses: nextStatuses,
         mcpStatus: next.length ? null : "No MCP servers configured yet.",
       }));
+      void healUnhealthyMcpEntries(next, nextStatuses);
     } catch (error) {
       mutateState((current) => ({
         ...current,
@@ -632,8 +677,8 @@ export function createConnectionsStore(options: {
 
       // Signed-in cloud users connect the Den MCPs with a first-party token —
       // no browser OAuth round-trip. Signed-out users fall back to OAuth.
-      // The same minted token works for both /mcp (openwork-cloud) and
-      // /mcp/admin (openwork-admin); den-api enforces the platform-admin
+      // The same minted token works for /mcp/agent (openwork-cloud), /mcp,
+      // and /mcp/admin (openwork-admin); den-api enforces the platform-admin
       // allowlist on the admin endpoint server-side.
       if (entry.serverName === "openwork-cloud" || entry.serverName === "openwork-admin") {
         try {
@@ -642,9 +687,13 @@ export function createConnectionsStore(options: {
             if (entry.serverName === "openwork-cloud") {
               // Never trust `minted.resource` verbatim: older den-api builds
               // mint the bare web-app origin (https://app.openworklabs.com/mcp)
-              // where MCP 404s. Heal it, falling back to the entry's
-              // bootstrap-derived URL.
-              resolvedUrl = resolveCloudMcpResourceUrl(minted.resource) ?? resolvedUrl;
+              // where MCP 404s. Heal it to the canonical /mcp origin, then
+              // route the desktop app to the minimal, harness-facing
+              // /mcp/agent surface (search_capabilities + execute_capability
+              // only) rather than the full catalog — falling back to the
+              // entry's bootstrap-derived URL (which already targets /agent).
+              const healed = resolveCloudMcpResourceUrl(minted.resource);
+              resolvedUrl = healed ? `${healed}/agent` : resolvedUrl;
             }
             resolvedHeaders = { Authorization: `Bearer ${minted.token}` };
           }
@@ -805,6 +854,11 @@ export function createConnectionsStore(options: {
       }
 
       await refreshMcpServers();
+      if (slug === CLOUD_MCP_SERVER_NAME) {
+        // An explicit connect overrides any earlier disable/remove intent,
+        // letting the background reconciler manage the entry again.
+        clearCloudMcpUserState();
+      }
       finishPerf(options.developerMode(), "mcp.connect", "done", startedAt, {
         name: entry.name,
         type: entryType,
@@ -847,15 +901,27 @@ export function createConnectionsStore(options: {
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!orgId || !settings.authToken?.trim()) return "skipped";
 
-    const entry = MCP_QUICK_CONNECT.find((candidate) => candidate.serverName === "openwork-cloud");
+    const entry = MCP_QUICK_CONNECT.find((candidate) => candidate.serverName === CLOUD_MCP_SERVER_NAME);
     if (!entry) return "skipped";
     const slug = entry.id ?? getMcpServerName(entry);
+
+    // Respect explicit user intent: a Cloud Control MCP the user disabled
+    // or removed must stay that way. Without this guard the reconciler
+    // rewrote the entry with `enabled: true` on every tick, making it
+    // impossible to turn off. Any explicit reconnect clears the record.
+    if (readCloudMcpUserState() !== null) return "skipped";
+    const configuredEntry = snapshot.mcpServers.find((server) => server.name === slug);
+    if (configuredEntry?.config.enabled === false) return "skipped";
 
     const marker = readCloudMcpSyncMarker();
     const markerFresh =
       marker !== null &&
       marker.orgId === orgId &&
-      new Date(marker.expiresAt).getTime() - Date.now() > CLOUD_MCP_REFRESH_MARGIN_MS;
+      isCloudMcpSyncMarkerFresh({
+        expiresAt: marker.expiresAt,
+        now: Date.now(),
+        refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
+      });
 
     // A revoked/expired token surfaces as needs_auth or failed from opencode;
     // while signed in, that means re-mint instead of standing pat — but only
@@ -870,7 +936,6 @@ export function createConnectionsStore(options: {
     // Builds before #2116's follow-up wrote the MCP URL against the bare
     // web-app origin (https://app.openworklabs.com/mcp), which 404s.
     // Reconfigure those entries even when the marker is still fresh.
-    const configuredEntry = snapshot.mcpServers.find((server) => server.name === slug);
     const hasLegacyUrl =
       configuredEntry?.config.type === "remote" && isLegacyWebAppMcpUrl(configuredEntry.config.url);
 
@@ -1026,6 +1091,9 @@ export function createConnectionsStore(options: {
         await removeMcpFromConfig(projectDir, name);
       }
 
+      if (name === CLOUD_MCP_SERVER_NAME) {
+        writeCloudMcpUserState("removed");
+      }
       options.markReloadRequired?.("mcp", { type: "mcp", name, action: "removed" });
       await refreshMcpServers();
       if (snapshot.selectedMcp === name) {
@@ -1093,6 +1161,13 @@ export function createConnectionsStore(options: {
       }
 
       await openworkClient.setMcpEnabled(openworkWorkspaceId, name, enabled);
+      if (name === CLOUD_MCP_SERVER_NAME) {
+        if (enabled) {
+          clearCloudMcpUserState();
+        } else {
+          writeCloudMcpUserState("disabled");
+        }
+      }
       options.markReloadRequired?.("mcp", { type: "mcp", name, action: "updated" });
       await refreshMcpServers();
     } catch (error) {

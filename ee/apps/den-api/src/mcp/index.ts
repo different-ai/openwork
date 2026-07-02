@@ -1,10 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
+import { z } from "zod"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { buildMcpCatalog, getToolDescription, loadOpenApiDocument, type McpToolOperation } from "./catalog.js"
 import { invokeMcpOperation } from "./invoke.js"
+import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities } from "./search.js"
 
 const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000
 
@@ -14,8 +16,11 @@ let catalogCache: { catalog: McpToolOperation[]; expiresAt: number } | null = nu
  * The tool catalog is derived from the OpenAPI document, which only changes
  * on deploy. Cache it briefly instead of self-fetching openapi.json and
  * rebuilding the catalog on every /mcp request.
+ *
+ * Exported so the minimal agent-facing endpoint (./agent.ts) shares this
+ * exact cache instead of re-fetching/rebuilding the catalog separately.
  */
-async function getCatalog(app: Hono, env: unknown) {
+export async function getCatalog(app: Hono, env: unknown) {
   if (catalogCache && catalogCache.expiresAt > Date.now()) {
     return catalogCache.catalog
   }
@@ -51,6 +56,29 @@ export function registerMcpRoutes<T extends { Variables: Record<string, unknown>
       name: "openwork-den-api",
       version: "1.0.0",
     })
+
+    server.registerTool(
+      SEARCH_CAPABILITIES_TOOL_NAME,
+      {
+        title: "Search capabilities",
+        description: [
+          "Search this catalog by keyword instead of browsing every tool at once.",
+          "Returns the best-matching tool names with a short summary of each.",
+          "Call the matched tool name directly via the normal tools/call protocol; this tool does not execute anything itself.",
+        ].join(" "),
+        inputSchema: z.object({
+          query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
+          limit: z.number().int().min(1).max(20).optional().describe("Max number of matches to return. Defaults to 5."),
+        }),
+      },
+      async ({ query, limit }) => {
+        const matches = searchCapabilities(catalog, query, limit ?? 5)
+        const text = matches.length > 0
+          ? JSON.stringify({ matches }, null, 2)
+          : JSON.stringify({ matches: [], hint: "No matches. Try broader or different keywords." }, null, 2)
+        return { content: [{ type: "text" as const, text }] }
+      },
+    )
 
     for (const operation of catalog) {
       server.registerTool(

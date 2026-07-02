@@ -95,15 +95,25 @@ function useDenClient() {
  * prepared summary (org + first skill) so the onboarding payoff can greet the
  * user with "Setup complete" instead of a generic resource list.
  */
+type PreparedBootstrapSummary = {
+  orgName: string;
+  skillTitle: string;
+  claimLinks: Array<{ id: string; role: string; url: string; expiresAt: string }>;
+};
+
 function usePreparedBootstrap() {
-  const [prepared, setPrepared] = useState<{ skillTitle: string } | null>(null);
+  const [prepared, setPrepared] = useState<PreparedBootstrapSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
     void getDesktopBootstrapConfig()
       .then((config) => {
         if (cancelled) return;
         if (config.prepared?.skillTitle) {
-          setPrepared({ skillTitle: config.prepared.skillTitle });
+          setPrepared({
+            orgName: config.prepared.orgName || "Your workspace",
+            skillTitle: config.prepared.skillTitle,
+            claimLinks: config.claimLinks ?? [],
+          });
         }
       })
       .catch(() => undefined);
@@ -112,6 +122,97 @@ function usePreparedBootstrap() {
     };
   }, []);
   return prepared;
+}
+
+const FIRST_TASK_IDEAS = [
+  "Summarize the files in my Downloads folder.",
+  "Create a CSV of my last 10 screenshots with their dates.",
+  "Draft a short intro email about OpenWork I can send my team.",
+];
+
+function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummary }) {
+  const navigate = useNavigate();
+  const platform = usePlatform();
+  const ownerClaim = prepared.claimLinks.find((link) => link.role === "owner") ?? prepared.claimLinks[0] ?? null;
+
+  const startFirstTask = () => {
+    navigate("/session", { replace: true });
+    // Drop the cursor into the composer so the user can type their first task.
+    [0, 120, 320, 600].forEach((delay) =>
+      window.setTimeout(() => window.dispatchEvent(new Event("openwork:focusPrompt")), delay),
+    );
+  };
+
+  return (
+    <Page>
+      <PageBackground />
+      <PageTitlebarRegion />
+      <PageContainer>
+        <PageHeader>
+          <div
+            data-openwork-prepared="true"
+            data-openwork-provisional="true"
+            className="mx-auto flex w-fit items-center gap-2 rounded-full border border-green-6/30 bg-green-2/30 px-3 py-1 text-xs font-semibold text-green-11"
+          >
+            <CheckCircle2 className="size-3.5" />
+            Setup complete — OpenWork is ready
+          </div>
+          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
+            <BuildingOffice2Icon className="size-7 text-foreground" />
+          </div>
+          <PageTitle>{prepared.orgName}</PageTitle>
+          <div
+            data-openwork-prepared-skill={prepared.skillTitle}
+            className="mx-auto flex w-fit items-center gap-2 rounded-xl border border-border bg-dls-hover px-3 py-2 text-sm text-foreground"
+          >
+            <Sparkles className="size-4 text-foreground/60" />
+            First skill ready:
+            <span className="font-semibold">{prepared.skillTitle}</span>
+          </div>
+          <PageDescription>
+            Your workspace and first skill are set up. Try a task to see OpenWork
+            work for you — no further setup needed.
+          </PageDescription>
+        </PageHeader>
+
+        <PageContent>
+          <div className="mx-auto flex w-full max-w-md flex-col gap-4">
+            <div className="rounded-2xl border border-border bg-dls-hover/40 p-4">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-foreground/60">
+                Try asking
+              </div>
+              <ul className="flex flex-col gap-2">
+                {FIRST_TASK_IDEAS.map((idea) => (
+                  <li
+                    key={idea}
+                    className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                  >
+                    {idea}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <Button size="lg" className="w-full" onClick={startFirstTask}>
+              Open your workspace and try a task
+              <ArrowRight data-icon="inline-end" />
+            </Button>
+
+            {ownerClaim ? (
+              <button
+                type="button"
+                onClick={() => platform.openLink(ownerClaim.url)}
+                className="inline-flex items-center justify-center gap-1.5 text-sm text-foreground/70 transition-colors hover:text-foreground"
+              >
+                Claim this workspace to add billing &amp; teammates
+                <ArrowUpRightIcon className="size-3.5" />
+              </button>
+            ) : null}
+          </div>
+        </PageContent>
+      </PageContainer>
+    </Page>
+  );
 }
 
 function markProvidersSeen(providers: DenOrgLlmProvider[]) {
@@ -137,6 +238,7 @@ export function OrgOnboardingPage() {
   const navigate = useNavigate();
   const { authToken, denClient, orgId, settings } = useDenClient();
   const { markRouteReady } = useBootState();
+  const prepared = usePreparedBootstrap();
   const [hasSelectedOrganization, setHasSelectedOrganization] = useState(false);
   
   useEffect(() => {
@@ -151,10 +253,10 @@ export function OrgOnboardingPage() {
   }, [markRouteReady]);
 
   useEffect(() => {
-    if (!authToken) {
+    if (!authToken && !prepared) {
       navigate("/session", { replace: true });
     }
-  }, [authToken, navigate]);
+  }, [authToken, navigate, prepared]);
 
   const { data, error, isPending } = useQuery({
     queryKey: ["den-org-onboarding", settings.baseUrl, settings.apiBaseUrl, "orgs"],
@@ -163,7 +265,7 @@ export function OrgOnboardingPage() {
   });
 
   if (!authToken) {
-    return null;
+    return prepared ? <PreparedWorkspacePage prepared={prepared} /> : null;
   }
 
   if (isPending) {
@@ -320,7 +422,7 @@ export function ResourceSelectionPage() {
               className="mx-auto flex w-fit items-center gap-2 rounded-full border border-green-6/30 bg-green-2/30 px-3 py-1 text-xs font-semibold text-green-11"
             >
               <CheckCircle2 className="size-3.5" />
-              Setup complete — OpenWork installed and signed you in
+              Setup complete — OpenWork prepared this workspace
             </div>
           ) : null}
           <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">

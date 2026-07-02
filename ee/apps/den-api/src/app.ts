@@ -13,11 +13,13 @@ import { db } from "./db.js"
 import { env } from "./env.js"
 import { publicRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
+import { registerAgentMcpRoutes } from "./mcp/agent.js"
 import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, emptyResponse, htmlResponse, jsonResponse } from "./openapi.js"
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
+import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
@@ -159,6 +161,7 @@ app.get(
 
 registerAdminRoutes(app)
 registerAuthRoutes(app)
+registerBootstrapRoutes(app)
 registerMeRoutes(app)
 registerOrgRoutes(app)
 registerVersionRoutes(app)
@@ -166,6 +169,7 @@ registerWebhookRoutes(app)
 registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
+registerAgentMcpRoutes(app)
 registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
 
@@ -218,6 +222,7 @@ app.get(
         { name: "Telemetry", description: "Telemetry event ingestion and adoption analytics." },
         { name: "Admin", description: "Administrative reporting routes." },
         { name: "Users", description: "Current user and membership routes." },
+        { name: "Bootstrap", description: "Agent-first provisional workspace setup routes." },
       ],
       components: {
         securitySchemes: {

@@ -138,6 +138,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       baseUrl: denBaseUrl,
       apiBaseUrl,
       requireSignin: bootstrap.requireSignin,
+      ...(bootstrap.claimLinks ? { claimLinks: bootstrap.claimLinks } : {}),
       handoff: null,
       ...(bootstrap.prepared ? { prepared: bootstrap.prepared } : {}),
     }).catch(() => undefined);
