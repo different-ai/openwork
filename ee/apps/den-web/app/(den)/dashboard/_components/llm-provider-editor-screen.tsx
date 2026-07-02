@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
     ArrowLeft,
     CodeXml,
@@ -35,6 +35,8 @@ import {
     buildCustomProviderTemplate,
     buildEditableCustomProviderText,
     getProviderApiBase,
+    requestLlmProviderTestConnection,
+    type LlmProviderProbeResult,
     getProviderDocUrl,
     getProviderEnvNames,
     getProviderNpmPackage,
@@ -103,6 +105,12 @@ export function LlmProviderEditorScreen({
     const [customModelsText, setCustomModelsText] = useState("");
     const [customEnvName, setCustomEnvName] = useState<string | null>(null);
     const [customJsonHint, setCustomJsonHint] = useState<string | null>(null);
+    const [probeState, setProbeState] = useState<"idle" | "probing" | "ok" | "failed">("idle");
+    const [probeResult, setProbeResult] = useState<LlmProviderProbeResult | null>(null);
+    const [selectedCustomModelIds, setSelectedCustomModelIds] = useState<string[]>([]);
+    const [customModelQuery, setCustomModelQuery] = useState("");
+    const [customManualModels, setCustomManualModels] = useState(false);
+    const lastProbeKeyRef = useRef("");
     const [apiKey, setApiKey] = useState("");
     const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
     const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
@@ -305,8 +313,73 @@ export function LlmProviderEditorScreen({
         ? customProviderId.trim()
         : slugifyProviderId(providerName);
 
+    // Models used for save/validation: picked from the probed endpoint list
+    // when available, or parsed from the manual text fallback.
+    const resolvedCustomModelIds =
+        probeState === "ok" && !customManualModels
+            ? selectedCustomModelIds
+            : parseGuidedModelIds(customModelsText);
+
+    // Probe the endpoint as soon as base URL + key are present (debounced):
+    // heals common URL mistakes and loads the models the endpoint actually
+    // serves, so users pick deployments instead of guessing ids.
+    useEffect(() => {
+        if (source !== "custom" || customMode !== "form") return;
+        const api = customBaseUrl.trim();
+        const key = apiKey.trim();
+        if (!api || !key) {
+            setProbeState("idle");
+            setProbeResult(null);
+            return;
+        }
+        const probeKey = `${api}::${key}`;
+        if (lastProbeKeyRef.current === probeKey) return;
+        const timer = window.setTimeout(() => {
+            lastProbeKeyRef.current = probeKey;
+            setProbeState("probing");
+            requestLlmProviderTestConnection({ api, apiKey: key })
+                .then((result) => {
+                    if (lastProbeKeyRef.current !== probeKey) return;
+                    setProbeResult(result);
+                    setProbeState(result.ok ? "ok" : "failed");
+                    if (result.ok) {
+                        if (result.normalizedApi && result.normalizedApi !== api) {
+                            // Pre-mark the healed URL as probed so updating the
+                            // field does not schedule a redundant probe.
+                            lastProbeKeyRef.current = `${result.normalizedApi}::${key}`;
+                            setCustomBaseUrl(result.normalizedApi);
+                        }
+                        // Keep previously chosen/stored ids selected when they
+                        // still exist on the endpoint.
+                        setSelectedCustomModelIds((current) => {
+                            const base = current.length
+                                ? current
+                                : parseGuidedModelIds(customModelsText);
+                            return base.filter((id) =>
+                                result.models.some((model) => model.id === id),
+                            );
+                        });
+                    }
+                })
+                .catch(() => {
+                    if (lastProbeKeyRef.current !== probeKey) return;
+                    setProbeResult(null);
+                    setProbeState("failed");
+                });
+        }, 700);
+        return () => window.clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- probe on endpoint/key edits only
+    }, [source, customMode, customBaseUrl, apiKey]);
+
+    const filteredProbeModels = useMemo(() => {
+        const models = probeResult?.models ?? [];
+        const query = customModelQuery.trim().toLowerCase();
+        if (!query) return models;
+        return models.filter((model) => model.id.toLowerCase().includes(query));
+    }, [customModelQuery, probeResult?.models]);
+
     function switchCustomModeToJson() {
-        const modelIds = parseGuidedModelIds(customModelsText);
+        const modelIds = resolvedCustomModelIds;
         if (!validateGuidedCustomProvider({
             providerId: resolvedCustomProviderId,
             baseUrl: customBaseUrl,
@@ -378,7 +451,7 @@ export function LlmProviderEditorScreen({
             const validationError = validateGuidedCustomProvider({
                 providerId: resolvedCustomProviderId,
                 baseUrl: customBaseUrl,
-                modelIds: parseGuidedModelIds(customModelsText),
+                modelIds: resolvedCustomModelIds,
             });
             if (validationError) {
                 setSaveError(validationError);
@@ -410,7 +483,7 @@ export function LlmProviderEditorScreen({
                     providerId: resolvedCustomProviderId,
                     name: providerName,
                     baseUrl: customBaseUrl,
-                    modelIds: parseGuidedModelIds(customModelsText),
+                    modelIds: resolvedCustomModelIds,
                     envName: customEnvName,
                 });
             } else {
@@ -733,24 +806,115 @@ export function LlmProviderEditorScreen({
                             ).
                         </p>
 
-                        <label className="grid gap-3">
-                            <span className="text-[14px] font-medium text-gray-700">
-                                Model IDs
-                            </span>
-                            <DenTextarea
-                                value={customModelsText}
-                                onChange={(event) =>
-                                    setCustomModelsText(event.target.value)
-                                }
-                                rows={4}
-                                placeholder={"gpt-5.2\nmy-deployment-name"}
-                            />
-                        </label>
-                        <p className="-mt-3 text-[13px] text-gray-500">
-                            One per line (or comma-separated). Use the model IDs
-                            the endpoint serves — on Azure AI Foundry these are
-                            your deployment names.
-                        </p>
+                        {probeState === "probing" ? (
+                            <p className="-mt-2 text-[13px] text-gray-500">
+                                Checking the endpoint…
+                            </p>
+                        ) : null}
+                        {probeState === "ok" && probeResult ? (
+                            <p className="-mt-2 text-[13px] text-emerald-700">
+                                Endpoint reachable — {probeResult.models.length}{" "}
+                                {probeResult.models.length === 1 ? "model" : "models"} available.
+                            </p>
+                        ) : null}
+                        {probeState === "failed" ? (
+                            <p className="-mt-2 text-[13px] text-red-600">
+                                {probeResult?.hint ?? "Could not reach the endpoint with this URL and key."}
+                            </p>
+                        ) : null}
+                        {probeState === "idle" && customBaseUrl.trim() && !apiKey.trim() ? (
+                            <p className="-mt-2 text-[13px] text-gray-500">
+                                Enter the API key below to load the models this endpoint serves.
+                            </p>
+                        ) : null}
+
+                        {probeState === "ok" && probeResult && !customManualModels ? (
+                            <div className="grid gap-3">
+                                <div className="flex flex-wrap items-center gap-3">
+                                    <span className="text-[14px] font-medium text-gray-700">
+                                        Models
+                                    </span>
+                                    <span className="rounded-full bg-gray-200 px-3 py-1 text-[12px] font-medium text-gray-700">
+                                        {resolvedCustomModelIds.length}{" "}
+                                        {resolvedCustomModelIds.length === 1 ? "model selected" : "models selected"}
+                                    </span>
+                                </div>
+                                <DenInput
+                                    type="search"
+                                    icon={Search}
+                                    value={customModelQuery}
+                                    onChange={(event) => setCustomModelQuery(event.target.value)}
+                                    placeholder="Search models..."
+                                />
+                                {filteredProbeModels.length ? (
+                                    <div className="max-h-72 overflow-y-auto overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
+                                        {filteredProbeModels.map((model) => {
+                                            const selected = selectedCustomModelIds.includes(model.id);
+                                            return (
+                                                <DenSelectableRow
+                                                    key={model.id}
+                                                    selected={selected}
+                                                    title={model.id}
+                                                    description={
+                                                        probeResult.vendor === "azure"
+                                                            ? "Deployment"
+                                                            : "Model"
+                                                    }
+                                                    onClick={() =>
+                                                        setSelectedCustomModelIds((current) =>
+                                                            current.includes(model.id)
+                                                                ? current.filter((entry) => entry !== model.id)
+                                                                : [...current, model.id],
+                                                        )
+                                                    }
+                                                />
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <p className="text-[13px] text-gray-500">
+                                        No models match &quot;{customModelQuery}&quot;.
+                                    </p>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => setCustomManualModels(true)}
+                                    className="justify-self-start text-[13px] font-medium text-gray-500 underline underline-offset-2 transition hover:text-gray-900"
+                                >
+                                    My model isn&apos;t listed — enter IDs manually
+                                </button>
+                            </div>
+                        ) : (
+                            <>
+                                <label className="grid gap-3">
+                                    <span className="text-[14px] font-medium text-gray-700">
+                                        Model IDs
+                                    </span>
+                                    <DenTextarea
+                                        value={customModelsText}
+                                        onChange={(event) =>
+                                            setCustomModelsText(event.target.value)
+                                        }
+                                        rows={4}
+                                        placeholder={"gpt-5.2\nmy-deployment-name"}
+                                    />
+                                </label>
+                                <p className="-mt-3 text-[13px] text-gray-500">
+                                    One per line (or comma-separated). Use the model IDs
+                                    the endpoint serves — on Azure AI Foundry these are
+                                    your deployment names.
+                                </p>
+                                {probeState === "ok" && probeResult ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => setCustomManualModels(false)}
+                                        className="-mt-2 justify-self-start text-[13px] font-medium text-gray-500 underline underline-offset-2 transition hover:text-gray-900"
+                                    >
+                                        Pick from the endpoint&apos;s model list instead
+                                    </button>
+                                ) : null}
+                            </>
+                        )}
 
                         <button
                             type="button"
