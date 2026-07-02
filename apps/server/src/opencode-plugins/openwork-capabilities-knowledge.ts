@@ -88,6 +88,12 @@ Here is what you can help users with:
 - Manageable via Settings > Skills.
 - Users can install skill templates or create custom skills in \`.opencode/skills/\`.
 
+## Packaging & Publishing Skills and MCPs
+- Some skills and MCP servers are managed by OpenWork at runtime (stored server-side and injected into the engine config), so they are not visible as plain workspace files. Do not try to read the OPENCODE_CONFIG file or runtime database directly.
+- To get portable definitions of installed skills and MCP servers — including runtime-managed ones — use the openwork_extensions_export tool. It returns full SKILL.md content and MCP configs with secret header/environment values redacted (listed in redactedKeys).
+- When packaging exported components into a plugin or publishing to a marketplace, never inline secret values; declare the redacted keys as required inputs the installer must provide.
+- To publish to an OpenWork Cloud marketplace, use the OpenWork Cloud MCP (plugins, config-objects, marketplaces resources) with the exported components.
+
 ## Creating Plugins
 - Plugins extend OpenWork/OpenCode with custom tools.
 - Create a file in \`.opencode/plugins/my-plugin.ts\` and add it to the \`plugin\` array in \`opencode.json\`.

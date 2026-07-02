@@ -8,6 +8,7 @@ import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
+import { exportExtensions } from "./extensions-export.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
@@ -2142,6 +2143,32 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const items = await listMcp(config, workspace.id, workspace.path);
     return jsonResponse({ items, engineSync: engineMcpSyncState(workspace.id) });
+  });
+
+  // Portable export of installed skills and MCP servers (including
+  // OpenWork-managed runtime MCPs that only live in the runtime DB), so
+  // agents can package them into marketplace plugins. Read-only; MCP
+  // secrets (headers/environment) are always redacted.
+  addRoute(routes, "POST", "/workspace/:id/extensions/export", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const skills = Array.isArray(body.skills)
+      ? body.skills.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+    const mcps = Array.isArray(body.mcps)
+      ? body.mcps.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+    if (skills.length === 0 && mcps.length === 0) {
+      throw new ApiError(400, "invalid_payload", "At least one skill or mcp name is required");
+    }
+    const result = await exportExtensions({
+      serverConfig: config,
+      workspaceId: workspace.id,
+      workspaceRoot: workspace.path,
+      skills,
+      mcps,
+    });
+    return jsonResponse(result);
   });
 
   addRoute(routes, "POST", "/workspace/:id/mcp", "client", async (ctx) => {
