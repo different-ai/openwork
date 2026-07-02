@@ -41,6 +41,16 @@ beforeAll(async () => {
     { id: alice, name: "Alice", email: `alice+${alice}@memory.test.local` },
     { id: bob, name: "Bob", email: `bob+${bob}@memory.test.local` },
   ])
+  // orgMemberRoute() on POST /v1/memory only lets a caller save to an org they are a member of,
+  // so each user needs a real org + membership row (slug carries the id to stay unique).
+  await db.insert(schema.OrganizationTable).values([
+    { id: aliceOrg, name: "Alice Org", slug: `alice-org-${aliceOrg}` },
+    { id: bobOrg, name: "Bob Org", slug: `bob-org-${bobOrg}` },
+  ])
+  await db.insert(schema.MemberTable).values([
+    { id: createDenTypeId("member"), organizationId: aliceOrg, userId: alice, role: "owner" },
+    { id: createDenTypeId("member"), organizationId: bobOrg, userId: bob, role: "owner" },
+  ])
 })
 
 afterAll(async () => {
@@ -54,6 +64,10 @@ afterAll(async () => {
     await db.delete(schema.MemoryContextTable).where(drizzle.inArray(schema.MemoryContextTable.memory_id, memoryIds))
     await db.delete(schema.MemoryTable).where(drizzle.inArray(schema.MemoryTable.id, memoryIds))
   }
+  const orgIds = [aliceOrg, bobOrg]
+  await db.delete(schema.MemberTable).where(drizzle.inArray(schema.MemberTable.organizationId, orgIds))
+  await db.delete(schema.OrganizationRoleTable).where(drizzle.inArray(schema.OrganizationRoleTable.organizationId, orgIds))
+  await db.delete(schema.OrganizationTable).where(drizzle.inArray(schema.OrganizationTable.id, orgIds))
   await db.delete(schema.AuthUserTable).where(drizzle.inArray(schema.AuthUserTable.id, ids))
 })
 
@@ -141,4 +155,18 @@ test("input bounds are enforced (400)", async () => {
     content: "x".repeat(100_000),
   })
   expect(res.status).toBe(400)
+})
+
+test("saving to an org the caller is not a member of is rejected (404) — orgMemberRoute gate", async () => {
+  // Alice presents a principal scoped to Bob's org, which she does not belong to.
+  const res = await request("POST", "/v1/memory", { userId: alice, organizationId: bobOrg }, {
+    content: "should never persist under a non-member org",
+  })
+  expect(res.status).toBe(404)
+  // Nothing was written for Alice under Bob's org.
+  const rows = await db
+    .select({ id: schema.MemoryTable.id })
+    .from(schema.MemoryTable)
+    .where(drizzle.and(drizzle.eq(schema.MemoryTable.user_id, alice), drizzle.eq(schema.MemoryTable.org_id, bobOrg)))
+  expect(rows.length).toBe(0)
 })

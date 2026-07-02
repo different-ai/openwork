@@ -3,9 +3,9 @@ import { MemoryContextTable, MemoryTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
-import { z } from "zod"
 import { db } from "../../db.js"
-import { authenticatedRoute, jsonValidator, paramValidator, queryValidator } from "../../middleware/index.js"
+import { authenticatedRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
+import type { OrganizationContextVariables } from "../../middleware/index.js"
 import { emptyResponse, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import {
@@ -25,10 +25,6 @@ import {
   toMemoryResponse,
 } from "./shared.js"
 
-const organizationUnavailableSchema = z
-  .object({ error: z.literal("organization_unavailable") })
-  .meta({ ref: "MemoryOrganizationUnavailableError" })
-
 function buildCitation(ctx: { conversation_id?: string; message_id?: string }): Record<string, string> | null {
   const citation: Record<string, string> = {}
   if (ctx.conversation_id) citation.conversation_id = ctx.conversation_id
@@ -36,7 +32,7 @@ function buildCitation(ctx: { conversation_id?: string; message_id?: string }): 
   return Object.keys(citation).length > 0 ? citation : null
 }
 
-export function registerMemoryCoreRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+export function registerMemoryCoreRoutes<T extends { Variables: AuthContextVariables & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   app.post(
     "/v1/memory",
     describeRoute({
@@ -47,23 +43,26 @@ export function registerMemoryCoreRoutes<T extends { Variables: AuthContextVaria
         "Persists a human-confirmed memory for the calling user. The server sets the source and always stores it as a personal ('user') memory regardless of any scope sent by the client.",
       responses: {
         201: jsonResponse("Memory saved successfully.", saveMemoryResponseSchema),
-        400: jsonResponse("The save payload was invalid, or the caller has no active organization.", z.union([invalidRequestSchema, organizationUnavailableSchema])),
+        400: jsonResponse("The save payload was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to save a memory.", unauthorizedSchema),
+        404: jsonResponse("The caller has no active organization they are a member of to save the memory to.", notFoundSchema),
       },
     }),
-    authenticatedRoute(),
+    orgMemberRoute(),
     jsonValidator(saveMemorySchema),
     async (c) => {
       const user = c.get("user")
       if (!user) return c.json({ error: "unauthorized" }, 401)
-      // org id comes from the resolved session (hydrated by the global sessionMiddleware for
-      // cookie/bearer sessions and from the signed principal on the MCP path); the desktop
-      // hydrates the active org via /v1/me/orgs on load. A caller with no active org gets 400.
-      const activeOrganizationId = c.get("session")?.activeOrganizationId
-      if (!activeOrganizationId) return c.json({ error: "organization_unavailable" }, 400)
+      // orgMemberRoute() resolved the caller's active org (from the cookie/bearer session, or the
+      // signed principal on the MCP path) AND verified they are a member of it — a non-member or
+      // no-active-org caller was already rejected with 404. So a memory is only ever saved to an
+      // org the user actually belongs to. org_id is recorded for the future org-shared bank (§8);
+      // v0 reads stay per-user across all of the caller's orgs.
+      const organizationContext = c.get("organizationContext")
+      if (!organizationContext) return c.json({ error: "organization_not_found" }, 404)
 
       const userId = normalizeDenTypeId("user", user.id)
-      const orgId = normalizeDenTypeId("org", activeOrganizationId)
+      const orgId = normalizeDenTypeId("org", organizationContext.organization.id)
       const input = c.req.valid("json")
       const memoryId = createDenTypeId("memory")
       // One app-clock timestamp for the whole save: the memory row, its context rows, and the
