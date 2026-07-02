@@ -119,6 +119,8 @@ export type SessionPageSidebarProps = {
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
+  /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
+  onOpenSessionSearch?: () => void;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
 };
 
@@ -858,6 +860,7 @@ export function SessionPage(props: SessionPageProps) {
           onEditWorkspaceConnection={props.sidebar.onEditWorkspaceConnection}
           onForgetWorkspace={props.sidebar.onForgetWorkspace}
           onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
+          onOpenSessionSearch={props.sidebar.onOpenSessionSearch}
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
           onStartResize={startLeftSidebarResize}
         />

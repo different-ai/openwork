@@ -148,16 +148,17 @@ export class EvalContext {
 
   async prove(name, options) {
     const claim = options?.claim ?? name;
-    this.recordEvidence({ type: "claim", status: "running", name, claim });
+    const voiceover = typeof options?.voiceover === "string" ? options.voiceover.trim() : "";
+    this.recordEvidence({ type: "claim", status: "running", name, claim, voiceover });
     if (typeof options?.action === "function") await options.action();
     if (typeof options?.assert === "function") await options.assert();
     if (options?.screenshot) {
       const screenshot = typeof options.screenshot === "string"
         ? { name: options.screenshot }
         : options.screenshot;
-      await this.screenshot(screenshot.name ?? slug(name), { claim, ...screenshot });
+      await this.screenshot(screenshot.name ?? slug(name), { claim, voiceover, ...screenshot });
     }
-    this.recordEvidence({ type: "claim", status: "passed", name, claim });
+    this.recordEvidence({ type: "claim", status: "passed", name, claim, voiceover });
   }
 
   /**
@@ -337,6 +338,7 @@ export class EvalContext {
       file: fileName,
       name,
       claim: options.claim ?? null,
+      voiceover: typeof options.voiceover === "string" && options.voiceover.trim() ? options.voiceover.trim() : null,
       url,
       validations,
     };

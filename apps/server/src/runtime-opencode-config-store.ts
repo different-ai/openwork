@@ -153,6 +153,27 @@ export function runtimeExternalDirectory(config: RuntimeOpencodeConfig): Record<
   return externalDirectory ?? {};
 }
 
+/**
+ * Per-provider merge for runtime config patches: record values upsert the
+ * provider, explicit `null` deletes it (so clients can remove runtime-managed
+ * providers, e.g. cloud imports, without racing a read-modify-write of the
+ * whole map). Returns undefined when the resulting map is empty.
+ */
+export function mergeRuntimeProviderUpdate(
+  current: unknown,
+  update: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const next: Record<string, unknown> = { ...(isRecord(current) ? current : {}) };
+  for (const [providerId, value] of Object.entries(update)) {
+    if (value === null) {
+      delete next[providerId];
+    } else if (isRecord(value)) {
+      next[providerId] = value;
+    }
+  }
+  return Object.keys(next).length ? next : undefined;
+}
+
 export async function readRuntimeOpencodeConfig(config: ServerConfig, workspaceId: string): Promise<RuntimeOpencodeConfig> {
   const db = await runtimeDb(config);
   const row = db.get(workspaceId);

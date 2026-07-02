@@ -258,6 +258,12 @@ importers:
         specifier: ^4.0.0
         version: 4.0.0
 
+  apps/installer:
+    dependencies:
+      webview-bun:
+        specifier: 2.4.0
+        version: 2.4.0
+
   apps/opencode-router:
     dependencies:
       '@opencode-ai/sdk':
@@ -304,10 +310,10 @@ importers:
         specifier: 0.1.77
         version: 0.1.77(solid-js@1.9.9)(stage-js@1.0.0-alpha.17)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       opencode-router:
-        specifier: 0.17.5
+        specifier: 0.17.7
         version: link:../opencode-router
       openwork-server:
-        specifier: 0.17.5
+        specifier: 0.17.7
         version: link:../server
       solid-js:
         specifier: 1.9.9
@@ -323,6 +329,9 @@ importers:
         specifier: 0.1.77
         version: 0.1.77
       '@opentui/core-linux-x64':
+        specifier: 0.1.77
+        version: 0.1.77
+      '@opentui/core-win32-arm64':
         specifier: 0.1.77
         version: 0.1.77
       '@opentui/core-win32-x64':
@@ -9006,6 +9015,9 @@ packages:
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
 
+  webview-bun@2.4.0:
+    resolution: {integrity: sha512-0+ugnQlcUHmuW+iLeb+Lzb8rGUJh7WEdXvNsuvaVEXT3EagK380XdD7heVJu0Ek/mNxMY3G2JM142YRQ1hDUGQ==}
+
   whatwg-url@5.0.0:
     resolution: {integrity: sha512-saE57nupxk6v3HY35+jzBwYa0rKSy0XR8JSxZPwgLr7ys0IBzhGviA1/TUGJLmSVqs8pb9AnvICXEuOHLprYTw==}
 
@@ -11815,8 +11827,7 @@ snapshots:
 
   '@opentui/core-linux-x64@0.1.77': {}
 
-  '@opentui/core-win32-arm64@0.1.77':
-    optional: true
+  '@opentui/core-win32-arm64@0.1.77': {}
 
   '@opentui/core-win32-x64@0.1.77': {}
 
@@ -18254,6 +18265,8 @@ snapshots:
   web-tree-sitter@0.25.10: {}
 
   webidl-conversions@3.0.1: {}
+
+  webview-bun@2.4.0: {}
 
   whatwg-url@5.0.0:
     dependencies:

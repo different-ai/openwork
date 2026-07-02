@@ -353,7 +353,7 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
     ? `All Models · ${source} provider`
     : t("den.cloud_provider_detail", { count: modelCount, source });
   const cloudProviderSyncDetail = modelCount === 0
-    ? `Cloud provider changed. Sync the All Models ${source} config into opencode.jsonc.`
+    ? `Cloud provider changed. Sync the All Models ${source} config into this workspace.`
     : t("den.cloud_provider_sync_detail", { count: modelCount, source });
 
   return (

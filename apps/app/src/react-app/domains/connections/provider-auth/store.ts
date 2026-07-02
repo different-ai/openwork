@@ -59,13 +59,14 @@ import {
   type CloudImportedProvider,
 } from "../../../../app/cloud/import-state";
 import {
-  formatConfigWithCloudProvider,
+  buildRuntimeProviderPatch,
   formatConfigWithoutCloudProvider,
   getCloudManagedProviderId,
   getCloudProviderEnv,
   getProviderModelIds,
   isCloudManagedProviderKey,
   isCloudProviderOutOfSync,
+  resolveCloudProviderCredentials,
 } from "./cloud-provider-config";
 import { refreshDesktopCloudSync } from "../../../../app/cloud/desktop-cloud-sync";
 import { dispatchNewProviders } from "../../../../app/lib/provider-events";
@@ -490,6 +491,44 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return false;
   };
 
+  /**
+   * Upsert/delete cloud-managed provider entries in the workspace's runtime
+   * opencode config (server-side SQLite merged into OPENCODE_CONFIG). Record
+   * values upsert, explicit `null` deletes — per-key on the server, so there
+   * is no read-modify-write race and no edit of the user's opencode.jsonc.
+   */
+  const patchRuntimeProviders = async (update: Record<string, unknown>) => {
+    const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
+      await resolveOpenworkConfigTarget("write");
+    if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
+      throw new Error("OpenWork server unavailable. Connect to manage cloud providers.");
+    }
+    await openworkClient.patchConfig(openworkWorkspaceId, {
+      opencode: { provider: update },
+    });
+  };
+
+  /**
+   * Best-effort migration: pre-runtime builds wrote cloud provider blocks
+   * into the project opencode.jsonc. Strip them so the runtime entry is the
+   * single owner (and stale blocks from older builds stop shadowing state).
+   */
+  const stripLegacyCloudProviderBlocks = async (providerIds: Array<string | null | undefined>) => {
+    const ids = [...new Set(providerIds.flatMap((id) => (id?.trim() ? [id.trim()] : [])))];
+    if (ids.length === 0) return;
+    try {
+      await updateProjectConfigFile((raw) => {
+        let next = raw;
+        for (const id of ids) {
+          next = formatConfigWithoutCloudProvider(next, id, options.disabledProviders());
+        }
+        return next;
+      });
+    } catch {
+      // Legacy cleanup only — the runtime entry already owns the provider.
+    }
+  };
+
   const updateProjectConfigFile = async (
     updater: (raw: string) => string,
     fallbackUpdate?: (config: Record<string, unknown>) => Record<string, unknown>,
@@ -615,35 +654,58 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   };
 
   // Sweep all cloud-managed provider entries (keys matching /^lpr_/) from
-  // opencode.jsonc regardless of importedCloudProviders state. Returns the
-  // list of provider IDs that were removed so callers can also clear their
-  // auth credentials.
+  // both the runtime config and opencode.jsonc, regardless of
+  // importedCloudProviders state. Returns the list of provider IDs that were
+  // removed so callers can also clear their auth credentials.
   const sweepOrphanCloudProvidersFromConfig = async (): Promise<string[]> => {
-    const configFile = await readProjectConfigFile() as { content?: string } | null;
-    if (!configFile?.content?.trim()) return [];
-    const parsed = parse(configFile.content);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
-    const providerSection = (parsed as Record<string, unknown>).provider;
-    if (
-      !providerSection ||
-      typeof providerSection !== "object" ||
-      Array.isArray(providerSection)
-    ) {
-      return [];
-    }
-    const orphanIds = Object.keys(providerSection as Record<string, unknown>).filter(
-      (key) => /^lpr_/i.test(key),
-    );
-    if (orphanIds.length === 0) return [];
+    const orphanIds = new Set<string>();
 
-    await updateProjectConfigFile((raw) => {
-      let next = raw;
-      for (const id of orphanIds) {
-        next = formatConfigWithoutCloudProvider(next, id, options.disabledProviders());
+    // Runtime-managed orphans (`lpr_*` keys in the workspace runtime config).
+    try {
+      const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
+        await resolveOpenworkConfigTarget("write");
+      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+        const merged = await openworkClient.getConfig(openworkWorkspaceId);
+        const runtimeProvider = isRecord(merged.opencode) ? merged.opencode.provider : null;
+        const runtimeOrphans = isRecord(runtimeProvider)
+          ? Object.keys(runtimeProvider).filter((key) => /^lpr_/i.test(key))
+          : [];
+        if (runtimeOrphans.length > 0) {
+          await patchRuntimeProviders(
+            Object.fromEntries(runtimeOrphans.map((id) => [id, null])),
+          );
+          for (const id of runtimeOrphans) orphanIds.add(id);
+        }
       }
-      return next;
-    });
-    return orphanIds;
+    } catch {
+      // Best-effort; the legacy file sweep below still runs.
+    }
+
+    // Legacy `opencode.jsonc` blocks written by pre-runtime builds.
+    const configFile = await readProjectConfigFile().catch(() => null) as { content?: string } | null;
+    if (configFile?.content?.trim()) {
+      const parsed = parse(configFile.content);
+      const providerSection =
+        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>).provider
+          : null;
+      const fileOrphans =
+        providerSection && typeof providerSection === "object" && !Array.isArray(providerSection)
+          ? Object.keys(providerSection as Record<string, unknown>).filter((key) => /^lpr_/i.test(key))
+          : [];
+      if (fileOrphans.length > 0) {
+        await updateProjectConfigFile((raw) => {
+          let next = raw;
+          for (const id of fileOrphans) {
+            next = formatConfigWithoutCloudProvider(next, id, options.disabledProviders());
+          }
+          return next;
+        });
+        for (const id of fileOrphans) orphanIds.add(id);
+      }
+    }
+
+    return [...orphanIds];
   };
 
   const assertCloudProviderImportSafe = async (
@@ -1289,20 +1351,31 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       assertProviderAllowedByDesktopPolicy(provider.providerId);
       const existingImported = state.importedCloudProviders[cloudProviderId] ?? null;
       const localProviderId = getCloudManagedProviderId(provider);
-      const apiKey = provider.apiKey?.trim() ?? "";
+      const { envEntries, primaryApiKey } = resolveCloudProviderCredentials(provider);
       const env = getCloudProviderEnv(provider.providerConfig);
-      if (!apiKey && env.length > 0) {
+      if (!primaryApiKey && env.length > 0) {
         throw new Error(`${provider.name} does not have a stored organization credential yet.`);
       }
 
       await assertCloudProviderImportSafe(provider);
 
-      if (apiKey) {
+      if (envEntries.length > 0) {
+        const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
+        if (!openworkClient) {
+          throw new Error(
+            `${provider.name} needs environment variables (${envEntries
+              .map((entry) => entry.key)
+              .join(", ")}) but the OpenWork server is not available.`,
+          );
+        }
+        await openworkClient.upsertUserEnv(envEntries);
+      }
+      if (primaryApiKey) {
         await c.auth.set({
           providerID: localProviderId,
-          auth: { type: "api", key: apiKey },
+          auth: { type: "api", key: primaryApiKey },
         });
-        await mirrorOpenWorkModelsVoiceEnv(provider, apiKey);
+        await mirrorOpenWorkModelsVoiceEnv(provider, primaryApiKey);
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         try {
@@ -1314,15 +1387,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           }
         }
       }
-      const updatedConfig = await updateProjectConfigFile((raw) =>
-        formatConfigWithCloudProvider(raw, provider, localProviderId, {
-          previousProviderId: existingImported?.providerId ?? null,
-          disabledProviders: options.disabledProviders(),
-        }),
+      // Cloud providers are runtime-managed: upsert (and delete a renamed
+      // predecessor) via the server's per-key provider merge instead of
+      // editing the user's opencode.jsonc.
+      await patchRuntimeProviders(
+        buildRuntimeProviderPatch(provider, localProviderId, existingImported?.providerId ?? null),
       );
-      if (!updatedConfig) {
-        throw new Error("Could not update opencode.jsonc for this workspace.");
-      }
+      await stripLegacyCloudProviderBlocks([localProviderId, existingImported?.providerId]);
 
       const nextImportedProviders = {
         ...state.importedCloudProviders,
@@ -1385,12 +1456,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           throw error;
         }
       }
-      const updatedConfig = await updateProjectConfigFile((raw) =>
-        formatConfigWithoutCloudProvider(raw, imported.providerId, options.disabledProviders()),
-      );
-      if (!updatedConfig) {
-        throw new Error("Could not update opencode.jsonc for this workspace.");
-      }
+      // Runtime-managed: delete the provider entry via the server's per-key
+      // merge (`null` deletes), then strip any legacy opencode.jsonc block
+      // left by pre-runtime builds. Both are idempotent.
+      await patchRuntimeProviders({ [imported.providerId]: null });
+      await stripLegacyCloudProviderBlocks([imported.providerId]);
 
       const nextImportedProviders = { ...state.importedCloudProviders };
       delete nextImportedProviders[cloudProviderId];

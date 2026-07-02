@@ -71,6 +71,7 @@ const targets = [
   { id: "linux-x64", bun: "bun-linux-x64" },
   { id: "linux-arm64", bun: "bun-linux-arm64" },
   { id: "windows-x64", bun: "bun-windows-x64" },
+  { id: "windows-arm64", bun: "bun-windows-arm64" },
 ];
 
 const sha256File = (path) => {

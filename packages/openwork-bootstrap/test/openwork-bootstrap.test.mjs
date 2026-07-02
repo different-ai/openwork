@@ -1,5 +1,5 @@
 import { createServer } from "node:http"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { spawn, spawnSync } from "node:child_process"
@@ -181,12 +181,52 @@ try {
     },
   )
 
+  // Regression test: the desktop-bootstrap.json `baseUrl` field is the
+  // browser-facing web origin (used by the app's Sign In button / claim
+  // links). It must NOT silently become the API origin. Previously
+  // --prepare-desktop wrote the same `--base-url` value into both `baseUrl`
+  // and `apiBaseUrl`, so a normal `--base-url https://api.openworklabs.com`
+  // run broke the desktop app's Sign In flow (it opened
+  // `https://api.openworklabs.com/?mode=sign-in...` and showed raw API JSON).
+  await withStubDenApi(
+    () => ({
+      ok: true,
+      organization: { id: "org_test", name: "Stub Org", slug: "org_test", status: "provisional" },
+      setup: { id: "wbt_test", expiresAt: "2030-01-01T00:00:00.000Z" },
+      skill: { id: "skl_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
+      claimLinks: [{ id: "wcl_test", role: "owner", token: "stub-token", url: "https://example.test/workspace-claim?token=stub-token", expiresAt: "2030-01-01T00:00:00.000Z" }],
+    }),
+    async (baseUrl) => {
+      const explicitWebBaseUrlPath = join(temp, "desktop-bootstrap-explicit-web.json")
+      const withExplicitWebBaseUrl = await spawnAsync(
+        process.execPath,
+        [
+          cli, "cloud", "bootstrap-workspace",
+          "--base-url", baseUrl,
+          "--workspace-name", "Web Base URL Override Test",
+          "--web-base-url", "https://app.example.test",
+          "--prepare-desktop",
+          "--desktop-bootstrap-path", explicitWebBaseUrlPath,
+          "--device-key-path", join(temp, "device-key-web-override.json"),
+          "--skills-dir", join(temp, "skills-web-override"),
+          "--json",
+        ],
+      )
+      assert.equal(withExplicitWebBaseUrl.status, 0, withExplicitWebBaseUrl.stderr)
+      const writtenExplicit = JSON.parse(readFileSync(explicitWebBaseUrlPath, "utf8"))
+      assert.equal(writtenExplicit.baseUrl, "https://app.example.test", "an explicit --web-base-url must be written as baseUrl")
+      assert.equal(writtenExplicit.apiBaseUrl, baseUrl, "apiBaseUrl must stay the real API origin, independent of the web base URL")
+      assert.notEqual(writtenExplicit.baseUrl, writtenExplicit.apiBaseUrl, "baseUrl and apiBaseUrl must not collapse into the same value")
+    },
+  )
+
   // The main bootstrap-workspace JSON output must never echo a real claim URL
   // — that string only exists in this test fixture, not in stdout redaction code.
   const helpOutput = spawnSync(process.execPath, [cli, "--help"], { encoding: "utf8" })
   assert.match(helpOutput.stdout, /cloud claim-link/)
   assert.match(helpOutput.stdout, /--owner-email/)
   assert.match(helpOutput.stdout, /--teammate-emails/)
+  assert.match(helpOutput.stdout, /--web-base-url/)
 } finally {
   rmSync(temp, { recursive: true, force: true })
 }

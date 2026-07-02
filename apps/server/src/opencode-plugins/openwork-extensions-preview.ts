@@ -56,6 +56,12 @@ const sessionReadArgsSchema = z.object({
   count: z.number().int().positive().max(100).optional().describe("Number of recent transcript messages to return. Defaults to 30, max 100."),
 });
 
+const extensionsExportArgsSchema = z.object({
+  skills: z.array(z.string().trim().min(1)).optional().describe("Names of installed skills to export, as shown in Settings > Skills or .opencode/skills/**."),
+  mcps: z.array(z.string().trim().min(1)).optional().describe("Names of installed MCP servers to export, including OpenWork-managed runtime MCPs."),
+  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current directory."),
+});
+
 const workspaceSchema = z.object({
   id: z.string(),
   name: z.string().optional(),
@@ -517,7 +523,54 @@ function unknownErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function postJson(path: string, body: ExtensionActionPayload): Promise<unknown> {
+function normalizeDirPath(path: string): string {
+  return path.replace(/\/+$/, "");
+}
+
+async function resolveContextWorkspace(workspaceId: string | undefined, context: OpenCodeContext): Promise<OpenWorkWorkspace> {
+  const workspaces = await listOpenWorkWorkspaces();
+  if (!workspaces.length) throw new Error("No OpenWork workspaces are available");
+  if (workspaceId) {
+    const match = filterWorkspaces(workspaces, workspaceId).at(0);
+    if (!match) throw new Error(`No workspace matched ${workspaceId}`);
+    return match;
+  }
+  const directory = context.worktree?.trim() || context.directory?.trim();
+  if (directory) {
+    const dir = normalizeDirPath(directory);
+    const match = workspaces
+      .filter((workspace) => {
+        const path = workspace.path?.trim();
+        if (!path) return false;
+        const root = normalizeDirPath(path);
+        return dir === root || dir.startsWith(`${root}/`);
+      })
+      .sort((left, right) => (right.path?.length ?? 0) - (left.path?.length ?? 0))
+      .at(0);
+    if (match) return match;
+  }
+  const only = workspaces.at(0);
+  if (workspaces.length === 1 && only) return only;
+  throw new Error(`Multiple OpenWork workspaces match; pass workspaceId. Available: ${workspaces.map((workspace) => workspaceLabel(workspace)).join(", ")}`);
+}
+
+async function exportOpenWorkExtensions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
+  const args = extensionsExportArgsSchema.parse(rawArgs);
+  const skills = args.skills ?? [];
+  const mcps = args.mcps ?? [];
+  if (skills.length === 0 && mcps.length === 0) {
+    return { ok: false, error: "Provide at least one skill or mcp name to export." };
+  }
+  const workspace = await resolveContextWorkspace(args.workspaceId, context);
+  const payload = await postJson(`/workspace/${encodeURIComponent(workspace.id)}/extensions/export`, { skills, mcps });
+  const base = { ok: true, workspaceId: workspace.id, workspace: workspaceLabel(workspace) };
+  if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+    return Object.assign(base, payload);
+  }
+  return Object.assign(base, { result: payload });
+}
+
+async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>): Promise<unknown> {
   const { url, token } = requireOpenWorkServer();
   const response = await fetch(url + path, {
     method: "POST",
@@ -621,6 +674,18 @@ export const OpenWorkExtensionsPreview = async () => ({
       async execute(rawArgs: unknown) {
         const result = await readOpenWorkSession(rawArgs);
         return JSON.stringify(result, null, 2);
+      },
+    },
+    openwork_extensions_export: {
+      description: "Export portable definitions of installed skills and MCP servers from OpenWork, including OpenWork-managed runtime MCPs that are not visible as workspace files. Returns full SKILL.md content and MCP configs with secret header/environment values redacted (listed in redactedKeys). Use this when packaging skills/MCPs into a plugin or publishing them to a marketplace; declare redacted keys as required inputs instead of inlining values.",
+      args: extensionsExportArgsSchema.shape,
+      async execute(rawArgs: unknown, context: OpenCodeContext) {
+        try {
+          const result = await exportOpenWorkExtensions(rawArgs, context);
+          return JSON.stringify(result, null, 2);
+        } catch (error) {
+          return JSON.stringify({ ok: false, error: unknownErrorMessage(error) }, null, 2);
+        }
       },
     },
     openwork_browser_open_url: {

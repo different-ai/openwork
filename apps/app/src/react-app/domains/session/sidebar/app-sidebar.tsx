@@ -12,6 +12,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  Search,
   Share2,
   Trash2,
   RefreshCw,
@@ -33,6 +34,7 @@ import {
   isRemoteConnectionErrorMessage,
   getWorkspaceTaskLoadErrorDisplay,
   isRemoteConnectionWorkspace,
+  isMacPlatform,
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
@@ -41,6 +43,7 @@ import {
   Sidebar,
   SidebarFooter,
   SidebarGroup,
+  SidebarHeader,
   SidebarGroupContent,
   SidebarMenu,
   SidebarMenuButton,
@@ -582,6 +585,8 @@ export type AppSidebarProps = {
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
+  /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
+  onOpenSessionSearch?: () => void;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
 };
@@ -744,6 +749,25 @@ export function AppSidebar(props: AppSidebarProps) {
               className="h-9 max-h-9 w-auto max-w-[180px] object-contain object-left"
             />
           </div>
+        ) : null}
+        {props.onOpenSessionSearch ? (
+          <SidebarHeader className="pb-0">
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  onClick={props.onOpenSessionSearch}
+                  aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+F" : "Control+Shift+F"}
+                  className="text-sidebar-foreground/70"
+                >
+                  <Search className="size-4" />
+                  <span className="flex-1 truncate">{t("workspace_list.search_sessions")}</span>
+                  <kbd className="ml-auto font-sans text-[11px] tracking-wide text-sidebar-foreground/50">
+                    {isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
+                  </kbd>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarHeader>
         ) : null}
         <LazyMotion features={domMax}>
           <m.div

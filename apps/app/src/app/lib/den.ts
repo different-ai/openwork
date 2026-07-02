@@ -176,6 +176,12 @@ export type DenOrgLlmProvider = {
 
 export type DenOrgLlmProviderConnection = DenOrgLlmProvider & {
   apiKey: string | null;
+  /**
+   * Per-env-var credential values for providers whose config declares several
+   * env keys (e.g. AWS Bedrock). Servers send either `apiKey` or `apiKeys`,
+   * never both.
+   */
+  apiKeys: Record<string, string> | null;
 };
 
 export type DenOrgMarketplaceResolved = {
@@ -1161,7 +1167,20 @@ function getDenOrgLlmProviderConnection(payload: unknown): DenOrgLlmProviderConn
   return {
     ...provider,
     apiKey: typeof payload.llmProvider.apiKey === "string" ? payload.llmProvider.apiKey : null,
+    apiKeys: parseApiKeysRecord(payload.llmProvider.apiKeys),
   };
+}
+
+function parseApiKeysRecord(value: unknown): Record<string, string> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, string] =>
+      typeof entry[1] === "string" && entry[1].trim().length > 0,
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
 }
 
 function parsePluginConfigObjectType(value: unknown): DenPluginConfigObjectType | null {

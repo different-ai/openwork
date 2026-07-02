@@ -122,12 +122,23 @@ plugin (configured in `.opencode/opencode.json`). Every tool takes
 ## Conventions
 
 - Prefer coded flows in `evals/flows/*.flow.mjs` over ad hoc browser tool calls.
+- Declare the demo kind on every new flow: `kind: "user-facing"` (a flow demo
+  where the end user is the protagonist) or `kind: "internal"` (an internal
+  demo, e.g. perf improvements or invariants). The runner rejects other values
+  and flags legacy flows without one in `fraimz.html`.
 - Use runner helpers such as `ctx.clickText`, `ctx.fill`, `ctx.waitFor`,
   `ctx.expectText`, `ctx.expectNoText`, `ctx.expectHashIncludes`,
   `ctx.control`, `ctx.prove`, and validated `ctx.screenshot` calls.
-- Prefer `ctx.prove("claim", { action, assert, screenshot })` for PR evidence.
-  It records the claim, assertions, screenshot, and validation results together
-  so the HTML frame proof explains why each image proves the step.
+- Prefer `ctx.prove("claim", { voiceover, action, assert, screenshot })` for PR
+  evidence. It records the claim, voiceover, assertions, screenshot, and
+  validation results together so the HTML frame proof explains why each image
+  proves the step.
+- Every `ctx.prove` should carry a `voiceover`: one or two spoken-style
+  sentences narrating what the viewer sees in that frame. `fraimz.html` renders
+  it per frame with a play button (Web Speech API) and a per-flow "Play full
+  voiceover". Write the voiceover script for the whole demo before coding the
+  flow. See `evals/flows/session-search-grouped.flow.mjs` for the reference
+  shape.
 - Screenshots should include `claim`, `requireText`, `rejectText`, or
   `hashIncludes` whenever possible. A screenshot without an assertion is only a
   visual checkpoint, not proof that the workflow passed.
