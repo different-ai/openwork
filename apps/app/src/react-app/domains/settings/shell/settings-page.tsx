@@ -2,6 +2,7 @@
 import type * as React from "react";
 import {
   ArrowLeft,
+  BrainCircuit,
   Bug,
   ChevronDown,
   CloudCog,
@@ -56,6 +57,7 @@ import {
   SettingsPanelToolbarStatus,
 } from "./panel";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
+import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
@@ -77,6 +79,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return CloudCog;
     case "skills":
       return Sparkles;
+    case "memory":
+      return BrainCircuit;
     case "extensions":
       return Puzzle;
     case "environment":
@@ -116,6 +120,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return t("settings.tab_cloud_providers");
     case "skills":
       return t("settings.tab_skills");
+    case "memory":
+      return t("memory.tab_label");
     case "extensions":
       return t("settings.tab_extensions");
     case "environment":
@@ -157,6 +163,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return t("settings.tab_description_cloud_providers");
     case "skills":
       return t("settings.tab_description_skills");
+    case "memory":
+      return t("memory.tab_description");
     case "extensions":
       return t("settings.tab_description_extensions");
     case "environment":
@@ -219,9 +227,11 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
 };
 
 export function SettingsSidebar(props: SettingsSidebarProps) {
+  const { memoryEnabled } = useFeatureFlagsPreferences();
   const workspaceTabs = getWorkspaceSettingsTabs();
   const globalTabs = getGlobalSettingsTabs(props.developerMode);
-  const cloudTabs = CLOUD_SETTINGS_TABS;
+  // Client-only preview gate: the Memory tab is surfaced only when the flag is on (C-4).
+  const cloudTabs: SettingsTab[] = memoryEnabled ? [...CLOUD_SETTINGS_TABS, "memory"] : CLOUD_SETTINGS_TABS;
 
   return (
     <Sidebar className="mac:**:data-[sidebar=sidebar]:bg-transparent">

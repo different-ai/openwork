@@ -188,6 +188,7 @@ export const SETTINGS_TAB_VALUES = [
   "cloud-workers",
   "cloud-providers",
   "skills",
+  "memory",
   "extensions",
   "environment",
   "advanced",

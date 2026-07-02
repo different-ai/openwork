@@ -77,6 +77,7 @@ import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-accou
 import { CloudMarketplacesView } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
 import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-providers-view";
 import { CloudWorkersView } from "@/react-app/domains/settings/pages/cloud-workers-view";
+import { MemoryView } from "@/react-app/domains/settings/pages/memory-view";
 import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
 import { ExtensionsView } from "@/react-app/domains/settings/pages/extensions-view";
@@ -271,6 +272,7 @@ function parseSettingsPath(pathname: string): {
     case "cloud-marketplaces":
     case "cloud-workers":
     case "cloud-providers":
+    case "memory":
       return { tab: head, redirectPath: null };
     case "den":
       return { tab: "cloud-account", redirectPath: "cloud-account" };
@@ -2032,6 +2034,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onToggleAnalytics={() => {
               local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
             }}
+            memoryEnabled={local.prefs.featureFlags?.memory === true}
+            onToggleMemory={() => {
+              local.setPrefs((previous) => ({
+                ...previous,
+                featureFlags: { ...previous.featureFlags, memory: !previous.featureFlags?.memory },
+              }));
+            }}
           />
         );
       case "shell":
@@ -2167,6 +2176,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onOpenAccount={openCloudAccountSettings}
           />
         );
+      case "memory":
+        return <MemoryView onOpenAccount={openCloudAccountSettings} />;
       case "cloud-providers":
         return (
           <CloudProvidersView

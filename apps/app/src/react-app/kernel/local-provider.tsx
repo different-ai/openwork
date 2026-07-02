@@ -38,6 +38,12 @@ export type LocalPreferences = {
   releaseChannel: ReleaseChannel;
   featureFlags: {
     microsandboxCreateSandbox: boolean;
+    /**
+     * Memory Bank preview. Client-only, per-device, never synced. Gates desktop
+     * UI surfacing (the management panel + copy-prompt affordance); the routes
+     * stay callable (owner-scoped + authz'd). Off by default — opt-in preview.
+     */
+    memory: boolean;
   };
   /**
    * Set to true after the user completes the welcome/onboarding flow
@@ -73,7 +79,7 @@ const INITIAL_PREFS: LocalPreferences = {
   defaultModel: null,
   selectedAgent: null,
   releaseChannel: "stable",
-  featureFlags: { microsandboxCreateSandbox: true },
+  featureFlags: { microsandboxCreateSandbox: true, memory: false },
   hasCompletedOnboarding: false,
   analyticsEnabled: true,
 };
