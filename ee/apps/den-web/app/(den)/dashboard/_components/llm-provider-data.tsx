@@ -355,56 +355,6 @@ export function buildEditableCustomProviderText(provider: DenLlmProvider) {
   );
 }
 
-export type LlmProviderProbeResult = {
-  ok: boolean;
-  vendor: "azure" | "openai-compatible";
-  normalizedApi: string | null;
-  attempted: string[];
-  models: Array<{ id: string }>;
-  hint: string | null;
-  status: number | null;
-};
-
-function asProbeResult(value: unknown): LlmProviderProbeResult | null {
-  if (!isRecord(value)) return null;
-  const models = Array.isArray(value.models)
-    ? value.models.flatMap((entry) => {
-        if (!isRecord(entry)) return [];
-        const id = asString(entry.id);
-        return id ? [{ id }] : [];
-      })
-    : [];
-  return {
-    ok: value.ok === true,
-    vendor: value.vendor === "azure" ? "azure" : "openai-compatible",
-    normalizedApi: asString(value.normalizedApi),
-    attempted: asStringList(value.attempted),
-    models,
-    hint: asString(value.hint),
-    status: typeof value.status === "number" ? value.status : null,
-  };
-}
-
-/**
- * Probe an OpenAI-compatible endpoint through den-api: heals common URL
- * mistakes and returns the model ids the endpoint actually serves.
- */
-export async function requestLlmProviderTestConnection(input: { api: string; apiKey?: string }) {
-  const { response, payload } = await requestJson(
-    `/v1/llm-providers/test-connection`,
-    { method: "POST", body: JSON.stringify(input) },
-    20000,
-  );
-  if (!response.ok) {
-    throw new Error(getErrorMessage(payload, `Endpoint test failed (${response.status}).`));
-  }
-  const result = isRecord(payload) ? asProbeResult(payload.result) : null;
-  if (!result) {
-    throw new Error("Endpoint test returned an unexpected response.");
-  }
-  return result;
-}
-
 export async function requestLlmProviderCatalog(orgId: string) {
   const { response, payload } = await requestJson(`/v1/llm-provider-catalog`, { method: "GET" }, 20000);
   if (!response.ok) {
