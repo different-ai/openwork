@@ -58,16 +58,12 @@ export function MemoryView({ onOpenAccount }: MemoryViewProps) {
   const [confirmTarget, setConfirmTarget] = React.useState<DenMemory | null>(null);
   const [copied, setCopied] = React.useState(false);
 
-  const timersRef = React.useRef<Map<string, ReturnType<typeof setTimeout>> | null>(null);
+  type PendingDelete = { timer: ReturnType<typeof setTimeout>; flush: () => void };
+  const timersRef = React.useRef<Map<string, PendingDelete> | null>(null);
   if (!timersRef.current) timersRef.current = new Map();
   const copyTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = React.useRef(true);
   const toolbarRef = React.useRef<HTMLDivElement | null>(null);
-  // Current client/org for the unmount flush (which has no deps, so it must not close over stale values).
-  const clientRef = React.useRef(client);
-  clientRef.current = client;
-  const orgIdRef = React.useRef(activeOrgId);
-  orgIdRef.current = activeOrgId;
 
   const unveil = React.useCallback((id: string) => {
     setPendingDeleteIds((prev) => {
@@ -78,54 +74,66 @@ export function MemoryView({ onOpenAccount }: MemoryViewProps) {
     });
   }, []);
 
-  const finalizeDelete = React.useCallback(
-    async (id: string) => {
-      timersRef.current?.delete(id);
-      try {
-        await client.deleteMemory(activeOrgId, id);
-        // Committed on the server: drop it from the cache and lift the veil.
-        queryClient.setQueryData<DenMemory[]>(queryKey, (prev) => (prev ?? []).filter((memory) => memory.id !== id));
-        unveil(id);
-      } catch (error) {
-        if (!mountedRef.current) return;
-        unveil(id); // restore visibility — the delete did not stick
-        toast.error(error instanceof Error ? error.message : t("memory.delete_error"));
-      }
-    },
-    [activeOrgId, client, queryClient, queryKey, unveil],
-  );
-
   const performDelete = React.useCallback(
     (memory: DenMemory) => {
       const timers = timersRef.current;
       if (!timers) return;
+      // Capture org/client/key NOW so the deferred delete (timer OR unmount flush) always targets
+      // the org the user deleted in — even if they switch orgs during the undo window.
+      const capturedOrgId = activeOrgId;
+      const capturedClient = client;
+      const capturedKey = ["memory", capturedOrgId] as const;
+      const toastKey = `memory-delete-${memory.id}`;
+
       const existing = timers.get(memory.id);
-      if (existing) clearTimeout(existing);
+      if (existing) clearTimeout(existing.timer);
       setPendingDeleteIds((prev) => new Set(prev).add(memory.id));
-      // Focus the toolbar (which persists across the list <-> empty transition) so keyboard
-      // users are not stranded on the removed row.
-      toolbarRef.current?.focus();
-      const timer = setTimeout(() => void finalizeDelete(memory.id), UNDO_DELETE_DELAY_MS);
-      timers.set(memory.id, timer);
+
+      const commit = async () => {
+        timers.delete(memory.id);
+        try {
+          await capturedClient.deleteMemory(capturedOrgId, memory.id);
+          // Committed on the server: drop it from the cache and lift the veil.
+          queryClient.setQueryData<DenMemory[]>(capturedKey, (prev) => (prev ?? []).filter((m) => m.id !== memory.id));
+          if (mountedRef.current) unveil(memory.id);
+        } catch (error) {
+          if (mountedRef.current) {
+            unveil(memory.id); // restore visibility — the delete did not stick
+            toast.error(error instanceof Error ? error.message : t("memory.delete_error"));
+          }
+        }
+        // Retire the undo toast so its button can never outlive the delete (e.g. if hovered).
+        toast.dismiss(toastKey);
+      };
+
+      const timer = setTimeout(() => void commit(), UNDO_DELETE_DELAY_MS);
+      timers.set(memory.id, { timer, flush: () => void commit() });
+
       toast.success(t("memory.deleted"), {
+        id: toastKey,
         duration: UNDO_TOAST_DURATION_MS,
         action: {
           label: t("memory.undo"),
           onClick: () => {
             const pending = timers.get(memory.id);
             if (!pending) return; // already committed — undo can no longer reverse it
-            clearTimeout(pending);
+            clearTimeout(pending.timer);
             timers.delete(memory.id);
             unveil(memory.id);
+            toast.dismiss(toastKey);
           },
         },
       });
+
+      // Focus the toolbar (which persists across the list <-> empty transition) AFTER the confirm
+      // modal closes and restores focus, so keyboard users are not stranded on the removed row.
+      requestAnimationFrame(() => toolbarRef.current?.focus());
     },
-    [finalizeDelete, unveil],
+    [activeOrgId, client, queryClient, unveil],
   );
 
-  // On unmount, flush pending deletes so they persist even if the user navigates away during
-  // the undo window. Runs only on mount/unmount; reads current client/org via refs.
+  // On unmount, flush pending deletes so they persist even if the user navigates away during the
+  // undo window. Each flush uses the org/client captured when its delete was queued (not live refs).
   React.useEffect(() => {
     mountedRef.current = true;
     const timers = timersRef.current;
@@ -133,9 +141,9 @@ export function MemoryView({ onOpenAccount }: MemoryViewProps) {
       mountedRef.current = false;
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       if (timers) {
-        for (const [id, timer] of timers) {
+        for (const { timer, flush } of timers.values()) {
           clearTimeout(timer);
-          void clientRef.current.deleteMemory(orgIdRef.current, id).catch(() => {});
+          flush();
         }
         timers.clear();
       }
