@@ -6,7 +6,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { authenticatedRoute, jsonValidator, paramValidator, queryValidator } from "../../middleware/index.js"
-import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { emptyResponse, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import {
   getMemoryByIdForUser,
@@ -56,6 +56,9 @@ export function registerMemoryCoreRoutes<T extends { Variables: AuthContextVaria
     async (c) => {
       const user = c.get("user")
       if (!user) return c.json({ error: "unauthorized" }, 401)
+      // org id comes from the resolved session (hydrated by the global sessionMiddleware for
+      // cookie/bearer sessions and from the signed principal on the MCP path); the desktop
+      // hydrates the active org via /v1/me/orgs on load. A caller with no active org gets 400.
       const activeOrganizationId = c.get("session")?.activeOrganizationId
       if (!activeOrganizationId) return c.json({ error: "organization_unavailable" }, 400)
 
@@ -63,17 +66,26 @@ export function registerMemoryCoreRoutes<T extends { Variables: AuthContextVaria
       const orgId = normalizeDenTypeId("org", activeOrganizationId)
       const input = c.req.valid("json")
       const memoryId = createDenTypeId("memory")
+      // One app-clock timestamp for the whole save: the memory row, its context rows, and the
+      // 201 body all carry `now`, so the response is authoritative (matches a later
+      // getMemory/getMemorySearch) — MySQL has no INSERT ... RETURNING. memory.created_at is
+      // the ordering authority for the list. `row` is the single source for the insert AND the
+      // response, so the persisted row and the returned body cannot drift.
+      const now = new Date()
+      const row = {
+        id: memoryId,
+        user_id: userId,
+        org_id: orgId,
+        scope: "user",
+        content: input.content,
+        source: "chat",
+        tags: input.tags ?? null,
+        created_at: now,
+        updated_at: now,
+      } satisfies typeof MemoryTable.$inferInsert
 
       await db.transaction(async (tx) => {
-        await tx.insert(MemoryTable).values({
-          id: memoryId,
-          user_id: userId,
-          org_id: orgId,
-          scope: "user",
-          content: input.content,
-          source: "chat",
-          tags: input.tags ?? null,
-        })
+        await tx.insert(MemoryTable).values(row)
         if (input.contexts && input.contexts.length > 0) {
           await tx.insert(MemoryContextTable).values(
             input.contexts.map((ctx) => ({
@@ -82,6 +94,7 @@ export function registerMemoryCoreRoutes<T extends { Variables: AuthContextVaria
               snippet: ctx.snippet,
               citation: buildCitation(ctx),
               origin: ctx.origin ?? null,
+              created_at: now,
             })),
           )
         }
@@ -89,21 +102,7 @@ export function registerMemoryCoreRoutes<T extends { Variables: AuthContextVaria
 
       logMemoryEvent("save", { memoryId, userId, contexts: input.contexts?.length ?? 0 })
 
-      const now = new Date().toISOString()
-      return c.json(
-        {
-          memory: {
-            id: memoryId,
-            content: input.content,
-            tags: input.tags ?? null,
-            source: "chat",
-            scope: "user",
-            createdAt: now,
-            updatedAt: now,
-          },
-        },
-        201,
-      )
+      return c.json({ memory: toMemoryResponse(row) }, 201)
     },
   )
 
@@ -128,6 +127,9 @@ export function registerMemoryCoreRoutes<T extends { Variables: AuthContextVaria
       const { q, limit } = c.req.valid("query")
 
       const relevance = memoryRelevance(q)
+      // v0 memory is a single per-user pool: reads are scoped by user_id (+ defensive
+      // scope='user'), intentionally NOT by org_id, so a user recalls their memories across
+      // all of their orgs. org_id is recorded for the future org-shared bank (§8).
       const rows = await db
         .select({
           id: MemoryTable.id,
@@ -199,7 +201,7 @@ export function registerMemoryCoreRoutes<T extends { Variables: AuthContextVaria
       summary: "Delete one of your saved memories.",
       description: "Hard-deletes a memory and its captured context rows. Returns 404 for an id the caller does not own.",
       responses: {
-        204: { description: "Memory deleted successfully." },
+        204: emptyResponse("Memory deleted successfully."),
         400: jsonResponse("The memory id path parameter was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to delete memories.", unauthorizedSchema),
         404: jsonResponse("The memory could not be found.", notFoundSchema),

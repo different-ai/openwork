@@ -266,6 +266,9 @@ kill switch) is scoped but **not built**. Additive — no contract change.
 - Active org-shared bank (schema-ready, not activated).
 - Hard server-enforced gate + server-side metrics + kill switch.
 - Per-user quota / rate-limiting (only cheap input bounds in v0).
+- **Memory reaping on account/org deletion** — there is no DB FK or offboarding hook, so deleting
+  a user/org does not remove their `memory`/`memory_context` rows. A cleanup hook is a pre-GA
+  requirement alongside encryption at rest (§8); v0 relies on the explicit `deleteMemoryById`.
 - `PATCH` (edit a saved memory) — v0 is view + delete only.
 - Optional desktop save/verify modal (chat-driven is the v0 baseline).
 

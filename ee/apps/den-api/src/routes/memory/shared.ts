@@ -63,7 +63,7 @@ const memoryContextResponseSchema = z
   })
   .meta({ ref: "MemoryContext" })
 
-export const memoryResponseSchema = z
+const memoryResponseSchema = z
   .object({
     id: denTypeIdSchema("memory"),
     content: z.string(),
@@ -75,7 +75,7 @@ export const memoryResponseSchema = z
   })
   .meta({ ref: "Memory" })
 
-export const memoryWithContextsSchema = memoryResponseSchema
+const memoryWithContextsSchema = memoryResponseSchema
   .extend({ contexts: z.array(memoryContextResponseSchema) })
   .meta({ ref: "MemoryWithContexts" })
 
