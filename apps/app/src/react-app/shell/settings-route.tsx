@@ -78,6 +78,7 @@ import { CloudMarketplacesView } from "@/react-app/domains/settings/pages/cloud-
 import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-providers-view";
 import { CloudWorkersView } from "@/react-app/domains/settings/pages/cloud-workers-view";
 import { MemoryView } from "@/react-app/domains/settings/pages/memory-view";
+import { useFeatureFlagsPreferences } from "@/react-app/domains/settings/state/feature-flags-preferences";
 import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
 import { ExtensionsView } from "@/react-app/domains/settings/pages/extensions-view";
@@ -347,6 +348,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const params = useParams<{ workspaceId?: string }>();
   const routeWorkspaceId = props.workspaceId?.trim() || params.workspaceId?.trim() || "";
   const local = useLocal();
+  const { memoryEnabled, toggleMemory } = useFeatureFlagsPreferences();
   const platform = usePlatform();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
@@ -2034,13 +2036,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onToggleAnalytics={() => {
               local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
             }}
-            memoryEnabled={local.prefs.featureFlags?.memory === true}
-            onToggleMemory={() => {
-              local.setPrefs((previous) => ({
-                ...previous,
-                featureFlags: { ...previous.featureFlags, memory: !previous.featureFlags?.memory },
-              }));
-            }}
+            memoryEnabled={memoryEnabled}
+            onToggleMemory={toggleMemory}
           />
         );
       case "shell":

@@ -201,6 +201,15 @@ export const CLOUD_SETTINGS_TABS: SettingsTab[] = [
   "cloud-workers",
 ];
 
+/**
+ * Cloud settings tabs, gated by client-only preview flags. The Memory tab is
+ * surfaced only when `featureFlags.memory` is on (C-4). Both settings nav
+ * surfaces (sidebar + compact section menu) must use this so they can't drift.
+ */
+export function getCloudSettingsTabs(memoryEnabled: boolean): SettingsTab[] {
+  return memoryEnabled ? [...CLOUD_SETTINGS_TABS, "memory"] : CLOUD_SETTINGS_TABS;
+}
+
 type SettingsPageProps = {
   activeTab: SettingsTab;
   onSelectTab: (tab: SettingsTab) => void;
@@ -230,8 +239,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
   const { memoryEnabled } = useFeatureFlagsPreferences();
   const workspaceTabs = getWorkspaceSettingsTabs();
   const globalTabs = getGlobalSettingsTabs(props.developerMode);
-  // Client-only preview gate: the Memory tab is surfaced only when the flag is on (C-4).
-  const cloudTabs: SettingsTab[] = memoryEnabled ? [...CLOUD_SETTINGS_TABS, "memory"] : CLOUD_SETTINGS_TABS;
+  const cloudTabs = getCloudSettingsTabs(memoryEnabled);
 
   return (
     <Sidebar className="mac:**:data-[sidebar=sidebar]:bg-transparent">

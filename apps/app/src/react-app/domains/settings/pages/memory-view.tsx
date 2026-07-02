@@ -8,6 +8,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/sonner";
+import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import type { DenMemory } from "@/app/lib/den";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
@@ -21,26 +22,18 @@ import {
   SettingsListItemTitle,
 } from "@/react-app/domains/settings/settings-list";
 import { SettingsNotice, SettingsStack } from "@/react-app/domains/settings/settings-section";
+import { visibleMemories } from "./memory-utils";
 
-// The undo window: the row is removed immediately and the server delete only fires after this
-// delay, so "Undo" is a true reversal (no re-create, original id/timestamps preserved).
+// The server delete is deferred so "Undo" is a true reversal (no re-create; original id/
+// timestamps preserved). The undo toast dismisses BEFORE the delete fires, so a user is
+// never offered an undo that can no longer reverse the delete.
 const UNDO_DELETE_DELAY_MS = 6000;
+const UNDO_TOAST_DURATION_MS = 5000;
 
 // Secondary cross-tool utility (Claude Code / external harnesses): on desktop the agent is
 // already primed by the injected `## Memory Bank` prompt, so this is not the first-run path.
 const COPY_SAVE_PROMPT =
   "Save this to my memory bank: draft a crisp, self-contained memory of the key fact worth keeping from our conversation, show it to me to confirm or edit, then save it. Do not include any secrets, credentials, tokens, or personal data.";
-
-export function byCreatedAtDesc(a: DenMemory, b: DenMemory): number {
-  if (a.createdAt < b.createdAt) return 1;
-  if (a.createdAt > b.createdAt) return -1;
-  return 0;
-}
-
-/** Re-insert a memory (undo of an optimistic delete), de-duped and newest-first. */
-export function restoreMemory(list: DenMemory[] | undefined, memory: DenMemory): DenMemory[] {
-  return [...(list ?? []).filter((entry) => entry.id !== memory.id), memory].sort(byCreatedAtDesc);
-}
 
 export type MemoryViewProps = {
   onOpenAccount: () => void;
@@ -59,68 +52,102 @@ export function MemoryView({ onOpenAccount }: MemoryViewProps) {
     staleTime: 30_000,
   });
 
+  // Optimistic-delete "veil": ids removed from the UI while their server delete is deferred.
+  // The query cache keeps the real server list, so a refetch can't resurrect a mid-delete row.
+  const [pendingDeleteIds, setPendingDeleteIds] = React.useState<ReadonlySet<string>>(() => new Set());
   const [confirmTarget, setConfirmTarget] = React.useState<DenMemory | null>(null);
   const [copied, setCopied] = React.useState(false);
-  const listRef = React.useRef<HTMLDivElement | null>(null);
-  const pendingDeletes = React.useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const timersRef = React.useRef<Map<string, ReturnType<typeof setTimeout>> | null>(null);
+  if (!timersRef.current) timersRef.current = new Map();
+  const copyTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = React.useRef(true);
+  const toolbarRef = React.useRef<HTMLDivElement | null>(null);
+  // Current client/org for the unmount flush (which has no deps, so it must not close over stale values).
+  const clientRef = React.useRef(client);
+  clientRef.current = client;
+  const orgIdRef = React.useRef(activeOrgId);
+  orgIdRef.current = activeOrgId;
+
+  const unveil = React.useCallback((id: string) => {
+    setPendingDeleteIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
 
   const finalizeDelete = React.useCallback(
-    async (memory: DenMemory) => {
-      pendingDeletes.current.delete(memory.id);
+    async (id: string) => {
+      timersRef.current?.delete(id);
       try {
-        await client.deleteMemory(activeOrgId, memory.id);
+        await client.deleteMemory(activeOrgId, id);
+        // Committed on the server: drop it from the cache and lift the veil.
+        queryClient.setQueryData<DenMemory[]>(queryKey, (prev) => (prev ?? []).filter((memory) => memory.id !== id));
+        unveil(id);
       } catch (error) {
-        // Server delete failed — put the memory back so the UI reflects reality.
-        queryClient.setQueryData<DenMemory[]>(queryKey, (prev) => restoreMemory(prev, memory));
+        if (!mountedRef.current) return;
+        unveil(id); // restore visibility — the delete did not stick
         toast.error(error instanceof Error ? error.message : t("memory.delete_error"));
       }
     },
-    [activeOrgId, client, queryClient, queryKey],
+    [activeOrgId, client, queryClient, queryKey, unveil],
   );
 
   const performDelete = React.useCallback(
     (memory: DenMemory) => {
-      queryClient.setQueryData<DenMemory[]>(queryKey, (prev) => (prev ?? []).filter((entry) => entry.id !== memory.id));
-      // Move focus off the now-removed row so keyboard users are not stranded.
-      listRef.current?.focus();
-      const timer = setTimeout(() => void finalizeDelete(memory), UNDO_DELETE_DELAY_MS);
-      pendingDeletes.current.set(memory.id, timer);
+      const timers = timersRef.current;
+      if (!timers) return;
+      const existing = timers.get(memory.id);
+      if (existing) clearTimeout(existing);
+      setPendingDeleteIds((prev) => new Set(prev).add(memory.id));
+      // Focus the toolbar (which persists across the list <-> empty transition) so keyboard
+      // users are not stranded on the removed row.
+      toolbarRef.current?.focus();
+      const timer = setTimeout(() => void finalizeDelete(memory.id), UNDO_DELETE_DELAY_MS);
+      timers.set(memory.id, timer);
       toast.success(t("memory.deleted"), {
-        duration: UNDO_DELETE_DELAY_MS,
+        duration: UNDO_TOAST_DURATION_MS,
         action: {
           label: t("memory.undo"),
           onClick: () => {
-            const pending = pendingDeletes.current.get(memory.id);
-            if (pending) {
-              clearTimeout(pending);
-              pendingDeletes.current.delete(memory.id);
-            }
-            queryClient.setQueryData<DenMemory[]>(queryKey, (prev) => restoreMemory(prev, memory));
+            const pending = timers.get(memory.id);
+            if (!pending) return; // already committed — undo can no longer reverse it
+            clearTimeout(pending);
+            timers.delete(memory.id);
+            unveil(memory.id);
           },
         },
       });
     },
-    [finalizeDelete, queryClient, queryKey],
+    [finalizeDelete, unveil],
   );
 
-  // On unmount, flush any pending deletes so they persist even if the user navigates away
-  // during the undo window.
+  // On unmount, flush pending deletes so they persist even if the user navigates away during
+  // the undo window. Runs only on mount/unmount; reads current client/org via refs.
   React.useEffect(() => {
-    const pending = pendingDeletes.current;
+    mountedRef.current = true;
+    const timers = timersRef.current;
     return () => {
-      for (const [id, timer] of pending) {
-        clearTimeout(timer);
-        void client.deleteMemory(activeOrgId, id).catch(() => {});
+      mountedRef.current = false;
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      if (timers) {
+        for (const [id, timer] of timers) {
+          clearTimeout(timer);
+          void clientRef.current.deleteMemory(orgIdRef.current, id).catch(() => {});
+        }
+        timers.clear();
       }
-      pending.clear();
     };
-  }, [activeOrgId, client]);
+  }, []);
 
   const copyPrompt = React.useCallback(async () => {
     try {
       await navigator.clipboard.writeText(COPY_SAVE_PROMPT);
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
       toast.success(t("memory.copy_prompt_copied"));
     } catch {
       toast.error(t("memory.copy_prompt_error"));
@@ -143,7 +170,16 @@ export function MemoryView({ onOpenAccount }: MemoryViewProps) {
     );
   }
 
-  const memories = memoriesQuery.data ?? [];
+  if (!activeOrgId) {
+    return (
+      <SettingsStack>
+        <Separator />
+        <SettingsNotice>{t("memory.no_active_org")}</SettingsNotice>
+      </SettingsStack>
+    );
+  }
+
+  const memories = visibleMemories(memoriesQuery.data ?? [], pendingDeleteIds);
   const isLoading = memoriesQuery.isLoading;
   const errorMessage = memoriesQuery.isError
     ? memoriesQuery.error instanceof Error
@@ -155,7 +191,11 @@ export function MemoryView({ onOpenAccount }: MemoryViewProps) {
     <SettingsStack>
       <Separator />
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div
+        ref={toolbarRef}
+        tabIndex={-1}
+        className="flex flex-col gap-3 outline-none sm:flex-row sm:items-center sm:justify-between"
+      >
         <p className="text-sm text-muted-foreground">{t("memory.description")}</p>
         <div className="flex items-center gap-2">
           <Button
@@ -176,7 +216,7 @@ export function MemoryView({ onOpenAccount }: MemoryViewProps) {
             title={t("memory.refresh")}
             aria-label={t("memory.refresh")}
           >
-            <RefreshCw className={`size-4${memoriesQuery.isFetching ? " animate-spin" : ""}`} />
+            <RefreshCw className={cn("size-4", memoriesQuery.isFetching && "animate-spin")} />
           </Button>
         </div>
       </div>
@@ -200,38 +240,36 @@ export function MemoryView({ onOpenAccount }: MemoryViewProps) {
           </EmptyHeader>
         </Empty>
       ) : (
-        <div ref={listRef} tabIndex={-1} className="outline-none">
-          <SettingsList>
-            {memories.map((memory) => (
-              <SettingsListItem key={memory.id}>
-                <SettingsListItemContent>
-                  {/* React escapes text children, so stored content is rendered safely (stored-XSS guard). */}
-                  <SettingsListItemTitle>{memory.content}</SettingsListItemTitle>
-                  {memory.contexts.length > 0 ? (
-                    <SettingsListItemDescription>
-                      <span className="text-muted-foreground">{t("memory.provenance_label")}</span>{" "}
-                      {memory.contexts.map((context) => context.snippet).join(" · ")}
-                    </SettingsListItemDescription>
-                  ) : null}
-                  {memory.tags && memory.tags.length > 0 ? (
-                    <SettingsListItemDescription>{memory.tags.join(", ")}</SettingsListItemDescription>
-                  ) : null}
-                </SettingsListItemContent>
-                <SettingsListItemActions>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => setConfirmTarget(memory)}
-                    title={t("memory.delete")}
-                    aria-label={t("memory.delete")}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </SettingsListItemActions>
-              </SettingsListItem>
-            ))}
-          </SettingsList>
-        </div>
+        <SettingsList>
+          {memories.map((memory) => (
+            <SettingsListItem key={memory.id}>
+              <SettingsListItemContent>
+                {/* React escapes text children, so stored content renders safely (stored-XSS guard). */}
+                <SettingsListItemTitle>{memory.content}</SettingsListItemTitle>
+                {memory.contexts.length > 0 ? (
+                  <SettingsListItemDescription>
+                    <span className="text-muted-foreground">{t("memory.provenance_label")}</span>{" "}
+                    {memory.contexts.map((context) => context.snippet).join(" · ")}
+                  </SettingsListItemDescription>
+                ) : null}
+                {memory.tags && memory.tags.length > 0 ? (
+                  <SettingsListItemDescription>{memory.tags.join(", ")}</SettingsListItemDescription>
+                ) : null}
+              </SettingsListItemContent>
+              <SettingsListItemActions>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setConfirmTarget(memory)}
+                  title={t("memory.delete")}
+                  aria-label={t("memory.delete")}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </SettingsListItemActions>
+            </SettingsListItem>
+          ))}
+        </SettingsList>
       )}
 
       <ConfirmModal

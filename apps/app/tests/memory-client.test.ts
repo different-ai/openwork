@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { createDenClient } from "../src/app/lib/den";
-import { byCreatedAtDesc, restoreMemory } from "../src/react-app/domains/settings/pages/memory-view";
+import { visibleMemories } from "../src/react-app/domains/settings/pages/memory-utils";
 import type { DenMemory } from "../src/app/lib/den";
 
 const originalFetch = globalThis.fetch;
@@ -83,38 +83,31 @@ describe("Den memory client", () => {
   });
 });
 
-describe("Memory panel optimistic-undo logic", () => {
-  const mk = (id: string, createdAt: string): DenMemory => ({
+describe("Memory panel optimistic-delete veil", () => {
+  const mk = (id: string): DenMemory => ({
     id,
     content: id,
     tags: null,
     source: "chat",
     scope: "user",
-    createdAt,
-    updatedAt: createdAt,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
     contexts: [],
   });
 
-  test("restoreMemory re-inserts a removed memory newest-first without duplicating", () => {
-    const a = mk("mem_a", "2026-07-01T00:00:00.000Z");
-    const b = mk("mem_b", "2026-07-03T00:00:00.000Z");
-    const c = mk("mem_c", "2026-07-02T00:00:00.000Z");
-    // b was optimistically removed; the remaining list is [c, a] (newest-first).
-    const afterRemove = [c, a];
-    const restored = restoreMemory(afterRemove, b);
-    expect(restored.map((m) => m.id)).toEqual(["mem_b", "mem_c", "mem_a"]);
-    // Restoring again does not duplicate.
-    expect(restoreMemory(restored, b).filter((m) => m.id === "mem_b")).toHaveLength(1);
+  test("visibleMemories hides ids that are pending an optimistic delete, preserving order", () => {
+    const list = [mk("mem_a"), mk("mem_b"), mk("mem_c")];
+    expect(visibleMemories(list, new Set(["mem_b"])).map((m) => m.id)).toEqual(["mem_a", "mem_c"]);
   });
 
-  test("restoreMemory tolerates an undefined cache", () => {
-    const a = mk("mem_a", "2026-07-01T00:00:00.000Z");
-    expect(restoreMemory(undefined, a).map((m) => m.id)).toEqual(["mem_a"]);
+  test("visibleMemories returns the full list when nothing is pending", () => {
+    const list = [mk("mem_a"), mk("mem_b")];
+    expect(visibleMemories(list, new Set()).map((m) => m.id)).toEqual(["mem_a", "mem_b"]);
   });
 
-  test("byCreatedAtDesc orders newest first", () => {
-    const older = mk("older", "2026-07-01T00:00:00.000Z");
-    const newer = mk("newer", "2026-07-05T00:00:00.000Z");
-    expect([older, newer].sort(byCreatedAtDesc).map((m) => m.id)).toEqual(["newer", "older"]);
+  test("a refetch that re-includes a pending-deleted id keeps it hidden (no zombie row)", () => {
+    // Simulates a background refetch bringing mem_b back while its server delete is deferred.
+    const refetched = [mk("mem_a"), mk("mem_b"), mk("mem_c")];
+    expect(visibleMemories(refetched, new Set(["mem_b"])).some((m) => m.id === "mem_b")).toBe(false);
   });
 });

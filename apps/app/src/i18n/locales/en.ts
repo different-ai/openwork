@@ -1303,6 +1303,7 @@ export default {
   "memory.description": "Facts you have asked the agent to remember, kept per user across sessions.",
   "memory.sign_in_hint": "Sign in to your OpenWork account to view your memory bank.",
   "memory.sign_in_cta": "Sign in",
+  "memory.no_active_org": "Select an organization to view your memory bank.",
   "memory.refresh": "Refresh",
   "memory.error_load": "Failed to load your memories.",
   "memory.empty_title": "No memories yet",
