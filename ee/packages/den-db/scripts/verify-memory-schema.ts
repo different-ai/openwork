@@ -119,6 +119,9 @@ async function main() {
       console.log(`   • ${label}`)
     }
   } finally {
+    // Roll back first: if an assertion threw inside step 5's open transaction, cleanup must
+    // run with autocommit restored, else connection.end() discards it and leaks marker rows.
+    await connection.rollback().catch(() => {})
     // Best-effort cleanup in case an assertion failed mid-way.
     await connection.query(`DELETE FROM memory_context WHERE memory_id = ?`, [marker]).catch(() => {})
     await connection.query(`DELETE FROM memory WHERE id = ?`, [marker]).catch(() => {})

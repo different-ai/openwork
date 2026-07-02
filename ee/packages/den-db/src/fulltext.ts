@@ -48,6 +48,17 @@ export async function ensureMemoryFulltextIndex(
 }
 
 /**
+ * Single seam that creates every FULLTEXT index the schema needs but Drizzle's DSL cannot
+ * express. Both DB apply paths call this — the bootstrap step and the post-`db:migrate`
+ * hook — so the two paths cannot drift (memory-bank-architecture.md §3, B2). Add future
+ * FULLTEXT indexes here.
+ */
+export async function ensureFulltextIndexes(executor: FulltextIndexExecutor): Promise<void> {
+  const memory = await ensureMemoryFulltextIndex(executor)
+  console.log(`[den-db] memory.content FULLTEXT index ${memory.created ? "created" : "already present"}`)
+}
+
+/**
  * Startup / CI assertion that the FULLTEXT index exists. Throws if it is missing so a
  * misconfigured database fails loudly instead of silently degrading search to no matches.
  */

@@ -13,54 +13,12 @@ import "../src/load-env.ts"
 import { spawnSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { ensureMemoryFulltextIndex } from "../src/fulltext.ts"
+import { ensureFulltextIndexes } from "../src/fulltext.ts"
+import { createExecutor, type Executor } from "./db-executor.ts"
 
 const MIGRATIONS_TABLE = "__drizzle_migrations"
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-
-type Executor = {
-  query: (sql: string, args?: (string | number)[]) => Promise<Record<string, unknown>[]>
-  close: () => Promise<void>
-}
-
-async function createExecutor(): Promise<Executor> {
-  const databaseUrl = process.env.DATABASE_URL?.trim()
-
-  if (databaseUrl) {
-    const mysql = await import("mysql2/promise")
-    const connection = await mysql.createConnection(databaseUrl)
-    return {
-      query: async (sql, args = []) => {
-        const [rows] = await connection.query(sql, args)
-        return Array.isArray(rows) ? rows.filter(isRecord) : []
-      },
-      close: () => connection.end(),
-    }
-  }
-
-  const host = process.env.DATABASE_HOST?.trim()
-  const username = process.env.DATABASE_USERNAME?.trim()
-  const password = process.env.DATABASE_PASSWORD ?? ""
-
-  if (!host || !username) {
-    throw new Error("Provide DATABASE_URL, or DATABASE_HOST/DATABASE_USERNAME/DATABASE_PASSWORD.")
-  }
-
-  const { Client } = await import("@planetscale/database")
-  const client = new Client({ host, username, password })
-  return {
-    query: async (sql, args = []) => {
-      const result = await client.execute(sql, args)
-      return result.rows.filter(isRecord)
-    },
-    close: async () => {},
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
-}
 
 function run(command: string, args: string[]) {
   const result = spawnSync(command, args, {
@@ -109,13 +67,12 @@ async function main() {
   run("node", ["--import", "tsx", "./node_modules/drizzle-kit/bin.cjs", "migrate", "--config", "drizzle.config.ts"])
 
   // FULLTEXT indexes cannot be expressed via Drizzle's DSL and are baselined-away on the
-  // fresh-install (push + baseline) path, so create them idempotently here — a step both
-  // the bootstrap and migrate paths reach (memory-bank-architecture.md §3, B2).
+  // fresh-install (push + baseline) path, so create them idempotently here — the same seam
+  // the post-`db:migrate` hook runs, so the two apply paths cannot drift (§3, B2).
   console.log("[den-db] ensuring FULLTEXT indexes")
   const indexExecutor = await createExecutor()
   try {
-    const { created } = await ensureMemoryFulltextIndex(indexExecutor)
-    console.log(`[den-db] memory.content FULLTEXT index ${created ? "created" : "already present"}`)
+    await ensureFulltextIndexes(indexExecutor)
   } finally {
     await indexExecutor.close()
   }
