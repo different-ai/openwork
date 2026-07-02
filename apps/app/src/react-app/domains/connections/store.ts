@@ -39,6 +39,7 @@ import type {
 import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
 
 import type { OpenworkServerStore } from "./openwork-server-store";
+import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
 import {
   CLOUD_MCP_SERVER_NAME,
   clearCloudMcpUserState,
@@ -398,6 +399,37 @@ export function createConnectionsStore(options: {
     return undefined;
   };
 
+  /**
+   * Quiet self-heal for remote OAuth MCPs stuck in "Sign in needed": the
+   * engine only refreshes tokens reactively (once per transport), so an
+   * expired access token strands the entry until the user clicks Sign in.
+   * `mcp.connect` retries the stored refresh-token grant on a fresh
+   * transport — silently, never opening a browser or modal. Mirrors
+   * syncCloudControlMcp, but for user-added connectors.
+   */
+  async function healUnhealthyMcpEntries(servers: McpServerEntry[], statuses: McpStatusMap) {
+    if (disposed || snapshot.mcpAuthModalOpen || snapshot.mcpConnectingName) return;
+    const activeClient = options.client();
+    const projectDir = options.projectDir().trim();
+    if (!activeClient || !projectDir) return;
+    const attempted = await attemptSilentMcpReauth({
+      client: activeClient,
+      directory: projectDir,
+      servers,
+      statuses,
+    }).catch(() => false);
+    if (!attempted || disposed) return;
+    try {
+      const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
+      setStateField(
+        "mcpStatuses",
+        filterConfiguredStatuses(status as McpStatusMap, snapshot.mcpServers),
+      );
+    } catch {
+      // Post-heal status refresh is best-effort; the next refresh picks it up.
+    }
+  }
+
   async function refreshMcpServers() {
     if (disposed) return;
 
@@ -422,6 +454,7 @@ export function createConnectionsStore(options: {
             ? `Some MCPs could not be registered with the engine: ${failedNames}. They may appear disconnected — try reloading the engine.`
             : serverResult.next.length ? null : "No MCP servers configured yet.",
         }));
+        void healUnhealthyMcpEntries(serverResult.next, serverResult.nextStatuses);
         return;
       }
     } catch (error) {
@@ -539,6 +572,7 @@ export function createConnectionsStore(options: {
         mcpStatuses: nextStatuses,
         mcpStatus: next.length ? null : "No MCP servers configured yet.",
       }));
+      void healUnhealthyMcpEntries(next, nextStatuses);
     } catch (error) {
       mutateState((current) => ({
         ...current,
