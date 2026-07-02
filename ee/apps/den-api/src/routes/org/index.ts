@@ -10,6 +10,7 @@ import { registerOrgInvitationRoutes } from "./invitations.js"
 import { registerOrgInferenceRoutes } from "./inference.js"
 import { registerOrgLlmProviderRoutes } from "./llm-providers.js"
 import { registerOrgMemberRoutes } from "./members.js"
+import { registerOAuthProviderRoutes } from "./oauth-providers.js"
 import { registerPluginArchRoutes } from "./plugin-system/routes.js"
 import { registerOrgRoleRoutes } from "./roles.js"
 import { registerOrgScimRoutes } from "./scim.js"
@@ -55,6 +56,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(ap
   registerOrgInvitationRoutes(app)
   registerOrgLlmProviderRoutes(app)
   registerOrgMemberRoutes(app)
+  registerOAuthProviderRoutes(app)
   registerPluginArchRoutes(app)
   registerOrgRoleRoutes(app)
   registerOrgResourceRoutes(app)

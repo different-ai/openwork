@@ -99,7 +99,7 @@ function isOpenApiParameter(value: unknown): value is OpenApiParameter {
   return typeof value === "object" && value !== null
 }
 
-function getParameters(operation: OpenApiOperation, location: "path" | "query") {
+export function getParameters(operation: OpenApiOperation, location: "path" | "query") {
   return (operation.parameters ?? [])
     .filter(isOpenApiParameter)
     .filter((parameter) => parameter.in === location && typeof parameter.name === "string" && parameter.name.length > 0)
@@ -141,7 +141,7 @@ function objectForParameters(parameters: OpenApiParameter[], requiredByDefault: 
   return z.object(shape).strict()
 }
 
-function pathParameterNamesFromTemplate(path: string) {
+export function pathParameterNamesFromTemplate(path: string) {
   return [...path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]).filter(Boolean)
 }
 
@@ -158,7 +158,7 @@ function buildQuerySchema(operation: OpenApiOperation) {
   return parameters.length > 0 ? objectForParameters(parameters, false) : undefined
 }
 
-function hasJsonRequestBody(operation: OpenApiOperation) {
+export function hasJsonRequestBody(operation: OpenApiOperation) {
   const requestBody = getRequestBody(operation)
   const content = requestBody?.content
   return typeof content === "object" && content !== null && "application/json" in content

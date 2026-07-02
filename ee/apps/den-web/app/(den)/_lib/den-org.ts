@@ -219,6 +219,7 @@ export const DEN_ROLE_PERMISSION_OPTIONS = {
 } as const;
 
 export const PENDING_ORG_INVITATION_STORAGE_KEY = "openwork:web:pending-org-invitation";
+export const PENDING_WORKSPACE_CLAIM_STORAGE_KEY = "openwork:web:pending-workspace-claim";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -349,6 +350,10 @@ export function getMarketplaceOnboardingRoute(_orgSlug?: string | null): string 
 
 export function getJoinOrgRoute(invitationId: string): string {
   return `/join-org?invite=${encodeURIComponent(invitationId)}`;
+}
+
+export function getWorkspaceClaimRoute(token: string): string {
+  return `/workspace-claim?token=${encodeURIComponent(token)}`;
 }
 
 export function getAnalyticsRoute(orgSlug?: string | null): string {

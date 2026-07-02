@@ -1,0 +1,118 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { StreamableHTTPTransport } from "@hono/mcp"
+import type { Hono } from "hono"
+import { z } from "zod"
+import { publicRoute, tokenRoute } from "../middleware/index.js"
+import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
+import { invokeMcpOperation, normalizeToolBody } from "./invoke.js"
+import { getCatalog, protectedResourceMetadata } from "./index.js"
+import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities } from "./search.js"
+
+export const EXECUTE_CAPABILITY_TOOL_NAME = "execute_capability"
+
+/**
+ * The minimal, harness-facing MCP surface: exactly two tools, full stop.
+ *
+ * `/mcp` (index.ts) stays exactly as it is — every catalog operation
+ * individually registered, ~129 tools today. That's unchanged and still
+ * useful for scripts/admin tooling that want to call a known operation by
+ * name directly.
+ *
+ * `/mcp/agent` is a *different* endpoint for a *different* consumer: the
+ * desktop app's "OpenWork Cloud Control" connection, which is what an
+ * OpenCode/Claude Code/Codex-style harness actually sees. It registers only
+ * `search_capabilities` and `execute_capability`, both backed by the exact
+ * same catalog and the exact same `invokeMcpOperation` execute path used by
+ * the rich endpoint — no new auth, no new policy, no new execution logic.
+ * A harness connected here can only discover and call capabilities through
+ * these two tools; the other ~127 operations are not individually callable
+ * on this endpoint.
+ */
+export function registerAgentMcpRoutes<T extends { Variables: Record<string, unknown> }>(app: Hono<T>) {
+  app.get("/.well-known/oauth-protected-resource/mcp/agent", publicRoute, (c) =>
+    c.json(protectedResourceMetadata(c.req.raw)))
+  app.get("/mcp/agent/.well-known/oauth-protected-resource", publicRoute, (c) =>
+    c.json(protectedResourceMetadata(c.req.raw)))
+
+  app.all("/mcp/agent", tokenRoute, async (c) => {
+    const principal = await verifyMcpRequest(c.req.raw.headers, getMcpResourceUrl(c.req.raw))
+    if (principal instanceof Response) {
+      return principal
+    }
+
+    const catalog = await getCatalog(app as unknown as Hono, c.env)
+    const server = new McpServer({
+      name: "openwork-den-api-agent",
+      version: "1.0.0",
+    })
+
+    server.registerTool(
+      SEARCH_CAPABILITIES_TOOL_NAME,
+      {
+        title: "Search capabilities",
+        description: [
+          "Search for a capability by keyword. This connection only exposes this tool and execute_capability —",
+          "there is no list of individually-named tools to browse. Always search first.",
+          "Each match includes pathParams/queryParams/hasBody describing exactly what execute_capability needs.",
+        ].join(" "),
+        inputSchema: z.object({
+          query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
+          limit: z.number().int().min(1).max(20).optional().describe("Max number of matches to return. Defaults to 5."),
+        }),
+      },
+      async ({ query, limit }) => {
+        const matches = searchCapabilities(catalog, query, limit ?? 5)
+        const text = matches.length > 0
+          ? JSON.stringify({ matches }, null, 2)
+          : JSON.stringify({ matches: [], hint: "No matches. Try broader or different keywords." }, null, 2)
+        return { content: [{ type: "text" as const, text }] }
+      },
+    )
+
+    server.registerTool(
+      EXECUTE_CAPABILITY_TOOL_NAME,
+      {
+        title: "Execute capability",
+        description: [
+          "Call a capability found via search_capabilities, by its exact name.",
+          "Pass path/query/body only as described by that match's pathParams/queryParams/hasBody.",
+          "Returns unknown_capability if name doesn't match a current capability — call search_capabilities again.",
+        ].join(" "),
+        inputSchema: z.object({
+          name: z.string().min(1).describe("The exact tool name returned by search_capabilities."),
+          path: z.record(z.string(), z.unknown()).optional().describe("Path parameters, only if the match's pathParams is non-empty."),
+          query: z.record(z.string(), z.unknown()).optional().describe("Query parameters, only if the match's queryParams is non-empty."),
+          body: z.unknown().optional().describe("JSON body, only if the match's hasBody is true."),
+        }),
+      },
+      async ({ name, path, query, body }) => {
+        const operation = catalog.find((candidate) => candidate.name === name)
+        if (!operation) {
+          return {
+            isError: true,
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                error: "unknown_capability",
+                message: `No capability named "${name}". Call search_capabilities to find a valid name.`,
+              }),
+            }],
+          }
+        }
+
+        return invokeMcpOperation({
+          app: app as unknown as Hono,
+          env: c.env,
+          operation,
+          principal,
+          toolInput: { path, query, body: normalizeToolBody(body) },
+        })
+      },
+    )
+
+    const transport = new StreamableHTTPTransport()
+    await server.connect(transport)
+    const response = await transport.handleRequest(c)
+    return response ?? new Response(null, { status: 204 })
+  })
+}

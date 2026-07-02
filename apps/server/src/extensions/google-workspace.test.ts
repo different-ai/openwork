@@ -258,6 +258,53 @@ describe("Google Workspace extension", () => {
     expect(requestedUrls[0]).toBe("https://gmail.googleapis.com/gmail/v1/users/me/messages/m1/attachments/att-1");
   });
 
+  test("gmail_create_draft attaches local workspace files", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    const workspaceRoot = join(dirname(config.configPath ?? ""), "workspace");
+    const invoicePath = join(workspaceRoot, "invoices", "blue-yonder-invoice-ow-by-poc-2026-001.pdf");
+    config.workspaces = [{ id: "workspace-1", name: "Workspace", path: workspaceRoot, preset: "starter", workspaceType: "local" }];
+    config.authorizedRoots = [workspaceRoot];
+    await mkdir(dirname(invoicePath), { recursive: true });
+    await writeFile(invoicePath, "%PDF-1.4\ninvoice bytes\n", "utf8");
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one")],
+    });
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(input instanceof Request ? input.url : input), body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "draft-message-1" } }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    const result = await callGoogleWorkspaceExtensionAction(config, "gmail_create_draft", {
+      to: ["AccountsPayable@blueyonder.com"],
+      cc: ["Purchasing.Administrator@blueyonder.com", "Vickie.Trent@blueyonder.com"],
+      subject: "Invoice OW-BY-POC-2026-001 for PO-047766",
+      body: "Please find attached invoice OW-BY-POC-2026-001 for PO-047766.",
+      attachments: [{ path: "invoices/blue-yonder-invoice-ow-by-poc-2026-001.pdf" }],
+    }, { directory: workspaceRoot });
+    expect(result?.ok).toBe(true);
+    expect(result?.result).toMatchObject({ id: "draft-1" });
+    expect(requests[0]?.url).toBe("https://gmail.googleapis.com/gmail/v1/users/me/drafts");
+    const raw = requests[0]?.body.match(/"raw":"([^"]+)"/)?.[1] ?? "";
+    const decoded = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    expect(decoded).toContain("To: AccountsPayable@blueyonder.com");
+    expect(decoded).toContain("Cc: Purchasing.Administrator@blueyonder.com, Vickie.Trent@blueyonder.com");
+    expect(decoded).toContain("Subject: Invoice OW-BY-POC-2026-001 for PO-047766");
+    expect(decoded).toContain("Content-Type: multipart/mixed;");
+    expect(decoded).toContain("Please find attached invoice OW-BY-POC-2026-001 for PO-047766.");
+    expect(decoded).toContain("Content-Type: application/pdf; name=\"blue-yonder-invoice-ow-by-poc-2026-001.pdf\"");
+    expect(decoded).toContain("Content-Disposition: attachment; filename=\"blue-yonder-invoice-ow-by-poc-2026-001.pdf\"");
+    expect(decoded).toContain(Buffer.from("%PDF-1.4\ninvoice bytes\n", "utf8").toString("base64"));
+  });
+
   test("gmail_create_reply_draft rejects accounts without the gmail.readonly scope", async () => {
     process.env.OPENWORK_DEV_MODE = "1";
     process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";

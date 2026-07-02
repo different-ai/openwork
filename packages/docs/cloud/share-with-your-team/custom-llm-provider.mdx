@@ -3,7 +3,7 @@ title: "Adding a custom LLM provider"
 description: "Create a custom provider definition in OpenWork Cloud and import it into the desktop app"
 ---
 
-Use this when the provider is not in the catalog. The Cloud dashboard accepts a models.dev-style JSON definition, stores the shared credential once, and then lets desktop workspaces import it.
+Use this when the provider is not in the catalog. The Cloud dashboard stores the shared credential once and then lets desktop workspaces import it.
 
 <Frame>
   ![Custom LLM provider detail in OpenWork Cloud](/images/cloud-custom-llm-provider-detail.png)
@@ -14,12 +14,18 @@ Use this when the provider is not in the catalog. The Cloud dashboard accepts a 
 1. Open `LLM Providers`.
 2. Click `Add Provider`.
 3. Switch to `Custom provider`.
-4. Paste the `Custom provider JSON`.
-5. Paste the shared `API key / credential`.
-6. Choose `People access` and/or `Team access`.
-7. Click `Create Provider`.
+4. Give it a `Name` (the `Provider ID` fills in automatically).
+5. Enter the `Base URL` of the OpenAI-compatible endpoint (for Azure AI Foundry this looks like `https://my-resource.openai.azure.com/openai/v1`).
+6. List the `Model IDs` the endpoint serves — on Azure AI Foundry these are your deployment names.
+7. Paste the shared `API key / credential`.
+8. Choose `People access` and/or `Team access`.
+9. Click `Create Provider`.
 
-The JSON must include `id`, `name`, `npm`, `env`, `doc`, and `models`. `api` is optional, but most OpenAI-compatible providers use it. The editor also requires valid JSON, at least one environment variable, and at least one model.
+That's it — no JSON required for OpenAI-compatible endpoints.
+
+### Advanced: raw JSON config
+
+If the provider needs more than the form covers (a different AI SDK package, per-model limits or modalities, custom options), click `Advanced: edit as JSON` and provide a models.dev-style definition. The JSON must include `id`, `name`, `npm`, `env`, and `models`; `api` is optional, but most OpenAI-compatible providers use it. The editor requires valid JSON, at least one environment variable, and at least one model.
 
 ```json
 {

@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 
 import { ApiError } from "../errors.js";
@@ -82,6 +82,20 @@ export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
         bcc: { type: "array", items: { type: "string" }, description: "Optional BCC recipients." },
         subject: { type: "string", description: "Draft subject." },
         body: { type: "string", description: "Plain text draft body." },
+        attachments: {
+          type: "array",
+          description: "Optional local files to attach. Paths may be relative to the active workspace/directory or absolute under an authorized workspace root.",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Workspace-relative path or authorized absolute file path." },
+              filename: { type: "string", description: "Optional attachment filename shown in Gmail." },
+              mimeType: { type: "string", description: "Optional attachment MIME type. Defaults from the file extension when possible." },
+            },
+            required: ["path"],
+            additionalProperties: false,
+          },
+        },
       },
       required: ["to", "subject", "body"],
       additionalProperties: false,
@@ -616,17 +630,172 @@ function stringArrayField(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
 }
 
-function gmailRawMessage(input: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string; headers?: { name: string; value: string }[] }): string {
-  return [
+type GmailDraftAttachmentRequest = {
+  path: string;
+  filename?: string;
+  mimeType?: string;
+};
+
+type GmailDraftAttachment = {
+  filename: string;
+  mimeType: string;
+  content: Buffer;
+};
+
+function gmailHeaderValue(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+function gmailMimeParameter(value: string): string {
+  return gmailHeaderValue(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+}
+
+function base64MimeContent(buffer: Buffer): string {
+  const chunks = buffer.toString("base64").match(/.{1,76}/g);
+  return chunks ? chunks.join("\r\n") : "";
+}
+
+function gmailAttachmentMimeType(path: string, override: string | undefined): string {
+  const provided = typeof override === "string" ? override.trim() : "";
+  if (provided && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(provided)) return provided;
+  const lowered = path.toLowerCase();
+  if (lowered.endsWith(".pdf")) return "application/pdf";
+  if (lowered.endsWith(".png")) return "image/png";
+  if (lowered.endsWith(".jpg") || lowered.endsWith(".jpeg")) return "image/jpeg";
+  if (lowered.endsWith(".gif")) return "image/gif";
+  if (lowered.endsWith(".csv")) return "text/csv";
+  if (lowered.endsWith(".txt")) return "text/plain";
+  return "application/octet-stream";
+}
+
+function gmailDraftAttachmentRequests(value: unknown): GmailDraftAttachmentRequest[] {
+  if (!Array.isArray(value)) return [];
+  const attachments: GmailDraftAttachmentRequest[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const path = typeof item.path === "string" ? item.path.trim() : "";
+    if (!path) continue;
+    const filename = typeof item.filename === "string" && item.filename.trim() ? item.filename.trim() : undefined;
+    const mimeType = typeof item.mimeType === "string" && item.mimeType.trim() ? item.mimeType.trim() : undefined;
+    attachments.push({ path, filename, mimeType });
+  }
+  return attachments;
+}
+
+function pushUniqueResolvedPath(paths: string[], path: string) {
+  const trimmed = path.trim();
+  if (!trimmed) return;
+  const resolved = resolve(trimmed);
+  if (!paths.includes(resolved)) paths.push(resolved);
+}
+
+function isPathWithinRoot(path: string, root: string): boolean {
+  const child = relative(root, path);
+  return child === "" || (!!child && !child.startsWith("..") && !isAbsolute(child));
+}
+
+function gmailAttachmentAllowedRoots(config: ServerConfig): string[] {
+  const roots: string[] = [];
+  for (const workspace of config.workspaces) pushUniqueResolvedPath(roots, workspace.path);
+  for (const root of config.authorizedRoots) pushUniqueResolvedPath(roots, root);
+  return roots;
+}
+
+function gmailAttachmentSearchRoots(config: ServerConfig, context: Record<string, unknown>, allowedRoots: string[]): string[] {
+  const roots: string[] = [];
+  const directory = readStringField(context, "directory");
+  const worktree = readStringField(context, "worktree");
+  if (directory) pushUniqueResolvedPath(roots, directory);
+  if (worktree) pushUniqueResolvedPath(roots, worktree);
+  for (const workspace of config.workspaces) pushUniqueResolvedPath(roots, workspace.path);
+  for (const root of allowedRoots) pushUniqueResolvedPath(roots, root);
+  return roots.filter((root) => allowedRoots.some((allowedRoot) => isPathWithinRoot(root, allowedRoot)));
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+async function assertGmailAttachmentFile(path: string) {
+  const info = await stat(path);
+  if (!info.isFile()) throw new ApiError(400, "invalid_payload", "Attachment path must point to a file", { path });
+}
+
+async function resolveGmailAttachmentPath(config: ServerConfig, context: Record<string, unknown>, path: string): Promise<string> {
+  const allowedRoots = gmailAttachmentAllowedRoots(config);
+  if (!allowedRoots.length) throw new ApiError(400, "invalid_payload", "No authorized workspace roots are available for Gmail attachments");
+  if (isAbsolute(path)) {
+    const resolved = resolve(path);
+    if (!allowedRoots.some((root) => isPathWithinRoot(resolved, root))) throw new ApiError(400, "invalid_payload", "Attachment path must be inside an authorized workspace root", { path });
+    await assertGmailAttachmentFile(resolved);
+    return resolved;
+  }
+
+  for (const root of gmailAttachmentSearchRoots(config, context, allowedRoots)) {
+    const resolved = resolve(root, path);
+    if (!isPathWithinRoot(resolved, root) || !allowedRoots.some((allowedRoot) => isPathWithinRoot(resolved, allowedRoot))) continue;
+    try {
+      await assertGmailAttachmentFile(resolved);
+      return resolved;
+    } catch (error) {
+      if (isFileNotFoundError(error)) continue;
+      throw error;
+    }
+  }
+
+  throw new ApiError(400, "invalid_payload", "Attachment file was not found in an authorized workspace root", { path });
+}
+
+async function loadGmailDraftAttachments(config: ServerConfig, context: Record<string, unknown>, requests: GmailDraftAttachmentRequest[]): Promise<GmailDraftAttachment[]> {
+  const attachments: GmailDraftAttachment[] = [];
+  for (const request of requests) {
+    const path = await resolveGmailAttachmentPath(config, context, request.path);
+    const content = await readFile(path);
+    const filename = gmailHeaderValue(request.filename || basename(path));
+    if (!filename) throw new ApiError(400, "invalid_payload", "Attachment filename is required", { path: request.path });
+    attachments.push({ filename, mimeType: gmailAttachmentMimeType(path, request.mimeType), content });
+  }
+  return attachments;
+}
+
+function gmailRawMessage(input: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string; headers?: { name: string; value: string }[]; attachments?: GmailDraftAttachment[] }): string {
+  const headers = [
     `To: ${input.to.join(", ")}`,
     input.cc?.length ? `Cc: ${input.cc.join(", ")}` : null,
     input.bcc?.length ? `Bcc: ${input.bcc.join(", ")}` : null,
     `Subject: ${input.subject}`,
     ...(input.headers ?? []).map((header) => `${header.name}: ${header.value}`),
+  ].filter((line): line is string => typeof line === "string");
+  const attachments = input.attachments ?? [];
+  if (!attachments.length) return [
+    ...headers,
     "Content-Type: text/plain; charset=UTF-8",
     "",
     input.body,
   ].filter((line): line is string => typeof line === "string").join("\r\n");
+
+  const boundary = `openwork-${randomBytes(16).toString("hex")}`;
+  return [
+    ...headers,
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    input.body,
+    ...attachments.flatMap((attachment) => [
+      `--${boundary}`,
+      `Content-Type: ${attachment.mimeType}; name="${gmailMimeParameter(attachment.filename)}"`,
+      `Content-Disposition: attachment; filename="${gmailMimeParameter(attachment.filename)}"`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      base64MimeContent(attachment.content),
+    ]),
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
 }
 
 function splitEmailHeader(value: string): string[] {
@@ -841,18 +1010,19 @@ async function googleWorkspaceListEvents(config: ServerConfig, args: Record<stri
   return fetchGoogleJson(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
 }
 
-async function googleWorkspaceCreateDraft(config: ServerConfig, args: Record<string, unknown>) {
+async function googleWorkspaceCreateDraft(config: ServerConfig, args: Record<string, unknown>, context: Record<string, unknown>) {
   const to = stringArrayField(args.to);
   const cc = stringArrayField(args.cc);
   const bcc = stringArrayField(args.bcc);
   const subject = readStringField(args, "subject");
   const body = typeof args.body === "string" ? args.body : "";
   if (!to.length || !subject || !body.trim()) throw new ApiError(400, "invalid_payload", "to, subject, and body are required");
+  const attachments = await loadGmailDraftAttachments(config, context, gmailDraftAttachmentRequests(args.attachments));
   const { accessToken } = await googleWorkspaceAccessToken(config);
   return fetchGoogleJson("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ message: { raw: base64UrlString(gmailRawMessage({ to, cc, bcc, subject, body })) } }),
+    body: JSON.stringify({ message: { raw: base64UrlString(gmailRawMessage({ to, cc, bcc, subject, body, attachments })) } }),
   });
 }
 
@@ -1015,7 +1185,7 @@ export async function callGoogleWorkspaceExtensionAction(config: ServerConfig, a
     };
   }
   if (action === "calendar_list_events") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceListEvents(config, args), context };
-  if (action === "gmail_create_draft") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceCreateDraft(config, args), context };
+  if (action === "gmail_create_draft") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceCreateDraft(config, args, context), context };
   if (action === "gmail_create_reply_draft") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceCreateReplyDraft(config, args), context };
   if (action === "gmail_list_messages") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceListMessages(config, args), context };
   if (action === "gmail_get_message") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceGetMessage(config, args), context };

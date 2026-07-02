@@ -5,11 +5,14 @@ import { ClockIcon, Loader2Icon, MessageSquareTextIcon, TypeIcon } from "lucide-
 
 import {
   Command,
+  CommandCollection,
   CommandDialog,
   CommandDialogPopup,
   CommandDialogTitle,
   CommandEmpty,
   CommandFooter,
+  CommandGroup,
+  CommandGroupLabel,
   CommandHeader,
   CommandInput,
   CommandItem,
@@ -39,6 +42,12 @@ type ResultItem = {
   session: SearchableSession;
   role?: "user" | "assistant";
   snippet?: SessionSearchSnippet;
+};
+
+type ResultGroup = {
+  value: string;
+  kind: ResultItem["kind"];
+  items: ResultItem[];
 };
 
 export type SessionSearchDialogProps = {
@@ -139,10 +148,10 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
     return () => run.cancel();
   }, [props.open, props.sessions, searcher, deepQuery]);
 
-  const items = useMemo<ResultItem[]>(() => {
+  const groups = useMemo<ResultGroup[]>(() => {
     const trimmed = query.trim();
     if (!trimmed) {
-      return [...props.sessions]
+      const recent = [...props.sessions]
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, RECENT_LIMIT)
         .map((session) => ({
@@ -150,11 +159,14 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
           kind: "recent" as const,
           session,
         }));
+      return recent.length > 0
+        ? [{ value: "Recent sessions", kind: "recent", items: recent }]
+        : [];
     }
 
-    const out: ResultItem[] = [];
     const seen = new Set<string>();
 
+    const titleItems: ResultItem[] = [];
     const titleHits = fuzzysort.go(trimmed, props.sessions, {
       keys: ["title", "workspaceTitle"],
       limit: TITLE_LIMIT,
@@ -162,20 +174,22 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
     for (const hit of titleHits) {
       const session = hit.obj;
       seen.add(session.sessionId);
-      out.push({
+      titleItems.push({
         id: `title:${session.workspaceId}:${session.sessionId}`,
         kind: "title",
         session,
       });
     }
 
+    const messageItems: ResultItem[] = [];
     const messageHits = [...matches].sort(
       (a, b) => b.session.updatedAt - a.session.updatedAt,
     );
     for (const match of messageHits) {
       if (seen.has(match.session.sessionId)) continue;
       seen.add(match.session.sessionId);
-      out.push({
+      if (titleItems.length + messageItems.length >= RESULT_LIMIT) break;
+      messageItems.push({
         id: `message:${match.session.workspaceId}:${match.session.sessionId}`,
         kind: "message",
         session: match.session,
@@ -183,8 +197,21 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
         snippet: match.snippet,
       });
     }
-    return out.slice(0, RESULT_LIMIT);
+
+    const out: ResultGroup[] = [];
+    if (titleItems.length > 0) {
+      out.push({ value: "Session titles", kind: "title", items: titleItems });
+    }
+    if (messageItems.length > 0) {
+      out.push({ value: "Messages", kind: "message", items: messageItems });
+    }
+    return out;
   }, [matches, props.sessions, query]);
+
+  const resultCount = useMemo(
+    () => groups.reduce((sum, group) => sum + group.items.length, 0),
+    [groups],
+  );
 
   const trimmedQuery = query.trim();
   const searching = Boolean(deepQuery) && progress !== null && !progress.done;
@@ -200,7 +227,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
     ? "Recent sessions"
     : searching
       ? `Searching messages… ${progress.scanned}/${progress.total}`
-      : `${items.length.toLocaleString()} ${items.length === 1 ? "result" : "results"}`;
+      : `${resultCount.toLocaleString()} ${resultCount === 1 ? "result" : "results"}`;
 
   return (
     <CommandDialog
@@ -212,7 +239,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
       <CommandDialogPopup>
         <CommandDialogTitle>Search sessions</CommandDialogTitle>
         <Command
-          items={items}
+          items={groups}
           filter={null}
           value={query}
           onValueChange={setQuery}
@@ -226,31 +253,46 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
           <CommandPanel>
             <CommandEmpty>{emptyText}</CommandEmpty>
             <CommandList>
-              {(item: ResultItem) => (
-                <CommandItem
-                  key={item.id}
-                  value={item.id}
-                  onClick={() => {
-                    props.onClose();
-                    props.onOpenSession(item.session.workspaceId, item.session.sessionId);
-                  }}
-                >
-                  <span className="mr-2 shrink-0">{resultIcon(item.kind)}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className="truncate font-medium">{item.session.title}</span>
-                      {item.kind === "message" ? (
-                        <span className="shrink-0 truncate text-[11px] text-muted-foreground/72">
-                          {item.session.workspaceTitle}
-                        </span>
-                      ) : null}
-                    </div>
-                    <SnippetLine item={item} />
-                  </div>
-                  <CommandShortcut className="ps-3">
-                    {formatRelativeTime(item.session.updatedAt)}
-                  </CommandShortcut>
-                </CommandItem>
+              {(group: ResultGroup) => (
+                <CommandGroup key={group.value} items={group.items}>
+                  <CommandGroupLabel className="flex items-center gap-1.5">
+                    {group.value}
+                    <span className="font-normal text-muted-foreground/72 tabular-nums">
+                      {group.items.length.toLocaleString()}
+                    </span>
+                    {group.kind === "message" && searching ? (
+                      <Loader2Icon className="size-3 animate-spin text-muted-foreground/72" />
+                    ) : null}
+                  </CommandGroupLabel>
+                  <CommandCollection>
+                    {(item: ResultItem) => (
+                      <CommandItem
+                        key={item.id}
+                        value={item.id}
+                        onClick={() => {
+                          props.onClose();
+                          props.onOpenSession(item.session.workspaceId, item.session.sessionId);
+                        }}
+                      >
+                        <span className="mr-2 shrink-0">{resultIcon(item.kind)}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline gap-2">
+                            <span className="truncate font-medium">{item.session.title}</span>
+                            {item.kind === "message" ? (
+                              <span className="shrink-0 truncate text-[11px] text-muted-foreground/72">
+                                {item.session.workspaceTitle}
+                              </span>
+                            ) : null}
+                          </div>
+                          <SnippetLine item={item} />
+                        </div>
+                        <CommandShortcut className="ps-3">
+                          {formatRelativeTime(item.session.updatedAt)}
+                        </CommandShortcut>
+                      </CommandItem>
+                    )}
+                  </CommandCollection>
+                </CommandGroup>
               )}
             </CommandList>
           </CommandPanel>

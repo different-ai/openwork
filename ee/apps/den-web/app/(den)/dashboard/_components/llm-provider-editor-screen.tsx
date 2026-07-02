@@ -24,6 +24,14 @@ import {
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
+    buildGuidedCustomProviderConfig,
+    parseGuidedModelIds,
+    readGuidedCustomProviderFields,
+    readGuidedCustomProviderFieldsFromText,
+    slugifyProviderId,
+    validateGuidedCustomProvider,
+} from "./llm-provider-guided";
+import {
     buildCustomProviderTemplate,
     buildEditableCustomProviderText,
     getProviderApiBase,
@@ -88,6 +96,13 @@ export function LlmProviderEditorScreen({
     const [customConfigText, setCustomConfigText] = useState(
         buildCustomProviderTemplate(),
     );
+    const [customMode, setCustomMode] = useState<"form" | "json">("form");
+    const [customProviderId, setCustomProviderId] = useState("");
+    const [customProviderIdTouched, setCustomProviderIdTouched] = useState(false);
+    const [customBaseUrl, setCustomBaseUrl] = useState("");
+    const [customModelsText, setCustomModelsText] = useState("");
+    const [customEnvName, setCustomEnvName] = useState<string | null>(null);
+    const [customJsonHint, setCustomJsonHint] = useState<string | null>(null);
     const [apiKey, setApiKey] = useState("");
     const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
     const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
@@ -146,6 +161,26 @@ export function LlmProviderEditorScreen({
                     ? buildEditableCustomProviderText(provider)
                     : buildCustomProviderTemplate(),
             );
+            if (provider.source === "custom") {
+                // Reopen simple configs in the guided form; anything richer
+                // (per-model metadata, custom npm, provider options) opens in
+                // the JSON editor so no data is dropped.
+                const guided = readGuidedCustomProviderFields({
+                    ...provider.providerConfig,
+                    models: provider.models.map((entry) => entry.config),
+                });
+                if (guided) {
+                    setCustomMode("form");
+                    setCustomProviderId(guided.providerId);
+                    setCustomProviderIdTouched(true);
+                    setCustomBaseUrl(guided.baseUrl);
+                    setCustomModelsText(guided.modelIds.join("\n"));
+                    setCustomEnvName(guided.envName);
+                } else {
+                    setCustomMode("json");
+                }
+            }
+            setCustomJsonHint(null);
             setApiKey("");
             return;
         }
@@ -159,6 +194,13 @@ export function LlmProviderEditorScreen({
         );
         setSelectedTeamIds([]);
         setCustomConfigText(buildCustomProviderTemplate());
+        setCustomMode("form");
+        setCustomProviderId("");
+        setCustomProviderIdTouched(false);
+        setCustomBaseUrl("");
+        setCustomModelsText("");
+        setCustomEnvName(null);
+        setCustomJsonHint(null);
         setApiKey("");
     }, [orgContext?.currentMember.id, provider]);
 
@@ -259,6 +301,52 @@ export function LlmProviderEditorScreen({
         [catalogProviders],
     );
 
+    const resolvedCustomProviderId = customProviderIdTouched
+        ? customProviderId.trim()
+        : slugifyProviderId(providerName);
+
+    function switchCustomModeToJson() {
+        const modelIds = parseGuidedModelIds(customModelsText);
+        if (!validateGuidedCustomProvider({
+            providerId: resolvedCustomProviderId,
+            baseUrl: customBaseUrl,
+            modelIds,
+        })) {
+            setCustomConfigText(
+                JSON.stringify(
+                    buildGuidedCustomProviderConfig({
+                        providerId: resolvedCustomProviderId,
+                        name: providerName,
+                        baseUrl: customBaseUrl,
+                        modelIds,
+                        envName: customEnvName,
+                    }),
+                    null,
+                    2,
+                ),
+            );
+        }
+        setCustomJsonHint(null);
+        setCustomMode("json");
+    }
+
+    function switchCustomModeToForm() {
+        const guided = readGuidedCustomProviderFieldsFromText(customConfigText);
+        if (!guided) {
+            setCustomJsonHint(
+                "This config uses advanced fields the form cannot represent — keep editing it as JSON.",
+            );
+            return;
+        }
+        setCustomProviderId(guided.providerId);
+        setCustomProviderIdTouched(true);
+        setCustomBaseUrl(guided.baseUrl);
+        setCustomModelsText(guided.modelIds.join("\n"));
+        setCustomEnvName(guided.envName);
+        setCustomJsonHint(null);
+        setCustomMode("form");
+    }
+
     async function saveProvider() {
         if (!orgId) {
             setSaveError("Organization not found.");
@@ -286,7 +374,19 @@ export function LlmProviderEditorScreen({
             }
         }
 
-        if (source === "custom" && !customConfigText.trim()) {
+        if (source === "custom" && customMode === "form") {
+            const validationError = validateGuidedCustomProvider({
+                providerId: resolvedCustomProviderId,
+                baseUrl: customBaseUrl,
+                modelIds: parseGuidedModelIds(customModelsText),
+            });
+            if (validationError) {
+                setSaveError(validationError);
+                return;
+            }
+        }
+
+        if (source === "custom" && customMode === "json" && !customConfigText.trim()) {
             setSaveError("Paste a custom provider config.");
             return;
         }
@@ -305,6 +405,14 @@ export function LlmProviderEditorScreen({
             if (source === "models_dev") {
                 body.providerId = selectedProviderId;
                 body.modelIds = selectedModelIds;
+            } else if (customMode === "form") {
+                body.customConfig = buildGuidedCustomProviderConfig({
+                    providerId: resolvedCustomProviderId,
+                    name: providerName,
+                    baseUrl: customBaseUrl,
+                    modelIds: parseGuidedModelIds(customModelsText),
+                    envName: customEnvName,
+                });
             } else {
                 body.customConfigText = customConfigText;
             }
@@ -412,9 +520,9 @@ export function LlmProviderEditorScreen({
                                 : "Add a new LLM provider"}
                         </h1>
                         <p className="mt-3 max-w-[720px] text-[16px] leading-8 text-gray-500">
-                            Pick a provider or paste a custom config, then
-                            decide which models to allow and which teammates can
-                            use it.
+                            Pick a provider from the catalog or describe a
+                            custom endpoint, then decide which models to allow
+                            and which teammates can use it.
                         </p>
                     </div>
                 </div>
@@ -574,6 +682,84 @@ export function LlmProviderEditorScreen({
                             </div>
                         ) : null}
                     </div>
+                ) : customMode === "form" ? (
+                    <div className="mt-8 grid gap-6">
+                        <p className="text-[15px] text-gray-500">
+                            Connect any OpenAI-compatible endpoint — Azure AI
+                            Foundry, LiteLLM, vLLM, or an internal gateway — by
+                            describing it below. No JSON required.
+                        </p>
+
+                        <label className="grid gap-3">
+                            <span className="text-[14px] font-medium text-gray-700">
+                                Provider ID
+                            </span>
+                            <DenInput
+                                value={resolvedCustomProviderId}
+                                onChange={(event) => {
+                                    setCustomProviderId(event.target.value);
+                                    setCustomProviderIdTouched(true);
+                                }}
+                                placeholder="azure-foundry"
+                                autoComplete="off"
+                                spellCheck={false}
+                            />
+                        </label>
+                        <p className="-mt-3 text-[13px] text-gray-500">
+                            A short identifier for this provider. Filled in from
+                            the name automatically.
+                        </p>
+
+                        <label className="grid gap-3">
+                            <span className="text-[14px] font-medium text-gray-700">
+                                Base URL
+                            </span>
+                            <DenInput
+                                value={customBaseUrl}
+                                onChange={(event) =>
+                                    setCustomBaseUrl(event.target.value)
+                                }
+                                placeholder="https://my-resource.openai.azure.com/openai/v1"
+                                autoComplete="off"
+                                spellCheck={false}
+                            />
+                        </label>
+                        <p className="-mt-3 text-[13px] text-gray-500">
+                            The OpenAI-compatible endpoint of the provider
+                            (usually ends in{" "}
+                            <code className="rounded bg-gray-100 px-1 py-0.5">
+                                /v1
+                            </code>
+                            ).
+                        </p>
+
+                        <label className="grid gap-3">
+                            <span className="text-[14px] font-medium text-gray-700">
+                                Model IDs
+                            </span>
+                            <DenTextarea
+                                value={customModelsText}
+                                onChange={(event) =>
+                                    setCustomModelsText(event.target.value)
+                                }
+                                rows={4}
+                                placeholder={"gpt-5.2\nmy-deployment-name"}
+                            />
+                        </label>
+                        <p className="-mt-3 text-[13px] text-gray-500">
+                            One per line (or comma-separated). Use the model IDs
+                            the endpoint serves — on Azure AI Foundry these are
+                            your deployment names.
+                        </p>
+
+                        <button
+                            type="button"
+                            onClick={switchCustomModeToJson}
+                            className="justify-self-start text-[13px] font-medium text-gray-500 underline underline-offset-2 transition hover:text-gray-900"
+                        >
+                            Advanced: edit as JSON
+                        </button>
+                    </div>
                 ) : (
                     <div className="mt-8 grid gap-3">
                         <span className="text-[14px] font-medium text-gray-700">
@@ -594,6 +780,18 @@ export function LlmProviderEditorScreen({
                             </code>
                             . Model maps are imported automatically.
                         </p>
+                        {customJsonHint ? (
+                            <p className="text-[13px] text-amber-700">
+                                {customJsonHint}
+                            </p>
+                        ) : null}
+                        <button
+                            type="button"
+                            onClick={switchCustomModeToForm}
+                            className="justify-self-start text-[13px] font-medium text-gray-500 underline underline-offset-2 transition hover:text-gray-900"
+                        >
+                            Use the guided form instead
+                        </button>
                     </div>
                 )}
             </section>

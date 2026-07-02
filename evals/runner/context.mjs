@@ -107,16 +107,17 @@ export class EvalContext {
 
   async prove(name, options) {
     const claim = options?.claim ?? name;
-    this.recordEvidence({ type: "claim", status: "running", name, claim });
+    const voiceover = typeof options?.voiceover === "string" ? options.voiceover.trim() : "";
+    this.recordEvidence({ type: "claim", status: "running", name, claim, voiceover });
     if (typeof options?.action === "function") await options.action();
     if (typeof options?.assert === "function") await options.assert();
     if (options?.screenshot) {
       const screenshot = typeof options.screenshot === "string"
         ? { name: options.screenshot }
         : options.screenshot;
-      await this.screenshot(screenshot.name ?? slug(name), { claim, ...screenshot });
+      await this.screenshot(screenshot.name ?? slug(name), { claim, voiceover, ...screenshot });
     }
-    this.recordEvidence({ type: "claim", status: "passed", name, claim });
+    this.recordEvidence({ type: "claim", status: "passed", name, claim, voiceover });
   }
 
   /**
@@ -140,6 +141,40 @@ export class EvalContext {
       `Timed out after ${timeoutMs}ms waiting for: ${what}` +
         (lastError ? ` (last error: ${lastError.message})` : ""),
     );
+  }
+
+  /**
+   * Force light mode for screenshot readability, reloading only if the app
+   * isn't already light. fraimz frame proofs are reviewed as images (in
+   * fraimz.html and exported to docs/PRs); the OS-following "system" default
+   * renders dark-on-dark text illegible whenever the host machine is in dark
+   * mode. Light mode is the readable baseline for evidence, so the runner
+   * applies it automatically unless a flow opts out via `preserveTheme: true`
+   * (for a flow that is itself testing theme/dark-mode behavior).
+   */
+  async ensureLightMode() {
+    await this.waitFor("Boolean(window.__openworkControl)", {
+      timeoutMs: 30_000,
+      label: "control API before theme check",
+    });
+    const currentTheme = await this.eval("document.documentElement.dataset.theme").catch(() => null);
+    if (currentTheme === "light") {
+      return;
+    }
+    await this.eval(`(() => {
+      localStorage.setItem('openwork.react.settings.theme-mode', 'light');
+      return true;
+    })()`);
+    await this.eval("location.reload()");
+    await this.waitFor("Boolean(window.__openworkControl)", {
+      timeoutMs: 30_000,
+      label: "control API after forcing light mode",
+    });
+    await this.waitFor("document.documentElement.dataset.theme === 'light'", {
+      timeoutMs: 10_000,
+      label: "light theme applied",
+    });
+    this.log(`Forced light mode for screenshot readability (was: ${currentTheme ?? "unknown"}).`);
   }
 
   /**
@@ -262,6 +297,7 @@ export class EvalContext {
       file: fileName,
       name,
       claim: options.claim ?? null,
+      voiceover: typeof options.voiceover === "string" && options.voiceover.trim() ? options.voiceover.trim() : null,
       url,
       validations,
     };
