@@ -1,6 +1,7 @@
 export * from "./auth"
 export * from "./desktop-policies"
 export * from "./inference"
+export * from "./memory"
 export * from "./org"
 export * from "./sharables/capability-credentials"
 export * from "./sharables/llm-providers"

@@ -13,6 +13,7 @@ import "../src/load-env.ts"
 import { spawnSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { ensureMemoryFulltextIndex } from "../src/fulltext.ts"
 
 const MIGRATIONS_TABLE = "__drizzle_migrations"
 
@@ -106,6 +107,18 @@ async function main() {
 
   console.log("[den-db] running migrations")
   run("node", ["--import", "tsx", "./node_modules/drizzle-kit/bin.cjs", "migrate", "--config", "drizzle.config.ts"])
+
+  // FULLTEXT indexes cannot be expressed via Drizzle's DSL and are baselined-away on the
+  // fresh-install (push + baseline) path, so create them idempotently here — a step both
+  // the bootstrap and migrate paths reach (memory-bank-architecture.md §3, B2).
+  console.log("[den-db] ensuring FULLTEXT indexes")
+  const indexExecutor = await createExecutor()
+  try {
+    const { created } = await ensureMemoryFulltextIndex(indexExecutor)
+    console.log(`[den-db] memory.content FULLTEXT index ${created ? "created" : "already present"}`)
+  } finally {
+    await indexExecutor.close()
+  }
 }
 
 main().catch((error) => {

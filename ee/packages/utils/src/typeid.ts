@@ -81,6 +81,8 @@ export const idTypesMapNameToPrefix = {
   orgOAuthClient: "ooc",
   connectedAccount: "cta",
   externalMcpConnection: "emc",
+  memory: "mem",
+  memctx: "mctx",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

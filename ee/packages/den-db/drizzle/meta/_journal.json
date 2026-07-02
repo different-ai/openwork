@@ -190,6 +190,13 @@
       "when": 1782866555987,
       "tag": "0027_hard_beast",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "5",
+      "when": 1783019129840,
+      "tag": "0028_memory_bank",
+      "breakpoints": true
     }
   ]
 }
