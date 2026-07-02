@@ -21,6 +21,7 @@ import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
 import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
+import { registerMemoryRoutes } from "./routes/memory/index.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
 import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
@@ -163,6 +164,7 @@ registerAdminRoutes(app)
 registerAuthRoutes(app)
 registerBootstrapRoutes(app)
 registerMeRoutes(app)
+registerMemoryRoutes(app)
 registerOrgRoutes(app)
 registerVersionRoutes(app)
 registerWebhookRoutes(app)
