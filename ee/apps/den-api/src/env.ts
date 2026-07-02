@@ -33,6 +33,7 @@ const EnvSchema = z.object({
   LOOPS_API_KEY: z.string().optional(),
   LOOPS_MARKETING_ENABLED: z.string().optional(),
   OPENWORK_DEV_MODE: z.string().optional(),
+  DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   DEN_API_PUBLIC_URL: z.string().optional(),
@@ -182,6 +183,13 @@ const planGatingEnabled =
   (parsed.DEN_PLAN_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
+// SSRF guard for External MCP Connection URLs: on hosted (multi-tenant)
+// deployments, Den must not fetch private/reserved addresses on behalf of
+// users. Self-hosted deployments whose MCP servers legitimately live on a
+// private network can opt out with DEN_ALLOW_PRIVATE_MCP_URLS=1; local dev
+// (OPENWORK_DEV_MODE=1) is exempt automatically so evals against a local
+// stand-in server keep working.
+const allowPrivateMcpUrls = devMode || (parsed.DEN_ALLOW_PRIVATE_MCP_URLS ?? "0").trim() === "1"
 const requireEmailVerification = parsed.DEN_REQUIRE_EMAIL_VERIFICATION === undefined
   ? !devMode
   : parsed.DEN_REQUIRE_EMAIL_VERIFICATION.trim().toLowerCase() !== "false"
@@ -217,6 +225,7 @@ export const env = {
   // are treated as suffix matches, e.g. ".example.com".
   webAppHosts: splitCsv(parsed.DEN_WEB_APP_HOSTS).map((host) => host.toLowerCase()),
   devMode,
+  allowPrivateMcpUrls,
   planGatingEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   requireEmailVerification,

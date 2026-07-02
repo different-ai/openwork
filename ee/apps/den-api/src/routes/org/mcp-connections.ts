@@ -31,6 +31,7 @@ import {
   type ExternalMcpConnectionRow,
 } from "../../capability-sources/external-mcp-connections.js"
 import { getConnectedAccount } from "../../capability-sources/oauth-credentials.js"
+import { assertPublicUrl } from "../../capability-sources/url-guard.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import { EXTERNAL_MCP_PRESETS } from "../../capability-sources/external-mcp-presets.js"
 import { ensureOrganizationAdmin, idParamSchema, orgAccessFailureStatus } from "./shared.js"
@@ -262,6 +263,15 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       }
       if (body.credentialMode === "per_member" && body.authType !== "oauth") {
         return c.json({ error: "invalid_request", message: "credentialMode per_member requires authType oauth — API keys and no-auth servers have no per-person identity to connect." }, 400)
+      }
+      if (!env.allowPrivateMcpUrls) {
+        // Fail fast with a clear message; the guarded fetch inside the MCP
+        // client re-checks at request time anyway (DNS can change later).
+        try {
+          await assertPublicUrl(body.url)
+        } catch (error) {
+          return c.json({ error: "invalid_request", message: error instanceof Error ? error.message : "URL not allowed." }, 400)
+        }
       }
 
       const created = await createExternalMcpConnection({

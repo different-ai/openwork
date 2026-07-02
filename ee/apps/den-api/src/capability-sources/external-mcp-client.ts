@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { env } from "../env.js"
+import { createGuardedFetch } from "./url-guard.js"
 import {
   type OAuthClientProvider,
   UnauthorizedError,
@@ -223,6 +225,11 @@ function buildTransport(connection: ExternalMcpConnectionRow, redirectUri: strin
   const provider = connection.authType === "oauth" ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member) : undefined
   const transport = new StreamableHTTPClientTransport(new URL(connection.url), {
     authProvider: provider,
+    // SSRF guard: every outbound request (the MCP endpoint itself, but also
+    // discovery documents and token endpoints the SDK follows to OTHER
+    // hosts) is checked against private/reserved address ranges at request
+    // time. Hosted-deployment protection; self-hosted/dev opt out via env.
+    fetch: env.allowPrivateMcpUrls ? undefined : createGuardedFetch(),
     requestInit: connection.authType === "apikey" && connection.apiKey
       ? { headers: { authorization: `Bearer ${connection.apiKey}` } }
       : undefined,
