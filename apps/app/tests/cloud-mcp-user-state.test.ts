@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 
 import {
+  __setCloudMcpUserStateStorageForTest,
   clearCloudMcpUserState,
   isCloudMcpSyncMarkerFresh,
   readCloudMcpUserState,
@@ -9,20 +10,11 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Bun runs every test file in one process: restore the global after this
-// file so the window stub does not leak into other tests.
-const originalWindow = (globalThis as Record<string, unknown>).window;
-afterAll(() => {
-  if (originalWindow === undefined) {
-    delete (globalThis as Record<string, unknown>).window;
-  } else {
-    (globalThis as Record<string, unknown>).window = originalWindow;
-  }
-});
-
-function installWindowStub() {
+// Bun on Linux exposes a readonly `globalThis.window`, so the storage is
+// injected via the test hook instead of stubbing the global.
+function installStorageStub() {
   const backing = new Map<string, string>();
-  const localStorage = {
+  __setCloudMcpUserStateStorageForTest({
     getItem: (key: string) => backing.get(key) ?? null,
     setItem: (key: string, value: string) => {
       backing.set(key, value);
@@ -30,14 +22,17 @@ function installWindowStub() {
     removeItem: (key: string) => {
       backing.delete(key);
     },
-  };
-  (globalThis as Record<string, unknown>).window = { localStorage };
+  });
   return backing;
 }
 
+afterAll(() => {
+  __setCloudMcpUserStateStorageForTest(null);
+});
+
 describe("cloud MCP user state", () => {
   beforeEach(() => {
-    installWindowStub();
+    installStorageStub();
   });
 
   test("round-trips disabled and removed intents", () => {
@@ -51,7 +46,7 @@ describe("cloud MCP user state", () => {
   });
 
   test("ignores corrupt stored values", () => {
-    const backing = installWindowStub();
+    const backing = installStorageStub();
     backing.set("openwork.den.mcp.cloudControlUserState", "banana");
     expect(readCloudMcpUserState()).toBeNull();
   });

@@ -17,10 +17,31 @@ const CLOUD_MCP_USER_STATE_KEY = "openwork.den.mcp.cloudControlUserState";
 
 export type CloudMcpUserState = "disabled" | "removed";
 
-export function readCloudMcpUserState(): CloudMcpUserState | null {
+type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+let storageOverrideForTest: StorageLike | null = null;
+
+/**
+ * Bun on Linux exposes a readonly `globalThis.window`, so tests cannot stub
+ * the global. Inject a storage instead (pass null to restore the default).
+ */
+export function __setCloudMcpUserStateStorageForTest(storage: StorageLike | null) {
+  storageOverrideForTest = storage;
+}
+
+function getStorage(): StorageLike | null {
+  if (storageOverrideForTest) return storageOverrideForTest;
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(CLOUD_MCP_USER_STATE_KEY);
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function readCloudMcpUserState(): CloudMcpUserState | null {
+  try {
+    const raw = getStorage()?.getItem(CLOUD_MCP_USER_STATE_KEY);
     if (raw === "disabled" || raw === "removed") return raw;
   } catch {
     // Storage unavailable — treat as no recorded intent.
@@ -29,9 +50,8 @@ export function readCloudMcpUserState(): CloudMcpUserState | null {
 }
 
 export function writeCloudMcpUserState(state: CloudMcpUserState) {
-  if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(CLOUD_MCP_USER_STATE_KEY, state);
+    getStorage()?.setItem(CLOUD_MCP_USER_STATE_KEY, state);
   } catch {
     // Storage unavailable — the reconciler may resurrect the entry; the
     // enabled-flag guard in syncCloudControlMcp still applies.
@@ -39,9 +59,8 @@ export function writeCloudMcpUserState(state: CloudMcpUserState) {
 }
 
 export function clearCloudMcpUserState() {
-  if (typeof window === "undefined") return;
   try {
-    window.localStorage.removeItem(CLOUD_MCP_USER_STATE_KEY);
+    getStorage()?.removeItem(CLOUD_MCP_USER_STATE_KEY);
   } catch {
     // ignore
   }
