@@ -6,6 +6,7 @@ import { auth } from "../../auth.js"
 import {
   getBreachedPasswordResponse,
   getEmailPasswordLockoutResponse,
+  getShortPasswordResponse,
   readEmailPasswordSignInAttempt,
   recordEmailPasswordSignInResult,
 } from "../../auth-protection.js"
@@ -131,6 +132,11 @@ async function handleAuthRequest(request: Request) {
     }
   }
 
+  const shortPasswordResponse = await getShortPasswordResponse(request)
+  if (shortPasswordResponse) {
+    return shortPasswordResponse
+  }
+
   const breachedPasswordResponse = await getBreachedPasswordResponse(request)
   if (breachedPasswordResponse) {
     return breachedPasswordResponse
@@ -168,7 +174,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
       responses: {
         200: emptyResponse("Better Auth handled the request successfully."),
         302: emptyResponse("Better Auth redirected the user to continue the auth flow."),
-        400: emptyResponse("Better Auth rejected the request as invalid. Password creation, password change, or reset is also rejected when the proposed password is known to be compromised."),
+        400: emptyResponse("Better Auth rejected the request as invalid. Password creation, password change, or reset is also rejected when the proposed password is too short or is known to be compromised."),
         401: emptyResponse("Better Auth rejected the request because authentication failed."),
         429: jsonResponse("Email/password sign-in is temporarily locked after too many failed attempts. The response includes a Retry-After header.", authLoginLockedSchema),
         503: jsonResponse("Password breach screening is temporarily unavailable, so password creation or reset should be retried later.", authPasswordScreeningUnavailableSchema),
