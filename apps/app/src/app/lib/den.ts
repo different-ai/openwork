@@ -174,6 +174,23 @@ export type DenOrgLlmProvider = {
   updatedAt: string | null;
 };
 
+export type DenExternalMcpConnection = {
+  id: string;
+  name: string;
+  url: string;
+  authType: "oauth" | "apikey" | "none";
+  credentialMode: "shared" | "per_member";
+  connected: boolean;
+  connectedAt: string | null;
+  /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
+  connectedForMe: boolean;
+};
+
+export type DenMcpConnectionConnectStart = {
+  status: "connected" | "needs_auth";
+  authorizeUrl: string | null;
+};
+
 export type DenOrgLlmProviderConnection = DenOrgLlmProvider & {
   apiKey: string | null;
   /**
@@ -1154,6 +1171,55 @@ function getDenOrgLlmProviders(payload: unknown): DenOrgLlmProvider[] {
   });
 }
 
+function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection | null {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.name !== "string" ||
+    typeof value.url !== "string" ||
+    (value.authType !== "oauth" && value.authType !== "apikey" && value.authType !== "none") ||
+    (value.credentialMode !== "shared" && value.credentialMode !== "per_member")
+  ) {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    name: value.name,
+    url: value.url,
+    authType: value.authType,
+    credentialMode: value.credentialMode,
+    connected: value.connected === true,
+    connectedAt: typeof value.connectedAt === "string" ? value.connectedAt : null,
+    connectedForMe: value.connectedForMe === true,
+  };
+}
+
+function getDenExternalMcpConnections(payload: unknown): DenExternalMcpConnection[] {
+  if (!isRecord(payload) || !Array.isArray(payload.connections)) {
+    return [];
+  }
+
+  return payload.connections.flatMap((connection) => {
+    const parsed = parseDenExternalMcpConnection(connection);
+    return parsed ? [parsed] : [];
+  });
+}
+
+function getDenMcpConnectionConnectStart(payload: unknown): DenMcpConnectionConnectStart | null {
+  if (
+    !isRecord(payload) ||
+    (payload.status !== "connected" && payload.status !== "needs_auth")
+  ) {
+    return null;
+  }
+
+  return {
+    status: payload.status,
+    authorizeUrl: typeof payload.authorizeUrl === "string" ? payload.authorizeUrl : null,
+  };
+}
+
 function getDenOrgLlmProviderConnection(payload: unknown): DenOrgLlmProviderConnection | null {
   if (!isRecord(payload) || !payload.llmProvider) {
     return null;
@@ -2002,6 +2068,28 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         throw new DenApiError(500, "invalid_llm_provider_payload", "LLM provider response was missing connection details.");
       }
       return provider;
+    },
+
+    async listMcpConnections(orgId: string, scope: "usable" | "manageable" = "usable"): Promise<DenExternalMcpConnection[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-connections?scope=${scope}`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      return getDenExternalMcpConnections(payload);
+    },
+
+    async startMcpConnectionConnect(orgId: string, connectionId: string): Promise<DenMcpConnectionConnectStart> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/start`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      const result = getDenMcpConnectionConnectStart(payload);
+      if (!result) {
+        throw new DenApiError(500, "invalid_mcp_connection_payload", "MCP connection connect response was invalid.");
+      }
+      return result;
     },
 
     async listOrgMarketplaces(orgId: string): Promise<DenOrgMarketplace[]> {
