@@ -30,6 +30,10 @@ const externalLinkProps = (href: string) =>
     ? { rel: "noreferrer", target: "_blank" as const }
     : {};
 
+// Mobile visitors can't install a desktop app, so the primary CTA points them to
+// the cloud sign-up screen instead of the download page.
+const CLOUD_SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
+
 export function LandingHome(props: Props) {
   const [activeDemoId, setActiveDemoId] = useState(defaultLandingDemoFlowId);
   const [activeUseCase, setActiveUseCase] = useState(0);
@@ -56,8 +60,8 @@ export function LandingHome(props: Props) {
             stars={props.stars}
             downloadHref={props.downloadHref}
             callUrl={props.callHref}
-            mobilePrimaryHref="/download"
-            mobilePrimaryLabel="Download now"
+            mobilePrimaryHref={CLOUD_SIGNUP_URL}
+            mobilePrimaryLabel="Get Started for Free"
             active="home"
           />
         </div>
@@ -80,12 +84,22 @@ export function LandingHome(props: Props) {
 
             <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-                <Link
-                  href="/download"
-                  className="doc-button inline-flex items-center gap-2"
-                >
-                  Download now <ArrowRight size={18} />
-                </Link>
+                {props.isMobileVisitor ? (
+                  <a
+                    href={CLOUD_SIGNUP_URL}
+                    className="doc-button inline-flex items-center gap-2"
+                    {...externalLinkProps(CLOUD_SIGNUP_URL)}
+                  >
+                    Get Started for Free <ArrowRight size={18} />
+                  </a>
+                ) : (
+                  <Link
+                    href="/download"
+                    className="doc-button inline-flex items-center gap-2"
+                  >
+                    Download now <ArrowRight size={18} />
+                  </Link>
+                )}
                 <a
                   href={props.callHref}
                   className="secondary-button"
