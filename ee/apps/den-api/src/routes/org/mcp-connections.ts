@@ -30,6 +30,7 @@ import {
   replaceExternalMcpConnectionAccess,
   type ExternalMcpConnectionRow,
 } from "../../capability-sources/external-mcp-connections.js"
+import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { getConnectedAccount } from "../../capability-sources/oauth-credentials.js"
 import { assertPublicUrl } from "../../capability-sources/url-guard.js"
 import type { MemberTeamSummary } from "../../orgs.js"
@@ -223,6 +224,13 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         const connections = await Promise.all(rows.map((row) =>
           toConnectionResponse(row, { callerOrgMembershipId: payload.currentMember.id, includeAccess: true })))
         return c.json({ connections })
+      }
+
+      // Staged rollout: gated deployments return an empty list for
+      // non-opted-in orgs — indistinguishable from "nothing published", on
+      // every desktop version in the field (see external-mcp-rollout.ts).
+      if (!memberFacingMcpConnectionsEnabled(payload.organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })) {
+        return c.json({ connections: [] })
       }
 
       const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []

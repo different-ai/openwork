@@ -70,6 +70,7 @@ const EnvSchema = z.object({
   VERCEL_TEAM_SLUG: z.string().optional(),
   VERCEL_DNS_DOMAIN: z.string().optional(),
   DEN_PLAN_GATING_ENABLED: z.string().optional(),
+  DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
   POLAR_API_BASE: z.string().optional(),
@@ -182,6 +183,14 @@ const polarFeatureGateEnabled =
 const planGatingEnabled =
   (parsed.DEN_PLAN_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
+// Staged rollout for member-facing org MCP connections: when gating is
+// enabled (hosted deployments), GET /v1/mcp-connections?scope=usable returns
+// an empty list unless the organization opted in via metadata
+// `mcpConnectionsEnabled: true`. Off by default so local dev, evals, and
+// self-hosted deployments keep the feature working out of the box.
+const mcpConnectionsGatingEnabled =
+  (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
+
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
 // SSRF guard for External MCP Connection URLs: on hosted (multi-tenant)
 // deployments, Den must not fetch private/reserved addresses on behalf of
@@ -227,6 +236,7 @@ export const env = {
   devMode,
   allowPrivateMcpUrls,
   planGatingEnabled,
+  mcpConnectionsGatingEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   requireEmailVerification,
   github: {
