@@ -2,7 +2,6 @@ import { LandingHome } from "../components/landing-home";
 import { getGithubData } from "../lib/github";
 import { headers } from "next/headers";
 import { StructuredData } from "../components/structured-data";
-import { detectOsFromUserAgent, osDownloadLabel } from "../lib/detect-os";
 import { homeFaq } from "../lib/faq";
 import { baseOpenGraph } from "../lib/seo";
 
@@ -56,13 +55,6 @@ export default async function Home() {
   const cal = process.env.NEXT_PUBLIC_CAL_URL || "/enterprise#book";
   const userAgent = headers().get("user-agent")?.toLowerCase() || "";
   const isMobileVisitor = /android|iphone|ipad|ipod|mobile/.test(userAgent);
-  const detectedOs = detectOsFromUserAgent(userAgent);
-  const osDownloadUrl =
-    detectedOs === "windows"
-      ? github.downloads.windows
-      : detectedOs === "linux"
-        ? github.downloads.linux
-        : github.downloads.macos;
 
   return (
     <>
@@ -73,8 +65,6 @@ export default async function Home() {
         downloadHref={github.downloads.macos}
         callHref={cal}
         isMobileVisitor={isMobileVisitor}
-        osDownloadUrl={osDownloadUrl}
-        osDownloadLabel={osDownloadLabel(detectedOs)}
       />
     </>
   );

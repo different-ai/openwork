@@ -17,15 +17,12 @@ import { LandingSharePackageCard } from "./landing-share-package-card";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
 import { WaitlistForm } from "./waitlist-form";
-import { triggerBackgroundDownload } from "../lib/trigger-download";
 
 type Props = {
   stars: string;
   downloadHref: string;
   callHref: string;
   isMobileVisitor: boolean;
-  osDownloadUrl: string;
-  osDownloadLabel: string;
 };
 
 const externalLinkProps = (href: string) =>
@@ -48,7 +45,6 @@ export function LandingHome(props: Props) {
   );
 
   const callLinkProps = externalLinkProps(props.callHref);
-  const handlePrimaryCtaClick = () => triggerBackgroundDownload(props.osDownloadUrl);
 
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
@@ -61,8 +57,7 @@ export function LandingHome(props: Props) {
             downloadHref={props.downloadHref}
             callUrl={props.callHref}
             mobilePrimaryHref="/download"
-            mobilePrimaryLabel={props.osDownloadLabel}
-            osDownloadUrl={props.osDownloadUrl}
+            mobilePrimaryLabel="Download now"
             active="home"
           />
         </div>
@@ -88,9 +83,8 @@ export function LandingHome(props: Props) {
                 <Link
                   href="/download"
                   className="doc-button inline-flex items-center gap-2"
-                  onClick={handlePrimaryCtaClick}
                 >
-                  {props.osDownloadLabel} <ArrowRight size={18} />
+                  Download now <ArrowRight size={18} />
                 </Link>
                 <a
                   href={props.callHref}
