@@ -439,6 +439,19 @@ select:disabled {
   --sidebar-ring: var(--slate-8);
 }
 
+/* Shiki emits both palettes as CSS variables (themes option in markdown.tsx);
+   swap token colors to the dark palette when the app theme is dark. */
+.dark .shiki,
+.dark .shiki span,
+[data-theme="dark"] .shiki,
+[data-theme="dark"] .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+  text-decoration: var(--shiki-dark-text-decoration) !important;
+}
+
 @theme inline {
   --font-sans: 'Geist Variable', sans-serif;
   --font-heading: 'IBM Plex Sans Variable', sans-serif;
