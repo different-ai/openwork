@@ -12,8 +12,6 @@ type PanelContent = {
   title: string;
   copy: string;
   submitLabel: string;
-  togglePrompt?: string;
-  toggleActionLabel?: string;
 };
 
 function getDesktopGrant(url: string | null) {
@@ -78,6 +76,7 @@ export function AuthPanel({
   hideSocialAuth = false,
   hideEmailField = false,
   eyebrow = "Account",
+  bare = false,
   signUpContent,
   signInContent,
   verificationContent,
@@ -89,6 +88,10 @@ export function AuthPanel({
   hideSocialAuth?: boolean;
   hideEmailField?: boolean;
   eyebrow?: string;
+  // When true the panel renders without its own `den-frame`/padding, so a parent
+  // (the unified split auth card) can own the surface. Defaults to a self-framed
+  // card for standalone callers (invite, workspace-claim).
+  bare?: boolean;
   signUpContent?: Partial<PanelContent>;
   signInContent?: Partial<PanelContent>;
   verificationContent?: Partial<PanelContent>;
@@ -118,7 +121,6 @@ export function AuthPanel({
     desktopRedirectUrl,
     desktopRedirectBusy,
     showAuthFeedback,
-    continueSignInWithEmail,
     submitAuth,
     submitVerificationCode,
     resendVerificationCode,
@@ -126,14 +128,11 @@ export function AuthPanel({
     beginSocialAuth,
     resolveUserLandingRoute,
   } = useDenFlow();
-  const [signInEmailConfirmed, setSignInEmailConfirmed] = useState(false);
 
   const resolvedSignUpContent: PanelContent = {
     title: "Get started.",
     copy: "Free to try. Team plans from $50/mo.",
     submitLabel: "Create account",
-    togglePrompt: "Have an account?",
-    toggleActionLabel: "Sign in",
     ...signUpContent,
   };
 
@@ -141,8 +140,6 @@ export function AuthPanel({
     title: "Welcome back.",
     copy: "Sign in to open your team workspace.",
     submitLabel: "Sign in",
-    togglePrompt: "Need an account?",
-    toggleActionLabel: "Create one",
     ...signInContent,
   };
 
@@ -161,23 +158,21 @@ export function AuthPanel({
 
   const desktopGrant = getDesktopGrant(desktopRedirectUrl);
   const isPasswordResetRequest = authMode === "sign-in" && passwordResetRequested && !verificationRequired;
-  const isEmailFirstSignIn = authMode === "sign-in" && !verificationRequired && !isPasswordResetRequest && !hideEmailField;
-  const isSignInEmailStep = isEmailFirstSignIn && !signInEmailConfirmed;
   const formBusy = isPasswordResetRequest ? passwordResetBusy : authBusy || desktopRedirectBusy;
   const activeContent = verificationRequired
     ? resolvedVerificationContent
     : isPasswordResetRequest
       ? passwordResetContent
-      : isSignInEmailStep
-      ? {
-          ...resolvedSignInContent,
-          copy: "Enter your email and we’ll send you to the right sign-in method.",
-          submitLabel: "Next",
-        }
       : authMode === "sign-in"
       ? resolvedSignInContent
       : resolvedSignUpContent;
   const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField);
+  const shellClass = (gap: string, padding: string) =>
+    bare ? `grid ${gap}` : `den-frame grid ${gap} ${padding}`;
+  // The segmented tabs are the primary sign-in/sign-up switch. Hide them for the
+  // focused sub-flows (email verification, password reset) where switching mode
+  // mid-step would be confusing.
+  const showModeTabs = !verificationRequired && !isPasswordResetRequest;
 
   useEffect(() => {
     const key = prefillKey ?? prefilledEmail?.trim() ?? null;
@@ -190,8 +185,17 @@ export function AuthPanel({
     setEmail(prefilledEmail?.trim() ?? "");
     setPassword("");
     setVerificationCode("");
-    setSignInEmailConfirmed(false);
   }, [initialMode, prefillKey, prefilledEmail, setAuthMode, setEmail, setPassword, setVerificationCode]);
+
+  const switchMode = (mode: AuthMode) => {
+    if (mode === authMode && !passwordResetRequested) {
+      return;
+    }
+    setPasswordResetRequested(false);
+    setPasswordResetInfo("");
+    setPasswordResetError(null);
+    setAuthMode(mode);
+  };
 
   const copyDesktopValue = async (field: "link" | "code", value: string | null) => {
     if (!value) return;
@@ -242,7 +246,7 @@ export function AuthPanel({
 
   if (isSignedInWithDesktopHandoff) {
     return (
-      <div className="den-frame grid gap-6 p-6 md:p-7">
+      <div className={shellClass("gap-6", "p-6 md:p-7")}>
         <div className="grid gap-3">
           <p className="den-eyebrow">{eyebrow}</p>
           <div className="grid gap-2">
@@ -301,7 +305,7 @@ export function AuthPanel({
   }
 
   return (
-    <div className="den-frame grid gap-4 p-5 sm:gap-5 sm:p-6 md:p-7">
+    <div className={shellClass("gap-4 sm:gap-5", "p-5 sm:p-6 md:p-7")}>
       <div className="grid gap-3">
         <p className="den-eyebrow">{eyebrow}</p>
         <div className="grid gap-2">
@@ -309,6 +313,39 @@ export function AuthPanel({
           <p className="den-copy">{activeContent.copy}</p>
         </div>
       </div>
+
+      {showModeTabs ? (
+        <div
+          className="grid grid-cols-2 gap-1 rounded-full border border-[var(--dls-border)] bg-[var(--dls-hover)] p-1"
+          role="group"
+          aria-label="Choose sign in or create account"
+        >
+          <button
+            type="button"
+            aria-pressed={authMode === "sign-in"}
+            onClick={() => switchMode("sign-in")}
+            className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+              authMode === "sign-in"
+                ? "bg-[var(--dls-surface)] text-[var(--dls-text-primary)] shadow-[0_1px_2px_rgba(15,23,42,0.08)]"
+                : "text-[var(--dls-text-secondary)] hover:text-[var(--dls-text-primary)]"
+            }`}
+          >
+            Sign in
+          </button>
+          <button
+            type="button"
+            aria-pressed={authMode === "sign-up"}
+            onClick={() => switchMode("sign-up")}
+            className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+              authMode === "sign-up"
+                ? "bg-[var(--dls-surface)] text-[var(--dls-text-primary)] shadow-[0_1px_2px_rgba(15,23,42,0.08)]"
+                : "text-[var(--dls-text-secondary)] hover:text-[var(--dls-text-primary)]"
+            }`}
+          >
+            Create account
+          </button>
+        </div>
+      ) : null}
 
       {desktopAuthRequested && desktopRedirectUrl ? (
         <div className="grid gap-3">
@@ -334,15 +371,6 @@ export function AuthPanel({
             return;
           }
 
-          if (isSignInEmailStep) {
-            event.preventDefault();
-            const shouldContinue = await continueSignInWithEmail();
-            if (shouldContinue) {
-              setSignInEmailConfirmed(true);
-            }
-            return;
-          }
-
           const next = verificationRequired
             ? await submitVerificationCode(event)
             : await submitAuth(event);
@@ -361,15 +389,13 @@ export function AuthPanel({
       >
         {!verificationRequired && !isPasswordResetRequest && !hideSocialAuth ? (
           <>
-            {authMode !== "sign-in" ? (
-              <SocialButton
-                onClick={() => void beginSocialAuth("github")}
-                disabled={authBusy || desktopRedirectBusy}
-              >
-                <GitHubLogo />
-                <span>Continue with GitHub</span>
-              </SocialButton>
-            ) : null}
+            <SocialButton
+              onClick={() => void beginSocialAuth("github")}
+              disabled={authBusy || desktopRedirectBusy}
+            >
+              <GitHubLogo />
+              <span>Continue with GitHub</span>
+            </SocialButton>
 
             <SocialButton
               onClick={() => void beginSocialAuth("google")}
@@ -399,12 +425,7 @@ export function AuthPanel({
               className="den-input disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500"
               type="email"
               value={email}
-              onChange={(event) => {
-                setEmail(event.target.value);
-                if (authMode === "sign-in") {
-                  setSignInEmailConfirmed(false);
-                }
-              }}
+              onChange={(event) => setEmail(event.target.value)}
               autoComplete="email"
               readOnly={lockEmail}
               disabled={lockEmail}
@@ -413,7 +434,7 @@ export function AuthPanel({
           </label>
         ) : null}
 
-        {!verificationRequired && !isPasswordResetRequest && !isSignInEmailStep ? (
+        {!verificationRequired && !isPasswordResetRequest ? (
           <label className="grid gap-2">
             <span className="den-label">Password</span>
             <input
@@ -443,10 +464,14 @@ export function AuthPanel({
           </label>
         ) : null}
 
-        {authMode === "sign-in" && !verificationRequired && !isPasswordResetRequest && !isSignInEmailStep && !hideEmailField ? (
-          <div className="-mt-2 flex justify-end">
+        {!verificationRequired && !isPasswordResetRequest && !hideEmailField ? (
+          // Always rendered (invisible in sign-up) so switching modes never
+          // changes the card height.
+          <div className={`-mt-2 flex justify-end ${authMode === "sign-in" ? "" : "invisible"}`}>
             <button
               type="button"
+              tabIndex={authMode === "sign-in" ? 0 : -1}
+              aria-hidden={authMode !== "sign-in"}
               className="text-sm font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
               onClick={() => {
                 setAuthMode("sign-in");
@@ -483,7 +508,6 @@ export function AuthPanel({
               type="button"
               className="den-button-secondary w-full"
               onClick={() => {
-                setSignInEmailConfirmed(false);
                 cancelVerification();
               }}
               disabled={authBusy || desktopRedirectBusy}
@@ -504,34 +528,10 @@ export function AuthPanel({
               setPasswordResetRequested(false);
               setPasswordResetInfo("");
               setPasswordResetError(null);
-              setSignInEmailConfirmed(false);
               setAuthMode("sign-in");
             }}
           >
             Back to sign in
-          </button>
-        </div>
-      ) : !verificationRequired ? (
-        <div className="flex flex-col gap-2 border-t border-[var(--dls-border)] pt-4 text-sm text-[var(--dls-text-secondary)] sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-          <p className="m-0">
-            {authMode === "sign-in"
-              ? resolvedSignInContent.togglePrompt
-              : resolvedSignUpContent.togglePrompt}
-          </p>
-          <button
-            type="button"
-            className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
-            onClick={() => {
-              setPasswordResetRequested(false);
-              setPasswordResetInfo("");
-              setPasswordResetError(null);
-              setSignInEmailConfirmed(false);
-              setAuthMode(authMode === "sign-in" ? "sign-up" : "sign-in");
-            }}
-          >
-            {authMode === "sign-in"
-              ? resolvedSignInContent.toggleActionLabel
-              : resolvedSignUpContent.toggleActionLabel}
           </button>
         </div>
       ) : null}
@@ -558,6 +558,16 @@ export function AuthPanel({
               <CheckCircle2 className="h-3.5 w-3.5" />
               <span>Waiting for your verification code</span>
             </div>
+          ) : null}
+          {authError && authMode === "sign-in" && !verificationRequired ? (
+            <button
+              type="button"
+              className="mt-1 inline-flex items-center justify-center gap-1 font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+              onClick={() => switchMode("sign-up")}
+            >
+              New here? Create an account
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
           ) : null}
         </div>
       ) : null}

@@ -270,15 +270,11 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
             title: `Join ${preview.organization.name}.`,
             copy: "Pick a password and you're in.",
             submitLabel: `Join ${preview.organization.name}`,
-            togglePrompt: "Already on Cloud?",
-            toggleActionLabel: "Sign in",
           }}
           signInContent={{
             title: `Join ${preview.organization.name}.`,
             copy: `Sign in as ${preview.invitation.email} to accept this invite.`,
             submitLabel: "Sign in to join",
-            togglePrompt: "Need a new account?",
-            toggleActionLabel: "Create one",
           }}
           verificationContent={{
             title: "Check your inbox.",

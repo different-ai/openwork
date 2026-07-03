@@ -319,7 +319,10 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
               <button
                 type="button"
                 className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-dls-accent text-sm font-semibold text-[var(--dls-accent-fg)] transition-all hover:bg-[var(--dls-accent-hover)] disabled:opacity-60 disabled:cursor-not-allowed"
-                onClick={() => props.onOpenBrowserAuth("sign-in")}
+                // Opens on the sign-up tab (label stays "Sign in"): most
+                // people hitting this are new, and the web page's tabs let
+                // returning users switch to sign-in in one tap.
+                onClick={() => props.onOpenBrowserAuth("sign-up")}
                 disabled={props.authBusy || props.sessionBusy}
               >
                 Sign in with OpenWork Cloud
