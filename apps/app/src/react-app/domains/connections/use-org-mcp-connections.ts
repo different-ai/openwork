@@ -69,11 +69,9 @@ export function resolveOrgMcpConnectionCardState(
 
 /**
  * Org-level External MCP Connections (Den's `/v1/mcp-connections`) usable by
- * the signed-in member — the "From your organization" section of the
- * desktop's Extensions view. Distinct from `MCP_QUICK_CONNECT`: these are
- * admin-published, org-shared or per-member connections executed through
- * Den's `search_capabilities`/`execute_capability` surface, not local
- * per-workspace `mcpServers` entries.
+ * the signed-in member. The settings catalog projects them into Marketplace
+ * or My Extensions; they execute through Den's `search_capabilities` /
+ * `execute_capability` surface, not local per-workspace `mcpServers` entries.
  */
 export function useOrgMcpConnections() {
   const [connections, setConnections] = useState<DenExternalMcpConnection[]>([]);

@@ -6,13 +6,18 @@ import type { McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin } from "@/app/cloud/import-state";
 import type { PendingCloudPluginChange } from "@/app/cloud/desktop-cloud-sync";
 import { evaluateEnablement, type EnablementContext } from "@/app/enablement";
-import type { DenOrgMarketplaceResolved, DenOrgPlugin, DenOrgPluginResolved } from "@/app/lib/den";
+import type { DenExternalMcpConnection, DenOrgMarketplaceResolved, DenOrgPlugin, DenOrgPluginResolved } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
 import { ExtensionCard } from "@/react-app/design-system/extension-card";
 import { ExtensionDetailModal } from "@/react-app/design-system/extension-detail-modal";
-import { isToggleControlledExtension, type ExtensionItem } from "@/react-app/domains/settings/extension-items";
+import {
+  isOrgMcpConnectionItem,
+  isToggleControlledExtension,
+  orgMcpConnectionActionLabel,
+  type ExtensionItem,
+} from "@/react-app/domains/settings/extension-items";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import type { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
 import {
@@ -77,7 +82,17 @@ type BuiltInMarketplaceRow = {
   searchableText: string;
 };
 
-type MarketplaceRow = MarketplacePackageRow | BuiltInMarketplaceRow;
+type OrgMcpMarketplaceRow = {
+  source: "org-mcp";
+  marketplaceId: "org-mcp-connections";
+  marketplaceName: string;
+  item: ExtensionItem & { orgMcpConnection: DenExternalMcpConnection };
+  connection: DenExternalMcpConnection;
+  status: MarketplacePackageStatus;
+  searchableText: string;
+};
+
+type MarketplaceRow = MarketplacePackageRow | BuiltInMarketplaceRow | OrgMcpMarketplaceRow;
 
 export function shouldShowMarketplaceRows(isSignedIn: boolean, activeOrgId: string) {
   return isSignedIn && activeOrgId.trim().length > 0;
@@ -95,6 +110,9 @@ export type CloudMarketplacesViewProps = {
   configSlotForBuiltIn?: (entry: McpDirectoryInfo) => React.ReactNode | null;
   isBuiltInConnected?: (entry: McpDirectoryInfo) => boolean;
   extensionItems?: ExtensionItem[];
+  orgMcpConnectingId?: string | null;
+  onConnectOrgMcp?: (connectionId: string) => void;
+  refreshOrgMcpConnections?: () => Promise<unknown> | void;
   setBuiltInEnabled?: (entry: McpDirectoryInfo, enabled: boolean) => void;
 };
 
@@ -179,6 +197,9 @@ export function CloudMarketplacesView({
   configSlotForBuiltIn,
   isBuiltInConnected,
   extensionItems = [],
+  orgMcpConnectingId = null,
+  onConnectOrgMcp,
+  refreshOrgMcpConnections,
   setBuiltInEnabled,
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
@@ -279,7 +300,39 @@ export function CloudMarketplacesView({
     });
   }, [builtInEntries, enablementContext, extensionItemsByBuiltInId, isBuiltInConnected]);
 
-  const rows = React.useMemo<MarketplaceRow[]>(() => canShowRows ? [...builtInRows, ...cloudRows] : [], [builtInRows, canShowRows, cloudRows]);
+  const orgMcpRows = React.useMemo<OrgMcpMarketplaceRow[]>(() => {
+    return extensionItems.flatMap((item) => {
+      if (!isOrgMcpConnectionItem(item) || item.installState !== "available") return [];
+      const connection = item.orgMcpConnection;
+      return [{
+        source: "org-mcp",
+        marketplaceId: "org-mcp-connections",
+        marketplaceName: "Organization MCP Connections",
+        item,
+        connection,
+        status: item.installState,
+        searchableText: [
+          item.name,
+          item.description ?? "",
+          connection.url,
+          connection.credentialMode,
+          "shared by your organization mcp connect account",
+        ].join(" ").toLowerCase(),
+      }];
+    });
+  }, [extensionItems]);
+
+  const rows = React.useMemo<MarketplaceRow[]>(() => canShowRows ? [...builtInRows, ...orgMcpRows, ...cloudRows] : [], [builtInRows, canShowRows, cloudRows, orgMcpRows]);
+
+  React.useEffect(() => {
+    if (detailRow?.source !== "org-mcp") return;
+    const current = orgMcpRows.find((row) => row.connection.id === detailRow.connection.id);
+    if (!current) {
+      setDetailRow(null);
+      return;
+    }
+    if (current.item !== detailRow.item) setDetailRow(current);
+  }, [detailRow, orgMcpRows]);
 
   React.useEffect(() => {
     if (rows.length > 0) lastRowsRef.current = rows;
@@ -290,9 +343,10 @@ export function CloudMarketplacesView({
   const marketplaceOptions = React.useMemo(
     () => canShowRows ? [
       ...(builtInRows.length > 0 ? [{ id: "openwork-builtins", name: "OpenWork Built-ins" }] : []),
+      ...(orgMcpRows.length > 0 ? [{ id: "org-mcp-connections", name: "Organization MCP Connections" }] : []),
       ...marketplaces.map((marketplace) => ({ id: marketplace.marketplace.id, name: marketplace.marketplace.name })),
     ] : [],
-    [builtInRows.length, canShowRows, marketplaces],
+    [builtInRows.length, canShowRows, marketplaces, orgMcpRows.length],
   );
 
   const visibleRows = React.useMemo(() => {
@@ -315,6 +369,7 @@ export function CloudMarketplacesView({
       try {
         session.syncCurrentDenSettings();
         await extensions.refreshCloudOrgMarketplaces({ force: true });
+        await refreshOrgMcpConnections?.();
         if (!quiet) {
           const count = extensions.cloudOrgMarketplaces().reduce((total, marketplace) => total + marketplace.plugins.length, 0);
           toast.info(
@@ -337,6 +392,7 @@ export function CloudMarketplacesView({
       activeOrgId,
       authToken,
       session.syncCurrentDenSettings,
+      refreshOrgMcpConnections,
     ],
   );
 
@@ -562,15 +618,16 @@ export function CloudMarketplacesView({
       {visibleRows.length > 0 ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3">
           {visibleRows.map((row) => {
-            const pluginName = row.source === "cloud" ? row.plugin.name : row.entry.name;
+            const pluginName = row.source === "cloud" ? row.plugin.name : row.source === "built-in" ? row.entry.name : row.item.name;
             const isHighlighted = highlightPluginName != null && pluginName === highlightPluginName;
             return (
               <MarketplaceCard
-                key={row.source === "cloud" ? `${row.marketplaceId}:${row.plugin.id}` : `${row.marketplaceId}:${row.entry.id ?? row.entry.name}`}
+                key={row.source === "cloud" ? `${row.marketplaceId}:${row.plugin.id}` : row.source === "built-in" ? `${row.marketplaceId}:${row.entry.id ?? row.entry.name}` : row.item.id}
                 actionId={actionId}
                 row={row}
                 onOpenDetail={setDetailRow}
                 onUpdatePlugin={importPlugin}
+                orgMcpConnectingId={orgMcpConnectingId}
                 builtInDisabled={builtInExtensionsDisabled}
                 builtInConnectingName={builtInConnectingName}
                 highlighted={isHighlighted}
@@ -600,6 +657,13 @@ export function CloudMarketplacesView({
           onSetEnabled={setBuiltInEnabled}
           onClose={() => setDetailRow(null)}
         />
+      ) : detailRow?.source === "org-mcp" ? (
+        <OrgMcpConnectionDetailModal
+          row={detailRow}
+          connecting={orgMcpConnectingId === detailRow.connection.id}
+          onClose={() => setDetailRow(null)}
+          onConnect={onConnectOrgMcp}
+        />
       ) : null}
     </SettingsSection>
   );
@@ -628,6 +692,7 @@ function MarketplaceCard(props: {
   row: MarketplaceRow;
   onOpenDetail: (row: MarketplaceRow) => void;
   onUpdatePlugin: (marketplaceId: string | null, plugin: DenOrgPlugin) => void | Promise<void>;
+  orgMcpConnectingId: string | null;
   builtInDisabled: boolean;
   builtInConnectingName: string | null;
   highlighted?: boolean;
@@ -662,6 +727,23 @@ function MarketplaceCard(props: {
           disabled={props.builtInDisabled}
           disabledReason={props.builtInDisabled ? "Disabled by organization" : null}
           actionLabel={row.active ? "Manage" : "View setup"}
+          onClick={() => onOpenDetail(row)}
+        />
+      </div>
+    );
+  }
+
+  if (row.source === "org-mcp") {
+    const actionBusy = props.orgMcpConnectingId === row.connection.id;
+    return (
+      <div ref={highlightRef} className={highlightClass}>
+        <ExtensionCard
+          name={row.item.name}
+          description={row.item.description ?? "Available from your organization."}
+          kind="mcp"
+          connected={false}
+          connecting={actionBusy}
+          actionLabel={actionBusy ? "Waiting for browser..." : orgMcpConnectionActionLabel(row.connection)}
           onClick={() => onOpenDetail(row)}
         />
       </div>
@@ -737,6 +819,44 @@ function BuiltInMarketplaceDetailModal(props: {
       uninstallLabel="Disable"
       onConnect={!disabled && toggleControlled && !row.active && onSetEnabled ? () => onSetEnabled(entry, true) : undefined}
       onUninstall={!disabled && toggleControlled && row.active && onSetEnabled ? () => onSetEnabled(entry, false) : undefined}
+    />
+  );
+}
+
+function OrgMcpConnectionDetailModal(props: {
+  row: OrgMcpMarketplaceRow;
+  connecting: boolean;
+  onClose: () => void;
+  onConnect?: (connectionId: string) => void;
+}) {
+  const { row, connecting, onClose, onConnect } = props;
+  return (
+    <ExtensionDetailModal
+      open
+      onClose={onClose}
+      name={row.item.name}
+      description={row.item.description ?? "Available from your organization."}
+      kind="mcp"
+      connected={false}
+      connecting={connecting}
+      connectLabel={orgMcpConnectionActionLabel(row.connection)}
+      connectingLabel="Waiting for browser..."
+      url={row.connection.url}
+      oauth={row.connection.authType === "oauth"}
+      showEnablementCard={false}
+      onConnect={onConnect ? () => onConnect(row.connection.id) : undefined}
+      configSlot={(
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <SettingsPill>Shared by your organization</SettingsPill>
+            <SettingsPill>{row.connection.credentialMode === "shared" ? "Shared credential" : "Your account"}</SettingsPill>
+            <SettingsPill>MCP</SettingsPill>
+          </div>
+          <SettingsNotice>
+            OpenWork stores this sign-in in the organization cloud. Once connected, your desktop agent can use the tools through OpenWork Cloud Control.
+          </SettingsNotice>
+        </div>
+      )}
     />
   );
 }

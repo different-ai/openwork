@@ -519,8 +519,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
 
 function connectCallbackPage(input: { ok: true; name: string } | { ok: false; name: string; message: string }): string {
   const title = input.ok ? "Connected" : "Connection failed"
+  const openWorkUrl = "openwork://settings/extensions"
   const body = input.ok
-    ? `<p>${escapeHtml(input.name)} is connected. You can close this tab and return to Den.</p>`
+    ? `<p>${escapeHtml(input.name)} is connected. You can return to OpenWork now.</p>
+      <p><a href="${openWorkUrl}" style="display:inline-block; margin-top:16px; border-radius:10px; background:#0f172a; color:white; padding:10px 14px; text-decoration:none; font-weight:600;">Open OpenWork</a></p>
+      <script>setTimeout(() => { window.location.href = "${openWorkUrl}" }, 500)</script>`
     : `<p>Couldn't connect ${escapeHtml(input.name)}: ${escapeHtml(input.message)}</p>`
   return `<!doctype html>
 <html>

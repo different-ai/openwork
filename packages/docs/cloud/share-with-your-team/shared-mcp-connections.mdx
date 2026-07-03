@@ -1,0 +1,103 @@
+---
+title: "Sharing MCP connections with your team"
+description: "Connect Notion, Linear, Stripe, or any MCP server once in OpenWork Cloud and let every member's agent use it — with each person's own account"
+---
+
+Use `MCP Connections` when you want the org to manage an MCP integration once
+— the server URL, who can use it, and how people sign in — instead of every
+member configuring Notion or Linear by hand on every machine.
+
+Two ways to handle credentials, chosen per connection:
+
+- **Shared credential** — an admin connects once (a service account or API
+  key). Every granted member's agent uses that identity. Nothing for members
+  to do.
+- **Each member connects their own account** — for tools like Notion or
+  Linear where people have their own pages, projects, and permissions. The
+  agent acts as *you*, and the provider's own access rules apply.
+
+## Publish the connection in OpenWork Cloud
+
+1. Open `MCP Connections` in the OpenWork Cloud dashboard.
+2. Click `Add Connection`.
+3. Pick a preset (Notion, Linear, Stripe, Sentry, Context7) or enter any
+   MCP server URL.
+4. Choose the credential mode: `Shared` or `Each member connects their own
+   account`.
+5. Choose who can use it: the whole workspace, specific teams, or specific
+   people.
+6. Click `Create`.
+
+<Frame>
+  ![MCP Connections admin screen in OpenWork Cloud](/images/cloud-mcp-connections-admin.png)
+</Frame>
+
+For a shared-credential connection, finish by clicking `Connect` and
+completing the provider's sign-in as the service account. Per-member
+connections are ready to publish immediately — each person connects
+themselves.
+
+## What members see in the desktop app
+
+Granted members find the connection in `Settings -> Extensions`, in the same
+catalog as everything else the org shares:
+
+- **Marketplace tab** — connections you can use but haven't connected yet,
+  with a `Connect your account` action.
+- **My Extensions tab** — connections that are ready: ones you've connected,
+  and shared-credential ones your admin manages.
+
+<Frame>
+  ![An org-shared connection in the Marketplace tab, ready to connect](/images/desktop-org-mcp-marketplace.png)
+</Frame>
+
+## Connect your account
+
+1. Open `Settings -> Extensions -> Marketplace`.
+2. Click the connection card, then `Connect your account`.
+3. Your browser opens the provider's own sign-in page. Approve access.
+4. The browser shows `Connected` — return to OpenWork.
+5. The card updates by itself, no reload needed, and moves to
+   `My Extensions`.
+
+<Frame>
+  ![The same card flipped to Connected after the browser sign-in](/images/desktop-org-mcp-connected.png)
+</Frame>
+
+Your sign-in is stored in OpenWork Cloud, not on this machine — connect once
+and every device you use is connected.
+
+## Your agent can use it immediately
+
+No restart, no resync. Ask for something the tool can do:
+
+> Find the "Q3 launch" page in Notion and summarize it.
+
+The agent discovers the org's tools through the `OpenWork Cloud Control`
+connection, and executes them with **your** account — your permissions,
+your audit trail on the provider's side.
+
+<Frame>
+  ![The agent executing an org-shared MCP tool in chat](/images/desktop-org-mcp-chat.png)
+</Frame>
+
+If the agent finds a tool you haven't connected yet, it tells you in the
+chat with a `Connect` button — you never have to go hunting in settings.
+
+## Notes for admins
+
+- Members only see connections they've been granted — access is explicit
+  (workspace-wide, team, or per-person), and it's enforced by the server on
+  every request, not by the app.
+- Removing a connection (or a member's access) takes effect immediately for
+  every device.
+- Members who already connected a tool directly in their desktop app keep
+  their existing setup — publishing an org connection never removes or
+  changes anyone's local configuration.
+
+## Relationship to local MCP servers
+
+Everything in [Add an MCP server](/start-here/connect-your-stack/add-an-mcp-server)
+still works, with or without a cloud account. Local servers (like OpenWork
+Browser and UI Control) always run on your machine. Org connections are for
+the things a team shares.

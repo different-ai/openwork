@@ -1651,10 +1651,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       importedCloudPlugins: extensionsStore.importedCloudPlugins(),
       pendingCloudPluginChanges: extensionsStore.pendingCloudPluginChanges(),
       cloudMarketplaces: extensionsStore.cloudOrgMarketplaces(),
+      orgMcpConnections: orgMcpConnections.connections,
       enablementContext,
       isBuiltInConnected: extensionController.isConnected,
     }),
-    [connectionsSnapshot.mcpServers, connectionsStore.quickConnect, enablementContext, extensionController, extensionsStore],
+    [connectionsSnapshot.mcpServers, connectionsStore.quickConnect, enablementContext, extensionController, extensionsStore, orgMcpConnections.connections],
   );
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
@@ -2096,11 +2097,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 selectedMcp={connectionsSnapshot.selectedMcp}
                 setSelectedMcp={(name) => connectionsStore.setSelectedMcp(name)}
                 quickConnect={extensionItems.quickConnectEntries}
-                orgMcpConnections={orgMcpConnections.connections}
-                orgMcpConnectingId={orgMcpConnections.connectingId}
-                onConnectOrgMcp={(connectionId) => {
-                  void orgMcpConnections.connect(connectionId);
-                }}
+                installedOrgMcpItems={extensionItems.orgMcpConnectionItems.filter((item) => item.installState === "installed")}
                 enablementContext={enablementContext}
                 builtInExtensionsDisabled={builtInExtensionsDisabled}
                 connectMcp={(entry) => {
@@ -2145,6 +2142,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 configSlotForBuiltIn={extensionController.configSlotForEntry}
                 isBuiltInConnected={extensionController.isConnected}
                 extensionItems={extensionItems.items}
+                orgMcpConnectingId={orgMcpConnections.connectingId}
+                onConnectOrgMcp={(connectionId) => {
+                  void orgMcpConnections.connect(connectionId);
+                }}
+                refreshOrgMcpConnections={orgMcpConnections.refresh}
                 setBuiltInEnabled={setOpenWorkExtensionEnabled}
               />
             }
@@ -2170,6 +2172,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             configSlotForBuiltIn={extensionController.configSlotForEntry}
             isBuiltInConnected={extensionController.isConnected}
             extensionItems={extensionItems.items}
+            orgMcpConnectingId={orgMcpConnections.connectingId}
+            onConnectOrgMcp={(connectionId) => {
+              void orgMcpConnections.connect(connectionId);
+            }}
+            refreshOrgMcpConnections={orgMcpConnections.refresh}
             setBuiltInEnabled={setOpenWorkExtensionEnabled}
           />
         );

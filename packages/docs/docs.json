@@ -67,7 +67,8 @@
               "cloud/share-with-your-team/team-templates",
               "cloud/share-with-your-team/desktop-policies",
               "cloud/share-with-your-team/managed-llm-provider",
-              "cloud/share-with-your-team/custom-llm-provider"
+              "cloud/share-with-your-team/custom-llm-provider",
+              "cloud/share-with-your-team/shared-mcp-connections"
             ]
           },
           {
