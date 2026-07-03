@@ -139,7 +139,7 @@ export default {
         const minted = await denFetch(ctx, "/v1/mcp/token", {
           method: "POST",
           headers: { authorization: `Bearer ${ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim()}` },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
         });
         ctx.assert(typeof minted.token === "string" && minted.token.startsWith("ow_mcp_at_"), "Expected a real opaque MCP token.");
         ctx.mcpToken = minted.token;
