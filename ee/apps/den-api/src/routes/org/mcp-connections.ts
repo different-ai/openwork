@@ -440,7 +440,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
       } else {
         // Per-member: any member GRANTED the connection may connect their own
-        // account (that's the whole point); admins may too.
+        // account (that is the whole point); admins may too.
         const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
         const isAdmin = ensureOrganizationAdmin(c, "").ok
         const canUse = await memberCanUseExternalMcpConnection({
