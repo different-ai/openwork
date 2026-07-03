@@ -45,21 +45,25 @@ export default async function Download() {
   const platformGroups = [
     {
       os: "macOS",
-      primary: { label: "Download for macOS", format: ".dmg", href: github.installers.macos.appleSilicon },
-      alternates: [{ label: "Intel", format: ".dmg", href: github.installers.macos.intel }]
+      options: [
+        { label: "Mac (Apple Silicon)", href: github.installers.macos.appleSilicon },
+        { label: "Mac (Intel)", href: github.installers.macos.intel }
+      ]
     },
     {
       os: "Windows",
-      primary: { label: "Download for Windows", format: ".exe", href: github.installers.windows.x64 },
-      alternates: [{ label: "arm64", format: ".exe", href: github.installers.windows.arm64 }]
+      options: [
+        { label: "Windows (x64)", href: github.installers.windows.x64 },
+        { label: "Windows (ARM64)", href: github.installers.windows.arm64 }
+      ]
     },
     {
       os: "Linux",
-      primary: { label: "Download for Linux", format: ".AppImage", href: github.installers.linux.appImageX64 },
-      alternates: [
-        { label: "arm64", format: ".AppImage", href: github.installers.linux.appImageArm64 },
-        { label: "x64", format: ".tar.gz", href: github.installers.linux.tarX64 },
-        { label: "arm64", format: ".tar.gz", href: github.installers.linux.tarArm64 }
+      options: [
+        { label: "Linux AppImage (x64)", href: github.installers.linux.appImageX64 },
+        { label: "Linux AppImage (ARM64)", href: github.installers.linux.appImageArm64 },
+        { label: "Linux tar.gz (x64)", href: github.installers.linux.tarX64 },
+        { label: "Linux tar.gz (ARM64)", href: github.installers.linux.tarArm64 }
       ]
     }
   ];
@@ -99,26 +103,22 @@ export default async function Download() {
                 key={group.os}
                 className="rounded-[2rem] border border-slate-200/40 bg-white/80 p-6 shadow-[0_20px_60px_-24px_rgba(15,23,42,0.18)]"
               >
-                <span className="mb-4 block text-[16px] font-semibold text-gray-900">
+                <span className="mb-2 block text-[16px] font-semibold text-gray-900">
                   {group.os}
                 </span>
-                <a href={group.primary.href} className="doc-button mb-4 inline-flex w-full text-[14px]">
-                  {group.primary.label}
-                </a>
-                {group.alternates.length > 0 ? (
-                  <div className="flex flex-col gap-2">
-                    {group.alternates.map((option) => (
-                      <a
-                        key={`${option.label}-${option.format}`}
-                        href={option.href}
-                        className="text-[13px] text-gray-600 transition-colors hover:text-[#011627]"
-                      >
-                        {option.label}{" "}
-                        <span className="mono text-gray-400">{option.format}</span>
-                      </a>
-                    ))}
-                  </div>
-                ) : null}
+                <div className="flex flex-col">
+                  {group.options.map((option, index) => (
+                    <a
+                      key={option.label}
+                      href={option.href}
+                      className={`py-3 text-[14px] text-gray-700 transition-colors hover:text-[#011627] ${
+                        index < group.options.length - 1 ? "border-b border-gray-100" : ""
+                      }`}
+                    >
+                      {option.label}
+                    </a>
+                  ))}
+                </div>
               </div>
             ))}
           </section>
