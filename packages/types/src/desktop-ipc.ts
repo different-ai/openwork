@@ -501,6 +501,7 @@ export type DesktopCommandMap = {
   __setZoomFactor: { args: [factor: number]; result: boolean };
   __setNativeTheme: { args: [theme: string]; result: unknown };
   __setApplicationMenuVisible: { args: [visible: boolean]; result: unknown };
+  __setSpellCheckerEnabled: { args: [enabled: boolean]; result: boolean };
 };
 
 export type DesktopCommandName = keyof DesktopCommandMap;

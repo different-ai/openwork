@@ -15,6 +15,8 @@ export type AppearanceViewProps = {
   setLanguage: (value: Language) => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
+  composerSpellcheckEnabled: boolean;
+  toggleComposerSpellcheck: () => void;
 };
 
 export function AppearanceView(props: AppearanceViewProps) {

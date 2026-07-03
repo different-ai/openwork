@@ -1070,6 +1070,8 @@ export default {
   "settings.group_workspace": "Workspace",
   "settings.hide_titlebar": "Hide titlebar",
   "settings.hide_titlebar_desc": "Hide the window titlebar. Useful for tiling window",
+  "settings.composer_spellcheck": "Composer spell check",
+  "settings.composer_spellcheck_desc": "Show red underlines for misspelled words while typing prompts. Off by default for non-English text.",
   "settings.join_discord": "Join Discord",
   "settings.language": "Language",
   "settings.language.description": "Choose your preferred language",

@@ -1417,6 +1417,13 @@ const desktopCommandHandlers = {
   "__setApplicationMenuVisible": async (event, ...args) => {
       return applicationMenu.setVisible(args[0]);
   },
+  "__setSpellCheckerEnabled": async (event, ...args) => {
+      const enabled = args[0] === true;
+      const window = activeWindowFromEvent(event);
+      if (!window) return false;
+      window.webContents.session.setSpellCheckerEnabled(enabled);
+      return true;
+  },
 };
 
 async function handleDesktopInvoke(event, command, ...args) {
@@ -1460,6 +1467,9 @@ async function createMainWindow() {
       // Enable Chromium's built-in PDF viewer so PDFs render inside the
       // artifact panel (<embed> pointed at a blob URL).
       plugins: true,
+      // Chromium spellcheck is distracting for non-English prompts and ignores
+      // Windows OS spell settings. Users can re-enable it in Settings > Appearance.
+      spellcheck: false,
     },
   });
   applicationMenu.applyVisibility(mainWindow);

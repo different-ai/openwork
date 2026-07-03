@@ -15,7 +15,10 @@ import {
 } from "../settings-layout";
 
 interface WindowSectionProps
-  extends Pick<AppearanceViewProps, "busy" | "hideTitlebar" | "toggleHideTitlebar"> {}
+  extends Pick<
+    AppearanceViewProps,
+    "busy" | "hideTitlebar" | "toggleHideTitlebar" | "composerSpellcheckEnabled" | "toggleComposerSpellcheck"
+  > {}
 
 export function WindowSection(props: WindowSectionProps) {
   return (
@@ -34,6 +37,20 @@ export function WindowSection(props: WindowSectionProps) {
               checked={props.hideTitlebar}
               disabled={props.busy}
               onCheckedChange={props.toggleHideTitlebar}
+            />
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+      </LayoutSectionItem>
+
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>{t("settings.composer_spellcheck")}</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>{t("settings.composer_spellcheck_desc")}</LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Switch
+              checked={props.composerSpellcheckEnabled}
+              disabled={props.busy}
+              onCheckedChange={props.toggleComposerSpellcheck}
             />
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
