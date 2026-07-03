@@ -29,6 +29,10 @@ the flow declares which via `kind` in `evals/flows/<id>.flow.mjs`:
   perf improvements, storage swaps, invariants, refactors. The frames
   demonstrate the internal claim (timings before/after, unchanged core flow,
   identical output) in a way a reviewer can still follow frame by frame.
+  Internal demos of terminal/tooling experiences may set `requiresApp: false`
+  to run without a CDP connection; their frames are claims + assertions +
+  recorded command output (`ctx.output`) instead of screenshots (see
+  `evals/flows/voiceover-first-dx.flow.mjs`).
 
 If you cannot say which of the two your fraimz is, you have not framed the
 experience yet — go back to step 1 of the loop.
@@ -42,9 +46,14 @@ video. The runner renders it on each frame in `fraimz.html` with a play button
 
 Rules:
 
-- **Write the voiceover script before coding the flow.** Narrate the whole demo
-  end to end (one paragraph per frame), state it back, and only then translate
-  each paragraph into a `ctx.prove` step. If a step is hard to narrate, the
+- **Write the voiceover script before coding the flow — ideally before the
+  feature.** The script is the spec (the PRD replacement): align on it with
+  the user via the **`voiceover` skill** / `/voiceover` command, then land it
+  at `evals/voiceovers/<flow-id>.md` (numbered paragraphs = frames) and
+  generate the flow from it with `pnpm fraimz scaffold <flow-id>`. Flows load
+  their narration from the script (`loadVoiceoverParagraphs`), and the runner
+  **fails any flow whose narration drifts** from the approved file (missing
+  scripted frames or unapproved lines). If a step is hard to narrate, the
   step is wrong.
 - Every `ctx.prove` must pass `voiceover`. Frames without one are flagged
   ("No voiceover for this frame") in the artifact — treat that flag as a
@@ -83,11 +92,13 @@ changes with no runtime path may skip — but say so explicitly.
    route, error state, missing text, stale dialog, duplicate image, missing
    voiceover), fix the visible state or the code and rerun until every claim
    has a passing assertion, a narrated voiceover, and a valid screenshot.
-6. **Output fraimz + verdict.** The run writes `fraimz.html` plus
-   `report.md` / `report.json` to `evals/results/<run-id>/`. Report the path to
-   `fraimz.html` as the headline deliverable. Report `Passed` only when fraimz
-   exists and every claim is backed by an observable assertion; otherwise
-   `Incomplete` / `Failed`, stated honestly with repro steps.
+6. **Output fraimz + verdict — on the PR.** The run writes `fraimz.html` plus
+   `report.md` / `report.json` to `evals/results/<run-id>/`. When a PR exists,
+   post the proof on it: `pnpm fraimz --flow <id> --pr [number]` renders the
+   frames (verdict, claims, voiceovers, assertions) as a PR comment via `gh`
+   (`--pr` alone targets the current branch's PR). Report `Passed` only when
+   fraimz exists and every claim is backed by an observable assertion;
+   otherwise `Incomplete` / `Failed`, stated honestly with repro steps.
 
 ## The canonical core flow
 
@@ -167,6 +178,9 @@ Keep this skill as the loop. The deeper mechanics live in:
 
 - `evals/README.md` — runner, flags, conventions, full `ctx.*` reference.
 - `evals/flows/` — existing coded flows to reuse or pattern-match.
+- `evals/voiceovers/` + `evals/runner/voiceover.mjs` — approved scripts,
+  parser, drift check, scaffolder; the `voiceover` skill owns the alignment
+  phase before any code.
 - Skills: `run-evals` (launch + run), `daytona-flow-validator` (observe → act →
   assert → repair → verdict), `daytona-electron-test`,
   `daytona-recording-artifacts` (optional video).

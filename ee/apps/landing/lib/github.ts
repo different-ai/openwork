@@ -139,6 +139,7 @@ export const getGithubData = async () => {
   const macosIntel = selectAsset(assets, [".dmg"], ["mac-x64"]);
   const windowsX64 =
     selectAsset(windowsAssets, [".exe"], ["win-x64"]) || exe;
+  const windowsArm64 = selectAsset(windowsAssets, [".exe"], ["win-arm64"]);
 
   const linuxAppImageX64 =
     selectAsset(assets, [".appimage"], ["linux-x86_64"]) ||
@@ -165,7 +166,8 @@ export const getGithubData = async () => {
         intel: macosIntel?.browser_download_url || dmg?.browser_download_url || releaseUrl
       },
       windows: {
-        x64: windowsX64?.browser_download_url || windowsReleaseUrl
+        x64: windowsX64?.browser_download_url || windowsReleaseUrl,
+        arm64: windowsArm64?.browser_download_url || windowsReleaseUrl
       },
       linux: {
         appImageX64: linuxAppImageX64?.browser_download_url || releaseUrl,

@@ -66,6 +66,16 @@ Den uses Better Auth. It runs in your deployment, uses your database, and is con
 
 SSO (SAML/OIDC) is in the current rollout and is designed to run against your own identity provider. When enabled, callback URLs and trusted origins should point at your self-hosted Den web/controller hosts.
 
+For isolated Kubernetes deployments without external egress, the Helm chart disables the external breached-password lookup by default:
+
+```yaml
+config:
+  auth:
+    passwordBreachScreeningEnabled: "false"
+```
+
+This avoids calls to the Have I Been Pwned Pwned Passwords range API during password creation and reset. Email/password sign-in lockout remains local. If your deployment has approved egress, set the value to `"true"` to restore known-compromised password rejection through the external range API.
+
 If you do not deploy Den, worker access is token-based with `OPENWORK_TOKEN` and `OPENWORK_HOST_TOKEN`.
 
 ## Minimal Working Stack

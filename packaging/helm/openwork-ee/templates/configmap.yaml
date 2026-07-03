@@ -9,6 +9,7 @@ data:
   NODE_ENV: "production"
   OPENWORK_DEV_MODE: {{ .Values.config.openworkDevMode | quote }}
   DB_MODE: {{ .Values.config.databaseMode | quote }}
+  DEN_PASSWORD_BREACH_SCREENING_ENABLED: {{ .Values.config.auth.passwordBreachScreeningEnabled | quote }}
   BETTER_AUTH_URL: {{ .Values.config.public.webOrigin | quote }}
   DEN_MCP_RESOURCE_URL: {{ .Values.config.public.mcpResourceUrl | quote }}
   DEN_MCP_CLAIM_NAMESPACE: {{ .Values.config.public.mcpClaimNamespace | quote }}

@@ -24,6 +24,8 @@ export type PreferencesViewProps = {
   onToggleAutoCompactContext: () => void;
   analyticsEnabled: boolean;
   onToggleAnalytics: () => void;
+  memoryEnabled: boolean;
+  onToggleMemory: () => void;
 };
 
 export function PreferencesView(props: PreferencesViewProps) {
@@ -84,6 +86,28 @@ export function PreferencesView(props: PreferencesViewProps) {
                 checked={props.analyticsEnabled}
                 disabled={props.busy}
                 onCheckedChange={props.onToggleAnalytics}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      </LayoutSection>
+
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>{t("memory.preferences_title")}</LayoutSectionTitle>
+          <LayoutSectionDescription>{t("memory.preferences_section_desc")}</LayoutSectionDescription>
+        </LayoutSectionHeader>
+
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("memory.preferences_toggle")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("memory.preferences_toggle_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label={t("memory.preferences_toggle")}
+                checked={props.memoryEnabled}
+                disabled={props.busy}
+                onCheckedChange={props.onToggleMemory}
               />
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>

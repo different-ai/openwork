@@ -19,12 +19,16 @@ Run the full loop, in order, and stop on any failure:
 
 1. **Frame the experience** as a one-line claim ("user can do X and sees Y").
    State it back before proceeding.
-2. **Create or pick the eval.** If no coded flow covers it, write one in
-   `evals/flows/<id>.flow.mjs` using the `ctx.*` helpers (`clickText`, `fill`,
-   `control`, `waitFor`, `expectText`, `prove`, `screenshot`). The end user is
-   the protagonist (drive via CDP). REST/DB/filesystem checks are ONLY how you
-   witness the expected side effects — never the thing being tested. Every
-   meaningful step must use `ctx.prove("claim", { action, assert, screenshot })`.
+2. **Create or pick the eval.** If an approved voice-over script exists at
+   `evals/voiceovers/<id>.md` (see the `voiceover` skill / `/voiceover`),
+   generate the flow from it: `pnpm fraimz scaffold <id>` — narration is wired
+   to the script and the runner fails the flow if it drifts. Otherwise write
+   one in `evals/flows/<id>.flow.mjs` using the `ctx.*` helpers (`clickText`,
+   `fill`, `control`, `waitFor`, `expectText`, `prove`, `screenshot`). The end
+   user is the protagonist (drive via CDP). REST/DB/filesystem checks are ONLY
+   how you witness the expected side effects — never the thing being tested.
+   Every meaningful step must use
+   `ctx.prove("claim", { voiceover, action, assert, screenshot })`.
 3. **Drive it for real.** Launch the app (Daytona preferred via
    `bash .devcontainer/test-on-daytona.sh`, local Electron `pnpm dev` as
    fallback), then run:
@@ -34,9 +38,10 @@ Run the full loop, in order, and stop on any failure:
    route, error state, missing text, stale dialog, duplicate image), fix the
    visible state or the code and rerun until every claim has a passing
    assertion and a valid screenshot.
-5. **Output fraimz.** The run writes `fraimz.html` (frame proof) plus
-   `report.md` / `report.json` to `evals/results/<run-id>/`. Report the path to
-   `fraimz.html` as the headline deliverable.
+5. **Output fraimz — on the PR when one exists.** The run writes `fraimz.html`
+   (frame proof) plus `report.md` / `report.json` to `evals/results/<run-id>/`.
+   Report the path to `fraimz.html` as the headline deliverable, and post the
+   proof as a PR comment with `pnpm fraimz --flow <id> --pr [number]`.
 6. **Verdict.** `Passed` only when the proof exists and every claim is backed by
    an observable assertion in the frames. Otherwise report `Incomplete` or
    `Failed`, honestly, with repro steps. If the app could not run (no model,

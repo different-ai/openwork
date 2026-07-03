@@ -158,7 +158,15 @@ export class EvalContext {
         : options.screenshot;
       await this.screenshot(screenshot.name ?? slug(name), { claim, voiceover, ...screenshot });
     }
-    this.recordEvidence({ type: "claim", status: "passed", name, claim, voiceover });
+    // When a screenshot frame carries the narration, leave it off the completed
+    // claim so fraimz.html narrates each frame exactly once (app-less proves
+    // narrate via the claim instead).
+    this.recordEvidence({ type: "claim", status: "passed", name, claim, voiceover: options?.screenshot ? "" : voiceover });
+  }
+
+  /** Record a terminal/API output as reviewable evidence (rendered as a code block). */
+  output(name, text) {
+    return this.recordEvidence({ type: "output", name, text: String(text) });
   }
 
   /**

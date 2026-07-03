@@ -271,15 +271,11 @@ export function WorkspaceClaimScreen({
             title: "Claim your workspace.",
             copy: "Create an account to take ownership.",
             submitLabel: "Create account and claim",
-            togglePrompt: "Already on Cloud?",
-            toggleActionLabel: "Sign in",
           }}
           signInContent={{
             title: "Claim your workspace.",
             copy: "Sign in to take ownership.",
             submitLabel: "Sign in to claim",
-            togglePrompt: "Need a new account?",
-            toggleActionLabel: "Create one",
           }}
         />
       </section>

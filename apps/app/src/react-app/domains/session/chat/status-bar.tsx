@@ -338,7 +338,9 @@ export function StatusBar(props: StatusBarProps) {
                     size="xs"
                     onClick={() => {
                       const baseUrl = readDenBootstrapConfig().baseUrl;
-                      platform.openLink(buildDenAuthUrl(baseUrl, "sign-in"));
+                      // Label stays "Sign in"; opens the sign-up tab so new
+                      // users aren't defaulted into sign-in (they can toggle).
+                      platform.openLink(buildDenAuthUrl(baseUrl, "sign-up"));
                     }}
                     aria-label={t("den.signin_title")}
                   >

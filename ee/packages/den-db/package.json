@@ -78,8 +78,9 @@
     "db:baseline": "node --import tsx scripts/baseline-migrations.ts",
     "db:bootstrap": "pnpm run build && node --import tsx scripts/bootstrap.ts",
     "db:generate": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs generate --config drizzle.config.ts",
-    "db:migrate": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts",
-    "db:push": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts"
+    "db:migrate": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts && node --import tsx scripts/ensure-fulltext-indexes.ts",
+    "db:push": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node --import tsx scripts/ensure-fulltext-indexes.ts",
+    "db:verify-memory": "pnpm run build && node --import tsx scripts/verify-memory-schema.ts"
   },
   "dependencies": {
     "@openwork/types": "workspace:*",

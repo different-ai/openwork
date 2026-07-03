@@ -156,3 +156,24 @@ test("short password response rejects passwords below the minimum length on crea
   })
   await expect(authProtection.getShortPasswordResponse(signIn)).resolves.toBeNull()
 })
+
+test("breached password response can skip screening for isolated deployments", async () => {
+  const request = new Request("http://den.local/api/auth/sign-up/email", {
+    body: JSON.stringify({ email: "user@example.com", password: "password" }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  })
+  let fetchCount = 0
+
+  const response = await authProtection.getBreachedPasswordResponse(
+    request,
+    async () => {
+      fetchCount += 1
+      return new Response("1E4C9B93F3F0682250B6CF8331B7EE68FD8:3303003\n", { status: 200 })
+    },
+    false,
+  )
+
+  expect(response).toBeNull()
+  expect(fetchCount).toBe(0)
+})

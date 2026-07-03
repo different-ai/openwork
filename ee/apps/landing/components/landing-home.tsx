@@ -1,6 +1,7 @@
 "use client";
 import { AnimatePresence, motion, useInView } from "framer-motion";
 import { ArrowRight, Users } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
@@ -29,7 +30,10 @@ const externalLinkProps = (href: string) =>
     ? { rel: "noreferrer", target: "_blank" as const }
     : {};
 
+// Mobile visitors can't install a desktop app, so the primary CTA points them to
+// the cloud sign-up screen instead of the download page.
 const CLOUD_SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
+
 export function LandingHome(props: Props) {
   const [activeDemoId, setActiveDemoId] = useState(defaultLandingDemoFlowId);
   const [activeUseCase, setActiveUseCase] = useState(0);
@@ -45,9 +49,6 @@ export function LandingHome(props: Props) {
   );
 
   const callLinkProps = externalLinkProps(props.callHref);
-  const primaryCtaHref = CLOUD_SIGNUP_URL;
-  const primaryCtaLabel = "Get Started for free";
-  const primaryCtaLinkProps = externalLinkProps(primaryCtaHref);
 
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
@@ -60,7 +61,7 @@ export function LandingHome(props: Props) {
             downloadHref={props.downloadHref}
             callUrl={props.callHref}
             mobilePrimaryHref={CLOUD_SIGNUP_URL}
-            mobilePrimaryLabel="Get Started for free"
+            mobilePrimaryLabel="Get Started for Free"
             active="home"
           />
         </div>
@@ -83,13 +84,22 @@ export function LandingHome(props: Props) {
 
             <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-                <a
-                  href={primaryCtaHref}
-                  className="doc-button inline-flex items-center gap-2"
-                  {...primaryCtaLinkProps}
-                >
-                  {primaryCtaLabel} <ArrowRight size={18} />
-                </a>
+                {props.isMobileVisitor ? (
+                  <a
+                    href={CLOUD_SIGNUP_URL}
+                    className="doc-button inline-flex items-center gap-2"
+                    {...externalLinkProps(CLOUD_SIGNUP_URL)}
+                  >
+                    Get Started for Free <ArrowRight size={18} />
+                  </a>
+                ) : (
+                  <Link
+                    href="/download"
+                    className="doc-button inline-flex items-center gap-2"
+                  >
+                    Download now <ArrowRight size={18} />
+                  </Link>
+                )}
                 <a
                   href={props.callHref}
                   className="secondary-button"

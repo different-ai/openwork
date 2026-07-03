@@ -107,6 +107,18 @@ By default, the chart wires internal services through Kubernetes DNS:
 
 Override `config.internal.*` only when routing through a mesh, gateway, or external service.
 
+## Isolated Networks
+
+The chart disables external password breach screening by default so isolated self-hosted installs do not depend on the Have I Been Pwned Pwned Passwords range API. If your deployment has approved egress and you want password creation and reset to reject known-compromised passwords through that service, enable it:
+
+```yaml
+config:
+  auth:
+    passwordBreachScreeningEnabled: "true"
+```
+
+Local sign-in lockout protections stay enabled either way.
+
 ## Migrations
 
 The migration Job runs as a Helm `pre-install,pre-upgrade` hook by default:

@@ -10,6 +10,8 @@ imagePullSecrets: []
 config:
   databaseMode: mysql
   openworkDevMode: "0"
+  auth:
+    passwordBreachScreeningEnabled: "false"
   public:
     webOrigin: https://openwork.example.com
     apiOrigin: https://api.openwork.example.com

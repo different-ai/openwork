@@ -127,14 +127,15 @@ export function SiteNav(props: Props) {
             </div>
 
             <div className="mt-4 flex flex-col gap-3">
-              <a
+              <Link
                 href={mobilePrimaryHref}
                 className="doc-button text-sm"
                 rel={mobilePrimaryExternal ? "noreferrer" : undefined}
                 target={mobilePrimaryExternal ? "_blank" : undefined}
+                onClick={() => setMobileOpen(false)}
               >
                 {mobilePrimaryLabel}
-              </a>
+              </Link>
               <a
                 href={callHref}
                 className="secondary-button text-sm"

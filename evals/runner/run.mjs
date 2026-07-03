@@ -24,14 +24,16 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { connect, debuggerUrlFor, pickAppTarget, resolveCdpBaseUrl } from "./cdp.mjs";
 import { EvalContext } from "./context.mjs";
 import { denStackDown, ensureDenStack } from "./den-stack.mjs";
+import { checkVoiceoverCoverage, loadVoiceoverParagraphs, scaffoldFlow } from "./voiceover.mjs";
+import { postPrComment } from "./pr.mjs";
 
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url));
-const FLOWS_DIR = join(RUNNER_DIR, "..", "flows");
+const FLOWS_DIR = process.env.OPENWORK_EVAL_FLOWS_DIR?.trim() || join(RUNNER_DIR, "..", "flows");
 const DEFAULT_RESULTS_DIR = join(RUNNER_DIR, "..", "results");
 const DEFAULT_CDP_CANDIDATES = ["http://127.0.0.1:9825", "http://127.0.0.1:9823"];
 
 function parseArgs(argv) {
-  const args = { flows: [], all: false, list: false, cdpUrl: null, out: null, stack: null, stackDown: false };
+  const args = { flows: [], all: false, list: false, cdpUrl: null, out: null, stack: null, stackDown: false, scaffold: null, force: false, pr: null };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--flow") args.flows.push(argv[++index]);
@@ -41,7 +43,17 @@ function parseArgs(argv) {
     else if (value === "--out") args.out = argv[++index];
     else if (value === "--stack") args.stack = argv[++index];
     else if (value === "--stack-down") args.stackDown = true;
-    else if (value === "--help" || value === "-h") args.help = true;
+    else if (value === "scaffold") args.scaffold = argv[++index];
+    else if (value === "--force") args.force = true;
+    else if (value === "--pr") {
+      const next = argv[index + 1];
+      if (next && /^\d+$/.test(next)) {
+        args.pr = next;
+        index += 1;
+      } else {
+        args.pr = true;
+      }
+    } else if (value === "--help" || value === "-h") args.help = true;
     else throw new Error(`Unknown argument: ${value}`);
   }
   return args;
@@ -88,15 +100,21 @@ async function runFlow(flow, { cdpBaseUrl, outDir, env }) {
     return result;
   }
 
-  const target = await pickAppTarget(cdpBaseUrl);
-  const client = await connect(debuggerUrlFor(cdpBaseUrl, target));
+  // Flows with `requiresApp: false` (e.g. DX/tooling demos) run without a CDP
+  // connection: their frames are claims + assertions + recorded outputs.
+  const requiresApp = flow.requiresApp !== false;
+  let client = null;
+  if (requiresApp) {
+    const target = await pickAppTarget(cdpBaseUrl);
+    client = await connect(debuggerUrlFor(cdpBaseUrl, target));
+  }
   const ctx = new EvalContext({ client, outDir, flowId: flow.id, env, cdpBaseUrl });
 
   try {
     // Force light mode by default so screenshot evidence is readable. Flows
     // that are themselves testing theme/dark-mode behavior can opt out with
     // `preserveTheme: true` in the flow definition.
-    if (!flow.preserveTheme) {
+    if (requiresApp && !flow.preserveTheme) {
       try {
         await ctx.ensureLightMode();
       } catch (error) {
@@ -121,7 +139,7 @@ async function runFlow(flow, { cdpBaseUrl, outDir, env }) {
           durationMs: Date.now() - startedAt,
           error: error instanceof Error ? error.message : String(error),
         });
-        await ctx.screenshot("failure").catch(() => undefined);
+        if (client) await ctx.screenshot("failure").catch(() => undefined);
         return result;
       }
     }
@@ -141,15 +159,47 @@ async function runFlow(flow, { cdpBaseUrl, outDir, env }) {
       stepResult.durationMs = Date.now() - startedAt;
       result.steps.push(stepResult);
       if (stepResult.status === "failed") {
-        await ctx.screenshot("failure").catch(() => undefined);
+        if (client) await ctx.screenshot("failure").catch(() => undefined);
         break;
+      }
+    }
+
+    // Voice-over drift check: when an approved script exists for this flow
+    // (evals/voiceovers/<id>.md), every scripted paragraph must have been
+    // narrated by the run, and the run must not narrate unapproved lines.
+    if (result.status === "passed") {
+      const paragraphs = await loadVoiceoverParagraphs(flow.id);
+      if (paragraphs) {
+        const recorded = new Set();
+        for (const step of result.steps) {
+          for (const evidence of step.evidence ?? []) {
+            if (evidence.voiceover) recorded.add(evidence.voiceover);
+          }
+        }
+        const coverage = checkVoiceoverCoverage(paragraphs, [...recorded]);
+        const evidence = paragraphs.map((paragraph, index) => ({
+          type: "assertion",
+          status: coverage.missing.includes(paragraph) ? "failed" : "passed",
+          assertion: `Script frame ${index + 1} narrated: ${JSON.stringify(paragraph.slice(0, 88))}`,
+        }));
+        for (const line of coverage.extra) {
+          evidence.push({ type: "assertion", status: "failed", assertion: `Narration not in the approved script: ${JSON.stringify(line.slice(0, 88))}` });
+        }
+        result.steps.push({
+          name: "Voice-over script coverage",
+          status: coverage.ok ? "passed" : "failed",
+          durationMs: 0,
+          error: coverage.ok ? null : `Narration drifted from evals/voiceovers/${flow.id}.md (${coverage.missing.length} missing, ${coverage.extra.length} unapproved).`,
+          evidence,
+        });
+        if (!coverage.ok) result.status = "failed";
       }
     }
   } finally {
     result.screenshots = ctx.screenshots;
     result.evidenceFrames = ctx.evidenceFrames;
     result.logs = ctx.logs;
-    client.close();
+    client?.close();
   }
 
   return result;
@@ -264,6 +314,7 @@ function renderFrameIndex(report) {
     .failed-text, .error { color: #b42318; font-weight: 700; }
     .skipped { color: #8a5a00; }
     code { background: #ededf0; padding: 2px 5px; border-radius: 5px; }
+    pre.output { margin: 0; padding: 12px; background: #16181d; color: #d6e2f0; font-size: 12.5px; line-height: 1.5; overflow-x: auto; border-radius: 0 0 12px 12px; }
   </style>
 </head>
 <body>
@@ -321,7 +372,15 @@ function renderEvidence(evidence) {
   if (evidence.length === 0) return `<p class="muted">No structured evidence recorded for this step.</p>`;
   return `<div class="evidence">${evidence.map((item) => {
     if (item.type === "claim") {
-      return `<div class="claim"><strong>${escapeHtml(item.name ?? "Claim")}</strong><br />${escapeHtml(item.claim ?? "")}</div>`;
+      // App-less frames (requiresApp: false) have no screenshot figure, so the
+      // completed claim carries the narration instead.
+      const voiceover = item.status === "passed" && item.voiceover
+        ? `<div class="voiceover" data-voiceover="${escapeHtml(item.voiceover)}"><button type="button" class="speak" title="Play voiceover">🎙 Play</button><span>${escapeHtml(item.voiceover)}</span></div>`
+        : "";
+      return `<div class="claim"><strong>${escapeHtml(item.name ?? "Claim")}</strong><br />${escapeHtml(item.claim ?? "")}</div>${voiceover}`;
+    }
+    if (item.type === "output") {
+      return `<figure><figcaption><strong>${escapeHtml(item.name ?? "Output")}</strong></figcaption><pre class="output">${escapeHtml(item.text ?? "")}</pre></figure>`;
     }
     if (item.type === "assertion") {
       const cls = item.status === "passed" ? "passed-text" : "failed-text";
@@ -352,12 +411,19 @@ function renderEvidence(evidence) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    console.log("Usage: node evals/runner/run.mjs [--list | --all | --flow <id> ...] [--cdp-url <url>] [--out <dir>] [--stack den | --stack-down]");
+    console.log("Usage: node evals/runner/run.mjs [--list | --all | --flow <id> ... | scaffold <id> [--force]] [--cdp-url <url>] [--out <dir>] [--pr [number]] [--stack den | --stack-down]");
     return;
   }
 
   if (args.stackDown) {
     await denStackDown({ log: (msg) => console.log(`▸ ${msg}`) });
+    return;
+  }
+
+  if (args.scaffold) {
+    const { flowPath, frames } = await scaffoldFlow(args.scaffold, { flowsDir: FLOWS_DIR, force: args.force });
+    console.log(`Scaffolded ${flowPath} — ${frames} frames from evals/voiceovers/${args.scaffold}.md.`);
+    console.log("Fill in each frame's action/assert, then run: pnpm fraimz --flow " + args.scaffold);
     return;
   }
 
@@ -391,8 +457,12 @@ async function main() {
     );
   }
 
+  // App-less flows (requiresApp: false) don't need a CDP endpoint; only probe
+  // for one when at least one selected flow drives the app.
+  const needsApp = selected.some((flow) => flow.requiresApp !== false);
   const envCdp = process.env.OPENWORK_EVAL_CDP_URL?.trim();
-  const cdpBaseUrl = args.cdpUrl ?? (envCdp || (await resolveCdpBaseUrl(DEFAULT_CDP_CANDIDATES)));
+  const cdpBaseUrl = args.cdpUrl
+    ?? (envCdp || (needsApp ? await resolveCdpBaseUrl(DEFAULT_CDP_CANDIDATES) : null));
 
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const outDir = join(args.out ?? DEFAULT_RESULTS_DIR, runId);
@@ -401,7 +471,7 @@ async function main() {
   const report = {
     runId,
     startedAt: new Date().toISOString(),
-    cdpUrl: cdpBaseUrl,
+    cdpUrl: cdpBaseUrl ?? "(app-less run)",
     flows: [],
     summary: { passed: 0, failed: 0, skipped: 0 },
   };
@@ -434,6 +504,16 @@ async function main() {
   );
   console.log(`Report: ${join(outDir, "report.md")}`);
   console.log(`fraimz: ${join(outDir, "fraimz.html")}`);
+
+  // fraimz on the PR: post the frame-by-frame proof as a comment. `--pr`
+  // targets the current branch's PR; `--pr <number>` targets an explicit one.
+  if (args.pr) {
+    const { posted, bodyPath, detail } = await postPrComment(report, {
+      outDir,
+      prNumber: args.pr === true ? null : args.pr,
+    });
+    console.log(posted ? `PR comment posted: ${detail}` : `PR comment NOT posted (${detail}). Body written to ${bodyPath}`);
+  }
 
   if (report.summary.failed > 0) process.exit(1);
 }

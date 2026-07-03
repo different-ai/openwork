@@ -147,6 +147,25 @@ export type DenWorkerTokens = {
   workspaceId: string | null;
 };
 
+export type DenMemoryContext = {
+  id: string;
+  snippet: string;
+  citation: Record<string, unknown> | null;
+  origin: string | null;
+  createdAt: string;
+};
+
+export type DenMemory = {
+  id: string;
+  content: string;
+  tags: string[] | null;
+  source: string;
+  scope: string;
+  createdAt: string;
+  updatedAt: string;
+  contexts: DenMemoryContext[];
+};
+
 export type DenMcpToken = {
   token: string;
   expiresAt: string;
@@ -1021,6 +1040,45 @@ function getWorkers(payload: unknown): DenWorkerSummary[] {
         isMine: Boolean(entry.isMine),
         createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
       } satisfies DenWorkerSummary,
+    ];
+  });
+}
+
+function getMemoryContexts(value: unknown): DenMemoryContext[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.snippet !== "string") return [];
+    return [
+      {
+        id: entry.id,
+        snippet: entry.snippet,
+        citation: isRecord(entry.citation) ? entry.citation : null,
+        origin: typeof entry.origin === "string" ? entry.origin : null,
+        createdAt: typeof entry.createdAt === "string" ? entry.createdAt : "",
+      } satisfies DenMemoryContext,
+    ];
+  });
+}
+
+function getMemories(payload: unknown): DenMemory[] {
+  if (!isRecord(payload) || !Array.isArray(payload.memories)) {
+    return [];
+  }
+  return payload.memories.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.content !== "string") {
+      return [];
+    }
+    return [
+      {
+        id: entry.id,
+        content: entry.content,
+        tags: Array.isArray(entry.tags) ? entry.tags.filter((tag): tag is string => typeof tag === "string") : null,
+        source: typeof entry.source === "string" ? entry.source : "",
+        scope: typeof entry.scope === "string" ? entry.scope : "user",
+        createdAt: typeof entry.createdAt === "string" ? entry.createdAt : "",
+        updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : "",
+        contexts: getMemoryContexts(entry.contexts),
+      } satisfies DenMemory,
     ];
   });
 }
@@ -1918,6 +1976,29 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         organizationId: orgId,
       });
       return getWorkers(payload);
+    },
+
+    async listMemory(orgId: string): Promise<DenMemory[]> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/memory", {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      return getMemories(payload);
+    },
+
+    async deleteMemory(orgId: string, memoryId: string): Promise<void> {
+      const result = await requestJsonRaw<unknown>(baseUrls, `/v1/memory/${encodeURIComponent(memoryId)}`, {
+        method: "DELETE",
+        token,
+        organizationId: orgId,
+      });
+      // 404 means the memory is already gone (or not owned) — idempotent from the caller's view.
+      if (!result.ok && result.status !== 404) {
+        const payload = result.json;
+        const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
+        throw new DenApiError(result.status, code, getErrorMessage(payload, `Delete failed with ${result.status}.`));
+      }
     },
 
     async mintMcpToken(orgId: string): Promise<DenMcpToken> {

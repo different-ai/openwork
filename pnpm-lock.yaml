@@ -310,10 +310,10 @@ importers:
         specifier: 0.1.77
         version: 0.1.77(solid-js@1.9.9)(stage-js@1.0.0-alpha.17)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       opencode-router:
-        specifier: 0.17.7
+        specifier: 0.17.8
         version: link:../opencode-router
       openwork-server:
-        specifier: 0.17.7
+        specifier: 0.17.8
         version: link:../server
       solid-js:
         specifier: 1.9.9
@@ -4688,10 +4688,6 @@ packages:
   baseline-browser-mapping@2.10.11:
     resolution: {integrity: sha512-DAKrHphkJyiGuau/cFieRYhcTFeK/lBuD++C7cZ6KZHbMhBrisoi+EvhQ5RZrIfV5qwsW8kgQ07JIC+MDJRAhg==}
     engines: {node: '>=6.0.0'}
-    hasBin: true
-
-  baseline-browser-mapping@2.9.14:
-    resolution: {integrity: sha512-B0xUquLkiGLgHhpPBqvl7GWegWBUNuujQ6kXd/r1U38ElPT6Ok8KZ8e+FpUGEc2ZoRQUzq/aUnaKFc/svWUGSg==}
     hasBin: true
 
   better-auth@1.6.11:
@@ -9852,7 +9848,7 @@ snapshots:
       '@babel/core': 7.28.0
       '@babel/helper-module-imports': 7.28.6
       '@babel/helper-validator-identifier': 7.28.5
-      '@babel/traverse': 7.28.6
+      '@babel/traverse': 7.29.0
     transitivePeerDependencies:
       - supports-color
 
@@ -9861,7 +9857,7 @@ snapshots:
       '@babel/core': 7.29.0
       '@babel/helper-module-imports': 7.28.6
       '@babel/helper-validator-identifier': 7.28.5
-      '@babel/traverse': 7.28.6
+      '@babel/traverse': 7.29.0
     transitivePeerDependencies:
       - supports-color
 
@@ -10013,8 +10009,8 @@ snapshots:
 
   '@babel/template@7.28.6':
     dependencies:
-      '@babel/code-frame': 7.28.6
-      '@babel/parser': 7.28.6
+      '@babel/code-frame': 7.29.0
+      '@babel/parser': 7.29.2
       '@babel/types': 7.29.0
 
   '@babel/traverse@7.27.0':
@@ -12894,7 +12890,7 @@ snapshots:
 
   '@types/better-sqlite3@7.6.13':
     dependencies:
-      '@types/node': 25.6.0
+      '@types/node': 20.12.12
 
   '@types/cacheable-request@6.0.3':
     dependencies:
@@ -13036,7 +13032,7 @@ snapshots:
 
   '@types/fs-extra@9.0.13':
     dependencies:
-      '@types/node': 25.6.0
+      '@types/node': 20.12.12
 
   '@types/geojson@7946.0.16': {}
 
@@ -13082,7 +13078,7 @@ snapshots:
 
   '@types/plist@3.0.5':
     dependencies:
-      '@types/node': 25.6.0
+      '@types/node': 20.12.12
       xmlbuilder: 15.1.1
     optional: true
 
@@ -13304,7 +13300,7 @@ snapshots:
       js-yaml: 4.1.1
       json5: 2.2.3
       lazy-val: 1.0.5
-      minimatch: 10.1.1
+      minimatch: 10.2.5
       resedit: 1.7.2
       sanitize-filename: 1.6.4
       semver: 7.7.4
@@ -13456,8 +13452,6 @@ snapshots:
 
   baseline-browser-mapping@2.10.11: {}
 
-  baseline-browser-mapping@2.9.14: {}
-
   better-auth@1.6.11(@opentelemetry/api@1.9.0)(drizzle-kit@0.31.9)(mysql2@3.17.4)(next@16.2.3(@opentelemetry/api@1.9.0)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(solid-js@1.9.9):
     dependencies:
       '@better-auth/core': 1.6.11(@better-auth/utils@0.4.0)(@better-fetch/fetch@1.1.21)(@opentelemetry/api@1.9.0)(better-call@1.3.5(zod@4.3.6))(jose@6.1.3)(kysely@0.28.17)(nanostores@1.2.0)
@@ -13570,7 +13564,7 @@ snapshots:
 
   browserslist@4.28.1:
     dependencies:
-      baseline-browser-mapping: 2.9.14
+      baseline-browser-mapping: 2.10.11
       caniuse-lite: 1.0.30001764
       electron-to-chromium: 1.5.267
       node-releases: 2.0.27
@@ -13631,7 +13625,7 @@ snapshots:
 
   bun-types@1.3.6:
     dependencies:
-      '@types/node': 25.6.0
+      '@types/node': 20.12.12
 
   bun-webgpu-darwin-arm64@0.1.4:
     optional: true

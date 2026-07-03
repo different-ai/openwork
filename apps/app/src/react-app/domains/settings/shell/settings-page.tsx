@@ -2,6 +2,7 @@
 import type * as React from "react";
 import {
   ArrowLeft,
+  BrainCircuit,
   Bug,
   ChevronDown,
   CloudCog,
@@ -56,6 +57,7 @@ import {
   SettingsPanelToolbarStatus,
 } from "./panel";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
+import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
@@ -77,6 +79,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return CloudCog;
     case "skills":
       return Sparkles;
+    case "memory":
+      return BrainCircuit;
     case "extensions":
       return Puzzle;
     case "environment":
@@ -116,6 +120,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return t("settings.tab_cloud_providers");
     case "skills":
       return t("settings.tab_skills");
+    case "memory":
+      return t("memory.tab_label");
     case "extensions":
       return t("settings.tab_extensions");
     case "environment":
@@ -157,6 +163,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return t("settings.tab_description_cloud_providers");
     case "skills":
       return t("settings.tab_description_skills");
+    case "memory":
+      return t("memory.tab_description");
     case "extensions":
       return t("settings.tab_description_extensions");
     case "environment":
@@ -193,6 +201,15 @@ export const CLOUD_SETTINGS_TABS: SettingsTab[] = [
   "cloud-workers",
 ];
 
+/**
+ * Cloud settings tabs, gated by client-only preview flags. The Memory tab is
+ * surfaced only when `featureFlags.memory` is on (C-4). Both settings nav
+ * surfaces (sidebar + compact section menu) must use this so they can't drift.
+ */
+export function getCloudSettingsTabs(memoryEnabled: boolean): SettingsTab[] {
+  return memoryEnabled ? [...CLOUD_SETTINGS_TABS, "memory"] : CLOUD_SETTINGS_TABS;
+}
+
 type SettingsPageProps = {
   activeTab: SettingsTab;
   onSelectTab: (tab: SettingsTab) => void;
@@ -219,9 +236,10 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
 };
 
 export function SettingsSidebar(props: SettingsSidebarProps) {
+  const { memoryEnabled } = useFeatureFlagsPreferences();
   const workspaceTabs = getWorkspaceSettingsTabs();
   const globalTabs = getGlobalSettingsTabs(props.developerMode);
-  const cloudTabs = CLOUD_SETTINGS_TABS;
+  const cloudTabs = getCloudSettingsTabs(memoryEnabled);
 
   return (
     <Sidebar className="mac:**:data-[sidebar=sidebar]:bg-transparent">

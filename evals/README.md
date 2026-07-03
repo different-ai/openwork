@@ -46,6 +46,31 @@ pnpm fraimz --flow <id>           # same runner; headline output is fraimz.html
 pnpm fraimz --flow core-flow --cdp-url http://127.0.0.1:9825
 ```
 
+### Voice-over first: the script is the spec
+
+Demo-driven development starts with the narration, not a PRD. The `/voiceover`
+command (and `voiceover` skill) aligns on the demo script with the user before
+any code; the approved script lands at `evals/voiceovers/<flow-id>.md` — a
+title, optional context prose, and one **numbered paragraph per frame**.
+
+```bash
+pnpm fraimz scaffold <flow-id>    # generate evals/flows/<flow-id>.flow.mjs
+                                  # from the approved script: one ctx.prove
+                                  # stub per paragraph, narration pre-wired
+pnpm fraimz --flow <flow-id> --pr # after the run, post the frame proof as a
+                                  # PR comment via gh (--pr <number> to target)
+```
+
+Flows load their narration with `loadVoiceoverParagraphs(<flow-id>)`; when a
+script exists for a flow, the runner appends a **Voice-over script coverage**
+step that fails the flow if the run's narration drifts from the approved file
+(a scripted frame never narrated, or an unapproved line narrated).
+
+Internal demos of terminal/tooling experiences can set `requiresApp: false` to
+run without a CDP endpoint; their frames carry claims, assertions, and
+`ctx.output(name, text)` command output instead of screenshots. The reference
+is `voiceover-first-dx` — this workflow demoing itself.
+
 The runner probes `http://127.0.0.1:9825` (Daytona) then `:9823` (local
 `pnpm dev`) by default. Flows that need cloud credentials declare
 `requiredEnv` and are skipped (not failed) when the env is missing — e.g.

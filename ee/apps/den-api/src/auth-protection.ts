@@ -3,6 +3,7 @@ import { eq } from "@openwork-ee/den-db/drizzle"
 import { RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
+import { env } from "./env.js"
 
 export const EMAIL_PASSWORD_SIGN_IN_PATH = "/api/auth/sign-in/email"
 export const EMAIL_PASSWORD_SIGN_UP_PATH = "/api/auth/sign-up/email"
@@ -228,7 +229,15 @@ export async function isPasswordCompromised(password: string, fetchPasswordRange
     })
 }
 
-export async function getBreachedPasswordResponse(request: Request, fetchPasswordRange?: PwnedPasswordsFetch) {
+export async function getBreachedPasswordResponse(
+  request: Request,
+  fetchPasswordRange?: PwnedPasswordsFetch,
+  screeningEnabled = env.passwordBreachScreeningEnabled,
+) {
+  if (!screeningEnabled) {
+    return null
+  }
+
   const password = await readPasswordForBreachCheck(request)
   if (!password) {
     return null

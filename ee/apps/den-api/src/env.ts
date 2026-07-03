@@ -24,6 +24,7 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
   DEN_REQUIRE_EMAIL_VERIFICATION: z.string().optional(),
+  DEN_PASSWORD_BREACH_SCREENING_ENABLED: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.string().optional(),
@@ -193,6 +194,9 @@ const allowPrivateMcpUrls = devMode || (parsed.DEN_ALLOW_PRIVATE_MCP_URLS ?? "0"
 const requireEmailVerification = parsed.DEN_REQUIRE_EMAIL_VERIFICATION === undefined
   ? !devMode
   : parsed.DEN_REQUIRE_EMAIL_VERIFICATION.trim().toLowerCase() !== "false"
+const passwordBreachScreeningEnabled = parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED === undefined
+  ? true
+  : parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED.trim().toLowerCase() !== "false"
 const port = Number(parsed.PORT ?? "8790")
 
 const daytonaSandboxPublic =
@@ -229,6 +233,7 @@ export const env = {
   planGatingEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   requireEmailVerification,
+  passwordBreachScreeningEnabled,
   github: {
     clientId: optionalString(parsed.GITHUB_CLIENT_ID),
     clientSecret: optionalString(parsed.GITHUB_CLIENT_SECRET),
