@@ -5,6 +5,8 @@ export type LocalProviderInstallInput = {
   modelId: string;
   modelName: string;
   setDefault: boolean;
+  /** When set, every listed model is written into the provider config. */
+  allModelIds?: string[];
 };
 
 export const OLLAMA_PROVIDER_CONFIG = {
@@ -12,6 +14,12 @@ export const OLLAMA_PROVIDER_CONFIG = {
   name: "Ollama (local)",
   baseURL: "http://localhost:11434/v1",
   defaultModelId: "qwen2.5-coder:7b",
+};
+
+export const LMSTUDIO_PROVIDER_CONFIG = {
+  providerId: "lmstudio",
+  name: "LM Studio (local)",
+  baseURL: "http://127.0.0.1:1234/v1",
 };
 
 export const OPENAI_IMAGE_EXTENSION_ID = "openai-image-generation";
