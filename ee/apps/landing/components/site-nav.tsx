@@ -5,6 +5,7 @@ import { Menu, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { CopyPromptButton } from "./copy-prompt-button";
 import { OpenWorkMark } from "./openwork-mark";
+import { triggerBackgroundDownload } from "../lib/trigger-download";
 
 type Props = {
   stars: string;
@@ -12,6 +13,7 @@ type Props = {
   downloadHref?: string;
   mobilePrimaryHref?: string;
   mobilePrimaryLabel?: string;
+  osDownloadUrl?: string;
   active?: "home" | "pricing" | "download" | "enterprise" | "cloud" | "docs";
 };
 
@@ -127,14 +129,18 @@ export function SiteNav(props: Props) {
             </div>
 
             <div className="mt-4 flex flex-col gap-3">
-              <a
+              <Link
                 href={mobilePrimaryHref}
                 className="doc-button text-sm"
                 rel={mobilePrimaryExternal ? "noreferrer" : undefined}
                 target={mobilePrimaryExternal ? "_blank" : undefined}
+                onClick={() => {
+                  if (props.osDownloadUrl) triggerBackgroundDownload(props.osDownloadUrl);
+                  setMobileOpen(false);
+                }}
               >
                 {mobilePrimaryLabel}
-              </a>
+              </Link>
               <a
                 href={callHref}
                 className="secondary-button text-sm"

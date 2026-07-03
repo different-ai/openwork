@@ -1,6 +1,7 @@
 "use client";
 import { AnimatePresence, motion, useInView } from "framer-motion";
 import { ArrowRight, Users } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
@@ -16,12 +17,15 @@ import { LandingSharePackageCard } from "./landing-share-package-card";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
 import { WaitlistForm } from "./waitlist-form";
+import { triggerBackgroundDownload } from "../lib/trigger-download";
 
 type Props = {
   stars: string;
   downloadHref: string;
   callHref: string;
   isMobileVisitor: boolean;
+  osDownloadUrl: string;
+  osDownloadLabel: string;
 };
 
 const externalLinkProps = (href: string) =>
@@ -29,7 +33,6 @@ const externalLinkProps = (href: string) =>
     ? { rel: "noreferrer", target: "_blank" as const }
     : {};
 
-const CLOUD_SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
 export function LandingHome(props: Props) {
   const [activeDemoId, setActiveDemoId] = useState(defaultLandingDemoFlowId);
   const [activeUseCase, setActiveUseCase] = useState(0);
@@ -45,9 +48,7 @@ export function LandingHome(props: Props) {
   );
 
   const callLinkProps = externalLinkProps(props.callHref);
-  const primaryCtaHref = CLOUD_SIGNUP_URL;
-  const primaryCtaLabel = "Get Started for free";
-  const primaryCtaLinkProps = externalLinkProps(primaryCtaHref);
+  const handlePrimaryCtaClick = () => triggerBackgroundDownload(props.osDownloadUrl);
 
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
@@ -59,8 +60,9 @@ export function LandingHome(props: Props) {
             stars={props.stars}
             downloadHref={props.downloadHref}
             callUrl={props.callHref}
-            mobilePrimaryHref={CLOUD_SIGNUP_URL}
-            mobilePrimaryLabel="Get Started for free"
+            mobilePrimaryHref="/download"
+            mobilePrimaryLabel={props.osDownloadLabel}
+            osDownloadUrl={props.osDownloadUrl}
             active="home"
           />
         </div>
@@ -83,13 +85,13 @@ export function LandingHome(props: Props) {
 
             <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-                <a
-                  href={primaryCtaHref}
+                <Link
+                  href="/download"
                   className="doc-button inline-flex items-center gap-2"
-                  {...primaryCtaLinkProps}
+                  onClick={handlePrimaryCtaClick}
                 >
-                  {primaryCtaLabel} <ArrowRight size={18} />
-                </a>
+                  {props.osDownloadLabel} <ArrowRight size={18} />
+                </Link>
                 <a
                   href={props.callHref}
                   className="secondary-button"
