@@ -728,15 +728,17 @@ export function ManageMembersScreen() {
             </p>
             {toolbarAction ? (
               <div className="flex flex-wrap justify-end gap-2">
-                <DenButton
-                  data-testid="copy-install-link"
-                  variant="secondary"
-                  icon={Link}
-                  onClick={() => void handleCopyInstallLink()}
-                  loading={installLinkBusy || mutationBusy === "copy-install-link"}
-                >
-                  {installLinkCopied ? "Copied" : "Copy install link"}
-                </DenButton>
+                {orgContext.capabilities.installLinks ? (
+                  <DenButton
+                    data-testid="copy-install-link"
+                    variant="secondary"
+                    icon={Link}
+                    onClick={() => void handleCopyInstallLink()}
+                    loading={installLinkBusy || mutationBusy === "copy-install-link"}
+                  >
+                    {installLinkCopied ? "Copied" : "Copy install link"}
+                  </DenButton>
+                ) : null}
                 <DenButton icon={Plus} onClick={toolbarAction.onClick}>
                   {toolbarAction.label}
                 </DenButton>

@@ -15,6 +15,7 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { jsonValidator, orgRoleRoute, publicRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
+import { organizationCapabilityKeySchema, organizationHasCapability } from "../../organization-capabilities.js"
 import { appendStoredEntryToZip } from "../../utils/zip-append.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureInviteManager, getInvitationOrigin, orgAccessFailureStatus } from "./shared.js"
@@ -46,6 +47,11 @@ const installPlatformParamSchema = z.object({
 const installLinkNotFoundSchema = z.object({
   error: z.literal("install_link_not_found"),
 }).meta({ ref: "InstallLinkNotFoundError" })
+
+const capabilityDisabledSchema = z.object({
+  error: z.literal("capability_disabled"),
+  capability: organizationCapabilityKeySchema,
+}).meta({ ref: "CapabilityDisabledError" })
 
 const installerArtifactsUnavailableSchema = z.object({
   error: z.literal("installer_artifacts_unavailable"),
@@ -269,7 +275,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         200: jsonResponse("Install link created successfully.", createInstallLinkResponseSchema),
         400: jsonResponse("The install-link request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create install links.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can create install links.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and admins can create install links, and the organization needs the installLinks capability enabled.", forbiddenSchema.or(capabilityDisabledSchema)),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
     }),
@@ -284,6 +290,12 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
 
       const input = c.req.valid("json")
       const payload = c.get("organizationContext")
+
+      // Org capability gate: install links ship dark and are enabled
+      // org-by-org from the platform /admin backoffice.
+      if (!organizationHasCapability(payload.organization.metadata, "installLinks")) {
+        return c.json({ error: "capability_disabled", capability: "installLinks" }, 403)
+      }
       const now = new Date()
       const token = randomBytes(32).toString("base64url")
 
