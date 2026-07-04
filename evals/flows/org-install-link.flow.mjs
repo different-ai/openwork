@@ -28,6 +28,8 @@ const INSTALLER_BIN = process.env.OPENWORK_EVAL_INSTALLER_BIN?.trim() ?? "";
 const ARTIFACTS_DIR = process.env.OPENWORK_EVAL_ARTIFACTS_DIR?.trim() ?? "";
 const BOOTSTRAP_PATH = process.env.OPENWORK_EVAL_BOOTSTRAP_PATH?.trim() ?? "";
 const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const PLATFORM_ADMIN_EMAIL = process.env.OPENWORK_EVAL_PLATFORM_ADMIN_EMAIL?.trim() || "";
+const PLATFORM_ADMIN_PASSWORD = process.env.OPENWORK_EVAL_PLATFORM_ADMIN_PASSWORD?.trim() || "";
 const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
 const RUN_TAG = Date.now().toString(36);
@@ -39,6 +41,8 @@ const MAC_ARTIFACT_FILENAME = "openwork-installer-mac-arm64.zip";
 const state = {
   desktopClient: null,
   adminToken: null,
+  platformAdminToken: null,
+  orgId: null,
   installLink: null,
   installToken: null,
   installConfig: null,
@@ -63,6 +67,8 @@ export default {
     "OPENWORK_EVAL_INSTALLER_BIN",
     "OPENWORK_EVAL_ARTIFACTS_DIR",
     "OPENWORK_EVAL_BOOTSTRAP_PATH",
+    "OPENWORK_EVAL_PLATFORM_ADMIN_EMAIL",
+    "OPENWORK_EVAL_PLATFORM_ADMIN_PASSWORD",
     "OPENWORK_EVAL_MARK_VERIFIED_CMD",
   ],
   steps: [
@@ -76,6 +82,32 @@ export default {
             // "Alex wants the whole team on OpenWork, so from the team page he copies Acme'"
             action: async () => {
               await ensureAdminToken(ctx);
+              await ensureOrgId(ctx);
+              // Capability affordances (setup, not demo): install links ship
+              // dark for every org, so a platform admin has to light Acme up
+              // before Alex can mint. Witness the gate first — with the
+              // capability forced off, the mint API refuses — then enable it
+              // through the same admin API a platform admin uses.
+              await ensurePlatformAdmin(ctx);
+              await setCapabilityViaAdminApi(ctx, { installLinks: false });
+              const refused = await attemptMintInstallLink(ctx);
+              ctx.assert(
+                refused.response.status === 403,
+                `Mint with the capability off returned ${refused.response.status}, expected 403.`,
+              );
+              ctx.assert(
+                refused.body?.error === "capability_disabled" && refused.body?.capability === "installLinks",
+                `Mint refusal body was ${JSON.stringify(refused.body).slice(0, 300)}, expected capability_disabled/installLinks.`,
+              );
+              ctx.output(
+                "mint-refused-while-capability-off",
+                JSON.stringify({ status: refused.response.status, body: refused.body }, null, 2),
+              );
+              await setCapabilityViaAdminApi(ctx, { installLinks: true });
+              ctx.output(
+                "capability-enabled-by-platform-admin",
+                `${PLATFORM_ADMIN_EMAIL} enabled installLinks for Acme via PUT /v1/admin/organizations/:id/capabilities — the platform-admin enablement every org needs before install links appear.`,
+              );
               await signInToDenWeb(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
               await goToDenWeb(ctx, "/dashboard/members");
               await stubInstallLinkClipboardCapture(ctx);
@@ -466,6 +498,83 @@ async function ensureAdminToken(ctx) {
   ctx.assert(token.length > 0, `Admin sign-in failed and OPENWORK_EVAL_DEN_TOKEN is missing: ${signedIn.response.status}`);
   state.adminToken = token;
   return token;
+}
+
+async function ensureOrgId(ctx) {
+  if (state.orgId) {
+    return state.orgId;
+  }
+  const token = requireStateValue(state.adminToken, "org admin token");
+  const org = await denApiFetch("/v1/org", {
+    method: "GET",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  ctx.assert(org.response.ok, `Could not load ${ADMIN_EMAIL}'s organization: ${org.response.status} ${org.text.slice(0, 300)}`);
+  const organization = org.body?.organization;
+  ctx.assert(typeof organization?.id === "string", "Organization payload was missing id.");
+  state.orgId = organization.id;
+  return state.orgId;
+}
+
+/**
+ * The platform admin is an ordinary account whose email is on the Den admin
+ * allowlist. The account is created here (idempotently); allowlist membership
+ * comes from DEN_BOOTSTRAP_ADMIN_EMAILS on the den-api under test, which
+ * upserts the email into admin_allowlist on boot.
+ */
+async function ensurePlatformAdmin(ctx) {
+  if (state.platformAdminToken) {
+    return state.platformAdminToken;
+  }
+
+  const signup = await denApiFetch("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ name: "Priya Platform", email: PLATFORM_ADMIN_EMAIL, password: PLATFORM_ADMIN_PASSWORD }),
+  });
+  const signupAccepted = signup.response.ok || [400, 403, 409, 422].includes(signup.response.status);
+  ctx.assert(signupAccepted, `Platform admin sign-up failed: ${signup.response.status} ${signup.text.slice(0, 300)}`);
+  markEmailVerified(ctx, PLATFORM_ADMIN_EMAIL);
+
+  const signedIn = await denApiFetch("/api/auth/sign-in/email", {
+    method: "POST",
+    body: JSON.stringify({ email: PLATFORM_ADMIN_EMAIL, password: PLATFORM_ADMIN_PASSWORD }),
+  });
+  ctx.assert(
+    signedIn.response.ok && typeof signedIn.body?.token === "string",
+    `Platform admin sign-in failed: ${signedIn.response.status} ${signedIn.text.slice(0, 300)}`,
+  );
+  state.platformAdminToken = signedIn.body.token;
+
+  const probe = await denApiFetch("/v1/admin/overview", {
+    method: "GET",
+    headers: { authorization: `Bearer ${state.platformAdminToken}` },
+  });
+  ctx.assert(
+    probe.response.ok,
+    `${PLATFORM_ADMIN_EMAIL} is not a platform admin (overview probe ${probe.response.status}). Start den-api with DEN_BOOTSTRAP_ADMIN_EMAILS=${PLATFORM_ADMIN_EMAIL} or insert the email into admin_allowlist.`,
+  );
+  return state.platformAdminToken;
+}
+
+async function setCapabilityViaAdminApi(ctx, capabilities) {
+  const token = requireStateValue(state.platformAdminToken, "platform admin token");
+  const orgId = requireStateValue(state.orgId, "organization id");
+  const updated = await denApiFetch(`/v1/admin/organizations/${orgId}/capabilities`, {
+    method: "PUT",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ capabilities }),
+  });
+  ctx.assert(updated.response.ok, `Admin capability update failed: ${updated.response.status} ${updated.text.slice(0, 300)}`);
+}
+
+async function attemptMintInstallLink(ctx) {
+  const token = requireStateValue(state.adminToken, "org admin token");
+  const orgId = requireStateValue(state.orgId, "organization id");
+  return denApiFetch(`/v1/orgs/${orgId}/install-links`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({}),
+  });
 }
 
 async function createInvitation(ctx, email) {
