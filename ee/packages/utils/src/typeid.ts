@@ -78,6 +78,7 @@ export const idTypesMapNameToPrefix = {
   telemetryEvent: "tev",
   workspaceBootstrap: "wbt",
   workspaceClaim: "wcl",
+  installLink: "inl",
   orgOAuthClient: "ooc",
   connectedAccount: "cta",
   externalMcpConnection: "emc",

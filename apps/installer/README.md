@@ -1,8 +1,8 @@
 # OpenWork Installer
 
-Per-client desktop installer for custom OpenWork deployments. Each build embeds one
-client's deployment config (client name, web URL, API URL). When an end user runs it,
-the installer:
+OpenWork desktop installer for custom deployments. Release builds are generic;
+deployment config is resolved from an install link stamp, sidecar file, filename tag,
+or local development env overrides. When an end user runs it, the installer:
 
 1. Writes `desktop-bootstrap.json` to the OS-correct config location (the same path
    the desktop app and `openwork-bootstrap` CLI resolve), pointing the desktop app at
@@ -18,14 +18,12 @@ the installer:
 The UI is a small native webview window (webview-bun); if the platform webview library
 is unavailable, the same UI opens in the default browser.
 
-## Building per client
+## Install-link stamping
 
-Run the **Build Client Installer** workflow (`.github/workflows/build-client-installer.yml`)
-with the client's name, web URL, and API URL. It compiles single-file binaries for
-macOS (arm64/x64, signed + notarized `.app` in a zip), Windows (x64, SignPath-signed
-when enabled), and Linux (x64/arm64 tarballs), and uploads them as **workflow
-artifacts** — deliberately not public release assets, so client names and deployment
-URLs stay private.
+The Den API serves one generic installer artifact and stamps it at download time:
+macOS zips receive `openwork-installer.json`, Windows installers receive a filename
+tag, and Linux receives a small shell setup script. An unstamped UI build asks the
+user to paste their OpenWork install link.
 
 ## Local development
 
@@ -40,13 +38,13 @@ OPENWORK_INSTALLER_WEB_URL="https://openwork.acme.com" \
 OPENWORK_INSTALLER_API_URL="https://openwork-api.acme.com" \
 bun run src/index.ts --headless --dry-run
 
-# UI mode (uses build config from src/generated/build-config.ts or the env overrides):
+# UI mode (uses install-link stamp, sidecar, filename tag, build config, or env overrides):
 bun run dev
 
 # Single binary:
 bun run compile
 ```
 
-`src/generated/build-config.ts` is a committed placeholder; the workflow overwrites it
-before compiling. Empty placeholder values make the binary refuse to run, so an
-unconfigured build can never point users at the wrong deployment.
+`src/generated/build-config.ts` is a committed placeholder for legacy/dev builds.
+Empty placeholder values make headless mode require `--install-link`; UI mode prompts
+for the install link instead of pointing users at the wrong deployment.

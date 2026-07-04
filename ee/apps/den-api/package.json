@@ -26,6 +26,7 @@
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "@openwork/email": "workspace:*",
+    "@openwork/install-config": "workspace:*",
     "@openwork/types": "workspace:*",
     "@standard-community/standard-json": "^0.3.5",
     "@standard-community/standard-openapi": "^0.2.9",

@@ -41,6 +41,7 @@ const EnvSchema = z.object({
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   DEN_API_PUBLIC_URL: z.string().optional(),
+  OPENWORK_INSTALLER_ARTIFACTS_DIR: z.string().optional(),
   DEN_DESKTOP_DEN_BASE_URL: z.string().optional(),
   DEN_MARKETING_URL: z.string().optional(),
   DEN_MCP_CLAIM_NAMESPACE: z.string().optional(),
@@ -283,6 +284,7 @@ export const env = {
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
   corsOrigins,
   apiPublicUrl: optionalString(parsed.DEN_API_PUBLIC_URL),
+  installerArtifactsDir: optionalString(parsed.OPENWORK_INSTALLER_ARTIFACTS_DIR),
   // Google endpoint overrides for evals/self-host testing: point the native
   // google-workspace provider at a protocol-identical mock instead of the
   // real Google endpoints. Unset in production.

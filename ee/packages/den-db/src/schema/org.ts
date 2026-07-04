@@ -130,6 +130,26 @@ export const WorkspaceClaimTable = mysqlTable(
   ],
 )
 
+export const InstallLinkTable = mysqlTable(
+  "install_link",
+  {
+    id: denTypeIdColumn("installLink", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    tokenHash: varchar("token_hash", { length: 128 }).notNull(),
+    createdByUserId: denTypeIdColumn("user", "created_by_user_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at", { fsp: 3 }),
+    expiresAt: timestamp("expires_at", { fsp: 3 }),
+  },
+  (table) => [
+    uniqueIndex("install_link_token_hash").on(table.tokenHash),
+    index("install_link_organization_id").on(table.organizationId),
+    index("install_link_created_by_user_id").on(table.createdByUserId),
+    index("install_link_revoked_at").on(table.revokedAt),
+    index("install_link_expires_at").on(table.expiresAt),
+  ],
+)
+
 export const OrganizationRoleTable = mysqlTable(
   "organization_role",
   {
@@ -172,4 +192,5 @@ export const member = MemberTable
 export const invitation = InvitationTable
 export const workspaceBootstrap = WorkspaceBootstrapTable
 export const workspaceClaim = WorkspaceClaimTable
+export const installLink = InstallLinkTable
 export const organizationRole = OrganizationRoleTable

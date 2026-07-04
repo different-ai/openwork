@@ -1,20 +1,29 @@
-import { resolveInstallerConfig } from "./config"
+import { installerConfigSourceLabel, resolveInstallerConfig } from "./config"
 import { runInstall } from "./install"
 
-const args = new Set(Bun.argv.slice(2))
+const rawArgs = Bun.argv.slice(2)
+const args = new Set(rawArgs)
 const headless = args.has("--headless") || process.env.OPENWORK_INSTALLER_HEADLESS === "1"
 const dryRun = args.has("--dry-run") || process.env.OPENWORK_INSTALLER_DRY_RUN === "1"
 
-let config
-try {
-  config = resolveInstallerConfig()
-} catch (error) {
-  console.error(`[openwork-installer] ${error instanceof Error ? error.message : String(error)}`)
-  process.exit(2)
+function argValue(name: string) {
+  const inline = rawArgs.find((entry) => entry.startsWith(`${name}=`))
+  if (inline) {
+    return inline.slice(name.length + 1).trim()
+  }
+  const index = rawArgs.indexOf(name)
+  return index >= 0 ? rawArgs[index + 1]?.trim() ?? "" : ""
 }
 
 if (headless) {
+  const resolution = await resolveInstallerConfig({ installLink: argValue("--install-link") }).catch((error): never => {
+    console.error(`[openwork-installer] ${error instanceof Error ? error.message : String(error)}`)
+    process.exit(2)
+  })
+
+  const { config, source } = resolution
   console.log(`OpenWork Installer — ${config.clientName}`)
+  console.log(`[openwork-installer] Configured via ${installerConfigSourceLabel(source)}.`)
   const result = await runInstall(config, {
     dryRun,
     onStatus: (status) => {
@@ -31,7 +40,11 @@ if (headless) {
 // UI mode. The HTTP server and install run live on a worker thread; the
 // native window must own the main thread (Cocoa requires it on macOS, and
 // Webview.run() blocks its thread until the window closes).
-const worker = new Worker(new URL("./server-worker.ts", import.meta.url))
+// Referenced as .js (not .ts): Bun's compiled executables embed the worker
+// entrypoint as server-worker.js, and its rewrite of .ts worker URLs breaks
+// when the worker shares imports with the main entrypoint. Bun's resolver
+// maps the .js specifier back to server-worker.ts when running from source.
+const worker = new Worker(new URL("./server-worker.js", import.meta.url))
 const ready = await new Promise<{ url: string; token: string }>((resolve, reject) => {
   worker.onmessage = (event: MessageEvent<{ type: string; url?: string; token?: string; error?: string }>) => {
     if (event.data.type === "ready" && event.data.url && event.data.token) {
@@ -50,8 +63,8 @@ const ready = await new Promise<{ url: string; token: string }>((resolve, reject
 async function installIsRunning(): Promise<boolean> {
   try {
     const response = await fetch(`${ready.url}api/status`, { headers: { "x-installer-token": ready.token } })
-    const status = (await response.json()) as { state?: string }
-    return status.state === "running"
+    const status: unknown = await response.json()
+    return typeof status === "object" && status !== null && "state" in status && status.state === "running"
   } catch {
     return false
   }
@@ -70,6 +83,15 @@ function openInBrowser(url: string) {
   Bun.spawn(command, { stdio: ["ignore", "ignore", "ignore"] })
 }
 
+if (process.env.OPENWORK_INSTALLER_UI === "manual") {
+  // Manual UI mode: serve the installer UI without opening any window or
+  // browser (headless CI, remote debugging, UI evals). The URL is printed so
+  // the operator can attach their own browser.
+  console.log(`[openwork-installer] UI ready at ${ready.url}`)
+  worker.addEventListener("message", (event: MessageEvent<{ type: string }>) => {
+    if (event.data.type === "exit") void exitWhenInstallSettles()
+  })
+} else {
 try {
   const { Webview, SizeHint } = await import("webview-bun")
   const webview = new Webview(false, { width: 420, height: 440, hint: SizeHint.FIXED })
@@ -87,4 +109,5 @@ try {
   worker.addEventListener("message", (event: MessageEvent<{ type: string }>) => {
     if (event.data.type === "exit") void exitWhenInstallSettles()
   })
+}
 }

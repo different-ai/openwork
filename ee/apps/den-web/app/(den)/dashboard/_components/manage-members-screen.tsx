@@ -24,7 +24,7 @@ import {
   getMembersRoute,
   splitRoleString,
 } from "../../_lib/den-org";
-import { type OrgLimitError, type OrgPaymentRequiredError, getOrgLimitError, getOrgPaymentRequiredError } from "../../_lib/den-flow";
+import { type OrgLimitError, type OrgPaymentRequiredError, getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, requestJson } from "../../_lib/den-flow";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgLimitDialog } from "../../_components/org-limit-dialog";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -137,6 +137,7 @@ export function ManageMembersScreen() {
     createRole,
     updateRole,
     deleteRole,
+    runReauthableAction,
   } = useOrgDashboard();
   const [activeTab, setActiveTab] = useState<MembersTab>("members");
   const [pageError, setPageError] = useState<string | null>(null);
@@ -160,6 +161,8 @@ export function ManageMembersScreen() {
   >({});
   const [limitDialogError, setLimitDialogError] = useState<OrgLimitError | null>(null);
   const [seatBillingDialogError, setSeatBillingDialogError] = useState<OrgPaymentRequiredError | null>(null);
+  const [installLinkBusy, setInstallLinkBusy] = useState(false);
+  const [installLinkCopied, setInstallLinkCopied] = useState(false);
 
   const assignableRoles = useMemo(
     () => (orgContext?.roles ?? []).filter((role) => !role.protected),
@@ -238,6 +241,51 @@ export function ManageMembersScreen() {
     setRoleNameDraft("");
     setRolePermissionDraft({});
     setShowRoleForm(false);
+  }
+
+  function getInstallPageUrl(payload: unknown) {
+    if (!payload || typeof payload !== "object" || !("installPageUrl" in payload)) {
+      return null;
+    }
+    return typeof payload.installPageUrl === "string" && payload.installPageUrl.trim()
+      ? payload.installPageUrl.trim()
+      : null;
+  }
+
+  async function handleCopyInstallLink() {
+    if (!activeOrg) {
+      return;
+    }
+
+    setPageError(null);
+    setInstallLinkCopied(false);
+    setInstallLinkBusy(true);
+    try {
+      await runReauthableAction("copy-install-link", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/orgs/${encodeURIComponent(activeOrg.id)}/install-links`,
+          { method: "POST", body: JSON.stringify({ rotate: true }) },
+          12000,
+        );
+
+        if (!response.ok) {
+          throw new Error(getErrorMessage(payload, `Could not create install link (${response.status}).`));
+        }
+
+        const installPageUrl = getInstallPageUrl(payload);
+        if (!installPageUrl) {
+          throw new Error("The install link response was incomplete.");
+        }
+
+        await navigator.clipboard.writeText(installPageUrl);
+        setInstallLinkCopied(true);
+        window.setTimeout(() => setInstallLinkCopied(false), 1800);
+      });
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : "Could not copy install link.");
+    } finally {
+      setInstallLinkBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -679,9 +727,20 @@ export function ManageMembersScreen() {
                 : "View who is in the organization and what role they currently hold."}
             </p>
             {toolbarAction ? (
-              <DenButton icon={Plus} onClick={toolbarAction.onClick}>
-                {toolbarAction.label}
-              </DenButton>
+              <div className="flex flex-wrap justify-end gap-2">
+                <DenButton
+                  data-testid="copy-install-link"
+                  variant="secondary"
+                  icon={Link}
+                  onClick={() => void handleCopyInstallLink()}
+                  loading={installLinkBusy || mutationBusy === "copy-install-link"}
+                >
+                  {installLinkCopied ? "Copied" : "Copy install link"}
+                </DenButton>
+                <DenButton icon={Plus} onClick={toolbarAction.onClick}>
+                  {toolbarAction.label}
+                </DenButton>
+              </div>
             ) : null}
           </div>
 

@@ -1,14 +1,55 @@
-import type { InstallerConfig } from "./config"
+import { installerConfigSourceLabel, type InstallerConfigResolution } from "./config"
 import { OPENWORK_LOGO_SVG } from "./openwork-logo"
 
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] as string)
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;"
+      case "<":
+        return "&lt;"
+      case ">":
+        return "&gt;"
+      case '"':
+        return "&quot;"
+      case "'":
+        return "&#39;"
+      default:
+        return char
+    }
+  })
 }
 
-export function renderInstallerHtml(config: InstallerConfig, token: string): string {
-  const logo = config.logoUrl
+export function renderInstallerHtml(resolution: InstallerConfigResolution | null, token: string): string {
+  const config = resolution?.config ?? null
+  const logo = config?.logoUrl
     ? `<img class="logo" src="${escapeHtml(config.logoUrl)}" alt="${escapeHtml(config.clientName)}" />`
     : `<div class="logo">${OPENWORK_LOGO_SVG}</div>`
+  const sourceLabel = resolution ? installerConfigSourceLabel(resolution.source) : ""
+  const configuredContent = config
+    ? `
+  ${logo}
+  <div class="title">OpenWork Installer</div>
+  <div class="client">This sets up OpenWork for ${escapeHtml(config.clientName)} (${escapeHtml(config.webUrl)}).</div>
+  <div class="source">Configured via ${escapeHtml(sourceLabel)}.</div>
+  <div class="bar" id="bar"><div id="bar-fill"></div></div>
+  <div class="buttons">
+    <button class="primary" id="action">Install</button>
+    <button id="exit">Exit</button>
+  </div>
+  <div class="status" id="status"></div>`
+    : `
+  <div class="logo">${OPENWORK_LOGO_SVG}</div>
+  <div class="title">Paste your OpenWork install link</div>
+  <div class="client">Your organization admin can copy this link from the Members page.</div>
+  <form class="paste" id="paste-form">
+    <input id="install-link" type="url" placeholder="https://.../install?token=..." autocomplete="off" required />
+    <button class="primary" id="continue" type="submit">Continue</button>
+  </form>
+  <div class="buttons single">
+    <button id="exit">Exit</button>
+  </div>
+  <div class="status" id="status"></div>`
 
   return `<!doctype html>
 <html>
@@ -24,11 +65,12 @@ export function renderInstallerHtml(config: InstallerConfig, token: string): str
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     -webkit-user-select: none; user-select: none;
   }
-  main { display: grid; gap: 6px; justify-items: center; width: 320px; text-align: center; }
+  main { display: grid; gap: 6px; justify-items: center; width: 340px; text-align: center; }
   .logo { max-height: 100px; max-width: 260px; width: auto; height: auto; object-fit: contain; margin-bottom: 10px; }
   div.logo svg { max-height: 72px; width: auto; height: 72px; }
   .title { font-size: 17px; font-weight: 600; }
-  .client { font-size: 14px; color: #71717a; margin-bottom: 14px; }
+  .client { font-size: 14px; color: #71717a; margin-bottom: 6px; line-height: 1.35; }
+  .source { font-size: 11px; color: #a1a1aa; margin-bottom: 8px; }
   .status { font-size: 12px; color: #71717a; min-height: 30px; margin-top: 12px; }
   .status.error { color: #dc2626; }
   .status.done { color: #16a34a; font-weight: 600; }
@@ -41,27 +83,26 @@ export function renderInstallerHtml(config: InstallerConfig, token: string): str
   }
   button.primary { background: #18181b; color: #ffffff; border-color: transparent; font-weight: 600; }
   button:disabled { opacity: .4; cursor: default; }
+  .single { margin-top: 2px; }
+  .paste { display: grid; gap: 10px; width: 100%; margin-top: 10px; }
+  input { box-sizing: border-box; width: 100%; border: 1px solid rgba(24,24,27,.16); border-radius: 8px; padding: 9px 10px; font: inherit; font-size: 13px; }
 </style>
 </head>
 <body>
 <main>
-  ${logo}
-  <div class="title">OpenWork Installer</div>
-  <div class="client">${escapeHtml(config.clientName)}</div>
-  <div class="bar" id="bar"><div id="bar-fill"></div></div>
-  <div class="buttons">
-    <button class="primary" id="action">Install</button>
-    <button id="exit">Exit</button>
-  </div>
-  <div class="status" id="status"></div>
+${configuredContent}
 </main>
 <script>
   const TOKEN = ${JSON.stringify(token)};
+  const CONFIGURED = ${config ? "true" : "false"};
   const statusEl = document.getElementById("status");
   const barEl = document.getElementById("bar");
   const barFillEl = document.getElementById("bar-fill");
   const actionBtn = document.getElementById("action");
   const exitBtn = document.getElementById("exit");
+  const pasteForm = document.getElementById("paste-form");
+  const installLinkInput = document.getElementById("install-link");
+  const continueBtn = document.getElementById("continue");
   let polling = null;
   let installed = false;
 
@@ -82,6 +123,7 @@ export function renderInstallerHtml(config: InstallerConfig, token: string): str
   }
 
   function render(status) {
+    if (!CONFIGURED) return;
     const downloading = status.step === "download" && status.totalBytes;
     barEl.style.visibility = downloading ? "visible" : "hidden";
     if (downloading) barFillEl.style.width = Math.round(100 * status.downloadedBytes / status.totalBytes) + "%";
@@ -108,7 +150,30 @@ export function renderInstallerHtml(config: InstallerConfig, token: string): str
     }
   }
 
-  actionBtn.addEventListener("click", async () => {
+  if (pasteForm) {
+    pasteForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      continueBtn.disabled = true;
+      statusEl.classList.remove("error");
+      statusEl.textContent = "Checking install link...";
+      try {
+        const response = await fetch("/api/resolve-link", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-installer-token": TOKEN },
+          body: JSON.stringify({ installLink: installLinkInput.value })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || "Install link could not be resolved.");
+        window.location.reload();
+      } catch (error) {
+        statusEl.textContent = error.message || "Install link could not be resolved.";
+        statusEl.classList.add("error");
+        continueBtn.disabled = false;
+      }
+    });
+  }
+
+  if (actionBtn) actionBtn.addEventListener("click", async () => {
     if (installed) {
       try { await api("/api/launch"); } catch {}
       closeWindow();

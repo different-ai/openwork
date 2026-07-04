@@ -260,6 +260,9 @@ importers:
 
   apps/installer:
     dependencies:
+      '@openwork/install-config':
+        specifier: workspace:*
+        version: link:../../packages/install-config
       webview-bun:
         specifier: 2.4.0
         version: 2.4.0
@@ -459,6 +462,9 @@ importers:
       '@openwork/email':
         specifier: workspace:*
         version: link:../../../packages/email
+      '@openwork/install-config':
+        specifier: workspace:*
+        version: link:../../../packages/install-config
       '@openwork/types':
         specifier: workspace:*
         version: link:../../../packages/types
@@ -805,6 +811,19 @@ importers:
         version: 5.9.3
 
   packages/handsfree: {}
+
+  packages/install-config:
+    dependencies:
+      zod:
+        specifier: 4.3.6
+        version: 4.3.6
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
 
   packages/openwork-bootstrap: {}
 
