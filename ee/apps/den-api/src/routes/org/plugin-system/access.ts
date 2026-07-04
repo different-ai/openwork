@@ -107,7 +107,7 @@ function ensureFreshPluginArchAdmin(context: PluginArchActorContext) {
     return
   }
 
-  throw new PluginArchAuthorizationError(403, "reauth", "Sign in again before performing this privileged action.", "fresh_auth_required")
+  throw new PluginArchAuthorizationError(403, "reauth", "For security, confirm it's you before changing workspace settings.", "fresh_auth_required")
 }
 
 function roleSatisfies(role: PluginArchRole | null, required: PluginArchRole) {

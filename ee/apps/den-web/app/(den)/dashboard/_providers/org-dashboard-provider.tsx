@@ -197,7 +197,7 @@ export function OrgDashboardProvider({
   function cancelReauth() {
     const pending = pendingReauthMutation;
     setPendingReauthMutation(null);
-    pending?.reject(new Error("Sign in again before continuing."));
+    pending?.reject(new Error("Confirm it's you before continuing."));
   }
 
   async function retryReauthMutation() {

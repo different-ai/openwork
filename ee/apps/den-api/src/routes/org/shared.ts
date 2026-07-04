@@ -48,7 +48,7 @@ function ensureFreshPrivilegedSession(c: { get: (key: "session") => OrgRouteVari
     response: {
       error: "reauth",
       reason: "fresh_auth_required",
-      message: "Sign in again before performing this privileged action.",
+      message: "For security, confirm it's you before changing workspace settings.",
     },
   }
 }

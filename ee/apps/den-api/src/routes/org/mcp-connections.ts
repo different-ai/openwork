@@ -10,6 +10,7 @@ import {
   publicRoute,
   queryValidator,
   resolveMemberTeamsMiddleware,
+  verifyOrgRole,
 } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { createOAuthStateToken, resolvePublicOrigin, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
@@ -220,8 +221,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const { scope } = c.req.valid("query")
 
       if (scope === "manageable") {
-        const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can list all MCP connections.")
-        if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+        if (!verifyOrgRole({ roles: ["admin"], userContext: payload.currentMember })) {
+          return c.json({ error: "forbidden", message: "Only workspace owners and admins can list all MCP connections." }, 403)
+        }
         const rows = await listExternalMcpConnections(payload.organization.id)
         const connections = await Promise.all(rows.map((row) =>
           toConnectionResponse(row, { callerOrgMembershipId: payload.currentMember.id, includeAccess: true })))
@@ -451,7 +453,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         // Per-member: any member GRANTED the connection may connect their own
         // account (that is the whole point); admins may too.
         const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
-        const isAdmin = ensureOrganizationAdmin(c, "").ok
+        const isAdmin = verifyOrgRole({ roles: ["admin"], userContext: payload.currentMember })
         const canUse = await memberCanUseExternalMcpConnection({
           connectionId: externalMcpConnectionId,
           orgMembershipId: payload.currentMember.id,
@@ -533,5 +535,3 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     },
   )
 }
-
-

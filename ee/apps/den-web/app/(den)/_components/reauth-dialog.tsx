@@ -97,7 +97,7 @@ export function ReauthDialog({
   async function submitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.email) {
-      setError("Sign in again to continue.");
+      setError("Confirm it's you to continue.");
       return;
     }
 
@@ -174,11 +174,11 @@ export function ReauthDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6">
       <div role="dialog" aria-modal="true" className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]">
         <div className="grid gap-3">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">Re-authentication required</p>
+          <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">Security check</p>
           <div className="grid gap-2">
-            <h2 className="text-[24px] font-semibold tracking-[-0.03em] text-gray-950">Sign in again to continue</h2>
+            <h2 className="text-[24px] font-semibold tracking-[-0.03em] text-gray-950">Confirm it's you to continue</h2>
             <p className="text-[15px] leading-7 text-gray-600">
-              This admin action needs a recent sign-in. Password verification retries automatically; redirect sign-ins return you here to retry safely.
+              Changing workspace settings requires a recent sign-in. After you confirm, OpenWork retries the action automatically.
             </p>
           </div>
         </div>

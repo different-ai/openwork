@@ -156,11 +156,6 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
     orgRoleRoute(["admin"]),
     async (c) => {
       const payload = c.get("organizationContext")
-      const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can manage desktop policies.")
-      if (!permission.ok) {
-        return c.json(permission.response, orgAccessFailureStatus(permission.response))
-      }
-
       const desktopPolicies = await loadDesktopPolicies(payload.organization.id)
       return c.json({ definitions: desktopPolicyDefinitions, desktopPolicies })
     },
