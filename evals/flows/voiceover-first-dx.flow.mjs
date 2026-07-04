@@ -173,15 +173,32 @@ export default {
                 steps: [{
                   status: "passed",
                   evidence: [
-                    { type: "claim", status: "passed", claim: "The demo holds", voiceover: vo[5] },
+                    // Mirrors ctx.prove's recording order for a prove-with-screenshot frame.
+                    { type: "claim", status: "running", name: "The demo holds", claim: "The demo holds", voiceover: vo[5] },
                     { type: "assertion", status: "passed", assertion: "Observable side effect witnessed" },
+                    { type: "frame", status: "passed", file: "demo-01-frame.png", name: "frame", claim: "The demo holds", voiceover: vo[5], validations: [{ label: "PNG exists and is non-empty", passed: true }] },
+                    { type: "claim", status: "passed", name: "The demo holds", claim: "The demo holds", voiceover: "" },
                   ],
                 }],
               }],
             });
+            const claimIndex = body.indexOf("**The demo holds**");
+            const voiceoverIndex = body.indexOf(`🎙 ${vo[5]}`);
+            const assertionIndex = body.indexOf("Observable side effect witnessed");
+            const screenshotIndex = body.indexOf("demo-01-frame.png");
             witness(ctx, body.includes("## fraimz — ✅ PASSED"), "The comment leads with the verdict");
             witness(ctx, body.includes(`🎙 ${vo[5]}`), "Each frame carries its voice-over line");
             witness(ctx, body.includes("Observable side effect witnessed"), "Each frame lists its passing assertions");
+            witness(
+              ctx,
+              claimIndex !== -1 && voiceoverIndex !== -1 && assertionIndex !== -1 && screenshotIndex !== -1 && claimIndex < voiceoverIndex && voiceoverIndex < assertionIndex && assertionIndex < screenshotIndex,
+              "The frame reads in follow-along order: claim, voice-over, assertions, then the screenshot",
+            );
+            witness(
+              ctx,
+              voiceoverIndex !== -1 && voiceoverIndex === body.lastIndexOf(`🎙 ${vo[5]}`),
+              "The narration appears exactly once per frame (screenshot copy deduped)",
+            );
             ctx.output("pr-comment.md (rendered)", body);
           },
         });

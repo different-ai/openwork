@@ -65,9 +65,11 @@ pnpm fraimz --flow <flow-id> --pr # after the run, post the frame proof as a
 `--pr` uploads each frame screenshot to Vercel Blob so it renders inline in
 the comment (see the `upload-photo` skill); this requires
 `BLOB_READ_WRITE_TOKEN` in the environment (`get-env-var` skill /
-`infisical secrets get BLOB_READ_WRITE_TOKEN --plain --silent`). If the token
-is missing or an upload fails, the comment still posts with a note and the
-screenshots stay available in `evals/results/<run-id>/`.
+`infisical secrets get BLOB_READ_WRITE_TOKEN --plain --silent`). The comment
+renders each frame as claim → voiceover → assertions → screenshot so reviewers
+can follow the demo step by step. If the token is missing or an upload fails,
+the comment still posts with a note and the screenshots stay available in
+`evals/results/<run-id>/`.
 
 Flows load their narration with `loadVoiceoverParagraphs(<flow-id>)`; when a
 script exists for a flow, the runner appends a **Voice-over script coverage**

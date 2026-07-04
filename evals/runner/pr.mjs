@@ -1,8 +1,8 @@
 /**
  * fraimz on the PR: render the frame-by-frame proof as a PR comment and post
- * it with `gh`. The comment is the reviewable demo (verdict + per-frame claim,
- * voiceover, assertions); `fraimz.html` in the run directory stays the full
- * artifact with validated screenshots.
+ * it with `gh`. The comment is the follow-along demo: each frame reads as
+ * claim → voiceover → assertions → validated screenshot; `fraimz.html` in the
+ * run directory stays the full artifact.
  *
  * Frame screenshots are uploaded to Vercel Blob (see the `upload-photo`
  * skill) so they render inline in the PR comment. Requires
@@ -42,16 +42,54 @@ export function renderPrComment(report, imageUrls = null) {
     lines.push("");
     let frame = 0;
     for (const step of flow.steps ?? []) {
-      for (const evidence of step.evidence ?? []) {
-        if (evidence.type === "claim" && evidence.status === "passed") {
-          frame += 1;
-          lines.push(`${frame}. **${evidence.claim ?? evidence.name}**`);
-          if (evidence.voiceover) lines.push(`   > 🎙 ${evidence.voiceover}`);
+      const evidenceItems = step.evidence ?? [];
+      const opened = new Set();
+      let openClaim = null;
+      let narrated = null;
+      for (const [index, evidence] of evidenceItems.entries()) {
+        if (evidence.type === "claim") {
+          const key = evidence.name ?? evidence.claim;
+          const claim = evidence.claim ?? evidence.name;
+          if (evidence.status === "running") {
+            const closed = evidenceItems.slice(index + 1).some((item) => {
+              const itemKey = item.name ?? item.claim;
+              return item.type === "claim" && item.status === "passed" && itemKey === key;
+            });
+            frame += 1;
+            lines.push(`${frame}. ${closed ? "" : "❌ "}**${claim}**`);
+            opened.add(key);
+            openClaim = claim ?? null;
+            narrated = null;
+            if (evidence.voiceover) {
+              lines.push(`   > 🎙 ${evidence.voiceover}`);
+              narrated = evidence.voiceover;
+            }
+          } else if (evidence.status === "passed" && !opened.has(key)) {
+            frame += 1;
+            lines.push(`${frame}. **${claim}**`);
+            opened.add(key);
+            openClaim = claim ?? null;
+            narrated = null;
+            if (evidence.voiceover) {
+              lines.push(`   > 🎙 ${evidence.voiceover}`);
+              narrated = evidence.voiceover;
+            }
+          }
         }
         if (evidence.type === "assertion") {
           lines.push(`   - ${evidence.status === "passed" ? "✅" : "❌"} ${evidence.assertion}`);
         }
         if (evidence.type === "frame") {
+          if (evidence.claim && evidence.claim !== openClaim) {
+            frame += 1;
+            lines.push(`${frame}. **${evidence.claim}**`);
+            openClaim = evidence.claim;
+            narrated = null;
+          }
+          if (evidence.voiceover && evidence.voiceover !== narrated) {
+            lines.push(`   > 🎙 ${evidence.voiceover}`);
+            narrated = evidence.voiceover;
+          }
           const failed = (evidence.validations ?? []).filter((validation) => !validation.passed);
           lines.push(
             `   - 📸 \`${evidence.file}\` — ${failed.length === 0 ? `${(evidence.validations ?? []).length} validations passed` : `FAILED: ${failed.map((validation) => validation.label).join(", ")}`}`,
