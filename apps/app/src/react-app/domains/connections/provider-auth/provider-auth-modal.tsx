@@ -794,7 +794,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                                   method.type === "oauth"
                                     ? "bg-indigo-3/30 text-indigo-11 border-indigo-5/30"
                                     : method.type === "cloud"
-                                      ? "bg-emerald-3/30 text-emerald-11 border-emerald-5/30"
+                                      ? "bg-green-3/30 text-green-11 border-green-5/30"
                                       : "bg-gray-3/40 text-gray-11 border-gray-6/40"
                                 }`}
                               >

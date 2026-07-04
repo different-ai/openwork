@@ -103,7 +103,7 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
         <section className="w-full overflow-hidden rounded-[32px] border border-white/10 bg-white/[0.04] shadow-2xl shadow-black/40">
           <div className="grid gap-0 lg:grid-cols-[1.05fr_0.95fr]">
             <div className="space-y-8 p-8 sm:p-10 lg:p-12">
-              <div className="inline-flex rounded-full border border-amber-300/30 bg-amber-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-amber-100">
+              <div className="inline-flex rounded-full border border-[#fcd34d]/30 bg-[#fcd34d]/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-[#fef3c7]">
                 Architecture mismatch
               </div>
               <div className="space-y-4">
@@ -121,10 +121,10 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
                   <div className="mt-2 text-2xl font-semibold text-white">{info.appArchLabel}</div>
                   <div className="mt-1 font-mono text-xs text-white/45">{info.appArch}</div>
                 </div>
-                <div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4">
-                  <div className="text-xs uppercase tracking-[0.2em] text-emerald-100/70">Your system</div>
-                  <div className="mt-2 text-2xl font-semibold text-emerald-50">{info.systemArchLabel}</div>
-                  <div className="mt-1 font-mono text-xs text-emerald-100/55">{info.systemArch}</div>
+                <div className="rounded-2xl border border-[#6ee7b7]/20 bg-[#6ee7b7]/10 p-4">
+                  <div className="text-xs uppercase tracking-[0.2em] text-[#d1fae5]/70">Your system</div>
+                  <div className="mt-2 text-2xl font-semibold text-[#ecfdf5]">{info.systemArchLabel}</div>
+                  <div className="mt-1 font-mono text-xs text-[#d1fae5]/55">{info.systemArch}</div>
                 </div>
               </div>
 
@@ -132,7 +132,7 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
                 <button
                   type="button"
                   onClick={openDownload}
-                  className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-black transition hover:bg-emerald-100"
+                  className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-black transition hover:bg-[#d1fae5]"
                 >
                   Download correct version
                 </button>
@@ -146,7 +146,7 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
               </div>
             </div>
 
-            <aside className="border-t border-white/10 bg-gradient-to-br from-emerald-300/12 via-sky-300/8 to-transparent p-8 sm:p-10 lg:border-l lg:border-t-0 lg:p-12">
+            <aside className="border-t border-white/10 bg-gradient-to-br from-[#6ee7b7]/12 via-[#7dd3fc]/8 to-transparent p-8 sm:p-10 lg:border-l lg:border-t-0 lg:p-12">
               <div className="space-y-5 rounded-[28px] border border-white/10 bg-black/25 p-6 text-sm leading-6 text-white/68">
                 <div className="text-lg font-semibold text-white">Why OpenWork stopped here</div>
                 <p>

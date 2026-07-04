@@ -64,7 +64,7 @@ export type CreateWorkspaceLocalPanelProps = {
 
 function stepIcon(status: CreateWorkspaceProgressStep["status"]) {
   if (status === "done")
-    return <XCircle size={16} className="text-emerald-10" />;
+    return <XCircle size={16} className="text-green-10" />;
   if (status === "active")
     return <Loader2 size={16} className="animate-spin text-dls-accent" />;
   if (status === "error") return <XCircle size={16} className="text-red-10" />;
@@ -107,15 +107,15 @@ export function CreateWorkspaceLocalPanel(
             </div>
             <ul className="mt-3 space-y-1.5 pl-1">
               <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
-                <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
+                <Check size={14} className="mt-0.5 shrink-0 text-green-10" />
                 {t("welcome.folder_read")}
               </li>
               <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
-                <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
+                <Check size={14} className="mt-0.5 shrink-0 text-green-10" />
                 {t("welcome.folder_write")}
               </li>
               <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
-                <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
+                <Check size={14} className="mt-0.5 shrink-0 text-green-10" />
                 {t("welcome.folder_anything")}
               </li>
             </ul>
