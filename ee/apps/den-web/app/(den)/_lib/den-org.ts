@@ -188,6 +188,7 @@ export type DenOrgContext = {
   currentMemberTeams: DenCurrentMemberTeam[];
   entitlements: DenOrgEntitlements;
   authMethods: DenOrgAuthMethods;
+  capabilities: DenOrgCapabilities;
 };
 
 export type DenOrgAuthMethods = {
@@ -200,6 +201,11 @@ export type DenOrgEntitlements = {
   desktopPolicies: boolean;
   orgControls: boolean;
   analytics: boolean;
+};
+
+/** Per-org feature flags controlled by platform admins; everything defaults to off. */
+export type DenOrgCapabilities = {
+  installLinks: boolean;
 };
 
 export type DenOrganizationMetadata = {
@@ -714,6 +720,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
     currentMemberTeams,
     entitlements: parseOrgEntitlements(payload.entitlements),
     authMethods: parseOrgAuthMethods(payload.authMethods),
+    capabilities: parseOrgCapabilities(payload.capabilities),
   };
 }
 
@@ -725,6 +732,16 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
   return {
     sso: value.sso === true,
     scim: value.scim === true,
+  };
+}
+
+function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
+  if (!isRecord(value)) {
+    return { installLinks: false };
+  }
+
+  return {
+    installLinks: value.installLinks === true,
   };
 }
 

@@ -93,6 +93,10 @@ type AdminUser = {
   organizations: AdminUserOrganization[];
 };
 
+type AdminOrganizationCapabilities = {
+  installLinks: boolean;
+};
+
 type AdminOrganization = {
   id: string;
   name: string;
@@ -108,6 +112,7 @@ type AdminOrganization = {
   freeSeatCount: number;
   seatsFreeAdditional: number;
   billableSeatCount: number;
+  capabilities: AdminOrganizationCapabilities;
 };
 
 type AdminPayload = {
@@ -273,6 +278,7 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
 
         const plan = isRecord(value.plan) ? value.plan : {};
         const tier = plan.tier === "team" || plan.tier === "enterprise" ? plan.tier : "free";
+        const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
 
         return {
           id: value.id,
@@ -288,7 +294,10 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           seatLimit: toNumberValue(value.seatLimit),
           freeSeatCount: toNumberValue(value.freeSeatCount) || DEFAULT_FREE_SEAT_COUNT,
           seatsFreeAdditional: toNumberValue(value.seatsFreeAdditional),
-          billableSeatCount: toNumberValue(value.billableSeatCount)
+          billableSeatCount: toNumberValue(value.billableSeatCount),
+          capabilities: {
+            installLinks: capabilities.installLinks === true
+          }
         };
       })
       .filter((value): value is AdminOrganization => value !== null)
@@ -406,6 +415,31 @@ async function requestJson(path: string) {
 async function patchJson(path: string, body: unknown) {
   const response = await fetch(`/api/den${path}`, {
     method: "PATCH",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+
+  const text = await response.text();
+  let payload: unknown = null;
+
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
+    }
+  }
+
+  return { response, payload };
+}
+
+async function putJson(path: string, body: unknown) {
+  const response = await fetch(`/api/den${path}`, {
+    method: "PUT",
     credentials: "include",
     headers: {
       Accept: "application/json",
@@ -796,6 +830,7 @@ export function DenAdminPanel() {
   const [savingOrgId, setSavingOrgId] = useState<string | null>(null);
   const [freeSeatsDialog, setFreeSeatsDialog] = useState<{ org: AdminOrganization; totalFreeSeats: string } | null>(null);
   const [savingFreeSeatsOrgId, setSavingFreeSeatsOrgId] = useState<string | null>(null);
+  const [savingCapabilityOrgId, setSavingCapabilityOrgId] = useState<string | null>(null);
   const [deleteUserDialog, setDeleteUserDialog] = useState<AdminUser | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
@@ -1063,6 +1098,44 @@ export function DenAdminPanel() {
     }
   }, [freeSeatsDialog, includeBilling, loadOverview]);
 
+  const setOrganizationCapabilityLocally = useCallback((orgId: string, key: keyof AdminOrganizationCapabilities, enabled: boolean) => {
+    setPayload((current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        organizations: current.organizations.map((org) =>
+          org.id === orgId ? { ...org, capabilities: { ...org.capabilities, [key]: enabled } } : org
+        )
+      };
+    });
+  }, []);
+
+  const saveOrganizationCapability = useCallback(async (org: AdminOrganization, key: keyof AdminOrganizationCapabilities, enabled: boolean) => {
+    setSavingCapabilityOrgId(org.id);
+    setError(null);
+    // Optimistic: flip the toggle immediately, roll back if the PUT fails.
+    setOrganizationCapabilityLocally(org.id, key, enabled);
+
+    try {
+      const { response, payload: nextPayload } = await putJson(`/v1/admin/organizations/${org.id}/capabilities`, {
+        capabilities: { [key]: enabled }
+      });
+
+      if (!response.ok) {
+        setOrganizationCapabilityLocally(org.id, key, !enabled);
+        setError(getErrorMessage(nextPayload, `Could not update capabilities for ${org.name}.`));
+      }
+    } catch (nextError) {
+      setOrganizationCapabilityLocally(org.id, key, !enabled);
+      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
+    } finally {
+      setSavingCapabilityOrgId(null);
+    }
+  }, [setOrganizationCapabilityLocally]);
+
   const deleteUser = useCallback(async () => {
     if (!deleteUserDialog) {
       return;
@@ -1319,7 +1392,7 @@ export function DenAdminPanel() {
         ) : null}
 
         {viewMode === "organizations" ? (
-          <div className="mt-4">
+          <div className="mt-4" data-testid="admin-orgs-page">
             <label className="grid w-full max-w-xl gap-2">
               <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search organizations</span>
               <input
@@ -1448,7 +1521,7 @@ export function DenAdminPanel() {
               const changed = draft.tier !== org.plan.tier || draft.seatLimit !== String(org.seatLimit);
 
               return (
-                <div key={org.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                <div key={org.id} data-testid={`admin-org-row-${org.slug}`} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1492,6 +1565,24 @@ export function DenAdminPanel() {
                         {org.seatsFreeAdditional > 0 ? `${org.seatsFreeAdditional} additional` : "Default included"}
                       </p>
                     </div>
+                  </div>
+
+                  <div className="mt-4 border-t border-slate-200 pt-4">
+                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Capabilities</p>
+                    <label className="mt-2 inline-flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        data-testid="admin-capability-installLinks"
+                        checked={org.capabilities.installLinks}
+                        disabled={savingCapabilityOrgId === org.id}
+                        onChange={(event) => {
+                          void saveOrganizationCapability(org, "installLinks", event.target.checked);
+                        }}
+                        className="h-4 w-4 rounded border-slate-300"
+                      />
+                      Install links
+                    </label>
+                    <p className="mt-1 text-xs text-slate-400">Off by default. Lets workspace admins mint desktop install links for this organization.</p>
                   </div>
 
                   <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-[12rem_10rem_auto] lg:items-end">

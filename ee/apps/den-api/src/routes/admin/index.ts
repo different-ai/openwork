@@ -26,6 +26,7 @@ import { db } from "../../db.js"
 import { parseOrganizationPlan, type PlanTier } from "../../entitlements.js"
 import { adminRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { normalizeOrganizationCapabilities } from "../../organization-capabilities.js"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../../organization-limits.js"
 import type { AuthContextVariables } from "../../session.js"
 import { calculateOrganizationSeatBillingCounts, getOrganizationSeatBillingCounts, refreshOrgSubscriptionFromStripe, syncSeatSubscriptionQuantityAfterMemberChange } from "../../stripe-billing.js"
@@ -56,6 +57,12 @@ const updateOrganizationPlanSchema = z.object({
 
 const updateOrganizationFreeSeatsSchema = z.object({
   totalFreeSeats: z.number().int().min(DEFAULT_ORGANIZATION_FREE_SEAT_COUNT).max(100000),
+})
+
+const updateOrganizationCapabilitiesSchema = z.object({
+  capabilities: z.object({
+    installLinks: z.boolean().optional(),
+  }),
 })
 
 const adminOverviewResponseSchema = z.object({
@@ -390,6 +397,74 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   )
 
   app.get(
+    "/v1/admin/organizations/:organizationId/capabilities",
+    adminRoute(),
+    async (c) => {
+      const organizationId = c.req.param("organizationId")
+      if (!isOrganizationId(organizationId)) {
+        return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
+      }
+
+      const rows = await db
+        .select({ id: OrganizationTable.id, metadata: OrganizationTable.metadata })
+        .from(OrganizationTable)
+        .where(eq(OrganizationTable.id, organizationId))
+        .limit(1)
+
+      const organization = rows[0]
+      if (!organization) {
+        return c.json({ error: "not_found", message: "Organization not found." }, 404)
+      }
+
+      return c.json({ capabilities: normalizeOrganizationCapabilities(organization.metadata) })
+    },
+  )
+
+  app.put(
+    "/v1/admin/organizations/:organizationId/capabilities",
+    adminRoute(),
+    async (c) => {
+      const body = updateOrganizationCapabilitiesSchema.safeParse(await c.req.json().catch(() => null))
+      if (!body.success) {
+        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid organization capabilities request." }, 400)
+      }
+
+      const organizationId = c.req.param("organizationId")
+      if (!isOrganizationId(organizationId)) {
+        return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
+      }
+
+      const rows = await db
+        .select({ id: OrganizationTable.id, metadata: OrganizationTable.metadata })
+        .from(OrganizationTable)
+        .where(eq(OrganizationTable.id, organizationId))
+        .limit(1)
+
+      const organization = rows[0]
+      if (!organization) {
+        return c.json({ error: "not_found", message: "Organization not found." }, 404)
+      }
+
+      const capabilities = normalizeOrganizationCapabilities(organization.metadata)
+      if (body.data.capabilities.installLinks !== undefined) {
+        capabilities.installLinks = body.data.capabilities.installLinks
+      }
+
+      const metadata = {
+        ...normalizeOrganizationMetadata(organization.metadata).metadata,
+        capabilities,
+      }
+
+      await db
+        .update(OrganizationTable)
+        .set({ metadata })
+        .where(eq(OrganizationTable.id, organizationId))
+
+      return c.json({ ok: true, organization: { id: organizationId }, capabilities })
+    },
+  )
+
+  app.get(
     "/v1/admin/overview",
     describeRoute({
       tags: ["Admin"],
@@ -591,6 +666,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         freeSeatCount: seatCounts.free,
         seatsFreeAdditional: seatCounts.additionalFree,
         billableSeatCount: seatCounts.chargeable,
+        capabilities: normalizeOrganizationCapabilities(metadata),
       }
     })
 
