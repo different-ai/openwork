@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Marked, type Tokens } from "marked";
 import { markedEmoji } from "marked-emoji";
 import markedShiki from "marked-shiki";
@@ -15,6 +15,7 @@ import {
 } from "@shikijs/transformers";
 import { bundledLanguages, codeToHtml } from "shiki";
 
+import { getResolvedShikiTheme, subscribeToTheme } from "@/app/theme";
 import { applyTextHighlights } from "./text-highlights";
 
 function escapeHtml(value: string) {
@@ -175,7 +176,7 @@ const highlightedMarkdownParser = new Marked<string, string>({
       return codeToHtml(code, {
         lang: language,
         meta: { __raw: props.join(" ") },
-        theme: "github-light",
+        theme: getResolvedShikiTheme(),
         transformers: [
           transformerNotationDiff({ matchAlgorithm: "v3" }),
           transformerNotationHighlight({ matchAlgorithm: "v3" }),
@@ -197,6 +198,11 @@ function MarkdownBlockInner(props: {
   highlightQuery?: string;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const shikiTheme = useSyncExternalStore(
+    subscribeToTheme,
+    getResolvedShikiTheme,
+    getResolvedShikiTheme,
+  );
   const syncHtml = useMemo(() => {
     if (!props.text.trim()) return "";
     return markdownParser.parse(props.text, { async: false });
@@ -218,7 +224,7 @@ function MarkdownBlockInner(props: {
     return () => {
       cancelled = true;
     };
-  }, [props.streaming, props.text]);
+  }, [props.streaming, props.text, shikiTheme]);
 
   useEffect(() => {
     const root = rootRef.current;

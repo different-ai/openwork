@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { motion } from "motion/react";
 import DOMPurify from "dompurify";
 import { Marked, type Tokens } from "marked";
@@ -17,6 +17,7 @@ import {
 } from "@shikijs/transformers";
 import { bundledLanguages, codeToHtml } from "shiki";
 
+import { getResolvedShikiTheme, subscribeToTheme } from "@/app/theme";
 import { cn } from "@/lib/utils";
 import { useOpenTargets } from "@/lib/target-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
@@ -340,7 +341,7 @@ const highlightedMarkdownParser = new Marked({
       return codeToHtml(code, {
         lang: language,
         meta: { __raw: props.join(" ") },
-        theme: "github-light",
+        theme: getResolvedShikiTheme(),
         transformers: [
           transformerNotationDiff({ matchAlgorithm: "v3" }),
           transformerNotationHighlight({ matchAlgorithm: "v3" }),
@@ -375,6 +376,11 @@ function MarkdownBlockInner({
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const { openTargets, onOpenTarget } = useOpenTargets();
+  const shikiTheme = useSyncExternalStore(
+    subscribeToTheme,
+    getResolvedShikiTheme,
+    getResolvedShikiTheme,
+  );
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
   const syncHtml = useMemo(() => {
     if (!text.trim()) {
@@ -405,7 +411,7 @@ function MarkdownBlockInner({
     return () => {
       cancelled = true;
     };
-  }, [streaming, text]);
+  }, [shikiTheme, streaming, text]);
 
   const html = !streaming && highlightedHtml?.text === text ? highlightedHtml.html : syncHtml;
 

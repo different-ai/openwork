@@ -1,5 +1,6 @@
 export type ThemeMode = "light" | "dark" | "system";
 export type ResolvedThemeMode = "light" | "dark";
+export type ShikiTheme = "github-light" | "github-dark";
 
 const THEME_PREF_KEY = "openwork.react.settings.theme-mode";
 const LEGACY_THEME_PREF_KEYS = ["openwork.themePref"];
@@ -95,6 +96,9 @@ export const bootstrapTheme = () => {
 export const getInitialThemeMode = () => getCurrentMode();
 
 export const getResolvedThemeMode = () => resolveMode(getCurrentMode());
+
+export const getResolvedShikiTheme = (): ShikiTheme =>
+  getResolvedThemeMode() === "dark" ? "github-dark" : "github-light";
 
 const persistThemeMode = (mode: ThemeMode) => {
   if (typeof window === "undefined") return;
