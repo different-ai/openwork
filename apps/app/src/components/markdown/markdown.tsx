@@ -209,6 +209,7 @@ function sanitizeMarkdownHtml(value: string) {
       "start",
       "style",
       "target",
+      "data-openwork-copy-code",
     ],
   });
 }
@@ -258,7 +259,14 @@ const baseMarkedOptions = {
       return `<blockquote class="my-4 rounded-r-lg border-l border-border bg-muted/40 pl-4 italic text-muted-foreground">${this.parser.parse(tokens)}</blockquote>`;
     },
     code({ text, lang }) {
-      return `<pre class="my-4 overflow-x-auto rounded-[18px] border border-border/70 bg-gray-1/80 px-4 py-3 text-xs leading-6 text-muted-foreground"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre>`;
+      return `
+      <div>
+        <pre class="my-4 overflow-x-auto rounded-[18px] border border-border/70 bg-gray-1/80 px-4 py-3 text-xs leading-6 text-muted-foreground">
+          <code${codeLanguageClass(lang)}>${escapeHtml(text)}</code>
+        </pre>
+      </div>
+      `
+      ;
     },
     codespan({ text }) {
       return `<code class="rounded-md bg-gray-2/70 px-1.5 py-0.5 font-mono text-sm text-foreground">${escapeHtml(text)}</code>`;
@@ -267,7 +275,7 @@ const baseMarkedOptions = {
       if (!raw.startsWith("~~")) {
         return escapeHtml(raw);
       }
-      
+
       return `<del>${this.parser.parseInline(tokens)}</del>`;
     },
     link({ href, title, tokens }) {
@@ -352,7 +360,22 @@ const highlightedMarkdownParser = new Marked({
         ],
       });
     },
-    container: `<div data-openwork-shiki="true" class="my-4 overflow-hidden rounded-lg border border-border/70 bg-gray-1/80 p-4 text-xs leading-6">%s</div>`,
+    container: `
+    <div data-openwork-shiki="true" class="my-4 overflow-y-clip rounded-lg border border-border/70 bg-gray-1/80 p-4 pt-0 text-xs leading-6">
+      <div class="sticky z-2 top-0 bg-white">
+        <div class="w-full flex items-center justify-end py-2">
+          <button data-openwork-copy-code="">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-md">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="overflow-x-scroll">
+        %s
+      </div>
+    </div>`,
   }),
 );
 
@@ -444,6 +467,30 @@ function MarkdownBlockInner({
 
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return;
+
+      const copyButton = event.target.closest("[data-openwork-copy-code]");
+      if (copyButton instanceof HTMLButtonElement) {
+        const originalHtml = copyButton.innerHTML;
+        event.preventDefault();
+        event.stopPropagation();
+        const codeBlock = copyButton.closest("[data-openwork-shiki]")?.querySelector("code");
+        if (codeBlock instanceof HTMLElement) {
+          const textToCopy = codeBlock.textContent ?? "";
+          navigator.clipboard.writeText(textToCopy).then(() => {
+            copyButton.innerHTML = `
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            `;
+            setTimeout(() => {
+              copyButton.innerHTML = originalHtml;
+            }, 500);
+          }).catch(() => {
+            console.log('Copy failed')
+          });
+        }
+        return;
+      }
 
       const chevron = event.target.closest("[data-openwork-link-chevron]");
       if (chevron instanceof HTMLElement) {
