@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { DownloadOpenWorkCard, type DownloadCardInstallers } from "@openwork/ui/react";
 import {
   ArrowRight,
   ChevronRight,
-  Download,
   Gauge,
-  Monitor,
   Users,
 } from "lucide-react";
 import Link from "next/link";
@@ -39,11 +38,7 @@ type Release = {
   assets?: ReleaseAsset[];
 };
 
-type Installers = {
-  macos: { appleSilicon: string; intel: string };
-  windows: { x64: string };
-  linux: { appImageX64: string; appImageArm64: string };
-};
+type Installers = DownloadCardInstallers;
 
 /* ── Data ── */
 
@@ -87,8 +82,13 @@ function selectAsset(assets: ReleaseAsset[], extensions: string[], keywords: str
 async function fetchInstallers(): Promise<{ installers: Installers; releaseTag: string; releaseUrl: string }> {
   const fallback: Installers = {
     macos: { appleSilicon: FALLBACK_RELEASE, intel: FALLBACK_RELEASE },
-    windows: { x64: FALLBACK_RELEASE },
-    linux: { appImageX64: FALLBACK_RELEASE, appImageArm64: FALLBACK_RELEASE },
+    windows: { x64: FALLBACK_RELEASE, arm64: FALLBACK_RELEASE },
+    linux: {
+      appImageX64: FALLBACK_RELEASE,
+      appImageArm64: FALLBACK_RELEASE,
+      tarX64: FALLBACK_RELEASE,
+      tarArm64: FALLBACK_RELEASE,
+    },
   };
   try {
     const res = await fetch("https://api.github.com/repos/different-ai/openwork/releases/latest", {
@@ -104,8 +104,11 @@ async function fetchInstallers(): Promise<{ installers: Installers; releaseTag: 
     const macIntel = selectAsset(assets, [".dmg"], ["mac-x64"]);
     const dmg = selectAsset(assets, [".dmg"], ["openwork-mac-"]);
     const winX64 = selectAsset(assets, [".exe"], ["win-x64"]);
+    const winArm64 = selectAsset(assets, [".exe"], ["win-arm64"]);
     const linuxAppX64 = selectAsset(assets, [".appimage"], ["linux-x86_64"]) || selectAsset(assets, [".appimage"], ["linux-x64"]);
     const linuxAppArm64 = selectAsset(assets, [".appimage"], ["linux-arm64"]);
+    const linuxTarX64 = selectAsset(assets, [".tar.gz"], ["linux-x64"]);
+    const linuxTarArm64 = selectAsset(assets, [".tar.gz"], ["linux-arm64"]);
 
     return {
       installers: {
@@ -113,10 +116,15 @@ async function fetchInstallers(): Promise<{ installers: Installers; releaseTag: 
           appleSilicon: macApple?.browser_download_url || dmg?.browser_download_url || releaseUrl,
           intel: macIntel?.browser_download_url || dmg?.browser_download_url || releaseUrl,
         },
-        windows: { x64: winX64?.browser_download_url || releaseUrl },
+        windows: {
+          x64: winX64?.browser_download_url || releaseUrl,
+          arm64: winArm64?.browser_download_url || releaseUrl,
+        },
         linux: {
           appImageX64: linuxAppX64?.browser_download_url || releaseUrl,
           appImageArm64: linuxAppArm64?.browser_download_url || releaseUrl,
+          tarX64: linuxTarX64?.browser_download_url || releaseUrl,
+          tarArm64: linuxTarArm64?.browser_download_url || releaseUrl,
         },
       },
       releaseTag,
@@ -135,14 +143,6 @@ function getGreeting(name: string | null | undefined) {
   return `${g}, ${name?.trim().split(/\s+/)[0] ?? "there"}`;
 }
 
-function detectOS(): "macos" | "windows" | "linux" {
-  if (typeof navigator === "undefined") return "macos";
-  const ua = navigator.userAgent.toLowerCase();
-  if (ua.includes("win")) return "windows";
-  if (ua.includes("linux")) return "linux";
-  return "macos";
-}
-
 function toneBg(tone: "violet" | "green" | "blue") {
   switch (tone) {
     case "violet": return "bg-[#EDE4FF]";
@@ -154,7 +154,7 @@ function toneBg(tone: "violet" | "green" | "blue") {
 /* ── Small components ── */
 
 function StatCard({ icon, title, value, sub, tone }: {
-  icon: React.ReactNode; title: string; value: string; sub?: string; tone: "violet" | "green" | "blue";
+  icon: ReactNode; title: string; value: string; sub?: string; tone: "violet" | "green" | "blue";
 }) {
   return (
     <div className="rounded-[16px] border border-[#e3e7ee] bg-white/90 px-4 py-3.5">
@@ -170,28 +170,11 @@ function StatCard({ icon, title, value, sub, tone }: {
   );
 }
 
-function DownloadLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2 text-[12px] font-medium text-white transition-colors hover:bg-white/10"
-    >
-      <Download className="h-3 w-3 shrink-0" />
-      {children}
-    </a>
-  );
-}
-
 /* ── Main screen ── */
 
 export function DashboardOverviewScreen() {
   const { activeOrg, orgContext } = useOrgDashboard();
   const { user } = useDenFlow();
-  const [os, setOs] = useState<"macos" | "windows" | "linux" | null>(null);
-
-  useEffect(() => { setOs(detectOS()); }, []);
 
   const { data: adoption } = useQuery({
     queryKey: ["telemetry", "adoption"],
@@ -238,59 +221,8 @@ export function DashboardOverviewScreen() {
       </section>
 
       {/* Download OpenWork */}
-      <section className="mt-4 overflow-hidden rounded-[18px] border border-[#e3e7ee] bg-[#07192C]">
-        <div className="px-6 py-5">
-          <div className="flex items-center gap-2.5">
-            <Download className="h-5 w-5 text-white/80" />
-            <span className="text-[16px] font-semibold text-white">Download OpenWork</span>
-            {releaseData?.releaseTag ? (
-              <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/60">{releaseData.releaseTag}</span>
-            ) : null}
-          </div>
-          <p className="mt-2 max-w-[520px] text-[13px] leading-[1.6] text-white/50">
-            Install the desktop app on macOS, Windows, or Linux. Your workspace connects automatically after sign-in.
-          </p>
-        </div>
-
-        <div className="grid gap-px bg-white/[0.06] sm:grid-cols-3">
-          {/* macOS */}
-          <div className="bg-[#07192C] px-6 py-4">
-            <div className="flex items-center gap-2">
-              <Monitor className="h-4 w-4 text-white/60" />
-              <span className="text-[13px] font-semibold text-white">macOS</span>
-              {os === "macos" ? <span className="rounded-full bg-[#18A34A]/20 px-1.5 py-px text-[10px] font-medium text-[#4ADE80]">Detected</span> : null}
-            </div>
-            <div className="mt-3 flex flex-col gap-2">
-              <DownloadLink href={inst?.macos.appleSilicon ?? FALLBACK_RELEASE}>Apple Silicon (M1+)</DownloadLink>
-              <DownloadLink href={inst?.macos.intel ?? FALLBACK_RELEASE}>Intel</DownloadLink>
-            </div>
-          </div>
-
-          {/* Windows */}
-          <div className="bg-[#07192C] px-6 py-4">
-            <div className="flex items-center gap-2">
-              <Monitor className="h-4 w-4 text-white/60" />
-              <span className="text-[13px] font-semibold text-white">Windows</span>
-              {os === "windows" ? <span className="rounded-full bg-[#18A34A]/20 px-1.5 py-px text-[10px] font-medium text-[#4ADE80]">Detected</span> : null}
-            </div>
-            <div className="mt-3 flex flex-col gap-2">
-              <DownloadLink href={inst?.windows.x64 ?? FALLBACK_RELEASE}>x64 Installer</DownloadLink>
-            </div>
-          </div>
-
-          {/* Linux */}
-          <div className="bg-[#07192C] px-6 py-4">
-            <div className="flex items-center gap-2">
-              <Monitor className="h-4 w-4 text-white/60" />
-              <span className="text-[13px] font-semibold text-white">Linux</span>
-              {os === "linux" ? <span className="rounded-full bg-[#18A34A]/20 px-1.5 py-px text-[10px] font-medium text-[#4ADE80]">Detected</span> : null}
-            </div>
-            <div className="mt-3 flex flex-col gap-2">
-              <DownloadLink href={inst?.linux.appImageX64 ?? FALLBACK_RELEASE}>AppImage (x64)</DownloadLink>
-              <DownloadLink href={inst?.linux.appImageArm64 ?? FALLBACK_RELEASE}>AppImage (ARM64)</DownloadLink>
-            </div>
-          </div>
-        </div>
+      <section className="mt-4">
+        <DownloadOpenWorkCard installers={inst ?? null} releaseTag={releaseData?.releaseTag} />
       </section>
 
       {/* Live org data */}
