@@ -1,5 +1,6 @@
 import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
+import type { z } from "zod"
 import { queryValidator, jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../../openapi.js"
 import type { OrgRouteVariables } from "../shared.js"
@@ -112,7 +113,7 @@ import {
   createConnectorMapping,
   createGithubConnectorAccount,
   createMarketplace,
-  createPlugin,
+  createPluginBundle,
   createResourceAccessGrant,
   createConnectorTarget,
   deleteConnectorMapping,
@@ -170,6 +171,7 @@ import {
 } from "./store.js"
 
 type OrgContext = Context<{ Variables: OrgRouteVariables }>
+type PluginCreateBody = z.infer<typeof pluginCreateSchema>
 
 function validRequestPart<T>(c: OrgContext, target: "json" | "param" | "query") {
   return (c.req as unknown as { valid: (part: typeof target) => unknown }).valid(target) as T
@@ -648,20 +650,34 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Plugins"],
       summary: "Create plugin",
-      description: "Creates a new private plugin and grants the creator manager access.",
+      description: "Creates a plugin and can also create components, share org-wide, and publish to a marketplace in one request.",
       responses: {
         201: jsonResponse("Plugin created successfully.", pluginMutationResponseSchema),
         400: jsonResponse("The plugin creation request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create plugins.", unauthorizedSchema),
         403: jsonResponse("The caller lacks permission to create plugins.", forbiddenSchema),
+        404: jsonResponse("The marketplace could not be found.", notFoundSchema),
       },
     }),
     async (c: OrgContext) => {
       try {
         const context = actorContext(c)
         await requirePluginArchCapability(context, "plugin.create")
-        const body = validJson<any>(c)
-        return c.json({ ok: true, item: await createPlugin({ context, description: body.description, name: body.name }) }, 201)
+        const body = validJson<PluginCreateBody>(c)
+        if ((body.components?.length ?? 0) > 0) {
+          await requirePluginArchCapability(context, "config_object.create")
+        }
+        return c.json({
+          ok: true,
+          item: await createPluginBundle({
+            components: body.components?.map((component) => ({ type: component.type, value: component.input })),
+            context,
+            description: body.description,
+            marketplaceId: body.marketplaceId,
+            name: body.name,
+            orgWide: body.orgWide,
+          }),
+        }, 201)
       } catch (error) {
         return routeErrorResponse(c, error)
       }

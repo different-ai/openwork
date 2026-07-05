@@ -207,9 +207,17 @@ export const resourceAccessGrantWriteSchema = z.object({
   }
 })
 
+export const pluginCreateComponentSchema = z.object({
+  type: configObjectTypeSchema,
+  input: configObjectInputSchema,
+})
+
 export const pluginCreateSchema = z.object({
   name: z.string().trim().min(1).max(255),
   description: nullableStringSchema.optional(),
+  components: z.array(pluginCreateComponentSchema).max(100).optional(),
+  orgWide: z.boolean().optional(),
+  marketplaceId: marketplaceIdSchema.optional(),
 })
 
 export const pluginUpdateSchema = z.object({

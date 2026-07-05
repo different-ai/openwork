@@ -372,7 +372,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
   },
   createPlugin: {
     audience: "admin",
-    description: "Create a private-by-default plugin.",
+    description: "Create a private-by-default plugin, optionally bundled with components, org-wide sharing, and marketplace publishing.",
     method: "POST",
     path: pluginArchRoutePaths.plugins,
     request: { body: pluginCreateSchema },

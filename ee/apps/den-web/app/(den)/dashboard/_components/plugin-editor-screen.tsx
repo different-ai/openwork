@@ -67,13 +67,11 @@ function buildSkillMarkdown(component: DraftComponent): string {
   ].join("\n");
 }
 
-function buildConfigObjectBody(pluginId: string, component: DraftComponent): Record<string, unknown> {
+function buildComponentBody(component: DraftComponent): Record<string, unknown> {
   if (component.kind === "mcp") {
     const serverName = slugify(component.name);
     return {
       type: "mcp",
-      sourceMode: "cloud",
-      pluginIds: [pluginId],
       input: {
         normalizedPayloadJson: {
           mcpServers: {
@@ -90,8 +88,6 @@ function buildConfigObjectBody(pluginId: string, component: DraftComponent): Rec
 
   return {
     type: component.kind,
-    sourceMode: "cloud",
-    pluginIds: [pluginId],
     input: {
       rawSourceText:
         component.kind === "skill" ? buildSkillMarkdown(component) : `${component.content.trim()}\n`,
@@ -145,7 +141,6 @@ export function PluginEditorScreen() {
     }
   }, [marketplaceId, marketplaceTouched, marketplaces]);
   const [saving, setSaving] = useState(false);
-  const [progress, setProgress] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const addComponent = (kind: ComponentKind) => {
@@ -193,61 +188,22 @@ export function PluginEditorScreen() {
     setSaving(true);
     setSaveError(null);
     try {
-      setProgress("Creating plugin...");
       let pluginPayload: unknown = null;
       await runReauthableAction("create-plugin", async () => {
         pluginPayload = await postJson(
           "/v1/plugins",
-          { name: name.trim(), description: description.trim() || null },
+          {
+            name: name.trim(),
+            description: description.trim() || null,
+            components: components.map(buildComponentBody),
+            orgWide: shareOrgWide,
+            marketplaceId: marketplaceId || undefined,
+          },
           "Failed to create the plugin",
         );
       });
       const pluginId = createdItemId(pluginPayload);
       if (!pluginId) throw new Error("The plugin was created, but no id was returned.");
-
-      for (const [index, component] of components.entries()) {
-        setProgress(`Adding ${COMPONENT_META[component.kind].label.toLowerCase()} ${index + 1} of ${components.length}...`);
-        let objectPayload: unknown = null;
-        await runReauthableAction("create-plugin-config-object", async () => {
-          objectPayload = await postJson(
-            "/v1/config-objects",
-            buildConfigObjectBody(pluginId, component),
-            `Failed to add "${component.name}"`,
-          );
-        });
-        const configObjectId = createdItemId(objectPayload);
-        if (shareOrgWide && configObjectId) {
-          await runReauthableAction("share-plugin-config-object", async () => {
-            await postJson(
-              `/v1/config-objects/${encodeURIComponent(configObjectId)}/access`,
-              { orgWide: true, role: "viewer" },
-              `Failed to share "${component.name}" with the organization`,
-            );
-          });
-        }
-      }
-
-      if (shareOrgWide) {
-        setProgress("Sharing with your organization...");
-        await runReauthableAction("share-plugin", async () => {
-          await postJson(
-            `/v1/plugins/${encodeURIComponent(pluginId)}/access`,
-            { orgWide: true, role: "viewer" },
-            "Failed to share the plugin with the organization",
-          );
-        });
-      }
-
-      if (marketplaceId) {
-        setProgress("Publishing to the marketplace...");
-        await runReauthableAction("publish-plugin", async () => {
-          await postJson(
-            `/v1/marketplaces/${encodeURIComponent(marketplaceId)}/plugins`,
-            { pluginId },
-            "Failed to publish to the marketplace",
-          );
-        });
-      }
 
       await queryClient.invalidateQueries({ queryKey: pluginQueryKeys.all });
       router.push(getPluginRoute(orgSlug, pluginId));
@@ -256,7 +212,6 @@ export function PluginEditorScreen() {
       setSaveError(error instanceof Error ? error.message : "Failed to create the plugin.");
     } finally {
       setSaving(false);
-      setProgress(null);
     }
   }
 
@@ -437,7 +392,7 @@ export function PluginEditorScreen() {
 
       <div className="mt-6 flex items-center gap-3">
         <DenButton onClick={() => void createPlugin()} disabled={saving}>
-          {saving ? progress ?? "Creating..." : "Create plugin"}
+          {saving ? "Creating..." : "Create plugin"}
         </DenButton>
         <Link href={getPluginsRoute(orgSlug)} className="text-[14px] text-gray-500 hover:text-gray-900">
           Cancel
