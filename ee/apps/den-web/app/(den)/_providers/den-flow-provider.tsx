@@ -1017,7 +1017,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }
 
   async function resolveUserLandingRoute() {
-    if (!user || desktopAuthRequested) {
+    // Deliberately ignores desktopAuthRequested: callers that auto-redirect
+    // (auth-screen) gate on it themselves, while explicit actions — the
+    // "Go to dashboard" button on the signed-in handoff card — must resolve
+    // a destination even mid desktop handoff.
+    if (!user) {
       return null;
     }
 
