@@ -3,8 +3,6 @@ import { and, eq, gt, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { InstallLinkTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { createHash, randomBytes } from "node:crypto"
-import { readFile } from "node:fs/promises"
-import path from "node:path"
 import type { MiddlewareHandler } from "hono"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -16,6 +14,7 @@ import { env } from "../../env.js"
 import { jsonValidator, orgRoleRoute, publicRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import { organizationCapabilityKeySchema, organizationHasCapability } from "../../organization-capabilities.js"
+import { resolveInstallerArtifact } from "../../utils/installer-artifacts.js"
 import { appendStoredEntryToZip } from "../../utils/zip-append.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureInviteManager, getInvitationOrigin, orgAccessFailureStatus } from "./shared.js"
@@ -166,22 +165,10 @@ function artifactFileName(platform: InstallPlatform) {
       : null
 }
 
-async function readInstallerArtifact(fileName: string) {
-  if (!env.installerArtifactsDir) {
-    return null
-  }
-
-  try {
-    return await readFile(path.join(env.installerArtifactsDir, fileName))
-  } catch {
-    return null
-  }
-}
-
 function installerArtifactsUnavailable() {
   return {
     error: "installer_artifacts_unavailable",
-    message: "Installer artifacts are unavailable in this environment. They ship with the OpenWork release pipeline.",
+    message: `Installer artifacts are unavailable in this environment (tried release ${env.installerReleaseTag}). They ship with the OpenWork release pipeline.`,
   }
 }
 
@@ -407,7 +394,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         return c.json(installerArtifactsUnavailable(), 503)
       }
 
-      const artifact = await readInstallerArtifact(fileName)
+      const artifact = await resolveInstallerArtifact(fileName)
       if (!artifact) {
         return c.json(installerArtifactsUnavailable(), 503)
       }
