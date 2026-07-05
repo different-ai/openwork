@@ -1181,7 +1181,7 @@ function WorkspaceSidebarGroup({
                   <SidebarMenuSubItem>
                     <SidebarMenuSubButton
                       aria-disabled
-                      className={cn("text-xs", taskLoadError.tone === "offline" ? "text-amber-600" : "text-destructive")}
+                      className={cn("text-xs", taskLoadError.tone === "offline" ? "text-amber-11" : "text-destructive")}
                     >
                       <span className="truncate">{taskLoadError.message}</span>
                     </SidebarMenuSubButton>

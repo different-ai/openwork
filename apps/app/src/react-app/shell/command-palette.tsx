@@ -65,7 +65,7 @@ function targetIcon(target: AccessibleTargetOption) {
   if (target.kind === "url") return <Globe className="size-4 text-primary" />;
   if (target.preview === "sheet") {
     return (
-      <span className="inline-flex h-4 min-w-6 shrink-0 items-center justify-center rounded-[4px] border border-emerald-500/30 bg-emerald-500/10 px-0.5 text-[7px] font-bold leading-none text-emerald-700">
+      <span className="inline-flex h-4 min-w-6 shrink-0 items-center justify-center rounded-[4px] border border-green-9/30 bg-green-9/10 px-0.5 text-[7px] font-bold leading-none text-green-11">
         XLS
       </span>
     );

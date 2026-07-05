@@ -300,7 +300,7 @@ export function MessagingView(props: MessagingViewProps) {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
                     {isWorkerOnline ? (
-                      <div className="size-2.5 rounded-full bg-emerald-9 animate-pulse" />
+                      <div className="size-2.5 rounded-full bg-green-9 animate-pulse" />
                     ) : (
                       <div className="size-2.5 rounded-full bg-gray-8" />
                     )}
@@ -315,7 +315,7 @@ export function MessagingView(props: MessagingViewProps) {
                   <span
                     className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
                       isWorkerOnline
-                        ? "border-emerald-7/25 bg-emerald-1/40 text-emerald-11"
+                        ? "border-green-7/25 bg-green-1/40 text-green-11"
                         : props.healthError
                           ? "border-red-7/20 bg-red-1/40 text-red-12"
                           : "border-amber-7/25 bg-amber-1/40 text-amber-12"
@@ -358,7 +358,7 @@ export function MessagingView(props: MessagingViewProps) {
                 <div className="flex flex-col gap-2.5">
                   <div
                     className={`overflow-hidden rounded-xl border transition-colors ${
-                      hasTelegramConnected ? "border-emerald-7/30 bg-emerald-1/20" : "border-gray-4 bg-gray-1"
+                      hasTelegramConnected ? "border-green-7/30 bg-green-1/20" : "border-gray-4 bg-gray-1"
                     }`}
                   >
                     <button
@@ -371,7 +371,7 @@ export function MessagingView(props: MessagingViewProps) {
                         <div className="flex items-center gap-2">
                           <span className="text-[15px] font-semibold text-gray-12">Telegram</span>
                           {hasTelegramConnected ? (
-                            <span className="rounded-full bg-emerald-1/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-11">
+                            <span className="rounded-full bg-green-1/40 px-2 py-0.5 text-[10px] font-semibold text-green-11">
                               {t("identities.connected_badge")}
                             </span>
                           ) : null}
@@ -405,7 +405,7 @@ export function MessagingView(props: MessagingViewProps) {
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-2">
                                       <div
-                                        className={`size-1.5 shrink-0 rounded-full ${item.running ? "bg-emerald-9" : "bg-gray-8"}`}
+                                        className={`size-1.5 shrink-0 rounded-full ${item.running ? "bg-green-9" : "bg-gray-8"}`}
                                       />
                                       <span className="truncate text-[13px] font-semibold text-gray-12">
                                         <span className="font-mono text-[12px]">{item.id}</span>
@@ -433,13 +433,13 @@ export function MessagingView(props: MessagingViewProps) {
                                 <div className="flex items-center gap-1.5">
                                   <div
                                     className={`size-1.5 rounded-full ${
-                                      props.telegram.identities.some((item) => item.running) ? "bg-emerald-9" : "bg-gray-8"
+                                      props.telegram.identities.some((item) => item.running) ? "bg-green-9" : "bg-gray-8"
                                     }`}
                                   />
                                   <span
                                     className={`text-[13px] font-semibold ${
                                       props.telegram.identities.some((item) => item.running)
-                                        ? "text-emerald-11"
+                                        ? "text-green-11"
                                         : "text-gray-10"
                                     }`}
                                   >
