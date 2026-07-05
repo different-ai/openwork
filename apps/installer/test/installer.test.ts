@@ -6,6 +6,7 @@ import { installConfigUrlFor, parseInstallerFilenameTag } from "@openwork/instal
 
 import { desktopBootstrapPath } from "../src/bootstrap-path"
 import { parseInstallLinkInput, resolveInstallerConfig } from "../src/config"
+import { isTranslocatedPath, parseMountTableLine, readSidecarConfig, resolveTranslocatedOriginalPath } from "../src/config-sources"
 import { writeBootstrapConfig } from "../src/install"
 import { releaseAssetFor } from "../src/release-asset"
 
@@ -140,6 +141,119 @@ describe("resolveInstallerConfig", () => {
       const resolution = await resolveInstallerConfig({ env: {}, execPath })
       expect(resolution.source).toBe("sidecar")
       expect(resolution.config.clientName).toBe("Bundle Sidecar")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("macOS App Translocation helpers", () => {
+  test("parses a normal mount table line", () => {
+    expect(parseMountTableLine("/private/tmp/OpenWork Installer.app on /private/var/folders/abc/T/AppTranslocation/123 (nullfs, local, read-only)")).toEqual({
+      source: "/private/tmp/OpenWork Installer.app",
+      mountPoint: "/private/var/folders/abc/T/AppTranslocation/123",
+      options: "nullfs, local, read-only",
+    })
+  })
+
+  test("parses paths with spaces and on in the source", () => {
+    expect(parseMountTableLine("/private/tmp/folder with spaces/source on disk/OpenWork Installer.app on /private/var/folders/abc/T/AppTranslocation/UUID With Space (nullfs, local)")).toEqual({
+      source: "/private/tmp/folder with spaces/source on disk/OpenWork Installer.app",
+      mountPoint: "/private/var/folders/abc/T/AppTranslocation/UUID With Space",
+      options: "nullfs, local",
+    })
+  })
+
+  test("ignores junk mount table lines", () => {
+    expect(parseMountTableLine("not a mount table line")).toBeNull()
+    expect(parseMountTableLine("/private/tmp/OpenWork Installer.app on /private/var/folders/abc/T/AppTranslocation/123")).toBeNull()
+  })
+
+  test("resolves the original app through the translocated /d path", () => {
+    const mountPoint = "/private/var/folders/abc/T/AppTranslocation/123"
+    const source = "/private/tmp/OpenWork Installer.app"
+    const execPath = `${mountPoint}/d/OpenWork Installer.app/Contents/MacOS/openwork-installer`
+
+    expect(resolveTranslocatedOriginalPath(execPath, `${source} on ${mountPoint} (nullfs, local, nodev)\n`)).toBe(source)
+  })
+
+  test("skips non-nullfs mounts", () => {
+    const mountPoint = "/private/var/folders/abc/T/AppTranslocation/123"
+    const source = "/private/tmp/OpenWork Installer.app"
+    const execPath = `${mountPoint}/d/OpenWork Installer.app/Contents/MacOS/openwork-installer`
+
+    expect(resolveTranslocatedOriginalPath(execPath, `${source} on ${mountPoint} (apfs, local)\n`)).toBeNull()
+  })
+
+  test("requires a mountpoint path-prefix boundary", () => {
+    const mountPoint = "/private/var/folders/abc/T/AppTranslocation/123"
+    const source = "/private/tmp/OpenWork Installer.app"
+    const execPath = `${mountPoint}-suffix/d/OpenWork Installer.app/Contents/MacOS/openwork-installer`
+
+    expect(resolveTranslocatedOriginalPath(execPath, `${source} on ${mountPoint} (nullfs, local)\n`)).toBeNull()
+  })
+
+  test("returns null when no translocation mount matches", () => {
+    const execPath = "/private/var/folders/abc/T/AppTranslocation/123/d/OpenWork Installer.app/Contents/MacOS/openwork-installer"
+    const mountTable = "/private/tmp/OpenWork Installer.app on /private/var/folders/abc/T/AppTranslocation/other (nullfs, local)\n"
+
+    expect(resolveTranslocatedOriginalPath(execPath, mountTable)).toBeNull()
+  })
+
+  test("detects App Translocation paths", () => {
+    expect(isTranslocatedPath("/private/var/folders/abc/T/AppTranslocation/123/d/OpenWork Installer.app/Contents/MacOS/openwork-installer")).toBe(true)
+    expect(isTranslocatedPath("/Applications/OpenWork Installer.app/Contents/MacOS/openwork-installer")).toBe(false)
+  })
+
+  test("reads the sidecar next to the original translocated app", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-translocated-"))
+    try {
+      const originalAppPath = path.join(dir, "OpenWork Installer.app")
+      const mountPoint = "/private/var/folders/abc/T/AppTranslocation/123"
+      const execPath = `${mountPoint}/d/OpenWork Installer.app/Contents/MacOS/openwork-installer`
+      mkdirSync(originalAppPath, { recursive: true })
+      writeFileSync(path.join(dir, "openwork-installer.json"), JSON.stringify({
+        clientName: "Translocated Sidecar",
+        webUrl: "https://translocated.example.com",
+        apiUrl: "https://translocated-api.example.com",
+        requireSignin: true,
+        logoUrl: null,
+      }))
+
+      expect(readSidecarConfig({
+        execPath,
+        readMountTable: () => `${originalAppPath} on ${mountPoint} (nullfs, local, read-only)\n`,
+        warn: () => undefined,
+      })).toEqual({
+        clientName: "Translocated Sidecar",
+        webUrl: "https://translocated.example.com",
+        apiUrl: "https://translocated-api.example.com",
+        requireSignin: true,
+        logoUrl: null,
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("falls through when the translocation mount is missing", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-translocated-missing-"))
+    try {
+      const originalAppPath = path.join(dir, "OpenWork Installer.app")
+      const execPath = "/private/var/folders/abc/T/AppTranslocation/123/d/OpenWork Installer.app/Contents/MacOS/openwork-installer"
+      writeFileSync(path.join(dir, "openwork-installer.json"), JSON.stringify({
+        clientName: "Missing Mount Sidecar",
+        webUrl: "https://missing.example.com",
+        apiUrl: "https://missing-api.example.com",
+        requireSignin: false,
+        logoUrl: null,
+      }))
+
+      expect(readSidecarConfig({
+        execPath,
+        readMountTable: () => `${originalAppPath} on /private/var/folders/abc/T/AppTranslocation/other (nullfs, local)\n`,
+        warn: () => undefined,
+      })).toBeNull()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
