@@ -82,6 +82,16 @@ Optional env vars (via `.env` or `export`):
 - `DEN_PROVISIONER_MODE` — `stub` or `render` (defaults to `stub`)
 - `DEN_WORKER_URL_TEMPLATE` — stub worker URL template with `{workerId}` placeholder
 
+### Install links (self-host)
+
+Run the install-link migration once against the Den database:
+
+```bash
+docker compose -f packaging/docker/docker-compose.den-dev.yml exec den sh -lc "pnpm --dir /app/ee/packages/den-db run db:bootstrap"
+```
+
+Set `DEN_BOOTSTRAP_ADMIN_EMAILS` on the Den API service, restart it, open `/admin`, and toggle `Install links` for each org. Optional installer artifact env vars are `OPENWORK_INSTALLER_RELEASE_TAG`, `OPENWORK_INSTALLER_RELEASE_REPO`, and `OPENWORK_INSTALLER_ARTIFACTS_DIR`; see the [operator guide](../../docs/org-install-links.md).
+
 ### Faster inner-loop alternative
 
 If you are iterating on Den locally and do not need the full Dockerized web stack, use the hybrid path instead:

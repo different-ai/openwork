@@ -20,6 +20,12 @@ data:
   DEN_CORS_ORIGINS: {{ .Values.config.public.corsOrigins | quote }}
   DEN_API_PUBLIC_URL: {{ .Values.config.public.apiOrigin | quote }}
   DEN_DESKTOP_DEN_BASE_URL: {{ .Values.config.public.desktopDenBaseUrl | quote }}
+  {{ if .Values.config.public.installerReleaseTag }}
+  OPENWORK_INSTALLER_RELEASE_TAG: {{ .Values.config.public.installerReleaseTag | quote }}
+  {{ end }}
+  {{ if .Values.config.public.installerReleaseRepo }}
+  OPENWORK_INSTALLER_RELEASE_REPO: {{ .Values.config.public.installerReleaseRepo | quote }}
+  {{ end }}
   PROVISIONER_MODE: {{ .Values.config.provisioner.mode | quote }}
   WORKER_PROVISIONING_RECONCILE_INTERVAL_MS: {{ .Values.config.provisioner.reconcileIntervalMs | quote }}
   WORKER_PROVISIONING_RECONCILE_STALE_MS: {{ .Values.config.provisioner.reconcileStaleMs | quote }}

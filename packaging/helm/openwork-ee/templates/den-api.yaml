@@ -40,6 +40,24 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.installerArtifacts.enabled }}
+      {{- if and .Values.installerArtifacts.existingClaim .Values.installerArtifacts.hostPath }}
+      {{- fail "installerArtifacts.existingClaim and installerArtifacts.hostPath are mutually exclusive" }}
+      {{- end }}
+      {{- if not (or .Values.installerArtifacts.existingClaim .Values.installerArtifacts.hostPath) }}
+      {{- fail "installerArtifacts.existingClaim or installerArtifacts.hostPath is required when installerArtifacts.enabled=true" }}
+      {{- end }}
+      volumes:
+        - name: installer-artifacts
+          {{- if .Values.installerArtifacts.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.installerArtifacts.existingClaim | quote }}
+          {{- else }}
+          hostPath:
+            path: {{ .Values.installerArtifacts.hostPath | quote }}
+            type: Directory
+          {{- end }}
+      {{- end }}
       containers:
         - name: den-api
           image: "{{ .Values.denApi.image.repository }}:{{ default .Values.image.tag .Values.denApi.image.tag }}"
@@ -47,6 +65,12 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.denApi.containerPort }}
+          {{- if .Values.installerArtifacts.enabled }}
+          volumeMounts:
+            - name: installer-artifacts
+              mountPath: {{ .Values.installerArtifacts.mountPath | quote }}
+              readOnly: true
+          {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "openwork-ee.configName" . }}
@@ -55,6 +79,10 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.denApi.containerPort | quote }}
+            {{- if .Values.installerArtifacts.enabled }}
+            - name: OPENWORK_INSTALLER_ARTIFACTS_DIR
+              value: {{ .Values.installerArtifacts.mountPath | quote }}
+            {{- end }}
             {{- range $key, $value := .Values.denApi.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

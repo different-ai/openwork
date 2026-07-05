@@ -132,6 +132,26 @@ migrations:
 
 `db:bootstrap` uses `db:migrate` for normal upgrades. On a completely empty database it applies the current schema once, records the committed migrations as the baseline, then runs migrations. On an existing schema without a Drizzle ledger, it records the baseline before migrating.
 
+## Install links
+
+The migration Job creates the `install_link` table automatically when `migrations.enabled=true`. Install links remain dark until a platform admin opens `/admin` and enables the `Install links` capability for an org. See the [operator guide](../../../docs/org-install-links.md).
+
+Optional installer artifact values:
+
+```yaml
+config:
+  public:
+    installerReleaseTag: "v0.17.9"
+    installerReleaseRepo: "different-ai/openwork"
+
+installerArtifacts:
+  enabled: true
+  existingClaim: openwork-installer-artifacts
+  mountPath: /var/lib/openwork/installer-artifacts
+```
+
+Use either `installerArtifacts.existingClaim` or `installerArtifacts.hostPath`, not both. The mounted directory must contain `openwork-installer-mac-arm64.zip`, `openwork-installer-mac-x64.zip`, and `openwork-installer-win-x64.exe`.
+
 ## Health Probes
 
 The chart uses the existing service health endpoints:

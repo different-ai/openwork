@@ -23,6 +23,8 @@ config:
     webAppHosts: openwork.example.com
     bootstrapAdminEmails: ""
     openworkAppConnectUrl: ""
+    installerReleaseTag: ""
+    installerReleaseRepo: ""
     authCallbackUrl: https://openwork.example.com
   internal:
     apiBaseUrl: ""
@@ -97,6 +99,12 @@ secret:
     openRouterManagementApiKey: ""
     inferenceAdminToken: ""
     inferenceWebhookSecret: ""
+
+installerArtifacts:
+  enabled: false
+  existingClaim: ""
+  hostPath: ""
+  mountPath: /var/lib/openwork/installer-artifacts
 
 denApi:
   replicaCount: 1
