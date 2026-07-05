@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Loader2, Plug } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { getOrgAccessFlags } from "../../_lib/den-org";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IntegrationIcon } from "./integration-icon";
 import {
   type ExternalMcpConnection,
@@ -20,9 +22,17 @@ const OAUTH_POLL_TIMEOUT_MS = 90_000;
  * sees it here. For "per_member" connections this is where each person
  * connects their own account — after which their agent's
  * search_capabilities/execute_capability calls run as them.
+ * Admins can also finish a shared-credential connection's OAuth here when
+ * the org account was published but never authorized.
  */
 export function YourConnectionsScreen() {
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections("usable");
+  const { orgContext } = useOrgDashboard();
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.roles,
+  );
   const startOAuth = useStartMcpConnectionOAuth();
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -93,6 +103,7 @@ export function YourConnectionsScreen() {
             <YourConnectionRow
               key={connection.id}
               connection={connection}
+              isAdmin={access.isAdmin}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               onConnect={() => void handleConnectMyAccount(connection.id)}
@@ -106,17 +117,20 @@ export function YourConnectionsScreen() {
 
 function YourConnectionRow({
   connection,
+  isAdmin,
   polling,
   connecting,
   onConnect,
 }: {
   connection: ExternalMcpConnection;
+  isAdmin: boolean;
   polling: boolean;
   connecting: boolean;
   onConnect: () => void;
 }) {
   const isPerMember = connection.credentialMode === "per_member";
   const needsMyConnect = isPerMember && !connection.connectedForMe;
+  const needsAdminConnect = isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
 
   return (
     <div className="flex items-center justify-between gap-4 px-6 py-4">
@@ -139,6 +153,10 @@ function YourConnectionRow({
               <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                 Connect your account
               </span>
+            ) : needsAdminConnect ? (
+              <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                Connect the org account
+              </span>
             ) : (
               <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
                 Not connected yet
@@ -150,7 +168,7 @@ function YourConnectionRow({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
-        {needsMyConnect ? (
+        {needsMyConnect || needsAdminConnect ? (
           <DenButton variant="primary" size="sm" loading={connecting || polling} onClick={onConnect}>
             Connect
           </DenButton>
