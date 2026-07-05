@@ -69,3 +69,4 @@ transcript-analysis
 evals/results/
 .playwright-mcp/
 .warden/
+.vscode/
