@@ -341,7 +341,7 @@ function ConnectionRow({
             {isPerMember ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-gray-900 px-2 py-0.5 text-[11px] font-medium text-white">
                 <Users className="h-3 w-3" />
-                Per-member accounts
+                Individual accounts
               </span>
             ) : connection.connected ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
@@ -410,7 +410,7 @@ function AddConnectionDialog({
   const [name, setName] = useState(preset?.displayName ?? "");
   const [url, setUrl] = useState(preset?.url ?? "");
   const [authType, setAuthType] = useState<ExternalMcpAuthType>(preset?.authType ?? "oauth");
-  const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("shared");
+  const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("per_member");
   const [apiKey, setApiKey] = useState("");
   const [accessMode, setAccessMode] = useState<"everyone" | "teams" | "people">("everyone");
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
@@ -421,7 +421,7 @@ function AddConnectionDialog({
     setName(preset?.displayName ?? "");
     setUrl(preset?.url ?? "");
     setAuthType(preset?.authType ?? "oauth");
-    setCredentialMode("shared");
+    setCredentialMode("per_member");
     setApiKey("");
     setAccessMode("everyone");
     setSelectedTeamIds([]);
@@ -504,17 +504,8 @@ function AddConnectionDialog({
 
           {authType === "oauth" ? (
             <div>
-              <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Account</label>
+              <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Whose account does the AI use?</label>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCredentialMode("shared")}
-                  className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
-                    credentialMode === "shared" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-300"
-                  }`}
-                >
-                  One shared account
-                </button>
                 <button
                   type="button"
                   onClick={() => setCredentialMode("per_member")}
@@ -522,13 +513,22 @@ function AddConnectionDialog({
                     credentialMode === "per_member" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-300"
                   }`}
                 >
-                  Each person connects their own
+                  Individual accounts
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCredentialMode("shared")}
+                  className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
+                    credentialMode === "shared" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-300"
+                  }`}
+                >
+                  One org account
                 </button>
               </div>
               <p className="mt-1.5 text-[12px] leading-5 text-gray-500">
-                {credentialMode === "shared"
-                  ? "You'll authorize a single account now; everyone granted access acts as it."
-                  : "You publish the connection; each person authorizes their own account from Your Connections and acts as themselves."}
+                {credentialMode === "per_member"
+                  ? "Each person signs in with their own account from Your Connections. Their AI acts as them, with their permissions."
+                  : "You sign in once with a single account — everyone granted access acts as it. Good for bot or service accounts."}
               </p>
             </div>
           ) : null}

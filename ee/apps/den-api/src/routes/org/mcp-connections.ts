@@ -481,7 +481,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       if (connection.credentialMode === "shared") {
         // Connecting a shared credential IS the org-level integration setup —
         // admin-only, like creating the connection itself.
-        const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can connect a shared-credential connection.")
+        const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can connect an org-account connection.")
         if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
       } else {
         // Per-member: any member GRANTED the connection may connect their own

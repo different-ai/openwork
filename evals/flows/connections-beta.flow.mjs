@@ -274,18 +274,18 @@ export default {
           assert: async () => {
             await ctx.expectText(CONNECTION_NAME, { timeoutMs: 20_000 });
             const pill = await ctx.eval(`(() => {
-              const span = [...document.querySelectorAll('span')].find((entry) => entry.textContent.includes('Per-member accounts'));
+              const span = [...document.querySelectorAll('span')].find((entry) => entry.textContent.includes('Individual accounts'));
               return span ? { classes: [...span.classList], text: span.textContent.trim() } : null;
             })()`);
-            ctx.assert(Boolean(pill), "Per-member accounts pill was not rendered.");
-            ctx.assert(pill.classes.includes("bg-gray-900"), `Per-member pill must be black: ${JSON.stringify(pill.classes)}`);
-            ctx.assert(pill.classes.includes("text-white"), `Per-member pill text must be white: ${JSON.stringify(pill.classes)}`);
-            ctx.assert(!pill.classes.some((className) => /violet|purple/i.test(className)), `Per-member pill must not be purple: ${JSON.stringify(pill.classes)}`);
+            ctx.assert(Boolean(pill), "Individual accounts pill was not rendered.");
+            ctx.assert(pill.classes.includes("bg-gray-900"), `Individual accounts pill must be black: ${JSON.stringify(pill.classes)}`);
+            ctx.assert(pill.classes.includes("text-white"), `Individual accounts pill text must be white: ${JSON.stringify(pill.classes)}`);
+            ctx.assert(!pill.classes.some((className) => /violet|purple/i.test(className)), `Individual accounts pill must not be purple: ${JSON.stringify(pill.classes)}`);
           },
           screenshot: {
             name: "connections-beta-per-member-pill",
-            claim: "A per-member org connection renders with the black Per-member accounts pill.",
-            requireText: [CONNECTION_NAME, "Per-member accounts"],
+            claim: "A per-member org connection renders with the black Individual accounts pill.",
+            requireText: [CONNECTION_NAME, "Individual accounts"],
             rejectText: ["Something went wrong"],
           },
         });

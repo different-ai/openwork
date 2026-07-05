@@ -142,7 +142,7 @@ function YourConnectionRow({
             {connection.connectedForMe ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                 <Check className="h-3 w-3" />
-                {isPerMember ? "Connected as you" : "Connected"}
+                {isPerMember ? "Connected as you" : "Org account connected"}
               </span>
             ) : polling ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
@@ -159,7 +159,7 @@ function YourConnectionRow({
               </span>
             ) : (
               <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                Not connected yet
+                Waiting for an admin to connect
               </span>
             )}
           </div>

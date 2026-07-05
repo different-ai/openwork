@@ -55,6 +55,7 @@ const state = {
   memberSession: null,
   connectionId: null,
   restrictedConnectionId: null,
+  createdTeamId: null,
 };
 
 async function denApiFetch(path, options = {}) {
@@ -109,18 +110,25 @@ async function mintMcpToken(sessionToken, ctx) {
 }
 
 async function signInViaBrowser(ctx, email, password) {
-  // Sign out whoever is signed in (same-origin better-auth endpoint), then
-  // drive the real sign-in form.
+  // The auth screen is a single split card: email + password + a
+  // type="submit" button (multiple elements read "Sign in", so target the
+  // submit button, not text).
   await ctx.eval(`fetch('/api/auth/sign-out', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(() => true).catch(() => true)`, { awaitPromise: true });
   await ctx.eval(`(() => { window.location.href = ${JSON.stringify(DEN_WEB_URL)}; return true; })()`);
   await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
-  await ctx.waitForText("Get started", { timeoutMs: 30_000 }).catch(() => {});
-  await ctx.clickText("Sign in", { timeoutMs: 20_000 });
-  await ctx.fill('input[type="email"], input', email);
-  await ctx.clickText("Next", { timeoutMs: 15_000 });
-  await ctx.waitFor("Boolean(document.querySelector('input[type=\"password\"]'))", { timeoutMs: 15_000, label: "password field" });
+  await ctx.waitFor(
+    "Boolean(document.querySelector('input[type=\"email\"]')) && Boolean(document.querySelector('input[type=\"password\"]'))",
+    { timeoutMs: 30_000, label: "email + password fields" },
+  );
+  await ctx.fill('input[type="email"]', email);
   await ctx.fill('input[type="password"]', password);
-  await ctx.clickText("Sign in", { timeoutMs: 15_000 });
+  const submitted = await ctx.eval(`(() => {
+    const button = document.querySelector('button[type="submit"]');
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+  ctx.assert(submitted, "No submit button found on the sign-in card.");
   await ctx.waitForText("Dashboard", { timeoutMs: 30_000 });
 }
 
@@ -194,12 +202,18 @@ export default {
     {
       name: "Admin publishes a per-member connection for everyone via the real dialog",
       run: async (ctx) => {
+        // The Connections link lives inside the collapsible Extensions nav
+        // group — expand it first when the link isn't in the DOM yet.
         await ctx.waitFor(
           `(() => {
-            const link = [...document.querySelectorAll('a')].find((a) => a.getAttribute('href')?.endsWith('/mcp-connections'));
-            if (!link) return false;
             if (window.location.pathname.endsWith('/mcp-connections')) return true;
-            link.click();
+            const link = [...document.querySelectorAll('nav a')].find((a) => a.getAttribute('href')?.endsWith('/mcp-connections'));
+            if (link) {
+              link.click();
+              return false;
+            }
+            const group = [...document.querySelectorAll('nav a, nav button')].find((el) => (el.textContent ?? '').trim().startsWith('Extensions'));
+            group?.click();
             return false;
           })()`,
           { timeoutMs: 30_000, label: "MCP Connections nav" },
@@ -209,19 +223,19 @@ export default {
         await ctx.waitFor("Boolean(document.querySelector('input[placeholder=\"notion\"]'))", { timeoutMs: 10_000, label: "dialog open" });
         await ctx.fill('input[placeholder="notion"]', CONNECTION_NAME);
         await ctx.fill('input[placeholder="https://mcp.example.com/mcp"]', `${MOCK_SERVER_URL}/mcp`);
-        await ctx.clickText("Each person connects their own", { timeoutMs: 10_000 });
+        await ctx.clickText("Individual accounts", { timeoutMs: 10_000 });
 
         await ctx.prove("The Add dialog offers per-member credentials and an access picker", {
           assert: async () => {
-            await ctx.expectText("Each person connects their own");
+            await ctx.expectText("Individual accounts");
             await ctx.expectText("Who can use this?");
             await ctx.expectText("Everyone in the org");
-            await ctx.expectText("each person authorizes their own account");
+            await ctx.expectText("acts as them, with their permissions");
           },
           screenshot: {
             name: "admin-dialog-per-member",
             claim: "Admin chooses per-member credentials and who can use the connection, in one dialog.",
-            requireText: ["Each person connects their own", "Who can use this?", "Everyone in the org"],
+            requireText: ["Individual accounts", "Who can use this?", "Everyone in the org"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -229,7 +243,7 @@ export default {
         await ctx.clickText("Add connection", { timeoutMs: 15_000 });
         await ctx.prove("The published connection shows per-member + everyone badges, with no admin OAuth step", {
           assert: async () => {
-            await ctx.waitForText("Per-member accounts", { timeoutMs: 20_000 });
+            await ctx.waitForText("Individual accounts", { timeoutMs: 20_000 });
             await ctx.expectText(CONNECTION_NAME);
             await ctx.expectText("Everyone in the org");
             await ctx.eval(`(() => {
@@ -240,8 +254,8 @@ export default {
           },
           screenshot: {
             name: "admin-connection-published",
-            claim: "The connection row shows Per-member accounts and Everyone in the org — published, nothing to authorize as admin.",
-            requireText: [CONNECTION_NAME, "Per-member accounts", "Everyone in the org"],
+            claim: "The connection row shows Individual accounts and Everyone in the org — published, nothing to authorize as admin.",
+            requireText: [CONNECTION_NAME, "Individual accounts", "Everyone in the org"],
             rejectText: ["Something went wrong", "Waiting for authorization"],
           },
         });
@@ -255,10 +269,21 @@ export default {
 
         // Also create the negative-case connection: scoped to a team the
         // member is NOT in (first team in the org — the bootstrapped member
-        // has no team memberships).
+        // has no team memberships). Seeds without teams get one created for
+        // real via the Teams API (removed again in cleanup).
         const org = await denApiFetch("/v1/org", { headers: { authorization: `Bearer ${state.adminSession}` } });
-        const team = (org.body.teams ?? [])[0];
-        ctx.assert(Boolean(team), "Org has no teams to scope the restricted connection to.");
+        let team = (org.body.teams ?? [])[0];
+        if (!team) {
+          const createdTeam = await denApiFetch("/v1/teams", {
+            method: "POST",
+            headers: { authorization: `Bearer ${state.adminSession}` },
+            body: JSON.stringify({ name: `eval-restricted-${RUN_TAG}` }),
+          });
+          ctx.assert(createdTeam.response.ok, `Creating a team for the negative case failed: ${createdTeam.response.status}`);
+          team = createdTeam.body.team;
+          state.createdTeamId = team?.id ?? null;
+        }
+        ctx.assert(Boolean(team?.id), "Org has no teams to scope the restricted connection to.");
         const restricted = await denApiFetch("/v1/mcp-connections", {
           method: "POST",
           headers: { authorization: `Bearer ${state.adminSession}` },
@@ -401,6 +426,13 @@ export default {
             headers: { authorization: `Bearer ${state.adminSession}` },
           });
           ctx.assert(removed.response.ok, `Cleanup delete failed for ${id}.`);
+        }
+        if (state.createdTeamId) {
+          const removedTeam = await denApiFetch(`/v1/teams/${state.createdTeamId}`, {
+            method: "DELETE",
+            headers: { authorization: `Bearer ${state.adminSession}` },
+          });
+          ctx.assert(removedTeam.response.ok, `Cleanup delete failed for team ${state.createdTeamId}.`);
         }
       },
     },

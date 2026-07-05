@@ -113,7 +113,7 @@ function rowShowsConnectedScript() {
     return leaves.some((leaf) => {
       let el = leaf;
       for (let i = 0; i < 4 && el; i++) {
-        if ((el.textContent ?? "").includes("Connected")) {
+        if ((el.textContent ?? "").includes("Org account connected")) {
           el.scrollIntoView({ block: "center" });
           return true;
         }
@@ -257,7 +257,7 @@ export default {
           screenshot: {
             name: "admin-shared-row-connected",
             claim: "The background poll updates the shared row to Connected without a refresh, matching the API state.",
-            requireText: [CONNECTION_NAME, "Connected"],
+            requireText: [CONNECTION_NAME, "Org account connected"],
             rejectText: ["Something went wrong", "Waiting for authorization"],
           },
         });

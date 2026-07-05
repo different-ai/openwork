@@ -75,7 +75,7 @@ export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnectio
 }
 
 export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe">) {
-  if (connection.credentialMode === "shared") return "Shared connection managed by your organization.";
+  if (connection.credentialMode === "shared") return "One org account managed by your organization — the AI acts as it.";
   if (connection.connectedForMe) return "Connected with your own account.";
   return "Available from your organization. Connect your own account to use it.";
 }

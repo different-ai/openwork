@@ -855,7 +855,7 @@ function OrgMcpConnectionDetailModal(props: {
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2">
             <SettingsPill>Shared by your organization</SettingsPill>
-            <SettingsPill>{row.connection.credentialMode === "shared" ? "Shared credential" : "Your account"}</SettingsPill>
+            <SettingsPill>{row.connection.credentialMode === "shared" ? "Org account" : "Your account"}</SettingsPill>
             <SettingsPill>MCP</SettingsPill>
           </div>
           <SettingsNotice>

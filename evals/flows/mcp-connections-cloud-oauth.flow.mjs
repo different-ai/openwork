@@ -100,15 +100,19 @@ export default {
         await ctx.eval(`fetch('/api/auth/sign-out', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(() => true).catch(() => true)`, { awaitPromise: true });
         await ctx.eval(`(() => { window.location.href = ${JSON.stringify(DEN_WEB_URL)}; return true; })()`);
         await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
-        await ctx.clickText("Sign in", { timeoutMs: 20_000 });
-        await ctx.fill("input[type=\"email\"], input", DEMO_EMAIL);
-        await ctx.clickText("Next", { timeoutMs: 15_000 });
-        await ctx.waitFor("Boolean(document.querySelector('input[type=\"password\"]'))", {
-          timeoutMs: 15_000,
-          label: "password field",
-        });
+        await ctx.waitFor(
+          "Boolean(document.querySelector('input[type=\"email\"]')) && Boolean(document.querySelector('input[type=\"password\"]'))",
+          { timeoutMs: 30_000, label: "email + password fields" },
+        );
+        await ctx.fill('input[type="email"]', DEMO_EMAIL);
         await ctx.fill("input[type=\"password\"]", DEMO_PASSWORD);
-        await ctx.clickText("Sign in", { timeoutMs: 15_000 });
+        const submitted = await ctx.eval(`(() => {
+          const button = document.querySelector('button[type="submit"]');
+          if (!button) return false;
+          button.click();
+          return true;
+        })()`);
+        ctx.assert(submitted, "No submit button found on the sign-in card.");
         await ctx.waitForText("Dashboard", { timeoutMs: 30_000 });
       },
     },
@@ -117,13 +121,19 @@ export default {
       run: async (ctx) => {
         // Retry the click: on a fresh page load (especially over higher cloud
         // latency), the very first click can land before Next.js has finished
-        // hydrating and attaching the link's handler.
+        // hydrating and attaching the link's handler. The Connections link
+        // lives inside the collapsible Extensions nav group, so expand that
+        // first when the link isn't in the DOM yet.
         await ctx.waitFor(
           `(() => {
-            const link = [...document.querySelectorAll('a')].find((a) => a.getAttribute('href')?.includes('mcp-connections'));
-            if (!link) return false;
             if (window.location.pathname.includes('mcp-connections')) return true;
-            link.click();
+            const link = [...document.querySelectorAll('nav a')].find((a) => a.getAttribute('href')?.includes('mcp-connections'));
+            if (link) {
+              link.click();
+              return false;
+            }
+            const group = [...document.querySelectorAll('nav a, nav button')].find((el) => (el.textContent ?? '').trim().startsWith('Extensions'));
+            group?.click();
             return false;
           })()`,
           { timeoutMs: 30_000, label: "MCP Connections nav link clicked" },
@@ -132,16 +142,16 @@ export default {
           timeoutMs: 20_000,
           label: "MCP Connections route",
         });
-        await ctx.prove("The new MCP Connections screen renders in Den", {
+        await ctx.prove("The Connections screen renders in Den", {
           assert: async () => {
-            await ctx.expectText("MCP Connections");
+            await ctx.expectText("Add a custom MCP server");
             await ctx.expectText("Add Custom");
             await ctx.expectText("Notion");
           },
           screenshot: {
             name: "mcp-connections-screen",
-            claim: "Den has a real MCP Connections settings screen with quick-add presets and a custom-URL form.",
-            requireText: ["MCP Connections", "Add Custom", "Notion"],
+            claim: "Den has a real Connections settings screen with quick-add presets and a custom-URL form.",
+            requireText: ["Add a custom MCP server", "Add Custom", "Notion"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -159,6 +169,16 @@ export default {
             );
             await ctx.fill('input[placeholder="notion"]', CONNECTION_NAME);
             await ctx.fill('input[placeholder="https://mcp.example.com/mcp"]', `${MOCK_SERVER_URL}/mcp`);
+            await ctx.waitFor(
+              "[...document.querySelectorAll('button')].some((button) => button.textContent.trim() === 'One org account')",
+              { timeoutMs: 10_000, label: "One org account button" },
+            );
+            const clicked = await ctx.eval(`(() => {
+              const button = [...document.querySelectorAll('button')].find((entry) => entry.textContent.trim() === 'One org account');
+              button?.click();
+              return Boolean(button);
+            })()`);
+            ctx.assert(clicked, "One org account button was not found.");
           },
           assert: async () => {
             const values = await ctx.eval(`(() => ({

@@ -621,7 +621,7 @@ export default {
   "mcp.org_connection_connected_label": "Connected",
   "mcp.org_connection_desc_per_member": "Available from your organization. Connect your own account to use it.",
   "mcp.org_connection_desc_per_member_connected": "Connected with your own account.",
-  "mcp.org_connection_desc_shared": "Shared connection managed by your organization.",
+  "mcp.org_connection_desc_shared": "One org account managed by your organization — the AI acts as it.",
   "mcp.org_connection_managed_label": "Managed by your organization",
   "mcp.org_connections_connected_badge": "Connected",
   "mcp.org_connections_subtitle": "Shared by your admin",
