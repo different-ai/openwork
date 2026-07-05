@@ -209,6 +209,7 @@ function sanitizeMarkdownHtml(value: string) {
       "start",
       "style",
       "target",
+      // Whitelist custom attribute to prevent DOMPurify from stripping the copy button identifier
       "data-openwork-copy-code",
     ],
   });
@@ -360,12 +361,13 @@ const highlightedMarkdownParser = new Marked({
         ],
       });
     },
+    // Custom container wrapping code blocks with a sticky copy header
     container: `
     <div data-openwork-shiki="true" class="my-4 overflow-y-clip rounded-lg border border-border/70 bg-gray-1/80 p-4 pt-0 text-xs leading-6">
       <div class="sticky z-2 top-0 bg-white">
         <div class="w-full flex items-center justify-end py-2">
           <button data-openwork-copy-code="">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-md">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-md">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
             </svg>
@@ -468,6 +470,7 @@ function MarkdownBlockInner({
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return;
 
+      // Handle copying code from code blocks when clicking the copy button
       const copyButton = event.target.closest("[data-openwork-copy-code]");
       if (copyButton instanceof HTMLButtonElement) {
         const originalHtml = copyButton.innerHTML;
