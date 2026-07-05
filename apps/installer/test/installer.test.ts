@@ -119,7 +119,10 @@ describe("resolveInstallerConfig", () => {
     }
   })
 
-  test("reads sidecar next to the enclosing app bundle", async () => {
+  // macOS-only semantics: .app bundles (and their slash-separated exec paths)
+  // do not exist on Windows, where path.join builds a backslashed path the
+  // bundle matcher rightly rejects.
+  test.skipIf(process.platform === "win32")("reads sidecar next to the enclosing app bundle", async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-app-sidecar-"))
     try {
       const macOsDir = path.join(dir, "OpenWork Installer.app", "Contents", "MacOS")
