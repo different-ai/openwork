@@ -36,9 +36,8 @@
  */
 
 import { execSync } from "node:child_process";
+import { denApiFetch, denApiUrl, openAdminConnections, openYourConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
 
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
 const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
 const MEMBER_EMAIL = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
@@ -58,32 +57,8 @@ const state = {
   createdTeamId: null,
 };
 
-async function denApiFetch(path, options = {}) {
-  const response = await fetch(`${DEN_API_URL}${path}`, {
-    ...options,
-    headers: { "content-type": "application/json", origin: DEN_WEB_URL, ...(options.headers ?? {}) },
-  });
-  const text = await response.text();
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = text;
-  }
-  return { response, body };
-}
-
-async function signIn(email, password) {
-  const { response, body } = await denApiFetch("/api/auth/sign-in/email", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-  if (!response.ok) return null;
-  return body.token;
-}
-
 async function mcpAgentCall(mcpToken, method, params, ctx) {
-  const response = await fetch(`${DEN_API_URL}/mcp/agent`, {
+  const response = await fetch(`${denApiUrl()}/mcp/agent`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -109,29 +84,6 @@ async function mintMcpToken(sessionToken, ctx) {
   return body.token;
 }
 
-async function signInViaBrowser(ctx, email, password) {
-  // The auth screen is a single split card: email + password + a
-  // type="submit" button (multiple elements read "Sign in", so target the
-  // submit button, not text).
-  await ctx.eval(`fetch('/api/auth/sign-out', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(() => true).catch(() => true)`, { awaitPromise: true });
-  await ctx.eval(`(() => { window.location.href = ${JSON.stringify(DEN_WEB_URL)}; return true; })()`);
-  await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
-  await ctx.waitFor(
-    "Boolean(document.querySelector('input[type=\"email\"]')) && Boolean(document.querySelector('input[type=\"password\"]'))",
-    { timeoutMs: 30_000, label: "email + password fields" },
-  );
-  await ctx.fill('input[type="email"]', email);
-  await ctx.fill('input[type="password"]', password);
-  const submitted = await ctx.eval(`(() => {
-    const button = document.querySelector('button[type="submit"]');
-    if (!button) return false;
-    button.click();
-    return true;
-  })()`);
-  ctx.assert(submitted, "No submit button found on the sign-in card.");
-  await ctx.waitForText("Dashboard", { timeoutMs: 30_000 });
-}
-
 export default {
   id: "mcp-connections-member-scoped",
   title: "Per-member MCP connections: admin publishes, employee connects their own account, agent acts as them, grants enforced",
@@ -145,10 +97,10 @@ export default {
         const health = await fetch(`${MOCK_SERVER_URL}/health`).catch(() => null);
         ctx.assert(Boolean(health?.ok), `Mock OAuth+MCP server not reachable at ${MOCK_SERVER_URL}.`);
 
-        state.adminSession = await signIn(ADMIN_EMAIL, ADMIN_PASSWORD);
+        state.adminSession = await signInApi(ADMIN_EMAIL, ADMIN_PASSWORD);
         ctx.assert(Boolean(state.adminSession), `Admin sign-in failed for ${ADMIN_EMAIL}.`);
 
-        state.memberSession = await signIn(MEMBER_EMAIL, MEMBER_PASSWORD);
+        state.memberSession = await signInApi(MEMBER_EMAIL, MEMBER_PASSWORD);
         if (!state.memberSession) {
           ctx.log(`Member ${MEMBER_EMAIL} can't sign in yet — bootstrapping via real invitation flow.`);
           const invite = await denApiFetch("/v1/invitations", {
@@ -167,7 +119,7 @@ export default {
             "Member email must be verified to accept the invitation; set OPENWORK_EVAL_MARK_VERIFIED_CMD (shell template with {email}).",
           );
           execSync(MARK_VERIFIED_CMD.replaceAll("{email}", MEMBER_EMAIL), { stdio: "ignore" });
-          state.memberSession = await signIn(MEMBER_EMAIL, MEMBER_PASSWORD);
+          state.memberSession = await signInApi(MEMBER_EMAIL, MEMBER_PASSWORD);
           ctx.assert(Boolean(state.memberSession), "Member sign-in still failing after sign-up.");
           const accept = await denApiFetch("/v1/orgs/invitations/accept", {
             method: "POST",
@@ -194,30 +146,13 @@ export default {
     {
       name: "Admin signs in to den-web (browser)",
       run: async (ctx) => {
-        await ctx.eval(`(() => { window.location.href = ${JSON.stringify(DEN_WEB_URL)}; return true; })()`);
-        await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
         await signInViaBrowser(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
       },
     },
     {
       name: "Admin publishes a per-member connection for everyone via the real dialog",
       run: async (ctx) => {
-        // The Connections link lives inside the collapsible Extensions nav
-        // group — expand it first when the link isn't in the DOM yet.
-        await ctx.waitFor(
-          `(() => {
-            if (window.location.pathname.endsWith('/mcp-connections')) return true;
-            const link = [...document.querySelectorAll('nav a')].find((a) => a.getAttribute('href')?.endsWith('/mcp-connections'));
-            if (link) {
-              link.click();
-              return false;
-            }
-            const group = [...document.querySelectorAll('nav a, nav button')].find((el) => (el.textContent ?? '').trim().startsWith('Extensions'));
-            group?.click();
-            return false;
-          })()`,
-          { timeoutMs: 30_000, label: "MCP Connections nav" },
-        );
+        await openAdminConnections(ctx);
         await ctx.waitForText("Add Custom", { timeoutMs: 20_000 });
         await ctx.clickText("Add Custom", { timeoutMs: 20_000 });
         await ctx.waitFor("Boolean(document.querySelector('input[placeholder=\"notion\"]'))", { timeoutMs: 10_000, label: "dialog open" });
@@ -303,16 +238,7 @@ export default {
       name: "Member signs in and sees only what they were granted",
       run: async (ctx) => {
         await signInViaBrowser(ctx, MEMBER_EMAIL, MEMBER_PASSWORD);
-        await ctx.waitFor(
-          `(() => {
-            const link = [...document.querySelectorAll('a')].find((a) => a.getAttribute('href')?.endsWith('/your-connections'));
-            if (!link) return false;
-            if (window.location.pathname.endsWith('/your-connections')) return true;
-            link.click();
-            return false;
-          })()`,
-          { timeoutMs: 30_000, label: "Your Connections nav" },
-        );
+        await openYourConnections(ctx);
         await ctx.prove("The member-facing Your Connections page shows the granted connection needing their account — and NOT the team-restricted one", {
           assert: async () => {
             await ctx.waitForText(CONNECTION_NAME, { timeoutMs: 20_000 });

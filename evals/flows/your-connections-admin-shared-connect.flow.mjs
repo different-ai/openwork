@@ -6,11 +6,10 @@
  */
 
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
+import { denApiFetch, openYourConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
 
 const vo = await loadVoiceoverParagraphs("your-connections-admin-shared-connect");
 
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
 const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
 const MOCK_SERVER_URL = (process.env.MOCK_OAUTH_MCP_URL ?? "http://127.0.0.1:3978").trim().replace(/\/+$/, "");
@@ -21,53 +20,6 @@ const state = {
   adminSession: null,
   connectionId: null,
 };
-
-async function denApiFetch(path, options = {}) {
-  const response = await fetch(`${DEN_API_URL}${path}`, {
-    ...options,
-    headers: { "content-type": "application/json", origin: DEN_WEB_URL, ...(options.headers ?? {}) },
-  });
-  const text = await response.text();
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = text;
-  }
-  return { response, body };
-}
-
-async function signIn(email, password) {
-  const { response, body } = await denApiFetch("/api/auth/sign-in/email", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-  if (!response.ok) return null;
-  return body.token;
-}
-
-async function signInViaBrowser(ctx, email, password) {
-  // The auth screen is a single split card: email + password + a
-  // type="submit" button (multiple elements read "Sign in", so target the
-  // submit button, not text).
-  await ctx.eval(`fetch('/api/auth/sign-out', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(() => true).catch(() => true)`, { awaitPromise: true });
-  await ctx.eval(`(() => { window.location.href = ${JSON.stringify(DEN_WEB_URL)}; return true; })()`);
-  await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
-  await ctx.waitFor(
-    "Boolean(document.querySelector('input[type=\"email\"]')) && Boolean(document.querySelector('input[type=\"password\"]'))",
-    { timeoutMs: 30_000, label: "email + password fields" },
-  );
-  await ctx.fill('input[type="email"]', email);
-  await ctx.fill('input[type="password"]', password);
-  const submitted = await ctx.eval(`(() => {
-    const button = document.querySelector('button[type="submit"]');
-    if (!button) return false;
-    button.click();
-    return true;
-  })()`);
-  ctx.assert(submitted, "No submit button found on the sign-in card.");
-  await ctx.waitForText("Dashboard", { timeoutMs: 30_000 });
-}
 
 function rowHasAdminConnectButtonScript() {
   return `(() => {
@@ -138,7 +90,7 @@ export default {
         const health = await fetch(`${MOCK_SERVER_URL}/health`).catch(() => null);
         ctx.assert(Boolean(health?.ok), `Mock OAuth+MCP server not reachable at ${MOCK_SERVER_URL}.`);
 
-        state.adminSession = await signIn(ADMIN_EMAIL, ADMIN_PASSWORD);
+        state.adminSession = await signInApi(ADMIN_EMAIL, ADMIN_PASSWORD);
         ctx.assert(Boolean(state.adminSession), `Admin sign-in failed for ${ADMIN_EMAIL}.`);
 
         const existing = await denApiFetch("/v1/mcp-connections?scope=manageable", {
@@ -175,8 +127,6 @@ export default {
     {
       name: "Admin signs in to den-web (browser)",
       run: async (ctx) => {
-        await ctx.eval(`(() => { window.location.href = ${JSON.stringify(DEN_WEB_URL)}; return true; })()`);
-        await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
         await signInViaBrowser(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
       },
     },
@@ -186,17 +136,7 @@ export default {
         await ctx.prove("An admin can connect an unconnected shared OAuth row from Your Connections", {
           voiceover: vo[0],
           action: async () => {
-            await ctx.waitFor(
-              `(() => {
-                const link = [...document.querySelectorAll('a')].find((a) => a.getAttribute('href')?.endsWith('/your-connections'));
-                if (!link) return false;
-                if (window.location.pathname.endsWith('/your-connections')) return true;
-                link.click();
-                return false;
-              })()`,
-              { timeoutMs: 30_000, label: "Your Connections nav" },
-            );
-            await ctx.waitFor("window.location.pathname.endsWith('/your-connections')", { timeoutMs: 20_000, label: "Your Connections route" });
+            await openYourConnections(ctx);
           },
           assert: async () => {
             await ctx.waitForText(CONNECTION_NAME, { timeoutMs: 20_000 });
