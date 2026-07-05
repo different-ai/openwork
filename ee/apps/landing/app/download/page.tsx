@@ -57,19 +57,15 @@ export default async function Download() {
       <main className="pb-24 pt-20">
         <div className="content-max-width px-6">
           <div className="animate-fade-up max-w-2xl">
-            <div className="mb-3 text-[12px] font-bold uppercase tracking-wider text-gray-500">
-              OpenWork desktop
-            </div>
             <h1 className="mb-4 text-4xl font-bold tracking-tight md:text-5xl">
               Download now
             </h1>
             <p className="mb-6 text-[17px] leading-relaxed text-gray-700">
-              A local-first AI coworker for your desktop. Pick your platform
-              below and start working.
+              Free and open source. No account required.
             </p>
           </div>
 
-          <section className="my-12">
+          <section className="my-8">
             <DownloadOpenWorkCard installers={github.installers} releaseTag={releaseTag} />
           </section>
 
