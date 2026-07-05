@@ -11,6 +11,7 @@ export type ExternalMcpPreset = {
   description: string
   url: string
   authType: "oauth" | "apikey" | "none"
+  requiresOAuthClient?: boolean
 }
 
 export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
@@ -41,6 +42,14 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     description: "Track releases and resolve production errors.",
     url: "https://mcp.sentry.dev/mcp",
     authType: "oauth",
+  },
+  {
+    presetId: "slack",
+    displayName: "Slack",
+    description: "Channels, DMs, and search. Slack has no automatic app registration — paste your Slack app's OAuth client once; each person then connects their own account.",
+    url: "https://mcp.slack.com/mcp",
+    authType: "oauth",
+    requiresOAuthClient: true,
   },
   {
     presetId: "context7",

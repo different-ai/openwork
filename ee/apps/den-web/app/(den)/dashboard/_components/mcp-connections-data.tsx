@@ -32,6 +32,14 @@ export type ExternalMcpPreset = {
   description: string;
   url: string;
   authType: ExternalMcpAuthType;
+  requiresOAuthClient?: boolean;
+};
+
+export type CreatedMcpConnection = ExternalMcpConnection & {
+  links?: {
+    yourConnections?: string;
+    oauthCallback?: string;
+  };
 };
 
 export const mcpConnectionQueryKeys = {
@@ -85,6 +93,10 @@ export type CreateMcpConnectionInput = {
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
   apiKey?: string;
+  oauthClient?: {
+    clientId: string;
+    clientSecret?: string;
+  };
   access: McpConnectionAccessInput;
 };
 
@@ -93,8 +105,8 @@ export function useCreateMcpConnection() {
   const { orgId, runReauthableAction } = useOrgDashboard();
 
   return useMutation({
-    mutationFn: async (input: CreateMcpConnectionInput): Promise<ExternalMcpConnection> => {
-      let created: ExternalMcpConnection | null = null;
+    mutationFn: async (input: CreateMcpConnectionInput): Promise<CreatedMcpConnection> => {
+      let created: CreatedMcpConnection | null = null;
       await runReauthableAction("create-mcp-connection", async () => {
         const { response, payload } = await requestJson(
           "/v1/mcp-connections",
@@ -104,7 +116,7 @@ export function useCreateMcpConnection() {
         if (!response.ok) {
           throw getRequestError(payload, response, `Failed to add MCP connection (${response.status}).`);
         }
-        created = payload as ExternalMcpConnection;
+        created = payload as CreatedMcpConnection;
       });
       if (!created) throw new Error("Create MCP connection response was incomplete.");
       return created;

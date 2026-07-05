@@ -6,6 +6,9 @@ const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 3978);
 const issuer = process.env.ISSUER || `http://${host}:${port}`;
 const autoApprove = process.env.AUTO_APPROVE !== "0";
+const disableDcr = process.env.DISABLE_DCR === "1";
+const mockClientId = process.env.MOCK_CLIENT_ID || "mock-preregistered-client";
+const mockClientSecret = process.env.MOCK_CLIENT_SECRET || "mock-preregistered-secret";
 
 const clients = new Map();
 const codes = new Map();
@@ -81,13 +84,53 @@ function authorizationServerMetadata() {
     issuer,
     authorization_endpoint: `${issuer}/authorize`,
     token_endpoint: `${issuer}/token`,
-    registration_endpoint: `${issuer}/register`,
+    ...(disableDcr ? {} : { registration_endpoint: `${issuer}/register` }),
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
     code_challenge_methods_supported: ["S256", "plain"],
     scopes_supported: ["mcp:read", "mcp:write"],
   };
+}
+
+function basicClient(req) {
+  const header = req.headers.authorization || "";
+  const match = header.match(/^Basic\s+(.+)$/i);
+  if (!match) return null;
+  const decoded = Buffer.from(match[1], "base64").toString("utf8");
+  const separator = decoded.indexOf(":");
+  if (separator === -1) return { clientId: decoded, clientSecret: "" };
+  return {
+    clientId: decoded.slice(0, separator),
+    clientSecret: decoded.slice(separator + 1),
+  };
+}
+
+function rejectInvalidPreregisteredClient(res) {
+  json(res, 400, { error: "invalid_client" });
+}
+
+function requirePreregisteredAuthorizeClient(res, params) {
+  if (!disableDcr) return true;
+  if (params.get("client_id") === mockClientId) return true;
+  rejectInvalidPreregisteredClient(res);
+  return false;
+}
+
+function requirePreregisteredTokenClient(req, res, form, grant) {
+  if (!disableDcr) return true;
+  const basic = basicClient(req);
+  const clientId = basic?.clientId || form.client_id || grant?.clientId || "";
+  if (clientId !== mockClientId) {
+    rejectInvalidPreregisteredClient(res);
+    return false;
+  }
+  const suppliedSecret = basic?.clientSecret ?? form.client_secret;
+  if (suppliedSecret !== undefined && suppliedSecret !== mockClientSecret) {
+    rejectInvalidPreregisteredClient(res);
+    return false;
+  }
+  return true;
 }
 
 function redirectWithCode(res, params) {
@@ -115,6 +158,9 @@ function redirectWithCode(res, params) {
 }
 
 function authorize(req, res, url) {
+  if (!requirePreregisteredAuthorizeClient(res, url.searchParams)) {
+    return;
+  }
   if (autoApprove) {
     redirectWithCode(res, url.searchParams);
     return;
@@ -136,6 +182,10 @@ function authorize(req, res, url) {
 }
 
 async function registerClient(req, res) {
+  if (disableDcr) {
+    json(res, 404, { error: "not_found" });
+    return;
+  }
   const body = await readJson(req).catch(() => ({}));
   const clientId = `mock-client-${randomUUID()}`;
   const client = {
@@ -161,6 +211,9 @@ async function issueToken(req, res) {
       json(res, 400, { error: "invalid_grant" });
       return;
     }
+    if (!requirePreregisteredTokenClient(req, res, form, grant)) {
+      return;
+    }
     if (grant.codeChallenge) {
       const verifier = form.code_verifier || "";
       const expected =
@@ -172,6 +225,8 @@ async function issueToken(req, res) {
         return;
       }
     }
+  } else if (!requirePreregisteredTokenClient(req, res, form, null)) {
+    return;
   }
 
   if (form.code) codes.delete(form.code);
@@ -269,7 +324,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/health") {
-      json(res, 200, { ok: true, issuer, autoApprove, requests: requests.length });
+      json(res, 200, { ok: true, issuer, autoApprove, disableDcr, requests: requests.length });
       return;
     }
 

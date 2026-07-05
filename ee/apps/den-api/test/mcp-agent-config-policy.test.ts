@@ -14,6 +14,7 @@ type OpenApiDocument = {
 
 let isMcpOperationAllowed: typeof import("../src/mcp/policy.js")["isMcpOperationAllowed"]
 let isAgentApiKeyConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentApiKeyConnection"]
+let isAgentOAuthClientConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentOAuthClientConnection"]
 let document: OpenApiDocument
 
 function findOperation(operationId: string) {
@@ -35,7 +36,9 @@ function allowed(operationId: string) {
 beforeAll(async () => {
   seedRequiredEnv()
   isMcpOperationAllowed = (await import("../src/mcp/policy.js")).isMcpOperationAllowed
-  isAgentApiKeyConnection = (await import("../src/routes/org/mcp-connections.js")).isAgentApiKeyConnection
+  const mcpConnections = await import("../src/routes/org/mcp-connections.js")
+  isAgentApiKeyConnection = mcpConnections.isAgentApiKeyConnection
+  isAgentOAuthClientConnection = mcpConnections.isAgentOAuthClientConnection
   const app = (await import("../src/app.js")).default
   const response = await app.request("http://127.0.0.1:8790/openapi.json")
   document = await response.json()
@@ -67,5 +70,12 @@ describe("agent-configurable org connections policy", () => {
     expect(isAgentApiKeyConnection({ authType: "none", sessionId: "mcp_internal" })).toBe(false)
     expect(isAgentApiKeyConnection({ authType: "apikey", sessionId: "normal_session" })).toBe(false)
     expect(isAgentApiKeyConnection({ authType: "apikey", sessionId: null })).toBe(false)
+  })
+
+  test("OAuth clients are blocked only for the internal agent principal", () => {
+    expect(isAgentOAuthClientConnection({ oauthClient: { clientId: "client" }, sessionId: "mcp_internal" })).toBe(true)
+    expect(isAgentOAuthClientConnection({ oauthClient: { clientId: "client" }, sessionId: "normal_session" })).toBe(false)
+    expect(isAgentOAuthClientConnection({ sessionId: "mcp_internal" })).toBe(false)
+    expect(isAgentOAuthClientConnection({ oauthClient: null, sessionId: "mcp_internal" })).toBe(false)
   })
 })

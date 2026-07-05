@@ -39,6 +39,20 @@ On `Your Connections`, an unconnected One org account connection shows
 `Waiting for an admin to connect` to members. Workspace owners and admins get a
 `Connect` button on that row so they can finish the org account sign-in there.
 
+## Slack
+
+Slack's MCP server requires a pre-registered Slack OAuth app.
+
+1. Create or open a Slack app in [Slack API apps](https://api.slack.com/apps).
+2. In OpenWork Cloud, add the Slack connection and paste the app's client ID
+   and client secret.
+3. Copy the OAuth redirect URL OpenWork shows after creating the connection,
+   then add it to the Slack app's `OAuth & Permissions` redirect URLs.
+4. Members open `Your Connections` and connect their own Slack account.
+
+For the local desktop-only setup, see
+[Connect Slack MCP](/start-here/connect-your-stack/connect-slack-mcp).
+
 ## What members see in the desktop app
 
 Granted members find the connection in `Settings -> Extensions`, in the same

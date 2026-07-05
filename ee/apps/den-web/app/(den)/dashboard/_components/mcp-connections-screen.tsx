@@ -8,6 +8,7 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { IntegrationIcon } from "./integration-icon";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
+  type CreatedMcpConnection,
   type CreateMcpConnectionInput,
   type ExternalMcpAuthType,
   type ExternalMcpConnection,
@@ -80,8 +81,11 @@ export function McpConnectionsScreen() {
     }
   }
 
-  async function handleCreate(input: CreateMcpConnectionInput) {
+  async function handleCreate(input: CreateMcpConnectionInput): Promise<CreatedMcpConnection> {
     const created = await createConnection.mutateAsync(input);
+    if (input.oauthClient) {
+      return created;
+    }
     setFormOpen(false);
     setFormPreset(null);
     // Shared-credential OAuth: the admin authorizes the org's single account
@@ -90,6 +94,7 @@ export function McpConnectionsScreen() {
     if (input.authType === "oauth" && input.credentialMode === "shared") {
       await handleConnectOAuth(created.id);
     }
+    return created;
   }
 
   return (
@@ -404,7 +409,7 @@ function AddConnectionDialog({
   submitting: boolean;
   error: unknown;
   onClose: () => void;
-  onSubmit: (input: CreateMcpConnectionInput) => void;
+  onSubmit: (input: CreateMcpConnectionInput) => Promise<CreatedMcpConnection>;
 }) {
   const { orgContext } = useOrgDashboard();
   const [name, setName] = useState(preset?.displayName ?? "");
@@ -412,6 +417,11 @@ function AddConnectionDialog({
   const [authType, setAuthType] = useState<ExternalMcpAuthType>(preset?.authType ?? "oauth");
   const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("per_member");
   const [apiKey, setApiKey] = useState("");
+  const [showOAuthClient, setShowOAuthClient] = useState(Boolean(preset?.requiresOAuthClient));
+  const [oauthClientId, setOAuthClientId] = useState("");
+  const [oauthClientSecret, setOAuthClientSecret] = useState("");
+  const [oauthCallback, setOAuthCallback] = useState<string | null>(null);
+  const [copiedCallback, setCopiedCallback] = useState(false);
   const [accessMode, setAccessMode] = useState<"everyone" | "teams" | "people">("everyone");
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
@@ -423,6 +433,11 @@ function AddConnectionDialog({
     setAuthType(preset?.authType ?? "oauth");
     setCredentialMode("per_member");
     setApiKey("");
+    setShowOAuthClient(Boolean(preset?.requiresOAuthClient));
+    setOAuthClientId("");
+    setOAuthClientSecret("");
+    setOAuthCallback(null);
+    setCopiedCallback(false);
     setAccessMode("everyone");
     setSelectedTeamIds([]);
     setSelectedMemberIds([]);
@@ -438,14 +453,72 @@ function AddConnectionDialog({
     return list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id];
   }
 
-  if (!open) {
-    return null;
-  }
-
+  const showOAuthClientFields = authType === "oauth" && (Boolean(preset?.requiresOAuthClient) || showOAuthClient);
+  const oauthClientRequired = authType === "oauth" && Boolean(preset?.requiresOAuthClient);
   const access: McpConnectionAccessInput = accessMode === "everyone"
     ? { orgWide: true, memberIds: [], teamIds: [] }
     : { orgWide: false, memberIds: accessMode === "people" ? selectedMemberIds : [], teamIds: accessMode === "teams" ? selectedTeamIds : [] };
   const accessIncomplete = accessMode === "teams" ? selectedTeamIds.length === 0 : accessMode === "people" ? selectedMemberIds.length === 0 : false;
+
+  async function submit() {
+    const trimmedClientId = oauthClientId.trim();
+    const trimmedClientSecret = oauthClientSecret.trim();
+    const input: CreateMcpConnectionInput = {
+      name: name.trim(),
+      url: url.trim(),
+      authType,
+      credentialMode: authType === "oauth" ? credentialMode : "shared",
+      apiKey: authType === "apikey" ? apiKey.trim() : undefined,
+      oauthClient: showOAuthClientFields && trimmedClientId
+        ? {
+          clientId: trimmedClientId,
+          ...(trimmedClientSecret ? { clientSecret: trimmedClientSecret } : {}),
+        }
+        : undefined,
+      access,
+    };
+    const created = await onSubmit(input);
+    if (input.oauthClient && created.links?.oauthCallback) {
+      setOAuthCallback(created.links.oauthCallback);
+      setCopiedCallback(false);
+    }
+  }
+
+  function copyOAuthCallback() {
+    if (!oauthCallback) return;
+    void navigator.clipboard.writeText(oauthCallback).then(() => setCopiedCallback(true));
+  }
+
+  if (!open) {
+    return null;
+  }
+
+  if (oauthCallback) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+        <div
+          className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Almost done — add this redirect URL to your app:</h2>
+          <p className="mt-2 text-[13px] leading-6 text-gray-600">
+            Copy this into the OAuth redirect URLs for your pre-registered app before teammates connect.
+          </p>
+          <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
+            <p className="break-all font-mono text-[12px] leading-5 text-gray-800">{oauthCallback}</p>
+          </div>
+          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <DenButton variant="secondary" onClick={copyOAuthCallback}>
+              {copiedCallback ? "Copied" : "Copy"}
+            </DenButton>
+            <DenButton variant="primary" onClick={onClose}>
+              Done
+            </DenButton>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
@@ -482,7 +555,10 @@ function AddConnectionDialog({
                   <button
                     key={option}
                     type="button"
-                    onClick={() => setAuthType(option)}
+                    onClick={() => {
+                      setAuthType(option);
+                      if (option !== "oauth") setShowOAuthClient(false);
+                    }}
                     className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
                       authType === option
                         ? "border-gray-900 bg-gray-900 text-white"
@@ -499,6 +575,44 @@ function AddConnectionDialog({
             <div>
               <label className="mb-1.5 block text-[12px] font-medium text-gray-700">API key</label>
               <DenInput type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-..." />
+            </div>
+          ) : null}
+
+          {authType === "oauth" && !preset?.requiresOAuthClient && !showOAuthClient ? (
+            <button
+              type="button"
+              onClick={() => setShowOAuthClient(true)}
+              className="text-left text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
+            >
+              This server needs a pre-registered OAuth app
+            </button>
+          ) : null}
+
+          {showOAuthClientFields ? (
+            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+              <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
+              <p className="mt-1 text-[12px] leading-5 text-gray-500">
+                Create an app for your workspace, then paste its OAuth client here. Each person connects their own account with it — sign-ins stay in your org&apos;s cloud.
+              </p>
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
+                  <DenInput
+                    value={oauthClientId}
+                    onChange={(event) => setOAuthClientId(event.target.value)}
+                    placeholder="1234567890.1234567890123"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret</label>
+                  <DenInput
+                    type="password"
+                    value={oauthClientSecret}
+                    onChange={(event) => setOAuthClientSecret(event.target.value)}
+                    placeholder="Slack client secret"
+                  />
+                </div>
+              </div>
             </div>
           ) : null}
 
@@ -605,17 +719,8 @@ function AddConnectionDialog({
           <DenButton
             variant="primary"
             loading={submitting}
-            disabled={!name.trim() || !url.trim() || (authType === "apikey" && !apiKey.trim()) || accessIncomplete}
-            onClick={() =>
-              onSubmit({
-                name: name.trim(),
-                url: url.trim(),
-                authType,
-                credentialMode: authType === "oauth" ? credentialMode : "shared",
-                apiKey: authType === "apikey" ? apiKey.trim() : undefined,
-                access,
-              })
-            }
+            disabled={!name.trim() || !url.trim() || (authType === "apikey" && !apiKey.trim()) || (oauthClientRequired && !oauthClientId.trim()) || accessIncomplete}
+            onClick={() => void submit()}
           >
             Add connection
           </DenButton>
