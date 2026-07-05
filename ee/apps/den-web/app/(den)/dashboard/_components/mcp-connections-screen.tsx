@@ -493,39 +493,32 @@ function AddConnectionDialog({
     return null;
   }
 
-  if (oauthCallback) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
-        <div
-          className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Almost done — add this redirect URL to your app:</h2>
-          <p className="mt-2 text-[13px] leading-6 text-gray-600">
-            Copy this into the OAuth redirect URLs for your pre-registered app before teammates connect.
-          </p>
-          <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
-            <p className="break-all font-mono text-[12px] leading-5 text-gray-800">{oauthCallback}</p>
-          </div>
-          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <DenButton variant="secondary" onClick={copyOAuthCallback}>
-              {copiedCallback ? "Copied" : "Copy"}
-            </DenButton>
-            <DenButton variant="primary" onClick={onClose}>
-              Done
-            </DenButton>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
       <div
         className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
+        {oauthCallback ? (
+          <>
+            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Almost done — add this redirect URL to your app:</h2>
+            <p className="mt-2 text-[13px] leading-6 text-gray-600">
+              Copy this into the OAuth redirect URLs for your pre-registered app before teammates connect.
+            </p>
+            <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <p className="break-all font-mono text-[12px] leading-5 text-gray-800">{oauthCallback}</p>
+            </div>
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <DenButton variant="secondary" onClick={copyOAuthCallback}>
+                {copiedCallback ? "Copied" : "Copy"}
+              </DenButton>
+              <DenButton variant="primary" onClick={onClose}>
+                Done
+              </DenButton>
+            </div>
+          </>
+        ) : (
+          <>
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
           {preset ? `Add ${preset.displayName}` : "Add a custom MCP server"}
         </h2>
@@ -609,7 +602,7 @@ function AddConnectionDialog({
                     type="password"
                     value={oauthClientSecret}
                     onChange={(event) => setOAuthClientSecret(event.target.value)}
-                    placeholder="Slack client secret"
+                    placeholder="Client secret"
                   />
                 </div>
               </div>
@@ -725,6 +718,8 @@ function AddConnectionDialog({
             Add connection
           </DenButton>
         </div>
+          </>
+        )}
       </div>
     </div>
   );

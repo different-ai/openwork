@@ -7,11 +7,10 @@
  */
 
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
+import { denApiFetch, openAdminConnections as openConnections, openYourConnections, signInApi as signIn, signInViaBrowser } from "./lib/den-web.mjs";
 
 const vo = await loadVoiceoverParagraphs("slack-org-connection");
 
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
 const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
 const MOCK_SERVER_URL = (process.env.MOCK_DCRLESS_MCP_URL ?? "http://127.0.0.1:3979").trim().replace(/\/+$/, "");
@@ -25,87 +24,6 @@ const state = {
   connectionId: null,
   callbackUrl: null,
 };
-
-async function denApiFetch(path, options = {}) {
-  const response = await fetch(`${DEN_API_URL}${path}`, {
-    ...options,
-    headers: { "content-type": "application/json", origin: DEN_WEB_URL, ...(options.headers ?? {}) },
-  });
-  const text = await response.text();
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = text;
-  }
-  return { response, body };
-}
-
-async function signIn(email, password) {
-  const { response, body } = await denApiFetch("/api/auth/sign-in/email", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-  if (!response.ok) return null;
-  return body.token;
-}
-
-async function signInViaBrowser(ctx, email, password) {
-  // Land on the den-web origin first so the relative sign-out fetch below
-  // actually reaches den-web (a leftover session would otherwise bounce the
-  // root URL straight to /dashboard with no sign-in card).
-  await ctx.eval(`(() => { window.location.href = ${JSON.stringify(DEN_WEB_URL)}; return true; })()`);
-  await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
-  await ctx.eval(`fetch('/api/auth/sign-out', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(() => true).catch(() => true)`, { awaitPromise: true });
-  await ctx.eval(`(() => { window.location.href = ${JSON.stringify(DEN_WEB_URL)}; return true; })()`);
-  await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
-  await ctx.waitFor(
-    "Boolean(document.querySelector('input[type=\"email\"]')) && Boolean(document.querySelector('input[type=\"password\"]'))",
-    { timeoutMs: 30_000, label: "email + password fields" },
-  );
-  await ctx.fill('input[type="email"]', email);
-  await ctx.fill('input[type="password"]', password);
-  const submitted = await ctx.eval(`(() => {
-    const button = document.querySelector('button[type="submit"]');
-    if (!button) return false;
-    button.click();
-    return true;
-  })()`);
-  ctx.assert(submitted, "No submit button found on the sign-in card.");
-  await ctx.waitForText("Dashboard", { timeoutMs: 30_000 });
-}
-
-async function openConnections(ctx) {
-  await ctx.waitFor(
-    `(() => {
-      if (window.location.pathname.endsWith('/mcp-connections')) return true;
-      const link = [...document.querySelectorAll('nav a')].find((a) => a.getAttribute('href')?.endsWith('/mcp-connections'));
-      if (link) {
-        link.click();
-        return false;
-      }
-      const group = [...document.querySelectorAll('nav a, nav button')].find((el) => (el.textContent ?? '').trim().startsWith('Extensions'));
-      group?.click();
-      return false;
-    })()`,
-    { timeoutMs: 30_000, label: "Extensions -> Connections nav" },
-  );
-  await ctx.waitFor("window.location.pathname.endsWith('/mcp-connections')", { timeoutMs: 20_000, label: "Connections route" });
-}
-
-async function openYourConnections(ctx) {
-  await ctx.waitFor(
-    `(() => {
-      if (window.location.pathname.endsWith('/your-connections')) return true;
-      const link = [...document.querySelectorAll('a')].find((a) => a.getAttribute('href')?.endsWith('/your-connections'));
-      if (!link) return false;
-      link.click();
-      return false;
-    })()`,
-    { timeoutMs: 30_000, label: "Your Connections nav" },
-  );
-  await ctx.waitFor("window.location.pathname.endsWith('/your-connections')", { timeoutMs: 20_000, label: "Your Connections route" });
-}
 
 function clickSlackCardScript() {
   return `(() => {
@@ -260,7 +178,7 @@ export default {
             await ctx.fill('input[placeholder="https://mcp.example.com/mcp"]', `${MOCK_SERVER_URL}/mcp`);
             await ctx.clickText("This server needs a pre-registered OAuth app", { timeoutMs: 10_000 });
             await ctx.fill('input[placeholder="1234567890.1234567890123"]', MOCK_CLIENT_ID);
-            await ctx.fill('input[placeholder="Slack client secret"]', MOCK_CLIENT_SECRET);
+            await ctx.fill('input[placeholder="Client secret"]', MOCK_CLIENT_SECRET);
             await ctx.clickText("Add connection", { timeoutMs: 15_000 });
           },
           assert: async () => {
