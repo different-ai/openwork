@@ -19,7 +19,7 @@ export async function getInitialActiveOrganizationIdForUser(userId: string) {
     .from(MemberTable)
     .where(and(eq(MemberTable.userId, normalizedUserId), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
-    .limit(1)
+    .limit(2)
 
-  return rows[0]?.organizationId ?? null
+  return rows.length === 1 ? rows[0].organizationId : null
 }

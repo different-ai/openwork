@@ -7,7 +7,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { ReauthDialog } from "../../_components/reauth-dialog";
@@ -17,6 +17,7 @@ import {
   getOrgDashboardRoute,
   parseOrgContextPayload,
   parseOrgListPayload,
+  shouldShowOrgSelection,
 } from "../../_lib/den-org";
 
 type OrgDashboardContextValue = {
@@ -25,6 +26,7 @@ type OrgDashboardContextValue = {
   orgDirectory: DenOrgSummary[];
   activeOrg: DenOrgSummary | null;
   orgContext: DenOrgContext | null;
+  orgSelectionRequired: boolean;
   orgBusy: boolean;
   orgError: string | null;
   mutationBusy: string | null;
@@ -62,9 +64,11 @@ export function OrgDashboardProvider({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, sessionHydrated, signOut, refreshWorkers, workersLoadedOnce, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const [orgDirectory, setOrgDirectory] = useState<DenOrgSummary[]>([]);
   const [orgContext, setOrgContext] = useState<DenOrgContext | null>(null);
+  const [orgSelectionRequired, setOrgSelectionRequired] = useState(false);
   const [orgBusy, setOrgBusy] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
   const [mutationBusy, setMutationBusy] = useState<string | null>(null);
@@ -80,6 +84,7 @@ export function OrgDashboardProvider({
 
   const activeOrgId = activeOrg?.id ?? orgContext?.organization.id ?? null;
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
+  const orgSelectionRequested = searchParams.get("selectOrg") === "1";
 
   function ensureActiveOrganizationSelected() {
     if (!activeOrgId) {
@@ -129,11 +134,13 @@ export function OrgDashboardProvider({
     if (!user) {
       setOrgDirectory([]);
       setOrgContext(null);
+      setOrgSelectionRequired(false);
       setOrgError(null);
       return;
     }
 
     setOrgBusy(true);
+    setOrgSelectionRequired(false);
     setOrgError(null);
 
     try {
@@ -144,6 +151,13 @@ export function OrgDashboardProvider({
         setOrgDirectory([]);
         setOrgContext(null);
         router.replace("/organization");
+        return;
+      }
+
+      if (!isSingleOrgMode && shouldShowOrgSelection(directoryPayload.orgs, orgSelectionRequested)) {
+        setOrgDirectory(directoryPayload.orgs);
+        setOrgContext(null);
+        setOrgSelectionRequired(true);
         return;
       }
 
@@ -277,8 +291,10 @@ export function OrgDashboardProvider({
         const context = await loadOrgContext();
         setOrgDirectory((current) => current.map((entry) => ({ ...entry, isActive: entry.id === context.organization.id })));
         setOrgContext(context);
+        setOrgSelectionRequired(false);
         await refreshWorkers({ keepSelection: false, quiet: workersLoadedOnce });
 
+        router.replace(getOrgDashboardRoute(context.organization.slug));
         router.refresh();
       } catch (error) {
         setOrgError(error instanceof Error ? error.message : "Failed to switch organization.");
@@ -561,7 +577,7 @@ export function OrgDashboardProvider({
     }
 
     void refreshOrgData();
-  }, [router, sessionHydrated, user?.id]);
+  }, [router, sessionHydrated, user?.id, isSingleOrgMode, orgSelectionRequested]);
 
   const value: OrgDashboardContextValue = {
     orgSlug: activeOrg?.slug ?? null,
@@ -569,6 +585,7 @@ export function OrgDashboardProvider({
     orgDirectory,
     activeOrg,
     orgContext,
+    orgSelectionRequired,
     orgBusy,
     orgError,
     mutationBusy,

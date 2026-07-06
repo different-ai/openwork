@@ -44,6 +44,7 @@ import {
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
+import { OrgSelectionScreen } from "./org-selection-screen";
 
 const OPENWORK_DOCS_URL = "/docs";
 
@@ -185,12 +186,27 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     activeOrg,
     orgDirectory,
     orgContext,
+    orgSelectionRequired,
     orgBusy,
     orgError,
+    mutationBusy,
     switchOrganization,
   } = useOrgDashboard();
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
+
+  if (orgSelectionRequired) {
+    return (
+      <OrgSelectionScreen
+        orgs={orgDirectory}
+        onSelect={switchOrganization}
+        onSignOut={() => void signOut()}
+        busy={mutationBusy === "switch-organization"}
+        error={orgError}
+      />
+    );
+  }
 
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
@@ -403,8 +419,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       ) : null}
     </div>
   );
-
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const sidebarContent = (
     <div className="flex flex-1 flex-col">

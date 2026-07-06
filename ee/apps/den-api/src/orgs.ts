@@ -1014,7 +1014,9 @@ export async function resolveUserOrganizations(input: {
     }
   }
 
-  activeOrgId ??= orgs[0]?.id ?? null
+  if (!activeOrgId && orgs.length === 1) {
+    activeOrgId = orgs[0].id
+  }
 
   const activeOrg = orgs.find((org) => org.id === activeOrgId) ?? null
 

@@ -338,6 +338,14 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, roleDefin
   };
 }
 
+export function shouldRequireOrgSelection(orgs: readonly DenOrgSummary[]): boolean {
+  return orgs.length > 1 && !orgs.some((org) => org.isActive);
+}
+
+export function shouldShowOrgSelection(orgs: readonly DenOrgSummary[], selectionRequested: boolean): boolean {
+  return shouldRequireOrgSelection(orgs) || (selectionRequested && orgs.length > 1);
+}
+
 export function formatRoleLabel(role: string): string {
   return role
     .split(/[-_\s]+/)
@@ -348,6 +356,10 @@ export function formatRoleLabel(role: string): string {
 
 export function getOrgDashboardRoute(_orgSlug?: string | null): string {
   return "/dashboard";
+}
+
+export function getOrgSelectionRoute(): string {
+  return `${getOrgDashboardRoute()}?selectOrg=1`;
 }
 
 export function getMarketplaceOnboardingRoute(_orgSlug?: string | null): string {
