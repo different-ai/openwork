@@ -32,11 +32,7 @@ type Props = {
   className?: string;
 };
 
-const executionPreviewItems = [
-  "Installs the OpenWork desktop app",
-  "Creates your first workspace and skill",
-  "Opens the app, ready for your first task"
-];
+const steps = ["Installs OpenWork", "Creates your workspace", "Opens ready to run"];
 
 export function LandingHeroPrompt({ className }: Props) {
   const [feedback, setFeedback] = useState(false);
@@ -72,7 +68,7 @@ export function LandingHeroPrompt({ className }: Props) {
     }
     setCopyError(!copied);
     setFeedback(true);
-    setRevealed(true);
+    if (copied) setRevealed(true);
     capturePosthogEvent("landing_copy_prompt_clicked", {
       copied,
       method,
@@ -92,15 +88,15 @@ export function LandingHeroPrompt({ className }: Props) {
       data-feedback={feedback ? "true" : "false"}
       data-copy-error={copyError ? "true" : "false"}
     >
-      <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-600">
-        Already use an AI agent? Have it install OpenWork for you
-      </div>
       <div
         onClick={() => {
           void onClick();
         }}
         className="group cursor-pointer rounded-xl border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md"
       >
+        <div className="mb-2 text-[13px] text-gray-500">
+          Already use an AI agent? Paste this prompt — it installs OpenWork for you.
+        </div>
         <p className="text-[15px] leading-relaxed text-[#011627]">
           Install OpenWork on my computer, set up my first workspace, and open it
           ready to use. Follow the steps in{" "}
@@ -196,32 +192,45 @@ export function LandingHeroPrompt({ className }: Props) {
             )}
           </button>
         </div>
-      </div>
-      <AnimatePresence initial={false}>
-        {revealed ? (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.25 }}
-            className="overflow-hidden"
-          >
-            <div className="mt-3 rounded-xl border border-gray-100 bg-white/70 p-3 shadow-sm">
-              <div className="flex flex-col gap-2">
-                {executionPreviewItems.map((item) => (
-                  <div key={item} className="flex items-center gap-2 text-xs text-gray-400">
-                    <ChevronRight size={10} className="text-gray-300" />
-                    <span>{item}</span>
-                  </div>
-                ))}
-                <div className="pt-1 text-xs font-medium text-[#011627]">
-                  Now paste it into Claude Code, Cursor, or ChatGPT.
+        <AnimatePresence initial={false}>
+          {revealed ? (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.25 }}
+              className="overflow-hidden"
+            >
+              <div className="mt-3 border-t border-gray-100 pt-3">
+                <div className="flex items-center gap-2 text-[13px] font-medium text-[#011627]">
+                  <svg
+                    className="h-4 w-4 shrink-0 text-green-600"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                  Copied — now paste it into Claude Code, Cursor, or ChatGPT:
+                </div>
+                <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-2">
+                  {steps.map((label, index) => (
+                    <div key={label} className="flex items-center gap-2">
+                      {index > 0 ? <ChevronRight size={12} className="text-gray-300" /> : null}
+                      <span className="step-circle">{index + 1}</span>
+                      <span className="text-[13px] text-gray-600">{label}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </div>
       <span aria-live="polite" className="sr-only">
         {feedback ? (copyError ? "Couldn't copy the prompt" : "Prompt copied to clipboard") : ""}
       </span>

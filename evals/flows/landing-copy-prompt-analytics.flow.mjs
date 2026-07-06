@@ -215,7 +215,8 @@ export default {
               const headerLinks = Array.from(header ? header.querySelectorAll("a") : []);
               return {
                 heroPromptVisible: bodyText.includes("Install OpenWork on my computer") && bodyText.includes("start.md?v=hero"),
-                executionPreviewVisible: bodyText.includes("Now paste it into Claude Code") && bodyText.includes("Installs the OpenWork desktop app"),
+                headerVisible: bodyText.includes("Paste this prompt — it installs OpenWork for you"),
+                executionPreviewVisible: bodyText.includes("now paste it into Claude Code") && bodyText.includes("Installs OpenWork") && bodyText.includes("Opens ready to run"),
                 copyPromptNavButtons: headerButtons.filter((button) => button.innerText.includes("Copy Prompt")).length,
                 downloadLinkVisible: headerLinks.some((link) => link.textContent.includes("Download") && link.href.endsWith("/download")),
               };
@@ -223,7 +224,7 @@ export default {
             recordAssertion(
               ctx,
               "The hero renders the human-readable agent install prompt with the hero start guide URL",
-              pageScan.heroPromptVisible === true,
+              pageScan.heroPromptVisible === true && pageScan.headerVisible === true,
               pageScan,
             );
             recordAssertion(
@@ -241,7 +242,7 @@ export default {
           },
           screenshot: {
             name: "hero-prompt-copied",
-            requireText: ["Copied", "Now paste it into"],
+            requireText: ["Copied", "now paste it into Claude Code"],
           },
         });
       },
