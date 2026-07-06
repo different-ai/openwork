@@ -33,20 +33,26 @@ function clickExaCardScript() {
 }
 
 function exaConnectedRowScript() {
+  // Returns true only when the connected row is INSIDE the viewport — the
+  // list re-renders on the page's 2s polling, which can reset an earlier
+  // scroll before the screenshot is captured, so keep scrolling until the
+  // row is genuinely visible.
   return `(() => {
     const leaves = [...document.querySelectorAll('*')].filter((el) => el.children.length === 0 && (el.textContent ?? '').trim() === 'Exa');
-    return leaves.some((leaf) => {
+    for (const leaf of leaves) {
       let el = leaf;
       for (let i = 0; i < 6 && el; i++) {
         const text = el.textContent ?? '';
         if (text.includes('Connected') && text.includes(${JSON.stringify(EXA_URL)})) {
+          const rect = el.getBoundingClientRect();
+          if (rect.top >= 0 && rect.bottom <= window.innerHeight) return true;
           el.scrollIntoView({ block: 'center' });
-          return true;
+          return false;
         }
         el = el.parentElement;
       }
-      return false;
-    });
+    }
+    return false;
   })()`;
 }
 
