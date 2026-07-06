@@ -208,6 +208,11 @@ export default {
             } else {
               ctx.log("Skipping real Exa web_search_exa execution because real execution requires OPENWORK_EVAL_EXA_API_KEY; placeholder keys only validate create and tool discovery.");
             }
+
+            // The list polls/re-renders while the API checks above run, which
+            // can reset the scroll position — bring the connected row back
+            // into view so the frame shows what the claim says.
+            await ctx.waitFor(exaConnectedRowScript(), { timeoutMs: 10_000, label: "Exa row back in view" });
           },
           screenshot: {
             name: "exa-connected-row",
