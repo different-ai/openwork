@@ -226,6 +226,7 @@ export const DEN_ROLE_PERMISSION_OPTIONS = {
 
 export const PENDING_ORG_INVITATION_STORAGE_KEY = "openwork:web:pending-org-invitation";
 export const PENDING_WORKSPACE_CLAIM_STORAGE_KEY = "openwork:web:pending-workspace-claim";
+export const PENDING_ORG_SELECTION_STORAGE_KEY = "openwork:web:pending-org-selection";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -340,6 +341,10 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, roleDefin
 
 export function shouldRequireOrgSelection(orgs: readonly DenOrgSummary[]): boolean {
   return orgs.length > 1 && !orgs.some((org) => org.isActive);
+}
+
+export function shouldOfferOrgSelection(orgs: readonly DenOrgSummary[]): boolean {
+  return orgs.length > 1;
 }
 
 export function formatRoleLabel(role: string): string {

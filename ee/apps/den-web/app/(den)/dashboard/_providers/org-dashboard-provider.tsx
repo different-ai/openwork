@@ -12,11 +12,13 @@ import { useDenFlow } from "../../_providers/den-flow-provider";
 import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { ReauthDialog } from "../../_components/reauth-dialog";
 import {
+  PENDING_ORG_SELECTION_STORAGE_KEY,
   type DenOrgContext,
   type DenOrgSummary,
   getOrgDashboardRoute,
   parseOrgContextPayload,
   parseOrgListPayload,
+  shouldOfferOrgSelection,
   shouldRequireOrgSelection,
 } from "../../_lib/den-org";
 
@@ -57,6 +59,16 @@ type PendingReauthMutation = {
 };
 
 const OrgDashboardContext = createContext<OrgDashboardContextValue | null>(null);
+
+function consumePendingOrgSelectionRequest(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const pending = window.sessionStorage.getItem(PENDING_ORG_SELECTION_STORAGE_KEY) === "1";
+  window.sessionStorage.removeItem(PENDING_ORG_SELECTION_STORAGE_KEY);
+  return pending;
+}
 
 export function OrgDashboardProvider({
   children,
@@ -152,7 +164,14 @@ export function OrgDashboardProvider({
         return;
       }
 
-      if (!isSingleOrgMode && shouldRequireOrgSelection(directoryPayload.orgs)) {
+      const shouldShowOrgSelection =
+        !isSingleOrgMode &&
+        (
+          shouldRequireOrgSelection(directoryPayload.orgs) ||
+          (consumePendingOrgSelectionRequest() && shouldOfferOrgSelection(directoryPayload.orgs))
+        );
+
+      if (shouldShowOrgSelection) {
         setOrgDirectory(directoryPayload.orgs);
         setOrgContext(null);
         setOrgSelectionRequired(true);
