@@ -13,6 +13,7 @@ import {
   landingDemoFlowTimes
 } from "./landing-demo-flows";
 import { LandingFaq } from "./landing-faq";
+import { LandingHeroPrompt } from "./landing-hero-prompt";
 import { LandingSharePackageCard } from "./landing-share-package-card";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
@@ -97,7 +98,7 @@ export function LandingHome(props: Props) {
                     href="/download"
                     className="doc-button inline-flex items-center gap-2"
                   >
-                    Download now <ArrowRight size={18} />
+                    Download for free <ArrowRight size={18} />
                   </Link>
                 )}
                 <a
@@ -122,8 +123,8 @@ export function LandingHome(props: Props) {
                   </span>
                 </div>
               </div>
- 
             </div>
+            {props.isMobileVisitor ? null : <LandingHeroPrompt className="mt-10 hidden md:block" />}
           </section>
 
           {props.isMobileVisitor ? (

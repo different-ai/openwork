@@ -1,3 +1,8 @@
+import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
+
+const FLOW_ID = "landing-posthog-prod-gate";
+const vo = await loadVoiceoverParagraphs(FLOW_ID);
+
 const COPY_BUTTON_SELECTOR = 'button[aria-label="Copy the agent setup prompt"]';
 const POSTHOG_SCRIPT_MARKERS = ['id="posthog"', '"id":"posthog"'];
 const POSTHOG_KEY_PREFIX = "phc_";
@@ -64,42 +69,97 @@ async function grantClipboardPermissions(ctx, baseUrl) {
   });
 }
 
+async function applyDesktopViewport(ctx) {
+  if (!ctx.client?.send) {
+    ctx.log("Desktop viewport skipped: no raw CDP send method on context.");
+    return;
+  }
+
+  await ctx.client.send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  }).catch((error) => {
+    ctx.log(`Desktop viewport skipped: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
+async function clickCopyButton(ctx) {
+  const point = await ctx.eval(`(() => {
+    const button = document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)});
+    // "instant" bypasses the page's css scroll-behavior: smooth so the rect
+    // below is measured after the scroll actually happened, not mid-animation.
+    button.scrollIntoView({ block: "center", behavior: "instant" });
+    const rect = button.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    };
+  })()`);
+
+  if (!ctx.client?.send) {
+    await ctx.eval(`(() => {
+      document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)}).click();
+      return true;
+    })()`);
+    return;
+  }
+
+  await ctx.client.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: point.x,
+    y: point.y,
+  });
+  await ctx.client.send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: point.x,
+    y: point.y,
+    button: "left",
+    clickCount: 1,
+  });
+  await ctx.client.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: point.x,
+    y: point.y,
+    button: "left",
+    clickCount: 1,
+  });
+}
+
 export default {
-  id: "landing-posthog-prod-gate",
+  id: FLOW_ID,
   title: "Landing PostHog loads in production only",
   kind: "user-facing",
   preserveTheme: true,
   requiredEnv: ["OPENWORK_EVAL_LANDING_URL", "OPENWORK_EVAL_LANDING_PROD_URL"],
   steps: [
     {
-      name: "Dev server ships no PostHog, and Copy Prompt still works",
+      name: "Dev server ships no PostHog, and the hero prompt still works",
       run: async (ctx) => {
         let htmlScan = null;
         let runtimeScan = null;
         let copyScan = null;
 
-        await ctx.prove("Dev server ships no PostHog, and Copy Prompt still works.", {
+        await ctx.prove("Dev server ships no PostHog, and the hero prompt still works.", {
+          voiceover: vo[0],
           action: async () => {
+            await applyDesktopViewport(ctx);
             htmlScan = await scanHomeHtml(ctx.env.OPENWORK_EVAL_LANDING_URL);
             await ctx.eval(`location.href = ${JSON.stringify(pageUrl(ctx.env.OPENWORK_EVAL_LANDING_URL))}; true`);
             await ctx.waitFor(
               `Boolean(document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)}))`,
-              { timeoutMs: 30_000, label: "Copy Prompt button on dev landing" },
+              { timeoutMs: 30_000, label: "hero prompt copy button on dev landing" },
             );
             runtimeScan = await ctx.eval(`(() => ({
               posthogUndefined: window.posthog === undefined,
               posthogScriptAbsent: document.getElementById("posthog") === null,
             }))()`);
             await grantClipboardPermissions(ctx, ctx.env.OPENWORK_EVAL_LANDING_URL);
-            await ctx.eval(`(() => {
-              const button = document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)});
-              button.scrollIntoView({ block: "center" });
-              button.click();
-              return true;
-            })()`);
+            await clickCopyButton(ctx);
             await ctx.waitFor(
               `Boolean(document.querySelector('[data-feedback="true"]')) && window.posthog === undefined`,
-              { timeoutMs: 10_000, label: "Copy Prompt feedback without PostHog" },
+              { timeoutMs: 10_000, label: "Hero prompt feedback without PostHog" },
             );
             copyScan = await ctx.eval(`(() => ({
               feedbackActive: Boolean(document.querySelector('[data-feedback="true"]')),
@@ -127,7 +187,7 @@ export default {
             );
             recordAssertion(
               ctx,
-              "Copy Prompt enters feedback state while PostHog remains absent",
+              "Hero prompt enters feedback state while PostHog remains absent",
               copyScan?.feedbackActive === true && copyScan.posthogUndefined === true,
               copyScan,
             );
@@ -146,13 +206,15 @@ export default {
         let runtimeScan = null;
 
         await ctx.prove("Production build ships PostHog.", {
+          voiceover: vo[1],
           action: async () => {
+            await applyDesktopViewport(ctx);
             htmlScan = await scanHomeHtml(ctx.env.OPENWORK_EVAL_LANDING_PROD_URL);
             await setPosthogNetworkBlocked(ctx, true);
             await ctx.eval(`location.href = ${JSON.stringify(pageUrl(ctx.env.OPENWORK_EVAL_LANDING_PROD_URL))}; true`);
             await ctx.waitFor(
               `Boolean(document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)}))`,
-              { timeoutMs: 30_000, label: "Copy Prompt button on production landing" },
+              { timeoutMs: 30_000, label: "hero prompt copy button on production landing" },
             );
             await ctx.waitFor(
               `typeof window.posthog !== "undefined"`,

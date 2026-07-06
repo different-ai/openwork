@@ -384,18 +384,18 @@ hr {
   }
 }
 
-/*
- * Squircle button shape, ported from Flue (https://github.com/withastro/flue,
- * apps/www/src/styles/global.css), Apache License 2.0. Used by the Copy Prompt
- * CTA glyph button.
- */
-.squircle-button {
-  border-radius: 32px;
+.hero-prompt-caret {
+  animation: hero-prompt-caret-blink 1s steps(1, end) infinite;
 }
 
-@supports (corner-shape: squircle) {
-  .squircle-button {
-    corner-shape: squircle;
+@keyframes hero-prompt-caret-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  46%,
+  100% {
+    opacity: 0;
   }
 }
 
@@ -403,6 +403,7 @@ hr {
   .word-cycle span,
   .animate-fade-up,
   .den-running-dot,
+  .hero-prompt-caret,
   .doc-button,
   .secondary-button,
   .feature-card {

@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { CopyPromptButton } from "./copy-prompt-button";
 import { OpenWorkMark } from "./openwork-mark";
 
 type Props = {
@@ -93,7 +92,12 @@ export function SiteNav(props: Props) {
               </svg>
               {props.stars}
             </a>
-            <CopyPromptButton className="hidden md:block" />
+            <Link
+              href="/download"
+              className="hidden items-center gap-2 rounded-full bg-[#011627] px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#102638] md:inline-flex"
+            >
+              Download
+            </Link>
             <button
               type="button"
               className="rounded-full p-2 text-[#011627] transition-colors hover:bg-white/70 md:hidden"

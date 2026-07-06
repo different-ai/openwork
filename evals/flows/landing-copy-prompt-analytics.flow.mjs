@@ -1,7 +1,12 @@
+import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
+
+const FLOW_ID = "landing-copy-prompt-analytics";
+const vo = await loadVoiceoverParagraphs(FLOW_ID);
+
 const COPY_BUTTON_SELECTOR = 'button[aria-label="Copy the agent setup prompt"]';
 const POSTHOG_CLIENT_EVENT = "landing_copy_prompt_clicked";
 const POSTHOG_SERVER_EVENT = "landing_start_md_fetched";
-const PROMPT_VARIANT = "bootstrap-workspace";
+const PROMPT_VARIANT = "hero";
 const AGENT_USER_AGENT = "fraimz-eval-agent/1.0";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -58,9 +63,67 @@ async function grantClipboardPermissions(ctx) {
   });
 }
 
+async function applyDesktopViewport(ctx) {
+  if (!ctx.client?.send) {
+    ctx.log("Desktop viewport skipped: no raw CDP send method on context.");
+    return;
+  }
+
+  await ctx.client.send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  }).catch((error) => {
+    ctx.log(`Desktop viewport skipped: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
+async function clickCopyButton(ctx) {
+  const point = await ctx.eval(`(() => {
+    const button = document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)});
+    // "instant" bypasses the page's css scroll-behavior: smooth so the rect
+    // below is measured after the scroll actually happened, not mid-animation.
+    button.scrollIntoView({ block: "center", behavior: "instant" });
+    const rect = button.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    };
+  })()`);
+
+  if (!ctx.client?.send) {
+    await ctx.eval(`(() => {
+      document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)}).click();
+      return true;
+    })()`);
+    return;
+  }
+
+  await ctx.client.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: point.x,
+    y: point.y,
+  });
+  await ctx.client.send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: point.x,
+    y: point.y,
+    button: "left",
+    clickCount: 1,
+  });
+  await ctx.client.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: point.x,
+    y: point.y,
+    button: "left",
+    clickCount: 1,
+  });
+}
+
 export default {
-  id: "landing-copy-prompt-analytics",
-  title: "Landing Copy Prompt analytics fire end-to-end",
+  id: FLOW_ID,
+  title: "Landing hero prompt analytics fire end-to-end",
   kind: "user-facing",
   spec: "evals/README.md",
   // The landing website has no theme system or __openworkControl API; skip the
@@ -69,14 +132,16 @@ export default {
   requiredEnv: ["OPENWORK_EVAL_LANDING_URL", "OPENWORK_EVAL_POSTHOG_MOCK_URL"],
   steps: [
     {
-      name: "Copy Prompt click captures the analytics event",
+      name: "Hero prompt copy captures the analytics event",
       run: async (ctx) => {
-        await ctx.prove("Copy Prompt click captures the analytics event.", {
+        await ctx.prove("Hero prompt copy captures the analytics event.", {
+          voiceover: vo[0],
           action: async () => {
+            await applyDesktopViewport(ctx);
             await ctx.eval(`location.href = ${JSON.stringify(routeUrl(ctx, "/"))}; true`);
             await ctx.waitFor(
-              `Boolean(document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)}))`,
-              { timeoutMs: 30_000, label: "Copy Prompt nav button" },
+              `Boolean(document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)})) && document.body.innerText.includes("Install OpenWork on my computer")`,
+              { timeoutMs: 30_000, label: "hero prompt copy button" },
             );
             // Freeze the recording stub onto window.posthog: PostHog's async
             // array.js loader assigns window.posthog when it arrives, and on a
@@ -97,12 +162,7 @@ export default {
               return true;
             })()`);
             await grantClipboardPermissions(ctx);
-            await ctx.eval(`(() => {
-              const button = document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)});
-              button.scrollIntoView({ block: "center" });
-              button.click();
-              return true;
-            })()`);
+            await clickCopyButton(ctx);
             await ctx.waitFor(
               `(() => {
                 const events = window.__capturedPosthogEvents || [];
@@ -134,23 +194,54 @@ export default {
             const method = properties.method;
             recordAssertion(
               ctx,
-              "Exactly one landing_copy_prompt_clicked event was captured with variant, copied, and method properties",
+              "Exactly one landing_copy_prompt_clicked event was captured with hero placement, copied, and method properties",
               clientCapture.count === 1
                 && properties.variant === PROMPT_VARIANT
+                && properties.placement === "hero"
                 && typeof properties.copied === "boolean"
                 && (method === "clipboard" || method === "execCommand" || method === "none"),
               clientCapture,
             );
             recordAssertion(
               ctx,
-              "The Copy Prompt button entered its post-click feedback state",
+              "The hero prompt entered its post-click feedback state",
               clientCapture.feedbackActive === true,
               clientCapture,
             );
+            const pageScan = await ctx.eval(`(() => {
+              const bodyText = document.body.innerText;
+              const header = document.querySelector("header");
+              const headerButtons = Array.from(header ? header.querySelectorAll("button") : []);
+              const headerLinks = Array.from(header ? header.querySelectorAll("a") : []);
+              return {
+                heroPromptVisible: bodyText.includes("Install OpenWork on my computer") && bodyText.includes("start.md?v=hero"),
+                executionPreviewVisible: bodyText.includes("Now paste it into Claude Code") && bodyText.includes("Installs the OpenWork desktop app"),
+                copyPromptNavButtons: headerButtons.filter((button) => button.innerText.includes("Copy Prompt")).length,
+                downloadLinkVisible: headerLinks.some((link) => link.textContent.includes("Download") && link.href.endsWith("/download")),
+              };
+            })()`);
+            recordAssertion(
+              ctx,
+              "The hero renders the human-readable agent install prompt with the hero start guide URL",
+              pageScan.heroPromptVisible === true,
+              pageScan,
+            );
+            recordAssertion(
+              ctx,
+              "Copying the hero prompt reveals the execution preview",
+              pageScan.executionPreviewVisible === true,
+              pageScan,
+            );
+            recordAssertion(
+              ctx,
+              "The navbar replaces Copy Prompt with a Download link to /download",
+              pageScan.copyPromptNavButtons === 0 && pageScan.downloadLinkVisible === true,
+              pageScan,
+            );
           },
           screenshot: {
-            name: "copy-prompt-feedback",
-            requireText: ["Copied"],
+            name: "hero-prompt-copied",
+            requireText: ["Copied", "Now paste it into"],
           },
         });
       },
@@ -163,6 +254,7 @@ export default {
         let browserEvents = [];
 
         await ctx.prove("Agent fetch of start.md is captured server-side.", {
+          voiceover: vo[1],
           action: async () => {
             await fetch(mockUrl(ctx, "/events"), { method: "DELETE" });
             const response = await fetch(routeUrl(ctx, `/start.md?v=${PROMPT_VARIANT}`), {
