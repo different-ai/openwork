@@ -18,9 +18,17 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing release tag to attach the installer assets to (e.g. v0.17.9)"
-        required: true
+        description: "Existing release tag to attach the installer assets to (required for publish_mode=release; e.g. v0.17.9)"
+        required: false
         type: string
+      publish_mode:
+        description: "Publish to a GitHub release or keep as workflow artifacts"
+        required: false
+        type: choice
+        default: "release"
+        options:
+          - "release"
+          - "artifact"
       platforms:
         description: "Platforms to build and publish"
         required: false
@@ -56,6 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
+      publish_mode: ${{ steps.resolve.outputs.publish_mode }}
       sign_windows: ${{ steps.resolve.outputs.sign_windows }}
       matrix: ${{ steps.resolve.outputs.matrix }}
     steps:
@@ -66,6 +75,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+          INPUT_PUBLISH_MODE: ${{ github.event.inputs.publish_mode }}
           INPUT_PLATFORMS: ${{ github.event.inputs.platforms }}
           INPUT_SIGN_WINDOWS: ${{ github.event.inputs.sign_windows }}
           RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
@@ -74,17 +84,25 @@ jobs:
 
           if [ "$EVENT_NAME" = "release" ]; then
             RELEASE_TAG="$RELEASE_EVENT_TAG"
+            PUBLISH_MODE="release"
             PLATFORMS="mac-arm64,mac-x64,win-x64"
             SIGN_WINDOWS="false"
           else
             RELEASE_TAG="$INPUT_RELEASE_TAG"
+            PUBLISH_MODE="${INPUT_PUBLISH_MODE:-release}"
             PLATFORMS="${INPUT_PLATFORMS:-mac-arm64,mac-x64,win-x64}"
             SIGN_WINDOWS="${INPUT_SIGN_WINDOWS:-false}"
           fi
 
-          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null; then
-            echo "Release $RELEASE_TAG does not exist on $GITHUB_REPOSITORY" >&2
-            exit 1
+          if [ "$PUBLISH_MODE" = "release" ]; then
+            if [ -z "$RELEASE_TAG" ]; then
+              echo "release_tag is required when publish_mode=release" >&2
+              exit 1
+            fi
+            if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null; then
+              echo "Release $RELEASE_TAG does not exist on $GITHUB_REPOSITORY" >&2
+              exit 1
+            fi
           fi
 
           ALL='[
@@ -101,6 +119,7 @@ jobs:
 
           {
             echo "release_tag=$RELEASE_TAG"
+            echo "publish_mode=$PUBLISH_MODE"
             echo "sign_windows=$SIGN_WINDOWS"
             echo "matrix=$MATRIX"
           } >> "$GITHUB_OUTPUT"
@@ -112,6 +131,7 @@ jobs:
     timeout-minutes: 90
     env:
       RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+      PUBLISH_MODE: ${{ needs.resolve.outputs.publish_mode }}
       SIGN_WINDOWS: ${{ needs.resolve.outputs.sign_windows }}
       SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID || vars.SIGNPATH_ORGANIZATION_ID }}
       SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG || vars.SIGNPATH_PROJECT_SLUG }}
@@ -372,6 +392,7 @@ jobs:
           fi
 
       - name: Upload release asset
+        if: env.PUBLISH_MODE == 'release'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -379,3 +400,12 @@ jobs:
           set -euo pipefail
           gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/out/${{ matrix.asset }}" \
             --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Upload workflow artifact
+        if: env.PUBLISH_MODE == 'artifact'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generic-installer-${{ matrix.platform_id }}
+          path: ${{ runner.temp }}/out/${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 7

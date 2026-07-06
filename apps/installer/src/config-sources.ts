@@ -1,4 +1,5 @@
 import { installConfigSchema, installConfigUrlFor, INSTALL_SIDECAR_FILENAME, parseInstallerFilenameTag, type InstallConfig } from "@openwork/install-config"
+import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { BUILD_API_URL, BUILD_CLIENT_NAME, BUILD_LOGO_URL, BUILD_REQUIRE_SIGNIN, BUILD_WEB_URL } from "./generated/build-config"
@@ -15,6 +16,7 @@ type ConfigSourceOptions = {
   env?: NodeJS.ProcessEnv
   execPath?: string
   fetcher?: typeof fetch
+  readMountTable?: () => string
   warn?: (message: string) => void
 }
 
@@ -110,6 +112,42 @@ function appBundleSidecarPath(execPath: string) {
   return match ? path.join(match[1], INSTALL_SIDECAR_FILENAME) : null
 }
 
+export function parseMountTableLine(line: string): { source: string; mountPoint: string; options: string } | null {
+  const match = /^(.+) on (\/.+?) \(([^)]*)\)$/.exec(line)
+  return match ? { source: match[1], mountPoint: match[2], options: match[3] } : null
+}
+
+function hasNullfsOption(options: string) {
+  return options.split(",").some((option) => option.trim() === "nullfs")
+}
+
+function isPathPrefix(prefix: string, value: string) {
+  return value === prefix || value.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`)
+}
+
+export function resolveTranslocatedOriginalPath(execPath: string, mountTable: string): string | null {
+  for (const line of mountTable.split(/\r?\n/)) {
+    const mount = parseMountTableLine(line)
+    if (mount && hasNullfsOption(mount.options) && isPathPrefix(mount.mountPoint, execPath)) {
+      return mount.source
+    }
+  }
+  return null
+}
+
+export function isTranslocatedPath(execPath: string): boolean {
+  return /\/AppTranslocation\//.test(execPath)
+}
+
+function readMountTable(options: ConfigSourceOptions) {
+  try {
+    return options.readMountTable?.() ?? execFileSync("/sbin/mount", { encoding: "utf8" })
+  } catch (error) {
+    warn(options, `Could not read mount table: ${error instanceof Error ? error.message : String(error)}`)
+    return null
+  }
+}
+
 export function readSidecarConfig(options: ConfigSourceOptions = {}): InstallerConfig | null {
   const execPath = options.execPath ?? process.execPath
   const sidecarPaths = [
@@ -124,6 +162,20 @@ export function readSidecarConfig(options: ConfigSourceOptions = {}): InstallerC
     const config = readJsonConfigFile(sidecarPath, options)
     if (config) {
       return config
+    }
+  }
+
+  if (isTranslocatedPath(execPath)) {
+    const mountTable = readMountTable(options)
+    const originalAppPath = mountTable ? resolveTranslocatedOriginalPath(execPath, mountTable) : null
+    if (originalAppPath) {
+      warn(options, `translocated launch detected; origenal app at ${originalAppPath}`)
+      // The nullfs SOURCE for App Translocation is the original .app bundle, so
+      // the sidecar lives next to that bundle rather than next to its binary.
+      const sidecarPath = path.join(path.dirname(originalAppPath), INSTALL_SIDECAR_FILENAME)
+      if (existsSync(sidecarPath)) {
+        return readJsonConfigFile(sidecarPath, options)
+      }
     }
   }
 
