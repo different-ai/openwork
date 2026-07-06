@@ -219,12 +219,13 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     pathname,
     orgSlug: activeOrg?.slug,
   });
+  const mcpConnectionsEnabled = orgContext?.capabilities.mcpConnections === true;
 
-  // Seven top-level rows: Dashboard, Your Connections, Extensions, Models,
+  // Top-level rows: Dashboard, optional Your Connections, Extensions, Models,
   // Members, Analytics, Settings. Everything tool-shaped groups under
   // Extensions (in pipeline order: Sources feed Plugins, share via
-  // Marketplaces, beta Connections last); model config groups
-  // under Models; set-once governance groups under Settings.
+  // Marketplaces, optional beta Connections last); model config groups under
+  // Models; set-once governance groups under Settings.
   const extensionsGroup: DashboardNavItem | null = access.isAdmin && activeOrg
     ? {
         href: getIntegrationsRoute(activeOrg.slug),
@@ -234,7 +235,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           { href: getIntegrationsRoute(activeOrg.slug), label: "Sources" },
           { href: getPluginsRoute(activeOrg.slug), label: "Plugins" },
           { href: getMarketplacesRoute(activeOrg.slug), label: "Marketplaces" },
-          { href: getMcpConnectionsRoute(activeOrg.slug), label: "Connections", badge: "Beta" },
+          ...(mcpConnectionsEnabled ? [{ href: getMcpConnectionsRoute(activeOrg.slug), label: "Connections", badge: "Beta" }] : []),
         ],
       }
     : null;
@@ -278,14 +279,16 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       label: "Dashboard",
       icon: Home,
     },
-    // Member-visible (not admin-gated): where each person connects their own
-    // account for per-member connections shared with them.
-    {
-      href: activeOrg ? getYourConnectionsRoute(activeOrg.slug) : "#",
-      label: "Your Connections",
-      icon: Plug,
-      badge: "Beta",
-    },
+    ...(mcpConnectionsEnabled
+      ? [{
+          // Member-visible (not admin-gated): where each person connects their
+          // own account for per-member connections shared with them.
+          href: activeOrg ? getYourConnectionsRoute(activeOrg.slug) : "#",
+          label: "Your Connections",
+          icon: Plug,
+          badge: "Beta",
+        }]
+      : []),
     ...(extensionsGroup ? [extensionsGroup] : []),
     ...(modelsGroup ? [modelsGroup] : []),
     ...(access.isAdmin && activeOrg

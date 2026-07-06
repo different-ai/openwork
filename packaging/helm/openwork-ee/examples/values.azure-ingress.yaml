@@ -50,6 +50,14 @@ secret:
     betterAuthSecret: "REPLACE_BETTER_AUTH_SECRET"
     # Generate separately with: openssl rand -base64 48
     denDbEncryptionKey: "REPLACE_DEN_DB_ENCRYPTION_KEY"
+    # Optional SMTP settings for invitations and other transactional email.
+    # SMTP delivery requires both emailFrom and smtpHost.
+    emailFrom: "OpenWork <no-reply@example.com>"
+    smtpHost: ""
+    smtpPort: "587"
+    smtpUser: ""
+    smtpPass: ""
+    smtpSecure: "false"
 
 denApi:
   replicaCount: 1

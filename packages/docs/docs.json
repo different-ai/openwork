@@ -45,7 +45,8 @@
           {
             "group": "Self-host",
             "pages": [
-              "start-here/self-host"
+              "start-here/self-host",
+              "start-here/github-connector-helm"
             ]
           },
           {

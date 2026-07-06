@@ -16,13 +16,9 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
-import {
-  clearTelemetrySessionDimension,
-  setTelemetrySessionDimension,
-  trackSessionActive,
-  trackTaskStarted,
-  type TelemetryDimensionInput,
-} from "@/app/lib/den-telemetry";
+import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
+import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
+import { downloadTextAsFile } from "@/app/lib/download";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
@@ -218,27 +214,6 @@ function taskCreateUnavailableToastId(workspaceId: string) {
   return `opencode-unavailable:${workspaceId}`;
 }
 
-type WorkspaceProjectDimension = Omit<TelemetryDimensionInput, "type">;
-
-function normalizeProjectDimension(
-  label: string,
-  value?: string | null,
-  metadata?: Record<string, unknown>,
-): WorkspaceProjectDimension | null {
-  const trimmedLabel = label.trim();
-  if (!trimmedLabel) return null;
-  const dimension: WorkspaceProjectDimension = { label: trimmedLabel };
-  const trimmedValue = value?.trim() ?? "";
-  if (trimmedValue) dimension.value = trimmedValue;
-  if (metadata) dimension.metadata = metadata;
-  return dimension;
-}
-
-function toTelemetryProjectDimension(dimension: WorkspaceProjectDimension): TelemetryDimensionInput | null {
-  const normalized = normalizeProjectDimension(dimension.label, dimension.value, dimension.metadata);
-  return normalized ? { type: "project", ...normalized } : null;
-}
-
 function focusPromptSoon() {
   if (typeof window === "undefined") return;
   const focus = () => window.dispatchEvent(new Event("openwork:focusPrompt"));
@@ -414,9 +389,6 @@ export function SessionRoute() {
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
   const [createWorkspaceRemoteError, setCreateWorkspaceRemoteError] = useState<string | null>(null);
-  const [sessionProjectLabelsById, setSessionProjectLabelsById] = useState<Record<string, string>>({});
-  const [workspaceProjectDimensionsById, setWorkspaceProjectDimensionsById] = useState<Record<string, WorkspaceProjectDimension>>({});
-  const [sessionProjectSavingId, setSessionProjectSavingId] = useState<string | null>(null);
   const [renameWorkspaceId, setRenameWorkspaceId] = useState<string | null>(null);
   const [renameWorkspaceTitle, setRenameWorkspaceTitle] = useState("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = useState(false);
@@ -455,38 +427,6 @@ export function SessionRoute() {
   const openworkServerSettings = useMemo(
     () => readOpenworkServerSettings(),
     [openworkServerSettingsVersion],
-  );
-
-  const applyProjectDimensionToSession = useCallback(
-    (workspaceId: string, sessionId: string, explicitDimension?: WorkspaceProjectDimension | null) => {
-      const trimmedSessionId = sessionId.trim();
-      if (!trimmedSessionId) return;
-      const dimension = explicitDimension ?? workspaceProjectDimensionsById[workspaceId] ?? null;
-      if (!dimension) return;
-      const normalized = normalizeProjectDimension(dimension.label, dimension.value, dimension.metadata);
-      if (!normalized) return;
-      void setTelemetrySessionDimension(trimmedSessionId, "project", normalized);
-      setSessionProjectLabelsById((current) => ({ ...current, [trimmedSessionId]: normalized.label }));
-    },
-    [workspaceProjectDimensionsById],
-  );
-
-  const telemetryDimensionsForSession = useCallback(
-    (workspaceId: string, sessionId: string): TelemetryDimensionInput[] | undefined => {
-      const sessionLabel = sessionProjectLabelsById[sessionId]?.trim() ?? "";
-      const workspaceDimension = workspaceProjectDimensionsById[workspaceId] ?? null;
-      if (sessionLabel) {
-        if (workspaceDimension?.label.trim() === sessionLabel) {
-          const dimension = toTelemetryProjectDimension(workspaceDimension);
-          return dimension ? [dimension] : undefined;
-        }
-        return [{ type: "project", label: sessionLabel }];
-      }
-      if (!workspaceDimension) return undefined;
-      const dimension = toTelemetryProjectDimension(workspaceDimension);
-      return dimension ? [dimension] : undefined;
-    },
-    [sessionProjectLabelsById, workspaceProjectDimensionsById],
   );
 
   const activeReloadBlockingSessions = useMemo(
@@ -898,9 +838,8 @@ export function SessionRoute() {
         // Den org adoption signals (auth-gated inside; no-op when signed out).
         // Lives here — the live send choke point — because its previous call
         // site was in the orphaned actions-store and never fired.
-        const telemetryDimensions = telemetryDimensionsForSession(selectedWorkspaceId, targetSessionId);
-        trackSessionActive(targetSessionId, telemetryDimensions);
-        trackTaskStarted(targetSessionId, telemetryDimensions);
+        trackSessionActive(targetSessionId);
+        trackTaskStarted(targetSessionId);
 
         if (draft.mode === "shell") {
           await shellInSession(opencodeClient, targetSessionId, text);
@@ -991,7 +930,6 @@ export function SessionRoute() {
           if (!targetSessionId) return;
           try {
             const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
-            applyProjectDimensionToSession(selectedWorkspaceId, forked.id);
             writeLastSessionFor(selectedWorkspaceId, forked.id);
             rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
             setSessionsByWorkspaceId((current) => ({
@@ -1022,7 +960,6 @@ export function SessionRoute() {
     };
   }, [
     client,
-    applyProjectDimensionToSession,
     modelPicker.compactOpen,
     handleOpenSettings,
     hasUsableModel,
@@ -1046,7 +983,6 @@ export function SessionRoute() {
     selectedWorkspaceId,
     selectedWorkspaceRoot,
     sessionsByWorkspaceId,
-    telemetryDimensionsForSession,
     token,
   ]);
 
@@ -1196,7 +1132,6 @@ export function SessionRoute() {
       const session = unwrap(
         await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
       );
-      applyProjectDimensionToSession(workspaceId, session.id);
       captureAnalyticsEvent("task_created", {
         source: "new_task",
         workspace_type: workspace.workspaceType ?? "unknown",
@@ -1242,7 +1177,7 @@ export function SessionRoute() {
         }
       }
     }
-  }, [applyProjectDimensionToSession, baseUrl, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, token, workspaces]);
+  }, [baseUrl, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, token, workspaces]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -1497,6 +1432,61 @@ export function SessionRoute() {
     },
   }), [developerMode]);
 
+  const buildCommandDiagnosticsBundle = useCallback(() => buildDiagnosticsBundleJson({
+    anyActiveRuns: activeReloadBlockingSessions.length > 0,
+    canReloadWorkspace: reloadCoordinator.canReloadWorkspaceEngine,
+    clientConnected: canCreateTask,
+    developerMode,
+    hostInfo: openworkServerHostInfoState,
+    openworkServerStatus: client ? "connected" : "disconnected",
+    openworkServerUrl: baseUrl,
+    runtimeWorkspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
+  }), [
+    activeReloadBlockingSessions.length,
+    baseUrl,
+    canCreateTask,
+    client,
+    developerMode,
+    openworkServerHostInfoState,
+    reloadCoordinator.canReloadWorkspaceEngine,
+    selectedWorkspaceEndpoint?.workspaceId,
+  ]);
+
+  const diagnosticsCopyPaletteItem = useMemo<PaletteItem>(() => ({
+    id: "diagnostics.copy",
+    title: t("session.cmd_diagnostics_copy_title"),
+    detail: t("session.cmd_diagnostics_copy_detail"),
+    searchText: "logs share diagnostics debug support bundle troubleshoot copy report issue",
+    action: async () => {
+      setCommandPaletteOpen(false);
+      try {
+        const json = await buildCommandDiagnosticsBundle();
+        await navigator.clipboard.writeText(json);
+        toast.success(t("session.diagnostics_copied"));
+      } catch (error) {
+        toast.error(t("session.diagnostics_failed"), { description: describeRouteError(error) });
+      }
+    },
+  }), [buildCommandDiagnosticsBundle]);
+
+  const diagnosticsExportPaletteItem = useMemo<PaletteItem>(() => ({
+    id: "diagnostics.export",
+    title: t("session.cmd_diagnostics_export_title"),
+    detail: t("session.cmd_diagnostics_export_detail"),
+    searchText: "logs export diagnostics debug support bundle save file json download",
+    action: async () => {
+      setCommandPaletteOpen(false);
+      try {
+        const json = await buildCommandDiagnosticsBundle();
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        downloadTextAsFile(`openwork-diagnostics-${timestamp}.json`, json, "application/json");
+        toast.success(t("session.diagnostics_exported"));
+      } catch (error) {
+        toast.error(t("session.diagnostics_failed"), { description: describeRouteError(error) });
+      }
+    },
+  }), [buildCommandDiagnosticsBundle]);
+
   const nextSessionTabPaletteItem = useMemo<PaletteItem>(() => ({
     id: "session-tab.next",
     title: "Next session tab",
@@ -1583,33 +1573,8 @@ export function SessionRoute() {
     [opencodeClient, refreshRouteState, selectedWorkspaceRoot],
   );
 
-  const handleSaveCurrentSessionProject = useCallback(async (label: string) => {
-    const sessionId = selectedSessionId;
-    if (!sessionId) return;
-    const trimmed = label.trim();
-    setSessionProjectSavingId(sessionId);
-    try {
-      if (trimmed) {
-        await setTelemetrySessionDimension(sessionId, "project", { label: trimmed });
-      } else {
-        await clearTelemetrySessionDimension(sessionId, "project");
-      }
-      setSessionProjectLabelsById((current) => {
-        const next = { ...current };
-        if (trimmed) next[sessionId] = trimmed;
-        else delete next[sessionId];
-        return next;
-      });
-    } finally {
-      setSessionProjectSavingId((current) => current === sessionId ? null : current);
-    }
-  }, [selectedSessionId]);
-
-  const handleCreateWorkspace = useCallback(async (preset: WorkspacePreset, folder: string | null, options?: { projectLabel?: string | null; projectValue?: string | null }) => {
+  const handleCreateWorkspace = useCallback(async (preset: WorkspacePreset, folder: string | null) => {
     if (!folder) return;
-    const projectValue = options?.projectValue?.trim() ?? "";
-    const projectLabel = options?.projectLabel?.trim() ?? "";
-    const workspaceProjectDimension = normalizeProjectDimension(projectLabel, projectValue);
     setCreateWorkspaceBusy(true);
     setCreateWorkspaceError(null);
     try {
@@ -1640,12 +1605,6 @@ export function SessionRoute() {
       local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
       await refreshRouteState();
       if (targetWorkspaceId) {
-        if (workspaceProjectDimension) {
-          setWorkspaceProjectDimensionsById((current) => ({
-            ...current,
-            [targetWorkspaceId]: workspaceProjectDimension,
-          }));
-        }
         const workspacePath = targetWorkspace?.path?.trim() || folder;
         const session = createdOnServer && baseUrl && token
           ? unwrap(await createClient(
@@ -1659,7 +1618,6 @@ export function SessionRoute() {
         captureAnalyticsEvent("workspace_created", { workspace_type: "local" });
         if (session?.id) {
           captureAnalyticsEvent("task_created", { source: "workspace_created", workspace_type: "local" });
-          applyProjectDimensionToSession(targetWorkspaceId, session.id, workspaceProjectDimension);
           writeLastSessionFor(targetWorkspaceId, session.id);
           rememberPendingCreatedSession(targetWorkspaceId, session.id);
           setSessionsByWorkspaceId((current) => {
@@ -1679,7 +1637,7 @@ export function SessionRoute() {
     } finally {
       setCreateWorkspaceBusy(false);
     }
-  }, [applyProjectDimensionToSession, baseUrl, client, local, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, token]);
+  }, [baseUrl, client, local, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, token]);
 
   const createWorkspaceControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "workspace.create",
@@ -1931,7 +1889,6 @@ export function SessionRoute() {
               const session = unwrap(
                 await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
               );
-              applyProjectDimensionToSession(workspaceId, session.id);
               saveSessionDraft(workspaceId, session.id, { text: prompt, mode: "prompt" });
               writeActiveWorkspaceId(workspaceId || null);
               writeLastSessionFor(workspaceId, session.id);
@@ -1967,15 +1924,6 @@ export function SessionRoute() {
         onUndo: () => {},
         onRedo: () => {},
       }}
-      projectDimension={
-        selectedSessionId
-          ? {
-              label: sessionProjectLabelsById[selectedSessionId] ?? "",
-              saving: sessionProjectSavingId === selectedSessionId,
-              onSave: handleSaveCurrentSessionProject,
-            }
-          : null
-      }
       todos={todos}
       sessionLoadingById={(sessionId) => effectiveLoading && Boolean(sessionId && sessionId === selectedSessionId)}
       shareWorkspaceModal={
@@ -2129,7 +2077,7 @@ export function SessionRoute() {
       currentSessionForGroupMove={currentSessionForGroupMove}
       currentSessionGroupId={currentSessionGroupId}
       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
-      extraItems={[...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
+      extraItems={[...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem, diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
       listAgents={listAgents}
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}

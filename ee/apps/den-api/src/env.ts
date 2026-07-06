@@ -229,9 +229,9 @@ const planGatingEnabled =
 
 // Staged rollout for member-facing org MCP connections: when gating is
 // enabled (hosted deployments), GET /v1/mcp-connections?scope=usable returns
-// an empty list unless the organization opted in via metadata
-// `mcpConnectionsEnabled: true`. Off by default so local dev, evals, and
-// self-hosted deployments keep the feature working out of the box.
+// an empty list unless the organization opted in via the mcpConnections
+// organization capability. Off by default so local dev, evals, and self-hosted
+// deployments keep the feature working out of the box.
 const mcpConnectionsGatingEnabled =
   (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
 

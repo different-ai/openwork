@@ -3,19 +3,19 @@
  *
  * When a deployment enables gating (DEN_MCP_CONNECTIONS_GATING_ENABLED=true,
  * see env.ts), members of an organization only discover connections once the
- * org opted in via metadata `mcpConnectionsEnabled: true`. Non-opted-in orgs
- * get an empty list — byte-identical to an org with no published connections,
- * on every desktop version in the field. Admin management (scope=manageable,
+ * org opted in via the organization capability stored at
+ * `metadata.capabilities.mcpConnections: true`. That per-org opt-in is
+ * controlled from the /admin backoffice, not a script. Non-opted-in orgs get
+ * an empty list — byte-identical to an org with no published connections, on
+ * every desktop version in the field. Admin management (scope=manageable,
  * create, access grants) stays available so orgs can stage connections before
- * the flag flips.
+ * the capability flips.
  *
  * Gating is off by default so local dev, evals, and self-hosted deployments
  * keep the feature working out of the box.
  */
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
-}
+import { organizationHasCapability } from "../organization-capabilities.js"
 
 export function memberFacingMcpConnectionsEnabled(
   metadata: Record<string, unknown> | string | null | undefined,
@@ -24,16 +24,5 @@ export function memberFacingMcpConnectionsEnabled(
   if (!options.gatingEnabled) {
     return true
   }
-  if (!metadata) {
-    return false
-  }
-  let parsed: unknown = metadata
-  if (typeof metadata === "string") {
-    try {
-      parsed = JSON.parse(metadata)
-    } catch {
-      return false
-    }
-  }
-  return isRecord(parsed) && parsed.mcpConnectionsEnabled === true
+  return organizationHasCapability(metadata, "mcpConnections")
 }

@@ -206,6 +206,7 @@ export type DenOrgEntitlements = {
 /** Per-org feature flags controlled by platform admins; everything defaults to off. */
 export type DenOrgCapabilities = {
   installLinks: boolean;
+  mcpConnections: boolean;
 };
 
 export type DenOrganizationMetadata = {
@@ -226,6 +227,7 @@ export const DEN_ROLE_PERMISSION_OPTIONS = {
 
 export const PENDING_ORG_INVITATION_STORAGE_KEY = "openwork:web:pending-org-invitation";
 export const PENDING_WORKSPACE_CLAIM_STORAGE_KEY = "openwork:web:pending-workspace-claim";
+export const PENDING_ORG_SELECTION_STORAGE_KEY = "openwork:web:pending-org-selection";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -342,8 +344,8 @@ export function shouldRequireOrgSelection(orgs: readonly DenOrgSummary[]): boole
   return orgs.length > 1 && !orgs.some((org) => org.isActive);
 }
 
-export function shouldShowOrgSelection(orgs: readonly DenOrgSummary[], selectionRequested: boolean): boolean {
-  return shouldRequireOrgSelection(orgs) || (selectionRequested && orgs.length > 1);
+export function shouldOfferOrgSelection(orgs: readonly DenOrgSummary[]): boolean {
+  return orgs.length > 1;
 }
 
 export function formatRoleLabel(role: string): string {
@@ -356,10 +358,6 @@ export function formatRoleLabel(role: string): string {
 
 export function getOrgDashboardRoute(_orgSlug?: string | null): string {
   return "/dashboard";
-}
-
-export function getOrgSelectionRoute(): string {
-  return `${getOrgDashboardRoute()}?selectOrg=1`;
 }
 
 export function getMarketplaceOnboardingRoute(_orgSlug?: string | null): string {
@@ -749,11 +747,12 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
 
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   if (!isRecord(value)) {
-    return { installLinks: false };
+    return { installLinks: false, mcpConnections: false };
   }
 
   return {
     installLinks: value.installLinks === true,
+    mcpConnections: value.mcpConnections === true,
   };
 }
 

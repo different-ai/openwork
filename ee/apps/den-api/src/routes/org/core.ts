@@ -5,6 +5,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
+import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { db } from "../../db.js"
 import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
@@ -455,6 +456,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
+      const capabilities = normalizeOrganizationCapabilities(payload.organization.metadata)
       const [ssoRows, scimRows] = await Promise.all([
         db
           .select({ id: SsoConnectionTable.id })
@@ -485,7 +487,15 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         currentMemberTeams: c.get("memberTeams") ?? [],
         plan: parseOrganizationPlan(payload.organization.metadata),
         entitlements: getOrganizationEntitlements(payload.organization.metadata),
-        capabilities: normalizeOrganizationCapabilities(payload.organization.metadata),
+        capabilities: {
+          ...capabilities,
+          // Expose the effective value, not the raw stored flag: org context
+          // answers whether the feature exists for this org on this deployment;
+          // /admin reads the raw capability from its own endpoint.
+          mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {
+            gatingEnabled: env.mcpConnectionsGatingEnabled,
+          }),
+        },
         authMethods: {
           sso: Boolean(ssoRows[0]),
           scim: Boolean(scimRows[0]),

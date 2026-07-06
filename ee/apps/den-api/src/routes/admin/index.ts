@@ -62,6 +62,7 @@ const updateOrganizationFreeSeatsSchema = z.object({
 const updateOrganizationCapabilitiesSchema = z.object({
   capabilities: z.object({
     installLinks: z.boolean().optional(),
+    mcpConnections: z.boolean().optional(),
   }),
 })
 
@@ -448,6 +449,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       const capabilities = normalizeOrganizationCapabilities(organization.metadata)
       if (body.data.capabilities.installLinks !== undefined) {
         capabilities.installLinks = body.data.capabilities.installLinks
+      }
+      if (body.data.capabilities.mcpConnections !== undefined) {
+        capabilities.mcpConnections = body.data.capabilities.mcpConnections
       }
 
       const metadata = {

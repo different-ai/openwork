@@ -95,6 +95,7 @@ type AdminUser = {
 
 type AdminOrganizationCapabilities = {
   installLinks: boolean;
+  mcpConnections: boolean;
 };
 
 type AdminOrganization = {
@@ -296,7 +297,8 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           seatsFreeAdditional: toNumberValue(value.seatsFreeAdditional),
           billableSeatCount: toNumberValue(value.billableSeatCount),
           capabilities: {
-            installLinks: capabilities.installLinks === true
+            installLinks: capabilities.installLinks === true,
+            mcpConnections: capabilities.mcpConnections === true
           }
         };
       })
@@ -1569,20 +1571,36 @@ export function DenAdminPanel() {
 
                   <div className="mt-4 border-t border-slate-200 pt-4">
                     <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Capabilities</p>
-                    <label className="mt-2 inline-flex items-center gap-2 text-sm text-slate-700">
-                      <input
-                        type="checkbox"
-                        data-testid="admin-capability-installLinks"
-                        checked={org.capabilities.installLinks}
-                        disabled={savingCapabilityOrgId === org.id}
-                        onChange={(event) => {
-                          void saveOrganizationCapability(org, "installLinks", event.target.checked);
-                        }}
-                        className="h-4 w-4 rounded border-slate-300"
-                      />
-                      Install links
-                    </label>
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          data-testid="admin-capability-installLinks"
+                          checked={org.capabilities.installLinks}
+                          disabled={savingCapabilityOrgId === org.id}
+                          onChange={(event) => {
+                            void saveOrganizationCapability(org, "installLinks", event.target.checked);
+                          }}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                        Install links
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          data-testid="admin-capability-mcpConnections"
+                          checked={org.capabilities.mcpConnections}
+                          disabled={savingCapabilityOrgId === org.id}
+                          onChange={(event) => {
+                            void saveOrganizationCapability(org, "mcpConnections", event.target.checked);
+                          }}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                        MCP connections
+                      </label>
+                    </div>
                     <p className="mt-1 text-xs text-slate-400">Off by default. Lets workspace admins mint desktop install links for this organization.</p>
+                    <p className="mt-1 text-xs text-slate-400">Off by default. Lets members discover and use organization MCP connections.</p>
                   </div>
 
                   <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-[12rem_10rem_auto] lg:items-end">

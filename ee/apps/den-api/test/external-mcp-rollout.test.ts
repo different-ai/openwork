@@ -3,12 +3,12 @@ import { memberFacingMcpConnectionsEnabled } from "../src/capability-sources/ext
 
 describe("memberFacingMcpConnectionsEnabled", () => {
   test("gating disabled: enabled for every org, regardless of metadata", () => {
-    for (const metadata of [null, undefined, "", "{}", "not json", { mcpConnectionsEnabled: false }, { mcpConnectionsEnabled: true }]) {
+    for (const metadata of [null, undefined, "", "{}", "not json", { capabilities: { mcpConnections: false } }, { mcpConnectionsEnabled: true }]) {
       expect(memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false })).toBe(true)
     }
   })
 
-  test("gating enabled: disabled unless the org explicitly opted in", () => {
+  test("gating enabled: disabled unless the org has the mcpConnections capability", () => {
     for (const metadata of [
       null,
       undefined,
@@ -17,21 +17,23 @@ describe("memberFacingMcpConnectionsEnabled", () => {
       "not json",
       "[]",
       JSON.stringify({ limits: { members: 5 } }),
-      JSON.stringify({ mcpConnectionsEnabled: false }),
-      JSON.stringify({ mcpConnectionsEnabled: "true" }),
-      { mcpConnectionsEnabled: false },
+      JSON.stringify({ capabilities: { mcpConnections: false } }),
+      JSON.stringify({ capabilities: { mcpConnections: "true" } }),
+      JSON.stringify({ mcpConnectionsEnabled: true }),
+      { capabilities: { mcpConnections: false } },
+      { mcpConnectionsEnabled: true },
       {},
     ]) {
       expect(memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: true })).toBe(false)
     }
   })
 
-  test("gating enabled: opted-in orgs are enabled (string and object metadata)", () => {
-    expect(memberFacingMcpConnectionsEnabled(JSON.stringify({ mcpConnectionsEnabled: true }), { gatingEnabled: true })).toBe(true)
-    expect(memberFacingMcpConnectionsEnabled({ mcpConnectionsEnabled: true }, { gatingEnabled: true })).toBe(true)
+  test("gating enabled: orgs with the mcpConnections capability are enabled", () => {
+    expect(memberFacingMcpConnectionsEnabled(JSON.stringify({ capabilities: { mcpConnections: true } }), { gatingEnabled: true })).toBe(true)
+    expect(memberFacingMcpConnectionsEnabled({ capabilities: { mcpConnections: true } }, { gatingEnabled: true })).toBe(true)
     expect(
       memberFacingMcpConnectionsEnabled(
-        JSON.stringify({ limits: { members: 100 }, plan: { tier: "team" }, mcpConnectionsEnabled: true }),
+        JSON.stringify({ limits: { members: 100 }, plan: { tier: "team" }, capabilities: { mcpConnections: true } }),
         { gatingEnabled: true },
       ),
     ).toBe(true)

@@ -58,13 +58,14 @@ import {
 import { EMPTY_RUNTIME_CONFIG, getRuntimeConfig, type DenWebRuntimeConfig } from "../_lib/runtime-config";
 import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
+  PENDING_ORG_SELECTION_STORAGE_KEY,
   PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
   getInferenceRoute,
   getJoinOrgRoute,
   getOrgDashboardRoute,
-  getOrgSelectionRoute,
   getWorkspaceClaimRoute,
   parseOrgListPayload,
+  shouldOfferOrgSelection,
 } from "../_lib/den-org";
 
 type LaunchWorkerResult = "success" | "limit" | "error";
@@ -962,10 +963,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
   async function resolveDashboardRoute() {
     const orgDirectory = await loadOrgDirectory();
-    const activeOrgSlug = orgDirectory.activeOrgSlug ?? orgDirectory.orgs[0]?.slug ?? null;
-    if (orgDirectory.orgs.length > 1 && !orgDirectory.activeOrgSlug) {
-      return getOrgSelectionRoute();
+    if (typeof window !== "undefined" && shouldOfferOrgSelection(orgDirectory.orgs)) {
+      window.sessionStorage.setItem(PENDING_ORG_SELECTION_STORAGE_KEY, "1");
     }
+
+    const activeOrgSlug = orgDirectory.activeOrgSlug ?? orgDirectory.orgs[0]?.slug ?? null;
     return activeOrgSlug ? getOrgDashboardRoute(activeOrgSlug) : null;
   }
 
@@ -1042,7 +1044,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     const dashboardRoute = await resolveDashboardRoute();
 
     if (dashboardRoute) {
-      if (getPendingAuthIntent() === "models" && dashboardRoute !== getOrgSelectionRoute()) {
+      if (getPendingAuthIntent() === "models") {
         clearPendingAuthIntent();
         return getInferenceRoute();
       }

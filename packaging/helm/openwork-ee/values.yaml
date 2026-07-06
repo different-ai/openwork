@@ -19,6 +19,9 @@ config:
     requireEmailVerification: "false"
   auth:
     passwordBreachScreeningEnabled: "false"
+  githubConnector:
+    appId: ""
+    clientId: ""
   public:
     webOrigin: https://openwork.example.com
     apiOrigin: https://api.openwork.example.com
@@ -97,11 +100,15 @@ secret:
     openRouterManagementApiKey: OPENROUTER_MANAGEMENT_API_KEY
     inferenceAdminToken: INFERENCE_ADMIN_TOKEN
     inferenceWebhookSecret: INFERENCE_WEBHOOK_SECRET
+    emailFrom: EMAIL_FROM
     smtpHost: SMTP_HOST
     smtpPort: SMTP_PORT
     smtpUser: SMTP_USER
     smtpPass: SMTP_PASS
     smtpSecure: SMTP_SECURE
+    githubConnectorAppClientSecret: GITHUB_CONNECTOR_APP_CLIENT_SECRET
+    githubConnectorAppPrivateKey: GITHUB_CONNECTOR_APP_PRIVATE_KEY
+    githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
     betterAuthSecret: CHANGE_ME_32_CHARS_MINIMUM_BETTER_AUTH
@@ -111,11 +118,15 @@ secret:
     openRouterManagementApiKey: ""
     inferenceAdminToken: ""
     inferenceWebhookSecret: ""
+    emailFrom: ""
     smtpHost: ""
     smtpPort: "587"
     smtpUser: ""
     smtpPass: ""
     smtpSecure: "false"
+    githubConnectorAppClientSecret: ""
+    githubConnectorAppPrivateKey: ""
+    githubConnectorAppWebhookSecret: ""
 
 installerArtifacts:
   enabled: false

@@ -1,8 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
+import { eq } from "@openwork-ee/den-db/drizzle"
+import { OrganizationTable } from "@openwork-ee/den-db/schema"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { z } from "zod"
+import { memberFacingMcpConnectionsEnabled } from "../capability-sources/external-mcp-rollout.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
+import { db } from "../db.js"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
@@ -51,6 +56,15 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
       userId: principal.userId,
       organizationId: principal.organizationId,
     })
+    const organizationId = normalizeDenTypeId("organization", principal.organizationId)
+    const organizationRows = await db
+      .select({ metadata: OrganizationTable.metadata })
+      .from(OrganizationTable)
+      .where(eq(OrganizationTable.id, organizationId))
+      .limit(1)
+    const externalMcpConnectionsEnabled = memberFacingMcpConnectionsEnabled(organizationRows[0]?.metadata, {
+      gatingEnabled: env.mcpConnectionsGatingEnabled,
+    })
     const server = new McpServer({
       name: "openwork-den-api-agent",
       version: "1.0.0",
@@ -77,13 +91,15 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         // tools/list (capability-sources/external-mcp-client.ts) — a
         // Notion/Linear/Stripe/... connection an admin added in Den shows
         // up here exactly like any native capability, ranked together.
-        const externalMatches = await searchExternalCapabilities({
-          organizationId: principal.organizationId,
-          member: memberIdentity,
-          query,
-          redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
-          limit: boundedLimit,
-        })
+        const externalMatches = externalMcpConnectionsEnabled
+          ? await searchExternalCapabilities({
+            organizationId: principal.organizationId,
+            member: memberIdentity,
+            query,
+            redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
+            limit: boundedLimit,
+          })
+          : []
         const matches = [...restMatches, ...externalMatches]
           .sort((a, b) => b.score - a.score)
           .slice(0, boundedLimit)
@@ -113,6 +129,18 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
       async ({ name, path, query, body }) => {
         const external = parseExternalCapabilityName(name)
         if (external) {
+          if (!externalMcpConnectionsEnabled) {
+            return {
+              isError: true,
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  error: "unknown_capability",
+                  message: "No external MCP connection capabilities are available for this organization.",
+                }),
+              }],
+            }
+          }
           const normalizedBody = normalizeToolBody(body)
           const args = (typeof normalizedBody === "object" && normalizedBody !== null && !Array.isArray(normalizedBody)
             ? normalizedBody

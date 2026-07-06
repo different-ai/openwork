@@ -16,6 +16,8 @@ data:
   DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: {{ .Values.config.tenancy.allowPublicSignup | quote }}
   DEN_REQUIRE_EMAIL_VERIFICATION: {{ .Values.config.tenancy.requireEmailVerification | quote }}
   DEN_PASSWORD_BREACH_SCREENING_ENABLED: {{ .Values.config.auth.passwordBreachScreeningEnabled | quote }}
+  GITHUB_CONNECTOR_APP_ID: {{ .Values.config.githubConnector.appId | quote }}
+  GITHUB_CONNECTOR_APP_CLIENT_ID: {{ .Values.config.githubConnector.clientId | quote }}
   BETTER_AUTH_URL: {{ .Values.config.public.webOrigin | quote }}
   DEN_MCP_RESOURCE_URL: {{ .Values.config.public.mcpResourceUrl | quote }}
   DEN_MCP_CLAIM_NAMESPACE: {{ .Values.config.public.mcpClaimNamespace | quote }}

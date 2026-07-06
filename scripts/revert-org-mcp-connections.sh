@@ -3,11 +3,10 @@ set -euo pipefail
 
 # Layered rollback runbook for org MCP connections (PRs #2406 + #2451 (desktop PR #2439 was superseded by #2451)).
 #
-# Layer 0 — instant, no deploy (prefer this):
-#   pnpm --filter @openwork-ee/den-api exec tsx scripts/mcp-connections-rollout.ts disable <org-slug>
-#   pnpm --filter @openwork-ee/den-api exec tsx scripts/mcp-connections-rollout.ts dark --yes
-#   (requires DEN_MCP_CONNECTIONS_GATING_ENABLED=true on the deployment;
-#   every desktop version in the field goes dark on its next poll)
+# Layer 0 — instant, no deploy (prefer this): in /admin, disable the
+# mcpConnections capability for affected organizations. This requires
+# DEN_MCP_CONNECTIONS_GATING_ENABLED=true on the deployment; every desktop
+# version in the field goes dark on its next poll.
 #
 # Layer 1 — code revert (this script): builds a revert branch from the squash
 # commits on origin/dev, newest first, and opens a PR. Desktop app code is
@@ -75,7 +74,7 @@ if [ "$PUSH" -eq 1 ]; then
   git push origin "$BRANCH"
   gh pr create --base dev --head "$BRANCH" \
     --title "revert: org MCP connections (${PRS[*]/#/#})" \
-    --body "Emergency revert of the org MCP connections stack. Layer-0 kill switch (metadata flag / DEN_MCP_CONNECTIONS_GATING_ENABLED) should already be active; this removes the code. Additive DB tables are intentionally left in place."
+    --body "Emergency revert of the org MCP connections stack. Layer-0 kill switch (mcpConnections org capability / DEN_MCP_CONNECTIONS_GATING_ENABLED) should already be active; this removes the code. Additive DB tables are intentionally left in place."
 else
   echo "Next: git push origin $BRANCH && gh pr create --base dev --head $BRANCH"
 fi

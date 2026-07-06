@@ -28,6 +28,8 @@ helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee
 
 The chart pulls the matching GHCR images for `openwork-den-api`, `openwork-den-web`, and optional `openwork-inference`.
 
+If you want self-hosted repository imports and sync from GitHub, configure the [GitHub connector for Helm](/start-here/github-connector-helm) after the core Den web and Den controller hosts are reachable.
+
 ## How we deploy hosted workers
 
 Our hosted deployment uses Render for long-running services and worker provisioning. Render gives us service deploys, env vars, health checks, logs, and worker builds without asking us to operate raw AWS services directly. If you want to run closer to AWS yourself, use the same service boundaries on ECS/Fargate, EC2, Kubernetes, or another container platform.
@@ -106,6 +108,7 @@ OpenWork does not require many third-party services for the core runtime. These 
 - Polar: optional billing/paywall for hosted cloud workers.
 - Loops: optional user sync and lifecycle messaging.
 - GitHub/Google OAuth: optional social sign-in providers for Better Auth.
+- GitHub connector app: optional repository connector for importing and syncing plugins or marketplaces from GitHub. For Helm installs, use the [GitHub connector setup guide](/start-here/github-connector-helm).
 
 ## Don't want to run infra?
 

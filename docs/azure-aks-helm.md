@@ -47,7 +47,7 @@ not a different OpenWork packaging format.
 ## Prerequisites
 
 - Azure CLI authenticated to the target subscription.
-- `kubectl` and `helm`.
+- `kubectl`, `kubelogin`, and `helm`.
 - Permission to create AKS, virtual networks, managed identities, Azure Database
   for MySQL Flexible Server, Private DNS, Azure DNS, Key Vault or TLS secrets,
   and public IP resources.
@@ -63,10 +63,43 @@ Azure docs used for this guide:
 - MySQL Flexible Server private access with Azure CLI: https://learn.microsoft.com/en-us/azure/mysql/flexible-server/how-to-manage-virtual-network-cli
 - MySQL Flexible Server TLS: https://learn.microsoft.com/en-us/azure/mysql/flexible-server/security-tls-how-to-connect
 
+## Before creating resources
+
+Confirm Azure CLI can see an enabled subscription before provisioning:
+
+```bash
+az login --use-device-code
+az account list --query "[].{name:name,id:id,state:state,isDefault:isDefault}" -o table
+az account set --subscription REPLACE_SUBSCRIPTION_ID
+az account show --query "{name:name,id:id,state:state,tenantId:tenantId}" -o json
+```
+
+New Azure subscriptions often need resource providers registered before AKS,
+networking, monitoring, policy, and MySQL resources can be created:
+
+```bash
+for namespace in \
+  Microsoft.ContainerService \
+  Microsoft.DBforMySQL \
+  Microsoft.Network \
+  Microsoft.OperationalInsights \
+  Microsoft.Insights \
+  Microsoft.PolicyInsights
+do
+  az provider register --namespace "$namespace"
+done
+
+az provider list \
+  --query "[?namespace=='Microsoft.ContainerService' || namespace=='Microsoft.DBforMySQL' || namespace=='Microsoft.Network' || namespace=='Microsoft.OperationalInsights' || namespace=='Microsoft.Insights' || namespace=='Microsoft.PolicyInsights'].{namespace:namespace,state:registrationState}" \
+  -o table
+```
+
+Wait until each provider shows `Registered`.
+
 ## 1. Create the AKS cluster
 
 For a first deployment, create an AKS cluster with the managed application
-routing add-on enabled:
+routing add-on enabled. This default path uses a standard AKS cluster:
 
 ```bash
 export AZURE_LOCATION=eastus
@@ -95,12 +128,51 @@ kubectl get ingressclass
 The application routing add-on creates an Ingress class named
 `webapprouting.kubernetes.azure.com`. The starter values file uses that class.
 
+If you use AKS Automatic instead of standard AKS, account for the additional
+platform requirements before following the rest of this guide:
+
+- Use `--no-ssh-key`; AKS Automatic with managed system node pools rejects SSH
+  key configuration.
+- If you bring your own VNet, use a user-assigned managed identity and grant it
+  `Network Contributor` on the VNet before cluster creation.
+- Keep separate subnets for AKS system nodes, AKS user nodes, the API server
+  subnet if required by your design, and the delegated MySQL Flexible Server
+  subnet.
+- Region capacity varies. If AKS Automatic reports SKU/capacity failures, retry
+  in a known-good region before debugging the OpenWork chart.
+
 If you are using an existing AKS cluster, enable the add-on instead:
 
 ```bash
 az aks approuting enable \
   --resource-group "$RESOURCE_GROUP" \
   --name "$AKS_CLUSTER"
+```
+
+AKS clusters that use Azure RBAC commonly require `kubelogin` and an explicit
+cluster role assignment before normal `kubectl` checks work:
+
+```bash
+az aks install-cli
+
+export AKS_ID="$(az aks show \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$AKS_CLUSTER" \
+  --query id -o tsv)"
+
+export USER_OBJECT_ID="$(az ad signed-in-user show --query id -o tsv)"
+
+az role assignment create \
+  --assignee "$USER_OBJECT_ID" \
+  --role "Azure Kubernetes Service RBAC Cluster Admin" \
+  --scope "$AKS_ID"
+
+az aks get-credentials \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$AKS_CLUSTER" \
+  --overwrite-existing
+
+kubectl get nodes
 ```
 
 ## 2. Create Azure Database for MySQL
@@ -134,6 +206,21 @@ az mysql flexible-server create \
 
 Use a separate delegated subnet for MySQL Flexible Server. Do not put AKS node
 resources in that delegated subnet.
+
+Before retrying failed MySQL creation, confirm Azure can list Flexible Server
+SKUs in the target region:
+
+```bash
+az mysql flexible-server list-skus --location "$AZURE_LOCATION" -o table
+```
+
+If MySQL creation or SKU listing returns Azure `InternalServerError`, capture
+the tracking ID, region, subscription ID, and command that failed, then retry
+later or open an Azure Support case. That failure happens before OpenWork or
+Helm is involved. For disposable chart-only validation, you may temporarily use
+an in-cluster MySQL instance to separate chart behavior from Azure MySQL control
+plane availability, but do not treat that as a production Azure deployment or
+as validation of the documented Azure Database path.
 
 Example database URL:
 
@@ -189,6 +276,7 @@ To send transactional email, configure SMTP in the same values file:
 ```yaml
 secret:
   values:
+    emailFrom: "OpenWork <no-reply@example.com>"
     smtpHost: "smtp.example.com"
     smtpPort: "587"
     smtpUser: "openwork@example.com"
@@ -196,10 +284,12 @@ secret:
     smtpSecure: "false"
 ```
 
-These values become `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and
-`SMTP_SECURE` in Den API. If you use `secret.create=false`, add those keys to
-the existing Kubernetes Secret referenced by `secret.existingSecret`. Leave
-`smtpHost` blank only when SMTP-backed transactional email should be disabled.
+These values become `EMAIL_FROM`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
+`SMTP_PASS`, and `SMTP_SECURE` in Den API. If you use `secret.create=false`,
+add those keys to the existing Kubernetes Secret referenced by
+`secret.existingSecret`. SMTP delivery requires both `EMAIL_FROM` and
+`SMTP_HOST`; leave `smtpHost` blank only when SMTP-backed transactional email
+should be disabled.
 
 Use a values file, not a long list of `--set` flags. Several OpenWork values are
 comma-separated strings, such as `config.public.corsOrigins`, and plain `--set`
@@ -219,7 +309,7 @@ helm template openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
   --namespace openwork-ee \
   -f values.azure.yaml > /tmp/openwork-rendered.yaml
 
-grep -E 'DATABASE_URL|BETTER_AUTH_URL|DEN_API_PUBLIC_URL|DEN_WEB_PUBLIC_ORIGIN|SMTP_HOST|SMTP_PORT|SMTP_SECURE' /tmp/openwork-rendered.yaml
+grep -E 'DATABASE_URL|BETTER_AUTH_URL|DEN_API_PUBLIC_URL|DEN_WEB_PUBLIC_ORIGIN|EMAIL_FROM|SMTP_HOST|SMTP_PORT|SMTP_SECURE' /tmp/openwork-rendered.yaml
 ```
 
 Redact secrets before sharing rendered manifests or terminal output.
@@ -445,6 +535,13 @@ single organization. Password sign-in for that organization is rejected.
 | Migration Job fails to connect to MySQL | VNet, private DNS, credentials, or TLS settings are wrong | Test from `mysql-client`, confirm DNS resolves inside AKS, and use `?sslaccept=accept` for the private-MySQL smoke path |
 | `ERROR 3159` from MySQL | Azure requires encrypted transport and the client is not using TLS | Keep TLS enabled with `?sslaccept=accept`, or configure strict CA verification explicitly |
 | Migration Job logs show `self-signed certificate in certificate chain` | Strict certificate verification is being used without the cloud MySQL CA bundle | Use `?sslaccept=accept` for the smoke path or mount/configure the CA bundle before strict verification |
+| `az login` succeeds but reports no subscriptions | The account has no visible enabled subscription | Create/activate a subscription, rerun device-code login, and confirm `az account show` before provisioning |
+| AKS creation reports missing provider registration | New subscription providers are not registered yet | Register the providers listed in "Before creating resources" and wait for `Registered` |
+| AKS Automatic rejects SSH keys | Automatic managed system node pools do not accept SSH key configuration | Use `--no-ssh-key` for AKS Automatic, or use the standard AKS command in this guide |
+| AKS Automatic with BYO VNet rejects system-assigned identity | BYO VNet requires a user-assigned managed identity | Create a UAMI and grant `Network Contributor` on the VNet before cluster creation |
+| `az aks operation show` changes accepted CLI flags after running | Azure CLI may install/use the `aks-preview` extension, changing command behavior | Check `az extension list`; remove `aks-preview` unless you intentionally need preview AKS commands |
+| `kubectl get nodes` is unauthorized on an Azure RBAC cluster | Signed-in user lacks AKS RBAC role assignment or `kubelogin` is missing | Install `kubelogin`, assign `Azure Kubernetes Service RBAC Cluster Admin`, and refresh credentials |
+| `az mysql flexible-server create` or `list-skus` returns `InternalServerError` | Azure MySQL control plane or regional SKU service failed before Helm install | Capture tracking IDs and region, retry later or open Azure Support; only use temporary in-cluster MySQL for chart-only smoke tests |
 | `ImagePullBackOff` from GHCR | Private image or missing pull token | Add `imagePullSecrets` |
 | Browser auth loops or CORS errors | Public origins do not match DNS/TLS | Set `webOrigin`, `apiOrigin`, `corsOrigins`, `betterAuthTrustedOrigins`, and `authCallbackUrl` to the final HTTPS domains |
 | SSO callback rejected | IdP callback URL does not match OpenWork | Use the callback/ACS URL shown by OpenWork for that org/provider |

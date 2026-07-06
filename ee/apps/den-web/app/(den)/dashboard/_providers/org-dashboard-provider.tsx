@@ -7,17 +7,19 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { ReauthDialog } from "../../_components/reauth-dialog";
 import {
+  PENDING_ORG_SELECTION_STORAGE_KEY,
   type DenOrgContext,
   type DenOrgSummary,
   getOrgDashboardRoute,
   parseOrgContextPayload,
   parseOrgListPayload,
-  shouldShowOrgSelection,
+  shouldOfferOrgSelection,
+  shouldRequireOrgSelection,
 } from "../../_lib/den-org";
 
 type OrgDashboardContextValue = {
@@ -58,13 +60,22 @@ type PendingReauthMutation = {
 
 const OrgDashboardContext = createContext<OrgDashboardContextValue | null>(null);
 
+function consumePendingOrgSelectionRequest(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const pending = window.sessionStorage.getItem(PENDING_ORG_SELECTION_STORAGE_KEY) === "1";
+  window.sessionStorage.removeItem(PENDING_ORG_SELECTION_STORAGE_KEY);
+  return pending;
+}
+
 export function OrgDashboardProvider({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { user, sessionHydrated, signOut, refreshWorkers, workersLoadedOnce, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const [orgDirectory, setOrgDirectory] = useState<DenOrgSummary[]>([]);
   const [orgContext, setOrgContext] = useState<DenOrgContext | null>(null);
@@ -84,7 +95,6 @@ export function OrgDashboardProvider({
 
   const activeOrgId = activeOrg?.id ?? orgContext?.organization.id ?? null;
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
-  const orgSelectionRequested = searchParams.get("selectOrg") === "1";
 
   function ensureActiveOrganizationSelected() {
     if (!activeOrgId) {
@@ -154,7 +164,14 @@ export function OrgDashboardProvider({
         return;
       }
 
-      if (!isSingleOrgMode && shouldShowOrgSelection(directoryPayload.orgs, orgSelectionRequested)) {
+      const shouldShowOrgSelection =
+        !isSingleOrgMode &&
+        (
+          shouldRequireOrgSelection(directoryPayload.orgs) ||
+          (consumePendingOrgSelectionRequest() && shouldOfferOrgSelection(directoryPayload.orgs))
+        );
+
+      if (shouldShowOrgSelection) {
         setOrgDirectory(directoryPayload.orgs);
         setOrgContext(null);
         setOrgSelectionRequired(true);
@@ -577,7 +594,7 @@ export function OrgDashboardProvider({
     }
 
     void refreshOrgData();
-  }, [router, sessionHydrated, user?.id, isSingleOrgMode, orgSelectionRequested]);
+  }, [router, sessionHydrated, user?.id, isSingleOrgMode]);
 
   const value: OrgDashboardContextValue = {
     orgSlug: activeOrg?.slug ?? null,
