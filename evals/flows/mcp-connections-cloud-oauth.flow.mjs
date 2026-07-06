@@ -40,7 +40,7 @@
  *   accommodation, not a product behavior change).
  */
 
-import { denApiFetch, denApiUrl, denWebUrl, openAdminConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
+import { denApiFetch, denWebUrl, mcpAgentCall, mintMcpToken, openAdminConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
 
 const DEMO_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const DEMO_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
@@ -221,51 +221,23 @@ export default {
       run: async (ctx) => {
         await ctx.prove("The org's harness-facing MCP surface (search_capabilities + execute_capability) picks up the connection with zero desktop-side setup", {
           assert: async () => {
-            const signIn = await denApiFetch("/api/auth/sign-in/email", {
-              method: "POST",
-              body: JSON.stringify({ email: DEMO_EMAIL, password: DEMO_PASSWORD }),
-            });
-            ctx.assert(signIn.response.ok, `Den API sign-in failed: ${signIn.response.status}`);
-            const sessionToken = signIn.body.token;
+            const sessionToken = await signInApi(DEMO_EMAIL, DEMO_PASSWORD);
+            ctx.assert(Boolean(sessionToken), `Den API sign-in failed for ${DEMO_EMAIL}.`);
+            const mcpToken = await mintMcpToken(sessionToken, ctx);
 
-            const mint = await denApiFetch("/v1/mcp/token", {
-              method: "POST",
-              headers: { authorization: `Bearer ${sessionToken}` },
-              body: "{}",
-            });
-            ctx.assert(mint.response.ok, `Minting an MCP token failed: ${mint.response.status}`);
-            const mcpToken = mint.body.token;
-
-            async function mcpAgentCall(method, params) {
-              const response = await fetch(`${denApiUrl()}/mcp/agent`, {
-                method: "POST",
-                headers: {
-                  "content-type": "application/json",
-                  accept: "application/json, text/event-stream",
-                  authorization: `Bearer ${mcpToken}`,
-                },
-                body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
-              });
-              const raw = await response.text();
-              ctx.assert(response.ok, `MCP ${method} failed: ${response.status} ${raw.slice(0, 200)}`);
-              const dataLine = raw.split("\n").find((line) => line.startsWith("data:"));
-              ctx.assert(Boolean(dataLine), `MCP ${method} returned no data frame.`);
-              return JSON.parse(dataLine.slice(5)).result;
-            }
-
-            const searchResult = await mcpAgentCall("tools/call", {
+            const searchResult = await mcpAgentCall(mcpToken, "tools/call", {
               name: "search_capabilities",
               arguments: { query: "echo" },
-            });
+            }, ctx);
             const matchesText = searchResult.content[0].text;
             ctx.assert(matchesText.includes(CONNECTION_NAME), `search_capabilities didn't surface ${CONNECTION_NAME}: ${matchesText}`);
             const match = JSON.parse(matchesText).matches.find((entry) => entry.summary.includes(CONNECTION_NAME));
             ctx.assert(Boolean(match), `No search_capabilities match for ${CONNECTION_NAME}.`);
 
-            const executeResult = await mcpAgentCall("tools/call", {
+            const executeResult = await mcpAgentCall(mcpToken, "tools/call", {
               name: "execute_capability",
               arguments: { name: match.name, body: { text: ECHO_TEXT } },
-            });
+            }, ctx);
             const echoed = executeResult.content?.[0]?.text;
             ctx.assert(echoed === ECHO_TEXT, `execute_capability didn't echo back the exact text: got "${echoed}"`);
           },

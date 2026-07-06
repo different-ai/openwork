@@ -5,7 +5,7 @@
  */
 
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
-import { denApiFetch, denApiUrl, openAdminConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
+import { denApiFetch, mcpAgentCall, mintMcpToken, openAdminConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
 
 const vo = await loadVoiceoverParagraphs("exa-connection");
 
@@ -54,33 +54,6 @@ function exaConnectedRowScript() {
     }
     return false;
   })()`;
-}
-
-async function mcpAgentCall(mcpToken, method, params, ctx) {
-  const response = await fetch(`${denApiUrl()}/mcp/agent`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      authorization: `Bearer ${mcpToken}`,
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
-  });
-  const raw = await response.text();
-  ctx.assert(response.ok, `MCP ${method} failed: ${response.status} ${raw.slice(0, 200)}`);
-  const dataLine = raw.split("\n").find((line) => line.startsWith("data:"));
-  ctx.assert(Boolean(dataLine), `MCP ${method} returned no data frame.`);
-  return JSON.parse(dataLine.slice(5)).result;
-}
-
-async function mintMcpToken(sessionToken, ctx) {
-  const { response, body } = await denApiFetch("/v1/mcp/token", {
-    method: "POST",
-    headers: { authorization: `Bearer ${sessionToken}` },
-    body: "{}",
-  });
-  ctx.assert(response.ok, `Minting an MCP token failed: ${response.status}`);
-  return body.token;
 }
 
 export default {
