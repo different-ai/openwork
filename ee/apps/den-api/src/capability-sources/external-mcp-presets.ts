@@ -52,6 +52,13 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     requiresOAuthClient: true,
   },
   {
+    presetId: "exa",
+    displayName: "Exa",
+    description: "AI web search, code search, and research for your agents. Paste your org's Exa API key from dashboard.exa.ai.",
+    url: "https://mcp.exa.ai/mcp",
+    authType: "apikey",
+  },
+  {
     presetId: "context7",
     displayName: "Context7",
     description: "Search product docs with richer context.",
