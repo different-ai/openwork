@@ -16,7 +16,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
-import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
+import { setTelemetrySessionDimension, trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { createClient, unwrap } from "@/app/lib/opencode";
@@ -134,9 +134,11 @@ import {
   forgetWorkspaceMemory,
   readActiveWorkspaceId,
   readLastSessionFor,
+  readWorkspaceProjectDimension,
   readWorkspaceOrderIds,
   writeActiveWorkspaceId,
   writeLastSessionFor,
+  writeWorkspaceProjectDimension,
   writeWorkspaceOrderIds,
 } from "./session-memory";
 import {
@@ -838,8 +840,19 @@ export function SessionRoute() {
         // Den org adoption signals (auth-gated inside; no-op when signed out).
         // Lives here — the live send choke point — because its previous call
         // site was in the orphaned actions-store and never fired.
-        trackSessionActive(targetSessionId);
-        trackTaskStarted(targetSessionId);
+        const projectDimension = readWorkspaceProjectDimension(selectedWorkspaceId);
+        const telemetryDimensions = projectDimension
+          ? [{
+              type: "project",
+              label: projectDimension.label,
+              ...(projectDimension.value ? { value: projectDimension.value } : {}),
+            }]
+          : undefined;
+        if (projectDimension) {
+          void setTelemetrySessionDimension(targetSessionId, "project", projectDimension);
+        }
+        trackSessionActive(targetSessionId, telemetryDimensions);
+        trackTaskStarted(targetSessionId, telemetryDimensions);
 
         if (draft.mode === "shell") {
           await shellInSession(opencodeClient, targetSessionId, text);
@@ -1573,8 +1586,14 @@ export function SessionRoute() {
     [opencodeClient, refreshRouteState, selectedWorkspaceRoot],
   );
 
-  const handleCreateWorkspace = useCallback(async (preset: WorkspacePreset, folder: string | null) => {
+  const handleCreateWorkspace = useCallback(async (
+    preset: WorkspacePreset,
+    folder: string | null,
+    options?: { projectLabel?: string | null; projectValue?: string | null },
+  ) => {
     if (!folder) return;
+    const projectLabel = options?.projectLabel?.trim() ?? "";
+    const projectValue = options?.projectValue?.trim() ?? "";
     setCreateWorkspaceBusy(true);
     setCreateWorkspaceError(null);
     try {
@@ -1615,8 +1634,20 @@ export function SessionRoute() {
           : null;
         setLegacySelectedWorkspaceId(targetWorkspaceId);
         writeActiveWorkspaceId(targetWorkspaceId);
+        if (projectLabel) {
+          writeWorkspaceProjectDimension(targetWorkspaceId, {
+            label: projectLabel,
+            ...(projectValue ? { value: projectValue } : {}),
+          });
+        }
         captureAnalyticsEvent("workspace_created", { workspace_type: "local" });
         if (session?.id) {
+          if (projectLabel) {
+            void setTelemetrySessionDimension(session.id, "project", {
+              label: projectLabel,
+              ...(projectValue ? { value: projectValue } : {}),
+            });
+          }
           captureAnalyticsEvent("task_created", { source: "workspace_created", workspace_type: "local" });
           writeLastSessionFor(targetWorkspaceId, session.id);
           rememberPendingCreatedSession(targetWorkspaceId, session.id);

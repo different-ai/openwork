@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Activity, CheckCircle2, ChevronRight, Clock, Users, Zap } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { requestJson } from "../../_lib/den-flow";
+import { DenSelect } from "../../_components/ui/select";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
@@ -36,14 +37,6 @@ type DimensionOption = {
   type: string;
   value: string;
   label: string;
-  sessionCount: number;
-  lastSeenAt: string;
-};
-
-type ProjectOption = {
-  type: string;
-  label: string;
-  values: string[];
   sessionCount: number;
   lastSeenAt: string;
 };
@@ -103,10 +96,10 @@ async function fetchDimensions(type: string): Promise<DimensionOption[]> {
   }
 }
 
-async function fetchAnalytics(projectLabel: string): Promise<AnalyticsData | null> {
+async function fetchAnalytics(projectValue: string): Promise<AnalyticsData | null> {
   try {
-    const params = projectLabel
-      ? new URLSearchParams({ dimensionType: PROJECT_DIMENSION_TYPE, dimensionLabel: projectLabel })
+    const params = projectValue
+      ? new URLSearchParams({ dimensionType: PROJECT_DIMENSION_TYPE, dimensionValue: projectValue })
       : null;
     const path = params ? `/v1/telemetry/analytics?${params.toString()}` : "/v1/telemetry/analytics";
     const { response, payload } = await requestJson(path, { method: "GET" }, 12000);
@@ -131,39 +124,8 @@ async function fetchAnalytics(projectLabel: string): Promise<AnalyticsData | nul
   }
 }
 
-function newestTimestamp(left: string, right: string): string {
-  const leftTime = Date.parse(left);
-  const rightTime = Date.parse(right);
-  if (Number.isNaN(leftTime)) return right;
-  if (Number.isNaN(rightTime)) return left;
-  return rightTime > leftTime ? right : left;
-}
-
-function aggregateProjectOptions(options: DimensionOption[]): ProjectOption[] {
-  const byLabel = new Map<string, ProjectOption>();
-
-  for (const option of options) {
-    const current = byLabel.get(option.label);
-    if (!current) {
-      byLabel.set(option.label, {
-        type: option.type,
-        label: option.label,
-        values: [option.value],
-        sessionCount: option.sessionCount,
-        lastSeenAt: option.lastSeenAt,
-      });
-      continue;
-    }
-
-    byLabel.set(option.label, {
-      ...current,
-      values: current.values.includes(option.value) ? current.values : [...current.values, option.value],
-      sessionCount: current.sessionCount + option.sessionCount,
-      lastSeenAt: newestTimestamp(current.lastSeenAt, option.lastSeenAt),
-    });
-  }
-
-  return Array.from(byLabel.values()).sort((left, right) => {
+function sortProjectOptions(options: DimensionOption[]): DimensionOption[] {
+  return [...options].sort((left, right) => {
     const timeDelta = Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt);
     return timeDelta || left.label.localeCompare(right.label);
   });
@@ -298,7 +260,7 @@ function TrendChart({ title, subtitle, weeks, series }: {
 
 export function AnalyticsScreen() {
   const { activeOrg, orgContext } = useOrgDashboard();
-  const [selectedProjectLabel, setSelectedProjectLabel] = useState("");
+  const [selectedProjectValue, setSelectedProjectValue] = useState("");
 
   // Server enforces the same gate with a 402 on /v1/telemetry/analytics
   // (entitlements.ts); this mirrors the SSO / desktop policies screens.
@@ -311,24 +273,24 @@ export function AnalyticsScreen() {
   });
 
   const projectOptions = useMemo(
-    () => aggregateProjectOptions(rawProjectOptions),
+    () => sortProjectOptions(rawProjectOptions),
     [rawProjectOptions],
   );
 
   const selectedProject = useMemo(
-    () => projectOptions.find((option: ProjectOption) => option.label === selectedProjectLabel) ?? null,
-    [projectOptions, selectedProjectLabel],
+    () => projectOptions.find((option: DimensionOption) => option.value === selectedProjectValue) ?? null,
+    [projectOptions, selectedProjectValue],
   );
 
   const { data, isLoading } = useQuery<AnalyticsData | null>({
-    queryKey: ["telemetry", "analytics", PROJECT_DIMENSION_TYPE, selectedProjectLabel || "all"],
-    queryFn: () => fetchAnalytics(selectedProjectLabel),
+    queryKey: ["telemetry", "analytics", PROJECT_DIMENSION_TYPE, selectedProjectValue || "all"],
+    queryFn: () => fetchAnalytics(selectedProjectValue),
     enabled: !locked,
   });
 
   const weekly: AnalyticsWeek[] = data?.weekly ?? [];
   const tasks7d = (data?.tasksCompleted7d ?? 0) + (data?.tasksFailed7d ?? 0);
-  const isProjectFiltered = Boolean(selectedProjectLabel);
+  const isProjectFiltered = Boolean(selectedProjectValue);
 
   return (
     <div className="mx-auto max-w-[1100px] px-4 pb-8 pt-4 sm:px-6 md:px-8">
@@ -353,23 +315,24 @@ export function AnalyticsScreen() {
       </p>
 
       {!locked ? (
-        <div className="mt-4 flex flex-wrap items-center gap-2.5">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
           <label className="text-[12px] font-semibold uppercase text-[#637291]" htmlFor="analytics-project-filter">
             Project
           </label>
-          <select
+          <DenSelect
             id="analytics-project-filter"
-            value={selectedProjectLabel}
-            onChange={(event) => setSelectedProjectLabel(event.currentTarget.value)}
-            className="h-9 min-w-[220px] rounded-[8px] border border-[#d8e0ec] bg-white px-3 text-[13px] font-medium text-[#07192C] shadow-sm outline-none transition-colors hover:border-[#b8c4d8] focus:border-[#6F3DFF]"
+            value={selectedProjectValue}
+            onChange={(event) => setSelectedProjectValue(event.target.value)}
+            aria-label="Project analytics filter"
+            className="h-9 min-w-[240px]"
           >
             <option value="">All projects</option>
-            {projectOptions.map((option: ProjectOption) => (
-              <option key={option.label} value={option.label}>
+            {projectOptions.map((option: DimensionOption) => (
+              <option key={option.value} value={option.value}>
                 {option.label}
               </option>
             ))}
-          </select>
+          </DenSelect>
           {selectedProject ? (
             <span className="text-[12px] text-[#637291]">
               {selectedProject.sessionCount} {selectedProject.sessionCount === 1 ? "session" : "sessions"}
