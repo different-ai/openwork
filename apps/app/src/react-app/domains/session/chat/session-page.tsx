@@ -100,6 +100,12 @@ export type SessionPageHistoryControls = {
   onRedo: () => void | Promise<void>;
 };
 
+export type SessionProjectDimensionControls = {
+  label: string;
+  saving: boolean;
+  onSave: (label: string) => void | Promise<void>;
+};
+
 export type SessionPageSidebarProps = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
   selectedWorkspaceId: string;
@@ -171,6 +177,7 @@ export type SessionPageProps = {
   sidebar: SessionPageSidebarProps;
   surface?: SessionPageSurfaceProps | null;
   history?: SessionPageHistoryControls | null;
+  projectDimension?: SessionProjectDimensionControls | null;
   todos: TodoItem[];
   sessionLoadingById: (sessionId: string | null) => boolean;
   shareWorkspaceModal?: ShareWorkspaceModalProps | null;
@@ -751,7 +758,6 @@ export function SessionPage(props: SessionPageProps) {
   );
   const canRenderSplitSurface = Boolean(canRenderReactSurface && splitSessionId && splitSessionId !== props.selectedSessionId);
   const findButtonSessionId = props.selectedSessionId;
-
   const openSessionTab = useCallback((workspaceId: string, sessionId: string) => {
     setSessionTabs((current) => {
       const next = current.filter((tab) => tab.workspaceId === workspaceId);
@@ -792,7 +798,6 @@ export function SessionPage(props: SessionPageProps) {
     setDeleteBusy(false);
     setSessionActionId(null);
   }, [props.selectedSessionId]);
-
   const openRenameModal = (sessionId: string) => {
     if (!props.onRenameSession) return;
     setSessionActionId(sessionId);

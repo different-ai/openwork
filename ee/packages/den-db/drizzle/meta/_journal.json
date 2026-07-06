@@ -211,6 +211,13 @@
       "when": 1783210357840,
       "tag": "0030_tidy_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "5",
+      "when": 1783382400000,
+      "tag": "0031_telemetry_session_dimension",
+      "breakpoints": true
     }
   ]
 }

@@ -27,6 +27,7 @@ import {
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { captureAnalyticsEvent } from "../../app/lib/analytics";
+import { setTelemetrySessionDimension } from "../../app/lib/den-telemetry";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
 import { buildDenAuthUrl, DEFAULT_DEN_BASE_URL, readDenSettings } from "../../app/lib/den";
 import { writeActiveWorkspaceId, writeLastSessionFor } from "./session-memory";
@@ -136,8 +137,10 @@ export function WelcomeRoute() {
   }, [local]);
 
   const handleCreateWorkspace = useCallback(
-    async (_preset: string, folder: string | null) => {
+    async (_preset: string, folder: string | null, options?: { projectLabel?: string | null; projectValue?: string | null }) => {
       if (!folder) return;
+      const projectValue = options?.projectValue?.trim() ?? "";
+      const projectLabel = options?.projectLabel?.trim() ?? "";
       dispatch({ type: "create:start" });
       try {
         const workspaceName = folderNameFromPath(folder);
@@ -195,6 +198,12 @@ export function WelcomeRoute() {
               { token: serverToken, mode: "openwork" },
             ).session.create({ directory: workspacePath || undefined }));
             targetSessionId = session.id;
+            if (projectLabel) {
+              void setTelemetrySessionDimension(session.id, "project", {
+                label: projectLabel,
+                ...(projectValue ? { value: projectValue } : {}),
+              });
+            }
             captureAnalyticsEvent("task_created", { source: "onboarding", workspace_type: "local" });
           } catch {
             // Best-effort first task creation.

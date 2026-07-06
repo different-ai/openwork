@@ -1,4 +1,5 @@
-import { boolean, index, int, mysqlTable, varchar, timestamp } from "drizzle-orm/mysql-core"
+import { sql } from "drizzle-orm"
+import { boolean, index, int, json, mysqlTable, uniqueIndex, varchar, timestamp } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn } from "../columns"
 
 export const TelemetryEventType = [
@@ -32,5 +33,47 @@ export const TelemetryEventTable = mysqlTable(
   (table) => [
     index("telemetry_event_org_id_type_ts").on(table.org_id, table.event_type, table.event_timestamp),
     index("telemetry_event_org_id_member_id").on(table.org_id, table.member_id),
+    index("telemetry_event_org_session_ts").on(table.org_id, table.session_id, table.event_timestamp),
+  ],
+)
+
+export const TelemetrySessionDimensionTable = mysqlTable(
+  "telemetry_session_dimension",
+  {
+    id: denTypeIdColumn("telemetrySessionDimension", "id").notNull().primaryKey(),
+    org_id: denTypeIdColumn("organization", "org_id").notNull(),
+    // Opaque session correlation id. Never contains user content.
+    session_id: varchar("session_id", { length: 128 }).notNull(),
+    source: varchar("source", { length: 32 }).notNull(),
+    dimension_type: varchar("dimension_type", { length: 64 }).notNull(),
+    dimension_value: varchar("dimension_value", { length: 128 }).notNull(),
+    dimension_label: varchar("dimension_label", { length: 255 }).notNull(),
+    metadata: json("metadata").$type<Record<string, unknown> | null>(),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+    last_seen_at: timestamp("last_seen_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("telemetry_session_dimension_org_source_session_type").on(
+      table.org_id,
+      table.source,
+      table.session_id,
+      table.dimension_type,
+    ),
+    index("telemetry_session_dimension_filter").on(
+      table.org_id,
+      table.dimension_type,
+      table.dimension_value,
+      table.session_id,
+    ),
+    index("telemetry_session_dimension_label_filter").on(
+      table.org_id,
+      table.dimension_type,
+      table.dimension_label,
+      table.session_id,
+    ),
+    index("telemetry_session_dimension_session").on(table.org_id, table.source, table.session_id),
   ],
 )

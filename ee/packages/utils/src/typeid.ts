@@ -76,6 +76,7 @@ export const idTypesMapNameToPrefix = {
   workerBundle: "wkb",
   auditEvent: "aev",
   telemetryEvent: "tev",
+  telemetrySessionDimension: "tsd",
   workspaceBootstrap: "wbt",
   workspaceClaim: "wcl",
   installLink: "inl",

@@ -2375,6 +2375,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onPickFolder={() => pickDirectory({ title: t("onboarding.authorize_folder") }) as Promise<string | null>}
         submitting={createWorkspaceBusy}
         localError={createWorkspaceError}
+        showProjectLabel={false}
         remoteSubmitting={createWorkspaceRemoteBusy}
         remoteError={createWorkspaceRemoteError}
       />

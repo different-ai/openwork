@@ -1,7 +1,19 @@
 /** @jsxImportSource react */
-import { Check, FolderPlus, Loader2, XCircle } from "lucide-react";
+import {
+  ChartNoAxesColumnIncreasing,
+  Check,
+  FolderPlus,
+  Loader2,
+  XCircle,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { DialogClose, DialogFooter } from "@/components/ui/dialog";
 import type { WorkspacePreset } from "../../../app/types";
 import { t } from "../../../i18n";
@@ -39,13 +51,18 @@ export type CreateWorkspaceLocalPanelProps = {
   hasSelectedFolder: boolean;
   pickingFolder: boolean;
   onPickFolder: () => void;
+  projectValue: string;
+  onProjectValueInput: (value: string) => void;
+  projectLabel: string;
+  onProjectLabelInput: (value: string) => void;
+  showProjectLabel: boolean;
   submitting: boolean;
   localError: string | null;
   onClose: () => void;
   onSubmit: () => void;
   confirmLabel?: string;
   workerLabel?: string;
-  onConfirmWorker?: (preset: WorkspacePreset, folder: string | null) => void;
+  onConfirmWorker?: (preset: WorkspacePreset, folder: string | null, options?: { projectLabel?: string | null; projectValue?: string | null }) => void;
   preset: WorkspacePreset;
   workerSubmitting: boolean;
   workerDisabled: boolean;
@@ -91,6 +108,10 @@ export function CreateWorkspaceLocalPanel(
   props: CreateWorkspaceLocalPanelProps,
 ) {
   const progress = props.progress;
+  const hasProjectValue = props.projectValue.trim().length > 0;
+  const hasProjectLabel = props.projectLabel.trim().length > 0;
+  const hasProjectDimension = hasProjectValue || hasProjectLabel;
+  const projectValueWithoutLabel = hasProjectValue && !hasProjectLabel;
 
   return (
     <>
@@ -134,6 +155,74 @@ export function CreateWorkspaceLocalPanel(
                 </span>
               )}
             </div>
+
+            {props.showProjectLabel ? (
+              <Accordion
+                multiple
+                defaultValue={hasProjectDimension ? ["analytics"] : []}
+                className="mt-4 overflow-hidden rounded-[20px] border-dls-border bg-dls-hover/60 shadow-none before:hidden"
+              >
+                <AccordionItem value="analytics" className="border-b-0">
+                  <AccordionTrigger className="items-center px-4 py-4 hover:no-underline focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.18)]">
+                    <span className="flex min-w-0 flex-1 items-start gap-3">
+                      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-surface text-dls-text">
+                        <ChartNoAxesColumnIncreasing size={17} className="shrink-0 text-current" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-[14px] font-semibold text-dls-text">
+                          Want more analytics?
+                        </span>
+                        <span className="mt-1 block text-[12px] leading-5 text-dls-secondary">
+                          Add project details to improve filtering and reporting in Analytics.
+                        </span>
+                      </span>
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="space-y-3 px-4 pb-4">
+                    <div>
+                      <label className="text-[13px] font-medium text-dls-text">
+                        Project name <span className="text-dls-secondary">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={props.projectLabel}
+                        onChange={(event) => props.onProjectLabelInput(event.currentTarget.value)}
+                        placeholder="Billing API"
+                        disabled={props.submitting}
+                        className="mt-2 w-full rounded-[20px] border border-dls-border bg-dls-surface px-4 py-3 text-[14px] text-dls-text outline-none placeholder:text-dls-secondary transition-colors focus:border-dls-accent disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[13px] font-medium text-dls-text">
+                        Project value <span className="text-dls-secondary">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={props.projectValue}
+                        onChange={(event) => props.onProjectValueInput(event.currentTarget.value)}
+                        placeholder="billing-api"
+                        disabled={props.submitting}
+                        className="mt-2 w-full rounded-[20px] border border-dls-border bg-dls-surface px-4 py-3 text-[14px] text-dls-text outline-none placeholder:text-dls-secondary transition-colors focus:border-dls-accent disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-3 text-[12px] text-dls-secondary">
+                      <span>{projectValueWithoutLabel ? "Enter a project name before adding a value." : "Leave value blank to generate it from the name."}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          props.onProjectValueInput("");
+                          props.onProjectLabelInput("");
+                        }}
+                        disabled={props.submitting || !hasProjectDimension}
+                        className="shrink-0 transition-colors hover:text-dls-text disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            ) : null}
             <div className="mt-4">
               <button
                 type="button"
@@ -300,10 +389,14 @@ export function CreateWorkspaceLocalPanel(
               type="button"
               variant="secondary"
               onClick={() =>
-                props.onConfirmWorker?.(props.preset, props.selectedFolder)
+                props.onConfirmWorker?.(props.preset, props.selectedFolder, {
+                  projectLabel: props.projectLabel.trim() || null,
+                  projectValue: props.projectValue.trim() || null,
+                })
               }
               disabled={
                 !props.selectedFolder ||
+                projectValueWithoutLabel ||
                 props.submitting ||
                 props.workerSubmitting ||
                 props.workerDisabled
@@ -311,7 +404,9 @@ export function CreateWorkspaceLocalPanel(
               title={
                 !props.selectedFolder
                   ? t("dashboard.choose_folder_continue")
-                  : props.workerDisabledReason || undefined
+                  : projectValueWithoutLabel
+                    ? "Enter a project name before adding a value."
+                    : props.workerDisabledReason || undefined
               }
             >
               {props.workerSubmitting ? (
@@ -328,11 +423,13 @@ export function CreateWorkspaceLocalPanel(
           <Button
             type="button"
             onClick={() => void props.onSubmit()}
-            disabled={!props.selectedFolder || props.submitting}
+            disabled={!props.selectedFolder || projectValueWithoutLabel || props.submitting}
             title={
               !props.selectedFolder
                 ? t("dashboard.choose_folder_continue")
-                : undefined
+                : projectValueWithoutLabel
+                  ? "Enter a project name before adding a value."
+                  : undefined
             }
           >
             {props.submitting ? (

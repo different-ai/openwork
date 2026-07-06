@@ -42,6 +42,48 @@
   app-region: no-drag;
 }
 
+@keyframes accordion-down {
+  from {
+    height: 0;
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    height: var(--accordion-panel-height);
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(--accordion-panel-height);
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    height: 0;
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@utility animate-accordion-down {
+  animation: accordion-down 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@utility animate-accordion-up {
+  animation: accordion-up 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-accordion-down,
+  .animate-accordion-up {
+    animation-duration: 1ms;
+    transform: none;
+  }
+}
+
 :root {
   color-scheme: light;
   --dls-surface: var(--slate-1);

@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Activity, CheckCircle2, ChevronRight, Clock, Users, Zap } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { requestJson } from "../../_lib/den-flow";
@@ -31,14 +32,37 @@ type AnalyticsData = {
   weekly: AnalyticsWeek[];
 };
 
+type DimensionOption = {
+  type: string;
+  value: string;
+  label: string;
+  sessionCount: number;
+  lastSeenAt: string;
+};
+
+type ProjectOption = {
+  type: string;
+  label: string;
+  values: string[];
+  sessionCount: number;
+  lastSeenAt: string;
+};
+
+const PROJECT_DIMENSION_TYPE = "project";
+
 /* ── Data ── */
 
 function readNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function readObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value));
+}
+
 function readWeek(value: unknown): AnalyticsWeek {
-  const w = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+  const w = readObject(value);
   return {
     weekStart: typeof w.weekStart === "string" ? w.weekStart : "",
     activeMembers: readNumber(w.activeMembers),
@@ -48,11 +72,46 @@ function readWeek(value: unknown): AnalyticsWeek {
   };
 }
 
-async function fetchAnalytics(): Promise<AnalyticsData | null> {
+function readDimensionOption(value: unknown): DimensionOption | null {
+  const item = readObject(value);
+  const type = typeof item.type === "string" ? item.type : "";
+  const dimensionValue = typeof item.value === "string" ? item.value : "";
+  const label = typeof item.label === "string" ? item.label : "";
+  if (!type || !dimensionValue || !label) return null;
+  return {
+    type,
+    value: dimensionValue,
+    label,
+    sessionCount: readNumber(item.sessionCount),
+    lastSeenAt: typeof item.lastSeenAt === "string" ? item.lastSeenAt : "",
+  };
+}
+
+async function fetchDimensions(type: string): Promise<DimensionOption[]> {
   try {
-    const { response, payload } = await requestJson("/v1/telemetry/analytics", { method: "GET" }, 12000);
+    const params = new URLSearchParams({ type });
+    const { response, payload } = await requestJson(`/v1/telemetry/dimensions?${params.toString()}`, { method: "GET" }, 12000);
+    if (!response.ok) return [];
+    const items = readObject(payload).items;
+    if (!Array.isArray(items)) return [];
+    return items.flatMap((item) => {
+      const option = readDimensionOption(item);
+      return option ? [option] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function fetchAnalytics(projectLabel: string): Promise<AnalyticsData | null> {
+  try {
+    const params = projectLabel
+      ? new URLSearchParams({ dimensionType: PROJECT_DIMENSION_TYPE, dimensionLabel: projectLabel })
+      : null;
+    const path = params ? `/v1/telemetry/analytics?${params.toString()}` : "/v1/telemetry/analytics";
+    const { response, payload } = await requestJson(path, { method: "GET" }, 12000);
     if (!response.ok || !payload || typeof payload !== "object") return null;
-    const p = payload as Record<string, unknown>;
+    const p = readObject(payload);
     return {
       members: readNumber(p.members),
       pendingInvites: readNumber(p.pendingInvites),
@@ -70,6 +129,44 @@ async function fetchAnalytics(): Promise<AnalyticsData | null> {
   } catch {
     return null;
   }
+}
+
+function newestTimestamp(left: string, right: string): string {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (Number.isNaN(leftTime)) return right;
+  if (Number.isNaN(rightTime)) return left;
+  return rightTime > leftTime ? right : left;
+}
+
+function aggregateProjectOptions(options: DimensionOption[]): ProjectOption[] {
+  const byLabel = new Map<string, ProjectOption>();
+
+  for (const option of options) {
+    const current = byLabel.get(option.label);
+    if (!current) {
+      byLabel.set(option.label, {
+        type: option.type,
+        label: option.label,
+        values: [option.value],
+        sessionCount: option.sessionCount,
+        lastSeenAt: option.lastSeenAt,
+      });
+      continue;
+    }
+
+    byLabel.set(option.label, {
+      ...current,
+      values: current.values.includes(option.value) ? current.values : [...current.values, option.value],
+      sessionCount: current.sessionCount + option.sessionCount,
+      lastSeenAt: newestTimestamp(current.lastSeenAt, option.lastSeenAt),
+    });
+  }
+
+  return Array.from(byLabel.values()).sort((left, right) => {
+    const timeDelta = Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt);
+    return timeDelta || left.label.localeCompare(right.label);
+  });
 }
 
 /* ── Helpers ── */
@@ -201,19 +298,37 @@ function TrendChart({ title, subtitle, weeks, series }: {
 
 export function AnalyticsScreen() {
   const { activeOrg, orgContext } = useOrgDashboard();
+  const [selectedProjectLabel, setSelectedProjectLabel] = useState("");
 
   // Server enforces the same gate with a 402 on /v1/telemetry/analytics
   // (entitlements.ts); this mirrors the SSO / desktop policies screens.
   const locked = Boolean(orgContext) && !orgContext?.entitlements.analytics;
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["telemetry", "analytics"],
-    queryFn: fetchAnalytics,
+  const { data: rawProjectOptions = [] } = useQuery<DimensionOption[]>({
+    queryKey: ["telemetry", "dimensions", PROJECT_DIMENSION_TYPE],
+    queryFn: () => fetchDimensions(PROJECT_DIMENSION_TYPE),
     enabled: !locked,
   });
 
-  const weekly = data?.weekly ?? [];
+  const projectOptions = useMemo(
+    () => aggregateProjectOptions(rawProjectOptions),
+    [rawProjectOptions],
+  );
+
+  const selectedProject = useMemo(
+    () => projectOptions.find((option: ProjectOption) => option.label === selectedProjectLabel) ?? null,
+    [projectOptions, selectedProjectLabel],
+  );
+
+  const { data, isLoading } = useQuery<AnalyticsData | null>({
+    queryKey: ["telemetry", "analytics", PROJECT_DIMENSION_TYPE, selectedProjectLabel || "all"],
+    queryFn: () => fetchAnalytics(selectedProjectLabel),
+    enabled: !locked,
+  });
+
+  const weekly: AnalyticsWeek[] = data?.weekly ?? [];
   const tasks7d = (data?.tasksCompleted7d ?? 0) + (data?.tasksFailed7d ?? 0);
+  const isProjectFiltered = Boolean(selectedProjectLabel);
 
   return (
     <div className="mx-auto max-w-[1100px] px-4 pb-8 pt-4 sm:px-6 md:px-8">
@@ -237,6 +352,32 @@ export function AnalyticsScreen() {
         Only event metadata is collected — never prompts, code, or file contents.
       </p>
 
+      {!locked ? (
+        <div className="mt-4 flex flex-wrap items-center gap-2.5">
+          <label className="text-[12px] font-semibold uppercase text-[#637291]" htmlFor="analytics-project-filter">
+            Project
+          </label>
+          <select
+            id="analytics-project-filter"
+            value={selectedProjectLabel}
+            onChange={(event) => setSelectedProjectLabel(event.currentTarget.value)}
+            className="h-9 min-w-[220px] rounded-[8px] border border-[#d8e0ec] bg-white px-3 text-[13px] font-medium text-[#07192C] shadow-sm outline-none transition-colors hover:border-[#b8c4d8] focus:border-[#6F3DFF]"
+          >
+            <option value="">All projects</option>
+            {projectOptions.map((option: ProjectOption) => (
+              <option key={option.label} value={option.label}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          {selectedProject ? (
+            <span className="text-[12px] text-[#637291]">
+              {selectedProject.sessionCount} {selectedProject.sessionCount === 1 ? "session" : "sessions"}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {locked ? (
         <div className="mt-5">
           <EnterprisePlanNotice feature="Usage analytics" />
@@ -249,7 +390,7 @@ export function AnalyticsScreen() {
           icon={<Users className="h-5 w-5 text-[#6F3DFF]" />}
           title="OpenWork users"
           value={isLoading ? "…" : `${data?.members ?? 0}`}
-          sub={`${data?.pendingInvites ?? 0} pending invites`}
+          sub={isProjectFiltered ? "Org total, not project-scoped" : `${data?.pendingInvites ?? 0} pending invites`}
           tone="violet"
         />
         <StatCard
@@ -279,15 +420,15 @@ export function AnalyticsScreen() {
       <div className="mt-4 grid gap-3.5 lg:grid-cols-2">
         <TrendChart
           title="Weekly active users"
-          subtitle="Members with at least one event, last 12 weeks"
+          subtitle={isProjectFiltered ? "Members with project-matched events, last 12 weeks" : "Members with at least one event, last 12 weeks"}
           weeks={weekly}
-          series={[{ label: "Active users", color: "#6F3DFF", values: weekly.map((w) => w.activeMembers) }]}
+          series={[{ label: "Active users", color: "#6F3DFF", values: weekly.map((w: AnalyticsWeek) => w.activeMembers) }]}
         />
         <TrendChart
           title="Sessions per week"
           subtitle="Distinct sessions, last 12 weeks"
           weeks={weekly}
-          series={[{ label: "Sessions", color: "#1D63FF", values: weekly.map((w) => w.sessions) }]}
+          series={[{ label: "Sessions", color: "#1D63FF", values: weekly.map((w: AnalyticsWeek) => w.sessions) }]}
         />
       </div>
 
@@ -297,8 +438,8 @@ export function AnalyticsScreen() {
           subtitle="Completed and failed task runs, last 12 weeks"
           weeks={weekly}
           series={[
-            { label: "Completed", color: "#18A34A", values: weekly.map((w) => w.tasksCompleted) },
-            { label: "Failed", color: "#E5484D", values: weekly.map((w) => w.tasksFailed) },
+            { label: "Completed", color: "#18A34A", values: weekly.map((w: AnalyticsWeek) => w.tasksCompleted) },
+            { label: "Failed", color: "#E5484D", values: weekly.map((w: AnalyticsWeek) => w.tasksFailed) },
           ]}
         />
       </div>

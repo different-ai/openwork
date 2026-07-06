@@ -8,6 +8,8 @@ export type CreateWorkspaceLocalState = {
   pickingFolder: boolean;
   showProgressDetails: boolean;
   now: number;
+  projectValue: string;
+  projectLabel: string;
   remoteUrl: string;
   remoteToken: string;
   remoteDisplayName: string;
@@ -26,6 +28,8 @@ export function createInitialWorkspaceLocalState(): CreateWorkspaceLocalState {
     pickingFolder: false,
     showProgressDetails: false,
     now: Date.now(),
+    projectValue: "",
+    projectLabel: "",
     remoteUrl: "",
     remoteToken: "",
     remoteDisplayName: "",
