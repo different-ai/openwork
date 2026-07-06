@@ -138,17 +138,24 @@ export default {
           voiceover: vo[0],
           action: async () => {
             await applyDesktopViewport(ctx);
+            // Warm the route first: on a cold `next dev` the first request
+            // compiles the page on demand and the dev client can trigger a
+            // full reload right after hydration — which would wipe the capture
+            // stub armed below and strand the waitFor.
+            await fetch(routeUrl(ctx, "/")).catch(() => {});
             await ctx.eval(`location.href = ${JSON.stringify(routeUrl(ctx, "/"))}; true`);
             await ctx.waitFor(
               `Boolean(document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)})) && document.body.innerText.includes("Install OpenWork on my computer")`,
               { timeoutMs: 30_000, label: "hero prompt copy button" },
             );
+            // Let any post-compile dev-client refresh settle before arming.
+            await sleep(1_500);
             // Freeze the recording stub onto window.posthog: PostHog's async
             // array.js loader assigns window.posthog when it arrives, and on a
             // fresh navigation that write can land after this step. A frozen
             // property makes the late assignment a silent no-op, so captures
             // deterministically reach the stub (and never real PostHog).
-            await ctx.eval(`(() => {
+            const armCaptureStub = () => ctx.eval(`(() => {
               window.__capturedPosthogEvents = [];
               Object.defineProperty(window, "posthog", {
                 value: {
@@ -161,15 +168,32 @@ export default {
               });
               return true;
             })()`);
+            await armCaptureStub();
             await grantClipboardPermissions(ctx);
             await clickCopyButton(ctx);
-            await ctx.waitFor(
-              `(() => {
-                const events = window.__capturedPosthogEvents || [];
-                return events.some((entry) => entry.event === ${JSON.stringify(POSTHOG_CLIENT_EVENT)}) && Boolean(document.querySelector('[data-feedback="true"]'));
-              })()`,
-              { timeoutMs: 10_000, label: "client PostHog event and feedback state" },
-            );
+            const capturedAndFedBack = `(() => {
+              const events = window.__capturedPosthogEvents || [];
+              return events.some((entry) => entry.event === ${JSON.stringify(POSTHOG_CLIENT_EVENT)}) && Boolean(document.querySelector('[data-feedback="true"]'));
+            })()`;
+            try {
+              await ctx.waitFor(capturedAndFedBack, { timeoutMs: 10_000, label: "client PostHog event and feedback state" });
+            } catch (error) {
+              // If the dev client reloaded the page after arming, the stub is
+              // gone (fresh window). Re-arm and click once more; when the stub
+              // is still armed the original failure stands. Re-arming resets
+              // the capture array, so the exactly-one-event assertion below
+              // stays truthful.
+              const stubArmed = await ctx.eval(`Array.isArray(window.__capturedPosthogEvents)`);
+              if (stubArmed) throw error;
+              ctx.log("Dev client reloaded after arming the capture stub; re-arming and clicking again.");
+              await ctx.waitFor(
+                `Boolean(document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)}))`,
+                { timeoutMs: 30_000, label: "hero prompt copy button after dev reload" },
+              );
+              await armCaptureStub();
+              await clickCopyButton(ctx);
+              await ctx.waitFor(capturedAndFedBack, { timeoutMs: 10_000, label: "client PostHog event and feedback state (after re-arm)" });
+            }
             // Let the 200ms copy-feedback morph settle so the frame shows a
             // clean "Copied" state instead of overlapping transition labels.
             await sleep(400);
