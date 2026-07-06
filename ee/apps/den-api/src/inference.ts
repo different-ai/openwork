@@ -50,7 +50,7 @@ export function readInferenceMetadata(metadata: Record<string, unknown> | null):
   }
 
   const inference = metadata.inference
-  if (inference.enabled !== true || inference.tier !== "tier1" && inference.tier !== "tier2") {
+  if (inference.enabled !== true || (inference.tier !== "tier1" && inference.tier !== "tier2")) {
     return null
   }
 

@@ -677,7 +677,7 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
         if (row) {
           await db
             .update(OrgSubscriptionTable)
-            .set({ status: "expired", last_event_id: event.id, updated_at: new Date() })
+            .set({ status: "past_due", last_event_id: event.id, updated_at: new Date() })
             .where(eq(OrgSubscriptionTable.id, row.id))
           if (row.type === INFERENCE_SUBSCRIPTION_TYPE) {
             await setInferenceEnabled({ organizationId: row.organization_id, enabled: false })
