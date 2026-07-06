@@ -62,7 +62,6 @@ import {
   getInferenceRoute,
   getJoinOrgRoute,
   getOrgDashboardRoute,
-  getOrgSelectionRoute,
   getWorkspaceClaimRoute,
   parseOrgListPayload,
 } from "../_lib/den-org";
@@ -963,9 +962,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   async function resolveDashboardRoute() {
     const orgDirectory = await loadOrgDirectory();
     const activeOrgSlug = orgDirectory.activeOrgSlug ?? orgDirectory.orgs[0]?.slug ?? null;
-    if (orgDirectory.orgs.length > 1 && !orgDirectory.activeOrgSlug) {
-      return getOrgSelectionRoute();
-    }
     return activeOrgSlug ? getOrgDashboardRoute(activeOrgSlug) : null;
   }
 
@@ -1042,7 +1038,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     const dashboardRoute = await resolveDashboardRoute();
 
     if (dashboardRoute) {
-      if (getPendingAuthIntent() === "models" && dashboardRoute !== getOrgSelectionRoute()) {
+      if (getPendingAuthIntent() === "models") {
         clearPendingAuthIntent();
         return getInferenceRoute();
       }

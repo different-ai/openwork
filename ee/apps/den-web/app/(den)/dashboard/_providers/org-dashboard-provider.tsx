@@ -7,7 +7,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { ReauthDialog } from "../../_components/reauth-dialog";
@@ -17,7 +17,7 @@ import {
   getOrgDashboardRoute,
   parseOrgContextPayload,
   parseOrgListPayload,
-  shouldShowOrgSelection,
+  shouldRequireOrgSelection,
 } from "../../_lib/den-org";
 
 type OrgDashboardContextValue = {
@@ -64,7 +64,6 @@ export function OrgDashboardProvider({
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { user, sessionHydrated, signOut, refreshWorkers, workersLoadedOnce, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const [orgDirectory, setOrgDirectory] = useState<DenOrgSummary[]>([]);
   const [orgContext, setOrgContext] = useState<DenOrgContext | null>(null);
@@ -84,7 +83,6 @@ export function OrgDashboardProvider({
 
   const activeOrgId = activeOrg?.id ?? orgContext?.organization.id ?? null;
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
-  const orgSelectionRequested = searchParams.get("selectOrg") === "1";
 
   function ensureActiveOrganizationSelected() {
     if (!activeOrgId) {
@@ -154,7 +152,7 @@ export function OrgDashboardProvider({
         return;
       }
 
-      if (!isSingleOrgMode && shouldShowOrgSelection(directoryPayload.orgs, orgSelectionRequested)) {
+      if (!isSingleOrgMode && shouldRequireOrgSelection(directoryPayload.orgs)) {
         setOrgDirectory(directoryPayload.orgs);
         setOrgContext(null);
         setOrgSelectionRequired(true);
@@ -577,7 +575,7 @@ export function OrgDashboardProvider({
     }
 
     void refreshOrgData();
-  }, [router, sessionHydrated, user?.id, isSingleOrgMode, orgSelectionRequested]);
+  }, [router, sessionHydrated, user?.id, isSingleOrgMode]);
 
   const value: OrgDashboardContextValue = {
     orgSlug: activeOrg?.slug ?? null,
