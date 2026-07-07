@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono"
 import { getApiKeyScopedOrganizationId, isScopedApiKeyForOrganization } from "../api-keys.js"
 import { getOrganizationContextForUser, resolveUserOrganizations, type OrganizationContext } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
-import { getLegacyProxyOrganizationId, hydrateSessionActiveOrganization, shouldHydrateSessionActiveOrganization, type UserOrganizationsContext } from "./user-organizations.js"
+import { getRequestScopedOrganizationId, hydrateSessionActiveOrganization, shouldHydrateSessionActiveOrganization, type UserOrganizationsContext } from "./user-organizations.js"
 
 export type OrganizationContextVariables = {
   organizationContext: OrganizationContext
@@ -19,28 +19,27 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
 
   const apiKey = c.get("apiKey")
   const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
-  const legacyProxyOrganizationId = getLegacyProxyOrganizationId(c.req.raw.headers)
-  const scopedOrganizationId = apiKeyScopedOrganizationId ?? legacyProxyOrganizationId
+  const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
+  const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId
+  const session = c.get("session")
+  const userId = normalizeDenTypeId("user", user.id)
 
-  let organizationId = c.get("activeOrganizationId") ?? null
-  let organizationSlug = c.get("activeOrganizationSlug") ?? null
+  let organizationId = scopedOrganizationId ?? c.get("activeOrganizationId") ?? null
+  let organizationSlug = scopedOrganizationId ? null : c.get("activeOrganizationSlug") ?? null
 
   if (!organizationId) {
-    const session = c.get("session")
     const resolved = await resolveUserOrganizations({
-      activeOrganizationId: scopedOrganizationId ?? session?.activeOrganizationId ?? null,
-      userId: normalizeDenTypeId("user", user.id),
+      activeOrganizationId: session?.activeOrganizationId ?? null,
+      userId,
     })
 
-    const scopedOrgs = scopedOrganizationId
-      ? resolved.orgs.filter((org) => org.id === scopedOrganizationId)
-      : resolved.orgs
+    const scopedOrgs = resolved.orgs
 
-    organizationId = scopedOrganizationId ? scopedOrgs[0]?.id ?? null : resolved.activeOrgId
-    organizationSlug = scopedOrganizationId ? scopedOrgs[0]?.slug ?? null : resolved.activeOrgSlug
+    organizationId = resolved.activeOrgId
+    organizationSlug = resolved.activeOrgSlug
 
     if (shouldHydrateSessionActiveOrganization({
-      scopedOrganizationId: apiKeyScopedOrganizationId,
+      scopedOrganizationId,
       sessionActiveOrganizationId: session?.activeOrganizationId,
       resolvedActiveOrganizationId: organizationId,
     })) {
@@ -59,12 +58,38 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
     return c.json({ error: "organization_not_found" }, 404) as never
   }
 
-  const normalizedOrganizationId = normalizeDenTypeId("organization", organizationId)
+  let normalizedOrganizationId = normalizeDenTypeId("organization", organizationId)
 
-  const context = await getOrganizationContextForUser({
-    userId: normalizeDenTypeId("user", user.id),
+  let context = await getOrganizationContextForUser({
+    userId,
     organizationId: normalizedOrganizationId,
   })
+
+  if (!context && !scopedOrganizationId) {
+    const resolved = await resolveUserOrganizations({
+      activeOrganizationId: null,
+      userId,
+    })
+
+    c.set("userOrganizations", resolved.orgs)
+    c.set("activeOrganizationId", resolved.activeOrgId)
+    c.set("activeOrganizationSlug", resolved.activeOrgSlug)
+
+    if (resolved.activeOrgId) {
+      normalizedOrganizationId = normalizeDenTypeId("organization", resolved.activeOrgId)
+      context = await getOrganizationContextForUser({
+        userId,
+        organizationId: normalizedOrganizationId,
+      })
+
+      if (context) {
+        await hydrateSessionActiveOrganization(session, resolved.activeOrgId)
+        if (session) {
+          c.set("session", { ...session, activeOrganizationId: resolved.activeOrgId })
+        }
+      }
+    }
+  }
 
   if (!context) {
     return c.json({ error: "organization_not_found" }, 404) as never
