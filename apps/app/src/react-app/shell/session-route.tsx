@@ -322,6 +322,11 @@ async function draftToParts(draft: ComposerDraft, workspaceRoot: string) {
   return parts;
 }
 
+// Module-scoped so the first-run loader survives route remounts during boot
+// (component state would reset and flash the underlying page). Reset only on
+// app relaunch, matching BOOT_STARTED in desktop-runtime-boot.ts.
+let firstRunLoaderPhase: "unarmed" | "armed" | "done" = "unarmed";
+
 export function SessionRoute() {
   const navigate = useNavigate();
   const platform = usePlatform();
@@ -1256,23 +1261,59 @@ export function SessionRoute() {
     }
   }, [baseUrl, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, token, workspaces]);
 
+  // Full-screen first-run loader. Armed once per app launch from the very
+  // first render of a brand-new profile (no active-workspace memory yet) and
+  // held through all boot-state churn AND route remounts — recomputing
+  // visibility from volatile route state made it flicker, and a remount
+  // would reset component state. It drops only when the first session is
+  // selected, on error (retry toast must be reachable), when state settles
+  // and this turns out not to be a first run, or after a safety timeout.
+  const [firstRunLoaderActive, setFirstRunLoaderActive] = useState(() => {
+    if (firstRunLoaderPhase === "unarmed") {
+      firstRunLoaderPhase = isDesktopRuntime() && !readActiveWorkspaceId() ? "armed" : "done";
+    }
+    return firstRunLoaderPhase === "armed";
+  });
+  const dismissFirstRunLoader = useCallback(() => {
+    firstRunLoaderPhase = "done";
+    setFirstRunLoaderActive(false);
+  }, []);
+  useEffect(() => {
+    if (!firstRunLoaderActive) return;
+    const timeout = window.setTimeout(dismissFirstRunLoader, 30_000);
+    return () => window.clearTimeout(timeout);
+  }, [firstRunLoaderActive, dismissFirstRunLoader]);
+  useEffect(() => {
+    if (!firstRunLoaderActive) return;
+    if (selectedSessionId) {
+      dismissFirstRunLoader();
+      return;
+    }
+    const workspaceError = selectedWorkspaceId ? errorsByWorkspaceId[selectedWorkspaceId] : null;
+    if (routeError || selectedWorkspaceError || workspaceError) {
+      dismissFirstRunLoader();
+      return;
+    }
+    // State settled and this profile already has sessions or last-session
+    // memory (not a first run): hand back to the normal UI. Skipped once the
+    // auto-create below has latched — our own just-created session briefly
+    // satisfies this before navigation lands.
+    if (
+      !loading &&
+      !firstRunSessionRef.current &&
+      selectedWorkspaceId &&
+      ((sessionsByWorkspaceId[selectedWorkspaceId] ?? []).length > 0 ||
+        Boolean(readLastSessionFor(selectedWorkspaceId)))
+    ) {
+      dismissFirstRunLoader();
+    }
+  }, [firstRunLoaderActive, dismissFirstRunLoader, selectedSessionId, routeError, selectedWorkspaceError, errorsByWorkspaceId, loading, selectedWorkspaceId, sessionsByWorkspaceId]);
+
   // Drop the user straight into a chat-ready session when they arrive at a
   // workspace they have never used (no sessions, no last-session memory),
   // instead of the "select or create a session" page. Retries on the next
   // state change until a session is actually created — the create call bails
   // silently while the workspace endpoint/token is still resolving at boot.
-  // While pending, a full-screen loader covers the page; errors drop it so
-  // the retry toast stays reachable.
-  const firstRunSessionPending =
-    isDesktopRuntime() &&
-    Boolean(selectedWorkspaceId) &&
-    !selectedSessionId &&
-    workspaces.length > 0 &&
-    (sessionsByWorkspaceId[selectedWorkspaceId] ?? []).length === 0 &&
-    !readLastSessionFor(selectedWorkspaceId) &&
-    !routeError &&
-    !selectedWorkspaceError &&
-    !errorsByWorkspaceId[selectedWorkspaceId];
   useEffect(() => {
     if (!canCreateTask || !isDesktopRuntime()) return;
     if (selectedSessionId || firstRunSessionRef.current) return;
@@ -2147,7 +2188,7 @@ export function SessionRoute() {
       onSubscribe={openWorkModelsPromo.subscribe}
       onContinueWithout={openWorkModelsPromo.continueWithout}
     />
-    {firstRunSessionPending ? <FirstRunLoader /> : null}
+    {firstRunLoaderActive ? <FirstRunLoader /> : null}
     {providerStepOpen ? (
       <ProviderSelectionStep
         onOpenWorkModels={() => completeProviderStep("openwork-models")}
