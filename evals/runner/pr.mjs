@@ -6,7 +6,7 @@
  *
  * Frame screenshots are uploaded to Vercel Blob (see the `upload-photo`
  * skill) so they render inline in the PR comment. Requires
- * `BLOB_READ_WRITE_TOKEN` in the environment.
+ * `BLOB_READ_WRITE_TOKEN`, falling back to Infisical when unset.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -14,6 +14,18 @@ import { writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 const BLOB_API_BASE = "https://blob.vercel-storage.com";
+
+function resolveBlobToken() {
+  const fromEnv = process.env.BLOB_READ_WRITE_TOKEN;
+  if (fromEnv) return fromEnv;
+  const result = spawnSync(
+    "infisical",
+    ["secrets", "get", "BLOB_READ_WRITE_TOKEN", "--plain", "--silent"],
+    { encoding: "utf8" },
+  );
+  const token = result.status === 0 && !result.error ? result.stdout.trim() : "";
+  return token.length > 0 ? token : null;
+}
 
 function contentTypeFor(file) {
   const lower = file.toLowerCase();
@@ -121,10 +133,11 @@ export async function uploadRunImages(report, outDir) {
   }
   if (files.length === 0) return null;
 
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  const token = resolveBlobToken();
   if (!token) {
     throw new Error(
-      "BLOB_READ_WRITE_TOKEN is not set — fetch it with the get-env-var skill: " +
+      "BLOB_READ_WRITE_TOKEN is not set and could not be fetched from Infisical (`infisical secrets get BLOB_READ_WRITE_TOKEN --plain --silent`) — " +
+        "run `infisical login` once, or export it: " +
         'export BLOB_READ_WRITE_TOKEN="$(infisical secrets get BLOB_READ_WRITE_TOKEN --plain --silent)"',
     );
   }
