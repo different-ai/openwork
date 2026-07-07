@@ -1182,18 +1182,18 @@ export function SessionRoute() {
   );
 
 
-  const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string) => {
+  const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string): Promise<string | null> => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
       !workspace ||
       loading ||
       retryingWorkspaceIds.includes(workspaceId)
     ) {
-      return;
+      return null;
     }
     const endpoint = resolveWorkspaceEndpoint(workspace, { baseUrl, token });
     if (!endpoint || !endpoint.token) {
-      return;
+      return null;
     }
     const workspaceClient = createClient(
       endpoint.opencodeBaseUrl,
@@ -1227,6 +1227,7 @@ export function SessionRoute() {
       navigateToWorkspaceSession(workspaceId, session.id);
       focusPromptSoon();
       void refreshRouteState();
+      return session.id;
     } catch (error) {
       const message = describeTaskCreateError(error);
       setRouteError(message);
@@ -1250,22 +1251,25 @@ export function SessionRoute() {
           }, 1_000);
         }
       }
+      return null;
     }
   }, [baseUrl, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, token, workspaces]);
 
-  // First run: drop the user straight into a new session so they can chat
-  // immediately, instead of the "select or create a session" page. One-shot —
-  // hasCompletedOnboarding flips so later launches respect the last-session
-  // memory, and deleting all sessions never auto-creates a new one.
+  // Drop the user straight into a chat-ready session when they arrive at a
+  // workspace they have never used (no sessions, no last-session memory),
+  // instead of the "select or create a session" page. Retries on the next
+  // state change until a session is actually created — the create call bails
+  // silently while the workspace endpoint/token is still resolving at boot.
   useEffect(() => {
     if (!canCreateTask || !isDesktopRuntime()) return;
-    if (local.prefs.hasCompletedOnboarding || firstRunSessionRef.current) return;
-    if (selectedSessionId) return;
+    if (selectedSessionId || firstRunSessionRef.current) return;
     if ((sessionsByWorkspaceId[selectedWorkspaceId] ?? []).length > 0) return;
+    if (readLastSessionFor(selectedWorkspaceId)) return;
     firstRunSessionRef.current = true;
-    local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
-    void handleCreateTaskInWorkspace(selectedWorkspaceId);
-  }, [canCreateTask, local, selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId, handleCreateTaskInWorkspace]);
+    void handleCreateTaskInWorkspace(selectedWorkspaceId).then((createdSessionId) => {
+      if (!createdSessionId) firstRunSessionRef.current = false;
+    });
+  }, [canCreateTask, selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId, handleCreateTaskInWorkspace]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -1306,7 +1310,7 @@ export function SessionRoute() {
   } = useShellShortcuts({
     canCreateTask,
     workspaceId: selectedWorkspaceId,
-    onCreateTask: handleCreateTaskInWorkspace,
+    onCreateTask: (workspaceId: string) => void handleCreateTaskInWorkspace(workspaceId),
     onNextSessionTab: goToNextSessionTab,
     onPrevSessionTab: goToPrevSessionTab,
   });
