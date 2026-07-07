@@ -123,6 +123,7 @@ import {
   hideOpenWorkModelsPromo,
   markOpenWorkModelsStartupPromoShown,
 } from "@/react-app/domains/cloud/openwork-models-promo";
+import { FirstRunLoader } from "@/react-app/domains/onboarding/first-run-loader";
 import { ProviderSelectionStep } from "@/react-app/domains/onboarding/provider-selection-step";
 import { useOpenWorkModelsStartupPromo } from "@/react-app/domains/cloud/use-openwork-models-startup-promo";
 import {
@@ -1260,6 +1261,18 @@ export function SessionRoute() {
   // instead of the "select or create a session" page. Retries on the next
   // state change until a session is actually created — the create call bails
   // silently while the workspace endpoint/token is still resolving at boot.
+  // While pending, a full-screen loader covers the page; errors drop it so
+  // the retry toast stays reachable.
+  const firstRunSessionPending =
+    isDesktopRuntime() &&
+    Boolean(selectedWorkspaceId) &&
+    !selectedSessionId &&
+    workspaces.length > 0 &&
+    (sessionsByWorkspaceId[selectedWorkspaceId] ?? []).length === 0 &&
+    !readLastSessionFor(selectedWorkspaceId) &&
+    !routeError &&
+    !selectedWorkspaceError &&
+    !errorsByWorkspaceId[selectedWorkspaceId];
   useEffect(() => {
     if (!canCreateTask || !isDesktopRuntime()) return;
     if (selectedSessionId || firstRunSessionRef.current) return;
@@ -2134,6 +2147,7 @@ export function SessionRoute() {
       onSubscribe={openWorkModelsPromo.subscribe}
       onContinueWithout={openWorkModelsPromo.continueWithout}
     />
+    {firstRunSessionPending ? <FirstRunLoader /> : null}
     {providerStepOpen ? (
       <ProviderSelectionStep
         onOpenWorkModels={() => completeProviderStep("openwork-models")}
