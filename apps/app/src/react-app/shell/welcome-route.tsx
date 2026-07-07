@@ -6,6 +6,7 @@ import { t } from "../../i18n";
 import {
   pickDirectory,
   resolveWorkspaceListSelectedId,
+  workspaceCreateRemote,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
   type WorkspaceInfo,
@@ -249,18 +250,22 @@ export function WelcomeRoute() {
           remoteType,
         };
         let list: WorkspaceList | null = null;
-        try {
-          const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
-            await resolveOpenworkConnection();
-          if (normalizedBaseUrl && (resolvedToken || resolvedHostToken)) {
-            list = await createOpenworkServerClient({
-              baseUrl: normalizedBaseUrl,
-              token: resolvedToken || undefined,
-              hostToken: resolvedHostToken || undefined,
-            }).createRemoteWorkspace(payload);
+        if (isDesktopRuntime()) {
+          list = await workspaceCreateRemote(payload);
+        } else {
+          try {
+            const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
+              await resolveOpenworkConnection();
+            if (normalizedBaseUrl && (resolvedToken || resolvedHostToken)) {
+              list = await createOpenworkServerClient({
+                baseUrl: normalizedBaseUrl,
+                token: resolvedToken || undefined,
+                hostToken: resolvedHostToken || undefined,
+              }).createRemoteWorkspace(payload);
+            }
+          } catch {
+            list = null;
           }
-        } catch {
-          list = null;
         }
         if (!list) {
           throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");

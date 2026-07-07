@@ -40,6 +40,7 @@ import {
   pickDirectory,
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
+  workspaceCreateRemote,
   workspaceForget,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
@@ -1701,7 +1702,9 @@ export function SessionRoute() {
         remoteType,
       };
       let list: WorkspaceList | null = null;
-      if (client) {
+      if (isDesktopRuntime()) {
+        list = await workspaceCreateRemote(payload);
+      } else if (client) {
         list = await client.createRemoteWorkspace(payload).catch(() => null);
       }
       if (!list) {

@@ -107,6 +107,7 @@ import {
   pickDirectory,
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
+  workspaceCreateRemote,
   workspaceForget,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
@@ -1884,7 +1885,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         remoteType,
       };
       let list: WorkspaceList | null = null;
-      if (openworkClient) {
+      if (isDesktopRuntime()) {
+        list = await workspaceCreateRemote(payload);
+      } else if (openworkClient) {
         list = await openworkClient.createRemoteWorkspace(payload).catch(() => null);
       }
       if (!list) {
