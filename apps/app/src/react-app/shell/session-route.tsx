@@ -399,6 +399,7 @@ export function SessionRoute() {
   const [providerStepOpen, setProviderStepOpen] = useState(false);
   const pendingProviderDraftRef = useRef<{ draft: ComposerDraft; sessionId: string } | null>(null);
   const providerStepResendRef = useRef(false);
+  const firstRunSessionRef = useRef(false);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
@@ -1251,6 +1252,20 @@ export function SessionRoute() {
       }
     }
   }, [baseUrl, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, token, workspaces]);
+
+  // First run: drop the user straight into a new session so they can chat
+  // immediately, instead of the "select or create a session" page. One-shot —
+  // hasCompletedOnboarding flips so later launches respect the last-session
+  // memory, and deleting all sessions never auto-creates a new one.
+  useEffect(() => {
+    if (!canCreateTask || !isDesktopRuntime()) return;
+    if (local.prefs.hasCompletedOnboarding || firstRunSessionRef.current) return;
+    if (selectedSessionId) return;
+    if ((sessionsByWorkspaceId[selectedWorkspaceId] ?? []).length > 0) return;
+    firstRunSessionRef.current = true;
+    local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
+    void handleCreateTaskInWorkspace(selectedWorkspaceId);
+  }, [canCreateTask, local, selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId, handleCreateTaskInWorkspace]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
