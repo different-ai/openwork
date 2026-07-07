@@ -29,13 +29,13 @@ export function SsoScreen() {
   const [domainVerificationToken, setDomainVerificationToken] = useState<string | null>(null);
   const [requestingDomainToken, setRequestingDomainToken] = useState(false);
   const [verifyingDomain, setVerifyingDomain] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>("saml");
   const [issuer, setIssuer] = useState("");
   const [domain, setDomain] = useState("");
   const [entryPoint, setEntryPoint] = useState("");
   const [cert, setCert] = useState("");
   const [audience, setAudience] = useState("");
-  const [wantAssertionsSigned, setWantAssertionsSigned] = useState(true);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [scopes, setScopes] = useState("openid email profile");
@@ -68,6 +68,7 @@ export function SsoScreen() {
       const parsed = parseOrgSsoPayload(payload);
       setConnection(parsed.connection);
       syncFormFromConnection(parsed.connection);
+      setEditing(false);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to load SSO settings.");
     } finally {
@@ -86,7 +87,6 @@ export function SsoScreen() {
     if (nextConnection.saml) {
       setEntryPoint(nextConnection.saml.entryPoint ?? "");
       setAudience(nextConnection.saml.audience ?? "");
-      setWantAssertionsSigned(nextConnection.saml.wantAssertionsSigned);
     }
     if (nextConnection.oidc) {
       setClientId(nextConnection.oidc.clientId ?? "");
@@ -139,7 +139,6 @@ export function SsoScreen() {
                 entryPoint,
                 cert,
                 audience: audience || undefined,
-                wantAssertionsSigned,
               }
             : {
                 issuer,
@@ -164,6 +163,7 @@ export function SsoScreen() {
           setConnection(parsed.connection);
           syncFormFromConnection(parsed.connection);
           setDomainVerificationToken(parsed.domainVerificationToken);
+          setEditing(false);
         } finally {
           setSaving(false);
         }
@@ -188,6 +188,7 @@ export function SsoScreen() {
             throw getRequestError(payload, response, `Failed to delete SSO settings (${response.status}).`);
           }
           setConnection(null);
+          setEditing(false);
           await loadSsoConfig();
         } finally {
           setDeleting(false);
@@ -248,6 +249,13 @@ export function SsoScreen() {
     }
   }
 
+  function handleCancelEdit() {
+    syncFormFromConnection(connection);
+    setEditing(false);
+  }
+
+  const showConnectionForm = !connection || editing;
+
   if (!orgContext) {
     return (
       <DashboardPageTemplate icon={Shield} badgeLabel="Admin" title="SSO" description="Set up enterprise single sign-on for this workspace." colors={["#F5F3FF", "#4C1D95", "#8B5CF6", "#DDD6FE"]}>
@@ -265,95 +273,99 @@ export function SsoScreen() {
           {!orgContext.entitlements.sso ? <EnterprisePlanNotice feature="SSO" /> : null}
           {error ? <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">{error}</div> : null}
 
-          <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
-            <div className="flex flex-wrap items-center gap-3">
-              <DenButton variant={formMode === "saml" ? "primary" : "secondary"} onClick={() => setFormMode("saml")}>SAML</DenButton>
-              <DenButton variant={formMode === "oidc" ? "primary" : "secondary"} onClick={() => setFormMode("oidc")}>OIDC</DenButton>
-            </div>
+          {showConnectionForm ? (
+            <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <DenButton variant={formMode === "saml" ? "primary" : "secondary"} onClick={() => setFormMode("saml")}>SAML</DenButton>
+                  <DenButton variant={formMode === "oidc" ? "primary" : "secondary"} onClick={() => setFormMode("oidc")}>OIDC</DenButton>
+                </div>
+                {connection ? <DenButton variant="secondary" onClick={handleCancelEdit}>Cancel edit</DenButton> : null}
+              </div>
 
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <label className="block text-[14px] text-gray-700">
-                <span className="mb-2 block font-medium">Issuer URL</span>
-                <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://idp.example.com" />
-              </label>
-              <label className="block text-[14px] text-gray-700">
-                <span className="mb-2 block font-medium">Domain</span>
-                <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.com" />
-              </label>
-              {formMode === "saml" ? (
-                <>
-                  <label className="block text-[14px] text-gray-700 md:col-span-2">
-                    <span className="mb-2 block font-medium">SAML Entry Point</span>
-                    <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={entryPoint} onChange={(event) => setEntryPoint(event.target.value)} placeholder="https://idp.example.com/sso" />
-                  </label>
-                  <label className="block text-[14px] text-gray-700 md:col-span-2">
-                    <span className="mb-2 block font-medium">Audience URL</span>
-                    <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Defaults to the OpenWork auth URL" />
-                  </label>
-                  <label className="block text-[14px] text-gray-700 md:col-span-2">
-                    <span className="mb-2 block font-medium">IdP Certificate</span>
-                    <textarea className="min-h-[140px] w-full rounded-[18px] border border-gray-200 px-4 py-3" value={cert} onChange={(event) => setCert(event.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />
-                  </label>
-                  <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] text-gray-700 md:col-span-2">
-                    <input type="checkbox" checked={wantAssertionsSigned} onChange={(event) => setWantAssertionsSigned(event.target.checked)} />
-                    Require signed SAML assertions
-                  </label>
-                </>
-              ) : (
-                <>
-                  <label className="block text-[14px] text-gray-700">
-                    <span className="mb-2 block font-medium">Client ID</span>
-                    <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={clientId} onChange={(event) => setClientId(event.target.value)} />
-                  </label>
-                  <label className="block text-[14px] text-gray-700">
-                    <span className="mb-2 block font-medium">Client Secret</span>
-                    <input type="password" className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} />
-                  </label>
-                  <label className="block text-[14px] text-gray-700 md:col-span-2">
-                    <span className="mb-2 block font-medium">Scopes</span>
-                    <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={scopes} onChange={(event) => setScopes(event.target.value)} placeholder="openid email profile" />
-                  </label>
-                  <label className="block text-[14px] text-gray-700 md:col-span-2">
-                    <span className="mb-2 block font-medium">Token endpoint auth method</span>
-                    <select className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpointAuthentication} onChange={(event) => setTokenEndpointAuthentication(event.target.value === "client_secret_basic" || event.target.value === "client_secret_post" ? event.target.value : "")}>
-                      <option value="">Use provider default</option>
-                      <option value="client_secret_basic">client_secret_basic</option>
-                      <option value="client_secret_post">client_secret_post</option>
-                    </select>
-                  </label>
-                  <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] text-gray-700 md:col-span-2">
-                    <input type="checkbox" checked={skipDiscovery} onChange={(event) => setSkipDiscovery(event.target.checked)} />
-                    Use manual OIDC endpoints instead of discovery
-                  </label>
-                  {skipDiscovery ? (
-                    <>
-                      <label className="block text-[14px] text-gray-700 md:col-span-2">
-                        <span className="mb-2 block font-medium">Authorization endpoint</span>
-                        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={authorizationEndpoint} onChange={(event) => setAuthorizationEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/authorize" />
-                      </label>
-                      <label className="block text-[14px] text-gray-700 md:col-span-2">
-                        <span className="mb-2 block font-medium">Token endpoint</span>
-                        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpoint} onChange={(event) => setTokenEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/token" />
-                      </label>
-                      <label className="block text-[14px] text-gray-700 md:col-span-2">
-                        <span className="mb-2 block font-medium">JWKS endpoint</span>
-                        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={jwksEndpoint} onChange={(event) => setJwksEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/keys" />
-                      </label>
-                      <label className="block text-[14px] text-gray-700 md:col-span-2">
-                        <span className="mb-2 block font-medium">UserInfo endpoint</span>
-                        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={userInfoEndpoint} onChange={(event) => setUserInfoEndpoint(event.target.value)} placeholder="Optional" />
-                      </label>
-                    </>
-                  ) : null}
-                </>
-              )}
-            </div>
+              <div className="mt-6 grid gap-4 md:grid-cols-2">
+                <label className="block text-[14px] text-gray-700">
+                  <span className="mb-2 block font-medium">Issuer URL</span>
+                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://idp.example.com" />
+                </label>
+                <label className="block text-[14px] text-gray-700">
+                  <span className="mb-2 block font-medium">Domain</span>
+                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.com" />
+                </label>
+                {formMode === "saml" ? (
+                  <>
+                    <label className="block text-[14px] text-gray-700 md:col-span-2">
+                      <span className="mb-2 block font-medium">SAML Entry Point</span>
+                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={entryPoint} onChange={(event) => setEntryPoint(event.target.value)} placeholder="https://idp.example.com/sso" />
+                    </label>
+                    <label className="block text-[14px] text-gray-700 md:col-span-2">
+                      <span className="mb-2 block font-medium">Audience URL</span>
+                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Defaults to the OpenWork auth URL" />
+                    </label>
+                    <label className="block text-[14px] text-gray-700 md:col-span-2">
+                      <span className="mb-2 block font-medium">IdP Certificate</span>
+                      <textarea className="min-h-[140px] w-full rounded-[18px] border border-gray-200 px-4 py-3" value={cert} onChange={(event) => setCert(event.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />
+                    </label>
+                    <div className="rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] leading-6 text-gray-600 md:col-span-2">
+                      OpenWork always requires signed SAML assertions, timestamps, and SP-initiated responses for organization SAML connections.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <label className="block text-[14px] text-gray-700">
+                      <span className="mb-2 block font-medium">Client ID</span>
+                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={clientId} onChange={(event) => setClientId(event.target.value)} />
+                    </label>
+                    <label className="block text-[14px] text-gray-700">
+                      <span className="mb-2 block font-medium">Client Secret</span>
+                      <input type="password" className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} />
+                    </label>
+                    <label className="block text-[14px] text-gray-700 md:col-span-2">
+                      <span className="mb-2 block font-medium">Scopes</span>
+                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={scopes} onChange={(event) => setScopes(event.target.value)} placeholder="openid email profile" />
+                    </label>
+                    <label className="block text-[14px] text-gray-700 md:col-span-2">
+                      <span className="mb-2 block font-medium">Token endpoint auth method</span>
+                      <select className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpointAuthentication} onChange={(event) => setTokenEndpointAuthentication(event.target.value === "client_secret_basic" || event.target.value === "client_secret_post" ? event.target.value : "")}>
+                        <option value="">Use provider default</option>
+                        <option value="client_secret_basic">client_secret_basic</option>
+                        <option value="client_secret_post">client_secret_post</option>
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] text-gray-700 md:col-span-2">
+                      <input type="checkbox" checked={skipDiscovery} onChange={(event) => setSkipDiscovery(event.target.checked)} />
+                      Use manual OIDC endpoints instead of discovery
+                    </label>
+                    {skipDiscovery ? (
+                      <>
+                        <label className="block text-[14px] text-gray-700 md:col-span-2">
+                          <span className="mb-2 block font-medium">Authorization endpoint</span>
+                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={authorizationEndpoint} onChange={(event) => setAuthorizationEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/authorize" />
+                        </label>
+                        <label className="block text-[14px] text-gray-700 md:col-span-2">
+                          <span className="mb-2 block font-medium">Token endpoint</span>
+                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpoint} onChange={(event) => setTokenEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/token" />
+                        </label>
+                        <label className="block text-[14px] text-gray-700 md:col-span-2">
+                          <span className="mb-2 block font-medium">JWKS endpoint</span>
+                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={jwksEndpoint} onChange={(event) => setJwksEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/keys" />
+                        </label>
+                        <label className="block text-[14px] text-gray-700 md:col-span-2">
+                          <span className="mb-2 block font-medium">UserInfo endpoint</span>
+                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={userInfoEndpoint} onChange={(event) => setUserInfoEndpoint(event.target.value)} placeholder="Optional" />
+                        </label>
+                      </>
+                    ) : null}
+                  </>
+                )}
+              </div>
 
-            <div className="mt-6 flex flex-wrap gap-3">
-              <DenButton variant="primary" icon={RefreshCw} onClick={() => void handleSave()} disabled={saving}>{saving ? "Saving..." : "Save SSO connection"}</DenButton>
-              <DenButton variant="secondary" icon={Trash2} onClick={() => void handleDelete()} disabled={deleting || !connection}>{deleting ? "Deleting..." : "Delete connection"}</DenButton>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <DenButton variant="primary" icon={RefreshCw} onClick={() => void handleSave()} disabled={saving || !orgContext.entitlements.sso}>{saving ? "Saving..." : "Save SSO connection"}</DenButton>
+                <DenButton variant="secondary" icon={Trash2} onClick={() => void handleDelete()} disabled={deleting || !connection}>{deleting ? "Deleting..." : "Delete connection"}</DenButton>
+              </div>
             </div>
-          </div>
+          ) : null}
 
           <div className="rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
             <div className="flex items-start justify-between gap-4">
@@ -361,6 +373,12 @@ export function SsoScreen() {
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">Current connection</p>
                 <p className="mt-1 text-[14px] leading-6 text-gray-500">Use the generated sign-in and provider setup URLs below.</p>
               </div>
+              {connection && !editing ? (
+                <div className="flex flex-wrap gap-3">
+                  <DenButton variant="secondary" onClick={() => setEditing(true)}>Edit connection</DenButton>
+                  <DenButton variant="secondary" icon={Trash2} onClick={() => void handleDelete()} disabled={deleting}>{deleting ? "Deleting..." : "Delete connection"}</DenButton>
+                </div>
+              ) : null}
             </div>
 
             {!connection && !busy ? <p className="mt-4 text-[14px] text-gray-500">No SSO connection configured yet.</p> : null}

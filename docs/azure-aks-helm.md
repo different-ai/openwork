@@ -623,6 +623,9 @@ Use OIDC first for a smoke test because most IdPs provide discovery metadata.
 Auth0, Okta trial, and Microsoft Entra test tenants all work as realistic demo
 IdPs.
 
+For the full Microsoft Entra SAML and SCIM setup flow, use
+`docs/microsoft-entra-sso-scim.md`.
+
 Configure the IdP application with this callback URL:
 
 ```text

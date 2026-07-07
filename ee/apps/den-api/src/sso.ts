@@ -5,6 +5,7 @@ import { z } from "zod"
 import { auth } from "./auth.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { isMicrosoftEntraManagedDomain } from "./sso-entra-domain.js"
 import { SSO_IDENTITY_EXTRA_FIELDS } from "./sso-jit.js"
 import { ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED } from "./sso-saml-policy.js"
 
@@ -244,11 +245,22 @@ export async function deleteOrganizationSsoConnection(organizationId: Organizati
 export async function registerOrganizationSsoConnection(input: OrganizationSsoRegistrationInput) {
   const providerId = buildOrganizationSsoProviderId(input.organizationId)
   const existing = await getOrganizationSsoConnection(input.organizationId)
+  const domainVerified = isMicrosoftEntraManagedDomain({
+    domain: input.domain,
+    issuer: input.issuer,
+    entryPoint: input.kind === "saml" ? input.entryPoint : null,
+  })
 
   if (existing) {
     const existingProvider = await getSsoProviderByProviderId(providerId)
     if (!existingProvider) {
       await registerBetterAuthSsoProvider(input, providerId)
+      if (domainVerified) {
+        await db
+          .update(SsoProviderTable)
+          .set({ domainVerified: true })
+          .where(eq(SsoProviderTable.providerId, providerId))
+      }
       await db
         .update(SsoConnectionTable)
         .set({
@@ -286,7 +298,7 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
           domain: draftProvider.domain,
           oidcConfig: draftProvider.oidcConfig,
           samlConfig: draftProvider.samlConfig,
-          domainVerified: false,
+          domainVerified,
         })
         .where(eq(SsoProviderTable.providerId, providerId))
 
@@ -317,6 +329,12 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
   }
 
   await registerBetterAuthSsoProvider(input, providerId)
+  if (domainVerified) {
+    await db
+      .update(SsoProviderTable)
+      .set({ domainVerified: true })
+      .where(eq(SsoProviderTable.providerId, providerId))
+  }
 
   await db.insert(SsoConnectionTable).values({
     id: createDenTypeId("ssoConnection"),
