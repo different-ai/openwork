@@ -1,5 +1,7 @@
 import DOMPurify from "dompurify";
 import emojiKeywords from "emojilib";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import { Marked, type MarkedExtension, type Token, type Tokens } from "marked";
 import { markedEmoji } from "marked-emoji";
 import {
@@ -535,4 +537,37 @@ export async function renderHighlightedMarkdownHtml(text: string, presentation: 
   const { highlightedMarkdownParser } = parsersForPresentation(presentation);
   const html = await highlightedMarkdownParser.parse(text, { async: true });
   return sanitizeMarkdownHtml(html);
+}
+
+const USER_MATH_RE = /\$\$([\s\S]+?)\$\$|\$(?![\d\s])([^$\n]+?)\$(?!\d)/g;
+
+export function renderUserMathHtml(text: string): string {
+  if (!text.trim()) {
+    return "";
+  }
+
+  const parts: string[] = [];
+  let last = 0;
+  let match: RegExpExecArray | null;
+  const re = new RegExp(USER_MATH_RE.source, "g");
+
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > last) {
+      parts.push(escapeHtml(text.slice(last, match.index)));
+    }
+    const isDisplay = match[1] !== undefined;
+    const mathContent = (isDisplay ? match[1] : match[2])!.trim();
+    try {
+      parts.push(katex.renderToString(mathContent, { displayMode: isDisplay, throwOnError: false }));
+    } catch {
+      parts.push(escapeHtml(match[0]));
+    }
+    last = re.lastIndex;
+  }
+
+  if (last < text.length) {
+    parts.push(escapeHtml(text.slice(last)));
+  }
+
+  return sanitizeMarkdownHtml(parts.join(""));
 }

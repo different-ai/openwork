@@ -669,11 +669,11 @@ const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
     const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
-    const inlineParts = React.useMemo(
-      () => message.parts.filter((part) => (part.type === "text" && Boolean(part.text)) || isFileUIPart(part)),
+    const userText = React.useMemo(
+      () => message.parts.map((part) => (part.type === "text" ? part.text : "")).join(""),
       [message.parts],
     )
-    const hasContent = inlineParts.length > 0
+    const hasSkillChips = USER_SKILL_TOKEN_RE.test(userText)
 
     return (
       <Message
@@ -690,32 +690,30 @@ const UserMessage = React.memo(
                 className="group flex w-full flex-col items-end gap-1 !select-text"
                 style={{ userSelect: "text" }}
               >
-                {hasContent ? (
-                  <MessageContent
-                    className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
-                    style={{ userSelect: "text" }}
-                  >
-                    {inlineParts.map((part, index) => {
-                      if (part.type === "text") {
-                        return (
-                          <span key={`text-${index}`} className="whitespace-pre-wrap">
-                            {renderUserTextWithSkillChips(part.text, highlightQuery)}
-                          </span>
-                        )
-                      }
-                      if (isFileUIPart(part)) {
-                        return (
-                          <span
-                            key={`file-${part.url}-${index}`}
-                            className="mx-1 inline-flex align-middle not-prose"
-                          >
-                            <FileMessage part={part} tone="user" />
-                          </span>
-                        )
-                      }
-                      return null
-                    })}
-                  </MessageContent>
+                {message.parts.filter(isFileUIPart).map((part, index) => (
+                  <FileMessage key={`${part.url}-${index}`} part={part} tone="user" />
+                ))}
+                {message.parts.some((part) => part.type === "text" && part.text) ? (
+                  // NOTE: when skill chips are present we fall back to plain-text rendering.
+                  // LaTeX won't render in that path. Known tradeoff — chips + math in the same
+                  // message is rare today, but worth revisiting if math skills are introduced.
+                  hasSkillChips ? (
+                    <MessageContent
+                      className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 whitespace-pre-wrap sm:max-w-[75%] !select-text not-prose"
+                      style={{ userSelect: "text" }}
+                    >
+                      {renderUserTextWithSkillChips(userText, highlightQuery)}
+                    </MessageContent>
+                  ) : (
+                    <MessageContent
+                      className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 whitespace-pre-wrap sm:max-w-[75%] !select-text not-prose"
+                      style={{ userSelect: "text" }}
+                      mathOnly
+                      highlightQuery={highlightQuery}
+                    >
+                      {userText}
+                    </MessageContent>
+                  )
                 ) : null}
                 {!isStreaming && (
                   <MessageActions

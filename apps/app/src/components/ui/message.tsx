@@ -52,6 +52,7 @@ export type MessageContentProps = {
   isStreaming?: boolean
   highlightQuery?: string
   className?: string
+  mathOnly?: boolean
 } & React.ComponentProps<"div">
 
 const MessageContent = ({
@@ -60,15 +61,17 @@ const MessageContent = ({
   className,
   isStreaming,
   highlightQuery,
+  mathOnly,
   ...props
 }: MessageContentProps) => {
-  if (markdown) {
+  if (markdown || mathOnly) {
     return (
       <MarkdownBlock
         className={cn(messageContentClassName, className)}
         text={children as string}
         streaming={isStreaming}
         highlightQuery={highlightQuery}
+        mathOnly={mathOnly}
         {...props}
       />
     )
