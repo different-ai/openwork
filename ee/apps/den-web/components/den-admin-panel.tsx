@@ -833,6 +833,7 @@ export function DenAdminPanel() {
   const [savingCapabilityOrgId, setSavingCapabilityOrgId] = useState<string | null>(null);
   const [deleteUserDialog, setDeleteUserDialog] = useState<AdminUser | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [orgRenderLimit, setOrgRenderLimit] = useState(200);
 
   const loadOverview = useCallback(async (loadBilling: boolean) => {
     setRefreshing(true);
@@ -1017,6 +1018,8 @@ export function DenAdminPanel() {
 
     return payload.organizations.filter((org) => `${org.name} ${org.slug} ${org.id}`.toLowerCase().includes(normalizedQuery));
   }, [payload, query]);
+  const renderedOrganizations = filteredOrganizations.slice(0, orgRenderLimit);
+  const remainingOrganizationCount = filteredOrganizations.length - renderedOrganizations.length;
 
   useEffect(() => {
     if (!payload) {
@@ -1516,7 +1519,9 @@ export function DenAdminPanel() {
 
         <div className="mt-6 grid gap-3">
           {viewMode === "organizations" ? (
-            filteredOrganizations.length > 0 ? filteredOrganizations.map((org) => {
+            filteredOrganizations.length > 0 ? (
+              <>
+                {renderedOrganizations.map((org) => {
               const draft = orgDrafts[org.id] ?? { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
               const changed = draft.tier !== org.plan.tier || draft.seatLimit !== String(org.seatLimit);
 
@@ -1626,7 +1631,23 @@ export function DenAdminPanel() {
                   </div>
                 </div>
               );
-            }) : (
+                })}
+                {remainingOrganizationCount > 0 ? (
+                  <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm text-slate-500">
+                      Showing {renderedOrganizations.length} of {filteredOrganizations.length} organizations
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setOrgRenderLimit((current) => current + 200)}
+                      className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
+                    >
+                      Show more
+                    </button>
+                  </div>
+                ) : null}
+              </>
+            ) : (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
                 <p className="text-base font-semibold text-slate-950">No organizations match</p>
                 <p className="mt-2 text-sm leading-7 text-slate-500">Try a different search.</p>

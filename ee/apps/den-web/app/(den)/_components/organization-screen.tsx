@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { LogOut, Settings } from "lucide-react";
 import { getErrorMessage, normalizeAuthIntentParam, PENDING_AUTH_INTENT_STORAGE_KEY, requestJson } from "../_lib/den-flow";
 import { type DenOrgSummary, formatRoleLabel, getInferenceRoute, getMarketplaceOnboardingRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
+import { useOrgListWindow } from "../_lib/use-org-list-window";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 type SettingsTab = "profile" | "organizations";
@@ -38,6 +39,15 @@ export function OrganizationScreen() {
   const singleOrgName = runtimeConfig.singleOrgName || "OpenWork";
   const singleOrgSlug = runtimeConfig.singleOrgSlug.trim();
   const showDirectCreateFlow = !isSingleOrgMode && orgs.length === 0;
+  const {
+    query: orgQuery,
+    setQuery: setOrgQuery,
+    visible: visibleOrgs,
+    filteredCount: orgFilteredCount,
+    hasMore: orgHasMore,
+    showMore: showMoreOrgs,
+    showSearch: showOrgSearch,
+  } = useOrgListWindow(orgs);
 
   useEffect(() => {
     if (!sessionHydrated || !runtimeConfigLoaded) return;
@@ -352,16 +362,27 @@ export function OrganizationScreen() {
               </section>
             ) : (
               <>
-                <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <p className="max-w-2xl text-sm text-gray-500">
                     Organizations are independent environments. In each organization you can collaborate with other members and manage your own resources.
                   </p>
-                  <button
-                    onClick={() => setShowCreate(true)}
-                    className="w-full shrink-0 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gray-800 sm:w-auto"
-                  >
-                    + Create New Organization
-                  </button>
+                  <div className="flex w-full flex-col gap-3 sm:w-auto sm:min-w-[18rem]">
+                    {showOrgSearch ? (
+                      <input
+                        type="search"
+                        value={orgQuery}
+                        onChange={(event) => setOrgQuery(event.target.value)}
+                        placeholder="Search organizations"
+                        className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
+                      />
+                    ) : null}
+                    <button
+                      onClick={() => setShowCreate(true)}
+                      className="w-full shrink-0 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gray-800 sm:w-auto"
+                    >
+                      + Create New Organization
+                    </button>
+                  </div>
                 </div>
 
                 {showCreate ? (
@@ -408,7 +429,7 @@ export function OrganizationScreen() {
                 ) : null}
 
                 <div className="grid gap-3 md:hidden">
-                  {orgs.map((org) => (
+                  {visibleOrgs.map((org) => (
                     <section key={org.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -453,7 +474,7 @@ export function OrganizationScreen() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        {orgs.map((org) => (
+                        {visibleOrgs.map((org) => (
                           <tr key={org.id} className="transition-colors hover:bg-gray-50/50">
                             <td className="px-6 py-4">
                               <div className="font-medium text-gray-900">{org.name}</div>
@@ -491,6 +512,25 @@ export function OrganizationScreen() {
                     </table>
                   </div>
                 </div>
+
+                {orgFilteredCount === 0 && orgQuery ? (
+                  <p className="mt-4 text-sm text-gray-500">No organizations match your search.</p>
+                ) : null}
+
+                {orgHasMore ? (
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm text-gray-500">
+                      Showing {visibleOrgs.length} of {orgFilteredCount} organizations
+                    </p>
+                    <button
+                      type="button"
+                      onClick={showMoreOrgs}
+                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 sm:w-auto"
+                    >
+                      Show more
+                    </button>
+                  </div>
+                ) : null}
 
                 <p className="mt-8 text-center text-sm text-gray-500">You have no pending organization invites.</p>
               </>

@@ -42,6 +42,7 @@ import {
   getSsoRoute,
   getScimRoute,
 } from "../../_lib/den-org";
+import { useOrgListWindow } from "../../_lib/use-org-list-window";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgSelectionScreen } from "./org-selection-screen";
@@ -195,6 +196,16 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
+  const {
+    query: switcherQuery,
+    setQuery: setSwitcherQuery,
+    visible: visibleOrgDirectory,
+    filteredCount: switcherFilteredCount,
+    hiddenCount: switcherHiddenCount,
+    hasMore: switcherHasMore,
+    showMore: showMoreOrgDirectory,
+    showSearch: showSwitcherSearch,
+  } = useOrgListWindow(orgDirectory, 20);
 
   if (orgSelectionRequired) {
     return (
@@ -360,9 +371,21 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               Switch workspace
             </p>
           </div>
-          
-          <div className="grid gap-0.5 px-1.5">
-            {orgDirectory.map((org) => (
+
+          {showSwitcherSearch ? (
+            <div className="px-2 pb-1">
+              <input
+                type="search"
+                value={switcherQuery}
+                onChange={(event) => setSwitcherQuery(event.target.value)}
+                placeholder="Search workspaces"
+                className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[12px] text-gray-900 outline-none transition focus:border-gray-400"
+              />
+            </div>
+          ) : null}
+
+          <div className="grid max-h-64 gap-0.5 overflow-y-auto px-1.5">
+            {visibleOrgDirectory.map((org) => (
               <button
                 key={org.id}
                 type="button"
@@ -392,6 +415,22 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               </button>
             ))}
           </div>
+
+          {switcherFilteredCount === 0 && switcherQuery ? (
+            <p className="px-3 py-1 text-[12px] text-gray-500">No organizations match your search.</p>
+          ) : null}
+
+          {switcherHasMore ? (
+            <div className="px-1.5">
+              <button
+                type="button"
+                onClick={showMoreOrgDirectory}
+                className="flex w-full items-center justify-center rounded-lg px-2 py-1.5 text-[12px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+              >
+                Show more ({switcherHiddenCount})
+              </button>
+            </div>
+          ) : null}
 
           <div className="px-1.5 mt-0.5">
             <Link

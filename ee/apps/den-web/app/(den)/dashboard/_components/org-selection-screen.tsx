@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Building2, ChevronRight, LogOut, Plus } from "lucide-react";
 import { formatRoleLabel, type DenOrgSummary } from "../../_lib/den-org";
+import { useOrgListWindow } from "../../_lib/use-org-list-window";
 
 export function OrgSelectionScreen({
   orgs,
@@ -17,6 +18,16 @@ export function OrgSelectionScreen({
   busy: boolean;
   error: string | null;
 }) {
+  const {
+    query,
+    setQuery,
+    visible,
+    filteredCount,
+    hasMore,
+    showMore,
+    showSearch,
+  } = useOrgListWindow(orgs);
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#fafafa] px-4 py-12">
       <div className="w-full max-w-md">
@@ -29,8 +40,18 @@ export function OrgSelectionScreen({
           </p>
         </div>
 
+        {showSearch ? (
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search organizations"
+            className="mb-3 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[13px] text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
+          />
+        ) : null}
+
         <div className="grid gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-[0_12px_24px_-16px_rgba(0,0,0,0.15)]">
-          {orgs.map((org) => (
+          {visible.map((org) => (
             <button
               key={org.id}
               type="button"
@@ -53,6 +74,25 @@ export function OrgSelectionScreen({
             </button>
           ))}
         </div>
+
+        {filteredCount === 0 && query ? (
+          <p className="mt-3 px-1 text-[13px] text-gray-500">No organizations match your search.</p>
+        ) : null}
+
+        {hasMore ? (
+          <div className="mt-3 flex items-center justify-between gap-3 px-1">
+            <p className="text-[12px] text-gray-500">
+              Showing {visible.length} of {filteredCount} organizations
+            </p>
+            <button
+              type="button"
+              onClick={showMore}
+              className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              Show more
+            </button>
+          </div>
+        ) : null}
 
         {error ? (
           <p className="mt-3 px-1 text-[12px] font-medium text-rose-600">{error}</p>
