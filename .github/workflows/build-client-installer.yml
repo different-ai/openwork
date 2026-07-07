@@ -134,7 +134,21 @@ jobs:
 
       - name: Install dependencies
         shell: bash
-        run: bun install --cwd apps/installer
+        run: |
+          set -euo pipefail
+          # Build the workspace dependency's dist first: @openwork/install-config's
+          # "default" export points at dist/, which a fresh checkout lacks.
+          (cd packages/install-config && bun install && bun run build)
+          # bun 1.3.9 on Windows can fail to create the parent-relative
+          # workspace symlink (ENOENT) after installing every other package;
+          # the copy fallback below repairs exactly that case.
+          (cd apps/installer && bun install) || [ "${{ matrix.os_type }}" = "windows" ]
+          if [ ! -e "apps/installer/node_modules/@openwork/install-config/package.json" ]; then
+            rm -rf "apps/installer/node_modules/@openwork/install-config"
+            mkdir -p "apps/installer/node_modules/@openwork"
+            cp -R "packages/install-config" "apps/installer/node_modules/@openwork/install-config"
+          fi
+          test -e "apps/installer/node_modules/@openwork/install-config/package.json"
 
       - name: Test
         shell: bash
