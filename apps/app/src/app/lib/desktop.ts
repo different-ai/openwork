@@ -151,6 +151,7 @@ declare global {
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
         version?: string;
+        disableWorkspaceRecovery?: boolean;
       };
     };
   }
