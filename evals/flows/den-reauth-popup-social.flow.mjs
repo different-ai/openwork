@@ -61,10 +61,10 @@ export default {
             await goToDenWeb(ctx, "/dashboard/members");
           },
           assert: async () => {
-            const actual = await ctx.eval(`fetch('/v1/me', { credentials: 'include' }).then((response) => response.json())`, { awaitPromise: true });
+            const actual = await ctx.eval(`fetch('/api/den/v1/me', { credentials: 'include' }).then((response) => response.json())`, { awaitPromise: true });
             recordAssertion(
               ctx,
-              "/v1/me reports the seeded Google auth provider for Alex",
+              "/api/den/v1/me reports the seeded Google auth provider for Alex",
               Array.isArray(actual?.user?.authProviders) && actual.user.authProviders.includes("google"),
               actual?.user?.authProviders ?? actual,
             );
