@@ -1292,6 +1292,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
           // the first message (short transcripts cannot scroll it clear).
           className={`absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pb-4 sm:px-5`}
         >
+          {/* Removed the padding from the scroll container and added a spacer div to adjust the top spacing when the find bar is open*/}
+          {findOpen? <div className="h-16"></div>:<div className="h-4"></div>}
           {/* Chat column: tighter than the composer (800px) so messages
                keep a comfortable reading width and don't feel "too big". */}
           <div ref={contentRef} className="mx-auto w-full max-w-[720px]">
