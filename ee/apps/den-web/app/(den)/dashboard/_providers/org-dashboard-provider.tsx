@@ -243,6 +243,11 @@ export function OrgDashboardProvider({
       await executeReauthableAction(pending.label, pending.action);
       pending.resolve();
     } catch (error) {
+      if (isReauthRequiredError(error)) {
+        setPendingReauthMutation(pending);
+        return;
+      }
+
       pending.reject(error);
     }
   }

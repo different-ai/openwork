@@ -1085,5 +1085,10 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
     }
   }
 
+  const reauthError = getReauthRequiredError(payload, response);
+  if (reauthError) {
+    throw reauthError;
+  }
+
   return { response, payload, text };
 }
