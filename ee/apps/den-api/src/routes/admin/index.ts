@@ -548,13 +548,15 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
           userId: AuthAccountTable.userId,
           providerId: AuthAccountTable.providerId,
         })
-        .from(AuthAccountTable),
+        .from(AuthAccountTable)
+        .groupBy(AuthAccountTable.userId, AuthAccountTable.providerId),
       db
         .select({
           userId: AuthSessionTable.userId,
           day: sessionDayExpr,
         })
         .from(AuthSessionTable)
+        .where(gte(AuthSessionTable.createdAt, activityWindowStart))
         .groupBy(AuthSessionTable.userId, sessionDayExpr),
       // Non-fatal: telemetry_event may be missing in environments that never
       // ran its migration; activity then degrades to sign-in days only.

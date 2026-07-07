@@ -11,6 +11,9 @@ type ActivityFilter = "all" | "active-7d" | "active-30d" | "recurring" | "inacti
 type SortMode = "newest" | "recently-active" | "most-sign-ins" | "most-active-days" | "fastest-invite";
 
 const DEFAULT_FREE_SEAT_COUNT = 5;
+const ADMIN_OVERVIEW_CACHE_KEY = "den-admin-overview-cache";
+
+let cachedAdminOverviewPayload: unknown = null;
 
 type AdminBillingStatus = {
   status: "paid" | "unpaid" | "unavailable";
@@ -342,6 +345,74 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
     organizations,
     generatedAt: toStringValue(payload.generatedAt)
   };
+}
+
+function clearPersistedAdminOverviewCache() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.sessionStorage.removeItem(ADMIN_OVERVIEW_CACHE_KEY);
+  } catch {
+    // Ignore storage failures: the cache is only a best-effort fast path.
+  }
+}
+
+function clearAdminOverviewCache() {
+  cachedAdminOverviewPayload = null;
+  clearPersistedAdminOverviewCache();
+}
+
+function storeAdminOverviewCache(payload: unknown) {
+  cachedAdminOverviewPayload = payload;
+
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    const serialized = JSON.stringify(payload);
+    if (serialized === undefined) {
+      window.sessionStorage.removeItem(ADMIN_OVERVIEW_CACHE_KEY);
+      return;
+    }
+
+    window.sessionStorage.setItem(ADMIN_OVERVIEW_CACHE_KEY, serialized);
+  } catch {
+    clearPersistedAdminOverviewCache();
+  }
+}
+
+function readAdminOverviewCache(): AdminPayload | null {
+  const parsedCachedPayload = parseAdminPayload(cachedAdminOverviewPayload);
+  if (parsedCachedPayload) {
+    return parsedCachedPayload;
+  }
+
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const persistedPayload = window.sessionStorage.getItem(ADMIN_OVERVIEW_CACHE_KEY);
+    if (!persistedPayload) {
+      return null;
+    }
+
+    const storedPayload: unknown = JSON.parse(persistedPayload);
+    const parsedStoredPayload = parseAdminPayload(storedPayload);
+    if (!parsedStoredPayload) {
+      window.sessionStorage.removeItem(ADMIN_OVERVIEW_CACHE_KEY);
+      return null;
+    }
+
+    cachedAdminOverviewPayload = storedPayload;
+    return parsedStoredPayload;
+  } catch {
+    clearPersistedAdminOverviewCache();
+    return null;
+  }
 }
 
 function getFriendlyHtmlError(value: string): string | null {
@@ -813,6 +884,57 @@ function PlanPill({ tier }: { tier: AdminOrganization["plan"]["tier"] }) {
   );
 }
 
+function DenAdminLoadingShell() {
+  return (
+    <section className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white shadow-sm" aria-busy="true">
+      <div className="border-b border-slate-200 px-6 py-6 sm:px-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Den admin</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">User backoffice</h1>
+            <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
+              Loading the latest signup, worker, and activity summaries.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 animate-pulse">
+            <div className="h-10 w-48 rounded-full bg-slate-100" />
+            <div className="h-10 w-24 rounded-full border border-slate-200 bg-slate-50" />
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6 animate-pulse">
+          {[0, 1, 2, 3, 4, 5].map((index) => (
+            <div key={index} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+              <div className="h-3 w-20 rounded-full bg-slate-200" />
+              <div className="mt-3 h-8 w-16 rounded-lg bg-slate-200" />
+              <div className="mt-3 h-3 w-full rounded-full bg-slate-200" />
+              <div className="mt-2 h-3 w-2/3 rounded-full bg-slate-200" />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="px-6 py-6 sm:px-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 animate-pulse">
+          <div className="h-11 w-80 rounded-full border border-slate-200 bg-slate-50" />
+          <div className="h-10 w-28 rounded-full border border-slate-200 bg-slate-50" />
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 animate-pulse">
+          <div className="h-4 w-56 rounded-full bg-slate-200" />
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className="h-24 rounded-2xl bg-slate-100" />
+            <div className="h-24 rounded-2xl bg-slate-100" />
+          </div>
+          <div className="mt-4 h-3 w-full rounded-full bg-slate-200" />
+          <div className="mt-2 h-3 w-5/6 rounded-full bg-slate-200" />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function DenAdminPanel() {
   const [accessState, setAccessState] = useState<AccessState>("loading");
   const [payload, setPayload] = useState<AdminPayload | null>(null);
@@ -846,12 +968,14 @@ export function DenAdminPanel() {
       const { response, payload: nextPayload } = await requestJson(`/v1/admin/overview${suffix}`);
 
       if (response.status === 401) {
+        clearAdminOverviewCache();
         setAccessState("signed-out");
         setPayload(null);
         return;
       }
 
       if (response.status === 403) {
+        clearAdminOverviewCache();
         setAccessState("forbidden");
         setPayload(null);
         return;
@@ -872,6 +996,7 @@ export function DenAdminPanel() {
         return;
       }
 
+      storeAdminOverviewCache(nextPayload);
       setIncludeBilling(parsed.summary.billingLoaded);
       setAccessState("ready");
       setPayload(parsed);
@@ -885,6 +1010,13 @@ export function DenAdminPanel() {
   }, []);
 
   useEffect(() => {
+    const cachedPayload = readAdminOverviewCache();
+    if (cachedPayload) {
+      setPayload(cachedPayload);
+      setIncludeBilling(cachedPayload.summary.billingLoaded);
+      setAccessState("ready");
+    }
+
     void loadOverview(false);
   }, [loadOverview]);
 
@@ -1248,11 +1380,7 @@ export function DenAdminPanel() {
   }, [filteredUsers, selectedUserId]);
 
   if (accessState === "loading") {
-    return (
-      <section className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
-        <p className="text-sm text-slate-500">Loading Den admin...</p>
-      </section>
-    );
+    return <DenAdminLoadingShell />;
   }
 
   if (accessState === "signed-out" || accessState === "forbidden" || accessState === "error") {
