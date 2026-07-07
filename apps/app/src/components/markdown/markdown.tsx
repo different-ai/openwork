@@ -219,7 +219,7 @@ function generateCodeBlockContainer(content: string){
   return (
     `
       <div data-openwork-shiki="true" class="my-4 overflow-y-clip rounded-lg border border-border/70 bg-gray-1/80 p-4 pt-0 text-xs leading-6">
-        <div class="sticky z-[2] top-0 bg-currentColor">
+        <div class="sticky z-[2] top-0 bg-gray-1">
           <div class="w-full flex items-center justify-end py-2">
             <button data-openwork-copy-code="">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-md">
