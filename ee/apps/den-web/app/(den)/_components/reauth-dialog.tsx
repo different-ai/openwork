@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
 import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider } from "../_lib/den-flow";
@@ -12,6 +12,44 @@ function getCurrentUrl() {
 
 function getSocialLabel(provider: SocialAuthProvider) {
   return provider === "google" ? "Google" : "GitHub";
+}
+
+function getRedirectUrl(response: Response, payload: unknown) {
+  return payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string"
+    ? payload.url
+    : response.headers.get("location") ?? "";
+}
+
+function getReauthCompleteUrl(nonce: string, error = false) {
+  const url = new URL("/reauth/complete", window.location.origin);
+  url.searchParams.set("nonce", nonce);
+  if (error) {
+    url.searchParams.set("error", "1");
+  }
+  return url.toString();
+}
+
+type ReauthCompleteMessage = {
+  type: "openwork:reauth-complete";
+  nonce: string;
+  error: string | null;
+};
+
+function getReauthCompleteMessage(data: unknown): ReauthCompleteMessage | null {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+  if (!("type" in data) || data.type !== "openwork:reauth-complete") {
+    return null;
+  }
+  if (!("nonce" in data) || typeof data.nonce !== "string") {
+    return null;
+  }
+  const error = "error" in data ? data.error : null;
+  if (error !== null && typeof error !== "string") {
+    return null;
+  }
+  return { type: "openwork:reauth-complete", nonce: data.nonce, error };
 }
 
 const REAUTH_SOCIAL_PROVIDERS: readonly SocialAuthProvider[] = ["google", "github"];
@@ -35,6 +73,11 @@ export function ReauthDialog({
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<string[]>([]);
   const [ssoUrl, setSsoUrl] = useState<string | null>(null);
+  const [nonce, setNonce] = useState("");
+  const wasOpenRef = useRef(false);
+  const onVerifiedRef = useRef(onVerified);
+  const popupRef = useRef<Window | null>(null);
+  const popupClosedIntervalRef = useRef<number | null>(null);
 
   const effectiveProviders = providers.length > 0 ? providers : user?.authProviders ?? [];
   const hasPassword = !loadingMethods && (effectiveProviders.length === 0 || effectiveProviders.includes("email"));
@@ -51,13 +94,44 @@ export function ReauthDialog({
       effectiveProviders.includes("scim"),
   );
 
+  function stopPopupWatcher() {
+    if (popupClosedIntervalRef.current !== null) {
+      window.clearInterval(popupClosedIntervalRef.current);
+      popupClosedIntervalRef.current = null;
+    }
+    popupRef.current = null;
+  }
+
+  function startPopupWatcher(popup: Window) {
+    stopPopupWatcher();
+    popupRef.current = popup;
+    popupClosedIntervalRef.current = window.setInterval(() => {
+      if (!popup.closed) {
+        return;
+      }
+      stopPopupWatcher();
+      setBusy(false);
+    }, 500);
+  }
+
+  useEffect(() => {
+    onVerifiedRef.current = onVerified;
+  }, [onVerified]);
+
   useEffect(() => {
     if (!open) {
+      wasOpenRef.current = false;
+      stopPopupWatcher();
       setPassword("");
       setError(null);
       setBusy(false);
       setLoadingMethods(false);
       return;
+    }
+
+    if (!wasOpenRef.current) {
+      setNonce(crypto.randomUUID());
+      wasOpenRef.current = true;
     }
 
     let cancelled = false;
@@ -94,6 +168,48 @@ export function ReauthDialog({
     };
   }, [open, user?.email]);
 
+  useEffect(() => {
+    if (!open || !nonce) {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const message = getReauthCompleteMessage(event.data);
+      if (event.origin !== window.location.origin || !message || message.nonce !== nonce) {
+        return;
+      }
+
+      const popup = popupRef.current;
+      stopPopupWatcher();
+      popup?.close();
+
+      if (message.error) {
+        setError("Sign-in was cancelled or failed. Try again.");
+        setBusy(false);
+        return;
+      }
+
+      // This message only says "try again now"; the retried request still hits
+      // the server-side freshness check, so a forged message cannot bypass reauth.
+      setBusy(true);
+      setError(null);
+      void (async () => {
+        try {
+          await onVerifiedRef.current();
+        } catch (nextError) {
+          setError(nextError instanceof Error ? nextError.message : "Re-authentication failed.");
+          setBusy(false);
+        }
+      })();
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      stopPopupWatcher();
+    };
+  }, [open, nonce]);
+
   async function submitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.email) {
@@ -124,31 +240,40 @@ export function ReauthDialog({
   }
 
   async function continueSocial(provider: SocialAuthProvider) {
+    const popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
     setBusy(true);
     setError(null);
     try {
-      const callbackURL = getCurrentUrl();
+      const callbackURL = popup ? getReauthCompleteUrl(nonce) : getCurrentUrl();
+      const errorCallbackURL = popup ? getReauthCompleteUrl(nonce, true) : callbackURL;
       const { response, payload } = await requestJson("/api/auth/sign-in/social", {
         method: "POST",
-        body: JSON.stringify({ provider, callbackURL, errorCallbackURL: callbackURL }),
+        body: JSON.stringify({ provider, callbackURL, errorCallbackURL }),
       });
       if (!response.ok) {
+        popup?.close();
         setError(getErrorMessage(payload, `${getSocialLabel(provider)} sign-in failed (${response.status}).`));
         setBusy(false);
         return;
       }
 
-      const redirectUrl = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string"
-        ? payload.url
-        : response.headers.get("location") ?? "";
+      const redirectUrl = getRedirectUrl(response, payload);
       if (!redirectUrl) {
+        popup?.close();
         setError(`${getSocialLabel(provider)} sign-in did not return a redirect URL.`);
         setBusy(false);
         return;
       }
 
-      window.location.assign(redirectUrl);
+      if (!popup) {
+        window.location.assign(redirectUrl);
+        return;
+      }
+
+      popup.location.href = redirectUrl;
+      startPopupWatcher(popup);
     } catch (nextError) {
+      popup?.close();
       setError(nextError instanceof Error ? nextError.message : `${getSocialLabel(provider)} sign-in failed.`);
       setBusy(false);
     }
@@ -160,10 +285,26 @@ export function ReauthDialog({
       return;
     }
 
-    const nextUrl = new URL(ssoUrl, window.location.origin);
-    nextUrl.searchParams.set("callbackURL", getCurrentUrl());
-    nextUrl.searchParams.set("loginHint", user.email);
-    window.location.assign(nextUrl.toString());
+    const popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
+    setBusy(true);
+    setError(null);
+    try {
+      const nextUrl = new URL(ssoUrl, window.location.origin);
+      nextUrl.searchParams.set("callbackURL", popup ? getReauthCompleteUrl(nonce) : getCurrentUrl());
+      nextUrl.searchParams.set("loginHint", user.email);
+
+      if (!popup) {
+        window.location.assign(nextUrl.toString());
+        return;
+      }
+
+      popup.location.href = nextUrl.toString();
+      startPopupWatcher(popup);
+    } catch (nextError) {
+      popup?.close();
+      setError(nextError instanceof Error ? nextError.message : "Organization SSO sign-in failed.");
+      setBusy(false);
+    }
   }
 
   if (!open) {
@@ -172,7 +313,13 @@ export function ReauthDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6">
-      <div role="dialog" aria-modal="true" className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]">
+      <div
+        role="dialog"
+        aria-modal="true"
+        // Test seam: the reauth popup eval matches the completion message to this nonce.
+        data-reauth-nonce={nonce}
+        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+      >
         <div className="grid gap-3">
           <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">Security check</p>
           <div className="grid gap-2">
