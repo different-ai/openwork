@@ -833,6 +833,7 @@ export function DenAdminPanel() {
   const [freeSeatsDialog, setFreeSeatsDialog] = useState<{ org: AdminOrganization; totalFreeSeats: string } | null>(null);
   const [savingFreeSeatsOrgId, setSavingFreeSeatsOrgId] = useState<string | null>(null);
   const [savingCapabilityOrgId, setSavingCapabilityOrgId] = useState<string | null>(null);
+  const [capabilityError, setCapabilityError] = useState<{ orgId: string; message: string } | null>(null);
   const [deleteUserDialog, setDeleteUserDialog] = useState<AdminUser | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
@@ -1118,6 +1119,7 @@ export function DenAdminPanel() {
   const saveOrganizationCapability = useCallback(async (org: AdminOrganization, key: keyof AdminOrganizationCapabilities, enabled: boolean) => {
     setSavingCapabilityOrgId(org.id);
     setError(null);
+    setCapabilityError(null);
     // Optimistic: flip the toggle immediately, roll back if the PUT fails.
     setOrganizationCapabilityLocally(org.id, key, enabled);
 
@@ -1128,11 +1130,15 @@ export function DenAdminPanel() {
 
       if (!response.ok) {
         setOrganizationCapabilityLocally(org.id, key, !enabled);
-        setError(getErrorMessage(nextPayload, `Could not update capabilities for ${org.name}.`));
+        const message = getErrorMessage(nextPayload, `Could not update capabilities for ${org.name}.`);
+        setError(message);
+        setCapabilityError({ orgId: org.id, message });
       }
     } catch (nextError) {
       setOrganizationCapabilityLocally(org.id, key, !enabled);
-      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
+      const message = nextError instanceof Error ? nextError.message : "Unknown network error";
+      setError(message);
+      setCapabilityError({ orgId: org.id, message });
     } finally {
       setSavingCapabilityOrgId(null);
     }
@@ -1599,6 +1605,11 @@ export function DenAdminPanel() {
                         MCP connections
                       </label>
                     </div>
+                    {capabilityError?.orgId === org.id ? (
+                      <p data-testid="admin-capability-error" className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+                        Save failed — the change was reverted. {capabilityError.message}
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-xs text-slate-400">Off by default. Lets workspace admins mint desktop install links for this organization.</p>
                     <p className="mt-1 text-xs text-slate-400">Off by default. Lets members discover and use organization MCP connections.</p>
                   </div>
