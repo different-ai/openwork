@@ -107,6 +107,7 @@ function clearOpenworkLocalStorageForReset(mode: ResetModalMode): void {
     if (raw) {
       const prefs = JSON.parse(raw);
       prefs.hasCompletedOnboarding = false;
+      prefs.providerStepCompleted = false;
       window.localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
     }
   } catch {
