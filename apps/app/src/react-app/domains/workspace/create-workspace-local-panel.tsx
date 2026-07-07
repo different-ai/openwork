@@ -17,6 +17,7 @@ import {
 import { DialogClose, DialogFooter } from "@/components/ui/dialog";
 import type { WorkspacePreset } from "../../../app/types";
 import { t } from "../../../i18n";
+import type { CreateWorkspaceOptions } from "./types";
 import {
   errorBannerClass,
   modalBodyClass,
@@ -51,8 +52,6 @@ export type CreateWorkspaceLocalPanelProps = {
   hasSelectedFolder: boolean;
   pickingFolder: boolean;
   onPickFolder: () => void;
-  projectValue: string;
-  onProjectValueInput: (value: string) => void;
   projectLabel: string;
   onProjectLabelInput: (value: string) => void;
   showProjectLabel: boolean;
@@ -62,7 +61,7 @@ export type CreateWorkspaceLocalPanelProps = {
   onSubmit: () => void;
   confirmLabel?: string;
   workerLabel?: string;
-  onConfirmWorker?: (preset: WorkspacePreset, folder: string | null, options?: { projectLabel?: string | null; projectValue?: string | null }) => void;
+  onConfirmWorker?: (preset: WorkspacePreset, folder: string | null, options?: CreateWorkspaceOptions) => void;
   preset: WorkspacePreset;
   workerSubmitting: boolean;
   workerDisabled: boolean;
@@ -108,10 +107,7 @@ export function CreateWorkspaceLocalPanel(
   props: CreateWorkspaceLocalPanelProps,
 ) {
   const progress = props.progress;
-  const hasProjectValue = props.projectValue.trim().length > 0;
   const hasProjectLabel = props.projectLabel.trim().length > 0;
-  const hasProjectDimension = hasProjectValue || hasProjectLabel;
-  const projectValueWithoutLabel = hasProjectValue && !hasProjectLabel;
 
   return (
     <>
@@ -159,7 +155,7 @@ export function CreateWorkspaceLocalPanel(
             {props.showProjectLabel ? (
               <Accordion
                 multiple
-                defaultValue={hasProjectDimension ? ["analytics"] : []}
+                defaultValue={hasProjectLabel ? ["analytics"] : []}
                 className="mt-4 overflow-hidden rounded-[20px] border-dls-border bg-dls-hover/60 shadow-none before:hidden"
               >
                 <AccordionItem value="analytics" className="border-b-0">
@@ -173,7 +169,7 @@ export function CreateWorkspaceLocalPanel(
                           Want more analytics?
                         </span>
                         <span className="mt-1 block text-[12px] leading-5 text-dls-secondary">
-                          Add project details to improve filtering and reporting in Analytics.
+                          Add a project name to group this workspace's sessions in Analytics.
                         </span>
                       </span>
                     </span>
@@ -191,33 +187,6 @@ export function CreateWorkspaceLocalPanel(
                         disabled={props.submitting}
                         className="mt-2 w-full rounded-[20px] border border-dls-border bg-dls-surface px-4 py-3 text-[14px] text-dls-text outline-none placeholder:text-dls-secondary transition-colors focus:border-dls-accent disabled:cursor-not-allowed disabled:opacity-60"
                       />
-                    </div>
-                    <div>
-                      <label className="text-[13px] font-medium text-dls-text">
-                        Project value <span className="text-dls-secondary">(optional)</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={props.projectValue}
-                        onChange={(event) => props.onProjectValueInput(event.currentTarget.value)}
-                        placeholder="billing-api"
-                        disabled={props.submitting}
-                        className="mt-2 w-full rounded-[20px] border border-dls-border bg-dls-surface px-4 py-3 text-[14px] text-dls-text outline-none placeholder:text-dls-secondary transition-colors focus:border-dls-accent disabled:cursor-not-allowed disabled:opacity-60"
-                      />
-                    </div>
-                    <div className="mt-2 flex items-center justify-between gap-3 text-[12px] text-dls-secondary">
-                      <span>{projectValueWithoutLabel ? "Enter a project name before adding a value." : "Leave value blank to generate it from the name."}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          props.onProjectValueInput("");
-                          props.onProjectLabelInput("");
-                        }}
-                        disabled={props.submitting || !hasProjectDimension}
-                        className="shrink-0 transition-colors hover:text-dls-text disabled:pointer-events-none disabled:opacity-40"
-                      >
-                        Clear
-                      </button>
                     </div>
                   </AccordionContent>
                 </AccordionItem>
@@ -391,12 +360,10 @@ export function CreateWorkspaceLocalPanel(
               onClick={() =>
                 props.onConfirmWorker?.(props.preset, props.selectedFolder, {
                   projectLabel: props.projectLabel.trim() || null,
-                  projectValue: props.projectValue.trim() || null,
                 })
               }
               disabled={
                 !props.selectedFolder ||
-                projectValueWithoutLabel ||
                 props.submitting ||
                 props.workerSubmitting ||
                 props.workerDisabled
@@ -404,9 +371,7 @@ export function CreateWorkspaceLocalPanel(
               title={
                 !props.selectedFolder
                   ? t("dashboard.choose_folder_continue")
-                  : projectValueWithoutLabel
-                    ? "Enter a project name before adding a value."
-                    : props.workerDisabledReason || undefined
+                  : props.workerDisabledReason || undefined
               }
             >
               {props.workerSubmitting ? (
@@ -423,13 +388,11 @@ export function CreateWorkspaceLocalPanel(
           <Button
             type="button"
             onClick={() => void props.onSubmit()}
-            disabled={!props.selectedFolder || projectValueWithoutLabel || props.submitting}
+            disabled={!props.selectedFolder || props.submitting}
             title={
               !props.selectedFolder
                 ? t("dashboard.choose_folder_continue")
-                : projectValueWithoutLabel
-                  ? "Enter a project name before adding a value."
-                  : undefined
+                : undefined
             }
           >
             {props.submitting ? (

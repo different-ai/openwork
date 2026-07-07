@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "c49402c8-8d49-4b81-9d3d-2bb00509ef6e",
+  "id": "5a458e2c-34f3-4b47-acab-835bd3dcf180",
   "prevId": "916b4589-ddf1-4c53-b5c5-831f4668bc6c",
   "tables": {
     "account": {
@@ -8562,25 +8562,6 @@
             "org_id",
             "dimension_type",
             "dimension_value",
-            "session_id"
-          ],
-          "isUnique": false
-        },
-        "telemetry_session_dimension_label_filter": {
-          "name": "telemetry_session_dimension_label_filter",
-          "columns": [
-            "org_id",
-            "dimension_type",
-            "dimension_label",
-            "session_id"
-          ],
-          "isUnique": false
-        },
-        "telemetry_session_dimension_session": {
-          "name": "telemetry_session_dimension_session",
-          "columns": [
-            "org_id",
-            "source",
             "session_id"
           ],
           "isUnique": false

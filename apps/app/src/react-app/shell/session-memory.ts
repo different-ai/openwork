@@ -66,7 +66,6 @@ export function writeWorkspaceOrderIds(ids: string[]): void {
 type SessionByWorkspace = Record<string, string>;
 export type WorkspaceProjectDimension = {
   label: string;
-  value?: string;
 };
 
 function readSessionByWorkspaceMap(): SessionByWorkspace {
@@ -121,11 +120,9 @@ function readWorkspaceProjectDimensionMap(): Record<string, WorkspaceProjectDime
       if (!workspaceId.trim() || !value || typeof value !== "object" || Array.isArray(value)) continue;
       const record = value as Record<string, unknown>;
       const label = typeof record.label === "string" ? record.label.trim() : "";
-      const dimensionValue = typeof record.value === "string" ? record.value.trim() : "";
       if (!label) continue;
       result[workspaceId] = {
         label,
-        ...(dimensionValue ? { value: dimensionValue } : {}),
       };
     }
     return result;
@@ -148,13 +145,11 @@ export function writeWorkspaceProjectDimension(
   if (!wsId) return;
   const map = readWorkspaceProjectDimensionMap();
   const label = dimension?.label.trim() ?? "";
-  const value = dimension?.value?.trim() ?? "";
   if (!label) {
     delete map[wsId];
   } else {
     map[wsId] = {
       label,
-      ...(value ? { value } : {}),
     };
   }
   safeSet(WORKSPACE_PROJECT_DIMENSION_KEY, Object.keys(map).length ? JSON.stringify(map) : null);

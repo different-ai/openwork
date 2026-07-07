@@ -1,41 +1,38 @@
-import { readFileSync } from "node:fs"
 import { expect, test } from "bun:test"
+import { deriveDimensionValue } from "../src/routes/telemetry/dimension-value.js"
 
-const telemetryRouteSource = readFileSync(new URL("../src/routes/telemetry/index.ts", import.meta.url), "utf8")
-const telemetrySchemaSource = readFileSync(new URL("../../../packages/den-db/src/schema/telemetry.ts", import.meta.url), "utf8")
-const appTelemetrySource = readFileSync(new URL("../../../../apps/app/src/app/lib/den-telemetry.ts", import.meta.url), "utf8")
-const analyticsScreenSource = readFileSync(new URL("../../den-web/app/(den)/dashboard/_components/analytics-screen.tsx", import.meta.url), "utf8")
+const dimensionValuePattern = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/
 
-test("telemetry dimensions are modeled as generic session dimensions", () => {
-  expect(telemetrySchemaSource).toContain("TelemetrySessionDimensionTable")
-  expect(telemetrySchemaSource).toContain('"telemetry_session_dimension"')
-  expect(telemetrySchemaSource).toContain('"dimension_type"')
-  expect(telemetrySchemaSource).toContain('"dimension_value"')
-  expect(telemetrySchemaSource).toContain('"dimension_label"')
-  expect(telemetrySchemaSource).toContain('json("metadata")')
-  expect(telemetrySchemaSource).not.toContain("project_id")
-  expect(telemetrySchemaSource).not.toContain("project_name")
+test("deriveDimensionValue is deterministic", () => {
+  expect(deriveDimensionValue("project", "Billing API")).toBe(deriveDimensionValue("project", "Billing API"))
 })
 
-test("telemetry dimension APIs use generic dimension routes and filters", () => {
-  expect(telemetryRouteSource).toContain('"/v1/telemetry/sessions/:sessionId/dimensions/:type"')
-  expect(telemetryRouteSource).toContain('"/v1/telemetry/dimensions"')
-  expect(telemetryRouteSource).toContain("dimensionType")
-  expect(telemetryRouteSource).toContain("dimensionValue")
-  expect(telemetryRouteSource).toContain("dimensionLabel")
-  expect(telemetryRouteSource).toContain("deriveDimensionValue")
-  expect(telemetryRouteSource).not.toContain("project_id")
-  expect(telemetryRouteSource).not.toContain("project_name")
+test("deriveDimensionValue ignores label trim and case", () => {
+  expect(deriveDimensionValue("project", "Billing API")).toBe(deriveDimensionValue("project", "  billing api  "))
 })
 
-test("project UI is backed by generic dimension APIs", () => {
-  expect(appTelemetrySource).toContain("/v1/telemetry/sessions/")
-  expect(appTelemetrySource).toContain("/dimensions/")
-  expect(analyticsScreenSource).toContain("PROJECT_DIMENSION_TYPE = \"project\"")
-  expect(analyticsScreenSource).toContain("/v1/telemetry/dimensions")
-  expect(analyticsScreenSource).toContain("dimensionType")
-  expect(analyticsScreenSource).toContain("dimensionLabel")
-  expect(analyticsScreenSource).toContain("aggregateProjectOptions")
-  expect(appTelemetrySource).not.toContain("projectId")
-  expect(analyticsScreenSource).not.toContain("projectId")
+test("deriveDimensionValue includes a slug prefix", () => {
+  expect(deriveDimensionValue("project", "Billing API").startsWith("billing-api-")).toBe(true)
+})
+
+test("deriveDimensionValue changes for different labels", () => {
+  expect(deriveDimensionValue("project", "Billing API")).not.toBe(deriveDimensionValue("project", "Support API"))
+})
+
+test("deriveDimensionValue changes for different types", () => {
+  expect(deriveDimensionValue("project", "Billing API")).not.toBe(deriveDimensionValue("team", "Billing API"))
+})
+
+test("deriveDimensionValue slugifies accented labels", () => {
+  expect(deriveDimensionValue("project", "Café Ops").startsWith("cafe-ops-")).toBe(true)
+})
+
+test("deriveDimensionValue falls back for symbol-only labels", () => {
+  expect(deriveDimensionValue("project", "!!!").startsWith("dimension-")).toBe(true)
+})
+
+test("deriveDimensionValue returns a valid bounded dimension value", () => {
+  const value = deriveDimensionValue("project", "A".repeat(300))
+  expect(value).toMatch(dimensionValuePattern)
+  expect(value.length).toBeLessThanOrEqual(128)
 })

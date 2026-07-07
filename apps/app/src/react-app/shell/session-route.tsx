@@ -16,7 +16,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
-import { setTelemetrySessionDimension, trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
+import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { createClient, unwrap } from "@/app/lib/opencode";
@@ -109,6 +109,7 @@ import { useModelPicker } from "@/react-app/domains/session/modals/use-model-pic
 import { appMentionInstruction } from "@/react-app/domains/session/surface/composer/app-mentions";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
+import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
 import { useSessionProviderAuth } from "@/react-app/domains/connections/provider-auth/use-session-provider-auth";
 import { useMcpConnectedCount } from "@/react-app/domains/connections/use-mcp-connected-count";
 import { useRemoteAccessRestart } from "@/react-app/domains/workspace/remote-access-restart";
@@ -845,12 +846,8 @@ export function SessionRoute() {
           ? [{
               type: "project",
               label: projectDimension.label,
-              ...(projectDimension.value ? { value: projectDimension.value } : {}),
             }]
           : undefined;
-        if (projectDimension) {
-          void setTelemetrySessionDimension(targetSessionId, "project", projectDimension);
-        }
         trackSessionActive(targetSessionId, telemetryDimensions);
         trackTaskStarted(targetSessionId, telemetryDimensions);
 
@@ -1589,11 +1586,10 @@ export function SessionRoute() {
   const handleCreateWorkspace = useCallback(async (
     preset: WorkspacePreset,
     folder: string | null,
-    options?: { projectLabel?: string | null; projectValue?: string | null },
+    options?: CreateWorkspaceOptions,
   ) => {
     if (!folder) return;
     const projectLabel = options?.projectLabel?.trim() ?? "";
-    const projectValue = options?.projectValue?.trim() ?? "";
     setCreateWorkspaceBusy(true);
     setCreateWorkspaceError(null);
     try {
@@ -1637,17 +1633,10 @@ export function SessionRoute() {
         if (projectLabel) {
           writeWorkspaceProjectDimension(targetWorkspaceId, {
             label: projectLabel,
-            ...(projectValue ? { value: projectValue } : {}),
           });
         }
         captureAnalyticsEvent("workspace_created", { workspace_type: "local" });
         if (session?.id) {
-          if (projectLabel) {
-            void setTelemetrySessionDimension(session.id, "project", {
-              label: projectLabel,
-              ...(projectValue ? { value: projectValue } : {}),
-            });
-          }
           captureAnalyticsEvent("task_created", { source: "workspace_created", workspace_type: "local" });
           writeLastSessionFor(targetWorkspaceId, session.id);
           rememberPendingCreatedSession(targetWorkspaceId, session.id);

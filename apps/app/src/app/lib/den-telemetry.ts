@@ -10,11 +10,9 @@
  * The client never sends prompt contents, code, or file paths.
  */
 
-import { isDesktopRuntime } from "./runtime-env";
 import { type DenSettings, readDenSettings, resolveDenBaseUrls } from "./den";
 
 const INGEST_PATH = "/v1/telemetry/ingest";
-const SESSION_DIMENSION_TIMEOUT_MS = 5_000;
 const INGEST_TIMEOUT_MS = 5_000;
 
 export type TelemetryDimensionInput = {
@@ -41,50 +39,8 @@ let pendingEvents: TelemetryEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const FLUSH_INTERVAL_MS = 10_000;
 const MAX_BATCH_SIZE = 50;
-const sessionDimensionsById = new Map<string, TelemetryDimensionInput[]>();
 
-function rememberSessionDimensions(sessionId: string, dimensions: TelemetryDimensionInput[]): void {
-  const trimmedSessionId = sessionId.trim();
-  if (!trimmedSessionId || dimensions.length === 0) return;
-
-  const current = sessionDimensionsById.get(trimmedSessionId) ?? [];
-  const nextByType = new Map(current.map((dimension) => [dimension.type, dimension]));
-  for (const dimension of dimensions) {
-    const type = dimension.type.trim();
-    const label = dimension.label.trim();
-    if (!type || !label) continue;
-    nextByType.set(type, {
-      type,
-      label,
-      ...(dimension.value?.trim() ? { value: dimension.value.trim() } : {}),
-      ...(dimension.metadata ? { metadata: dimension.metadata } : {}),
-    });
-  }
-
-  const next = Array.from(nextByType.values());
-  if (next.length > 0) sessionDimensionsById.set(trimmedSessionId, next);
-}
-
-function forgetSessionDimension(sessionId: string, type: string): void {
-  const trimmedSessionId = sessionId.trim();
-  const trimmedType = type.trim();
-  if (!trimmedSessionId || !trimmedType) return;
-
-  const current = sessionDimensionsById.get(trimmedSessionId);
-  if (!current) return;
-  const next = current.filter((dimension) => dimension.type !== trimmedType);
-  if (next.length > 0) sessionDimensionsById.set(trimmedSessionId, next);
-  else sessionDimensionsById.delete(trimmedSessionId);
-}
-
-function dimensionsForEvent(fields: TelemetryEventFields): TelemetryDimensionInput[] | undefined {
-  if (fields.dimensions?.length) return fields.dimensions;
-  const sessionId = fields.sessionId?.trim();
-  if (!sessionId) return undefined;
-  return sessionDimensionsById.get(sessionId);
-}
-
-function getResolvedApiUrl(settings: DenSettings, path: string): string | null {
+function getResolvedIngestUrl(settings: DenSettings): string | null {
   if (!settings.authToken) return null;
 
   const baseUrls = resolveDenBaseUrls({
@@ -92,7 +48,7 @@ function getResolvedApiUrl(settings: DenSettings, path: string): string | null {
     apiBaseUrl: settings.apiBaseUrl,
   });
 
-  return `${baseUrls.apiBaseUrl}${path}`;
+  return `${baseUrls.apiBaseUrl}${INGEST_PATH}`;
 }
 
 async function flushEvents(): Promise<void> {
@@ -104,7 +60,7 @@ async function flushEvents(): Promise<void> {
     return;
   }
 
-  const url = getResolvedApiUrl(settings, INGEST_PATH);
+  const url = getResolvedIngestUrl(settings);
   if (!url) {
     pendingEvents = [];
     return;
@@ -116,98 +72,14 @@ async function flushEvents(): Promise<void> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), INGEST_TIMEOUT_MS);
 
-    const fetchFn = isDesktopRuntime() ? globalThis.fetch : globalThis.fetch;
-
     try {
-      await fetchFn(url, {
+      await globalThis.fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${settings.authToken}`,
         },
         body: JSON.stringify({ events: batch }),
-        signal: controller.signal,
-        credentials: "include",
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-  } catch {
-    // Swallow silently -- telemetry should never affect UX
-  }
-}
-
-export async function setTelemetrySessionDimension(
-  sessionId: string,
-  type: string,
-  dimension: Omit<TelemetryDimensionInput, "type">,
-): Promise<void> {
-  const settings = readDenSettings();
-  if (!settings.authToken) return;
-
-  const trimmedSessionId = sessionId.trim();
-  const trimmedType = type.trim();
-  const label = dimension.label.trim();
-  if (!trimmedSessionId || !trimmedType || !label) return;
-  rememberSessionDimensions(trimmedSessionId, [{
-    type: trimmedType,
-    label,
-    ...(dimension.value?.trim() ? { value: dimension.value.trim() } : {}),
-    ...(dimension.metadata ? { metadata: dimension.metadata } : {}),
-  }]);
-
-  const path = `/v1/telemetry/sessions/${encodeURIComponent(trimmedSessionId)}/dimensions/${encodeURIComponent(trimmedType)}`;
-  const url = getResolvedApiUrl(settings, path);
-  if (!url) return;
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), SESSION_DIMENSION_TIMEOUT_MS);
-    try {
-      await globalThis.fetch(url, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${settings.authToken}`,
-        },
-        body: JSON.stringify({
-          label,
-          ...(dimension.value?.trim() ? { value: dimension.value.trim() } : {}),
-          ...(dimension.metadata ? { metadata: dimension.metadata } : {}),
-        }),
-        signal: controller.signal,
-        credentials: "include",
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-  } catch {
-    // Swallow silently -- telemetry should never affect UX
-  }
-}
-
-export async function clearTelemetrySessionDimension(sessionId: string, type: string): Promise<void> {
-  const settings = readDenSettings();
-  if (!settings.authToken) return;
-
-  const trimmedSessionId = sessionId.trim();
-  const trimmedType = type.trim();
-  if (!trimmedSessionId || !trimmedType) return;
-  forgetSessionDimension(trimmedSessionId, trimmedType);
-
-  const path = `/v1/telemetry/sessions/${encodeURIComponent(trimmedSessionId)}/dimensions/${encodeURIComponent(trimmedType)}`;
-  const url = getResolvedApiUrl(settings, path);
-  if (!url) return;
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), SESSION_DIMENSION_TIMEOUT_MS);
-    try {
-      await globalThis.fetch(url, {
-        method: "DELETE",
-        headers: {
-          "Authorization": `Bearer ${settings.authToken}`,
-        },
         signal: controller.signal,
         credentials: "include",
       });
@@ -234,17 +106,12 @@ function scheduleFlush(): void {
 export function trackTelemetryEvent(type: string, fields: TelemetryEventFields = {}): void {
   const settings = readDenSettings();
   if (!settings.authToken) return;
-  const dimensions = dimensionsForEvent(fields);
-  if (fields.sessionId && dimensions?.length) {
-    rememberSessionDimensions(fields.sessionId, dimensions);
-  }
 
   pendingEvents.push({
     type,
     timestamp: new Date().toISOString(),
     source: "app",
     ...fields,
-    ...(dimensions?.length ? { dimensions } : {}),
   });
 
   if (pendingEvents.length >= MAX_BATCH_SIZE) {

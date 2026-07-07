@@ -53,7 +53,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     pickingFolder,
     showProgressDetails,
     now,
-    projectValue,
     projectLabel,
     remoteUrl,
     remoteToken,
@@ -69,7 +68,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const setPickingFolder = (value: SetStateAction<boolean>) => setLocal("pickingFolder", value);
   const setShowProgressDetails = (value: SetStateAction<boolean>) => setLocal("showProgressDetails", value);
   const setNow = (value: SetStateAction<number>) => setLocal("now", value);
-  const setProjectValue = (value: SetStateAction<string>) => setLocal("projectValue", value);
   const setProjectLabel = (value: SetStateAction<string>) => setLocal("projectLabel", value);
   const setRemoteUrl = (value: SetStateAction<string>) => setLocal("remoteUrl", value);
   const setRemoteToken = (value: SetStateAction<string>) => setLocal("remoteToken", value);
@@ -175,7 +173,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
 
   const handleLocalSubmit = async () => {
     props.onConfirm(preset, selectedFolder, {
-      projectValue: projectValue.trim() || null,
       projectLabel: projectLabel.trim() || null,
     });
   };
@@ -268,8 +265,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
             hasSelectedFolder={hasSelectedFolder}
             pickingFolder={pickingFolder}
             onPickFolder={() => void handlePickFolder()}
-            projectValue={showProjectLabel ? projectValue : ""}
-            onProjectValueInput={setProjectValue}
             projectLabel={showProjectLabel ? projectLabel : ""}
             onProjectLabelInput={setProjectLabel}
             showProjectLabel={showProjectLabel}

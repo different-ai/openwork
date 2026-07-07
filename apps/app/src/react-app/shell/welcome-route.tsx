@@ -19,6 +19,7 @@ import { WelcomePage } from "../domains/onboarding/welcome-page";
 import { ProviderSelectionStep } from "../domains/onboarding/provider-selection-step";
 import { AttributionStep, type AttributionSource } from "../domains/onboarding/attribution-step";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
+import type { CreateWorkspaceOptions } from "../domains/workspace/types";
 import {
   getOpenWorkModelsActionUrl,
   hideOpenWorkModelsPromo,
@@ -27,7 +28,6 @@ import {
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { captureAnalyticsEvent } from "../../app/lib/analytics";
-import { setTelemetrySessionDimension } from "../../app/lib/den-telemetry";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
 import { buildDenAuthUrl, DEFAULT_DEN_BASE_URL, readDenSettings } from "../../app/lib/den";
 import { writeActiveWorkspaceId, writeLastSessionFor, writeWorkspaceProjectDimension } from "./session-memory";
@@ -137,9 +137,8 @@ export function WelcomeRoute() {
   }, [local]);
 
   const handleCreateWorkspace = useCallback(
-    async (_preset: string, folder: string | null, options?: { projectLabel?: string | null; projectValue?: string | null }) => {
+    async (_preset: string, folder: string | null, options?: CreateWorkspaceOptions) => {
       if (!folder) return;
-      const projectValue = options?.projectValue?.trim() ?? "";
       const projectLabel = options?.projectLabel?.trim() ?? "";
       dispatch({ type: "create:start" });
       try {
@@ -198,12 +197,6 @@ export function WelcomeRoute() {
               { token: serverToken, mode: "openwork" },
             ).session.create({ directory: workspacePath || undefined }));
             targetSessionId = session.id;
-            if (projectLabel) {
-              void setTelemetrySessionDimension(session.id, "project", {
-                label: projectLabel,
-                ...(projectValue ? { value: projectValue } : {}),
-              });
-            }
             captureAnalyticsEvent("task_created", { source: "onboarding", workspace_type: "local" });
           } catch {
             // Best-effort first task creation.
@@ -214,7 +207,6 @@ export function WelcomeRoute() {
           if (projectLabel) {
             writeWorkspaceProjectDimension(targetWorkspaceId, {
               label: projectLabel,
-              ...(projectValue ? { value: projectValue } : {}),
             });
           }
           if (targetSessionId) writeLastSessionFor(targetWorkspaceId, targetSessionId);

@@ -28,7 +28,6 @@ if (shortHostname && shortHostname !== hostname) {
 const appRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const appPackagePath = resolve(appRoot, "package.json");
 const desktopPackagePath = resolve(appRoot, "..", "desktop", "package.json");
-const appNodeModules = resolve(appRoot, "node_modules");
 
 function readPackageVersion(packagePath: string): string | null {
   if (!existsSync(packagePath)) return null;
@@ -114,13 +113,8 @@ export default defineConfig({
     },
   },
   resolve: {
-    dedupe: ["react", "react-dom", "lexical", "@lexical/react"],
     alias: {
       "@": resolve(appRoot, "src"),
-      lexical: resolve(appNodeModules, "lexical"),
-      react: resolve(appNodeModules, "react"),
-      "react-dom": resolve(appNodeModules, "react-dom"),
-      "react/jsx-runtime": resolve(appNodeModules, "react", "jsx-runtime.js"),
     },
   },
 });

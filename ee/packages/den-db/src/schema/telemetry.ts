@@ -68,12 +68,5 @@ export const TelemetrySessionDimensionTable = mysqlTable(
       table.dimension_value,
       table.session_id,
     ),
-    index("telemetry_session_dimension_label_filter").on(
-      table.org_id,
-      table.dimension_type,
-      table.dimension_label,
-      table.session_id,
-    ),
-    index("telemetry_session_dimension_session").on(table.org_id, table.source, table.session_id),
   ],
 )

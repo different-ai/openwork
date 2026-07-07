@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto"
 import { and, desc, eq, gte, isNull, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   TelemetryEventTable,
@@ -13,10 +12,11 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
-import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute, queryValidator } from "../../middleware/index.js"
 import { enterprisePlanRequiredSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema, emptyResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import type { UserOrganizationsContext, OrganizationContextVariables } from "../../middleware/index.js"
+import { deriveDimensionValue } from "./dimension-value.js"
 
 type TelemetryRouteVariables = AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables>
 
@@ -70,17 +70,6 @@ const ingestBatchSchema = z.object({
   events: z.array(ingestBodySchema).min(1).max(50),
 })
 
-const sessionDimensionParamSchema = z.object({
-  sessionId: z.string().trim().min(1).max(128),
-  type: dimensionTypeSchema,
-})
-
-const sessionDimensionBodySchema = z.object({
-  label: z.string().trim().min(1).max(255),
-  value: dimensionValueSchema.optional(),
-  metadata: dimensionMetadataSchema.optional(),
-})
-
 const dimensionsQuerySchema = z.object({
   type: dimensionTypeSchema,
 })
@@ -89,16 +78,11 @@ const analyticsQuerySchema = z
   .object({
     dimensionType: dimensionTypeSchema.optional(),
     dimensionValue: dimensionValueSchema.optional(),
-    dimensionLabel: z.string().trim().min(1).max(255).optional(),
   })
   .refine((value) => {
-    const hasFilter = Boolean(value.dimensionValue) || Boolean(value.dimensionLabel)
-    return Boolean(value.dimensionType) === hasFilter
+    return Boolean(value.dimensionType) === Boolean(value.dimensionValue)
   }, {
-    message: "dimensionType must be supplied with dimensionValue or dimensionLabel.",
-  })
-  .refine((value) => !(value.dimensionValue && value.dimensionLabel), {
-    message: "dimensionValue and dimensionLabel cannot both be supplied.",
+    message: "dimensionType and dimensionValue must be supplied together.",
   })
 
 const adoptionResponseSchema = z.object({
@@ -132,16 +116,6 @@ const analyticsResponseSchema = z.object({
   weekly: z.array(analyticsWeekSchema),
 }).meta({ ref: "TelemetryAnalyticsResponse" })
 
-const telemetryDimensionResponseSchema = z.object({
-  type: z.string(),
-  value: z.string(),
-  label: z.string(),
-  metadata: z.record(z.string(), z.unknown()).nullable(),
-  source: z.string(),
-  sessionId: z.string(),
-  lastSeenAt: z.string(),
-}).meta({ ref: "TelemetrySessionDimensionResponse" })
-
 const telemetryDimensionListResponseSchema = z.object({
   items: z.array(z.object({
     type: z.string(),
@@ -168,37 +142,21 @@ type TelemetryDimensionInput = z.infer<typeof telemetryDimensionSchema>
 
 type DimensionFilter = {
   type: string
-} & (
-  | { value: string; label?: never }
-  | { label: string; value?: never }
-)
+  value: string
+}
+
+type PendingDimensionUpsert = {
+  sessionId: string
+  source: string
+  dimension: TelemetryDimensionInput
+  seenAt: Date
+}
 
 function normalizeTelemetrySource(source: string | null | undefined) {
   return source && allowedSources.has(source) ? source : "unknown"
 }
 
-function slugifyDimensionLabel(label: string) {
-  const slug = label
-    .trim()
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-  return slug || "dimension"
-}
-
-export function deriveDimensionValue(type: string, label: string) {
-  const hash = createHash("sha256").update(`${type}:${label.trim().toLowerCase()}`).digest("hex").slice(0, 10)
-  const suffix = `-${hash}`
-  return `${slugifyDimensionLabel(label).slice(0, 128 - suffix.length)}${suffix}`
-}
-
 function dimensionFilterCondition(filter: DimensionFilter): SQL {
-  const dimensionPredicate = "value" in filter
-    ? sql`${TelemetrySessionDimensionTable.dimension_value} = ${filter.value}`
-    : sql`${TelemetrySessionDimensionTable.dimension_label} = ${filter.label}`
-
   return sql`exists (
     select 1
     from ${TelemetrySessionDimensionTable}
@@ -206,7 +164,7 @@ function dimensionFilterCondition(filter: DimensionFilter): SQL {
       and ${TelemetrySessionDimensionTable.session_id} = ${TelemetryEventTable.session_id}
       and ${TelemetrySessionDimensionTable.source} = coalesce(${TelemetryEventTable.source}, 'unknown')
       and ${TelemetrySessionDimensionTable.dimension_type} = ${filter.type}
-      and ${dimensionPredicate}
+      and ${TelemetrySessionDimensionTable.dimension_value} = ${filter.value}
   )`
 }
 
@@ -219,43 +177,14 @@ function telemetryWindowConditions(orgId: TelemetryOrgId, since: Date, filter: D
   return conditions
 }
 
-async function resolveDimensionValue(params: {
-  orgId: TelemetryOrgId
-  source: string
-  sessionId: string
-  type: string
-  label: string
-  value?: string | undefined
-}) {
-  if (params.value) return params.value
-  const existingRows = await db
-    .select({ value: TelemetrySessionDimensionTable.dimension_value })
-    .from(TelemetrySessionDimensionTable)
-    .where(and(
-      eq(TelemetrySessionDimensionTable.org_id, params.orgId),
-      eq(TelemetrySessionDimensionTable.source, params.source),
-      eq(TelemetrySessionDimensionTable.session_id, params.sessionId),
-      eq(TelemetrySessionDimensionTable.dimension_type, params.type),
-    ))
-    .limit(1)
-  return existingRows[0]?.value ?? deriveDimensionValue(params.type, params.label)
-}
-
 async function upsertSessionDimension(params: {
   orgId: TelemetryOrgId
   sessionId: string
   source: string
   dimension: TelemetryDimensionInput
   seenAt: Date
-}) {
-  const value = await resolveDimensionValue({
-    orgId: params.orgId,
-    source: params.source,
-    sessionId: params.sessionId,
-    type: params.dimension.type,
-    label: params.dimension.label,
-    value: params.dimension.value,
-  })
+}): Promise<void> {
+  const value = params.dimension.value ?? deriveDimensionValue(params.dimension.type, params.dimension.label)
   const metadata = params.dimension.metadata ?? null
 
   await db
@@ -275,23 +204,13 @@ async function upsertSessionDimension(params: {
     })
     .onDuplicateKeyUpdate({
       set: {
-        dimension_value: value,
+        ...(params.dimension.value ? { dimension_value: params.dimension.value } : {}),
         dimension_label: params.dimension.label,
         metadata,
         updated_at: params.seenAt,
         last_seen_at: params.seenAt,
       },
     })
-
-  return {
-    type: params.dimension.type,
-    value,
-    label: params.dimension.label,
-    metadata,
-    source: params.source,
-    sessionId: params.sessionId,
-    lastSeenAt: params.seenAt.toISOString(),
-  }
 }
 
 async function loadWindowMetrics(orgId: TelemetryOrgId, since: Date, filter: DimensionFilter | null): Promise<WindowMetrics> {
@@ -361,13 +280,13 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           await db.insert(TelemetryEventTable).values(rows)
         }
 
+        const pendingDimensions = new Map<string, PendingDimensionUpsert>()
         for (const event of acceptedEvents) {
           if (!event.sessionId || !event.dimensions?.length) continue
           const source = normalizeTelemetrySource(event.source)
-          const seenAt = event.timestamp ? new Date(event.timestamp) : new Date()
+          const seenAt = new Date(event.timestamp)
           for (const dimension of event.dimensions) {
-            await upsertSessionDimension({
-              orgId,
+            pendingDimensions.set(`${source}\u0000${event.sessionId}\u0000${dimension.type}`, {
               sessionId: event.sessionId,
               source,
               dimension,
@@ -375,81 +294,15 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
             })
           }
         }
+        for (const pendingDimension of pendingDimensions.values()) {
+          await upsertSessionDimension({
+            orgId,
+            ...pendingDimension,
+          })
+        }
       } catch {
         // Swallow errors -- telemetry should never break the app
       }
-
-      return c.body(null, 204)
-    },
-  )
-
-  // ── PUT /v1/telemetry/sessions/:sessionId/dimensions/:type ────────────────
-  app.put(
-    "/v1/telemetry/sessions/:sessionId/dimensions/:type",
-    describeRoute({
-      tags: ["Telemetry"],
-      summary: "Set a telemetry session dimension",
-      description: "Assigns a generic analytics dimension to a session. If value is omitted, the server derives a stable key from the label or keeps the existing key for that session and type.",
-      responses: {
-        200: jsonResponse("Session dimension saved.", telemetryDimensionResponseSchema),
-        400: jsonResponse("Invalid session dimension payload.", invalidRequestSchema),
-        401: jsonResponse("Caller must be signed in.", unauthorizedSchema),
-      },
-    }),
-    orgMemberRoute(),
-    paramValidator(sessionDimensionParamSchema),
-    jsonValidator(sessionDimensionBodySchema),
-    async (c) => {
-      const orgId = c.get("activeOrganizationId")
-      if (!orgId) return c.json({ error: "invalid_request", message: "No active organization." }, 400)
-
-      const params = c.req.valid("param")
-      const body = c.req.valid("json")
-      const dimension = await upsertSessionDimension({
-        orgId,
-        sessionId: params.sessionId,
-        source: normalizeTelemetrySource("app"),
-        dimension: {
-          type: params.type,
-          label: body.label,
-          value: body.value,
-          metadata: body.metadata,
-        },
-        seenAt: new Date(),
-      })
-
-      return c.json(dimension)
-    },
-  )
-
-  // ── DELETE /v1/telemetry/sessions/:sessionId/dimensions/:type ─────────────
-  app.delete(
-    "/v1/telemetry/sessions/:sessionId/dimensions/:type",
-    describeRoute({
-      tags: ["Telemetry"],
-      summary: "Clear a telemetry session dimension",
-      description: "Removes the active app dimension value for a session/type pair.",
-      responses: {
-        204: emptyResponse("Session dimension cleared."),
-        400: jsonResponse("Invalid session dimension parameters.", invalidRequestSchema),
-        401: jsonResponse("Caller must be signed in.", unauthorizedSchema),
-      },
-    }),
-    orgMemberRoute(),
-    paramValidator(sessionDimensionParamSchema),
-    async (c) => {
-      const orgId = c.get("activeOrganizationId")
-      if (!orgId) return c.body(null, 204)
-
-      const params = c.req.valid("param")
-      await db
-        .delete(TelemetrySessionDimensionTable)
-        .where(and(
-          eq(TelemetrySessionDimensionTable.org_id, orgId),
-          eq(TelemetrySessionDimensionTable.source, normalizeTelemetrySource("app")),
-          eq(TelemetrySessionDimensionTable.session_id, params.sessionId),
-          eq(TelemetrySessionDimensionTable.dimension_type, params.type),
-        ))
 
       return c.body(null, 204)
     },
@@ -602,12 +455,9 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     async (c) => {
       const orgId = c.get("activeOrganizationId")
       const query = c.req.valid("query")
-      let dimensionFilter: DimensionFilter | null = null
-      if (query.dimensionType && query.dimensionValue) {
-        dimensionFilter = { type: query.dimensionType, value: query.dimensionValue }
-      } else if (query.dimensionType && query.dimensionLabel) {
-        dimensionFilter = { type: query.dimensionType, label: query.dimensionLabel }
-      }
+      const dimensionFilter = query.dimensionType && query.dimensionValue
+        ? { type: query.dimensionType, value: query.dimensionValue }
+        : null
 
       const empty = {
         members: 0,

@@ -96,10 +96,10 @@ async function fetchDimensions(type: string): Promise<DimensionOption[]> {
   }
 }
 
-async function fetchAnalytics(projectValue: string): Promise<AnalyticsData | null> {
+async function fetchAnalytics(dimensionValue: string): Promise<AnalyticsData | null> {
   try {
-    const params = projectValue
-      ? new URLSearchParams({ dimensionType: PROJECT_DIMENSION_TYPE, dimensionValue: projectValue })
+    const params = dimensionValue
+      ? new URLSearchParams({ dimensionType: PROJECT_DIMENSION_TYPE, dimensionValue })
       : null;
     const path = params ? `/v1/telemetry/analytics?${params.toString()}` : "/v1/telemetry/analytics";
     const { response, payload } = await requestJson(path, { method: "GET" }, 12000);
@@ -266,7 +266,7 @@ export function AnalyticsScreen() {
   // (entitlements.ts); this mirrors the SSO / desktop policies screens.
   const locked = Boolean(orgContext) && !orgContext?.entitlements.analytics;
 
-  const { data: rawProjectOptions = [] } = useQuery<DimensionOption[]>({
+  const { data: rawProjectOptions = [] } = useQuery({
     queryKey: ["telemetry", "dimensions", PROJECT_DIMENSION_TYPE],
     queryFn: () => fetchDimensions(PROJECT_DIMENSION_TYPE),
     enabled: !locked,
@@ -278,17 +278,17 @@ export function AnalyticsScreen() {
   );
 
   const selectedProject = useMemo(
-    () => projectOptions.find((option: DimensionOption) => option.value === selectedProjectValue) ?? null,
+    () => projectOptions.find((option) => option.value === selectedProjectValue) ?? null,
     [projectOptions, selectedProjectValue],
   );
 
-  const { data, isLoading } = useQuery<AnalyticsData | null>({
+  const { data, isLoading } = useQuery({
     queryKey: ["telemetry", "analytics", PROJECT_DIMENSION_TYPE, selectedProjectValue || "all"],
     queryFn: () => fetchAnalytics(selectedProjectValue),
     enabled: !locked,
   });
 
-  const weekly: AnalyticsWeek[] = data?.weekly ?? [];
+  const weekly = data?.weekly ?? [];
   const tasks7d = (data?.tasksCompleted7d ?? 0) + (data?.tasksFailed7d ?? 0);
   const isProjectFiltered = Boolean(selectedProjectValue);
 
@@ -327,7 +327,7 @@ export function AnalyticsScreen() {
             className="h-9 min-w-[240px]"
           >
             <option value="">All projects</option>
-            {projectOptions.map((option: DimensionOption) => (
+            {projectOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -385,13 +385,13 @@ export function AnalyticsScreen() {
           title="Weekly active users"
           subtitle={isProjectFiltered ? "Members with project-matched events, last 12 weeks" : "Members with at least one event, last 12 weeks"}
           weeks={weekly}
-          series={[{ label: "Active users", color: "#6F3DFF", values: weekly.map((w: AnalyticsWeek) => w.activeMembers) }]}
+          series={[{ label: "Active users", color: "#6F3DFF", values: weekly.map((w) => w.activeMembers) }]}
         />
         <TrendChart
           title="Sessions per week"
           subtitle="Distinct sessions, last 12 weeks"
           weeks={weekly}
-          series={[{ label: "Sessions", color: "#1D63FF", values: weekly.map((w: AnalyticsWeek) => w.sessions) }]}
+          series={[{ label: "Sessions", color: "#1D63FF", values: weekly.map((w) => w.sessions) }]}
         />
       </div>
 
@@ -401,8 +401,8 @@ export function AnalyticsScreen() {
           subtitle="Completed and failed task runs, last 12 weeks"
           weeks={weekly}
           series={[
-            { label: "Completed", color: "#18A34A", values: weekly.map((w: AnalyticsWeek) => w.tasksCompleted) },
-            { label: "Failed", color: "#E5484D", values: weekly.map((w: AnalyticsWeek) => w.tasksFailed) },
+            { label: "Completed", color: "#18A34A", values: weekly.map((w) => w.tasksCompleted) },
+            { label: "Failed", color: "#E5484D", values: weekly.map((w) => w.tasksFailed) },
           ]}
         />
       </div>

@@ -15,6 +15,4 @@ CREATE TABLE `telemetry_session_dimension` (
 );
 --> statement-breakpoint
 CREATE INDEX `telemetry_session_dimension_filter` ON `telemetry_session_dimension` (`org_id`,`dimension_type`,`dimension_value`,`session_id`);--> statement-breakpoint
-CREATE INDEX `telemetry_session_dimension_label_filter` ON `telemetry_session_dimension` (`org_id`,`dimension_type`,`dimension_label`,`session_id`);--> statement-breakpoint
-CREATE INDEX `telemetry_session_dimension_session` ON `telemetry_session_dimension` (`org_id`,`source`,`session_id`);--> statement-breakpoint
 CREATE INDEX `telemetry_event_org_session_ts` ON `telemetry_event` (`org_id`,`session_id`,`event_timestamp`);
