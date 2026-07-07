@@ -52,6 +52,7 @@ import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
 import { ClaudePluginImportModal } from "../../connections/modals/claude-plugin-import-modal";
 import type { OpenworkClaudePluginPreview } from "../../../../app/lib/openwork-server";
+import { MarketplaceDangerZone, type MarketplaceClearScope } from "./cloud-marketplaces-view";
 import {
   isOpenWorkExtensionEnabled,
   isOpenWorkExtensionHidden,
@@ -85,6 +86,7 @@ const getSkillHiddenId = (skill: SkillItem) => `skill:${skill.name}`;
 
 export type McpViewProps = {
   busy: boolean;
+  workspaceName?: string;
   selectedWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
   /** Installed skills to render alongside MCPs in the grid. */
@@ -92,9 +94,11 @@ export type McpViewProps = {
   /** Installed marketplace packages to render alongside runtime extensions. */
   installedPlugins?: CloudImportedPlugin[];
   /** Uninstall a skill by name. */
-  uninstallSkill?: (name: string) => void;
+  uninstallSkill?: (name: string) => void | Promise<void>;
   /** Remove an imported marketplace package by plugin id. */
   removeCloudPlugin?: (pluginId: string) => void | Promise<unknown>;
+  /** Clear extension resources using the same uninstall paths as individual items. */
+  clearExtensions?: (scope: MarketplaceClearScope) => Promise<string>;
   /** Read skill content by name. */
   readSkill?: (name: string) => Promise<{ content: string } | null>;
   readConfigFile?: (scope: "project" | "global") => Promise<OpencodeConfigFile | null>;
@@ -110,7 +114,7 @@ export type McpViewProps = {
   connectMcp: (entry: McpDirectoryInfo) => void;
   authorizeMcp: (entry: McpServerEntry) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
-  removeMcp: (name: string) => void;
+  removeMcp: (name: string) => void | Promise<void>;
   setMcpEnabled?: (name: string, enabled: boolean) => Promise<void> | void;
   /** Return extension-specific config UI for the detail modal. */
   configSlotForEntry?: (entry: McpDirectoryInfo) => React.ReactNode | null;
@@ -251,6 +255,7 @@ export function McpView(props: McpViewProps) {
   const [filter, setFilter] = useState<ExtensionFilter>("all");
   const [showHidden, setShowHidden] = useState(false);
   const [claudeImportOpen, setClaudeImportOpen] = useState(false);
+  const [marketplaceClearScope, setMarketplaceClearScope] = useState<MarketplaceClearScope | null>(null);
   const [, setExtensionStateVersion] = useState(0);
 
   const [localState, dispatchLocal] = useReducer(
@@ -696,12 +701,17 @@ export function McpView(props: McpViewProps) {
         open={showAdvanced}
         configScope={configScope}
         activeConfig={activeConfig}
+        workspaceName={props.workspaceName?.trim() || t("session.workspace_fallback")}
+        marketplaceClearScope={marketplaceClearScope}
         canRevealConfig={canRevealConfig}
         revealBusy={revealBusy}
         revealLabel={revealLabel}
         configError={configError}
         onToggle={() => setShowAdvanced((current) => !current)}
         onScopeChange={setConfigScope}
+        onMarketplaceClearScope={setMarketplaceClearScope}
+        onCloseMarketplaceClear={() => setMarketplaceClearScope(null)}
+        onClearExtensions={props.clearExtensions}
         onReveal={revealConfig}
       />
 
@@ -1238,12 +1248,17 @@ function McpAdvancedConfigSection(props: {
   open: boolean;
   configScope: ConfigScope;
   activeConfig: OpencodeConfigFile | null;
+  workspaceName: string;
+  marketplaceClearScope: "workspace" | "all-workspaces" | null;
   canRevealConfig: boolean;
   revealBusy: boolean;
   revealLabel: string;
   configError: string | null;
   onToggle: () => void;
   onScopeChange: (scope: ConfigScope) => void;
+  onMarketplaceClearScope: (scope: "workspace" | "all-workspaces") => void;
+  onCloseMarketplaceClear: () => void;
+  onClearExtensions?: (scope: MarketplaceClearScope) => Promise<string>;
   onReveal: () => Promise<void>;
 }) {
   return (
@@ -1295,6 +1310,15 @@ function McpAdvancedConfigSection(props: {
             {props.activeConfig && props.activeConfig.exists === false ? <div className="text-[11px] text-dls-secondary">{t("mcp.file_not_found")}</div> : null}
           </div>
           {props.configError ? <div className="text-xs text-red-11">{props.configError}</div> : null}
+          <MarketplaceDangerZone
+            workspaceName={props.workspaceName}
+            clearScope={props.marketplaceClearScope}
+            onOpenScope={props.onMarketplaceClearScope}
+            onClose={props.onCloseMarketplaceClear}
+            onClearExtensions={props.onClearExtensions ?? (async () => {
+              throw new Error("Clearing extensions is unavailable.");
+            })}
+          />
         </div>
       ) : null}
     </div>

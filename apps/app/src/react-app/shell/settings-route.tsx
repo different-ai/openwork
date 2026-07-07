@@ -65,7 +65,7 @@ import "@/react-app/domains/settings/browser-extension-config";
 import "@/react-app/domains/settings/openwork-voice-config";
 import "@/react-app/domains/settings/google-workspace-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
-import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
+import { buildExtensionItems, isToggleControlledExtension } from "@/react-app/domains/settings/extension-items";
 import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED, setOpenWorkExtensionEnabled } from "@/react-app/domains/settings/extension-state";
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
 import { ShellCustomizationView } from "@/react-app/domains/settings/pages/shell-view";
@@ -76,7 +76,7 @@ import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
 import { ConnectView } from "@/react-app/domains/settings/pages/connect-view";
-import { CloudMarketplacesView } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
+import { CloudMarketplacesView, type MarketplaceClearScope } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
 import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-providers-view";
 import { MemoryView } from "@/react-app/domains/settings/pages/memory-view";
 import { useFeatureFlagsPreferences } from "@/react-app/domains/settings/state/feature-flags-preferences";
@@ -1688,6 +1688,139 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     port: openworkServerSnapshot.openworkServerHostInfo?.port ?? null,
   });
 
+  const refreshExtensionSurfaces = async () => {
+    await Promise.all([
+      connectionsStore.refreshMcpServers(),
+      extensionsStore.refreshSkills({ force: true }),
+      extensionsStore.refreshPlugins(),
+      extensionsStore.refreshCloudOrgMarketplaces({ force: true }),
+      orgMcpConnections.refresh(),
+    ]);
+  };
+
+  const disableToggleControlledBuiltIns = () => {
+    let disabled = 0;
+    for (const item of extensionItems.builtInItems) {
+      const entry = item.builtInEntry;
+      if (!entry || !item.active || !isToggleControlledExtension(entry) || !isOpenWorkExtensionEnabled(entry)) continue;
+      setOpenWorkExtensionEnabled(entry, false);
+      disabled += 1;
+    }
+    return disabled;
+  };
+
+  const handleClearThisWorkspaceExtensions = async () => {
+    setBusy(true);
+    setBusyLabel("Clearing extensions...");
+    setConfigActionStatus(null);
+
+    let removed = 0;
+    try {
+      for (const plugin of extensionItems.installedCloudPlugins) {
+        const result = await extensionsStore.removeCloudOrgPlugin(plugin.pluginId);
+        if (!result.ok) throw new Error(result.message);
+        removed += 1;
+      }
+
+      for (const skill of extensionItems.installedSkills) {
+        await extensionsStore.uninstallSkill(skill.name);
+        removed += 1;
+      }
+
+      for (const server of connectionsSnapshot.mcpServers.filter((entry) => entry.source !== "config.global")) {
+        await connectionsStore.removeMcp(server.name);
+        removed += 1;
+      }
+
+      for (const plugin of extensionsStore.pluginList().filter((entry) => entry.removable)) {
+        await extensionsStore.removePlugin(plugin.name);
+        removed += 1;
+      }
+
+      removed += disableToggleControlledBuiltIns();
+      await refreshExtensionSurfaces();
+      const message = `Cleared ${removed} extension resource${removed === 1 ? "" : "s"} from this workspace.`;
+      setConfigActionStatus(message);
+      return message;
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+    }
+  };
+
+  const clearWorkspaceExtensionsByEndpoint = async (workspace: RouteWorkspace) => {
+    const endpoint = resolveWorkspaceEndpoint(workspace, { baseUrl, token });
+    if (!endpoint) throw new Error(`${workspaceLabel(workspace)} is not connected.`);
+
+    let removed = 0;
+    const cloudPlugins = await endpoint.client.listCloudPlugins(endpoint.workspaceId);
+    for (const pluginId of Object.keys(cloudPlugins.plugins)) {
+      await endpoint.client.removeCloudPlugin(endpoint.workspaceId, pluginId);
+      removed += 1;
+    }
+
+    const skills = await endpoint.client.listSkills(endpoint.workspaceId);
+    for (const skill of skills.items.filter((item) => item.scope !== "global")) {
+      await endpoint.client.deleteSkill(endpoint.workspaceId, skill.name);
+      removed += 1;
+    }
+
+    const mcp = await endpoint.client.listMcp(endpoint.workspaceId);
+    for (const entry of mcp.items.filter((item) => item.source !== "config.global")) {
+      await endpoint.client.removeMcp(endpoint.workspaceId, entry.name);
+      removed += 1;
+    }
+
+    const plugins = await endpoint.client.listPlugins(endpoint.workspaceId);
+    for (const plugin of plugins.items.filter((item) => item.source === "config")) {
+      await endpoint.client.removePlugin(endpoint.workspaceId, plugin.spec);
+      removed += 1;
+    }
+
+    return removed;
+  };
+
+  const handleClearAllWorkspaceExtensions = async () => {
+    setBusy(true);
+    setBusyLabel("Clearing extensions...");
+    setConfigActionStatus(null);
+
+    let removed = 0;
+    const failures: string[] = [];
+    try {
+      const targets = workspaces.length > 0 ? workspaces : selectedWorkspace ? [selectedWorkspace] : [];
+      if (targets.length === 0) throw new Error("No workspaces are available.");
+
+      for (const workspace of targets) {
+        try {
+          removed += await clearWorkspaceExtensionsByEndpoint(workspace);
+        } catch (error) {
+          failures.push(`${workspaceLabel(workspace)}: ${error instanceof Error ? error.message : "failed"}`);
+        }
+      }
+
+      removed += disableToggleControlledBuiltIns();
+      await refreshExtensionSurfaces();
+
+      if (failures.length > 0) {
+        throw new Error(`Cleared ${removed} extension resource${removed === 1 ? "" : "s"}, but ${failures.length} workspace${failures.length === 1 ? "" : "s"} failed. ${failures.slice(0, 3).join(" ")}`);
+      }
+
+      const message = `Cleared ${removed} extension resource${removed === 1 ? "" : "s"} from all workspaces.`;
+      setConfigActionStatus(message);
+      return message;
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+    }
+  };
+
+  const handleClearExtensions = (scope: MarketplaceClearScope) => {
+    return scope === "workspace"
+      ? handleClearThisWorkspaceExtensions()
+      : handleClearAllWorkspaceExtensions();
+  };
+
   const handleApplyEnvironmentChanges = async () => {
     if (!isDesktopRuntime()) {
       throw new Error(t("settings.environment.apply_unavailable"));
@@ -2104,6 +2237,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             mcpView={
               <McpView
                 busy={busy}
+                workspaceName={selectedWorkspaceName}
                 selectedWorkspaceRoot={selectedWorkspaceRoot}
                 isRemoteWorkspace={isRemoteWorkspace}
                 mcpServers={connectionsSnapshot.mcpServers}
@@ -2125,9 +2259,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                   void connectionsStore.authorizeMcp(entry);
                 }}
                 logoutMcpAuth={(name) => connectionsStore.logoutMcpAuth(name)}
-                removeMcp={(name) => {
-                  void connectionsStore.removeMcp(name);
-                }}
+                removeMcp={(name) => connectionsStore.removeMcp(name)}
                 setMcpEnabled={
                   routeOpenworkStatus === "connected" && routeOpenworkCapabilities?.mcp?.write
                     ? (name, enabled) => connectionsStore.setMcpEnabled(name, enabled)
@@ -2136,8 +2268,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 readConfigFile={(scope) => connectionsStore.readMcpConfigFile(scope)}
                 installedSkills={extensionItems.installedSkills}
                 installedPlugins={extensionItems.installedCloudPlugins}
-                uninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
-                removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
+                uninstallSkill={(name) => extensionsStore.uninstallSkill(name)}
+                removeCloudPlugin={(pluginId) => extensionsStore.removeCloudOrgPlugin(pluginId)}
+                clearExtensions={handleClearExtensions}
                 readSkill={(name) => extensionsStore.readSkill(name)}
                 previewClaudePlugin={(url) => extensionsStore.previewClaudePlugin(url)}
                 installClaudePlugin={(url) => extensionsStore.installClaudePlugin(url)}

@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import * as React from "react";
+import { AlertTriangle, Trash2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import type { McpDirectoryInfo } from "@/app/constants";
@@ -7,7 +8,17 @@ import type { CloudImportedPlugin } from "@/app/cloud/import-state";
 import type { PendingCloudPluginChange } from "@/app/cloud/desktop-cloud-sync";
 import { evaluateEnablement, type EnablementContext } from "@/app/enablement";
 import type { DenExternalMcpConnection, DenOrgMarketplaceResolved, DenOrgPlugin, DenOrgPluginResolved } from "@/app/lib/den";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
 import { useConnectEnabled } from "@/react-app/domains/cloud/desktop-config-provider";
@@ -48,6 +59,7 @@ import {
 type AsyncResult = { ok: boolean; message: string };
 type MarketplacePackageStatus = "available" | "installed" | "update_available";
 type MarketplaceStatusFilter = "all" | MarketplacePackageStatus;
+export type MarketplaceClearScope = "workspace" | "all-workspaces";
 type CloudMarketplacesSession = Pick<
   ReturnType<typeof useDenSession>,
   "syncCurrentDenSettings"
@@ -682,6 +694,171 @@ export function CloudMarketplacesView({
       <Separator />
       {content}
     </SettingsStack>
+  );
+}
+
+export function MarketplaceDangerZone(props: {
+  workspaceName: string;
+  clearScope: MarketplaceClearScope | null;
+  onOpenScope: (scope: MarketplaceClearScope) => void;
+  onClose: () => void;
+  onClearExtensions: (scope: MarketplaceClearScope) => Promise<string> | string;
+}) {
+  return (
+    <div className="space-y-3 rounded-2xl border border-red-7/30 bg-red-3/10 p-4">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-red-7/30 bg-red-3/30 text-red-11">
+          <AlertTriangle size={17} />
+        </div>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-red-11">Extensions danger zone</div>
+          <div className="text-xs text-muted-foreground">
+            Remove installed skills, plugins, apps, and MCP resources from My Extensions.
+          </div>
+        </div>
+      </div>
+      <div className="space-y-3">
+        <MarketplaceDangerAction
+          title="Clear this workspace"
+          description={`Removes installed extension resources from ${props.workspaceName}. Type the workspace name before continuing.`}
+          actionLabel="Clear this workspace"
+          onClick={() => props.onOpenScope("workspace")}
+        />
+        <MarketplaceDangerAction
+          title="Clear all workspaces"
+          description="Removes installed extension resources from every workspace. Type all workspaces before continuing."
+          actionLabel="Clear all workspaces"
+          onClick={() => props.onOpenScope("all-workspaces")}
+        />
+      </div>
+      <MarketplaceClearConfirmDialog
+        scope={props.clearScope}
+        workspaceName={props.workspaceName}
+        onClose={props.onClose}
+        onClearExtensions={props.onClearExtensions}
+      />
+    </div>
+  );
+}
+
+function MarketplaceDangerAction(props: {
+  title: string;
+  description: string;
+  actionLabel: string;
+  onClick: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-red-7/25 bg-dls-surface px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-dls-text">{props.title}</div>
+        <div className="mt-1 text-xs text-muted-foreground">{props.description}</div>
+      </div>
+      <Button
+        type="button"
+        variant="destructive"
+        size="sm"
+        className="shrink-0"
+        onClick={props.onClick}
+      >
+        <Trash2 size={14} />
+        {props.actionLabel}
+      </Button>
+    </div>
+  );
+}
+
+function MarketplaceClearConfirmDialog(props: {
+  scope: MarketplaceClearScope | null;
+  workspaceName: string;
+  onClose: () => void;
+  onClearExtensions: (scope: MarketplaceClearScope) => Promise<string> | string;
+}) {
+  const [confirmation, setConfirmation] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const requiredText = props.scope === "all-workspaces" ? "all workspaces" : props.workspaceName;
+  const confirmed = confirmation.trim() === requiredText;
+
+  React.useEffect(() => {
+    if (!props.scope) return;
+    setConfirmation("");
+    setError(null);
+    setBusy(false);
+  }, [props.scope]);
+
+  const title = props.scope === "all-workspaces"
+    ? "Clear installed extensions from all workspaces?"
+    : `Clear installed extensions from ${props.workspaceName}?`;
+  const description = props.scope === "all-workspaces"
+    ? "This will remove every installed skill, plugin, app, and MCP resource from every workspace. This action cannot be undone."
+    : `This will remove installed skills, plugins, apps, and MCP resources from ${props.workspaceName}. This action cannot be undone.`;
+  const confirmLabel = props.scope === "all-workspaces"
+    ? "Clear all workspaces"
+    : "Clear this workspace";
+
+  return (
+    <AlertDialog
+      open={props.scope !== null}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <AlertDialogContent className="max-w-lg overflow-hidden rounded-3xl p-0">
+        <div className="space-y-5 p-6">
+          <div className="flex items-start gap-4">
+            <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-red-3/50 text-red-11">
+              <AlertTriangle size={24} />
+            </div>
+            <div className="min-w-0 space-y-2">
+              <AlertDialogTitle className="text-left text-xl leading-7">{title}</AlertDialogTitle>
+              <AlertDialogDescription className="text-left leading-6">
+                {description}
+              </AlertDialogDescription>
+            </div>
+          </div>
+          <label className="block space-y-2 rounded-2xl border border-red-7/20 bg-red-1/40 p-4 text-left text-sm text-muted-foreground">
+            <span className="block">
+              Type <span className="font-mono font-semibold text-dls-text">{requiredText}</span> to confirm.
+            </span>
+            <Input
+              autoFocus
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.currentTarget.value)}
+              placeholder={requiredText}
+              aria-label="Extensions clear confirmation"
+            />
+          </label>
+          {error ? (
+            <div className="rounded-xl border border-red-7/30 bg-red-2/40 px-3 py-2 text-sm text-red-11">
+              {error}
+            </div>
+          ) : null}
+        </div>
+        <AlertDialogFooter className="border-t border-dls-border bg-dls-hover/40 px-6 py-4">
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={!confirmed || busy}
+            onClick={() => {
+              if (!props.scope || !confirmed || busy) return;
+              setBusy(true);
+              setError(null);
+              void Promise.resolve(props.onClearExtensions(props.scope))
+                .then((message) => {
+                  toast.success(message);
+                  props.onClose();
+                })
+                .catch((clearError: unknown) => {
+                  setError(clearError instanceof Error ? clearError.message : "Failed to clear extensions.");
+                })
+                .finally(() => setBusy(false));
+            }}
+          >
+            {busy ? "Clearing..." : confirmLabel}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
