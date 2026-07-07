@@ -85,6 +85,29 @@ async function grantClipboardPermissions(ctx) {
   });
 }
 
+async function denyClipboardPermissions(ctx) {
+  if (!ctx.client?.send) {
+    ctx.log("Clipboard permission denial skipped: no raw CDP send method on context.");
+    return;
+  }
+
+  const origin = new URL(ctx.env.OPENWORK_EVAL_DEN_WEB_URL).origin;
+  const permissions = [
+    { name: "clipboard-write", allowWithoutSanitization: false },
+    { name: "clipboard-read" },
+  ];
+
+  for (const permission of permissions) {
+    await ctx.client.send("Browser.setPermission", {
+      origin,
+      permission,
+      setting: "denied",
+    }).catch((error) => {
+      ctx.log(`Clipboard permission denial skipped: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+}
+
 async function navigateTo(ctx, path) {
   await ctx.eval(`(() => { location.assign(${JSON.stringify(routeUrl(ctx, path))}); return true; })()`);
   await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000, label: `load ${path}` });
@@ -347,6 +370,75 @@ export default {
             requireText: ["Copied"],
           },
         });
+      },
+    },
+    {
+      name: "Even when the browser blocks copying, the link is still usable",
+      run: async (ctx) => {
+        try {
+          await ctx.prove("Even when the browser blocks copying, the link is still usable", {
+            voiceover: vo[3],
+            action: async () => {
+              await ctx.waitFor(`(() => {
+                const button = document.querySelector(${JSON.stringify(COPY_INSTALL_LINK_SELECTOR)});
+                return Boolean(button && !button.disabled && button.textContent.includes('Copy install link'));
+              })()`, { timeoutMs: 10_000, label: "copy install link button reset" });
+              await denyClipboardPermissions(ctx);
+              await clickSelectorWithMouse(ctx, COPY_INSTALL_LINK_SELECTOR, "copy install link button");
+              await ctx.waitFor(`(() => {
+                const input = document.querySelector('[data-testid="install-link-share-url"]');
+                return input instanceof HTMLInputElement && input.value.includes('/install?token=');
+              })()`, { timeoutMs: 45_000, label: "manual install link share row" });
+            },
+            assert: async () => {
+              const actual = await ctx.eval(`(() => {
+                const input = document.querySelector('[data-testid="install-link-share-url"]');
+                const shareUrl = input instanceof HTMLInputElement ? input.value : '';
+                const bodyText = document.body.innerText.toLowerCase();
+                const pageErrorTexts = [...document.querySelectorAll('div')]
+                  .filter((element) => element.className.includes('mb-6') && element.className.includes('border-red-200') && element.className.includes('bg-red-50'))
+                  .map((element) => (element.textContent ?? '').trim())
+                  .filter((text) => text.length > 0);
+                return {
+                  shareRowVisible: input instanceof HTMLInputElement,
+                  shareUrl,
+                  rawClipboardMessageVisible: bodyText.includes('not allowed by the user agent'),
+                  pageErrorTexts,
+                  pageErrorHasClipboardFailure: pageErrorTexts.some((text) => {
+                    const normalized = text.toLowerCase();
+                    return normalized.includes('not allowed by the user agent') ||
+                      normalized.includes('notallowederror') ||
+                      normalized.includes('could not copy install link');
+                  }),
+                };
+              })()`);
+              recordAssertion(
+                ctx,
+                "The inline manual copy row appears with an install-link token URL",
+                actual.shareRowVisible === true && /\/install[?]token=/.test(actual.shareUrl),
+                actual,
+              );
+              recordAssertion(
+                ctx,
+                "The raw browser clipboard error is not rendered anywhere on the page",
+                actual.rawClipboardMessageVisible === false,
+                actual,
+              );
+              recordAssertion(
+                ctx,
+                "The page error banner stays empty after clipboard denial",
+                actual.pageErrorTexts.length === 0 && actual.pageErrorHasClipboardFailure === false,
+                actual,
+              );
+            },
+            screenshot: {
+              name: "reauth-copy-blocked-manual-install-link",
+              requireText: ["Copy blocked by the browser — copy the link manually:"],
+            },
+          });
+        } finally {
+          await grantClipboardPermissions(ctx);
+        }
       },
     },
   ],

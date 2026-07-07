@@ -163,6 +163,8 @@ export function ManageMembersScreen() {
   const [seatBillingDialogError, setSeatBillingDialogError] = useState<OrgPaymentRequiredError | null>(null);
   const [installLinkBusy, setInstallLinkBusy] = useState(false);
   const [installLinkCopied, setInstallLinkCopied] = useState(false);
+  const [installLinkShareUrl, setInstallLinkShareUrl] = useState<string | null>(null);
+  const [installLinkShareCopied, setInstallLinkShareCopied] = useState(false);
 
   const assignableRoles = useMemo(
     () => (orgContext?.roles ?? []).filter((role) => !role.protected),
@@ -252,13 +254,38 @@ export function ManageMembersScreen() {
       : null;
   }
 
+  function selectInstallLinkShareInput() {
+    const input = document.getElementById("install-link-share-url");
+    if (input instanceof HTMLInputElement) {
+      input.focus();
+      input.select();
+    }
+  }
+
+  async function handleInstallLinkShareCopy() {
+    if (!installLinkShareUrl) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(installLinkShareUrl);
+      setInstallLinkShareCopied(true);
+      window.setTimeout(() => setInstallLinkShareCopied(false), 1800);
+    } catch {
+      selectInstallLinkShareInput();
+    }
+  }
+
   async function handleCopyInstallLink() {
     if (!activeOrg) {
       return;
     }
 
+    let mintedInstallPageUrl: string | null = null;
     setPageError(null);
     setInstallLinkCopied(false);
+    setInstallLinkShareUrl(null);
+    setInstallLinkShareCopied(false);
     setInstallLinkBusy(true);
     try {
       await runReauthableAction("copy-install-link", async () => {
@@ -277,10 +304,26 @@ export function ManageMembersScreen() {
           throw new Error("The install link response was incomplete.");
         }
 
-        await navigator.clipboard.writeText(installPageUrl);
+        mintedInstallPageUrl = installPageUrl;
+      });
+
+      if (!mintedInstallPageUrl) {
+        throw new Error("The install link response was incomplete.");
+      }
+
+      // The clipboard write is best-effort presentation, kept outside the
+      // queued action: after a step-up verification the retry runs without
+      // transient user activation, and some browsers deniy programmatic
+      // clipboard access entirely. The mint already succeeded either way, so
+      // failure falls back to showing the link for a manual copy instead of
+      // surfacing a raw browser error.
+      try {
+        await navigator.clipboard.writeText(mintedInstallPageUrl);
         setInstallLinkCopied(true);
         window.setTimeout(() => setInstallLinkCopied(false), 1800);
-      });
+      } catch {
+        setInstallLinkShareUrl(mintedInstallPageUrl);
+      }
     } catch (error) {
       setPageError(error instanceof Error ? error.message : "Could not copy install link.");
     } finally {
@@ -745,6 +788,46 @@ export function ManageMembersScreen() {
               </div>
             ) : null}
           </div>
+
+          {installLinkShareUrl ? (
+            <div className="mb-6 rounded-[24px] border border-gray-200 bg-white px-5 py-4">
+              <p className="text-[13px] text-gray-500">
+                Copy blocked by the browser — copy the link manually:
+              </p>
+              <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center">
+                <DenInput
+                  id="install-link-share-url"
+                  data-testid="install-link-share-url"
+                  value={installLinkShareUrl}
+                  readOnly
+                  aria-label="Install link"
+                  className="font-mono text-[12px]"
+                  onFocus={(event) => event.currentTarget.select()}
+                  onClick={(event) => event.currentTarget.select()}
+                />
+                <div className="flex shrink-0 gap-2">
+                  <DenButton
+                    data-testid="install-link-share-copy"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleInstallLinkShareCopy()}
+                  >
+                    {installLinkShareCopied ? "Copied" : "Copy"}
+                  </DenButton>
+                  <DenButton
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setInstallLinkShareUrl(null);
+                      setInstallLinkShareCopied(false);
+                    }}
+                  >
+                    Done
+                  </DenButton>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           <div className="overflow-visible rounded-2xl border border-gray-100 bg-white">
             <div className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
