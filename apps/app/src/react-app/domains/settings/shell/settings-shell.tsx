@@ -73,7 +73,6 @@ export function SettingsShell(props: SettingsShellProps) {
             />
           </div>
           <div className="flex shrink-0 items-center gap-1 mac:titlebar-no-drag">
-            <NotificationBell />
             <Button
               variant="ghost"
               type="button"
