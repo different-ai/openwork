@@ -282,7 +282,7 @@ const baseMarkedOptions = {
       return `<blockquote class="my-4 rounded-r-lg border-l border-border bg-muted/40 pl-4 italic text-muted-foreground">${this.parser.parse(tokens)}</blockquote>`;
     },
     code({ text, lang }) {
-      const rawCode = `<pre class="my-4 overflow-x-auto rounded-[18px] border border-border/70 bg-gray-1/80 px-4 py-3 text-xs leading-6 text-muted-foreground"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre>`
+      const rawCode = `<pre class="overflow-x-auto text-xs leading-6 text-muted-foreground"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre>`
       return generateCodeBlockContainer(rawCode)
     },
     codespan({ text }) {
