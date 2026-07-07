@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, session, shell, systemPreferences } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, net as electronNet, session, shell, systemPreferences } from "electron";
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
@@ -1383,11 +1383,13 @@ const desktopCommandHandlers = {
       const init = args[1] ?? {};
       if (!url) throw new Error("URL is required.");
       const timeoutMs = Number(init.timeoutMs);
-      const response = await fetch(url, {
+      const response = await electronNet.fetch(url, {
         method: typeof init.method === "string" ? init.method : undefined,
         headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
         body: typeof init.body === "string" ? init.body : undefined,
         signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
+        credentials: "omit",
+        cache: "no-store",
       });
       return {
         status: response.status,
@@ -1419,12 +1421,66 @@ const desktopCommandHandlers = {
   },
 };
 
+function desktopErrorMessageSegment(error, includeName = false) {
+  try {
+    if (error && (typeof error === "object" || typeof error === "function")) {
+      const message = typeof error.message === "string" ? error.message.trim() : "";
+      if (message) {
+        const name = typeof error.name === "string" ? error.name.trim() : "";
+        return includeName && name && name !== "Error" && !message.startsWith(`${name}:`)
+          ? `${name}: ${message}`
+          : message;
+      }
+    }
+    return String(error);
+  } catch {
+    return "Unknown error";
+  }
+}
+
+function desktopErrorCause(error) {
+  try {
+    return error && (typeof error === "object" || typeof error === "function") ? error.cause : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function desktopErrorMessageWithCauses(error) {
+  try {
+    const messages = [];
+    const seenMessages = new Set();
+    const seenErrors = new Set();
+    let current = error;
+    for (let depth = 0; current != null && depth < 8; depth += 1) {
+      if (typeof current === "object" || typeof current === "function") {
+        if (seenErrors.has(current)) break;
+        seenErrors.add(current);
+      }
+      const message = desktopErrorMessageSegment(current, depth === 0).trim();
+      if (message && !seenMessages.has(message)) {
+        seenMessages.add(message);
+        messages.push(message);
+      }
+      current = desktopErrorCause(current);
+    }
+    const combined = messages.join(": ") || "Unknown desktop command error";
+    return combined.length > 2000 ? `${combined.slice(0, 1997)}...` : combined;
+  } catch {
+    return "Unknown desktop command error";
+  }
+}
+
 async function handleDesktopInvoke(event, command, ...args) {
   const handler = desktopCommandHandlers[command];
   if (!handler) {
     throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
   }
-  return handler(event, ...args);
+  try {
+    return await handler(event, ...args);
+  } catch (error) {
+    throw new Error(desktopErrorMessageWithCauses(error), { cause: error });
+  }
 }
 
 

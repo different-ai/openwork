@@ -541,7 +541,14 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     if (hostAuthToken) headers.set("X-OpenWork-Host-Token", hostAuthToken);
 
     try {
-      const response = await fetch(url, { headers, signal: controller.signal });
+      const electron = await import("electron").catch(() => null);
+      const fetcher = typeof electron?.net?.fetch === "function" ? electron.net.fetch.bind(electron.net) : fetch;
+      const response = await fetcher(url, {
+        headers,
+        signal: controller.signal,
+        credentials: "omit",
+        cache: "no-store",
+      });
       if (!response.ok) {
         throw new Error(`OpenWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
       }
