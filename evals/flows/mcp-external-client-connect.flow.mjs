@@ -655,7 +655,9 @@ export default {
               tokenType: readString(state.tokenExchange?.body, "token_type"),
               accessToken: redactToken(state.accessToken),
               tokenParts,
+              errorBody: state.tokenExchange?.ok ? undefined : (state.tokenExchange?.rawBody ?? "").slice(0, 400),
             };
+            ctx.recordEvidence({ type: "output", name: "Token exchange response", text: JSON.stringify(actual, null, 2) });
             recordAssertion(
               ctx,
               "The authorization code exchanges for a non-empty MCP access token with an accepted token shape",
