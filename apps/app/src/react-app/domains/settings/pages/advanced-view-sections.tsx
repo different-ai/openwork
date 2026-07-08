@@ -8,8 +8,14 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import { DEFAULT_DEN_BASE_URL } from "@/app/lib/den";
 import { isDesktopRuntime } from "@/app/utils";
 import { t } from "@/i18n";
+import { ControlPlaneUrlEditor } from "../cloud/control-plane-url-editor";
+import {
+  displayCustomControlPlaneUrl,
+  isValidControlPlaneUrl,
+} from "../cloud/control-plane-url";
 import {
   SettingsInset,
   SettingsNotice,
@@ -29,6 +35,55 @@ import {
 } from "../settings-layout";
 
 type SettingsTone = ComponentProps<typeof SettingsStatusBadge>["tone"];
+
+interface AdvancedOrganizationServerSectionProps {
+  authBusy: boolean;
+  baseUrl: string;
+  baseUrlBusy: boolean;
+  baseUrlDraft: string;
+  baseUrlError: string | null;
+  onApplyBaseUrl: () => void | Promise<void>;
+  onBaseUrlDraftChange: (value: string) => void;
+  onResetBaseUrlToDefault: () => void | Promise<void>;
+  sessionBusy: boolean;
+}
+
+export function AdvancedOrganizationServerSection(props: AdvancedOrganizationServerSectionProps) {
+  const controlsDisabled = [props.authBusy, props.baseUrlBusy, props.sessionBusy].some(Boolean);
+  const customUrl = displayCustomControlPlaneUrl(props.baseUrlDraft);
+  const currentUrl = displayCustomControlPlaneUrl(props.baseUrl);
+
+  return (
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>{t("settings.organization_server_title")}</LayoutSectionTitle>
+        <LayoutSectionDescription>{t("settings.organization_server_desc")}</LayoutSectionDescription>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <ControlPlaneUrlEditor
+          disabled={controlsDisabled}
+          hint={t("settings.organization_server_url_hint")}
+          label={t("settings.organization_server_url_label")}
+          onReset={props.onResetBaseUrlToDefault}
+          onSave={props.onApplyBaseUrl}
+          onValueChange={props.onBaseUrlDraftChange}
+          placeholder={DEFAULT_DEN_BASE_URL}
+          resetLabel={t("common.reset")}
+          saveDisabled={!isValidControlPlaneUrl(customUrl)}
+          saveLabel={t("common.save")}
+          value={customUrl}
+        />
+        <LayoutSectionItemFootnote>
+          {currentUrl
+            ? t("settings.organization_server_current", { url: currentUrl })
+            : t("settings.organization_server_default")}
+        </LayoutSectionItemFootnote>
+        {props.baseUrlError ? <SettingsNotice tone="error">{props.baseUrlError}</SettingsNotice> : null}
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
+}
 
 interface RuntimeStatusCardProps {
   icon: ReactNode;

@@ -2215,6 +2215,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               }
               return openworkClient.getRuntimeConfigStatus(selectedWorkspaceId);
             }}
+            organizationServer={denSession}
           />
         );
       case "appearance":
