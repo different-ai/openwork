@@ -103,24 +103,24 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         // tools/list (capability-sources/external-mcp-client.ts) — a
         // Notion/Linear/Stripe/... connection an admin added in Den shows
         // up here exactly like any native capability, ranked together.
-        const externalMatches = externalMcpConnectionsEnabled
-          ? await searchExternalCapabilities({
-            organizationId: principal.organizationId,
-            member: memberIdentity,
-            query,
-            redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
-            limit: boundedLimit,
-          })
-          : []
-        const marketplaceMatches = externalMcpConnectionsEnabled
-          ? await searchMarketplaceCapabilities({
-            organizationId: principal.organizationId,
-            member: memberIdentity,
-            query,
-            limit: boundedLimit,
-            enabled: externalMcpConnectionsEnabled,
-          })
-          : []
+        const [externalMatches, marketplaceMatches] = externalMcpConnectionsEnabled
+          ? await Promise.all([
+              searchExternalCapabilities({
+                organizationId: principal.organizationId,
+                member: memberIdentity,
+                query,
+                redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
+                limit: boundedLimit,
+              }),
+              searchMarketplaceCapabilities({
+                organizationId: principal.organizationId,
+                member: memberIdentity,
+                query,
+                limit: boundedLimit,
+                enabled: externalMcpConnectionsEnabled,
+              }),
+            ])
+          : [[], []]
         const matches = [...restMatches, ...externalMatches, ...marketplaceMatches]
           .sort((a, b) => b.score - a.score)
           .slice(0, boundedLimit)

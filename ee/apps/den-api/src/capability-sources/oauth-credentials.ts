@@ -1,10 +1,12 @@
-import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
   OrgOAuthClientTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
+import { isDenTypeId } from "@openwork-ee/utils/typeid"
+import { deleteManifests } from "./external-mcp-manifests.js"
 
 /**
  * Generic, provider-agnostic reads/writes for the two credential tables.
@@ -79,6 +81,24 @@ export async function getConnectedAccount(input: {
   return rows[0] ?? null
 }
 
+export async function getConnectedAccounts(input: {
+  organizationId: OrganizationId
+  orgMembershipId: OrgMembershipId
+  providerIds: string[]
+}): Promise<Map<string, ConnectedAccountRow>> {
+  const providerIds = [...new Set(input.providerIds)]
+  if (providerIds.length === 0) return new Map()
+  const rows = await db
+    .select()
+    .from(ConnectedAccountTable)
+    .where(and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+      inArray(ConnectedAccountTable.providerId, providerIds),
+    ))
+  return new Map(rows.map((row) => [row.providerId, row]))
+}
+
 /** Upsert used both to stash a pending PKCE verifier before redirect, and to save real tokens after exchange. */
 export async function upsertConnectedAccount(input: {
   organizationId: OrganizationId
@@ -134,5 +154,11 @@ export async function disconnectAccount(input: {
   const existing = await getConnectedAccount(input)
   if (!existing) return false
   await db.delete(ConnectedAccountTable).where(eq(ConnectedAccountTable.id, existing.id))
+  if (isDenTypeId("externalMcpConnection", input.providerId)) {
+    await deleteManifests({
+      connectionId: input.providerId,
+      principal: input.orgMembershipId,
+    })
+  }
   return true
 }

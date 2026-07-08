@@ -66,6 +66,7 @@ describe("agent-configurable org connections policy", () => {
   test("discovery surfaces the agent needs are readable", () => {
     expect(allowed("getV1McpConnections")).toBe(true)
     expect(allowed("getV1McpConnectionsPresets")).toBe(true)
+    expect(allowed("postV1McpConnectionsByConnectionIdRefreshTools")).toBe(true)
   })
 
   test("agent catalog search discovers member list and admin create mcp-connection operations", () => {

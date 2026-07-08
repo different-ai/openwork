@@ -276,12 +276,31 @@ export async function completeExternalMcpAuth(connection: ExternalMcpConnectionR
   await transport.finishAuth(code)
 }
 
-export async function listExternalMcpTools(connection: ExternalMcpConnectionRow, redirectUri: string, member?: ExternalMcpMemberContext) {
+export async function listExternalMcpTools(
+  connection: ExternalMcpConnectionRow,
+  redirectUri: string,
+  member?: ExternalMcpMemberContext,
+  options?: { timeoutMs?: number },
+) {
+  return listExternalMcpToolsWithOptions(connection, redirectUri, member, options)
+}
+
+export async function listExternalMcpToolsWithOptions(
+  connection: ExternalMcpConnectionRow,
+  redirectUri: string,
+  member?: ExternalMcpMemberContext,
+  options?: { timeoutMs?: number },
+) {
   const client = buildClient()
   const { transport } = buildTransport(connection, redirectUri, undefined, member)
-  await client.connect(transport)
+  const startedAt = Date.now()
+  const timeoutMs = options?.timeoutMs
+  await client.connect(transport, timeoutMs === undefined ? undefined : { timeout: timeoutMs })
   try {
-    const { tools } = await client.listTools()
+    const remainingMs = timeoutMs === undefined
+      ? undefined
+      : Math.max(1, timeoutMs - (Date.now() - startedAt))
+    const { tools } = await client.listTools(undefined, remainingMs === undefined ? undefined : { timeout: remainingMs })
     return tools
   } finally {
     await client.close()

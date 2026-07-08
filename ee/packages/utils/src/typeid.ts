@@ -84,6 +84,7 @@ export const idTypesMapNameToPrefix = {
   connectedAccount: "cta",
   externalMcpConnection: "emc",
   externalMcpConnectionAccessGrant: "emg",
+  externalMcpToolManifest: "emtm",
   memory: "mem",
   memctx: "mctx",
 } as const

@@ -19,6 +19,14 @@ import {
   completeExternalMcpAuth,
 } from "../../capability-sources/external-mcp-client.js"
 import {
+  getManifests,
+  manifestMapKey,
+  manifestPrincipalFor,
+  revalidateManifest,
+  deleteManifests,
+  type ManifestPrincipal,
+} from "../../capability-sources/external-mcp-manifests.js"
+import {
   createExternalMcpConnection,
   deleteExternalMcpConnection,
   disconnectExternalMcpConnection,
@@ -90,6 +98,13 @@ const connectionResponseSchema = z.object({
   connectedForMe: z.boolean(),
   /** Present only for scope=manageable (admin) listings. */
   access: accessSummarySchema.nullable(),
+  tools: z.object({
+    count: z.number(),
+    listedAt: z.string().nullable(),
+    status: z.enum(["ok", "error"]),
+    truncated: z.boolean(),
+    lastError: z.string().nullable(),
+  }).nullable(),
 }).meta({ ref: "ExternalMcpConnectionResponse" })
 
 const connectionListResponseSchema = z.object({
@@ -158,6 +173,13 @@ const connectionValidationFailedSchema = z.object({
   message: z.string(),
 }).meta({ ref: "ExternalMcpConnectionValidationFailedError" })
 
+const refreshToolsResponseSchema = z.object({
+  status: z.enum(["ok", "error"]),
+  toolCount: z.number(),
+  listedAt: z.string().nullable(),
+  message: z.string().optional(),
+}).meta({ ref: "ExternalMcpRefreshToolsResponse" })
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
@@ -195,6 +217,12 @@ async function toConnectionResponse(
     connectedForMe = Boolean(account?.accessToken)
   }
 
+  const principal: ManifestPrincipal = row.credentialMode === "per_member"
+    ? options.callerOrgMembershipId
+    : "shared"
+  const manifests = await getManifests({ pairs: [{ connection: row, principal }] })
+  const manifest = manifests.get(manifestMapKey(row.id, principal))
+
   let access: { orgWide: boolean; memberIds: string[]; teamIds: string[] } | null = null
   if (options.includeAccess) {
     const grants = await listExternalMcpConnectionAccess(row.id)
@@ -215,6 +243,15 @@ async function toConnectionResponse(
     connectedAt: row.connectedAt ? row.connectedAt.toISOString() : null,
     connectedForMe,
     access,
+    tools: manifest
+      ? {
+          count: manifest.toolCount,
+          listedAt: manifest.listedAt ? manifest.listedAt.toISOString() : null,
+          status: manifest.status,
+          truncated: manifest.toolsTruncated,
+          lastError: manifest.lastError,
+        }
+      : null,
   }
 }
 
@@ -517,6 +554,66 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     },
   )
 
+  app.post(
+    "/v1/mcp-connections/:connectionId/refresh-tools",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Refresh the cached tool manifest for an External MCP Connection",
+      description: "Admins can refresh any connection. Granted members can refresh their own per-member principal. The refresh uses the same bounded MCP tools/list path as search.",
+      responses: {
+        200: jsonResponse("Refresh attempted.", refreshToolsResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller cannot refresh this connection.", forbiddenSchema),
+        404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    resolveMemberTeamsMiddleware,
+    paramValidator(connectionParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const { connectionId } = c.req.valid("param")
+      const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
+      const connection = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: externalMcpConnectionId })
+      if (!connection) {
+        return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+      }
+
+      const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
+      const isAdmin = verifyOrgRole({ roles: ["admin"], userContext: payload.currentMember })
+      const canUse = await memberCanUseExternalMcpConnection({
+        connectionId: externalMcpConnectionId,
+        orgMembershipId: payload.currentMember.id,
+        teamIds: memberTeams.map((team) => team.id),
+      })
+      if (!isAdmin && !canUse) {
+        return c.json({ error: "forbidden", message: "You have not been granted access to this connection." }, 403)
+      }
+
+      if (connection.credentialMode === "shared" && !isAdmin) {
+        return c.json({ error: "forbidden", message: "Only workspace owners and admins can refresh a shared org-account connection." }, 403)
+      }
+      const member = connection.credentialMode === "per_member"
+        ? { orgMembershipId: payload.currentMember.id }
+        : undefined
+      const principal = manifestPrincipalFor(connection, member)
+      await revalidateManifest({
+        connection,
+        principal,
+        redirectUri: callbackRedirectUri(c.req.raw, connection.id),
+        member,
+      })
+      const manifests = await getManifests({ pairs: [{ connection, principal }] })
+      const manifest = manifests.get(manifestMapKey(connection.id, principal))
+      return c.json({
+        status: manifest?.status ?? "error",
+        toolCount: manifest?.toolCount ?? 0,
+        listedAt: manifest?.listedAt ? manifest.listedAt.toISOString() : null,
+        ...(manifest?.lastError ? { message: manifest.lastError } : {}),
+      })
+    },
+  )
+
   app.get(
     "/v1/mcp-connections/:connectionId/connect/start",
     describeRoute({
@@ -636,6 +733,10 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           ? { orgMembershipId: statePayload.orgMembershipId }
           : undefined
         await completeExternalMcpAuth(connection, code, callbackRedirectUri(c.req.raw, connectionId), member)
+        await deleteManifests({
+          connectionId: connection.id,
+          principal: connection.credentialMode === "per_member" ? statePayload.orgMembershipId : "shared",
+        })
       } catch (error) {
         return c.html(connectCallbackPage({ ok: false, name: connection.name, message: error instanceof Error ? error.message : String(error) }), 400)
       }

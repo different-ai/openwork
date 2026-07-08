@@ -7,6 +7,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
+import { deleteManifests } from "./external-mcp-manifests.js"
 
 /**
  * CRUD for ExternalMcpConnectionTable and its access grants — the "add any
@@ -208,6 +209,7 @@ export async function deleteExternalMcpConnection(input: {
     eq(OrgOAuthClientTable.organizationId, input.organizationId),
     eq(OrgOAuthClientTable.providerId, existing.id),
   ))
+  await deleteManifests({ connectionId: existing.id })
   await db.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
   return true
 }
@@ -262,5 +264,6 @@ export async function disconnectExternalMcpConnection(input: {
       connectedAt: null,
     })
     .where(eq(ExternalMcpConnectionTable.id, existing.id))
+  await deleteManifests({ connectionId: existing.id, principal: "shared" })
   return true
 }

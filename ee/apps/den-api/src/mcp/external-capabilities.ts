@@ -8,9 +8,23 @@ import {
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
 import { callExternalMcpTool, listExternalMcpTools } from "../capability-sources/external-mcp-client.js"
-import { getConnectedAccount } from "../capability-sources/oauth-credentials.js"
+import { getConnectedAccount, getConnectedAccounts, type ConnectedAccountRow } from "../capability-sources/oauth-credentials.js"
+import {
+  classifyManifest,
+  getManifests,
+  manifestMapKey,
+  manifestPrincipalFor,
+  markManifestsStale,
+  saveManifestFailure,
+  saveManifestListing,
+  scheduleManifestRevalidation,
+  type ExternalMcpToolManifestRow,
+  type ManifestPrincipal,
+} from "../capability-sources/external-mcp-manifests.js"
 import { db } from "../db.js"
+import { env } from "../env.js"
 import { listTeamsForMember } from "../orgs.js"
+import { mapWithConcurrency } from "../utils/concurrency.js"
 import { tokenize } from "./search.js"
 import type { CapabilityMatch } from "./search.js"
 
@@ -86,7 +100,7 @@ function hasSharedCredential(connection: ExternalMcpConnectionRow): boolean {
   return true
 }
 
-function redirectUriFor(redirectUriBase: string, connectionId: string): string {
+export function redirectUriFor(redirectUriBase: string, connectionId: string): string {
   return `${redirectUriBase}/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/callback`
 }
 
@@ -116,6 +130,198 @@ function shortErrorMessage(error: unknown): string {
   return message.length > 120 ? `${message.slice(0, 117)}...` : message
 }
 
+type ToolForSearch = {
+  name: string
+  title?: string
+  description?: string
+}
+
+type ExternalSearchCounters = {
+  cacheHits: number
+  staleServed: number
+  misses: number
+  errors: number
+  timeouts: number
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false
+  if ("code" in error && error.code === -32001) return true
+  const message = error instanceof Error ? error.message : String(error)
+  return /timeout|timed out/i.test(message)
+}
+
+function isUnknownToolError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = error.code
+    if (code === -32601) return true
+    if (code === -32602) {
+      const message = error instanceof Error ? error.message : String(error)
+      return /unknown tool|not found/i.test(message)
+    }
+  }
+  return false
+}
+
+function scoreTools(
+  connection: ExternalMcpConnectionRow,
+  tools: readonly ToolForSearch[],
+  queryTokens: string[],
+): ExternalCapabilityMatch[] {
+  const matches: ExternalCapabilityMatch[] = []
+  for (const tool of tools) {
+    const summary = tool.description ?? tool.title ?? tool.name
+    const nameTokens = tokenize(`${connection.name} ${tool.name}`)
+    const summaryTokens = tokenize(summary)
+    const score = scoreText(nameTokens, summaryTokens, queryTokens)
+    if (score <= 0) continue
+    matches.push({
+      name: buildExternalCapabilityName(connection.id, tool.name),
+      method: "MCP",
+      path: connection.url,
+      score,
+      summary: `[${connection.name}] ${summary}`,
+      pathParams: [],
+      queryParams: [],
+      hasBody: true,
+    })
+  }
+  return matches
+}
+
+function statusMatch(input: {
+  connection: ExternalMcpConnectionRow
+  queryTokens: string[]
+  status: "needs_connection" | "error"
+  summary: string
+  hint: string
+}): ExternalCapabilityMatch[] {
+  const nameTokens = tokenize(input.connection.name)
+  const score = scoreText(nameTokens, nameTokens, input.queryTokens)
+  if (score <= 0) return []
+  return [{
+    name: buildExternalCapabilityName(input.connection.id, "*"),
+    method: "MCP",
+    path: input.connection.url,
+    score,
+    summary: input.summary,
+    pathParams: [],
+    queryParams: [],
+    hasBody: false,
+    status: input.status,
+    hint: input.hint,
+  }]
+}
+
+async function listAndMaybeCache(input: {
+  connection: ExternalMcpConnectionRow
+  redirectUri: string
+  member?: { orgMembershipId: DenTypeId<"member"> }
+  principal: ManifestPrincipal
+  cacheEnabled: boolean
+  counters: ExternalSearchCounters
+}) {
+  const startedAt = Date.now()
+  try {
+    const tools = await listExternalMcpTools(input.connection, input.redirectUri, input.member, {
+      timeoutMs: env.mcpListToolsTimeoutMs,
+    })
+    if (input.cacheEnabled) {
+      await saveManifestListing({
+        connection: input.connection,
+        principal: input.principal,
+        tools,
+        durationMs: Date.now() - startedAt,
+      })
+    }
+    return tools
+  } catch (error) {
+    input.counters.errors += 1
+    if (isTimeoutError(error)) input.counters.timeouts += 1
+    if (input.cacheEnabled) {
+      await saveManifestFailure({
+        connection: input.connection,
+        principal: input.principal,
+        error,
+        durationMs: Date.now() - startedAt,
+      })
+    }
+    throw error
+  }
+}
+
+async function collectConnectionMatches(input: {
+  connection: ExternalMcpConnectionRow
+  account?: ConnectedAccountRow
+  manifest?: ExternalMcpToolManifestRow
+  queryTokens: string[]
+  redirectUriBase: string
+  orgMembershipId: DenTypeId<"member">
+  counters: ExternalSearchCounters
+}): Promise<ExternalCapabilityMatch[]> {
+  const { connection, queryTokens } = input
+  if (connection.credentialMode === "per_member") {
+    if (!input.account?.accessToken) {
+      return statusMatch({
+        connection,
+        queryTokens,
+        status: "needs_connection",
+        summary: `[${connection.name}] Available to you, but you haven't connected your ${connection.name} account yet.`,
+        hint: `Ask the user to open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}", then search again.`,
+      })
+    }
+  } else if (!hasSharedCredential(connection)) {
+    return statusMatch({
+      connection,
+      queryTokens,
+      status: "needs_connection",
+      summary: `[${connection.name}] Available to your organization, but an admin hasn't connected it yet.`,
+      hint: `Ask an org admin to open the OpenWork Cloud dashboard -> Connections and connect "${connection.name}", then search again.`,
+    })
+  }
+
+  const member = connection.credentialMode === "per_member"
+    ? { orgMembershipId: input.orgMembershipId }
+    : undefined
+  const principal = manifestPrincipalFor(connection, member)
+  const redirectUri = redirectUriFor(input.redirectUriBase, connection.id)
+
+  if (env.mcpManifestCacheEnabled) {
+    const classification = classifyManifest(input.manifest ?? null, connection)
+    if (classification.state === "fresh") {
+      input.counters.cacheHits += 1
+      return scoreTools(connection, classification.row.tools, queryTokens)
+    }
+    if (classification.state === "stale") {
+      input.counters.staleServed += 1
+      scheduleManifestRevalidation({ connection, principal, redirectUri, member })
+      return scoreTools(connection, classification.row.tools, queryTokens)
+    }
+    input.counters.misses += 1
+  }
+
+  try {
+    const tools = await listAndMaybeCache({
+      connection,
+      redirectUri,
+      member,
+      principal,
+      cacheEnabled: env.mcpManifestCacheEnabled,
+      counters: input.counters,
+    })
+    return scoreTools(connection, tools, queryTokens)
+  } catch (error) {
+    const message = shortErrorMessage(error)
+    return statusMatch({
+      connection,
+      queryTokens,
+      status: "error",
+      summary: `[${connection.name}] This connection is set up but not responding right now (${message}).`,
+      hint: `The stored credential may be expired or the server may be unreachable. Reconnect "${connection.name}" from the OpenWork Cloud dashboard -> Connections, then search again.`,
+    })
+  }
+}
+
 /**
  * Live-lists tools for every external MCP connection the calling member has
  * been granted, and returns the ones matching `query`, in the same
@@ -130,110 +336,65 @@ export async function searchExternalCapabilities(input: {
   limit?: number
 }): Promise<ExternalCapabilityMatch[]> {
   if (!input.member) return []
+  const memberIdentity = input.member
   const queryTokens = tokenize(input.query)
   if (queryTokens.length === 0) return []
 
   const connections = await listUsableExternalMcpConnections({
     organizationId: normalizeDenTypeId("organization", input.organizationId),
-    orgMembershipId: input.member.orgMembershipId,
-    teamIds: input.member.teamIds,
+    orgMembershipId: memberIdentity.orgMembershipId,
+    teamIds: memberIdentity.teamIds,
   })
-  const matches: ExternalCapabilityMatch[] = []
-
-  for (const connection of connections) {
-    if (connection.credentialMode === "per_member") {
-      const account = await getConnectedAccount({
-        organizationId: connection.organizationId,
-        orgMembershipId: input.member.orgMembershipId,
-        providerId: connection.id,
-      })
-      if (!account?.accessToken) {
-        // Granted but not yet connected: surface the connection itself (not
-        // its tools — we can't list them without the member's credential) so
-        // the agent can tell the human exactly what to do.
-        const nameTokens = tokenize(connection.name)
-        const score = scoreText(nameTokens, nameTokens, queryTokens)
-        if (score > 0) {
-          matches.push({
-            name: buildExternalCapabilityName(connection.id, "*"),
-            method: "MCP",
-            path: connection.url,
-            score,
-            summary: `[${connection.name}] Available to you, but you haven't connected your ${connection.name} account yet.`,
-            pathParams: [],
-            queryParams: [],
-            hasBody: false,
-            status: "needs_connection",
-            hint: `Ask the user to open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}", then search again.`,
-          })
-        }
-        continue
-      }
-    } else if (!hasSharedCredential(connection)) {
-      const nameTokens = tokenize(connection.name)
-      const score = scoreText(nameTokens, nameTokens, queryTokens)
-      if (score > 0) {
-        matches.push({
-          name: buildExternalCapabilityName(connection.id, "*"),
-          method: "MCP",
-          path: connection.url,
-          score,
-          summary: `[${connection.name}] Available to your organization, but an admin hasn't connected it yet.`,
-          pathParams: [],
-          queryParams: [],
-          hasBody: false,
-          status: "needs_connection",
-          hint: `Ask an org admin to open the OpenWork Cloud dashboard -> Connections and connect "${connection.name}", then search again.`,
-        })
-      }
-      continue
-    }
-
-    const member = connection.credentialMode === "per_member"
-      ? { orgMembershipId: input.member.orgMembershipId }
-      : undefined
-    let tools: Awaited<ReturnType<typeof listExternalMcpTools>>
-    try {
-      tools = await listExternalMcpTools(connection, redirectUriFor(input.redirectUriBase, connection.id), member)
-    } catch (error) {
-      const message = shortErrorMessage(error)
-      const nameTokens = tokenize(connection.name)
-      const score = scoreText(nameTokens, nameTokens, queryTokens)
-      if (score > 0) {
-        matches.push({
-          name: buildExternalCapabilityName(connection.id, "*"),
-          method: "MCP",
-          path: connection.url,
-          score,
-          summary: `[${connection.name}] This connection is set up but not responding right now (${message}).`,
-          pathParams: [],
-          queryParams: [],
-          hasBody: false,
-          status: "error",
-          hint: `The stored credential may be expired or the server may be unreachable. Reconnect "${connection.name}" from the OpenWork Cloud dashboard -> Connections, then search again.`,
-        })
-      }
-      continue
-    }
-
-    for (const tool of tools) {
-      const summary = tool.description ?? tool.title ?? tool.name
-      const nameTokens = tokenize(`${connection.name} ${tool.name}`)
-      const summaryTokens = tokenize(summary)
-      const score = scoreText(nameTokens, summaryTokens, queryTokens)
-      if (score <= 0) continue
-      matches.push({
-        name: buildExternalCapabilityName(connection.id, tool.name),
-        method: "MCP",
-        path: connection.url,
-        score,
-        summary: `[${connection.name}] ${summary}`,
-        pathParams: [],
-        queryParams: [],
-        hasBody: true,
-      })
-    }
+  const startedAt = Date.now()
+  const counters: ExternalSearchCounters = {
+    cacheHits: 0,
+    staleServed: 0,
+    misses: 0,
+    errors: 0,
+    timeouts: 0,
   }
+  const perMemberConnections = connections.filter((connection) => connection.credentialMode === "per_member")
+  const accounts = await getConnectedAccounts({
+    organizationId: normalizeDenTypeId("organization", input.organizationId),
+    orgMembershipId: memberIdentity.orgMembershipId,
+    providerIds: perMemberConnections.map((connection) => connection.id),
+  })
+  const manifestPairs = env.mcpManifestCacheEnabled
+    ? connections
+        .filter((connection) => connection.credentialMode === "shared" ? hasSharedCredential(connection) : Boolean(accounts.get(connection.id)?.accessToken))
+        .map((connection) => ({
+          connection,
+          principal: manifestPrincipalFor(
+            connection,
+            connection.credentialMode === "per_member"
+              ? { orgMembershipId: memberIdentity.orgMembershipId }
+              : undefined,
+          ),
+        }))
+    : []
+  const manifests = await getManifests({ pairs: manifestPairs })
+  const matchesByConnection = await mapWithConcurrency(
+    connections,
+    env.mcpListToolsConcurrency,
+    (connection) => {
+      const account = accounts.get(connection.id)
+      const principal = connection.credentialMode === "per_member"
+        ? memberIdentity.orgMembershipId
+        : "shared"
+      return collectConnectionMatches({
+        connection,
+        account,
+        manifest: manifests.get(manifestMapKey(connection.id, principal)),
+        queryTokens,
+        redirectUriBase: input.redirectUriBase,
+        orgMembershipId: memberIdentity.orgMembershipId,
+        counters,
+      })
+    },
+  )
+  const matches = matchesByConnection.flat()
+
+  console.info(`[mcp-agent][external_mcp_search] connections=${connections.length} cache_hits=${counters.cacheHits} stale_served=${counters.staleServed} misses=${counters.misses} errors=${counters.errors} timeouts=${counters.timeouts} durationMs=${Date.now() - startedAt}`)
 
   matches.sort((a, b) => (b.score - a.score) || a.name.localeCompare(b.name))
   return matches.slice(0, input.limit ?? 5)
@@ -316,12 +477,21 @@ export async function executeExternalCapability(input: {
     return { ok: false, error: "connection_not_connected", message: `"${connection.name}" is not connected yet.` }
   }
 
-  const result = await callExternalMcpTool({
-    connection,
-    redirectUri: redirectUriFor(input.redirectUriBase, connection.id),
-    toolName: input.toolName,
-    args: input.args,
-    member,
-  })
+  let result: Awaited<ReturnType<typeof callExternalMcpTool>>
+  try {
+    result = await callExternalMcpTool({
+      connection,
+      redirectUri: redirectUriFor(input.redirectUriBase, connection.id),
+      toolName: input.toolName,
+      args: input.args,
+      member,
+    })
+  } catch (error) {
+    if (isUnknownToolError(error)) {
+      const principal = manifestPrincipalFor(connection, member)
+      void markManifestsStale({ connectionId: connection.id, principal })
+    }
+    throw error
+  }
   return { ok: true, result }
 }
