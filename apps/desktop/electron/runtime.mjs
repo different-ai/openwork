@@ -484,12 +484,29 @@ function loadUserEnvFile() {
   }
 }
 
+/**
+ * @typedef {Object} RuntimeSystemCaTlsModule
+ * @property {(type?: string) => string[]} [getCACertificates]
+ */
+
+/**
+ * @typedef {Object} ResolveSystemCaEnvOptions
+ * @property {RuntimeSystemCaTlsModule} [tlsModule]
+ * @property {string} userDataDir
+ * @property {NodeJS.ProcessEnv} [parentEnv]
+ * @property {(...args: unknown[]) => void} [logInfo]
+ */
+
+/**
+ * @param {ResolveSystemCaEnvOptions} options
+ * @returns {Promise<NodeJS.ProcessEnv>}
+ */
 export async function resolveSystemCaEnv({
   tlsModule = tls,
   userDataDir,
   parentEnv = process.env,
   logInfo = console.info,
-} = {}) {
+}) {
   const env = parentEnv ?? {};
   if (Object.prototype.hasOwnProperty.call(env, "NODE_EXTRA_CA_CERTS")) {
     if (typeof logInfo === "function") {
@@ -513,6 +530,12 @@ export async function resolveSystemCaEnv({
   }
 }
 
+/**
+ * @param {NodeJS.ProcessEnv} [baseEnv]
+ * @param {NodeJS.ProcessEnv} [caEnv]
+ * @param {NodeJS.ProcessEnv} [extra]
+ * @returns {NodeJS.ProcessEnv}
+ */
 export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
   return {
     ...baseEnv,

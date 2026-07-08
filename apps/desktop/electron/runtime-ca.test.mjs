@@ -37,6 +37,7 @@ test("sets NODE_EXTRA_CA_CERTS for a child env merge", async () => {
     parentEnv: {},
     logInfo: () => {},
   });
+  /** @type {NodeJS.ProcessEnv} */
   const childEnv = { PATH: "/bin", ...caEnv };
 
   assert.equal(childEnv.NODE_EXTRA_CA_CERTS, path.join(userDataDir, "system-ca-bundle.pem"));
