@@ -513,6 +513,14 @@ export async function resolveSystemCaEnv({
   }
 }
 
+export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
+  return {
+    ...baseEnv,
+    ...(Object.prototype.hasOwnProperty.call(baseEnv, "NODE_EXTRA_CA_CERTS") ? {} : caEnv),
+    ...extra,
+  };
+}
+
 export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
@@ -724,20 +732,19 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function buildChildEnv(extra = {}) {
-    const caEnv = await systemCaEnv();
     /** @type {NodeJS.ProcessEnv} */
     // User env is layered first so process.env + any caller overrides always
     // win. See apps/server/src/env-file.ts and apps/orchestrator/src/cli.ts —
     // all loaders must agree on path + reserved-keys policy.
-    const env = {
+    const baseEnv = {
       ...loadUserEnvFile(),
       ...process.env,
       BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
-      // Bun honors Node's NODE_EXTRA_CA_CERTS, so bundled Bun sidecars inherit
-      // the exported OS trust store through the same child env variable.
-      ...caEnv,
-      ...extra,
     };
+    const caEnv = Object.prototype.hasOwnProperty.call(baseEnv, "NODE_EXTRA_CA_CERTS") ? {} : await systemCaEnv();
+    // Bun honors Node's NODE_EXTRA_CA_CERTS, so bundled Bun sidecars inherit
+    // the exported OS trust store through the same child env variable.
+    const env = mergeSystemCaChildEnv(baseEnv, caEnv, extra);
     const pathKey =
       Object.prototype.hasOwnProperty.call(env, "PATH") ||
       !Object.prototype.hasOwnProperty.call(env, "Path")

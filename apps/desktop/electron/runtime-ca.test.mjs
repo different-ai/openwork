@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { resolveSystemCaEnv } from "./runtime.mjs";
+import { mergeSystemCaChildEnv, resolveSystemCaEnv } from "./runtime.mjs";
 
 const CERT_ONE = "-----BEGIN CERTIFICATE-----\none\n-----END CERTIFICATE-----";
 const CERT_TWO = "-----BEGIN CERTIFICATE-----\ntwo\n-----END CERTIFICATE-----";
@@ -40,6 +40,19 @@ test("sets NODE_EXTRA_CA_CERTS for a child env merge", async () => {
   const childEnv = { PATH: "/bin", ...caEnv };
 
   assert.equal(childEnv.NODE_EXTRA_CA_CERTS, path.join(userDataDir, "system-ca-bundle.pem"));
+});
+
+test("keeps NODE_EXTRA_CA_CERTS from user env file over generated bundle", () => {
+  const userEnvFile = { NODE_EXTRA_CA_CERTS: "/user/file-ca.pem" };
+  const processEnv = {};
+  const baseEnv = {
+    ...userEnvFile,
+    ...processEnv,
+    BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
+  };
+  const childEnv = mergeSystemCaChildEnv(baseEnv, { NODE_EXTRA_CA_CERTS: "/generated/system-ca-bundle.pem" });
+
+  assert.equal(childEnv.NODE_EXTRA_CA_CERTS, "/user/file-ca.pem");
 });
 
 test("respects user-set NODE_EXTRA_CA_CERTS", async () => {
