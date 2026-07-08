@@ -207,21 +207,23 @@ export async function saveManifestFailure(input: SaveFailureInput): Promise<void
     ))
     .limit(1)
   const existing = existingRows[0]
+  const currentHash = computeManifestConfigHash(input.connection)
+  const keepExistingTools = Boolean(existing && existing.configHash === currentHash)
   const values = {
     id: existing?.id ?? createDenTypeId("externalMcpToolManifest"),
     organizationId: input.connection.organizationId,
     externalMcpConnectionId: input.connection.id,
     principal: input.principal,
-    configHash: computeManifestConfigHash(input.connection),
+    configHash: existing?.configHash ?? currentHash,
     status: "error" as const,
-    tools: existing?.tools ?? [],
-    toolCount: existing?.toolCount ?? 0,
-    toolsHash: existing?.toolsHash ?? null,
-    toolsTruncated: existing?.toolsTruncated ?? false,
+    tools: keepExistingTools ? existing?.tools ?? [] : [],
+    toolCount: keepExistingTools ? existing?.toolCount ?? 0 : 0,
+    toolsHash: keepExistingTools ? existing?.toolsHash ?? null : null,
+    toolsTruncated: keepExistingTools ? existing?.toolsTruncated ?? false : false,
     lastError: shortErrorMessage(input.error),
     durationMs: input.durationMs,
-    listedAt: existing?.listedAt ?? null,
-    staleAt: existing?.staleAt ?? null,
+    listedAt: keepExistingTools ? existing?.listedAt ?? null : null,
+    staleAt: keepExistingTools ? existing?.staleAt ?? null : null,
     refreshStartedAt: null,
   }
 
@@ -238,6 +240,8 @@ export async function saveManifestFailure(input: SaveFailureInput): Promise<void
         toolsTruncated: values.toolsTruncated,
         lastError: values.lastError,
         durationMs: values.durationMs,
+        listedAt: values.listedAt,
+        staleAt: values.staleAt,
         refreshStartedAt: values.refreshStartedAt,
       },
     })
@@ -317,7 +321,7 @@ export async function createRefreshLeaseForPair(input: {
     .values(values)
     .onDuplicateKeyUpdate({
       set: {
-        configHash: computeManifestConfigHash(input.connection),
+        staleAt: values.staleAt,
       },
     })
   const rows = await db
