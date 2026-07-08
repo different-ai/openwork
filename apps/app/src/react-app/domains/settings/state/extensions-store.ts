@@ -1061,6 +1061,39 @@ export function createExtensionsStore(options: {
     return warnings.length > 0 ? `${message} ${warnings.join(" ")}` : message;
   };
 
+  const externalMcpConnectionIdFromPayload = (
+    object: NonNullable<DenOrgPluginResolved["memberships"][number]["configObject"]>,
+  ): string | null => {
+    const version = object.latestVersion;
+    const payload = version?.normalizedPayloadJson ?? parseJsonRecord(version?.rawSourceText ?? null);
+    if (!payload) return null;
+    if (payload.openworkManaged === "den_external_mcp") {
+      const id = readNonEmptyString(payload.externalMcpConnectionId);
+      if (id) return id;
+    }
+    const containers = [
+      isRecord(payload.mcpServers) ? payload.mcpServers : null,
+      isRecord(payload.mcp) ? payload.mcp : null,
+    ].filter((entry): entry is Record<string, unknown> => Boolean(entry));
+    for (const container of containers) {
+      for (const config of Object.values(container)) {
+        if (!isRecord(config) || config.openworkManaged !== "den_external_mcp") continue;
+        const id = readNonEmptyString(config.externalMcpConnectionId);
+        if (id) return id;
+      }
+    }
+    return null;
+  };
+
+  const denSkillIdFromPayload = (
+    object: NonNullable<DenOrgPluginResolved["memberships"][number]["configObject"]>,
+  ): string | null => {
+    const version = object.latestVersion;
+    const payload = version?.normalizedPayloadJson ?? parseJsonRecord(version?.rawSourceText ?? null);
+    if (!payload || payload.openworkManaged !== "den_skill") return null;
+    return readNonEmptyString(payload.denSkillId);
+  };
+
   const upsertPluginMcpConfig = async (name: string, config: Record<string, unknown>) => {
     const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
@@ -1166,6 +1199,19 @@ export function createExtensionsStore(options: {
       }
 
       if (object.objectType === "mcp") {
+        const externalMcpConnectionId = externalMcpConnectionIdFromPayload(object);
+        if (externalMcpConnectionId) {
+          files.push({
+            configObjectId: object.id,
+            externalMcpConnectionId,
+            versionId: version?.id ?? null,
+            objectType: object.objectType,
+            title: object.title,
+            path: `den#mcp-connection.${externalMcpConnectionId}`,
+            updatedAt: object.updatedAt,
+          });
+          continue;
+        }
         const configs = pluginMcpConfigsFromPayload(object, namespace);
         if (configs.length === 0) warnings.push(mcpNoConfigWarning(object.title));
         for (const config of configs) {
@@ -1185,6 +1231,22 @@ export function createExtensionsStore(options: {
           });
         }
         continue;
+      }
+
+      if (object.objectType === "skill") {
+        const denSkillId = denSkillIdFromPayload(object);
+        if (denSkillId) {
+          files.push({
+            configObjectId: object.id,
+            denSkillId,
+            versionId: version?.id ?? null,
+            objectType: object.objectType,
+            title: object.title,
+            path: `den#skill.${denSkillId}`,
+            updatedAt: object.updatedAt,
+          });
+          continue;
+        }
       }
 
       if (version?.rawSourceText == null) continue;

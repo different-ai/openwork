@@ -29,6 +29,8 @@ export type CloudImportedMarketplace = {
 
 export type CloudImportedPluginFile = {
   configObjectId: string;
+  denSkillId?: string | null;
+  externalMcpConnectionId?: string | null;
   versionId: string | null;
   objectType: string;
   title: string;
@@ -155,10 +157,18 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
             const objectType = typeof file.objectType === "string" ? file.objectType.trim() : "";
             const title = typeof file.title === "string" ? file.title.trim() : configObjectId;
             const path = typeof file.path === "string" ? file.path.trim() : "";
+            const externalMcpConnectionId = typeof file.externalMcpConnectionId === "string"
+              ? file.externalMcpConnectionId.trim() || null
+              : null;
+            const denSkillId = typeof file.denSkillId === "string"
+              ? file.denSkillId.trim() || null
+              : null;
             if (!configObjectId || !objectType || !title || !path) return [];
             return [
               {
                 configObjectId,
+                denSkillId,
+                externalMcpConnectionId,
                 versionId: typeof file.versionId === "string" ? file.versionId.trim() || null : null,
                 objectType,
                 title,
