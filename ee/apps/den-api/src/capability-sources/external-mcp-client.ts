@@ -12,6 +12,7 @@ import type {
   OAuthClientInformationMixed,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js"
+import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
 import {
@@ -43,6 +44,11 @@ import {
  */
 
 const CLIENT_NAME = "OpenWork"
+const EXTERNAL_MCP_CALL_TIMEOUT_MS = 30_000
+const EXTERNAL_MCP_CALL_OPTIONS: RequestOptions = {
+  timeout: EXTERNAL_MCP_CALL_TIMEOUT_MS,
+  resetTimeoutOnProgress: true,
+}
 
 /**
  * Which member's credential this session should use, for connections with
@@ -299,7 +305,7 @@ export async function callExternalMcpTool(input: {
   const { transport } = buildTransport(input.connection, input.redirectUri, undefined, input.member)
   await client.connect(transport)
   try {
-    return await client.callTool({ name: input.toolName, arguments: input.args })
+    return await client.callTool({ name: input.toolName, arguments: input.args }, undefined, EXTERNAL_MCP_CALL_OPTIONS)
   } finally {
     await client.close()
   }

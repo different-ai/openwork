@@ -25,8 +25,9 @@ const CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 const DRIVE_READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 const DRIVE_FULL_SCOPE = "https://www.googleapis.com/auth/drive"
+const GOOGLE_WORKSPACE_API_TIMEOUT_MS = 30_000
 
-const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open Settings, then Extensions, and use Connect your account on the Google Workspace card."
+const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the OpenWork Cloud dashboard."
 
 const createDraftBodySchema = z.object({
   to: z.string().trim().min(3).max(320).describe("Recipient email address."),
@@ -232,6 +233,13 @@ async function googleApiError(operation: string, response: Response) {
   return { error: "google_api_error", message: `${operation} failed: ${response.status} ${text.slice(0, 300)}` }
 }
 
+async function googleWorkspaceApiFetch(input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    signal: AbortSignal.timeout(GOOGLE_WORKSPACE_API_TIMEOUT_MS),
+  })
+}
+
 async function readJson(response: Response): Promise<unknown> {
   const body: unknown = await response.json()
   return body
@@ -297,7 +305,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (query.q) listUrl.searchParams.set("q", query.q)
       listUrl.searchParams.set("maxResults", String(query.maxResults))
 
-      const listResponse = await fetch(listUrl, {
+      const listResponse = await googleWorkspaceApiFetch(listUrl, {
         headers: { authorization: `Bearer ${token.accessToken}` },
       })
       if (!listResponse.ok) {
@@ -313,7 +321,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         messageUrl.searchParams.append("metadataHeaders", "To")
         messageUrl.searchParams.append("metadataHeaders", "Subject")
         messageUrl.searchParams.append("metadataHeaders", "Date")
-        const messageResponse = await fetch(messageUrl, {
+        const messageResponse = await googleWorkspaceApiFetch(messageUrl, {
           headers: { authorization: `Bearer ${token.accessToken}` },
         })
         if (!messageResponse.ok) {
@@ -370,7 +378,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       const { messageId } = c.req.valid("param")
       const messageUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`)
       messageUrl.searchParams.set("format", "full")
-      const response = await fetch(messageUrl, {
+      const response = await googleWorkspaceApiFetch(messageUrl, {
         headers: { authorization: `Bearer ${token.accessToken}` },
       })
       if (!response.ok) {
@@ -420,7 +428,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       url.searchParams.set("orderBy", "startTime")
       url.searchParams.set("maxResults", String(query.maxResults))
 
-      const response = await fetch(url, {
+      const response = await googleWorkspaceApiFetch(url, {
         headers: { authorization: `Bearer ${token.accessToken}` },
       })
       if (!response.ok) {
@@ -463,7 +471,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const input = c.req.valid("json")
-      const response = await fetch(`${calendarApiBase()}/calendar/v3/calendars/primary/events`, {
+      const response = await googleWorkspaceApiFetch(`${calendarApiBase()}/calendar/v3/calendars/primary/events`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${token.accessToken}`,
@@ -528,7 +536,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       url.searchParams.set("pageSize", String(query.maxResults))
       url.searchParams.set("fields", "files(id,name,mimeType,modifiedTime,webViewLink,size)")
 
-      const response = await fetch(url, {
+      const response = await googleWorkspaceApiFetch(url, {
         headers: { authorization: `Bearer ${token.accessToken}` },
       })
       if (!response.ok) {
@@ -573,7 +581,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       const { fileId } = c.req.valid("param")
       const metadataUrl = new URL(`${driveApiBase()}/drive/v3/files/${encodeURIComponent(fileId)}`)
       metadataUrl.searchParams.set("fields", "id,name,mimeType,modifiedTime,webViewLink,size")
-      const metadataResponse = await fetch(metadataUrl, {
+      const metadataResponse = await googleWorkspaceApiFetch(metadataUrl, {
         headers: { authorization: `Bearer ${token.accessToken}` },
       })
       if (!metadataResponse.ok) {
@@ -594,7 +602,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         contentUrl.searchParams.set("alt", "media")
       }
 
-      const contentResponse = await fetch(contentUrl, {
+      const contentResponse = await googleWorkspaceApiFetch(contentUrl, {
         headers: { authorization: `Bearer ${token.accessToken}` },
       })
       if (!contentResponse.ok) {
@@ -642,7 +650,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const { to, subject, body } = c.req.valid("json")
-      const response = await fetch(`${gmailApiBase()}/gmail/v1/users/me/drafts`, {
+      const response = await googleWorkspaceApiFetch(`${gmailApiBase()}/gmail/v1/users/me/drafts`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${token.accessToken}`,
