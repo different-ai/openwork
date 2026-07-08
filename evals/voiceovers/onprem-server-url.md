@@ -15,3 +15,5 @@ the welcome screen and at the top of Advanced settings.
 4. Later, in Settings, Advanced shows an Organization server section right at the top with no developer mode required. The same address is visible there and can be changed with one copy-paste.
 
 5. One click on Reset returns the app to standard OpenWork Cloud, proving there is no hidden state left behind and the welcome flow and the settings field stay in agreement.
+
+6. When an organization requires sign-in before anything else, the same on-premises option sits right on the sign-in screen, so pointing the app at the company server never depends on developer mode.

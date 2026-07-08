@@ -10,6 +10,33 @@ const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const DEFAULT_DEN_API_BASE_URL = "https://app.openworklabs.com/api/den";
 const PROJECT_DIR = process.cwd();
 
+async function setDesktopBootstrapConfig(ctx, config) {
+  await ctx.waitFor(`Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)`, {
+    timeoutMs: 60_000,
+    label: "desktop bridge",
+  });
+  await ctx.eval(`(async () => {
+    const config = ${JSON.stringify(config)};
+    const persisted = await window.__OPENWORK_ELECTRON__.invokeDesktop("setDesktopBootstrapConfig", config);
+    const baseUrl = persisted?.baseUrl || config.baseUrl;
+    const apiBaseUrl = persisted?.apiBaseUrl || config.apiBaseUrl;
+    localStorage.setItem("openwork.den.baseUrl", baseUrl);
+    localStorage.setItem("openwork.den.apiBaseUrl", apiBaseUrl);
+    localStorage.removeItem("openwork.den.authToken");
+    localStorage.removeItem("openwork.den.activeOrgId");
+    localStorage.removeItem("openwork.den.activeOrgSlug");
+    localStorage.removeItem("openwork.den.activeOrgName");
+    return persisted;
+  })()`, { awaitPromise: true });
+}
+
+async function currentDenBaseUrls(ctx) {
+  return ctx.eval(`(() => ({
+    baseUrl: localStorage.getItem("openwork.den.baseUrl") || ${JSON.stringify(DEFAULT_DEN_BASE_URL)},
+    apiBaseUrl: localStorage.getItem("openwork.den.apiBaseUrl") || ${JSON.stringify(DEFAULT_DEN_API_BASE_URL)},
+  }))()`);
+}
+
 async function closeDialogs(ctx) {
   await ctx.eval(`(() => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -37,22 +64,13 @@ function writeOnboardingPrefScript(completed) {
 
 async function resetToDefaultWelcome(ctx) {
   await closeDialogs(ctx);
+  await setDesktopBootstrapConfig(ctx, {
+    baseUrl: DEFAULT_DEN_BASE_URL,
+    apiBaseUrl: DEFAULT_DEN_API_BASE_URL,
+    requireSignin: false,
+  });
   await ctx.eval(`(async () => {
-    localStorage.setItem("openwork.den.baseUrl", ${JSON.stringify(DEFAULT_DEN_BASE_URL)});
-    localStorage.setItem("openwork.den.apiBaseUrl", ${JSON.stringify(DEFAULT_DEN_API_BASE_URL)});
-    localStorage.removeItem("openwork.den.authToken");
-    localStorage.removeItem("openwork.den.activeOrgId");
-    localStorage.removeItem("openwork.den.activeOrgSlug");
-    localStorage.removeItem("openwork.den.activeOrgName");
     ${writeOnboardingPrefScript(false)};
-    const invokeDesktop = window.__OPENWORK_ELECTRON__?.invokeDesktop;
-    if (invokeDesktop) {
-      await invokeDesktop("setDesktopBootstrapConfig", {
-        baseUrl: ${JSON.stringify(DEFAULT_DEN_BASE_URL)},
-        apiBaseUrl: ${JSON.stringify(DEFAULT_DEN_API_BASE_URL)},
-        requireSignin: false,
-      });
-    }
     location.hash = "#/welcome";
     location.reload();
     return true;
@@ -252,6 +270,66 @@ export default {
             rejectText: [`Connected to ${ORG_HOST}`, "Something went wrong"],
           },
         });
+      },
+    },
+    {
+      name: "Frame 6",
+      run: async (ctx) => {
+        try {
+          await ctx.prove("The forced sign-in gate exposes the same on-premises server option without developer mode", {
+            voiceover: vo[5],
+            action: async () => {
+              await closeDialogs(ctx);
+              const current = await currentDenBaseUrls(ctx);
+              await setDesktopBootstrapConfig(ctx, {
+                baseUrl: current.baseUrl,
+                apiBaseUrl: current.apiBaseUrl,
+                requireSignin: true,
+              });
+              await ctx.eval(`(() => {
+                location.hash = "#/signin";
+                location.reload();
+                return true;
+              })()`);
+              await ctx.waitForText("Sign in with OpenWork Cloud", { timeoutMs: 60_000 });
+              await ctx.expectNoText("Developer mode only");
+              await ctx.expectText("Using OpenWork on-premises?");
+              await ctx.clickText("Using OpenWork on-premises?");
+              await ctx.expectText("Connect to your organization's server");
+              await ctx.expectText("Paste the server URL your IT team shared.");
+              await ctx.fill('input[placeholder="https://openwork.yourcompany.com"]', ORG_URL);
+              await ctx.clickText("Save", { selector: '[role="dialog"] button' });
+              await ctx.waitForText(`Connected to ${ORG_HOST}`, { timeoutMs: 30_000 });
+              // The dialog closes with a fade animation; screenshotting while the
+              // ghost overlay is still fading produced a dirty frame. Wait for the
+              // dialog (and any [role="dialog"] remnant) to be fully unmounted.
+              await ctx.waitFor(
+                "!document.querySelector('[role=\\\"dialog\\\"]') && !(document.body?.innerText ?? '').includes('Connect to your organization')",
+                { timeoutMs: 10_000, label: "organization server dialog fully closed" },
+              );
+            },
+            assert: async () => {
+              await ctx.expectText(`Connected to ${ORG_HOST}`);
+              await ctx.expectText("Change");
+              await ctx.expectNoText("Developer mode only");
+              const stored = await ctx.eval(`localStorage.getItem("openwork.den.baseUrl")`);
+              ctx.assert(stored === ORG_URL, `Expected forced sign-in control plane URL to be ${ORG_URL}, got ${stored}`);
+              const bootstrap = await ctx.eval(`(async () => {
+                const config = await window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig");
+                return { baseUrl: config.baseUrl, requireSignin: config.requireSignin === true };
+              })()`, { awaitPromise: true });
+              ctx.assert(bootstrap.requireSignin === true, "Expected forced sign-in to remain enabled while proving the gate.");
+              ctx.assert(bootstrap.baseUrl === ORG_URL, `Expected desktop bootstrap URL to be ${ORG_URL}, got ${bootstrap.baseUrl}`);
+            },
+            screenshot: {
+              name: "frame-6",
+              requireText: [`Connected to ${ORG_HOST}`, "Change"],
+              rejectText: ["Developer mode only", "Something went wrong"],
+            },
+          });
+        } finally {
+          await resetToDefaultWelcome(ctx);
+        }
       },
     },
   ],
