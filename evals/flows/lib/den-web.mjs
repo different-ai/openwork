@@ -11,10 +11,15 @@ export function denApiUrl() {
 }
 
 export async function denApiFetch(path, options = {}) {
-  const response = await fetch(`${denApiUrl()}${path}`, {
+  // Better Auth rejects auth requests with no Origin header (CSRF
+  // protection). Origin is a forbidden request header, so Node's fetch
+  // strips a hand-set value on recent Node versions — route auth paths
+  // through den-web instead: its upstream proxy injects a trusted Origin
+  // (DEN_AUTH_ORIGIN) when the client sends none. Bearer-token /v1 calls
+  // don't need an Origin and keep hitting den-api directly.
+  const base = path.startsWith("/api/auth/") && denWebUrl() ? denWebUrl() : denApiUrl();
+  const response = await fetch(`${base}${path}`, {
     ...options,
-    // Better Auth rejects auth requests with no Origin header (CSRF
-    // protection); a real browser always sends one, Node's fetch doesn't.
     headers: { "content-type": "application/json", origin: denWebUrl(), ...(options.headers ?? {}) },
   });
   const text = await response.text();
@@ -49,6 +54,20 @@ export async function signInViaBrowser(ctx, email, password) {
     "Boolean(document.querySelector('input[type=\"email\"]')) && Boolean(document.querySelector('input[type=\"password\"]'))",
     { timeoutMs: 30_000, label: "email + password fields" },
   );
+  const switchedToSignIn = await ctx.eval(`(() => {
+    const button = [...document.querySelectorAll('button')].find((entry) => (entry.textContent ?? '').trim() === 'Sign in');
+    button?.click();
+    return Boolean(button);
+  })()`);
+  if (switchedToSignIn) {
+    await ctx.waitFor(
+      `(() => {
+        const submit = document.querySelector('button[type="submit"]');
+        return (submit?.textContent ?? '').includes('Sign in');
+      })()`,
+      { timeoutMs: 10_000, label: "sign-in form selected" },
+    );
+  }
   await ctx.fill('input[type="email"]', email);
   await ctx.fill('input[type="password"]', password);
   const submitted = await ctx.eval(`(() => {

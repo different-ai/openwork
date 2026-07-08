@@ -40,6 +40,7 @@ import {
   pickDirectory,
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
+  workspaceCreateRemote,
   workspaceForget,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
@@ -117,7 +118,14 @@ import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-works
 import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { OpenWorkModelsStartupDialog } from "@/react-app/domains/cloud/openwork-models-startup-dialog";
-import { OPENWORK_MODEL_PREVIEWS } from "@/react-app/domains/cloud/openwork-models-promo";
+import {
+  OPENWORK_MODEL_PREVIEWS,
+  getOpenWorkModelsActionUrl,
+  hideOpenWorkModelsPromo,
+  markOpenWorkModelsStartupPromoShown,
+} from "@/react-app/domains/cloud/openwork-models-promo";
+import { FirstRunLoader } from "@/react-app/domains/onboarding/first-run-loader";
+import { ProviderSelectionStep } from "@/react-app/domains/onboarding/provider-selection-step";
 import { useOpenWorkModelsStartupPromo } from "@/react-app/domains/cloud/use-openwork-models-startup-promo";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
@@ -315,6 +323,11 @@ async function draftToParts(draft: ComposerDraft, workspaceRoot: string) {
   return parts;
 }
 
+// Module-scoped so the first-run loader survives route remounts during boot
+// (component state would reset and flash the underlying page). Reset only on
+// app relaunch, matching BOOT_STARTED in desktop-runtime-boot.ts.
+let firstRunLoaderPhase: "unarmed" | "armed" | "done" = "unarmed";
+
 export function SessionRoute() {
   const navigate = useNavigate();
   const platform = usePlatform();
@@ -388,6 +401,12 @@ export function SessionRoute() {
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  // Agent-screen-first onboarding: a one-shot provider selection intercepting
+  // the first send (the first-run default workspace is created further down).
+  const [providerStepOpen, setProviderStepOpen] = useState(false);
+  const pendingProviderDraftRef = useRef<{ draft: ComposerDraft; sessionId: string } | null>(null);
+  const providerStepResendRef = useRef(false);
+  const firstRunSessionRef = useRef(false);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
@@ -626,6 +645,10 @@ export function SessionRoute() {
     clientReady: Boolean(opencodeClient),
     workspaceId: selectedWorkspaceId,
     providerConnectedIds,
+    // First-run users get the OpenWork Models pitch from the provider
+    // selection step on their first send, not a startup popup. Completing
+    // the step marks the promo as shown, so it never auto-pops for them.
+    suppressed: providerStepOpen || !local.prefs.providerStepCompleted,
   });
 
   const { store: sessionProviderAuthStore, snapshot: sessionProviderAuthSnapshot } =
@@ -826,6 +849,19 @@ export function SessionRoute() {
         if (!targetSessionId) return;
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!text && draft.attachments.length === 0) return;
+        // One-shot provider selection on the first send: hold the draft,
+        // show the step, and resend automatically once the user chooses.
+        if (
+          !providerStepResendRef.current &&
+          !local.prefs.providerStepCompleted &&
+          !hasUsableModel &&
+          userProviderConnectedIds.length === 0 &&
+          draft.mode !== "shell"
+        ) {
+          pendingProviderDraftRef.current = { draft, sessionId: targetSessionId };
+          setProviderStepOpen(true);
+          return;
+        }
         if (selectedModelUnavailable) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
         captureAnalyticsEvent("task_message_sent", {
@@ -976,6 +1012,7 @@ export function SessionRoute() {
     handleApplyEnvironmentChanges,
     environmentRuntimeKey,
     local,
+    userProviderConnectedIds,
     listAgents,
     listSlashCommands,
     modelBehaviorOptions,
@@ -995,6 +1032,40 @@ export function SessionRoute() {
     sessionsByWorkspaceId,
     token,
   ]);
+
+  // Latest surfaceProps for the provider-step resend below; the memoized
+  // onSendDraft closure is otherwise unreachable from callbacks.
+  const surfacePropsRef = useRef<typeof surfaceProps>(null);
+  useEffect(() => {
+    surfacePropsRef.current = surfaceProps;
+  });
+
+  const completeProviderStep = useCallback((action: "openwork-models" | "byok" | "skip") => {
+    setProviderStepOpen(false);
+    local.setPrefs((prev) => ({ ...prev, providerStepCompleted: true }));
+    // The step IS the OpenWork Models pitch — never auto-pop the startup
+    // promo on top of it afterwards.
+    markOpenWorkModelsStartupPromoShown();
+    if (action === "openwork-models") {
+      platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"));
+    } else if (action === "byok") {
+      hideOpenWorkModelsPromo();
+      void sessionProviderAuthStore.openProviderAuthModal({ returnFocusTarget: "composer" });
+    }
+    // ponytail: the held draft is resent immediately on the free model for
+    // all three choices; a byok key applies from the next message onward.
+    const pending = pendingProviderDraftRef.current;
+    pendingProviderDraftRef.current = null;
+    const send = surfacePropsRef.current?.onSendDraft;
+    if (pending && send) {
+      providerStepResendRef.current = true;
+      void Promise.resolve(send(pending.draft, pending.sessionId))
+        .catch((error) => setRouteError(describeRouteError(error)))
+        .finally(() => {
+          providerStepResendRef.current = false;
+        });
+    }
+  }, [denAuth.isSignedIn, local, platform, sessionProviderAuthStore, setRouteError]);
 
   const handleOpenCreateWorkspace = useCallback(() => {
     // Respect the org-level `allowMultipleWorkspaces` restriction (dev
@@ -1118,18 +1189,18 @@ export function SessionRoute() {
   );
 
 
-  const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string) => {
+  const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string): Promise<string | null> => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
       !workspace ||
       loading ||
       retryingWorkspaceIds.includes(workspaceId)
     ) {
-      return;
+      return null;
     }
     const endpoint = resolveWorkspaceEndpoint(workspace, { baseUrl, token });
     if (!endpoint || !endpoint.token) {
-      return;
+      return null;
     }
     const workspaceClient = createClient(
       endpoint.opencodeBaseUrl,
@@ -1163,6 +1234,7 @@ export function SessionRoute() {
       navigateToWorkspaceSession(workspaceId, session.id);
       focusPromptSoon();
       void refreshRouteState();
+      return session.id;
     } catch (error) {
       const message = describeTaskCreateError(error);
       setRouteError(message);
@@ -1186,8 +1258,73 @@ export function SessionRoute() {
           }, 1_000);
         }
       }
+      return null;
     }
   }, [baseUrl, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, token, workspaces]);
+
+  // Full-screen first-run loader. Armed once per app launch from the very
+  // first render of a brand-new profile (no active-workspace memory yet) and
+  // held through all boot-state churn AND route remounts — recomputing
+  // visibility from volatile route state made it flicker, and a remount
+  // would reset component state. It drops only when the first session is
+  // selected, on error (retry toast must be reachable), when state settles
+  // and this turns out not to be a first run, or after a safety timeout.
+  const [firstRunLoaderActive, setFirstRunLoaderActive] = useState(() => {
+    if (firstRunLoaderPhase === "unarmed") {
+      firstRunLoaderPhase = isDesktopRuntime() && !readActiveWorkspaceId() ? "armed" : "done";
+    }
+    return firstRunLoaderPhase === "armed";
+  });
+  const dismissFirstRunLoader = useCallback(() => {
+    firstRunLoaderPhase = "done";
+    setFirstRunLoaderActive(false);
+  }, []);
+  useEffect(() => {
+    if (!firstRunLoaderActive) return;
+    const timeout = window.setTimeout(dismissFirstRunLoader, 30_000);
+    return () => window.clearTimeout(timeout);
+  }, [firstRunLoaderActive, dismissFirstRunLoader]);
+  useEffect(() => {
+    if (!firstRunLoaderActive) return;
+    if (selectedSessionId) {
+      dismissFirstRunLoader();
+      return;
+    }
+    const workspaceError = selectedWorkspaceId ? errorsByWorkspaceId[selectedWorkspaceId] : null;
+    if (routeError || selectedWorkspaceError || workspaceError) {
+      dismissFirstRunLoader();
+      return;
+    }
+    // State settled and this profile already has sessions or last-session
+    // memory (not a first run): hand back to the normal UI. Skipped once the
+    // auto-create below has latched — our own just-created session briefly
+    // satisfies this before navigation lands.
+    if (
+      !loading &&
+      !firstRunSessionRef.current &&
+      selectedWorkspaceId &&
+      ((sessionsByWorkspaceId[selectedWorkspaceId] ?? []).length > 0 ||
+        Boolean(readLastSessionFor(selectedWorkspaceId)))
+    ) {
+      dismissFirstRunLoader();
+    }
+  }, [firstRunLoaderActive, dismissFirstRunLoader, selectedSessionId, routeError, selectedWorkspaceError, errorsByWorkspaceId, loading, selectedWorkspaceId, sessionsByWorkspaceId]);
+
+  // Drop the user straight into a chat-ready session when they arrive at a
+  // workspace they have never used (no sessions, no last-session memory),
+  // instead of the "select or create a session" page. Retries on the next
+  // state change until a session is actually created — the create call bails
+  // silently while the workspace endpoint/token is still resolving at boot.
+  useEffect(() => {
+    if (!canCreateTask || !isDesktopRuntime()) return;
+    if (selectedSessionId || firstRunSessionRef.current) return;
+    if ((sessionsByWorkspaceId[selectedWorkspaceId] ?? []).length > 0) return;
+    if (readLastSessionFor(selectedWorkspaceId)) return;
+    firstRunSessionRef.current = true;
+    void handleCreateTaskInWorkspace(selectedWorkspaceId).then((createdSessionId) => {
+      if (!createdSessionId) firstRunSessionRef.current = false;
+    });
+  }, [canCreateTask, selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId, handleCreateTaskInWorkspace]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -1228,7 +1365,7 @@ export function SessionRoute() {
   } = useShellShortcuts({
     canCreateTask,
     workspaceId: selectedWorkspaceId,
-    onCreateTask: handleCreateTaskInWorkspace,
+    onCreateTask: (workspaceId: string) => void handleCreateTaskInWorkspace(workspaceId),
     onNextSessionTab: goToNextSessionTab,
     onPrevSessionTab: goToPrevSessionTab,
   });
@@ -1615,18 +1752,42 @@ export function SessionRoute() {
         await workspaceSetSelected(createdId).catch(() => undefined);
         await workspaceSetRuntimeActive(createdId).catch(() => undefined);
       }
+      // First workspace on a fresh install: the OpenWork server was started
+      // engine-less (it only spawns OpenCode at boot when a workspace already
+      // exists), so sessions would hang forever. This boots the engine when
+      // it isn't running, same as the old /welcome flow did.
+      let sessionBaseUrl = baseUrl;
+      let sessionToken = token;
+      if (targetWorkspace && isDesktopRuntime()) {
+        await ensureDesktopLocalOpenworkConnection({
+          route: "session",
+          workspace: targetWorkspace,
+          allWorkspaces: list.workspaces,
+        }).catch(() => undefined);
+        // The engine boot can restart the server with fresh tokens; re-resolve
+        // so the first-session creation below doesn't use stale credentials.
+        const fresh = await resolveOpenworkConnection().catch(() => null);
+        if (fresh?.normalizedBaseUrl && fresh.resolvedToken) {
+          sessionBaseUrl = fresh.normalizedBaseUrl;
+          sessionToken = fresh.resolvedToken;
+        }
+      }
       setCreateWorkspaceOpen(false);
       // Mark onboarding complete so the /welcome redirect never fires again.
       local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
       await refreshRouteState();
       if (targetWorkspaceId) {
         const workspacePath = targetWorkspace?.path?.trim() || folder;
-        const session = createdOnServer && baseUrl && token
-          ? unwrap(await createClient(
-              `${(buildOpenworkWorkspaceBaseUrl(baseUrl, targetWorkspaceId) ?? baseUrl).replace(/\/+$/, "")}/opencode`,
+        // Best-effort first task creation (mirrors the old welcome flow) — a
+        // failure here must not surface as a failed workspace creation.
+        const session = createdOnServer && sessionBaseUrl && sessionToken
+          ? await createClient(
+              `${(buildOpenworkWorkspaceBaseUrl(sessionBaseUrl, targetWorkspaceId) ?? sessionBaseUrl).replace(/\/+$/, "")}/opencode`,
               workspacePath || undefined,
-              { token, mode: "openwork" },
-            ).session.create({ directory: workspacePath || undefined }))
+              { token: sessionToken, mode: "openwork" },
+            ).session.create({ directory: workspacePath || undefined })
+              .then((result) => unwrap(result))
+              .catch(() => null)
           : null;
         setLegacySelectedWorkspaceId(targetWorkspaceId);
         writeActiveWorkspaceId(targetWorkspaceId);
@@ -1701,7 +1862,9 @@ export function SessionRoute() {
         remoteType,
       };
       let list: WorkspaceList | null = null;
-      if (client) {
+      if (isDesktopRuntime()) {
+        list = await workspaceCreateRemote(payload);
+      } else if (client) {
         list = await client.createRemoteWorkspace(payload).catch(() => null);
       }
       if (!list) {
@@ -2028,6 +2191,14 @@ export function SessionRoute() {
       onSubscribe={openWorkModelsPromo.subscribe}
       onContinueWithout={openWorkModelsPromo.continueWithout}
     />
+    {firstRunLoaderActive ? <FirstRunLoader /> : null}
+    {providerStepOpen ? (
+      <ProviderSelectionStep
+        onOpenWorkModels={() => completeProviderStep("openwork-models")}
+        onBringYourOwn={() => completeProviderStep("byok")}
+        onSkip={() => completeProviderStep("skip")}
+      />
+    ) : null}
     <CreateWorkspaceModal
       open={createWorkspaceOpen}
       onClose={() => {

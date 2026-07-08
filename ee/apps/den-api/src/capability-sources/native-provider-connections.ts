@@ -1,5 +1,10 @@
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
-import { NATIVE_OAUTH_PROVIDERS, type NativeOAuthProviderConfig } from "./provider-registry.js"
+import {
+  clientSelectedFeatures,
+  NATIVE_OAUTH_PROVIDERS,
+  resolveProviderScopes,
+  type NativeOAuthProviderConfig,
+} from "./provider-registry.js"
 import { getConnectedAccount, getOrgOAuthClient } from "./oauth-credentials.js"
 
 /**
@@ -22,12 +27,40 @@ export type NativeProviderConnectionEntry = {
   connected: boolean
   connectedAt: null
   connectedForMe: boolean
+  needsReconnect: boolean
+  missingFeatures: string[]
   access: null
+}
+
+type NativeProviderReconnectState = {
+  needsReconnect: boolean
+  missingFeatures: string[]
+}
+
+function resolveReconnectState(
+  provider: NativeOAuthProviderConfig,
+  clientExtra: Record<string, unknown> | null,
+  grantedScopes: string[] | null,
+): NativeProviderReconnectState {
+  if (!grantedScopes || grantedScopes.length === 0) {
+    return { needsReconnect: false, missingFeatures: [] }
+  }
+
+  const selectedFeatures = clientSelectedFeatures(provider, clientExtra)
+  const expectedScopes = resolveProviderScopes(provider, selectedFeatures)
+  const grantedScopeSet = new Set(grantedScopes)
+  const needsReconnect = expectedScopes.some((scope) => !grantedScopeSet.has(scope))
+  const missingFeatures = selectedFeatures.filter((feature) => {
+    const featureScopes = provider.optionalFeatures?.[feature] ?? []
+    return featureScopes.some((scope) => !grantedScopeSet.has(scope))
+  })
+
+  return { needsReconnect, missingFeatures }
 }
 
 export function buildNativeProviderEntry(
   provider: NativeOAuthProviderConfig,
-  state: { clientConfigured: boolean; connectedForMe: boolean },
+  state: { clientConfigured: boolean; connectedForMe: boolean; reconnect?: NativeProviderReconnectState },
 ): NativeProviderConnectionEntry | null {
   if (!state.clientConfigured) {
     return null
@@ -41,6 +74,8 @@ export function buildNativeProviderEntry(
     connected: true,
     connectedAt: null,
     connectedForMe: state.connectedForMe,
+    needsReconnect: state.reconnect?.needsReconnect ?? false,
+    missingFeatures: state.reconnect?.missingFeatures ?? [],
     access: null,
   }
 }
@@ -61,6 +96,9 @@ export async function listNativeProviderUsableEntries(input: {
     const entry = buildNativeProviderEntry(provider, {
       clientConfigured: true,
       connectedForMe: Boolean(account?.accessToken),
+      reconnect: account?.accessToken
+        ? resolveReconnectState(provider, client.extra, account.scopes)
+        : { needsReconnect: false, missingFeatures: [] },
     })
     if (entry) entries.push(entry)
   }

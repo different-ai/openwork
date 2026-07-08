@@ -70,18 +70,20 @@ function cloudPluginStatus(imported: CloudImportedPlugin | null, plugin: DenOrgP
   return "installed";
 }
 
-export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe">) {
-  return connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe;
+export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect">) {
+  return connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe && connection.needsReconnect !== true;
 }
 
-export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe">) {
+export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect">) {
   if (connection.credentialMode === "shared") return "One org account managed by your organization — the AI acts as it.";
+  if (connection.connectedForMe && connection.needsReconnect === true) return "Reconnect your account to grant newly requested permissions.";
   if (connection.connectedForMe) return "Connected with your own account.";
   return "Available from your organization. Connect your own account to use it.";
 }
 
-export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe">) {
+export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect">) {
   if (connection.credentialMode === "shared") return "Managed by your organization";
+  if (connection.connectedForMe && connection.needsReconnect === true) return "Reconnect";
   if (connection.connectedForMe) return "Connected";
   return "Connect your account";
 }

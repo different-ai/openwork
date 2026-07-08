@@ -22,17 +22,12 @@ const pinnedOpencodeVersion = String(
   .trim()
   .replace(/^v/, "");
 const serverPkg = readJson(resolve(root, "apps", "server", "package.json"));
-const opencodeRouterPkg = readJson(
-  resolve(root, "apps", "opencode-router", "package.json"),
-);
 const versions = {
   app: appPkg.version ?? null,
   desktop: desktopPkg.version ?? null,
   server: serverPkg.version ?? null,
   orchestrator: orchestratorPkg.version ?? null,
-  opencodeRouter: opencodeRouterPkg.version ?? null,
   opencode: pinnedOpencodeVersion || null,
-  opencodeRouterVersionPinned: desktopPkg.opencodeRouterVersion ?? null,
   orchestratorOpenworkServerRange:
     orchestratorPkg.dependencies?.["openwork-server"] ?? null,
 };
@@ -64,20 +59,6 @@ addCheck(
   "App/openwork-server versions match",
   versions.app && versions.server && versions.app === versions.server,
   `${versions.app ?? "?"} vs ${versions.server ?? "?"}`,
-);
-addCheck(
-  "App/opencode-router versions match",
-  versions.app &&
-    versions.opencodeRouter &&
-    versions.app === versions.opencodeRouter,
-  `${versions.app ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
-);
-addCheck(
-  "OpenCodeRouter version pinned in desktop",
-  versions.opencodeRouter &&
-    versions.opencodeRouterVersionPinned &&
-    versions.opencodeRouter === versions.opencodeRouterVersionPinned,
-  `${versions.opencodeRouterVersionPinned ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
 );
 if (versions.opencode) {
   addCheck(
@@ -123,19 +104,11 @@ if (existsSync(sidecarManifestPath)) {
     `${manifest.version ?? "?"} vs ${versions.orchestrator ?? "?"}`,
   );
   const serverEntry = manifest.entries?.["openwork-server"]?.version;
-  const routerEntry = manifest.entries?.["opencode-router"]?.version;
   if (serverEntry) {
     addCheck(
       "Sidecar manifest openwork-server version matches",
       versions.server && serverEntry === versions.server,
       `${serverEntry ?? "?"} vs ${versions.server ?? "?"}`,
-    );
-  }
-  if (routerEntry) {
-    addCheck(
-      "Sidecar manifest opencode-router version matches",
-      versions.opencodeRouter && routerEntry === versions.opencodeRouter,
-      `${routerEntry ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
     );
   }
 } else {

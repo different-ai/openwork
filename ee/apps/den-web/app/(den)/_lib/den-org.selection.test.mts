@@ -1,5 +1,5 @@
 // Runnable check for the org-selection decision. No test framework in den-web,
-// so this is a plain assert script: `pnpm exec tsx den-org.selection.test.mts`.
+// so this is a plain assert script: `node den-org.selection.test.mts`.
 import assert from "node:assert/strict";
 import { shouldOfferOrgSelection, shouldRequireOrgSelection } from "./den-org.ts";
 import type { DenOrgSummary } from "./den-org.ts";

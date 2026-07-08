@@ -14,18 +14,5 @@ function getMicrosoftTenantId(value: string) {
 }
 
 export function isMicrosoftEntraManagedDomain(input: { domain: string; issuer: string; entryPoint?: string | null }) {
-  if (!input.domain.toLowerCase().endsWith(".onmicrosoft.com")) {
-    return false
-  }
-
-  const issuerTenantId = getMicrosoftTenantId(input.issuer)
-  if (!issuerTenantId) {
-    return false
-  }
-
-  if (input.entryPoint) {
-    return getMicrosoftTenantId(input.entryPoint) === issuerTenantId
-  }
-
-  return true
+  return getMicrosoftTenantId(input.issuer) !== null
 }

@@ -130,10 +130,6 @@ const openworkServerBin = path.join(
   cwd,
   "apps/server/dist/bin/openwork-server",
 );
-const opencodeRouterBin = path.join(
-  cwd,
-  "apps/opencode-router/dist/bin/opencode-router",
-);
 
 const ensureOpenworkServer = async () => {
   try {
@@ -173,55 +169,8 @@ const ensureOpenworkServer = async () => {
   }
 };
 
-const ensureOpencodeRouter = async () => {
-  try {
-    await access(opencodeRouterBin);
-  } catch {
-    if (!autoBuildEnabled) {
-      logLine(
-        `[dev:headless-web] Missing opencode-router binary at ${opencodeRouterBin}`,
-      );
-      logLine(
-        "[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)",
-      );
-      logLine(
-        "[dev:headless-web] Run: pnpm --filter opencode-router build:bin",
-      );
-      logLine(
-        "[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.",
-      );
-      process.exit(1);
-    }
-
-    logLine(
-      `[dev:headless-web] Missing opencode-router binary at ${opencodeRouterBin}`,
-    );
-    logLine(
-      "[dev:headless-web] Auto-building: pnpm --filter opencode-router build:bin",
-    );
-    try {
-      await runCommand("pnpm", ["--filter", "opencode-router", "build:bin"]);
-      await access(opencodeRouterBin);
-    } catch (error) {
-      logLine(
-        `[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      process.exit(1);
-    }
-  }
-};
-
 const openworkUrl = `http://${clientHost}:${openworkPort}`;
 const webUrl = `http://${clientHost}:${webPort}`;
-// In practice we want opencode-router on for end-to-end messaging tests.
-// Allow opt-out via OPENWORK_DEV_OPENCODE_ROUTER=0.
-const opencodeRouterEnabled =
-  process.env.OPENWORK_DEV_OPENCODE_ROUTER == null
-    ? true
-    : readBool(process.env.OPENWORK_DEV_OPENCODE_ROUTER);
-const opencodeRouterRequired = readBool(
-  process.env.OPENWORK_DEV_OPENCODE_ROUTER_REQUIRED,
-);
 const viteEnv = {
   ...process.env,
   HOST: viteHost,
@@ -240,13 +189,9 @@ const headlessEnv = {
   OPENWORK_HOST_TOKEN: openworkHostToken,
   OPENWORK_SERVER_BIN: openworkServerBin,
   OPENWORK_SIDECAR_SOURCE: process.env.OPENWORK_SIDECAR_SOURCE ?? "external",
-  OPENCODE_ROUTER_BIN: process.env.OPENCODE_ROUTER_BIN ?? opencodeRouterBin,
 };
 
 await ensureOpenworkServer();
-if (opencodeRouterEnabled) {
-  await ensureOpencodeRouter();
-}
 
 logLine("[dev:headless-web] Starting services");
 logLine(`[dev:headless-web] Workspace: ${workspace}`);
@@ -254,9 +199,6 @@ logLine(`[dev:headless-web] OpenWork server: ${openworkUrl}`);
 logLine(`[dev:headless-web] Web host: ${viteHost}`);
 logLine(`[dev:headless-web] Web port: ${webPort}`);
 logLine(`[dev:headless-web] Web URL: ${webUrl}`);
-logLine(
-  `[dev:headless-web] OpenCodeRouter: ${opencodeRouterEnabled ? "on" : "off"} (set OPENWORK_DEV_OPENCODE_ROUTER=0 to disable)`,
-);
 logLine("[dev:headless-web] OPENWORK_TOKEN: [REDACTED]");
 logLine("[dev:headless-web] OPENWORK_HOST_TOKEN: [REDACTED]");
 logLine(
@@ -296,9 +238,6 @@ const headlessProcess = spawnLogged(
     "--approval",
     "auto",
     "--allow-external",
-    "--opencode-router",
-    opencodeRouterEnabled ? "true" : "false",
-    ...(opencodeRouterRequired ? ["--opencode-router-required"] : []),
     ...(remoteAccessEnabled ? ["--remote-access"] : []),
     "--openwork-port",
     String(openworkPort),

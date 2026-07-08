@@ -13,7 +13,6 @@ import { t } from "../../../../i18n";
 import {
   ConfigDiagnosticsSection,
   ConfigEngineReloadSection,
-  ConfigMessagingIdentitiesSection,
   ConfigServerConnectionSection,
   ConfigServerSharingSection,
   ConfigWorkspaceSummary,
@@ -306,7 +305,6 @@ export function ConfigView(props: ConfigViewProps) {
         onSave={() => props.updateOpenworkServerSettings(buildOpenworkSettings())}
         onReset={props.resetOpenworkServerSettings}
       />
-      <ConfigMessagingIdentitiesSection />
       {!isDesktopRuntime() ? <div className="text-xs text-gray-9">{t("config.desktop_only_hint")}</div> : null}
     </section>
   );

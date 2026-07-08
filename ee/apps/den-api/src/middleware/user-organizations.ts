@@ -5,6 +5,7 @@ import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSum
 import type { AuthContextVariables } from "../session.js"
 
 export const LEGACY_ORG_PROXY_HEADER = "x-openwork-legacy-org-id"
+export const ORG_SCOPE_HEADER = "x-openwork-org-id"
 
 export type UserOrganizationsContext = {
   userOrganizations: UserOrgSummary[]
@@ -14,8 +15,8 @@ export type UserOrganizationsContext = {
 
 type SessionLike = AuthContextVariables["session"]
 
-export function getLegacyProxyOrganizationId(headers: Headers) {
-  const rawOrganizationId = headers.get(LEGACY_ORG_PROXY_HEADER)?.trim()
+function getHeaderOrganizationId(headers: Headers, headerName: string) {
+  const rawOrganizationId = headers.get(headerName)?.trim()
   if (!rawOrganizationId) {
     return null
   }
@@ -25,6 +26,14 @@ export function getLegacyProxyOrganizationId(headers: Headers) {
   } catch {
     return null
   }
+}
+
+export function getLegacyProxyOrganizationId(headers: Headers) {
+  return getHeaderOrganizationId(headers, LEGACY_ORG_PROXY_HEADER)
+}
+
+export function getRequestScopedOrganizationId(headers: Headers) {
+  return getHeaderOrganizationId(headers, ORG_SCOPE_HEADER) ?? getLegacyProxyOrganizationId(headers)
 }
 
 export function shouldHydrateSessionActiveOrganization(input: {
@@ -60,8 +69,8 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
   const session = c.get("session")
   const apiKey = c.get("apiKey")
   const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
-  const legacyProxyOrganizationId = getLegacyProxyOrganizationId(c.req.raw.headers)
-  const scopedOrganizationId = apiKeyScopedOrganizationId ?? legacyProxyOrganizationId
+  const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
+  const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId
   const resolved = await resolveUserOrganizations({
     activeOrganizationId: scopedOrganizationId ?? session?.activeOrganizationId ?? null,
     userId: normalizeDenTypeId("user", user.id),
@@ -77,7 +86,7 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
     : resolved.activeOrgSlug
 
   if (shouldHydrateSessionActiveOrganization({
-    scopedOrganizationId: apiKeyScopedOrganizationId,
+    scopedOrganizationId,
     sessionActiveOrganizationId: session?.activeOrganizationId,
     resolvedActiveOrganizationId: activeOrganizationId,
   })) {

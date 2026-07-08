@@ -60,9 +60,11 @@ const clientConfigResponseSchema = z.object({
 
 const clientConfigDetailResponseSchema = z.object({
   providerId: z.string(),
-  clientId: z.string(),
+  configured: z.boolean(),
+  clientId: z.string().nullable(),
   features: z.array(z.string()),
   scopes: z.array(z.string()),
+  redirectUri: z.string(),
 }).meta({ ref: "OAuthClientConfigDetailResponse" })
 
 const connectStartResponseSchema = z.object({
@@ -73,8 +75,6 @@ const clientNotConfiguredSchema = z.object({
   error: z.literal("client_not_configured"),
   message: z.string(),
 }).meta({ ref: "OAuthClientNotConfiguredError" })
-
-const clientLookupNotFoundSchema = z.union([oauthNotFoundSchema, clientNotConfiguredSchema]).meta({ ref: "OAuthClientLookupNotFoundError" })
 
 const oauthStatusResponseSchema = z.object({
   providerId: z.string(),
@@ -206,12 +206,12 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Get an org's OAuth client configuration for a provider",
-      description: "Admin-only. Returns the saved OAuth client id, selected optional features, and the full scope list members will be asked to approve. Never returns the client secret.",
+      description: "Admin-only. Returns setup status, the saved OAuth client id when configured, selected permission features, the callback redirect URI, and the full scope list members will be asked to approve. Never returns the client secret.",
       responses: {
         200: jsonResponse("OAuth client configuration.", clientConfigDetailResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can view an OAuth client configuration.", forbiddenSchema),
-        404: jsonResponse("Unknown providerId, or the org has not configured an OAuth client for this provider yet.", clientLookupNotFoundSchema),
+        404: jsonResponse("Unknown providerId.", oauthNotFoundSchema),
       },
     }),
     orgMemberRoute(),
@@ -228,16 +228,14 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       }
 
       const client = await getOrgOAuthClient(payload.organization.id, providerId)
-      if (!client) {
-        return c.json({ error: "client_not_configured", message: `Connect an OAuth client for "${providerId}" first.` }, 404)
-      }
-
-      const features = clientSelectedFeatures(provider, client.extra)
+      const features = clientSelectedFeatures(provider, client?.extra ?? null)
       return c.json({
         providerId,
-        clientId: client.clientId,
+        configured: Boolean(client),
+        clientId: client?.clientId ?? null,
         features,
         scopes: resolveProviderScopes(provider, features),
+        redirectUri: callbackRedirectUri(c.req.raw, providerId),
       })
     },
   )

@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import type { ReactNode } from "react";
+import { type ReactNode } from "react";
 import { ShareIcon, UserGroupIcon } from "@heroicons/react/24/solid";
 import { PaperGrainGradient } from "@openwork/ui/react";
 
@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { OrganizationServerAffordance } from "../settings/cloud/organization-server-affordance";
 
 interface BrandIconProps {
   slug: string;
@@ -128,6 +129,10 @@ type WelcomePageProps = {
   onUseManualFolder?: () => void;
   showManualFolder?: boolean;
   onTeamSignIn?: () => void;
+  organizationServerBusy: boolean;
+  organizationServerError: string | null;
+  organizationServerUrl: string;
+  onOrganizationServerSave: (url: string) => Promise<boolean>;
 };
 
 type OnboardingStepProps = {
@@ -160,6 +165,10 @@ export function WelcomePage({
   onUseManualFolder,
   showManualFolder,
   onTeamSignIn,
+  organizationServerBusy,
+  organizationServerError,
+  organizationServerUrl,
+  onOrganizationServerSave,
 }: WelcomePageProps) {
   return (
     <Page className="min-h-screen">
@@ -206,6 +215,12 @@ export function WelcomePage({
                   >
                     {busy ? t("welcome.creating_workspace") : (getStartedLabel || t("welcome.get_started"))}
                   </Button>
+                  <OrganizationServerAffordance
+                    busy={organizationServerBusy}
+                    error={organizationServerError}
+                    onSave={onOrganizationServerSave}
+                    url={organizationServerUrl}
+                  />
                   {onTeamSignIn ? (
                     <Button
                       type="button"

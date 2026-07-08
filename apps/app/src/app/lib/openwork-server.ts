@@ -246,6 +246,7 @@ export type OpenworkDesktopCloudSyncResult = {
 
 export type OpenworkCloudPluginInstallResult = {
   item: CloudImportedPlugin;
+  warnings: string[];
 };
 
 export type OpenworkCloudPluginsResult = {
@@ -611,42 +612,6 @@ const OPENWORK_INVITE_PARAM_URL = "ow_url";
 const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";
 const OPENWORK_INVITE_PARAM_STARTUP = "ow_startup";
 const OPENWORK_INVITE_PARAM_AUTO_CONNECT = "ow_auto_connect";
-
-export type OpenworkOpenCodeRouterHealthSnapshot = {
-  ok: boolean;
-  opencode: Record<string, unknown>;
-  channels: Record<string, unknown>;
-  config: Record<string, unknown>;
-  activity?: {
-    inboundToday?: number;
-    outboundToday?: number;
-    lastMessageAt?: number | null;
-    [key: string]: unknown;
-  };
-  agent?: {
-    loaded?: boolean;
-    selected?: string;
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
-};
-
-export type OpenworkOpenCodeRouterIdentityItem = {
-  id: string;
-  channel?: string;
-  enabled?: boolean;
-  peerId?: string;
-  [key: string]: unknown;
-};
-
-export type OpenworkOpenCodeRouterSendResult = {
-  ok: boolean;
-  sent: number;
-  attempted: number;
-  failures?: Array<{ identityId: string; peerId: string; error: string }>;
-  reason?: string;
-  [key: string]: unknown;
-};
 
 export type OpenworkConnectInvite = {
   url: string;

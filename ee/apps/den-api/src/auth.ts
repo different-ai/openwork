@@ -15,6 +15,7 @@ import {
   DEN_SESSION_EXPIRES_IN_SECONDS,
   DEN_SESSION_UPDATE_AGE_IN_SECONDS,
 } from "./session-lifetime.js";
+import { DEN_ACCOUNT_CONFIG } from "./account-linking-policy.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
@@ -43,6 +44,7 @@ import {
 } from "./sso-saml-policy.js";
 import {
   getOrganizationContextForUser,
+  reconcilePendingInvitationsForUser,
   seedDefaultOrganizationRoles,
   validateOrganizationMemberRemovalForHook,
   validateOrganizationMemberRoleUpdate,
@@ -218,6 +220,7 @@ export const auth = betterAuth({
     provider: "mysql",
     schema,
   }),
+  account: DEN_ACCOUNT_CONFIG,
   session: {
     expiresIn: DEN_SESSION_EXPIRES_IN_SECONDS,
     updateAge: DEN_SESSION_UPDATE_AGE_IN_SECONDS,
@@ -246,7 +249,15 @@ export const auth = betterAuth({
     session: {
       create: {
         before: async (session) => {
-          const activeOrganizationId = await getInitialActiveOrganizationIdForUser(session.userId);
+          const userId = normalizeDenTypeId("user", session.userId);
+          const activeOrganizationId = await getInitialActiveOrganizationIdForUser(userId);
+          try {
+            // SSO JIT creates the raw member row before the session row, so this
+            // chokepoint can merge any matching pending invitation without blocking sign-in.
+            await reconcilePendingInvitationsForUser(userId);
+          } catch (error) {
+            console.error("[auth][invitation_reconcile_failed]", { userId, error });
+          }
 
           return {
             data: {

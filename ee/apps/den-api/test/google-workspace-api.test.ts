@@ -1,0 +1,175 @@
+import { describe, expect, test } from "bun:test"
+import {
+  buildDriveSearchQuery,
+  extractCalendarEvents,
+  extractDriveFiles,
+  extractGmailMessage,
+  truncateText,
+} from "../src/capability-sources/google-workspace-api.js"
+
+function base64Url(text: string): string {
+  return Buffer.from(text, "utf8").toString("base64url")
+}
+
+describe("extractGmailMessage", () => {
+  test("reads headers, nested plain-text body, and attachment metadata", () => {
+    const message = extractGmailMessage({
+      id: "msg_1",
+      threadId: "thread_1",
+      snippet: "Snippet fallback",
+      payload: {
+        mimeType: "multipart/mixed",
+        headers: [
+          { name: "From", value: "Ada <ada@example.com>" },
+          { name: "To", value: "Ben <ben@example.com>" },
+          { name: "Subject", value: "Nested body" },
+          { name: "Date", value: "Tue, 07 Jul 2026 10:00:00 +0000" },
+        ],
+        parts: [
+          {
+            mimeType: "multipart/alternative",
+            parts: [
+              { mimeType: "text/html", body: { data: base64Url("<p>HTML <strong>fallback</strong></p>") } },
+              { mimeType: "text/plain", body: { data: base64Url("Plain body from Gmail") } },
+            ],
+          },
+          {
+            filename: "report.pdf",
+            mimeType: "application/pdf",
+            body: { attachmentId: "att_1", size: 1234 },
+          },
+        ],
+      },
+    })
+
+    expect(message).toEqual({
+      id: "msg_1",
+      threadId: "thread_1",
+      from: "Ada <ada@example.com>",
+      to: "Ben <ben@example.com>",
+      subject: "Nested body",
+      date: "Tue, 07 Jul 2026 10:00:00 +0000",
+      snippet: "Snippet fallback",
+      body: "Plain body from Gmail",
+      attachments: [{ attachmentId: "att_1", filename: "report.pdf", mimeType: "application/pdf", size: 1234 }],
+    })
+  })
+
+  test("falls back from stripped html to snippet", () => {
+    expect(extractGmailMessage({
+      snippet: "Snippet text",
+      payload: { mimeType: "text/html", body: { data: base64Url("<div>Hello <b>HTML</b></div>") } },
+    }).body).toBe("Hello HTML")
+
+    expect(extractGmailMessage({ snippet: "Snippet text", payload: {} }).body).toBe("Snippet text")
+  })
+
+  test("truncates long bodies to Gmail's route budget", () => {
+    const message = extractGmailMessage({
+      snippet: "short",
+      payload: { mimeType: "text/plain", body: { data: base64Url("x".repeat(100_010)) } },
+    })
+    expect(message.body.length).toBe(100_000)
+  })
+})
+
+describe("extractCalendarEvents", () => {
+  test("maps dateTime and all-day date events", () => {
+    expect(extractCalendarEvents({
+      items: [
+        {
+          id: "event_1",
+          summary: "Planning",
+          description: "Discuss launch",
+          location: "Room 1",
+          start: { dateTime: "2026-07-08T10:00:00Z" },
+          end: { dateTime: "2026-07-08T10:30:00Z" },
+          status: "confirmed",
+          htmlLink: "https://calendar.google.com/event?eid=event_1",
+          attendees: [{ email: "ada@example.com" }, { email: "ben@example.com" }],
+        },
+        {
+          id: "event_2",
+          summary: "Offsite",
+          start: { date: "2026-07-09" },
+          end: { date: "2026-07-10" },
+        },
+      ],
+    })).toEqual([
+      {
+        id: "event_1",
+        summary: "Planning",
+        description: "Discuss launch",
+        location: "Room 1",
+        start: "2026-07-08T10:00:00Z",
+        end: "2026-07-08T10:30:00Z",
+        status: "confirmed",
+        htmlLink: "https://calendar.google.com/event?eid=event_1",
+        attendees: ["ada@example.com", "ben@example.com"],
+      },
+      {
+        id: "event_2",
+        summary: "Offsite",
+        description: "",
+        location: "",
+        start: "2026-07-09",
+        end: "2026-07-10",
+        status: "",
+        htmlLink: "",
+        attendees: [],
+      },
+    ])
+  })
+})
+
+describe("Drive helpers", () => {
+  test("buildDriveSearchQuery escapes quotes and backslashes", () => {
+    expect(buildDriveSearchQuery("it's \\ tricky")).toBe("trashed = false and (name contains 'it\\'s \\\\ tricky' or fullText contains 'it\\'s \\\\ tricky')")
+  })
+
+  test("extractDriveFiles maps file metadata and preserves absent size as null", () => {
+    expect(extractDriveFiles({
+      files: [
+        {
+          id: "file_1",
+          name: "Notes.txt",
+          mimeType: "text/plain",
+          modifiedTime: "2026-07-08T11:00:00Z",
+          webViewLink: "https://drive.google.com/file/d/file_1/view",
+          size: "42",
+        },
+        {
+          id: "doc_1",
+          name: "Doc",
+          mimeType: "application/vnd.google-apps.document",
+          modifiedTime: "2026-07-08T12:00:00Z",
+          webViewLink: "https://docs.google.com/document/d/doc_1/edit",
+        },
+      ],
+    })).toEqual([
+      {
+        id: "file_1",
+        name: "Notes.txt",
+        mimeType: "text/plain",
+        modifiedTime: "2026-07-08T11:00:00Z",
+        webViewLink: "https://drive.google.com/file/d/file_1/view",
+        size: "42",
+      },
+      {
+        id: "doc_1",
+        name: "Doc",
+        mimeType: "application/vnd.google-apps.document",
+        modifiedTime: "2026-07-08T12:00:00Z",
+        webViewLink: "https://docs.google.com/document/d/doc_1/edit",
+        size: null,
+      },
+    ])
+  })
+})
+
+describe("truncateText", () => {
+  test("reports whether content was truncated", () => {
+    expect(truncateText("short", 10)).toEqual({ text: "short", truncated: false })
+    expect(truncateText("abcdef", 3)).toEqual({ text: "abc", truncated: true })
+  })
+})

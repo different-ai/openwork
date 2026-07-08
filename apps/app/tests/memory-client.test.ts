@@ -22,12 +22,12 @@ afterEach(() => {
 });
 
 const client = () =>
-  createDenClient({ baseUrl: "https://web.test", apiBaseUrl: "https://api.test", token: "tok_test" });
+  createDenClient({ baseUrl: "https://web.test", token: "tok_test" });
 
 describe("Den memory client", () => {
   test("listMemory normalizes memories, tags, and contexts and drops malformed rows", async () => {
     const calls = mockFetch((url) => {
-      expect(url).toContain("/v1/memory");
+      expect(url).toContain("/api/den/v1/memory");
       return new Response(
         JSON.stringify({
           memories: [

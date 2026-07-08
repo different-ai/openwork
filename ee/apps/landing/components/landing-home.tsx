@@ -7,6 +7,7 @@ import { useMemo, useRef, useState } from "react";
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
 import { LandingBackground } from "./landing-background";
 import { LandingCloudWorkersCard } from "./landing-cloud-workers-card";
+import { LandingConnectMcp } from "./landing-connect-mcp";
 import {
   defaultLandingDemoFlowId,
   landingDemoFlows,
@@ -222,6 +223,8 @@ export function LandingHome(props: Props) {
               </div>
             </div>
           </section>
+
+          <LandingConnectMcp />
 
           <section
             ref={enterpriseShowcaseRef}

@@ -50,6 +50,12 @@
             ]
           },
           {
+            "group": "Troubleshooting",
+            "pages": [
+              "start-here/troubleshooting/diagnostic-prompts"
+            ]
+          },
+          {
             "group": "Help improve OpenWork",
             "pages": [
               "start-here/missing-docs",

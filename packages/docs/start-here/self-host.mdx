@@ -90,6 +90,16 @@ OpenWork cloud is composed of two services:
 - NodeJS backend (Hono) with MySQL DB
 - Electron/React desktop app
 
+The desktop app should be pointed at the Den web URL only. It derives API and
+MCP traffic through the Den web proxy:
+
+- API: `<baseUrl>/api/den/v1/...`
+- MCP: `<baseUrl>/api/den/mcp/...`
+
+For self-hosted deployments, configure `baseUrl` to the public Den web origin
+and make sure that web app's `/api/den` route can reach your Den API backend.
+The desktop app no longer needs, reads, or writes a separate API URL.
+
 These three alone cover most feature but do not include:
 
 - Remote code execution through sandboxes

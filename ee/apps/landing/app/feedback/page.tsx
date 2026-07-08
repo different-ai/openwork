@@ -42,7 +42,6 @@ export default function FeedbackPage({ searchParams }: PageProps) {
     openworkServerVersion: readSearchParam(searchParams, "openworkServerVersion"),
     opencodeVersion: readSearchParam(searchParams, "opencodeVersion"),
     orchestratorVersion: readSearchParam(searchParams, "orchestratorVersion"),
-    opencodeRouterVersion: readSearchParam(searchParams, "opencodeRouterVersion"),
     osName: readSearchParam(searchParams, "osName"),
     osVersion: readSearchParam(searchParams, "osVersion"),
     platform: readSearchParam(searchParams, "platform"),

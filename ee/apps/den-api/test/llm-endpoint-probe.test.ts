@@ -24,7 +24,7 @@ describe("buildCandidateBaseUrls", () => {
   test("strips known suffixes and trailing slashes", () => {
     expect(buildCandidateBaseUrls("https://x.example.com/v1/")[0]).toBe("https://x.example.com/v1")
     expect(buildCandidateBaseUrls("https://x.example.com/v1/chat/completions")[0]).toBe("https://x.example.com/v1")
-    // The exact mistake from the Blue Yonder session: /responses pasted from the portal.
+    // The exact mistake from a real onboarding session: /responses pasted from the portal.
     expect(
       buildCandidateBaseUrls("https://r.services.ai.azure.com/openai/v1/responses")[0],
     ).toBe("https://r.services.ai.azure.com/openai/v1")
@@ -136,7 +136,7 @@ describe("probeEndpoint", () => {
         if (url.includes("/openai/deployments")) {
           return jsonResponse(200, { data: [{ id: "gpt-5-mini", object: "deployment" }] })
         }
-        // The Blue Yonder resource answers /models with the full Azure catalog.
+        // Real Foundry resources answer /models with the full Azure catalog.
         return jsonResponse(200, modelsPayload(["gpt-5-mini-2025-08-07", "dall-e-3-3.0"]))
       },
     })

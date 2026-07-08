@@ -6,6 +6,7 @@ import {
   engineInfo as engineInfoCmd,
   engineStart as engineStartCmd,
   getDesktopBootstrapConfig,
+  debugDesktopBootstrapConfig,
   nukeOpenworkAndOpencodeConfigAndExit,
   openDesktopUrl,
   openworkServerInfo as openworkServerInfoCmd,
@@ -39,6 +40,7 @@ import {
   safeStringify,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { resetFirstRunClientState } from "../../../shell/session-memory";
 import type { DebugViewProps } from "../pages/debug-view";
 import type { ReleaseChannel } from "../../../../app/types";
 import type { OpenworkServerStore, OpenworkServerStoreSnapshot } from "../../connections/openwork-server-store";
@@ -49,13 +51,6 @@ const ENGINE_CUSTOM_BIN_KEY = "openwork.engineCustomBinPath";
 const OPENCODE_ENABLE_EXA_KEY = "openwork.opencodeEnableExa";
 
 type ResetModalMode = "onboarding" | "all";
-
-const ONBOARDING_LOCAL_STORAGE_KEYS = [
-  "openwork.acknowledgedProviders",
-  "openwork.orgOnboardingSeen",
-  "openwork.reloadAfterOrgOnboarding",
-  "openwork.seenProviderIds",
-];
 
 type UseDebugViewModelOptions = {
   developerMode: boolean;
@@ -95,23 +90,18 @@ function clearStoredString(key: string): void {
 
 function clearOpenworkLocalStorageForReset(mode: ResetModalMode): void {
   if (typeof window === "undefined") return;
-  try {
-    if (mode === "all") {
+  if (mode === "all") {
+    try {
       window.localStorage.clear();
-      return;
+    } catch {
+      // ignore persistence failures
     }
-    for (const key of ONBOARDING_LOCAL_STORAGE_KEYS) {
-      window.localStorage.removeItem(key);
-    }
-    const raw = window.localStorage.getItem("openwork.preferences");
-    if (raw) {
-      const prefs = JSON.parse(raw);
-      prefs.hasCompletedOnboarding = false;
-      window.localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
-    }
-  } catch {
-    // ignore persistence failures
+    return;
   }
+  // Single source of truth so this can't drift from the recovery-disabled boot
+  // reset (both must clear the workspace-memory keys or the first-run loader and
+  // auto-session-create stay silently suppressed).
+  resetFirstRunClientState();
 }
 
 function readEngineSource(): "path" | "sidecar" | "custom" {
@@ -250,6 +240,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [engineInfoState, setEngineInfoState] = useState<EngineInfo | null>(null);
   const [appBuild, setAppBuild] = useState<AppBuildInfo | null>(null);
   const [bootstrapPrepared, setBootstrapPrepared] = useState<DesktopBootstrapConfig["prepared"]>(null);
+  const [bootstrapConfigDebug, setBootstrapConfigDebug] = useState<unknown>(null);
   const [runtimeDebugStatus, setRuntimeDebugStatus] = useState<string | null>(null);
   const [sandboxProbeBusy, setSandboxProbeBusy] = useState(false);
   const [sandboxProbeResult, setSandboxProbeResult] = useState<SandboxDebugProbeResult | null>(null);
@@ -334,6 +325,25 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     };
   }, [developerMode]);
 
+  useEffect(() => {
+    if (!developerMode || !isDesktopRuntime()) return;
+    let cancelled = false;
+    void debugDesktopBootstrapConfig()
+      .then((config) => {
+        if (!cancelled) setBootstrapConfigDebug(config);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setBootstrapConfigDebug({
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [developerMode]);
+
   const pushDeveloperLog = useCallback((message: string) => {
     const timestamp = new Date().toISOString();
     setDeveloperLog((current) => {
@@ -391,6 +401,10 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const runtimeDebugReportJson = useMemo(
     () => safeStringify(runtimeDebugReport),
     [runtimeDebugReport],
+  );
+  const bootstrapConfigDebugJson = useMemo(
+    () => safeStringify(bootstrapConfigDebug),
+    [bootstrapConfigDebug],
   );
 
   const engineCard = useMemo(() => describeEngine(engineInfoState), [engineInfoState]);
@@ -920,6 +934,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
           : t("status.disconnected_label"),
       runtimeSummary,
       runtimeDebugReportJson,
+      bootstrapConfigDebugJson,
       runtimeDebugStatus,
       onCopyRuntimeDebugReport,
       onExportRuntimeDebugReport,
@@ -1006,6 +1021,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       developerLog,
       developerLogStatus,
       developerMode,
+      bootstrapConfigDebugJson,
       electronMigrationBusy,
       electronMigrationArtifactLabel,
       electronMigrationSha256,

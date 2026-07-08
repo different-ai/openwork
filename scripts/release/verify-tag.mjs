@@ -24,7 +24,6 @@ const desktopVersion = readJson(resolve(root, "apps", "desktop", "package.json")
 const orchestratorVersion =
   readJson(resolve(root, "apps", "orchestrator", "package.json")).version ?? null;
 const serverVersion = readJson(resolve(root, "apps", "server", "package.json")).version ?? null;
-const opencodeRouterVersion = readJson(resolve(root, "apps", "opencode-router", "package.json")).version ?? null;
 
 
 const mismatches = [];
@@ -42,7 +41,6 @@ check("app", appVersion);
 check("desktop", desktopVersion);
 check("openwork-orchestrator", orchestratorVersion);
 check("openwork-server", serverVersion);
-check("opencode-router", opencodeRouterVersion);
 
 if (mismatches.length) {
   console.error(`Release tag ${tag} does not match package versions:`);

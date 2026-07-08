@@ -29,12 +29,68 @@ import {
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
 
-const GOOGLE_WORKSPACE_OPTIONAL_PERMISSIONS = [
-  { key: "gmailRead", label: "Read Gmail" },
-  { key: "driveFull", label: "Full Drive access" },
-  { key: "calendarWrite", label: "Create calendar events" },
-  { key: "chat", label: "Google Chat" },
+const GOOGLE_WORKSPACE_DEFAULT_FEATURES = ["calendarRead", "gmailDraft", "driveFile"];
+
+const GOOGLE_WORKSPACE_PERMISSION_GROUPS = [
+  {
+    name: "Calendar",
+    permissions: [
+      { key: "calendarRead", label: "Read calendar" },
+      { key: "calendarWrite", label: "Create calendar events" },
+    ],
+  },
+  {
+    name: "Gmail",
+    permissions: [
+      { key: "gmailDraft", label: "Draft emails" },
+      { key: "gmailRead", label: "Read Gmail" },
+    ],
+  },
+  {
+    name: "Drive",
+    permissions: [
+      { key: "driveFile", label: "Work with selected Drive files" },
+      { key: "driveRead", label: "Read all Drive files" },
+      { key: "driveFull", label: "Full Drive access" },
+    ],
+  },
+  {
+    name: "Chat",
+    permissions: [
+      { key: "chat", label: "Google Chat" },
+    ],
+  },
 ];
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    const clipboard = navigator.clipboard;
+    if (clipboard) {
+      await clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the textarea fallback.
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+  }
+}
 
 export function McpConnectionsScreen() {
   const { orgContext } = useOrgDashboard();
@@ -112,15 +168,15 @@ export function McpConnectionsScreen() {
     <DashboardPageTemplate
       icon={Plug}
       title="Connections"
-      badgeLabel="Beta"
+      badgeLabel="Alpha"
       description="Connect any MCP server — Notion, Linear, Stripe, or a custom URL — once for the whole org. search_capabilities and execute_capability pick these up automatically."
       colors={["#E2E8F0", "#020617", "#0F172A", "#94A3B8"]}
     >
       {showStagingBanner ? (
         <div data-testid="mcp-connections-staging-banner" className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] leading-6 text-amber-800">
-          <p className="font-semibold text-amber-900">OpenWork Connect (beta) is staged for this org.</p>
+          <p className="font-semibold text-amber-900">OpenWork Connect (alpha) is staged for this org.</p>
           <p className="mt-1">
-            Connections and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (beta) for this org. Admin management remains fully usable.
+            Connections and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (alpha) for this org. Admin management remains fully usable.
           </p>
         </div>
       ) : null}
@@ -265,19 +321,21 @@ function GoogleWorkspaceDialog({
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [features, setFeatures] = useState<string[]>([]);
+  const [copiedRedirectUri, setCopiedRedirectUri] = useState(false);
   const featuresPrefilled = useRef(false);
 
   useEffect(() => {
     if (!open) return;
     setClientId("");
     setClientSecret("");
-    setFeatures([]);
+    setFeatures(GOOGLE_WORKSPACE_DEFAULT_FEATURES);
+    setCopiedRedirectUri(false);
     featuresPrefilled.current = false;
   }, [open]);
 
   useEffect(() => {
     if (!open || featuresPrefilled.current || !clientConfig.isSuccess || clientConfig.isFetching) return;
-    setFeatures(clientConfig.data?.features ?? []);
+    setFeatures(clientConfig.data.features);
     featuresPrefilled.current = true;
   }, [open, clientConfig.isSuccess, clientConfig.isFetching, clientConfig.data?.features]);
 
@@ -285,7 +343,8 @@ function GoogleWorkspaceDialog({
     return null;
   }
 
-  const configured = Boolean(clientConfig.data);
+  const configured = clientConfig.data?.configured ?? false;
+  const redirectUri = clientConfig.data?.redirectUri ?? "";
   const loadingConfig = clientConfig.isLoading;
   const formError = error ?? clientConfig.error;
   const trimmedClientId = clientId.trim();
@@ -296,10 +355,15 @@ function GoogleWorkspaceDialog({
     setFeatures((current) => current.includes(feature) ? current.filter((entry) => entry !== feature) : [...current, feature]);
   }
 
+  async function copyRedirectUri() {
+    if (!redirectUri) return;
+    if (await copyTextToClipboard(redirectUri)) setCopiedRedirectUri(true);
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        className="max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Set up Google Workspace</h2>
@@ -307,27 +371,62 @@ function GoogleWorkspaceDialog({
           Paste the OAuth client from your company&apos;s Google Cloud project. Members then connect their own
           Google account from Your Connections — sign-ins stay in your org&apos;s cloud.
         </p>
-        <p className="mt-2 text-[12px] leading-5 text-gray-500">
-          Included permissions: calendar read, Gmail drafts, and selected Drive files.
-        </p>
 
         <div className="mt-5 space-y-4">
           <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-            <p className="text-[13px] font-semibold text-gray-900">Optional permissions</p>
-            <p className="mt-1 text-[12px] leading-5 text-gray-500">Only add these when your team needs the extra Google access.</p>
-            <div className="mt-3 space-y-2">
-              {GOOGLE_WORKSPACE_OPTIONAL_PERMISSIONS.map((permission) => (
-                <label key={permission.key} className="flex items-center gap-2 text-[13px] text-gray-700">
-                  <input
-                    type="checkbox"
-                    data-feature={permission.key}
-                    className="h-4 w-4 rounded border-gray-300 text-gray-900"
-                    checked={features.includes(permission.key)}
-                    disabled={loadingConfig}
-                    onChange={() => toggleFeature(permission.key)}
-                  />
-                  <span>{permission.label}</span>
-                </label>
+            <p className="text-[13px] font-semibold text-gray-900">How to set it up</p>
+            <ol className="mt-2 list-decimal space-y-2 pl-4 text-[12px] leading-5 text-gray-600">
+              <li>
+                Create an OAuth client in Google Cloud Console (APIs &amp; Services → Credentials → Create credentials → OAuth client ID → Web application).{" "}
+                <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" className="font-medium text-gray-900 underline decoration-gray-300 underline-offset-4">
+                  Open Google Cloud Console
+                </a>
+              </li>
+              <li>
+                <p>Add this authorized redirect URI:</p>
+                <div className="mt-1 flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-2">
+                  <p data-google-redirect-uri className="min-w-0 flex-1 break-all font-mono text-[11px] leading-5 text-gray-800">
+                    {redirectUri || "Loading redirect URI…"}
+                  </p>
+                  <DenButton variant="secondary" size="sm" data-testid="copy-redirect-uri" onClick={copyRedirectUri} disabled={!redirectUri}>
+                    {copiedRedirectUri ? "Copied" : "Copy"}
+                  </DenButton>
+                </div>
+              </li>
+              <li>
+                Enable the Google APIs for the permissions you pick (Gmail, Calendar, Drive).{" "}
+                <a href="https://console.cloud.google.com/apis/library" target="_blank" rel="noopener" className="font-medium text-gray-900 underline decoration-gray-300 underline-offset-4">
+                  Open API library
+                </a>
+              </li>
+              <li>Paste the client ID and secret below.</li>
+            </ol>
+          </div>
+          <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+            <p className="text-[13px] font-semibold text-gray-900">Permissions</p>
+            <p className="mt-1 text-[12px] leading-5 text-gray-500">
+              Pick what your team&apos;s AI can do across Calendar, Gmail, and Drive. Signing in always shares the member&apos;s name and email.
+            </p>
+            <div className="mt-3 space-y-3">
+              {GOOGLE_WORKSPACE_PERMISSION_GROUPS.map((group) => (
+                <div key={group.name}>
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400">{group.name}</p>
+                  <div className="space-y-2">
+                    {group.permissions.map((permission) => (
+                      <label key={permission.key} className="flex items-center gap-2 text-[13px] text-gray-700">
+                        <input
+                          type="checkbox"
+                          data-feature={permission.key}
+                          className="h-4 w-4 rounded border-gray-300 text-gray-900"
+                          checked={features.includes(permission.key)}
+                          disabled={loadingConfig}
+                          onChange={() => toggleFeature(permission.key)}
+                        />
+                        <span>{permission.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
@@ -552,9 +651,9 @@ function AddConnectionDialog({
     }
   }
 
-  function copyOAuthCallback() {
+  async function copyOAuthCallback() {
     if (!oauthCallback) return;
-    void navigator.clipboard.writeText(oauthCallback).then(() => setCopiedCallback(true));
+    if (await copyTextToClipboard(oauthCallback)) setCopiedCallback(true);
   }
 
   if (!open) {

@@ -15,18 +15,20 @@ const MOCK_SERVER_URL = (process.env.MOCK_OAUTH_MCP_URL ?? "http://127.0.0.1:397
 const RUN_TAG = Date.now();
 const GOOGLE_CLIENT_ID = "google-client-id";
 const GOOGLE_CLIENT_SECRET = "google-client-secret";
-const SELECTED_FEATURES = ["gmailRead", "calendarWrite"];
-const FEATURE_KEYS = ["gmailRead", "driveFull", "calendarWrite", "chat"];
-const BASE_GOOGLE_SCOPES = [
+const DEFAULT_FEATURES = ["calendarRead", "gmailDraft", "driveFile"];
+const EXTRA_FEATURES = ["gmailRead", "calendarWrite"];
+const SAVED_FEATURES = ["calendarRead", "gmailDraft", "driveFile", "gmailRead", "calendarWrite"];
+const FEATURE_KEYS = ["calendarRead", "calendarWrite", "gmailDraft", "gmailRead", "driveFile", "driveRead", "driveFull", "chat"];
+const IDENTITY_SCOPES = [
   "openid",
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
+];
+const EXPECTED_MEMBER_SCOPES = [
+  ...IDENTITY_SCOPES,
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/drive.file",
-];
-const EXPECTED_MEMBER_SCOPES = [
-  ...BASE_GOOGLE_SCOPES,
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/calendar.events",
 ];
@@ -150,11 +152,20 @@ function includedPermissionsScript() {
   return `(() => {
     const text = document.body.innerText;
     const normalized = text.toLowerCase();
-    return text.includes('Included permissions')
+    return text.includes('Permissions')
       && normalized.includes('calendar')
       && normalized.includes('gmail')
       && normalized.includes('drive');
   })()`;
+}
+
+function assertFeatureStates(ctx, states, checkedFeatures, uncheckedFeatures) {
+  for (const feature of checkedFeatures) {
+    ctx.assert(states[feature] === true, `${feature} should be checked.`);
+  }
+  for (const feature of uncheckedFeatures) {
+    ctx.assert(states[feature] === false, `${feature} should be unchecked.`);
+  }
 }
 
 function featureReadyScript(featureKey) {
@@ -228,11 +239,11 @@ async function waitForSavedFeatures(ctx) {
     });
     if (config.response.ok) {
       features = Array.isArray(config.body.features) ? config.body.features : [];
-      if (sameStringSet(features, SELECTED_FEATURES)) return features;
+      if (sameStringSet(features, SAVED_FEATURES)) return features;
     }
     await sleep(500);
   }
-  ctx.assert(false, `Saved features never matched ${JSON.stringify(SELECTED_FEATURES)}; last seen ${JSON.stringify(features)}.`);
+  ctx.assert(false, `Saved features never matched ${JSON.stringify(SAVED_FEATURES)}; last seen ${JSON.stringify(features)}.`);
   return features;
 }
 
@@ -311,7 +322,7 @@ export default {
           body: JSON.stringify({
             clientId: `google-clean-client-${RUN_TAG}`,
             clientSecret: "google-clean-secret",
-            features: [],
+            features: DEFAULT_FEATURES,
           }),
         });
         ctx.assert(cleanClient.response.ok, `Saving clean Google client failed: ${cleanClient.response.status} ${JSON.stringify(cleanClient.body).slice(0, 200)}`);
@@ -320,7 +331,7 @@ export default {
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("The Google Workspace setup explains the desktop-parity included permissions", {
+        await ctx.prove("The Google Workspace setup shows granular permissions with desktop defaults checked", {
           voiceover: vo[0],
           action: async () => {
             await signInViaBrowser(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
@@ -330,12 +341,15 @@ export default {
             ctx.assert(clicked, "Google Workspace quick-add card was not found.");
           },
           assert: async () => {
-            await ctx.waitFor(includedPermissionsScript(), { timeoutMs: 20_000, label: "included permissions copy" });
+            await ctx.waitFor(includedPermissionsScript(), { timeoutMs: 20_000, label: "permissions copy" });
+            await ctx.waitFor(featureReadyScript("calendarRead"), { timeoutMs: 20_000, label: "default permission checkboxes ready" });
+            const states = await ctx.eval(featureStatesScript());
+            assertFeatureStates(ctx, states, DEFAULT_FEATURES, ["calendarWrite", "gmailRead", "driveRead", "driveFull", "chat"]);
           },
           screenshot: {
             name: "org-google-workspace-included-permissions",
-            claim: "The setup dialog names the included calendar, Gmail, and Drive permissions.",
-            requireText: ["Included permissions", "calendar", "Gmail", "Drive"],
+            claim: "The setup dialog shows granular Calendar, Gmail, and Drive permissions with the default picks checked.",
+            requireText: ["Permissions", "Calendar", "Gmail", "Drive", "Read calendar", "Draft emails"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -348,7 +362,7 @@ export default {
           voiceover: vo[1],
           action: async () => {
             await ctx.waitFor(featureReadyScript("gmailRead"), { timeoutMs: 20_000, label: "optional permission checkboxes ready" });
-            for (const feature of SELECTED_FEATURES) {
+            for (const feature of EXTRA_FEATURES) {
               const result = await ctx.eval(setFeatureCheckedScript(feature, true));
               ctx.assert(result?.ok, `Could not check optional feature ${feature}.`);
             }
@@ -361,7 +375,7 @@ export default {
           },
           assert: async () => {
             const features = await waitForSavedFeatures(ctx);
-            assertExactStringSet(ctx, features, SELECTED_FEATURES, "Saved optional features");
+            assertExactStringSet(ctx, features, SAVED_FEATURES, "Saved permission features");
           },
           screenshot: {
             name: "org-google-workspace-features-saved",
@@ -384,15 +398,12 @@ export default {
           assert: async () => {
             await ctx.waitFor(featureReadyScript("gmailRead"), { timeoutMs: 20_000, label: "reopened optional permission checkboxes ready" });
             const states = await ctx.eval(featureStatesScript());
-            ctx.assert(states.gmailRead === true, "Read Gmail should be checked after reopening.");
-            ctx.assert(states.calendarWrite === true, "Create calendar events should be checked after reopening.");
-            ctx.assert(states.driveFull === false, "Full Drive access should remain unchecked.");
-            ctx.assert(states.chat === false, "Google Chat should remain unchecked.");
+            assertFeatureStates(ctx, states, SAVED_FEATURES, ["driveRead", "driveFull", "chat"]);
           },
           screenshot: {
             name: "org-google-workspace-features-persisted",
             claim: "The saved Read Gmail and Create calendar events options are still checked.",
-            requireText: ["Optional permissions", "Read Gmail", "Create calendar events"],
+            requireText: ["Permissions", "Read calendar", "Draft emails", "Read Gmail", "Create calendar events"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -401,7 +412,7 @@ export default {
     {
       name: "Frame 4",
       run: async (ctx) => {
-        await ctx.prove("The member authorize URL asks for exactly the base Google scopes plus the two selected extras", {
+        await ctx.prove("The member authorize URL asks for exactly the defaults plus the two selected additions", {
           voiceover: vo[3],
           action: async () => {
             const started = await denApiFetch("/v1/mcp-connections/google-workspace/connect/start", {

@@ -5,6 +5,7 @@ import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 
 const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
+const originalUiControlTools = process.env.OPENWORK_UI_CONTROL_TOOLS;
 const stops: Array<() => void> = [];
 
 const searchResultSchema = z.object({
@@ -36,7 +37,15 @@ afterEach(() => {
   else process.env.OPENWORK_SERVER_URL = originalServerUrl;
   if (originalServerToken === undefined) delete process.env.OPENWORK_SERVER_TOKEN;
   else process.env.OPENWORK_SERVER_TOKEN = originalServerToken;
+  if (originalUiControlTools === undefined) delete process.env.OPENWORK_UI_CONTROL_TOOLS;
+  else process.env.OPENWORK_UI_CONTROL_TOOLS = originalUiControlTools;
 });
+
+async function transformedSystem(plugin: Awaited<ReturnType<typeof OpenWorkExtensionsPreview>>): Promise<string> {
+  const output: { system: string[] } = { system: [] };
+  await plugin["experimental.chat.system.transform"]({}, output);
+  return output.system.join("\n");
+}
 
 function startFakeOpenWorkServer() {
   const requests: Array<{ pathname: string; search: string; authorization: string | null }> = [];
@@ -164,5 +173,36 @@ describe("OpenWorkExtensionsPreview session tools", () => {
         text: "We decided to ship the archive importer first.",
       },
     ]);
+  });
+});
+
+describe("OpenWorkExtensionsPreview UI control tools", () => {
+  test("omits UI-control tools and steering by default", async () => {
+    delete process.env.OPENWORK_UI_CONTROL_TOOLS;
+    const plugin = await OpenWorkExtensionsPreview();
+    const tools = Object.keys(plugin.tool);
+
+    expect(tools).not.toContain("openwork_ui_snapshot");
+    expect(tools).not.toContain("openwork_ui_list_actions");
+    expect(tools).not.toContain("openwork_ui_execute_action");
+    expect(tools).toContain("openwork_session_search");
+    expect(tools).toContain("openwork_extension_list_actions");
+
+    const system = await transformedSystem(plugin);
+    expect(system).not.toContain("openwork_ui_");
+    expect(system).toContain("openwork_session_search");
+  });
+
+  test("registers UI-control tools and steering when opted in", async () => {
+    process.env.OPENWORK_UI_CONTROL_TOOLS = "1";
+    const plugin = await OpenWorkExtensionsPreview();
+    const tools = Object.keys(plugin.tool);
+
+    expect(tools).toContain("openwork_ui_snapshot");
+    expect(tools).toContain("openwork_ui_list_actions");
+    expect(tools).toContain("openwork_ui_execute_action");
+
+    const system = await transformedSystem(plugin);
+    expect(system).toContain("openwork_ui_execute_action");
   });
 });

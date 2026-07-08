@@ -106,9 +106,14 @@ function scoreText(nameTokens: string[], summaryTokens: string[], queryTokens: s
 }
 
 export type ExternalCapabilityMatch = CapabilityMatch & {
-  /** Set when the connection is per-member and the calling member hasn't connected their account yet: the tool exists but needs the human to connect first. */
-  status?: "needs_connection"
+  /** Set for connection-level status rows: the tool exists but needs a human/admin fix before real tools can be listed. */
+  status?: "needs_connection" | "error"
   hint?: string
+}
+
+function shortErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.length > 120 ? `${message.slice(0, 117)}...` : message
 }
 
 /**
@@ -165,6 +170,22 @@ export async function searchExternalCapabilities(input: {
         continue
       }
     } else if (!hasSharedCredential(connection)) {
+      const nameTokens = tokenize(connection.name)
+      const score = scoreText(nameTokens, nameTokens, queryTokens)
+      if (score > 0) {
+        matches.push({
+          name: buildExternalCapabilityName(connection.id, "*"),
+          method: "MCP",
+          path: connection.url,
+          score,
+          summary: `[${connection.name}] Available to your organization, but an admin hasn't connected it yet.`,
+          pathParams: [],
+          queryParams: [],
+          hasBody: false,
+          status: "needs_connection",
+          hint: `Ask an org admin to open the OpenWork Cloud dashboard -> Connections and connect "${connection.name}", then search again.`,
+        })
+      }
       continue
     }
 
@@ -174,7 +195,24 @@ export async function searchExternalCapabilities(input: {
     let tools: Awaited<ReturnType<typeof listExternalMcpTools>>
     try {
       tools = await listExternalMcpTools(connection, redirectUriFor(input.redirectUriBase, connection.id), member)
-    } catch {
+    } catch (error) {
+      const message = shortErrorMessage(error)
+      const nameTokens = tokenize(connection.name)
+      const score = scoreText(nameTokens, nameTokens, queryTokens)
+      if (score > 0) {
+        matches.push({
+          name: buildExternalCapabilityName(connection.id, "*"),
+          method: "MCP",
+          path: connection.url,
+          score,
+          summary: `[${connection.name}] This connection is set up but not responding right now (${message}).`,
+          pathParams: [],
+          queryParams: [],
+          hasBody: false,
+          status: "error",
+          hint: `The stored credential may be expired or the server may be unreachable. Reconnect "${connection.name}" from the OpenWork Cloud dashboard -> Connections, then search again.`,
+        })
+      }
       continue
     }
 
@@ -249,6 +287,14 @@ export async function executeExternalCapability(input: {
   })
   if (!canUse) {
     return { ok: false, error: "forbidden", message: `You have not been granted access to "${connection.name}".` }
+  }
+
+  if (input.toolName === "*") {
+    return {
+      ok: false,
+      error: "needs_connection",
+      message: `"${connection.name}" was surfaced as a connection status entry, not a callable tool. Fix the connection first (see the search hint), then search again for its real tools.`,
+    }
   }
 
   let member: { orgMembershipId: DenTypeId<"member"> } | undefined

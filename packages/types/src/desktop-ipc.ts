@@ -140,6 +140,7 @@ export type DesktopBootstrapConfig = {
   baseUrl: string;
   apiBaseUrl?: string | null;
   requireSignin: boolean;
+  writtenAt?: string | null;
   claimLinks?: Array<{
     id: string;
     role: string;
@@ -414,6 +415,7 @@ export type DesktopCommandMap = {
   // Bootstrap config
   getDesktopBootstrapConfig: { args: []; result: DesktopBootstrapConfig };
   debugDesktopBootstrapConfig: { args: []; result: unknown };
+  clearDesktopBootstrapConfig: { args: []; result: unknown };
   setDesktopBootstrapConfig: {
     args: [config: Partial<DesktopBootstrapConfig>];
     result: DesktopBootstrapConfig;

@@ -143,7 +143,7 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 ## Architecture (high-level)
 
 - In **Host mode**, OpenWork runs a local host stack and connects the UI to it.
-  - Default runtime: `openwork` (installed from `openwork-orchestrator`), which orchestrates `opencode`, `openwork-server`, and optionally `opencode-router`.
+  - Default runtime: `openwork` (installed from `openwork-orchestrator`), which orchestrates `opencode` and `openwork-server`.
   - Fallback runtime: `direct`, where the desktop app spawns `opencode serve --hostname 127.0.0.1 --port <free-port>` directly.
 
 When you select a project folder, OpenWork runs the host stack locally using that folder and connects the desktop UI.

@@ -1437,7 +1437,7 @@ function createRoutes(
       paths: [openworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
     });
 
-    const imported = await installCloudPlugin({
+    const result = await installCloudPlugin({
       serverConfig: config,
       workspaceId: workspace.id,
       workspaceRoot: workspace.path,
@@ -1451,6 +1451,7 @@ function createRoutes(
         : null,
       resolved,
     });
+    const imported = result.item;
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -1470,7 +1471,10 @@ function createRoutes(
       });
     }
 
-    return jsonResponse({ item: imported });
+    // Hot-register any bundled MCP servers with the running engine.
+    await syncRuntimeMcpToOpencodeEngine(config, workspace).catch(() => undefined);
+
+    return jsonResponse({ item: imported, warnings: result.warnings });
   });
 
   // Claude Code plugin bundles (MCP + skills + commands + agents) installed
@@ -1499,13 +1503,14 @@ function createRoutes(
       paths: [openworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
     });
 
-    const imported = await installCloudPlugin({
+    const result = await installCloudPlugin({
       serverConfig: config,
       workspaceId: workspace.id,
       workspaceRoot: workspace.path,
       marketplaceId: null,
       resolved: bundle.resolved,
     });
+    const imported = result.item;
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -1528,7 +1533,7 @@ function createRoutes(
     // Hot-register any bundled MCP servers with the running engine.
     await syncRuntimeMcpToOpencodeEngine(config, workspace).catch(() => undefined);
 
-    return jsonResponse({ item: imported, preview: bundle.preview });
+    return jsonResponse({ item: imported, preview: bundle.preview, warnings: result.warnings });
   });
 
   addRoute(routes, "DELETE", "/workspace/:id/cloud-plugins/:pluginId", "client", async (ctx) => {
@@ -1569,7 +1574,7 @@ function createRoutes(
       });
     }
 
-    return jsonResponse({ item: removed });
+    return jsonResponse({ item: removed, warnings: [] });
   });
 
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {

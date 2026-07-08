@@ -54,7 +54,7 @@ declare global {
         ...args: DesktopCommandArgs<C>
       ) => Promise<DesktopCommandResult<C>>;
       shell?: {
-        openExternal?: (url: string) => Promise<void>;
+        openExternal?: (url: string) => Promise<{ ok: boolean; error?: string } | void>;
         relaunch?: () => Promise<void>;
       };
       system?: {
@@ -151,6 +151,7 @@ declare global {
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
         version?: string;
+        disableWorkspaceRecovery?: boolean;
       };
     };
   }
@@ -337,7 +338,10 @@ export async function desktopFetchViaMain(input: RequestInfo | URL, init?: Reque
 export async function openDesktopUrl(url: string): Promise<void> {
   const openExternal = window.__OPENWORK_ELECTRON__?.shell?.openExternal;
   if (openExternal) {
-    await openExternal(url);
+    const result = await openExternal(url);
+    if (result && result.ok === false) {
+      throw new Error(result.error ?? "Failed to open browser");
+    }
     return;
   }
   if (typeof window !== "undefined") {
@@ -441,6 +445,8 @@ const {
   engineRestart,
   appBuildInfo,
   getDesktopBootstrapConfig,
+  debugDesktopBootstrapConfig,
+  clearDesktopBootstrapConfig,
   setDesktopBootstrapConfig,
   nukeOpenworkAndOpencodeConfigAndExit,
   orchestratorStartDetached,
@@ -494,6 +500,8 @@ export {
   engineRestart,
   appBuildInfo,
   getDesktopBootstrapConfig,
+  debugDesktopBootstrapConfig,
+  clearDesktopBootstrapConfig,
   setDesktopBootstrapConfig,
   nukeOpenworkAndOpencodeConfigAndExit,
   orchestratorStartDetached,

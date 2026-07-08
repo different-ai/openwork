@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import os from "node:os"
 import path from "node:path"
 
-import { desktopBootstrapPath } from "./bootstrap-path"
+import { desktopBootstrapPath, legacyDesktopBootstrapPath } from "./bootstrap-path"
 import type { InstallerConfig } from "./config"
 import { releaseAssetFor, type ReleaseAsset } from "./release-asset"
 
@@ -48,9 +48,9 @@ function update(partial: Partial<InstallStatus>, onStatus?: (status: InstallStat
 
 /**
  * Merge the deployment config into any existing bootstrap file rather than
- * replacing it: a re-run must not destroy handoff/prepared/claimLinks state
- * written by the bootstrap CLI (see normalizeDesktopBootstrapConfig in the
- * Electron shell for the full shape).
+ * replacing it: a re-run must not destroy prepared/claimLinks state written by
+ * the bootstrap CLI, but one-time handoff grants must not survive reinstall
+ * (see normalizeDesktopBootstrapConfig in the Electron shell for the full shape).
  */
 export function writeBootstrapConfig(config: InstallerConfig, env: NodeJS.ProcessEnv = process.env): string {
   const target = desktopBootstrapPath(env)
@@ -67,9 +67,17 @@ export function writeBootstrapConfig(config: InstallerConfig, env: NodeJS.Proces
     baseUrl: config.webUrl,
     apiBaseUrl: config.apiUrl,
     requireSignin: config.requireSignin,
+    writtenAt: new Date().toISOString(),
   }
+  delete next.handoff
   mkdirSync(path.dirname(target), { recursive: true })
   writeFileSync(target, `${JSON.stringify(next, null, 2)}\n`, "utf8")
+  const legacy = legacyDesktopBootstrapPath(env)
+  try {
+    if (path.resolve(legacy) !== path.resolve(target) && existsSync(legacy)) rmSync(legacy, { force: true })
+  } catch {
+    // Best-effort cleanup only; the canonical config was written successfully.
+  }
   return target
 }
 

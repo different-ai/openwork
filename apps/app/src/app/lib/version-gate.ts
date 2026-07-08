@@ -165,7 +165,6 @@ async function readDenLatestAppVersion(): Promise<string | null> {
     const token = settings.authToken?.trim() ?? "";
     const client = createDenClient({
       baseUrl: settings.baseUrl,
-      apiBaseUrl: settings.apiBaseUrl,
       ...(token ? { token } : {}),
     });
     const metadata = await client.getAppVersionMetadata();

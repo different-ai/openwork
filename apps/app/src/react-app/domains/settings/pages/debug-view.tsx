@@ -75,6 +75,7 @@ export type DebugViewProps = {
   startupStatus: string | null;
   runtimeSummary: RuntimeSummary;
   runtimeDebugReportJson: string;
+  bootstrapConfigDebugJson: string;
   runtimeDebugStatus: string | null;
   onCopyRuntimeDebugReport: () => void | Promise<void>;
   onExportRuntimeDebugReport: () => void | Promise<void>;
@@ -416,6 +417,13 @@ export function DebugView(props: DebugViewProps) {
           </summary>
           <pre className={`${monoPreClass} mt-2`}>{props.runtimeDebugReportJson}</pre>
         </details>
+        <div className={subCardClass}>
+          <div>
+            <div className="text-sm font-semibold tracking-[-0.1px] text-dls-text">Bootstrap config</div>
+            <div className="text-[12px] text-dls-secondary">Desktop bootstrap paths, parsed config, and normalized values.</div>
+          </div>
+          <pre className={monoPreClass}>{props.bootstrapConfigDebugJson}</pre>
+        </div>
       </div>
 
       {/* Section: Services */}

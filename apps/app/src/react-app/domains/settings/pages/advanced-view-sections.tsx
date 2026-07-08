@@ -1,15 +1,32 @@
 /** @jsxImportSource react */
-import type { ComponentProps, ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import { CircleAlert, Cpu, Database, Info, RefreshCcw, Server } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import {
+  DEFAULT_DEN_API_BASE_URL,
+  DEFAULT_DEN_BASE_URL,
+  readDenBootstrapConfig,
+  readDenSettings,
+} from "@/app/lib/den";
+import {
+  describeCloudMcpTarget,
+  describeDenEndpointSource,
+  type DenEndpointSource,
+} from "@/app/lib/den-endpoint-sources";
 import { isDesktopRuntime } from "@/app/utils";
 import { t } from "@/i18n";
+import { ControlPlaneUrlEditor } from "../cloud/control-plane-url-editor";
+import {
+  displayCustomControlPlaneUrl,
+  isValidControlPlaneUrl,
+} from "../cloud/control-plane-url";
 import {
   SettingsInset,
   SettingsNotice,
@@ -29,6 +46,205 @@ import {
 } from "../settings-layout";
 
 type SettingsTone = ComponentProps<typeof SettingsStatusBadge>["tone"];
+
+const DESKTOP_BOOTSTRAP_PATH_HINT = "~/.config/openwork/desktop-bootstrap.json";
+
+function sourceBadgeLabel(source: DenEndpointSource): string {
+  switch (source) {
+    case "custom":
+      return t("settings.server_endpoints_source_custom");
+    case "bootstrap":
+      return t("settings.server_endpoints_source_bootstrap");
+    case "default":
+      return t("settings.server_endpoints_source_default");
+  }
+}
+
+function sourceBadgeClass(source: DenEndpointSource): string {
+  switch (source) {
+    case "custom":
+      return "border-blue-7/40 bg-blue-3 text-blue-11";
+    case "bootstrap":
+      return "border-amber-7/40 bg-amber-3 text-amber-11";
+    case "default":
+      return "border-gray-7/50 bg-gray-3 text-gray-11";
+  }
+}
+
+function EndpointSourceBadge(props: { source: DenEndpointSource }) {
+  return (
+    <Badge variant="outline" className={sourceBadgeClass(props.source)}>
+      {sourceBadgeLabel(props.source)}
+    </Badge>
+  );
+}
+
+function EndpointWarningBadge(props: { children: ReactNode }) {
+  return (
+    <Badge variant="outline" className="border-amber-7/40 bg-amber-3 text-amber-11">
+      {props.children}
+    </Badge>
+  );
+}
+
+function EndpointRow(props: { label: string; value: string; children?: ReactNode }) {
+  return (
+    <div className="grid gap-1 rounded-xl border border-gray-6/50 bg-gray-1/60 p-3 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-3">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-gray-9">
+        {props.label}
+      </div>
+      <div className="min-w-0 space-y-2">
+        <div className="truncate font-mono text-xs text-gray-12" title={props.value}>
+          {props.value}
+        </div>
+        {props.children ? <div className="flex flex-wrap gap-1.5">{props.children}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function bootstrapValueWhenNotDefault(value: string, buildDefault: string): string | null {
+  const fallback = describeDenEndpointSource({
+    storedValue: null,
+    bootstrapValue: null,
+    buildDefault,
+  });
+  return value === fallback.effective ? null : value;
+}
+
+function ServerEndpointsCard(props: { cloudMcpUrl: string | null }) {
+  const settings = readDenSettings();
+  const effectiveApiBaseUrl = settings.apiBaseUrl ?? DEFAULT_DEN_API_BASE_URL;
+  const bootstrap = readDenBootstrapConfig();
+  const organizationServer = describeDenEndpointSource({
+    storedValue: null,
+    bootstrapValue: bootstrapValueWhenNotDefault(bootstrap.baseUrl, DEFAULT_DEN_BASE_URL),
+    buildDefault: DEFAULT_DEN_BASE_URL,
+  });
+  const apiEndpoint = describeDenEndpointSource({
+    storedValue: null,
+    bootstrapValue: bootstrapValueWhenNotDefault(bootstrap.apiBaseUrl, DEFAULT_DEN_API_BASE_URL),
+    buildDefault: DEFAULT_DEN_API_BASE_URL,
+  });
+  const cloudMcp = describeCloudMcpTarget({
+    mcpUrl: props.cloudMcpUrl,
+    effectiveApiBaseUrl,
+  });
+  const hasBootstrapSource = organizationServer.source === "bootstrap" || apiEndpoint.source === "bootstrap";
+
+  return (
+    <SettingsInset className="space-y-3 bg-gray-1/40">
+      <div className="space-y-1">
+        <div className="text-sm font-medium text-gray-12">{t("settings.server_endpoints_title")}</div>
+        <div className="text-xs text-gray-9">{t("settings.server_endpoints_desc")}</div>
+      </div>
+
+      <div className="space-y-2">
+        <EndpointRow label={t("settings.server_endpoints_org")} value={settings.baseUrl}>
+          <EndpointSourceBadge source={organizationServer.source} />
+        </EndpointRow>
+        <EndpointRow label={t("settings.server_endpoints_api")} value={effectiveApiBaseUrl}>
+          <EndpointSourceBadge source={apiEndpoint.source} />
+        </EndpointRow>
+        <EndpointRow
+          label={t("settings.server_endpoints_cloud_mcp")}
+          value={cloudMcp.url ?? t("settings.server_endpoints_not_configured")}
+        >
+          {cloudMcp.url && cloudMcp.isLocalhost ? (
+            <EndpointWarningBadge>{t("settings.server_endpoints_local_dev")}</EndpointWarningBadge>
+          ) : null}
+          {cloudMcp.url && !cloudMcp.matchesApi ? (
+            <EndpointWarningBadge>{t("settings.server_endpoints_mismatch")}</EndpointWarningBadge>
+          ) : null}
+        </EndpointRow>
+      </div>
+
+      {hasBootstrapSource ? (
+        <div className="text-[11px] text-amber-11">
+          {t("settings.server_endpoints_bootstrap_hint", { path: DESKTOP_BOOTSTRAP_PATH_HINT })}
+        </div>
+      ) : null}
+    </SettingsInset>
+  );
+}
+
+interface AdvancedOrganizationServerSectionProps {
+  authBusy: boolean;
+  baseUrl: string;
+  baseUrlBusy: boolean;
+  baseUrlDraft: string;
+  baseUrlError: string | null;
+  onApplyBaseUrl: () => void | Promise<void>;
+  onBaseUrlDraftChange: (value: string) => void;
+  onClearServerConfiguration: () => void | Promise<void>;
+  onResetBaseUrlToDefault: () => void | Promise<void>;
+  sessionBusy: boolean;
+  cloudMcpUrl: string | null;
+}
+
+export function AdvancedOrganizationServerSection(props: AdvancedOrganizationServerSectionProps) {
+  const [clearConfirming, setClearConfirming] = useState(false);
+  const controlsDisabled = [props.authBusy, props.baseUrlBusy, props.sessionBusy].some(Boolean);
+  const customUrl = displayCustomControlPlaneUrl(props.baseUrlDraft);
+  const currentUrl = displayCustomControlPlaneUrl(props.baseUrl);
+  const clearServerConfiguration = () => {
+    if (!clearConfirming) {
+      setClearConfirming(true);
+      return;
+    }
+    setClearConfirming(false);
+    void props.onClearServerConfiguration();
+  };
+
+  return (
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>{t("settings.organization_server_title")}</LayoutSectionTitle>
+        <LayoutSectionDescription>{t("settings.organization_server_desc")}</LayoutSectionDescription>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <ControlPlaneUrlEditor
+          disabled={controlsDisabled}
+          hint={t("settings.organization_server_url_hint")}
+          label={t("settings.organization_server_url_label")}
+          onReset={props.onResetBaseUrlToDefault}
+          onSave={props.onApplyBaseUrl}
+          onValueChange={props.onBaseUrlDraftChange}
+          placeholder={DEFAULT_DEN_BASE_URL}
+          resetLabel={t("common.reset")}
+          saveDisabled={!isValidControlPlaneUrl(customUrl)}
+          saveLabel={t("common.save")}
+          value={customUrl}
+        />
+        <LayoutSectionItemFootnote>
+          {currentUrl
+            ? t("settings.organization_server_current", { url: currentUrl })
+            : t("settings.organization_server_default")}
+        </LayoutSectionItemFootnote>
+        {isDesktopRuntime() ? <ServerEndpointsCard cloudMcpUrl={props.cloudMcpUrl} /> : null}
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-9">
+          <Button
+            variant={clearConfirming ? "destructive" : "outline"}
+            size="sm"
+            onClick={clearServerConfiguration}
+            disabled={controlsDisabled}
+          >
+            {clearConfirming
+              ? t("den.cloud_control_plane_clear_confirm")
+              : t("den.cloud_control_plane_clear")}
+          </Button>
+          <span>
+            {clearConfirming
+              ? t("den.cloud_control_plane_clear_confirm_hint")
+              : t("den.cloud_control_plane_clear_hint")}
+          </span>
+        </div>
+        {props.baseUrlError ? <SettingsNotice tone="error">{props.baseUrlError}</SettingsNotice> : null}
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
+}
 
 interface RuntimeStatusCardProps {
   icon: ReactNode;

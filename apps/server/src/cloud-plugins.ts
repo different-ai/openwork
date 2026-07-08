@@ -66,6 +66,11 @@ export type CloudImportedPlugin = {
   importedAt: number | null;
 };
 
+export type CloudPluginInstallResult = {
+  item: CloudImportedPlugin;
+  warnings: string[];
+};
+
 type WorkspaceCloudImports = {
   skills: Record<string, unknown>;
   providers: Record<string, unknown>;
@@ -419,6 +424,14 @@ function pluginMcpConfigsFromPayload(object: CloudPluginConfigObject, namespace:
   return [...configs.values()];
 }
 
+function mcpNoConfigWarning(title: string): string {
+  return `MCP component "${title}" could not be installed: no server config with a "url" or "command" was found.`;
+}
+
+function mcpInactiveWarning(title: string): string {
+  return `MCP component "${title}" could not be installed because it is not active.`;
+}
+
 function readCloudImports(config: Record<string, unknown>): WorkspaceCloudImports {
   const root = isRecord(config.cloudImports) ? config.cloudImports : {};
   const marketplaces = isRecord(root.marketplaces) ? Object.fromEntries(Object.entries(root.marketplaces).flatMap(([key, value]) => {
@@ -600,19 +613,25 @@ export async function installCloudPlugin(input: {
   marketplaceId: string | null;
   marketplace?: { id: string; name: string; updatedAt: string | null } | null;
   resolved: CloudPluginResolved;
-}): Promise<CloudImportedPlugin> {
+}): Promise<CloudPluginInstallResult> {
   const namespace = pluginNamespace(input.resolved.plugin.name, input.resolved.plugin.id);
   const cloudImports = await readInstalledCloudPlugins(input.serverConfig, input.workspaceId);
   const existing = cloudImports.plugins[input.resolved.plugin.id];
   const files: CloudImportedPluginFile[] = [];
+  const warnings: string[] = [];
 
   for (const membership of input.resolved.memberships) {
     const object = membership.configObject;
     const version = object?.latestVersion ?? null;
-    if (!object || object.status !== "active") continue;
+    if (!object) continue;
+    if (object.status !== "active") {
+      if (object.objectType === "mcp") warnings.push(mcpInactiveWarning(object.title));
+      continue;
+    }
 
     if (object.objectType === "mcp") {
       const configs = pluginMcpConfigsFromPayload(object, namespace);
+      if (configs.length === 0) warnings.push(mcpNoConfigWarning(object.title));
       for (const config of configs) {
         await addMcp(input.serverConfig, input.workspaceId, config.name, config.config);
         files.push({
@@ -697,7 +716,7 @@ export async function installCloudPlugin(input: {
     plugins: nextPlugins,
   }));
 
-  return imported;
+  return { item: imported, warnings };
 }
 
 export async function removeCloudPlugin(input: {

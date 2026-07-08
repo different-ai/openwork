@@ -17,11 +17,12 @@
  * - OPENWORK_EVAL_DEN_WEB_URL          Den web origin
  * - OPENWORK_EVAL_DEN_EMAIL            Seeded admin email
  * - OPENWORK_EVAL_DEN_PASSWORD         Seeded admin password
- * - OPENWORK_EVAL_BLUEYONDER_API_KEY   Azure AI Foundry key (throwaway)
+ * - OPENWORK_EVAL_AZURE_FOUNDRY_RESOURCE  Azure AI Foundry resource name
+ * - OPENWORK_EVAL_AZURE_FOUNDRY_API_KEY   Azure AI Foundry key (throwaway)
  */
 
-const RESOURCE_NAME = "blueyonder-openworklabs";
-const PROVIDER_NAME = "Blue Yonder Azure (Catalog)";
+const RESOURCE_NAME = process.env.OPENWORK_EVAL_AZURE_FOUNDRY_RESOURCE ?? "";
+const PROVIDER_NAME = "Acme Azure (Catalog)";
 const DEPLOYMENT = "gpt-5-mini";
 const CATALOG_NOISE = "gpt-4o";
 
@@ -54,7 +55,8 @@ export default {
     "OPENWORK_EVAL_DEN_WEB_URL",
     "OPENWORK_EVAL_DEN_EMAIL",
     "OPENWORK_EVAL_DEN_PASSWORD",
-    "OPENWORK_EVAL_BLUEYONDER_API_KEY",
+    "OPENWORK_EVAL_AZURE_FOUNDRY_RESOURCE",
+    "OPENWORK_EVAL_AZURE_FOUNDRY_API_KEY",
   ],
   steps: [
     {
@@ -155,7 +157,7 @@ export default {
               ));
               await ctx.eval(fillInputExpr(
                 `[...document.querySelectorAll('input[type="password"]')].find((el) => el.placeholder.includes("AZURE_API_KEY"))`,
-                ctx.env.OPENWORK_EVAL_BLUEYONDER_API_KEY,
+                ctx.env.OPENWORK_EVAL_AZURE_FOUNDRY_API_KEY,
               ));
             },
             assert: async () => {

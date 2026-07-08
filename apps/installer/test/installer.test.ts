@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { installConfigUrlFor, parseInstallerFilenameTag } from "@openwork/install-config"
 
-import { desktopBootstrapPath } from "../src/bootstrap-path"
+import { desktopBootstrapPath, legacyDesktopBootstrapPath } from "../src/bootstrap-path"
 import { parseInstallLinkInput, resolveInstallerConfig } from "../src/config"
 import { isTranslocatedPath, parseMountTableLine, readSidecarConfig, resolveTranslocatedOriginalPath } from "../src/config-sources"
 import { writeBootstrapConfig } from "../src/install"
@@ -20,11 +20,20 @@ describe("desktopBootstrapPath", () => {
     expect(desktopBootstrapPath({ XDG_CONFIG_HOME: "/xdg" }, "win32")).toBe(path.join("/xdg", "openwork", "desktop-bootstrap.json"))
   })
 
-  test("uses APPDATA on Windows and ~/.config elsewhere", () => {
-    expect(desktopBootstrapPath({ APPDATA: "C:\\Users\\u\\AppData\\Roaming" }, "win32")).toBe(
-      path.join("C:\\Users\\u\\AppData\\Roaming", "openwork", "desktop-bootstrap.json"),
+  test("uses LOCALAPPDATA on Windows and ~/.config elsewhere", () => {
+    expect(desktopBootstrapPath({ LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" }, "win32")).toBe(
+      path.join("C:\\Users\\u\\AppData\\Local", "openwork", "desktop-bootstrap.json"),
     )
     expect(desktopBootstrapPath({}, "darwin")).toBe(path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json"))
+  })
+
+  test("resolves the legacy bootstrap path under ~/.config on every platform", () => {
+    expect(legacyDesktopBootstrapPath({ HOME: "/Users/u" }, "darwin")).toBe(
+      path.join("/Users/u", ".config", "openwork", "desktop-bootstrap.json"),
+    )
+    expect(legacyDesktopBootstrapPath({ USERPROFILE: "C:\\Users\\u" }, "win32")).toBe(
+      path.join("C:\\Users\\u", ".config", "openwork", "desktop-bootstrap.json"),
+    )
   })
 })
 
@@ -289,22 +298,40 @@ describe("install link helpers", () => {
 })
 
 describe("writeBootstrapConfig", () => {
-  test("writes the deployment config and preserves existing extra fields", () => {
+  test("writes the deployment config, stamps it, drops handoff, and removes stale legacy", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-test-"))
-    const target = path.join(dir, "desktop-bootstrap.json")
+    const target = path.join(dir, "canonical", "desktop-bootstrap.json")
+    const home = path.join(dir, "home")
+    const legacy = path.join(home, ".config", "openwork", "desktop-bootstrap.json")
+    const previousHome = process.env.HOME
     try {
-      writeFileSync(target, JSON.stringify({ baseUrl: "https://old.example.com", handoff: { grant: "keep-me" } }))
+      process.env.HOME = home
+      mkdirSync(path.dirname(target), { recursive: true })
+      mkdirSync(path.dirname(legacy), { recursive: true })
+      writeFileSync(legacy, JSON.stringify({ baseUrl: "https://legacy.example.com" }))
+      writeFileSync(target, JSON.stringify({
+        baseUrl: "https://old.example.com",
+        handoff: { grant: "drop-me" },
+        prepared: { orgId: "org" },
+        claimLinks: [{ id: "claim" }],
+      }))
       const written = writeBootstrapConfig(
         { clientName: "Acme", webUrl: "https://openwork.acme.com", apiUrl: "https://openwork-api.acme.com", requireSignin: true, logoUrl: null },
-        { OPENWORK_DESKTOP_BOOTSTRAP_PATH: target },
+        { OPENWORK_DESKTOP_BOOTSTRAP_PATH: target, HOME: home, USERPROFILE: home },
       )
       expect(written).toBe(target)
       const parsed = JSON.parse(readFileSync(target, "utf8"))
       expect(parsed.baseUrl).toBe("https://openwork.acme.com")
       expect(parsed.apiBaseUrl).toBe("https://openwork-api.acme.com")
       expect(parsed.requireSignin).toBe(true)
-      expect(parsed.handoff).toEqual({ grant: "keep-me" })
+      expect(parsed.handoff).toBeUndefined()
+      expect(parsed.prepared).toEqual({ orgId: "org" })
+      expect(parsed.claimLinks).toEqual([{ id: "claim" }])
+      expect(Number.isFinite(Date.parse(parsed.writtenAt))).toBe(true)
+      expect(existsSync(legacy)).toBe(false)
     } finally {
+      if (previousHome === undefined) delete process.env.HOME
+      else process.env.HOME = previousHome
       rmSync(dir, { recursive: true, force: true })
     }
   })

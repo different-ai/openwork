@@ -1,16 +1,20 @@
 import { NextRequest } from "next/server";
 
 const NO_BODY_STATUS = new Set([204, 205, 304]);
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+const REQUEST_ONLY_HEADERS = new Set(["host", "content-length"]);
+const RESPONSE_ONLY_HEADERS = new Set(["content-length", "content-encoding"]);
 
 const apiBase = readBaseUrlEnv("DEN_API_BASE");
-const authOrigin = readBaseUrlEnv("DEN_AUTH_ORIGIN");
-const authFallbackBase = readBaseUrlEnv("DEN_AUTH_FALLBACK_BASE");
-const appPort = process.env.OPENWORK_APP_PORT?.trim() || process.env.PORT?.trim() || "5173";
-const configuredCorsOrigins = splitCsv(process.env.DEN_CORS_ORIGINS ?? process.env.CORS_ORIGINS);
-const localDevCorsOrigins = process.env.OPENWORK_DEV_MODE === "1"
-  ? [`http://localhost:${appPort}`, `http://127.0.0.1:${appPort}`]
-  : [];
-const corsOrigins = Array.from(new Set([...configuredCorsOrigins, ...localDevCorsOrigins]));
 
 type ProxyOptions = {
   routePrefix: string;
@@ -25,13 +29,6 @@ function normalizeBaseUrl(value: string): string {
 function readBaseUrlEnv(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? normalizeBaseUrl(value) : null;
-}
-
-function splitCsv(value: string | undefined): string[] {
-  return (value ?? "")
-    .split(",")
-    .map((entry) => entry.trim().replace(/\/+$/, ""))
-    .filter(Boolean);
 }
 
 function normalizePathPrefix(value: string): string {
@@ -67,50 +64,69 @@ function buildTargetUrl(
   return upstream.toString();
 }
 
-function isLikelyHtmlBody(body: ArrayBuffer): boolean {
-  if (body.byteLength === 0) {
-    return false;
-  }
-
-  const preview = new TextDecoder().decode(body.slice(0, 256)).trim().toLowerCase();
-  return preview.startsWith("<!doctype") || preview.startsWith("<html") || preview.includes("<body");
+function shouldSkipRequestHeader(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return HOP_BY_HOP_HEADERS.has(normalized) || REQUEST_ONLY_HEADERS.has(normalized);
 }
 
-function isLikelyCannotGetBody(body: ArrayBuffer): boolean {
-  if (body.byteLength === 0) {
-    return false;
-  }
-
-  const preview = new TextDecoder().decode(body.slice(0, 256)).trim().toLowerCase();
-  return preview.includes("cannot get ");
+function shouldSkipResponseHeader(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return HOP_BY_HOP_HEADERS.has(normalized) || RESPONSE_ONLY_HEADERS.has(normalized) || normalized === "set-cookie";
 }
 
-function isAdminTargetPath(targetPath: string): boolean {
-  return targetPath === "v1/admin" || targetPath.startsWith("v1/admin/");
-}
-
-function shouldFallbackToAuthBase(response: Response, body: ArrayBuffer, targetPath: string): boolean {
-  if (response.status === 502 || response.status === 503 || response.status === 504) {
-    return true;
-  }
-
-  if (response.status === 404 && isAdminTargetPath(targetPath)) {
-    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-    if (contentType.includes("text/html") || isLikelyHtmlBody(body) || isLikelyCannotGetBody(body)) {
-      return true;
+function cloneRequestHeaders(request: NextRequest): Headers {
+  const headers = new Headers();
+  request.headers.forEach((value, name) => {
+    if (!shouldSkipRequestHeader(name)) {
+      headers.append(name, value);
     }
+  });
+  return headers;
+}
+
+function copySetCookieHeaders(upstreamHeaders: Headers, responseHeaders: Headers): void {
+  for (const cookie of upstreamHeaders.getSetCookie()) {
+    if (cookie) responseHeaders.append("set-cookie", cookie);
+  }
+}
+
+function rewriteLocationHeader(location: string, request: NextRequest): string {
+  if (!apiBase) return location;
+
+  let parsedLocation: URL;
+  try {
+    parsedLocation = new URL(location);
+  } catch {
+    return location;
   }
 
-  if (response.status < 500) {
-    return false;
+  let apiOrigin: string;
+  try {
+    apiOrigin = new URL(apiBase).origin;
+  } catch {
+    return location;
   }
 
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  if (contentType.includes("text/html")) {
-    return true;
+  if (parsedLocation.origin !== apiOrigin || !parsedLocation.pathname.startsWith("/api/auth/")) {
+    return location;
   }
 
-  return isLikelyHtmlBody(body);
+  const requestOrigin = new URL(request.url).origin;
+  return `${requestOrigin}${parsedLocation.pathname}${parsedLocation.search}${parsedLocation.hash}`;
+}
+
+function cloneResponseHeaders(request: NextRequest, upstream: Response, options: ProxyOptions): Headers {
+  const headers = new Headers();
+  upstream.headers.forEach((value, name) => {
+    if (shouldSkipResponseHeader(name)) return;
+    if (name.toLowerCase() === "location" && options.rewriteAuthLocationsToRequestOrigin) {
+      headers.append(name, rewriteLocationHeader(value, request));
+      return;
+    }
+    headers.append(name, value);
+  });
+  copySetCookieHeaders(upstream.headers, headers);
+  return headers;
 }
 
 function buildUpstreamErrorResponse(status: number, error: string): Response {
@@ -122,210 +138,9 @@ function buildUpstreamErrorResponse(status: number, error: string): Response {
   });
 }
 
-function applyCorsHeaders(request: NextRequest, headers: Headers): void {
-  const origin = request.headers.get("origin")?.trim().replace(/\/+$/, "") ?? "";
-  if (!origin) {
-    return;
-  }
-
-  const allowOrigin = corsOrigins.includes("*") || corsOrigins.includes(origin) ? origin : "";
-  if (!allowOrigin) {
-    return;
-  }
-
-  headers.set("access-control-allow-origin", allowOrigin);
-  headers.set("access-control-allow-credentials", "true");
-  headers.set("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-  headers.set("access-control-allow-headers", "Content-Type,Authorization,X-Api-Key,X-Request-Id,X-Requested-With,X-OpenWork-Legacy-Org-Id");
-  headers.append("vary", "Origin");
-}
-
-export function buildCorsPreflightResponse(request: NextRequest): Response {
-  const headers = new Headers();
-  applyCorsHeaders(request, headers);
-  return new Response(null, { status: 204, headers });
-}
-
-function getJsonRedirectUrl(body: ArrayBuffer): string | null {
-  try {
-    const payload = JSON.parse(new TextDecoder().decode(body)) as unknown;
-    if (
-      payload &&
-      typeof payload === "object" &&
-      "redirect" in payload &&
-      payload.redirect === true &&
-      "url" in payload &&
-      typeof payload.url === "string" &&
-      payload.url.trim()
-    ) {
-      return payload.url.trim();
-    }
-  } catch {}
-  return null;
-}
-
-function copySetCookieHeaders(upstreamHeaders: Headers, responseHeaders: Headers): void {
-  const getSetCookie = (upstreamHeaders as Headers & { getSetCookie?: () => string[] }).getSetCookie;
-  if (typeof getSetCookie === "function") {
-    const cookies = getSetCookie.call(upstreamHeaders);
-    for (const cookie of cookies) {
-      if (cookie) {
-        responseHeaders.append("set-cookie", cookie);
-      }
-    }
-    return;
-  }
-
-  const cookie = upstreamHeaders.get("set-cookie");
-  if (cookie) {
-    responseHeaders.append("set-cookie", cookie);
-  }
-}
-
-function buildHeaders(request: NextRequest, contentType: string | null): Headers {
-  const headers = new Headers();
-  const copyHeaders = [
-    "accept",
-    "authorization",
-    "cookie",
-    "user-agent",
-    "x-requested-with",
-    "x-api-key",
-    "x-openwork-legacy-org-id",
-    "origin",
-    "x-forwarded-for",
-  ];
-
-  for (const key of copyHeaders) {
-    const value = request.headers.get(key);
-    if (value) {
-      headers.set(key, value);
-    }
-  }
-
-  if (contentType) {
-    headers.set("content-type", contentType);
-  }
-
-  if (!headers.has("accept")) {
-    headers.set("accept", "application/json");
-  }
-
-  if (!headers.has("origin") && authOrigin) {
-    headers.set("origin", authOrigin);
-  }
-
-  const incoming = new URL(request.url);
-  headers.set("x-forwarded-host", request.headers.get("host") ?? incoming.host);
-  headers.set("x-forwarded-proto", incoming.protocol.replace(/:$/, ""));
-
-  return headers;
-}
-
-async function fetchUpstream(
-  request: NextRequest,
-  targetUrl: string,
-  contentType: string | null,
-  body: Uint8Array | null,
-): Promise<Response> {
-  const init: RequestInit = {
-    method: request.method,
-    headers: buildHeaders(request, contentType),
-    redirect: "manual",
-  };
-
-  if (body && request.method !== "GET" && request.method !== "HEAD") {
-    init.body = body;
-  }
-
-  return fetch(targetUrl, init);
-}
-
-async function readUpstreamBody(response: Response): Promise<ArrayBuffer> {
-  return response.arrayBuffer();
-}
-
-function isEventStreamRequest(request: NextRequest): boolean {
-  const accept = request.headers.get("accept")?.toLowerCase() ?? "";
-  return accept.includes("text/event-stream");
-}
-
-function isEventStreamResponse(response: Response): boolean {
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  return contentType.includes("text/event-stream");
-}
-
-function shouldFallbackToAuthBaseForStream(response: Response, targetPath: string): boolean {
-  if (response.status === 502 || response.status === 503 || response.status === 504) {
-    return true;
-  }
-
-  if (response.status === 404 && isAdminTargetPath(targetPath)) {
-    return true;
-  }
-
-  return false;
-}
-
-function rewriteLocationHeader(location: string, request: NextRequest): string {
-  let parsedLocation: URL;
-  try {
-    parsedLocation = new URL(location);
-  } catch {
-    return location;
-  }
-
-  const requestOrigin = new URL(request.url).origin;
-  const rewriteableOrigins = [apiBase, authFallbackBase]
-    .filter((value): value is string => Boolean(value))
-    .map((value) => {
-      try {
-        return new URL(value).origin;
-      } catch {
-        return null;
-      }
-    })
-    .filter((value): value is string => Boolean(value));
-
-  if (!rewriteableOrigins.includes(parsedLocation.origin) || !parsedLocation.pathname.startsWith("/api/auth/")) {
-    return location;
-  }
-
-  return `${requestOrigin}${parsedLocation.pathname}${parsedLocation.search}${parsedLocation.hash}`;
-}
-
-function buildProxyResponse(
-  request: NextRequest,
-  upstream: Response,
-  options: ProxyOptions,
-  body?: BodyInit | null,
-): Response {
-  const responseHeaders = new Headers();
-  const passThroughHeaders = ["content-type", "location", "cache-control"];
-
-  for (const key of passThroughHeaders) {
-    const value = upstream.headers.get(key);
-    if (!value) {
-      continue;
-    }
-
-    if (key === "location" && options.rewriteAuthLocationsToRequestOrigin) {
-      responseHeaders.set(key, rewriteLocationHeader(value, request));
-      continue;
-    }
-
-    responseHeaders.set(key, value);
-  }
-
-  copySetCookieHeaders(upstream.headers, responseHeaders);
-  applyCorsHeaders(request, responseHeaders);
-
-  const shouldDropBody = request.method === "HEAD" || NO_BODY_STATUS.has(upstream.status);
-
-  return new Response(shouldDropBody ? null : (body ?? upstream.body), {
-    status: upstream.status,
-    headers: responseHeaders,
-  });
+async function readRequestBody(request: NextRequest): Promise<Uint8Array | null> {
+  if (request.method === "GET" || request.method === "HEAD") return null;
+  return new Uint8Array(await request.arrayBuffer());
 }
 
 export async function proxyUpstream(
@@ -333,74 +148,22 @@ export async function proxyUpstream(
   segments: string[] = [],
   options: ProxyOptions,
 ): Promise<Response> {
-  if (!apiBase || !authOrigin) {
-    const response = buildUpstreamErrorResponse(503, "DEN_API_BASE and DEN_AUTH_ORIGIN must be configured.");
-    applyCorsHeaders(request, response.headers);
-    return response;
+  if (!apiBase) {
+    return buildUpstreamErrorResponse(503, "DEN_API_BASE must be configured.");
   }
 
   const targetPath = getTargetPath(request, segments, options.routePrefix);
-  const primaryTargetUrl = buildTargetUrl(apiBase, request, targetPath, options.upstreamPathPrefix);
-  const fallbackTargetUrl = authFallbackBase
-    ? buildTargetUrl(authFallbackBase, request, targetPath, options.upstreamPathPrefix)
-    : null;
-  const contentType = request.headers.get("content-type");
-  const requestBody = request.method !== "GET" && request.method !== "HEAD"
-    ? new Uint8Array(await request.arrayBuffer())
-    : null;
+  const targetUrl = buildTargetUrl(apiBase, request, targetPath, options.upstreamPathPrefix);
+  const upstream = await fetch(targetUrl, {
+    method: request.method,
+    headers: cloneRequestHeaders(request),
+    body: await readRequestBody(request),
+    redirect: "manual",
+  });
+  const shouldDropBody = request.method === "HEAD" || NO_BODY_STATUS.has(upstream.status);
 
-  let upstream: Response | null = null;
-
-  try {
-    upstream = await fetchUpstream(request, primaryTargetUrl, contentType, requestBody);
-  } catch {
-    if (fallbackTargetUrl && apiBase !== authFallbackBase) {
-      try {
-        upstream = await fetchUpstream(request, fallbackTargetUrl, contentType, requestBody);
-      } catch {}
-    }
-  }
-
-  if (!upstream) {
-    const response = buildUpstreamErrorResponse(502, "Upstream request failed.");
-    applyCorsHeaders(request, response.headers);
-    return response;
-  }
-
-  if (isEventStreamRequest(request) || isEventStreamResponse(upstream)) {
-    if (fallbackTargetUrl && apiBase !== authFallbackBase && shouldFallbackToAuthBaseForStream(upstream, targetPath)) {
-      try {
-        upstream = await fetchUpstream(request, fallbackTargetUrl, contentType, requestBody);
-      } catch {}
-    }
-    return buildProxyResponse(request, upstream, options);
-  }
-
-  let body = await readUpstreamBody(upstream);
-
-  if (fallbackTargetUrl && apiBase !== authFallbackBase && shouldFallbackToAuthBase(upstream, body, targetPath)) {
-    try {
-      upstream = await fetchUpstream(request, fallbackTargetUrl, contentType, requestBody);
-      body = await readUpstreamBody(upstream);
-    } catch {}
-  }
-
-  const responseContentType = upstream.headers.get("content-type")?.toLowerCase() ?? "";
-  if (upstream.status >= 500 && (responseContentType.includes("text/html") || isLikelyHtmlBody(body))) {
-    const response = buildUpstreamErrorResponse(upstream.status, "Upstream service unavailable.");
-    applyCorsHeaders(request, response.headers);
-    return response;
-  }
-
-  if (request.method === "GET" && targetPath === "oauth2/authorize") {
-    const redirectUrl = getJsonRedirectUrl(body);
-    if (redirectUrl) {
-      const incoming = new URL(request.url);
-      const host = request.headers.get("host") ?? incoming.host;
-      const origin = `${incoming.protocol}//${host}`;
-      return Response.redirect(new URL(redirectUrl, origin), 302);
-    }
-  }
-
-  return buildProxyResponse(request, upstream, options, body);
+  return new Response(shouldDropBody ? null : upstream.body, {
+    status: upstream.status,
+    headers: cloneResponseHeaders(request, upstream, options),
+  });
 }

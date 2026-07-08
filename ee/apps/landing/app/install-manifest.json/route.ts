@@ -27,11 +27,11 @@ type ManifestArtifact = {
 };
 
 // Only treat OpenWork desktop-app installers as artifacts. The orchestrator
-// release ships sidecar/CLI binaries (opencode-router-*, openwork-server-*.exe,
+// release ships sidecar/CLI binaries (openwork-server-*.exe,
 // openwork-bun-*) that must NOT be treated as the desktop app, so we positively
 // require the desktop app's OS-tagged naming (openwork-mac / openwork-linux /
 // openwork-win + an installer extension).
-const SIDECAR_HINTS = ["orchestrator", "server", "router", "bun-", "sidecar", "opencode"];
+const SIDECAR_HINTS = ["orchestrator", "server", "bun-", "sidecar", "opencode"];
 
 function isDesktopAppAsset(name: string): boolean {
   const lower = name.toLowerCase();

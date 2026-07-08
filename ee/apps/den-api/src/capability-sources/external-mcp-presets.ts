@@ -44,6 +44,20 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     authType: "oauth",
   },
   {
+    presetId: "granola",
+    displayName: "Granola",
+    description: "Search your meeting notes and transcripts.",
+    url: "https://mcp.granola.ai/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "polar",
+    displayName: "Polar",
+    description: "Products, subscriptions, orders, and customer billing.",
+    url: "https://mcp.polar.sh/mcp/polar-mcp",
+    authType: "oauth",
+  },
+  {
     presetId: "slack",
     displayName: "Slack",
     description: "Channels, DMs, and search. Slack has no automatic app registration — paste your Slack app's OAuth client once; each person then connects their own account.",
@@ -56,6 +70,13 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     displayName: "Exa",
     description: "AI web search, code search, and research for your agents. Paste your org's Exa API key from dashboard.exa.ai.",
     url: "https://mcp.exa.ai/mcp",
+    authType: "apikey",
+  },
+  {
+    presetId: "render",
+    displayName: "Render",
+    description: "Deploy and manage services, databases, and logs. Paste your org's Render API key from dashboard.render.com.",
+    url: "https://mcp.render.com/mcp",
     authType: "apikey",
   },
   {

@@ -35,8 +35,8 @@ import type {
   OpenWorkExtensionSourceFormat,
 } from "../extensions";
 
-const STORAGE_BASE_URL = "openwork.den.baseUrl";
-const STORAGE_API_BASE_URL = "openwork.den.apiBaseUrl";
+export const STORAGE_BASE_URL = "openwork.den.baseUrl";
+const LEGACY_STORAGE_API_BASE_URL = "openwork.den.apiBaseUrl";
 const STORAGE_AUTH_TOKEN = "openwork.den.authToken";
 const STORAGE_ACTIVE_ORG_ID = "openwork.den.activeOrgId";
 const STORAGE_ACTIVE_ORG_SLUG = "openwork.den.activeOrgSlug";
@@ -49,15 +49,12 @@ const BUILD_DEN_BASE_URL =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL
     : "").trim() || "https://app.openworklabs.com";
-const BUILD_DEN_API_BASE_URL =
-  (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_API_BASE_URL === "string"
-    ? import.meta.env.VITE_DEN_API_BASE_URL
-    : "").trim() || undefined;
 const BUILD_DEN_REQUIRE_SIGNIN =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_REQUIRE_SIGNIN === "string"
     ? /^(1|true|yes|on)$/i.test(import.meta.env.VITE_DEN_REQUIRE_SIGNIN.trim())
     : false);
 
+const HOSTED_DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
 export const DEN_INFERENCE_PATH = "/dashboard/inference";
 
@@ -206,6 +203,8 @@ export type DenExternalMcpConnection = {
   connectedAt: string | null;
   /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
   connectedForMe: boolean;
+  needsReconnect?: boolean;
+  missingFeatures?: string[];
 };
 
 export type DenMcpConnectionConnectStart = {
@@ -284,8 +283,8 @@ export type DenDesktopHandoffExchange = {
 
 const defaultBootstrapBaseUrls = resolveDenBaseUrls({
   baseUrl: BUILD_DEN_BASE_URL,
-  apiBaseUrl: BUILD_DEN_API_BASE_URL,
 });
+export const DEFAULT_DEN_API_BASE_URL = defaultBootstrapBaseUrls.apiBaseUrl;
 
 let desktopBootstrapConfig: DenBootstrapConfig = {
   ...defaultBootstrapBaseUrls,
@@ -462,74 +461,8 @@ export function getDenInferenceUrl(baseUrl?: string | null): string {
   return `${normalized}${DEN_INFERENCE_PATH}`;
 }
 
-function isWebAppHost(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase();
-
-  if (
-    normalized === "localhost" ||
-    normalized === "0.0.0.0" ||
-    normalized === "::1" ||
-    normalized === "[::1]" ||
-    /^127(?:\.\d{1,3}){3}$/.test(normalized)
-  ) {
-    return true;
-  }
-
-  const ipv4Match = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const [first, second, third, fourth] = ipv4Match.slice(1).map(Number);
-    const octets = [first, second, third, fourth];
-    if (octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
-      if (
-        first === 10 ||
-        first === 127 ||
-        (first === 172 && second >= 16 && second <= 31) ||
-        (first === 192 && second === 168) ||
-        (first === 169 && second === 254) ||
-        (first === 100 && second >= 64 && second <= 127)
-      ) {
-        return true;
-      }
-    }
-  }
-
-  return (
-    normalized === "app.openworklabs.com" ||
-    normalized === "app.openwork.software" ||
-    normalized.startsWith("app.") ||
-    // Cloud Run hostnames serve the den-web frontend, which only exposes the
-    // Den API behind its `/api/den` proxy path (see #1807/#1808).
-    normalized.endsWith(".run.app")
-  );
-}
-
-/**
- * Hosted web-app hosts (`app.openworklabs.com`, `app.openwork.software`,
- * `app.*`) never serve the Den API at their root — only behind the
- * `/api/den` proxy. Loopback/private hosts are excluded on purpose: in dev
- * an explicit apiBaseUrl may point directly at den-api.
- */
 function isHostedWebAppHost(hostname: string): boolean {
   return hostname.trim().toLowerCase().startsWith("app.");
-}
-
-/**
- * Older builds persisted the bare web-app origin as the API base URL
- * (bootstrap file and localStorage). Requests against that origin 404 —
- * notably the cloud MCP at `https://app.openworklabs.com/mcp`. Heal such
- * values by routing them through the web app's `/api/den` proxy.
- */
-function healWebAppApiBaseUrl(input: string | null): string | null {
-  if (!input) return null;
-  try {
-    const url = new URL(input);
-    if (isHostedWebAppHost(url.hostname)) {
-      return ensureDenApiBasePath(input);
-    }
-  } catch {
-    // Not a URL — leave untouched.
-  }
-  return input;
 }
 
 function stripDenApiBasePath(input: string | null | undefined): string | null {
@@ -569,44 +502,20 @@ function ensureDenApiBasePath(input: string | null | undefined): string | null {
   }
 }
 
-function deriveDenApiBaseUrl(input: string | null | undefined): string {
-  const normalized = normalizeDenBaseUrl(input) ?? DEFAULT_DEN_BASE_URL;
-
-  try {
-    const url = new URL(normalized);
-    const pathname = url.pathname.replace(/\/+$/, "");
-    if (pathname.toLowerCase().endsWith("/api/den")) {
-      return normalized;
-    }
-    if (isWebAppHost(url.hostname)) {
-      return ensureDenApiBasePath(normalized) ?? normalized;
-    }
-  } catch {
-    return normalized;
-  }
-
-  return normalized;
-}
-
 export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?: string | null } | string | null | undefined): DenBaseUrls {
   const rawBaseUrl = typeof input === "string" ? input : input?.baseUrl;
-  const rawApiBaseUrl = typeof input === "string" ? null : input?.apiBaseUrl;
   const normalizedBaseUrl = normalizeDenBaseUrl(rawBaseUrl);
-  const normalizedApiBaseUrl = normalizeDenBaseUrl(rawApiBaseUrl);
-  const seedUrl = normalizedBaseUrl ?? normalizedApiBaseUrl ?? DEFAULT_DEN_BASE_URL;
+  const legacyApiBaseUrl = typeof input === "string" ? null : normalizeDenBaseUrl(input?.apiBaseUrl);
+  const seedUrl = stripDenApiBasePath(normalizedBaseUrl ?? legacyApiBaseUrl) ?? DEFAULT_DEN_BASE_URL;
+  const baseUrl = stripDenApiBasePath(seedUrl) ?? DEFAULT_DEN_BASE_URL;
 
   return {
-    baseUrl: stripDenApiBasePath(normalizedBaseUrl ?? seedUrl) ?? DEFAULT_DEN_BASE_URL,
-    apiBaseUrl: healWebAppApiBaseUrl(normalizedApiBaseUrl) ?? deriveDenApiBaseUrl(seedUrl),
+    baseUrl,
+    apiBaseUrl: ensureDenApiBasePath(baseUrl) ?? baseUrl,
   };
 }
 
-/**
- * The MCP endpoint served by den-api, resolved from the bootstrap config.
- * On the hosted web app this goes through the `/api/den` proxy
- * (`https://app.openworklabs.com/api/den/mcp`); a direct API origin maps to
- * `<apiBaseUrl>/mcp` (canonically `https://api.openworklabs.com/mcp`).
- */
+/** The MCP endpoint served through the Den web proxy from the single base URL. */
 export function getDenMcpUrl(): string {
   const { apiBaseUrl } = resolveDenBaseUrls(readDenBootstrapConfig());
   return `${apiBaseUrl.replace(/\/+$/, "")}/mcp`;
@@ -667,31 +576,20 @@ function resolveDenBootstrapConfig(
   };
 }
 
-function syncBootstrapSettingsToLocalStorage(config: DenBootstrapConfig) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.setItem(STORAGE_BASE_URL, config.baseUrl);
-  window.localStorage.setItem(STORAGE_API_BASE_URL, config.apiBaseUrl);
-}
-
 function getPendingBootstrapConfig(next: DenSettings): DenBootstrapConfig | null {
-  if (next.baseUrl === undefined && next.apiBaseUrl === undefined) {
+  if (next.baseUrl === undefined) {
     return null;
   }
 
   const previous = readDenBootstrapConfig();
   return resolveDenBootstrapConfig({
     baseUrl: next.baseUrl ?? previous.baseUrl,
-    apiBaseUrl: next.apiBaseUrl ?? previous.apiBaseUrl,
     requireSignin: previous.requireSignin,
   });
 }
 
 function applyDesktopBootstrapConfig(config: DenBootstrapConfig) {
   desktopBootstrapConfig = config;
-  syncBootstrapSettingsToLocalStorage(config);
 }
 
 export function readDenBootstrapConfig(): DenBootstrapConfig {
@@ -702,7 +600,6 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
   if (!isDesktopRuntime()) {
     desktopBootstrapConfig = resolveDenBootstrapConfig({
       baseUrl: BUILD_DEN_BASE_URL,
-      apiBaseUrl: BUILD_DEN_API_BASE_URL,
       requireSignin: BUILD_DEN_REQUIRE_SIGNIN,
     });
     return desktopBootstrapConfig;
@@ -732,8 +629,7 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
   // silently reverted custom/self-hosted control planes to the production
   // URL until a manual reload.
   desktopBootstrapConfig = resolveDenBootstrapConfig({
-    baseUrl: BUILD_DEN_BASE_URL,
-    apiBaseUrl: BUILD_DEN_API_BASE_URL,
+    baseUrl: HOSTED_DEFAULT_DEN_BASE_URL,
     requireSignin: BUILD_DEN_REQUIRE_SIGNIN,
   });
 
@@ -764,7 +660,6 @@ export async function setDenBootstrapConfig(
   if (isDesktopRuntime()) {
     const persisted = await setDesktopBootstrapConfigInShell({
       baseUrl: normalized.baseUrl,
-      apiBaseUrl: normalized.apiBaseUrl,
       requireSignin: normalized.requireSignin,
       ...(normalized.handoff ? { handoff: normalized.handoff } : {}),
       ...(normalized.prepared ? { prepared: normalized.prepared } : {}),
@@ -808,8 +703,9 @@ export function readDenSettings(): DenSettings {
   }
 
   const baseUrls = resolveDenBaseUrls({
-    baseUrl: window.localStorage.getItem(STORAGE_BASE_URL) ?? readDenBootstrapConfig().baseUrl,
-    apiBaseUrl: window.localStorage.getItem(STORAGE_API_BASE_URL) ?? readDenBootstrapConfig().apiBaseUrl,
+    baseUrl: isDesktopRuntime()
+      ? readDenBootstrapConfig().baseUrl
+      : window.localStorage.getItem(STORAGE_BASE_URL) ?? readDenBootstrapConfig().baseUrl,
   });
 
   return {
@@ -829,13 +725,8 @@ export function writeDenSettings(next: DenSettings, options?: { persistBootstrap
   const pendingBootstrap = getPendingBootstrapConfig(next);
   const previous = readDenSettings();
   const resolved = resolveDenBaseUrls(next);
-  const previousResolved = resolveDenBaseUrls(previous);
   const baseUrl = resolved.baseUrl;
-  const apiBaseUrl = next.apiBaseUrl !== undefined
-    ? resolved.apiBaseUrl
-    : previousResolved.baseUrl === resolved.baseUrl
-      ? previous.apiBaseUrl ?? resolved.apiBaseUrl
-      : resolved.apiBaseUrl;
+  const apiBaseUrl = resolved.apiBaseUrl;
   const authToken = next.authToken?.trim() ?? "";
   const activeOrgId = next.activeOrgId?.trim() ?? "";
   const activeOrgSlug = next.activeOrgSlug?.trim() ?? "";
@@ -852,8 +743,12 @@ export function writeDenSettings(next: DenSettings, options?: { persistBootstrap
     return;
   }
 
-  window.localStorage.setItem(STORAGE_BASE_URL, baseUrl);
-  window.localStorage.setItem(STORAGE_API_BASE_URL, apiBaseUrl);
+  if (isDesktopRuntime()) {
+    window.localStorage.removeItem(STORAGE_BASE_URL);
+  } else {
+    window.localStorage.setItem(STORAGE_BASE_URL, baseUrl);
+  }
+  window.localStorage.removeItem(LEGACY_STORAGE_API_BASE_URL);
   if (authToken) {
     window.localStorage.setItem(STORAGE_AUTH_TOKEN, authToken);
   } else {
@@ -881,12 +776,10 @@ export function writeDenSettings(next: DenSettings, options?: { persistBootstrap
   if (options?.persistBootstrap !== false && pendingBootstrap) {
     const currentBootstrap = readDenBootstrapConfig();
     if (
-      pendingBootstrap.baseUrl !== currentBootstrap.baseUrl ||
-      pendingBootstrap.apiBaseUrl !== currentBootstrap.apiBaseUrl
+      pendingBootstrap.baseUrl !== currentBootstrap.baseUrl
     ) {
       void setDenBootstrapConfig({
         baseUrl: pendingBootstrap.baseUrl,
-        apiBaseUrl: pendingBootstrap.apiBaseUrl,
         requireSignin: currentBootstrap.requireSignin,
       }).catch(() => undefined);
     }
@@ -904,7 +797,7 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
 
   if (options?.includeBaseUrls) {
     window.localStorage.removeItem(STORAGE_BASE_URL);
-    window.localStorage.removeItem(STORAGE_API_BASE_URL);
+    window.localStorage.removeItem(LEGACY_STORAGE_API_BASE_URL);
   }
 
   window.localStorage.removeItem(STORAGE_AUTH_TOKEN);
@@ -926,7 +819,6 @@ export async function ensureDenActiveOrganization(options?: { forceServerSync?: 
 
   const client = createDenClient({
     baseUrl: settings.baseUrl,
-    apiBaseUrl: settings.apiBaseUrl,
     token,
   });
 
@@ -1253,6 +1145,8 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
     connected: value.connected === true,
     connectedAt: typeof value.connectedAt === "string" ? value.connectedAt : null,
     connectedForMe: value.connectedForMe === true,
+    ...(typeof value.needsReconnect === "boolean" ? { needsReconnect: value.needsReconnect } : {}),
+    ...(Array.isArray(value.missingFeatures) ? { missingFeatures: readStringArray(value.missingFeatures) } : {}),
   };
 }
 
@@ -1955,20 +1849,14 @@ async function ensureActiveOrganization(
   });
 }
 
-export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string | null; token?: string | null }) {
+export function createDenClient(options: { baseUrl: string; token?: string | null }) {
   const baseUrls = resolveDenBaseUrls({
     baseUrl: options.baseUrl,
-    apiBaseUrl: options.apiBaseUrl,
   });
   const token = options.token?.trim() ?? null;
 
   return {
-    /**
-     * The resolved URLs this client actually talks to. Call sites that
-     * persist Den settings after a successful auth flow should store
-     * `baseUrls.apiBaseUrl` so relaunches reuse the exact endpoint that
-     * worked instead of re-deriving it from the web URL (see #1808).
-     */
+    /** The resolved web base URL and its derived `/api/den` proxy URL. */
     baseUrls,
 
     async setActiveOrganization(input: { organizationId?: string | null; organizationSlug?: string | null }): Promise<void> {
@@ -2029,10 +1917,11 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return appVersionMetadata;
     },
 
-    async getDesktopConfig(): Promise<DenDesktopConfig> {
+    async getDesktopConfig(orgId?: string | null): Promise<DenDesktopConfig> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/me/desktop-config", {
         method: "GET",
         token,
+        organizationId: orgId,
       });
       return normalizeDenDesktopConfig(payload);
     },
@@ -2219,6 +2108,14 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return result;
     },
 
+    async disconnectOauthProviderAccount(orgId: string, providerId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/oauth-providers/${encodeURIComponent(providerId)}/disconnect`,
+        { method: "POST", token, organizationId: orgId },
+      );
+    },
+
     async listOrgMarketplaces(orgId: string): Promise<DenOrgMarketplace[]> {
       const payload = await requestJson<unknown>(
         baseUrls,
@@ -2318,7 +2215,6 @@ export async function mintCloudControlMcpToken(): Promise<DenMcpToken | null> {
   }
   const client = createDenClient({
     baseUrl: settings.baseUrl,
-    apiBaseUrl: settings.apiBaseUrl ?? null,
     token,
   });
   return client.mintMcpToken(orgId);

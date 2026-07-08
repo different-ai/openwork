@@ -36,6 +36,15 @@ function text(res, status, body, headers = {}) {
   res.end(body);
 }
 
+function escapeHtml(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
@@ -168,12 +177,17 @@ function authorize(req, res, url) {
 
   const approveUrl = new URL(`${issuer}/approve`);
   for (const [key, value] of url.searchParams) approveUrl.searchParams.set(key, value);
+  const requestedScopes = (url.searchParams.get("scope") || "").split(/\s+/).filter(Boolean);
+  const requestedScopesHtml = requestedScopes.length > 0
+    ? `<h2>Requested scopes</h2><ul>${requestedScopes.map((scope) => `<li><code>${escapeHtml(scope)}</code></li>`).join("")}</ul>`
+    : "";
   text(res, 200, `<!doctype html>
 <html>
   <head><title>Mock MCP OAuth</title></head>
   <body style="font-family: system-ui, sans-serif; max-width: 560px; margin: 48px auto;">
     <h1>Mock MCP OAuth</h1>
     <p>This fake OAuth provider is for OpenWork MCP end-to-end tests.</p>
+    ${requestedScopesHtml}
     <form method="post" action="${approveUrl.pathname}${approveUrl.search}">
       <button style="font: inherit; padding: 10px 14px;">Approve OpenWork</button>
     </form>

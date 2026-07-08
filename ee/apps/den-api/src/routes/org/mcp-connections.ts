@@ -88,6 +88,10 @@ const connectionResponseSchema = z.object({
   connectedAt: z.string().nullable(),
   /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
   connectedForMe: z.boolean(),
+  /** Present on native provider rows when the member's saved grant is missing currently selected scopes. */
+  needsReconnect: z.boolean().optional(),
+  /** Native provider feature ids whose scopes are missing from the member's saved grant. */
+  missingFeatures: z.array(z.string()).optional(),
   /** Present only for scope=manageable (admin) listings. */
   access: accessSummarySchema.nullable(),
 }).meta({ ref: "ExternalMcpConnectionResponse" })

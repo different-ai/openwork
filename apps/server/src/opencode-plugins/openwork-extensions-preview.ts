@@ -122,14 +122,16 @@ To open settings: openwork_ui_execute_action with actionId "settings.panel.open"
 To add a provider: openwork_ui_execute_action with actionId "settings.provider.add" and optional args {providerId:"anthropic"}
 To see what the user sees: openwork_ui_snapshot
 To list all available actions: openwork_ui_list_actions
-To ask what OpenWork can do: openwork_ui_execute_action with actionId "help.capabilities"
+To ask what OpenWork can do: openwork_ui_execute_action with actionId "help.capabilities"`;
 
-## Cross-session memory
+const OPENWORK_SESSION_MEMORY_INSTRUCTION =
+  `## Cross-session memory
 When the user asks what they said, what happened, or what was decided in another OpenWork chat/session, treat it as a session-history lookup, not hidden model memory.
 Use openwork_session_search first to search session titles and message transcripts across workspaces. If there is one clear match, use openwork_session_read with the returned sessionId/workspaceId to retrieve transcript context without navigating the UI.
-Answer only from the returned search/read results. If multiple sessions match, ask a short clarifying question. If the returned transcript is limited or missing the older context needed, say so instead of guessing.
+Answer only from the returned search/read results. If multiple sessions match, ask a short clarifying question. If the returned transcript is limited or missing the older context needed, say so instead of guessing.`;
 
-Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the OpenWork app itself. Those are for browsing external websites.
+const OPENWORK_BROWSER_INSTRUCTION =
+  `Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the OpenWork app itself. Those are for browsing external websites.
 
 ## Built-in Browser (external websites)
 For web browsing tasks, ALWAYS start with openwork_browser_open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
@@ -171,6 +173,16 @@ function userAppDataDir(): string {
   if (platform() === "darwin") return join(homedir(), "Library", "Application Support");
   if (platform() === "win32") return process.env.APPDATA || join(homedir(), "AppData", "Roaming");
   return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+}
+
+// The agent-facing UI-control surface (system steering + openwork_ui_* tools)
+// is opt-in: it noises every session's prompt/tool list, and the supported way
+// to grant agents UI control is the hidden "OpenWork UI Control" MCP in
+// Settings -> Extensions. Set OPENWORK_UI_CONTROL_TOOLS=1 to re-enable the
+// built-in preview surface (used by internal tooling).
+function uiControlToolsEnabled(): boolean {
+  const raw = process.env.OPENWORK_UI_CONTROL_TOOLS?.trim().toLowerCase() ?? "";
+  return raw === "1" || raw === "true";
 }
 
 function uiControlDiscoveryPaths(): string[] {
@@ -597,10 +609,14 @@ function contextPayload(context: OpenCodeContext) {
   };
 }
 
-export const OpenWorkExtensionsPreview = async () => ({
+export const OpenWorkExtensionsPreview = async () => {
+  const uiControlEnabled = uiControlToolsEnabled();
+  return {
   "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
     output.system.push(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
-    output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);
+    output.system.push(OPENWORK_SESSION_MEMORY_INSTRUCTION);
+    output.system.push(OPENWORK_BROWSER_INSTRUCTION);
+    if (uiControlEnabled) output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);
   },
   tool: {
     openwork_extension_list_actions: {
@@ -632,6 +648,7 @@ export const OpenWorkExtensionsPreview = async () => ({
         return JSON.stringify(payload, null, 2);
       },
     },
+    ...(uiControlEnabled ? {
     openwork_ui_snapshot: {
       description: "Get a snapshot of the current OpenWork UI state: active route, narration, visible actions, and status. Use this to understand what the user sees before taking action.",
       args: {},
@@ -660,6 +677,7 @@ export const OpenWorkExtensionsPreview = async () => ({
         return JSON.stringify(result, null, 2);
       },
     },
+    } : {}),
     openwork_session_search: {
       description: "Search OpenWork past chat sessions by title and full message transcript text without navigating the UI. Use this when the user refers to another/past chat or asks what was said, decided, or done previously.",
       args: sessionSearchArgsSchema.shape,
@@ -727,4 +745,5 @@ export const OpenWorkExtensionsPreview = async () => ({
       },
     },
   },
-});
+  };
+};

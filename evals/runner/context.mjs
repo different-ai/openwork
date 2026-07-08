@@ -268,6 +268,34 @@ export class EvalContext {
   }
 
   /**
+   * Dispatch a real browser click via CDP input events. Use this when a flow
+   * needs transient user activation (clipboard, popup, etc.).
+   */
+  async trustedClick(selector, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    const point = await this.waitFor(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return null;
+      if (el instanceof HTMLButtonElement && el.disabled) return null;
+      el.scrollIntoView({ block: "center", inline: "center" });
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === "hidden" || style.display === "none") return null;
+      return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+        label: (el.textContent ?? "").trim(),
+      };
+    })()`, { timeoutMs, label: `trusted clickable element ${selector}` });
+
+    await this.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+    await this.client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    await this.client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    this.log(`Trusted clicked ${selector}${point.label ? `: ${point.label}` : ""}`);
+    return point.label;
+  }
+
+  /**
    * Fill a controlled React input via the native value setter + input event.
    */
   async fill(selector, value, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {

@@ -152,14 +152,14 @@ describe("readGuidedCustomProviderFields", () => {
 
     test("round-trips a verification-adjusted (OpenAI package) config", () => {
         const generated = buildGuidedCustomProviderConfig({
-            providerId: "blueyonder-foundry",
-            name: "Blue Yonder Azure Foundry",
-            baseUrl: "https://blueyonder.services.ai.azure.com/openai/v1",
+            providerId: "acme-foundry",
+            name: "Acme Azure Foundry",
+            baseUrl: "https://acme.services.ai.azure.com/openai/v1",
             modelIds: ["gpt-5-mini"],
             npm: "@ai-sdk/openai",
         });
         expect(generated.npm).toBe("@ai-sdk/openai");
-        expect(generated.env).toEqual(["BLUEYONDER_FOUNDRY_API_KEY"]);
+        expect(generated.env).toEqual(["ACME_FOUNDRY_API_KEY"]);
         expect(readGuidedCustomProviderFields(generated)?.npm).toBe("@ai-sdk/openai");
     });
 

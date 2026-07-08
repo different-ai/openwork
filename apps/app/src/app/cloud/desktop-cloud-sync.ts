@@ -111,7 +111,6 @@ async function runDesktopCloudSync(input: {
 
   const snapshot = await createDenClient({
     baseUrl: settings.baseUrl,
-    apiBaseUrl: settings.apiBaseUrl,
     token,
   }).getResourceSnapshot(activeOrgId);
 

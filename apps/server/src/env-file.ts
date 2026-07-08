@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { ensureDir, exists } from "./utils.js";
 
 // User-level environment variables, persisted so the desktop shell can inject
-// them into every spawned child (OpenCode, OpenWork server, opencode-router).
+// them into every spawned child (OpenCode and OpenWork server).
 // Motivation: Linux GUI launches don't inherit shell env, so users set
 // ANTHROPIC_API_KEY / GCLOUD_* / GCP_* in .bashrc and hit silent auth failures.
 // Scope: user/machine, not workspace. Not synced to the cloud.

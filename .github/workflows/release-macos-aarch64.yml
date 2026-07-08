@@ -39,7 +39,7 @@ on:
         type: boolean
         default: true
       publish_npm:
-        description: "Publish openwork-orchestrator/openwork-server/opencode-router to npm if versions changed"
+        description: "Publish openwork-orchestrator/openwork-server to npm if versions changed"
         required: false
         type: boolean
         default: true
@@ -642,7 +642,7 @@ jobs:
         id: sidecar-versions
         shell: bash
         run: |
-          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('apps/opencode-router/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
+          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version);" >> "$GITHUB_OUTPUT"
 
       - name: Resolve SOURCE_DATE_EPOCH
         id: source-date
@@ -684,7 +684,7 @@ jobs:
         run: |
           version="${{ steps.sidecar-versions.outputs.orchestrator }}"
           tag="openwork-orchestrator-v${version}"
-          notes="Sidecar bundle for openwork-orchestrator v${version}.\n\nopenwork-server: ${{ steps.sidecar-versions.outputs.server }}\nopencodeRouter: ${{ steps.sidecar-versions.outputs.opencodeRouter }}"
+          notes="Sidecar bundle for openwork-orchestrator v${version}.\n\nopenwork-server: ${{ steps.sidecar-versions.outputs.server }}"
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
             --title "openwork-orchestrator v${version}" \
@@ -756,7 +756,7 @@ jobs:
         id: package-versions
         shell: bash
         run: |
-          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('apps/opencode-router/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
+          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version);" >> "$GITHUB_OUTPUT"
 
       - name: Check npm versions
         id: npm-versions
@@ -764,14 +764,12 @@ jobs:
         env:
           ORCHESTRATOR_VERSION: ${{ steps.package-versions.outputs.orchestrator }}
           SERVER_VERSION: ${{ steps.package-versions.outputs.server }}
-          OPENCODE_ROUTER_VERSION: ${{ steps.package-versions.outputs.opencodeRouter }}
         run: |
           set -euo pipefail
           # npm view exits non-zero for packages that don't exist yet (404).
           # Treat missing packages as "not published" so release can publish them.
           orchestrator_current="$(npm view openwork-orchestrator version 2>/dev/null || true)"
           server_current="$(npm view openwork-server version 2>/dev/null || true)"
-          opencodeRouter_current="$(npm view opencode-router version 2>/dev/null || true)"
 
           if [ "$orchestrator_current" = "$ORCHESTRATOR_VERSION" ]; then
             echo "publish_orchestrator=false" >> "$GITHUB_OUTPUT"
@@ -785,14 +783,8 @@ jobs:
             echo "publish_server=true" >> "$GITHUB_OUTPUT"
           fi
 
-          if [ "$opencodeRouter_current" = "$OPENCODE_ROUTER_VERSION" ]; then
-            echo "publish_opencodeRouter=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish_opencodeRouter=true" >> "$GITHUB_OUTPUT"
-          fi
-
           publish_any=false
-          if [ "$orchestrator_current" != "$ORCHESTRATOR_VERSION" ] || [ "$server_current" != "$SERVER_VERSION" ] || [ "$opencodeRouter_current" != "$OPENCODE_ROUTER_VERSION" ]; then
+          if [ "$orchestrator_current" != "$ORCHESTRATOR_VERSION" ] || [ "$server_current" != "$SERVER_VERSION" ]; then
             publish_any=true
           fi
           echo "publish_any=$publish_any" >> "$GITHUB_OUTPUT"
@@ -823,10 +815,6 @@ jobs:
       - name: Publish openwork-server
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
         run: pnpm --filter openwork-server publish --access public --no-git-checks
-
-      - name: Publish opencode-router
-        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_opencodeRouter == 'true'
-        run: pnpm --filter opencode-router publish --access public --no-git-checks
 
       - name: Publish openwork-orchestrator
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_orchestrator == 'true'

@@ -1,4 +1,4 @@
-import { and, asc, count, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, eq, gt, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthUserTable,
@@ -411,10 +411,10 @@ async function ensureDefaultDynamicRoles(orgId: OrgId) {
   }
 }
 
-function normalizeAssignableRole(input: string, availableRoles: Set<string>) {
+function normalizeAssignableRole(input: string, availableRoles: Set<string>, fallbackRole = "member") {
   const roles = splitRoles(input).filter((role) => availableRoles.has(role))
   if (roles.length === 0) {
-    return "member"
+    return fallbackRole
   }
   return roles.join(",")
 }
@@ -434,6 +434,7 @@ async function insertMemberIfMissing(input: {
   organizationId: OrgId
   userId: UserId
   role: string
+  email?: string | null
 }) {
   const existing = await db
     .select()
@@ -443,6 +444,16 @@ async function insertMemberIfMissing(input: {
 
   if (existing.length > 0) {
     return existing[0]
+  }
+
+  const invitedMember = await acceptPendingInvitationForBootstrapMembership({
+    organizationId: input.organizationId,
+    userId: input.userId,
+    email: input.email ?? null,
+    defaultRole: input.role,
+  })
+  if (invitedMember) {
+    return invitedMember
   }
 
   try {
@@ -468,9 +479,101 @@ async function insertMemberIfMissing(input: {
   return created[0]
 }
 
-async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
+export async function ensureBootstrapMembershipForOrganization(input: {
+  organizationId: OrgId
+  userId: UserId
+  role: string
+  email?: string | null
+}) {
+  return insertMemberIfMissing(input)
+}
+
+export async function acceptPendingInvitationForBootstrapMembership(input: {
+  organizationId: OrgId
+  userId: UserId
+  email: string | null
+  defaultRole: string
+}) {
+  const email = input.email?.trim().toLowerCase()
+  if (!email) {
+    return null
+  }
+
+  const invitationRows = await db
+    .select()
+    .from(InvitationTable)
+    .where(and(
+      eq(InvitationTable.organizationId, input.organizationId),
+      eq(InvitationTable.status, "pending"),
+      gt(InvitationTable.expiresAt, new Date()),
+      sql`lower(${InvitationTable.email}) = ${email}`,
+    ))
+    .limit(1)
+
+  const invitation = invitationRows.find((row) => (
+    row.organizationId === input.organizationId
+    && row.status === "pending"
+    && row.expiresAt > new Date()
+    && row.email.trim().toLowerCase() === email
+  )) ?? null
+  if (!invitation) {
+    return null
+  }
+
+  // Bootstrap paths already grant same-org membership before email verification.
+  // organization-join-verification.ts keeps that gate on the explicit accept endpoint.
+  return acceptInvitation(invitation, input.userId, { fallbackRole: input.defaultRole })
+}
+
+export async function reconcilePendingInvitationsForUser(userId: UserId) {
+  const userRows = await db
+    .select({ email: AuthUserTable.email })
+    .from(AuthUserTable)
+    .where(eq(AuthUserTable.id, userId))
+    .limit(1)
+  const email = userRows[0]?.email.trim().toLowerCase()
+  if (!email) {
+    return 0
+  }
+
+  const now = new Date()
+  const invitations = await db
+    .select()
+    .from(InvitationTable)
+    .where(and(
+      eq(InvitationTable.status, "pending"),
+      gt(InvitationTable.expiresAt, now),
+      sql`lower(${InvitationTable.email}) = ${email}`,
+    ))
+    .limit(20)
+
+  let acceptedCount = 0
+  for (const invitation of invitations) {
+    if (invitation.status !== "pending" || invitation.expiresAt <= now || invitation.email.trim().toLowerCase() !== email) {
+      continue
+    }
+
+    const existingMemberRows = await db
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(eq(MemberTable.organizationId, invitation.organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
+      .limit(1)
+    if (!existingMemberRows[0]) {
+      // No cross-org auto-join here; organization-join-verification.ts keeps
+      // that email-verification boundary on the explicit accept endpoint.
+      continue
+    }
+
+    await acceptInvitation(invitation, userId)
+    acceptedCount += 1
+  }
+
+  return acceptedCount
+}
+
+async function acceptInvitation(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string }) {
   const availableRoles = await listAssignableRoles(invitation.organizationId)
-  const role = normalizeAssignableRole(invitation.role, availableRoles)
+  const role = normalizeAssignableRole(invitation.role, availableRoles, options?.fallbackRole)
   const joinedAt = new Date()
 
   const existingMemberRows = await db
@@ -488,6 +591,19 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
   const invitedMember = invitedMemberRows[0] ?? null
   const existingMember = existingMemberRows[0] ?? null
   let member = existingMember
+
+  if (existingMember && invitedMember) {
+    const existingJoinedAt = existingMember.joinedAt ?? joinedAt
+    const existingRole = roleIncludesOwner(existingMember.role) ? existingMember.role : role
+    await db
+      .update(MemberTable)
+      .set({ role: existingRole, joinedAt: existingJoinedAt })
+      .where(eq(MemberTable.id, existingMember.id))
+    if (invitedMember.id !== existingMember.id) {
+      await db.delete(MemberTable).where(eq(MemberTable.id, invitedMember.id))
+    }
+    member = { ...existingMember, role: existingRole, joinedAt: existingJoinedAt }
+  }
 
   if (!member && invitedMember) {
     await db
@@ -756,10 +872,11 @@ export async function ensureSingletonOrganizationForUser(userId: UserId) {
     return null
   }
 
-  const member = await insertMemberIfMissing({
+  const member = await ensureBootstrapMembershipForOrganization({
     organizationId: organization.id,
     userId,
     role,
+    email: userEmail,
   })
 
   await ensureDefaultDesktopPolicyForOrganization({

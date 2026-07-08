@@ -18,7 +18,7 @@
  * http://127.0.0.1:9823 (local pnpm dev). Override with --cdp-url or
  * OPENWORK_EVAL_CDP_URL.
  */
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { connect, debuggerUrlFor, pickAppTarget, resolveCdpBaseUrl } from "./cdp.mjs";
@@ -75,6 +75,20 @@ async function loadFlows() {
     flows.push({ ...flow, file: entry });
   }
   return flows;
+}
+
+async function selectedStackNeedsApp(args) {
+  if (args.list) return false;
+  if (args.all || args.flows.length === 0) return true;
+  for (const flowId of args.flows) {
+    try {
+      const source = await readFile(join(FLOWS_DIR, `${flowId}.flow.mjs`), "utf8");
+      if (!/requiresApp\s*:\s*false/.test(source)) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
 }
 
 function missingEnv(flow, env) {
@@ -431,6 +445,7 @@ async function main() {
     await ensureDenStack({
       log: (msg) => console.log(`▸ ${msg}`),
       cdpCandidates: args.cdpUrl ? [args.cdpUrl] : DEFAULT_CDP_CANDIDATES,
+      skipApp: !(await selectedStackNeedsApp(args)),
     });
   } else if (args.stack) {
     throw new Error(`Unknown stack: ${args.stack}. Supported: den`);

@@ -3,10 +3,14 @@ import { beforeAll, describe, expect, test } from "bun:test"
 
 import type { OrgOAuthClientRow } from "../src/capability-sources/oauth-credentials.js"
 
-const GOOGLE_WORKSPACE_BASE_SCOPES = [
+const GOOGLE_WORKSPACE_IDENTITY_SCOPES = [
   "openid",
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
+]
+
+const GOOGLE_WORKSPACE_LEGACY_BASE_SCOPES = [
+  ...GOOGLE_WORKSPACE_IDENTITY_SCOPES,
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/drive.file",
@@ -38,38 +42,62 @@ function googleWorkspaceProvider() {
 }
 
 describe("google-workspace native provider scopes", () => {
-  test("defaultScopes matches the desktop base set", () => {
-    expect(googleWorkspaceProvider().defaultScopes).toEqual(GOOGLE_WORKSPACE_BASE_SCOPES)
+  test("defaultScopes is only the identity trio", () => {
+    expect(googleWorkspaceProvider().defaultScopes).toEqual(GOOGLE_WORKSPACE_IDENTITY_SCOPES)
   })
 
-  test("resolveProviderScopes adds selected feature scopes and dedupes", () => {
-    const scopes = registry.resolveProviderScopes(googleWorkspaceProvider(), ["gmailRead", "calendarWrite", "gmailRead"])
+  test("missing features keeps legacy rows on the old desktop base behavior", () => {
+    const provider = googleWorkspaceProvider()
+    const features = registry.clientSelectedFeatures(provider, {})
+    const scopes = registry.resolveProviderScopes(provider, features)
+
+    // Legacy rows without a features key preserve the old base-6 scope behavior.
+    expect(registry.clientSelectedFeatures(provider, null)).toEqual(["calendarRead", "gmailDraft", "driveFile"])
+    expect(features).toEqual(["calendarRead", "gmailDraft", "driveFile"])
+    expect(scopes).toEqual(GOOGLE_WORKSPACE_LEGACY_BASE_SCOPES)
+  })
+
+  test("features empty array means identity-only", () => {
+    const provider = googleWorkspaceProvider()
+    const features = registry.clientSelectedFeatures(provider, { features: [] })
+    const scopes = registry.resolveProviderScopes(provider, features)
+
+    expect(features).toEqual([])
+    expect(scopes).toEqual(GOOGLE_WORKSPACE_IDENTITY_SCOPES)
+  })
+
+  test("selected features are the complete capability set", () => {
+    const provider = googleWorkspaceProvider()
+    const features = registry.clientSelectedFeatures(provider, {
+      features: ["calendarRead", "calendarWrite", "gmailDraft", "gmailRead"],
+    })
+    const scopes = registry.resolveProviderScopes(provider, features)
 
     expect(scopes).toEqual([
-      ...GOOGLE_WORKSPACE_BASE_SCOPES,
-      "https://www.googleapis.com/auth/gmail.readonly",
+      ...GOOGLE_WORKSPACE_IDENTITY_SCOPES,
+      "https://www.googleapis.com/auth/calendar.readonly",
       "https://www.googleapis.com/auth/calendar.events",
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://www.googleapis.com/auth/gmail.readonly",
     ])
   })
 
-  test("clientSelectedFeatures ignores unknown keys, non-strings, and absent extra", () => {
+  test("clientSelectedFeatures ignores unknown keys and non-strings", () => {
     const provider = googleWorkspaceProvider()
 
-    expect(registry.clientSelectedFeatures(provider, null)).toEqual([])
-    expect(registry.clientSelectedFeatures(provider, {})).toEqual([])
     expect(registry.clientSelectedFeatures(provider, {
-      features: ["gmailRead", "unknown", 42, "calendarWrite", null],
-    })).toEqual(["gmailRead", "calendarWrite"])
+      features: ["calendarRead", "unknown", 42, "gmailRead", null],
+    })).toEqual(["calendarRead", "gmailRead"])
   })
 
-  test("buildAuthorizeUrl includes base scopes plus selected optional feature scopes", () => {
+  test("buildAuthorizeUrl includes identity plus the complete selected feature scopes", () => {
     const client: OrgOAuthClientRow = {
       id: createDenTypeId("orgOAuthClient"),
       organizationId: createDenTypeId("organization"),
       providerId: "google-workspace",
       clientId: "google-client-id",
       clientSecret: "google-client-secret",
-      extra: { features: ["gmailRead", "calendarWrite"] },
+      extra: { features: ["calendarRead", "gmailDraft", "driveFile", "gmailRead", "calendarWrite"] },
       createdByOrgMembershipId: createDenTypeId("member"),
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
       updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -85,9 +113,13 @@ describe("google-workspace native provider scopes", () => {
     const scopes = new URL(authorizeUrl).searchParams.get("scope")?.split(" ") ?? []
 
     expect(scopes).toEqual([
-      ...GOOGLE_WORKSPACE_BASE_SCOPES,
+      ...GOOGLE_WORKSPACE_IDENTITY_SCOPES,
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://www.googleapis.com/auth/drive.file",
       "https://www.googleapis.com/auth/gmail.readonly",
       "https://www.googleapis.com/auth/calendar.events",
     ])
+    expect(scopes).toHaveLength(8)
   })
 })

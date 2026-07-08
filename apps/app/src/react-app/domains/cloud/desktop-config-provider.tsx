@@ -179,9 +179,10 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const currentRun = ++refreshRunRef.current;
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
+    const activeOrgId = settings.activeOrgId?.trim() ?? "";
     const cacheKey = getDesktopConfigCacheKey();
 
-    if (!isSignedIn || !token || !settings.activeOrgId?.trim()) {
+    if (!isSignedIn || !token || !activeOrgId) {
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
       setDesktopConfigState((current) => ({ ...current, loading: false }));
       return;
@@ -199,9 +200,8 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     try {
       const nextConfig = await createDenClient({
         baseUrl: settings.baseUrl,
-        apiBaseUrl: settings.apiBaseUrl,
         token,
-      }).getDesktopConfig();
+      }).getDesktopConfig(activeOrgId);
 
       if (currentRun !== refreshRunRef.current) return;
 

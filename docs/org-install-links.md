@@ -69,6 +69,50 @@ Den resolves Mac and Windows installer artifacts in this order:
 or Windows installer download and the artifact is not already cached. The Linux
 setup script and every other install-link feature need no egress.
 
+## Distribute configuration with MDM (no custom installer)
+
+You can deploy the standard public OpenWork desktop installer and point it at
+your self-hosted control plane by managing one JSON file. No custom installer is
+required.
+
+OpenWork reads `desktop-bootstrap.json` from the same canonical path used by the
+installer and bootstrap CLI:
+
+| OS | Canonical path |
+|---|---|
+| Windows | `%LOCALAPPDATA%\openwork\desktop-bootstrap.json` (`%XDG_CONFIG_HOME%\openwork\desktop-bootstrap.json` wins first if your environment sets it) |
+| macOS/Linux | `$XDG_CONFIG_HOME/openwork/desktop-bootstrap.json`, falling back to `~/.config/openwork/desktop-bootstrap.json` |
+
+Older desktop builds also wrote `~/.config/openwork/desktop-bootstrap.json` on
+every OS. Current builds still read that legacy file for compatibility; when
+both files exist and parse, the config with the newest `writtenAt` timestamp
+wins. If `writtenAt` is missing or invalid, OpenWork falls back to the file
+mtime for that file. When the legacy file wins, OpenWork migrates it to the
+canonical path. The installer also cleans up a stale legacy twin after writing
+the canonical file.
+
+Schema:
+
+```json
+{
+  "baseUrl": "https://openwork.example.com",
+  "apiBaseUrl": "https://api.openwork.example.com",
+  "requireSignin": true,
+  "writtenAt": "2026-07-07T12:00:00.000Z"
+}
+```
+
+- `baseUrl` is required and should be your den-web origin.
+- `apiBaseUrl` is optional when your web origin proxies Den API traffic, but is
+  recommended for split web/API deployments.
+- `requireSignin` should be `true` for organization-managed installs.
+- `writtenAt` should be an ISO timestamp; use a fresh value whenever MDM rolls
+  out a replacement config so the newest file wins deterministically.
+
+For MDM tools such as ManageEngine, deploy the public installer, then write this
+file to the canonical path for each user profile. The public installer plus this
+managed file is enough for a fully self-hosted desktop rollout.
+
 ## Security notes
 
 - Install-link tokens are stored SHA-256 hashed.

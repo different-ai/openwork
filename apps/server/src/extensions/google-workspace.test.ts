@@ -264,7 +264,7 @@ describe("Google Workspace extension", () => {
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     const workspaceRoot = join(dirname(config.configPath ?? ""), "workspace");
-    const invoicePath = join(workspaceRoot, "invoices", "blue-yonder-invoice-ow-by-poc-2026-001.pdf");
+    const invoicePath = join(workspaceRoot, "invoices", "acme-invoice-2026-001.pdf");
     config.workspaces = [{ id: "workspace-1", name: "Workspace", path: workspaceRoot, preset: "starter", workspaceType: "local" }];
     config.authorizedRoots = [workspaceRoot];
     await mkdir(dirname(invoicePath), { recursive: true });
@@ -284,24 +284,24 @@ describe("Google Workspace extension", () => {
     );
 
     const result = await callGoogleWorkspaceExtensionAction(config, "gmail_create_draft", {
-      to: ["AccountsPayable@blueyonder.com"],
-      cc: ["Purchasing.Administrator@blueyonder.com", "Vickie.Trent@blueyonder.com"],
-      subject: "Invoice OW-BY-POC-2026-001 for PO-047766",
-      body: "Please find attached invoice OW-BY-POC-2026-001 for PO-047766.",
-      attachments: [{ path: "invoices/blue-yonder-invoice-ow-by-poc-2026-001.pdf" }],
+      to: ["accounts.payable@acme.test"],
+      cc: ["purchasing.admin@acme.test", "casey.jordan@acme.test"],
+      subject: "Invoice ACME-2026-001 for PO-000123",
+      body: "Please find attached invoice ACME-2026-001 for PO-000123.",
+      attachments: [{ path: "invoices/acme-invoice-2026-001.pdf" }],
     }, { directory: workspaceRoot });
     expect(result?.ok).toBe(true);
     expect(result?.result).toMatchObject({ id: "draft-1" });
     expect(requests[0]?.url).toBe("https://gmail.googleapis.com/gmail/v1/users/me/drafts");
     const raw = requests[0]?.body.match(/"raw":"([^"]+)"/)?.[1] ?? "";
     const decoded = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
-    expect(decoded).toContain("To: AccountsPayable@blueyonder.com");
-    expect(decoded).toContain("Cc: Purchasing.Administrator@blueyonder.com, Vickie.Trent@blueyonder.com");
-    expect(decoded).toContain("Subject: Invoice OW-BY-POC-2026-001 for PO-047766");
+    expect(decoded).toContain("To: accounts.payable@acme.test");
+    expect(decoded).toContain("Cc: purchasing.admin@acme.test, casey.jordan@acme.test");
+    expect(decoded).toContain("Subject: Invoice ACME-2026-001 for PO-000123");
     expect(decoded).toContain("Content-Type: multipart/mixed;");
-    expect(decoded).toContain("Please find attached invoice OW-BY-POC-2026-001 for PO-047766.");
-    expect(decoded).toContain("Content-Type: application/pdf; name=\"blue-yonder-invoice-ow-by-poc-2026-001.pdf\"");
-    expect(decoded).toContain("Content-Disposition: attachment; filename=\"blue-yonder-invoice-ow-by-poc-2026-001.pdf\"");
+    expect(decoded).toContain("Please find attached invoice ACME-2026-001 for PO-000123.");
+    expect(decoded).toContain("Content-Type: application/pdf; name=\"acme-invoice-2026-001.pdf\"");
+    expect(decoded).toContain("Content-Disposition: attachment; filename=\"acme-invoice-2026-001.pdf\"");
     expect(decoded).toContain(Buffer.from("%PDF-1.4\ninvoice bytes\n", "utf8").toString("base64"));
   });
 

@@ -14,10 +14,12 @@
  * (plus an enabled:false guard), and fixes the marker margin. This flow
  * drives the real app:
  *   1. Sign in to OpenWork Cloud via desktop handoff.
- *   2. Wait for the reconciler to auto-configure openwork-cloud.
+ *   2. Reveal hidden extensions and wait for the reconciler to auto-configure
+ *      openwork-cloud.
  *   3. Disable it via the Settings toggle.
  *   4. Remount settings (the exact trigger that used to resurrect it) and
- *      assert it is still Paused and the intent record persists.
+ *      reveal hidden again, then assert it is still Paused and the intent
+ *      record persists.
  *   5. Re-enable it and assert the intent record clears.
  *
  * Required env:
@@ -28,6 +30,11 @@
 const CLOUD_TITLE = "OpenWork Cloud Control";
 const USER_STATE_KEY = "openwork.den.mcp.cloudControlUserState";
 const CLICK_ANY = "button, [role=button], a, div, article, li, label";
+
+const revealHidden = async (ctx) => {
+  const showing = await ctx.eval("document.body.innerText.includes('Showing hidden')");
+  if (!showing) await ctx.clickText("Show hidden", { timeoutMs: 30_000 });
+};
 
 // The configured-server row shows the friendly status next to the title;
 // catalog cards do not. Use that to target the configured row.
@@ -137,6 +144,7 @@ export default {
         await ctx.navigateHash("/settings/extensions/mcp");
         await ctx.waitFor("window.location.hash.includes('/settings/extensions/mcp')", { timeoutMs: 30_000 });
         await ctx.waitForText("Add Custom App", { timeoutMs: 30_000 });
+        await revealHidden(ctx);
         await ctx.waitFor(cloudRowExpr(CONFIGURED_STATUSES), {
           timeoutMs: 90_000,
           label: "openwork-cloud configured row",
@@ -215,6 +223,7 @@ export default {
             await ctx.navigateHash("/settings/extensions/mcp");
             await ctx.waitFor("window.location.hash.includes('/settings/extensions/mcp')", { timeoutMs: 20_000 });
             await ctx.waitForText("Add Custom App", { timeoutMs: 30_000 });
+            await revealHidden(ctx);
             // Give the sync tick time to run (it fires on mount).
             await new Promise((resolve) => setTimeout(resolve, 6_000));
           },

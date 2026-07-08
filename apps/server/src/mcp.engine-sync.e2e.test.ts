@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { startServer, syncAllWorkspacesRuntimeMcpToEngine } from "./server.js";
-import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
 type Served = { port: number; stop: (closeActiveConnections?: boolean) => void | Promise<void> };
@@ -87,11 +87,20 @@ async function startOpenworkServer(workspaceRoot: string, opencodeBaseUrl: strin
   };
   const server = await startServer(config) as Served;
   stops.push(() => server.stop(true));
-  return { base: `http://127.0.0.1:${server.port}`, token: config.token };
+  return { base: `http://127.0.0.1:${server.port}`, token: config.token, config };
 }
 
 function auth(token: string) {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (isRecord(value)) return value;
+  throw new Error(`${label} was not an object`);
 }
 
 const POSTHOG_CONFIG = {
@@ -121,6 +130,153 @@ describe("runtime MCP engine sync", () => {
       expect(addRequest).toBeDefined();
       expect(addRequest?.body).toEqual({ name: "posthog", config: POSTHOG_CONFIG });
       expect(addRequest?.search).toContain(`directory=${encodeURIComponent(workspaceRoot)}`);
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("cloud plugin install writes a remote MCP and hot-syncs it into the engine", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode();
+      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+
+      const response = await fetch(`${openwork.base}/workspace/ws_1/cloud-plugins`, {
+        method: "POST",
+        headers: auth(openwork.token),
+        body: JSON.stringify({
+          marketplaceId: null,
+          resolved: {
+            plugin: {
+              id: "plugin_cloud_mcp",
+              name: "Cloud MCP Plugin",
+              description: null,
+              updatedAt: "2026-06-02T00:00:00.000Z",
+            },
+            memberships: [
+              {
+                configObjectId: "config_mcp_valid",
+                configObject: {
+                  id: "config_mcp_valid",
+                  objectType: "mcp",
+                  title: "Brief MCP",
+                  description: null,
+                  currentRelativePath: null,
+                  status: "active",
+                  updatedAt: "2026-06-02T00:00:00.000Z",
+                  latestVersion: {
+                    id: "version_mcp_valid",
+                    rawSourceText: JSON.stringify({ mcpServers: { brief: { url: "https://example.com/mcp" } } }),
+                    normalizedPayloadJson: { mcpServers: { brief: { url: "https://example.com/mcp" } } },
+                  },
+                },
+              },
+            ],
+          },
+        }),
+      });
+      expect(response.status).toBe(200);
+      const parsed: unknown = await response.json();
+      const body = requireRecord(parsed, "cloud plugin install response");
+      const item = requireRecord(body.item, "cloud plugin install item");
+      expect(item.pluginId).toBe("plugin_cloud_mcp");
+      expect(body.warnings).toEqual([]);
+
+      expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.brief).toMatchObject({
+        type: "remote",
+        url: "https://example.com/mcp",
+      });
+      const addRequest = mock.requests.find((entry) => entry.method === "POST" && entry.pathname === "/mcp");
+      expect(addRequest).toBeDefined();
+      expect(addRequest?.body).toEqual({
+        name: "brief",
+        config: { type: "remote", url: "https://example.com/mcp", enabled: true },
+      });
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("cloud plugin install warns for dropped MCP payloads while still installing skills", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode();
+      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+
+      const response = await fetch(`${openwork.base}/workspace/ws_1/cloud-plugins`, {
+        method: "POST",
+        headers: auth(openwork.token),
+        body: JSON.stringify({
+          marketplaceId: null,
+          resolved: {
+            plugin: {
+              id: "plugin_broken_mcp",
+              name: "Broken Plugin",
+              description: null,
+              updatedAt: "2026-06-02T00:00:00.000Z",
+            },
+            memberships: [
+              {
+                configObjectId: "config_skill_broken",
+                configObject: {
+                  id: "config_skill_broken",
+                  objectType: "skill",
+                  title: "Helpful Skill",
+                  description: "Skill still installs",
+                  currentRelativePath: null,
+                  status: "active",
+                  updatedAt: "2026-06-02T00:00:00.000Z",
+                  latestVersion: {
+                    id: "version_skill_broken",
+                    rawSourceText: "# Helpful Skill\n\nInstalled skill body.",
+                    normalizedPayloadJson: null,
+                  },
+                },
+              },
+              {
+                configObjectId: "config_mcp_broken",
+                configObject: {
+                  id: "config_mcp_broken",
+                  objectType: "mcp",
+                  title: "Broken MCP",
+                  description: null,
+                  currentRelativePath: null,
+                  status: "active",
+                  updatedAt: "2026-06-02T00:00:00.000Z",
+                  latestVersion: {
+                    id: "version_mcp_broken",
+                    rawSourceText: JSON.stringify({
+                      mcpServers: { broken: { type: "sse", serverUrl: "https://x.example/mcp" } },
+                    }),
+                    normalizedPayloadJson: {
+                      mcpServers: { broken: { type: "sse", serverUrl: "https://x.example/mcp" } },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        }),
+      });
+      expect(response.status).toBe(200);
+      const parsed: unknown = await response.json();
+      const body = requireRecord(parsed, "cloud plugin install response");
+      const item = requireRecord(body.item, "cloud plugin install item");
+      expect(item.pluginId).toBe("plugin_broken_mcp");
+      expect(body.warnings).toEqual([
+        'MCP component "Broken MCP" could not be installed: no server config with a "url" or "command" was found.',
+      ]);
+
+      const skillPath = join(workspaceRoot, ".opencode", "skills", "broken-plugin", "helpful-skill", "SKILL.md");
+      expect(await readFile(skillPath, "utf8")).toContain("Installed skill body.");
+      expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.broken).toBeUndefined();
+      expect(mock.requests.some((entry) => entry.method === "POST" && entry.pathname === "/mcp")).toBe(false);
     } finally {
       if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
       else process.env.OPENWORK_RUNTIME_DB = previousDb;

@@ -119,7 +119,7 @@ copyFileSync(constantsSrc, join(meta, "constants.json"))
 writeJson(join(meta, "package.json"), {
   name: "openwork-orchestrator",
   version,
-  description: "OpenWork host orchestrator for opencode + OpenWork server + opencode-router",
+  description: "OpenWork host orchestrator for opencode + OpenWork server",
   license: "MIT",
   bin: {
     openwork: "./bin/openwork",

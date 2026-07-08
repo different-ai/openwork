@@ -1,10 +1,56 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
 import { createWorkspaceStore } from "./workspace-store.mjs";
+
+function restoreEnv(name, value) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
+async function writeBootstrapConfig(targetPath, config) {
+  await mkdir(path.dirname(targetPath), { recursive: true });
+  await writeFile(targetPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+async function withIsolatedBootstrapStore(callback) {
+  const root = await mkdtemp(path.join(tmpdir(), "openwork-bootstrap-store-"));
+  const home = path.join(root, "home");
+  const xdg = path.join(root, "xdg");
+  const previousHome = process.env.HOME;
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  const previousOverride = process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
+  const previousDevMode = process.env.OPENWORK_DEV_MODE;
+
+  process.env.HOME = home;
+  process.env.XDG_CONFIG_HOME = xdg;
+  delete process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
+  delete process.env.OPENWORK_DEV_MODE;
+
+  try {
+    const module = await import(`./workspace-store.mjs?bootstrap-test=${Date.now()}-${Math.random()}`);
+    const store = module.createWorkspaceStore({
+      app: { getPath: (name) => name === "userData" ? path.join(root, "userData") : root },
+      defaultDenBaseUrl: "https://default.example.com",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+    });
+    return await callback({
+      store,
+      canonicalPath: path.join(xdg, "openwork", "desktop-bootstrap.json"),
+      legacyPath: path.join(home, ".config", "openwork", "desktop-bootstrap.json"),
+      userDataPath: path.join(root, "userData"),
+    });
+  } finally {
+    restoreEnv("HOME", previousHome);
+    restoreEnv("XDG_CONFIG_HOME", previousXdg);
+    restoreEnv("OPENWORK_DESKTOP_BOOTSTRAP_PATH", previousOverride);
+    restoreEnv("OPENWORK_DEV_MODE", previousDevMode);
+  }
+}
 
 test("recovers empty desktop workspace state from token store paths", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
@@ -156,4 +202,110 @@ test("normalizes recovered remote OpenWork entries before persisting", async () 
     if (previous === undefined) delete process.env.OPENWORK_SERVER_CONFIG;
     else process.env.OPENWORK_SERVER_CONFIG = previous;
   }
+});
+
+test("desktop bootstrap prefers a newer canonical writtenAt over stale legacy", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath }) => {
+    await writeBootstrapConfig(canonicalPath, {
+      baseUrl: "https://canonical.example.com",
+      requireSignin: false,
+      writtenAt: "2026-01-02T00:00:00.000Z",
+    });
+    await writeBootstrapConfig(legacyPath, {
+      baseUrl: "https://legacy.example.com",
+      requireSignin: true,
+      writtenAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.baseUrl, "https://canonical.example.com");
+
+    const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
+    assert.equal(persisted.baseUrl, "https://canonical.example.com");
+  });
+});
+
+test("desktop bootstrap migrates a newer legacy writtenAt to canonical", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath }) => {
+    await writeBootstrapConfig(canonicalPath, {
+      baseUrl: "https://canonical.example.com",
+      requireSignin: false,
+      writtenAt: "2026-01-01T00:00:00.000Z",
+    });
+    await writeBootstrapConfig(legacyPath, {
+      baseUrl: "https://legacy.example.com",
+      requireSignin: true,
+      writtenAt: "2026-01-02T00:00:00.000Z",
+    });
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.baseUrl, "https://legacy.example.com");
+    assert.equal(config.requireSignin, true);
+
+    const migrated = JSON.parse(await readFile(canonicalPath, "utf8"));
+    assert.equal(migrated.baseUrl, "https://legacy.example.com");
+  });
+});
+
+test("desktop bootstrap falls back to mtime when writtenAt is missing", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath }) => {
+    await writeBootstrapConfig(canonicalPath, {
+      baseUrl: "https://canonical.example.com",
+      requireSignin: false,
+    });
+    await writeBootstrapConfig(legacyPath, {
+      baseUrl: "https://legacy.example.com",
+      requireSignin: true,
+    });
+    const older = new Date("2026-01-01T00:00:00.000Z");
+    const newer = new Date("2026-01-02T00:00:00.000Z");
+    await utimes(canonicalPath, older, older);
+    await utimes(legacyPath, newer, newer);
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.baseUrl, "https://legacy.example.com");
+  });
+});
+
+test("desktop bootstrap writes include a fresh writtenAt stamp", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath }) => {
+    const config = await store.setDesktopBootstrapConfig({
+      baseUrl: "https://canonical.example.com",
+      requireSignin: true,
+    });
+    assert.equal(Number.isFinite(Date.parse(config.writtenAt)), true);
+
+    const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
+    assert.equal(persisted.baseUrl, "https://canonical.example.com");
+    assert.equal(Number.isFinite(Date.parse(persisted.writtenAt)), true);
+  });
+});
+
+test("clearDesktopBootstrapConfig removes bootstrap files without deleting workspace state", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath, userDataPath }) => {
+    const workspaceStatePath = path.join(userDataPath, "openwork-workspaces.json");
+    await writeBootstrapConfig(canonicalPath, {
+      baseUrl: "https://canonical.example.com",
+      requireSignin: false,
+      writtenAt: "2026-01-02T00:00:00.000Z",
+    });
+    await writeBootstrapConfig(legacyPath, {
+      baseUrl: "https://legacy.example.com",
+      requireSignin: true,
+      writtenAt: "2026-01-01T00:00:00.000Z",
+    });
+    await mkdir(userDataPath, { recursive: true });
+    await writeFile(workspaceStatePath, JSON.stringify({ selectedId: "ws_keep", workspaces: [] }), "utf8");
+
+    await store.clearDesktopBootstrapConfig();
+
+    await assert.rejects(readFile(canonicalPath, "utf8"));
+    await assert.rejects(readFile(legacyPath, "utf8"));
+    const workspaceState = JSON.parse(await readFile(workspaceStatePath, "utf8"));
+    assert.equal(workspaceState.selectedId, "ws_keep");
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.baseUrl, "https://default.example.com");
+    assert.equal(config.requireSignin, false);
+  });
 });

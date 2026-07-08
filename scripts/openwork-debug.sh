@@ -29,7 +29,7 @@
 #   3. Tauri webview       (target/debug/OpenWork-Dev)  <-- never /Applications/
 #   4. Electron main+helpers (node_modules/electron/...Electron.app)
 #   5. Vite                (node node_modules/.../vite)
-#   6. orchestrator + openwork-server + opencode + opencode-router
+#   6. orchestrator + openwork-server + opencode
 #      (both target/debug/* and src-tauri/sidecars/* trees)
 #
 # Cache/ephemeral state wiped by `reset`:
@@ -196,7 +196,7 @@ NODE
 
 snapshot() {
   echo "=== dev stack processes ==="
-  ps -Ao pid,ppid,command | awk '/target\/debug\/OpenWork-Dev|node_modules\/electron\/dist\/Electron\.app\/Contents\/MacOS\/Electron|apps\/desktop\/scripts\/electron-dev\.mjs|target\/debug\/openwork-server|target\/debug\/openwork-orchestrator|target\/debug\/opencode( |\/)|target\/debug\/opencode-router|apps\/desktop\/src-tauri\/sidecars\/openwork-server|apps\/desktop\/src-tauri\/sidecars\/openwork-orchestrator|apps\/desktop\/src-tauri\/sidecars\/opencode( |\/)|apps\/desktop\/src-tauri\/sidecars\/opencode-router|vite|pnpm .*dev/ && !/awk/ && !/grep/' | sed -E 's#/Users/[^ ]*/#…/#g' | head -20
+  ps -Ao pid,ppid,command | awk '/target\/debug\/OpenWork-Dev|node_modules\/electron\/dist\/Electron\.app\/Contents\/MacOS\/Electron|apps\/desktop\/scripts\/electron-dev\.mjs|target\/debug\/openwork-server|target\/debug\/openwork-orchestrator|target\/debug\/opencode( |\/)|apps\/desktop\/src-tauri\/sidecars\/openwork-server|apps\/desktop\/src-tauri\/sidecars\/openwork-orchestrator|apps\/desktop\/src-tauri\/sidecars\/opencode( |\/)|vite|pnpm .*dev/ && !/awk/ && !/grep/' | sed -E 's#/Users/[^ ]*/#…/#g' | head -20
 
   echo
   echo "=== openwork-server ==="
@@ -229,24 +229,8 @@ snapshot() {
   fi
 
   echo
-  echo "=== opencode-router ==="
-  local r_port
-  r_port=$(ps -Ao command \
-    | grep -E "(target/debug|apps/desktop/src-tauri/sidecars)/opencode-router" \
-    | grep -v grep \
-    | grep -oE '\-\-opencode-url http://127.0.0.1:[0-9]+' \
-    | head -1 \
-    | awk '{print $2}' \
-    || true)
-  if [[ -z "$r_port" ]]; then
-    echo "  (no opencode-router info)"
-  else
-    echo "  attached to $r_port"
-  fi
-
-  echo
   echo "=== orphans (parent == 1) ==="
-  ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|openwork-orchestrator|opencode( |\/)|opencode-router/' | head
+  ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|openwork-orchestrator|opencode( |\/)/' | head
 
   echo
   echo "=== dev log sink ==="
@@ -274,7 +258,7 @@ tail_logs() {
 
 kill_orphans() {
   local pids
-  pids=$(ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|openwork-orchestrator|opencode( |\/)|opencode-router/ {print $1}')
+  pids=$(ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|openwork-orchestrator|opencode( |\/)/ {print $1}')
   if [[ -z "$pids" ]]; then
     log "no orphans"
     return 0
@@ -465,7 +449,7 @@ stop() {
   kill_by_pattern "node_modules/\.bin/vite"
   kill_by_pattern "node_modules/vite/bin/vite\.js"
 
-  # 5. openwork-server / orchestrator / opencode / opencode-router for the
+  # 5. openwork-server / orchestrator / opencode for the
   #    current dev build. These are the longest-lived children and the ones
   #    most likely to orphan after an unclean shutdown.
   #    Tauri dev runs them from target/debug/, Electron dev runs them from
@@ -473,11 +457,9 @@ stop() {
   kill_by_pattern "target/debug/openwork-server"
   kill_by_pattern "target/debug/openwork-orchestrator"
   kill_by_pattern "target/debug/opencode"
-  kill_by_pattern "target/debug/opencode-router"
   kill_by_pattern "apps/desktop/src-tauri/sidecars/openwork-server"
   kill_by_pattern "apps/desktop/src-tauri/sidecars/openwork-orchestrator"
   kill_by_pattern "apps/desktop/src-tauri/sidecars/opencode( |/)"
-  kill_by_pattern "apps/desktop/src-tauri/sidecars/opencode-router"
 
   # Safety net for stragglers we don't own directly.
   kill_orphans

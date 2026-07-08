@@ -3,7 +3,7 @@ title: "Connect OpenWork Cloud MCP"
 description: "Use the hosted OpenWork Cloud MCP server from OpenWork or another OAuth-capable MCP client"
 ---
 
-OpenWork Cloud exposes a hosted MCP server at `https://api.openworklabs.com/mcp`. Add it to an MCP client when you want agents to use your OpenWork Cloud organization, skills, plugins, marketplaces, workers, and other Cloud API resources through MCP tools.
+OpenWork Cloud exposes a hosted MCP server through the Den web URL at `https://app.openworklabs.com/api/den/mcp`. Add it to an MCP client when you want agents to use your OpenWork Cloud organization, skills, plugins, marketplaces, workers, and other Cloud API resources through MCP tools.
 
 The server uses OAuth. Your MCP client opens a browser, you sign in to OpenWork Cloud, choose the organization to authorize, and the client stores the returned token.
 
@@ -12,9 +12,15 @@ The server uses OAuth. Your MCP client opens a browser, you sign in to OpenWork 
 If you use the OpenWork desktop app, there is nothing to configure. When you
 sign in to OpenWork Cloud, the app connects the `openwork-cloud` MCP for you
 with a token scoped to your active organization — no browser OAuth round-trip.
-You can see it under **Settings → Extensions** as **OpenWork Cloud Control**
-with a Ready status. Switching organizations refreshes the token
-automatically.
+It is enabled while you are signed in and hidden from the default **Settings →
+Extensions** list; use **Show hidden** on that page to reveal **OpenWork Cloud
+Control** when you want to inspect, disable, or remove it. Switching
+organizations refreshes the token automatically.
+
+The desktop app derives the MCP URL from the single Cloud `baseUrl`. For the
+hosted service, that means `https://app.openworklabs.com/api/den/mcp`; for a
+self-hosted Den web deployment, use `<baseUrl>/api/den/mcp`. There is no
+separate desktop API URL to configure.
 
 ## What you can ask the agent
 
@@ -52,7 +58,7 @@ Add this server to your MCP config:
     "openwork-cloud": {
       "type": "remote",
       "enabled": true,
-      "url": "https://api.openworklabs.com/mcp",
+      "url": "https://app.openworklabs.com/api/den/mcp",
       "oauth": {}
     }
   }
@@ -66,7 +72,7 @@ If your client expects the server map directly, use just the server entry:
   "openwork-cloud": {
     "type": "remote",
     "enabled": true,
-    "url": "https://api.openworklabs.com/mcp",
+    "url": "https://app.openworklabs.com/api/den/mcp",
     "oauth": {}
   }
 }

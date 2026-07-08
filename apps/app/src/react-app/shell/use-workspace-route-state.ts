@@ -670,8 +670,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // Redirect to /welcome when no workspaces exist and the user hasn't
   // completed onboarding. This fires after the initial route refresh so
   // `loading` is false and we know for sure there are zero workspaces.
+  // Desktop skips it: first-run there lands on the chat with a default
+  // workspace and the welcome content as a modal (see session-route).
   useEffect(() => {
     if (loading) return;
+    if (isDesktopRuntime()) return;
     if (workspaces.length > 0) return;
     if (local.prefs.hasCompletedOnboarding) return;
     navigate("/welcome", { replace: true });

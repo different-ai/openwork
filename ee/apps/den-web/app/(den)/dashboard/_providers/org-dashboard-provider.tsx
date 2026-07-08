@@ -21,6 +21,7 @@ import {
   shouldOfferOrgSelection,
   shouldRequireOrgSelection,
 } from "../../_lib/den-org";
+import { ORG_SCOPE_HEADER, OrganizationNotFoundError, setRequestOrgScope } from "../../_lib/org-scope";
 
 type OrgDashboardContextValue = {
   orgSlug: string | null;
@@ -126,9 +127,17 @@ export function OrgDashboardProvider({
     }
   }
 
-  async function loadOrgContext() {
-    const { response, payload } = await requestJson("/v1/org", { method: "GET" }, 12000);
+  async function loadOrgContext(organizationId: string) {
+    const { response, payload } = await requestJson(
+      "/v1/org",
+      { method: "GET", headers: { [ORG_SCOPE_HEADER]: organizationId } },
+      12000,
+    );
     if (!response.ok) {
+      if (response.status === 404) {
+        throw new OrganizationNotFoundError(getErrorMessage(payload, `Failed to load organization (${response.status}).`));
+      }
+
       throw new Error(getErrorMessage(payload, `Failed to load organization (${response.status}).`));
     }
 
@@ -142,6 +151,7 @@ export function OrgDashboardProvider({
 
   async function refreshOrgData() {
     if (!user) {
+      setRequestOrgScope(null);
       setOrgDirectory([]);
       setOrgContext(null);
       setOrgSelectionRequired(false);
@@ -155,14 +165,21 @@ export function OrgDashboardProvider({
 
     try {
       let directoryPayload = await loadOrgDirectory();
-      const targetOrg = directoryPayload.orgs.find((entry) => entry.isActive) ?? directoryPayload.orgs[0] ?? null;
+      const targetOrg =
+        directoryPayload.orgs.find((entry) => entry.id === orgContext?.organization.id) ??
+        directoryPayload.orgs.find((entry) => entry.isActive) ??
+        directoryPayload.orgs[0] ??
+        null;
 
       if (!targetOrg) {
+        setRequestOrgScope(null);
         setOrgDirectory([]);
         setOrgContext(null);
         router.replace("/organization");
         return;
       }
+
+      setRequestOrgScope(targetOrg.id);
 
       const shouldShowOrgSelection =
         !isSingleOrgMode &&
@@ -172,6 +189,7 @@ export function OrgDashboardProvider({
         );
 
       if (shouldShowOrgSelection) {
+        setRequestOrgScope(null);
         setOrgDirectory(directoryPayload.orgs);
         setOrgContext(null);
         setOrgSelectionRequired(true);
@@ -183,16 +201,44 @@ export function OrgDashboardProvider({
         directoryPayload = await loadOrgDirectory();
       }
 
-      const context = await loadOrgContext();
+      const context = await loadOrgContext(targetOrg.id);
 
       setOrgDirectory(directoryPayload.orgs.map((entry) => ({ ...entry, isActive: entry.id === context.organization.id })));
       setOrgContext(context);
       await refreshWorkers({ keepSelection: false, quiet: workersLoadedOnce });
     } catch (error) {
+      if (error instanceof OrganizationNotFoundError) {
+        try {
+          await recoverFromOrganizationNotFound();
+        } catch (recoveryError) {
+          setOrgError(recoveryError instanceof Error ? recoveryError.message : "Failed to load organization details.");
+        }
+        return;
+      }
+
       setOrgError(error instanceof Error ? error.message : "Failed to load organization details.");
     } finally {
       setOrgBusy(false);
     }
+  }
+
+  async function recoverFromOrganizationNotFound() {
+    setRequestOrgScope(null);
+    const directoryPayload = await loadOrgDirectory();
+
+    if (directoryPayload.orgs.length === 0) {
+      setOrgDirectory([]);
+      setOrgContext(null);
+      setOrgSelectionRequired(false);
+      setOrgError(null);
+      router.replace("/organization");
+      return;
+    }
+
+    setOrgDirectory(directoryPayload.orgs.map((entry) => ({ ...entry, isActive: false })));
+    setOrgContext(null);
+    setOrgSelectionRequired(true);
+    setOrgError(null);
   }
 
   async function executeReauthableAction(label: string, action: () => Promise<void>) {
@@ -309,8 +355,9 @@ export function OrgDashboardProvider({
       setOrgError(null);
 
       try {
+        setRequestOrgScope(targetOrg.id);
         await setActiveOrganization({ organizationId: targetOrg.id });
-        const context = await loadOrgContext();
+        const context = await loadOrgContext(targetOrg.id);
         setOrgDirectory((current) => current.map((entry) => ({ ...entry, isActive: entry.id === context.organization.id })));
         setOrgContext(context);
         setOrgSelectionRequired(false);
@@ -319,6 +366,16 @@ export function OrgDashboardProvider({
         router.replace(getOrgDashboardRoute(context.organization.slug));
         router.refresh();
       } catch (error) {
+        if (error instanceof OrganizationNotFoundError) {
+          try {
+            await recoverFromOrganizationNotFound();
+          } catch (recoveryError) {
+            setOrgError(recoveryError instanceof Error ? recoveryError.message : "Failed to switch organization.");
+          }
+          return;
+        }
+
+        setRequestOrgScope(orgContext?.organization.id ?? null);
         setOrgError(error instanceof Error ? error.message : "Failed to switch organization.");
       } finally {
         setMutationBusy(null);
@@ -588,11 +645,18 @@ export function OrgDashboardProvider({
   }
 
   useEffect(() => {
+    return () => {
+      setRequestOrgScope(null);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!sessionHydrated) {
       return;
     }
 
     if (!user) {
+      setRequestOrgScope(null);
       void signOut();
       router.replace("/");
       return;

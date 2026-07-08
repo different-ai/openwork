@@ -51,6 +51,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const revealHidden = async (ctx) => {
+  const showing = await ctx.eval("document.body.innerText.includes('Showing hidden')");
+  if (!showing) await ctx.clickText("Show hidden", { timeoutMs: 30_000 });
+};
+
 async function denApiFetch(path, options = {}) {
   const response = await fetch(`${DEN_API_URL}${path}`, {
     ...options,
@@ -455,6 +460,7 @@ export default {
           voiceover: vo[4],
           action: async () => {
             await openMcpSettings(ctx);
+            await revealHidden(ctx);
             await ctx.expectText("OpenWork Cloud Control", { timeoutMs: 30_000 });
             const alreadyConnected = await ctx.eval(`(() => {
               const card = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('OpenWork Cloud Control'));

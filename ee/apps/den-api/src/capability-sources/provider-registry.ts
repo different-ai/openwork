@@ -19,6 +19,7 @@ export type NativeOAuthProviderConfig = {
   /** Display-only endpoint shown on connection cards. */
   websiteUrl: string
   defaultScopes: string[]
+  defaultFeatures?: string[]
   optionalFeatures?: Record<string, string[]>
   /** Google (and most modern providers) support PKCE even for confidential clients; harmless to always send. */
   usesPkce: boolean
@@ -37,14 +38,16 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
       "openid",
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/userinfo.profile",
-      "https://www.googleapis.com/auth/calendar.readonly",
-      "https://www.googleapis.com/auth/gmail.compose",
-      "https://www.googleapis.com/auth/drive.file",
     ],
+    defaultFeatures: ["calendarRead", "gmailDraft", "driveFile"],
     optionalFeatures: {
-      gmailRead: ["https://www.googleapis.com/auth/gmail.readonly"],
-      driveFull: ["https://www.googleapis.com/auth/drive"],
+      calendarRead: ["https://www.googleapis.com/auth/calendar.readonly"],
       calendarWrite: ["https://www.googleapis.com/auth/calendar.events"],
+      gmailDraft: ["https://www.googleapis.com/auth/gmail.compose"],
+      gmailRead: ["https://www.googleapis.com/auth/gmail.readonly"],
+      driveFile: ["https://www.googleapis.com/auth/drive.file"],
+      driveRead: ["https://www.googleapis.com/auth/drive.readonly"],
+      driveFull: ["https://www.googleapis.com/auth/drive"],
       chat: [
         "https://www.googleapis.com/auth/chat.spaces.readonly",
         "https://www.googleapis.com/auth/chat.messages.readonly",
@@ -83,9 +86,16 @@ export function resolveProviderScopes(provider: NativeOAuthProviderConfig, featu
   return scopes
 }
 
+function providerDefaultFeatures(provider: NativeOAuthProviderConfig): string[] {
+  const optionalFeatures = provider.optionalFeatures
+  if (!optionalFeatures) return []
+  return (provider.defaultFeatures ?? []).filter((feature) => Object.hasOwn(optionalFeatures, feature))
+}
+
 export function clientSelectedFeatures(provider: NativeOAuthProviderConfig, extra: Record<string, unknown> | null): string[] {
   const optionalFeatures = provider.optionalFeatures
-  if (!optionalFeatures || !extra || !Array.isArray(extra.features)) return []
+  if (!optionalFeatures) return []
+  if (!extra || !Object.hasOwn(extra, "features") || !Array.isArray(extra.features)) return providerDefaultFeatures(provider)
 
   const features: string[] = []
   for (const feature of extra.features) {

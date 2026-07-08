@@ -11,7 +11,6 @@ export type AppFeedbackPrefill = {
   openworkServerVersion: string;
   opencodeVersion: string;
   orchestratorVersion: string;
-  opencodeRouterVersion: string;
   osName: string;
   osVersion: string;
   platform: string;
@@ -40,7 +39,6 @@ export function AppFeedbackForm(props: Props) {
       { label: "OpenWork server", value: props.prefill.openworkServerVersion },
       { label: "OpenCode", value: props.prefill.opencodeVersion },
       { label: "Orchestrator", value: props.prefill.orchestratorVersion },
-      { label: "Router", value: props.prefill.opencodeRouterVersion },
       {
         label: "OS",
         value: [props.prefill.osName, props.prefill.osVersion].filter(Boolean).join(" "),
