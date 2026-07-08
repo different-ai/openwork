@@ -1,5 +1,5 @@
 param(
-    [string]$WebUrl = "https://openwork-poc.blueyonder.com",
+    [string]$WebUrl = "",
     [string]$ApiUrl = "",
     [string]$ExpectedIssuerMatch = "DigiCert"
 )
@@ -68,8 +68,6 @@ function Test-InternalIssuer {
         "proxy",
         "zscaler",
         "netskope",
-        "blue yonder",
-        "blueyonder",
         "microsoft",
         "active directory",
         "domain ca",
@@ -577,7 +575,12 @@ $emdash = [char]0x2014
 Write-Report ("OpenWork Network Doctor v1 {0} {1}" -f $emdash, $timestamp)
 Write-Report "This entire output is safe to copy/paste back to OpenWork support."
 Write-Report ("Expected issuer match: {0}" -f $ExpectedIssuerMatch)
-Write-Report ("WebUrl: {0}" -f $WebUrl)
+if ([string]::IsNullOrWhiteSpace($WebUrl)) {
+    Write-Report "WebUrl: (empty; skipped)"
+}
+else {
+    Write-Report ("WebUrl: {0}" -f $WebUrl)
+}
 if ([string]::IsNullOrWhiteSpace($ApiUrl)) {
     Write-Report "ApiUrl: (empty; skipped)"
 }

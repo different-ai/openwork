@@ -6,8 +6,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Marker = "OpenWork Blue Yonder Repro"
-$ReproDir = Join-Path (Get-Location).Path "bly-repro"
+$Marker = "OpenWork TLS Repro"
+$ReproDir = Join-Path (Get-Location).Path "tls-repro"
 $StatePath = Join-Path $ReproDir "state.txt"
 $HostsMarker = "# OpenWork TLS repro"
 $SslAppId = "{1f6c8f8b-6b57-4a0b-8a1c-8d7e3d8f0d31}"
@@ -307,9 +307,9 @@ Invoke-Cleanup -Quiet
 New-Item -ItemType Directory -Path $ReproDir -Force | Out-Null
 
 $notAfter = (Get-Date).AddYears(1)
-$rootSubject = "CN=OpenWork Blue Yonder Repro Root CA, O=$Marker"
-$healthyIntermediateSubject = "CN=OpenWork Blue Yonder Repro Healthy Intermediate CA, O=$Marker"
-$brokenIntermediateSubject = "CN=OpenWork Blue Yonder Repro Broken Intermediate CA, O=$Marker"
+$rootSubject = "CN=OpenWork TLS Repro Root CA, O=$Marker"
+$healthyIntermediateSubject = "CN=OpenWork TLS Repro Healthy Intermediate CA, O=$Marker"
+$brokenIntermediateSubject = "CN=OpenWork TLS Repro Broken Intermediate CA, O=$Marker"
 $healthyLeafSubject = "CN=$Hostname, O=$Marker"
 $brokenLeafSubject = "CN=$Hostname, O=$Marker"
 $leafExtensions = @(
@@ -370,7 +370,7 @@ Write-Step ("   curl.exe -v {0}" -f $healthyUrl)
 Write-Step "2. curl broken (expect certificate/chain failure on a fresh VM; if it succeeds, Windows found a cached intermediate):"
 Write-Step ("   curl.exe -v {0}" -f $brokenUrl)
 Write-Step "3. Doctor against both local endpoints:"
-Write-Step ("   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\support\openwork-doctor.ps1 -WebUrl {0} -ApiUrl {1} -ExpectedIssuerMatch `"OpenWork Blue Yonder Repro`"" -f $healthyUrl, $brokenUrl)
+Write-Step ("   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\support\openwork-doctor.ps1 -WebUrl {0} -ApiUrl {1} -ExpectedIssuerMatch `"OpenWork TLS Repro`"" -f $healthyUrl, $brokenUrl)
 
 $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
 if ($nodeCommand -ne $null) {

@@ -1,5 +1,5 @@
 /**
- * Blue Yonder Azure Foundry, end to end against the REAL Azure resource:
+ * Custom Azure Foundry provider, end to end against the REAL Azure resource:
  * an admin sets up a gpt-5 deployment with nothing but a name, a lazily
  * pasted base URL, and a key — no JSON, no custom fields.
  *
@@ -18,13 +18,14 @@
  * - OPENWORK_EVAL_DEN_WEB_URL          Den web origin
  * - OPENWORK_EVAL_DEN_EMAIL            Seeded admin email
  * - OPENWORK_EVAL_DEN_PASSWORD         Seeded admin password
- * - OPENWORK_EVAL_BLUEYONDER_API_KEY   Azure AI Foundry key (throwaway)
+ * - OPENWORK_EVAL_AZURE_FOUNDRY_RESOURCE  Azure AI Foundry resource name
+ * - OPENWORK_EVAL_AZURE_FOUNDRY_API_KEY   Azure AI Foundry key (throwaway)
  */
 
-const RESOURCE_ORIGIN = "https://blueyonder-openworklabs.services.ai.azure.com";
+const RESOURCE_ORIGIN = `https://${process.env.OPENWORK_EVAL_AZURE_FOUNDRY_RESOURCE ?? ""}.services.ai.azure.com`;
 const HEALED_API = `${RESOURCE_ORIGIN}/openai/v1`;
-const PROVIDER_NAME = "Blue Yonder Azure Foundry";
-const PROVIDER_ID = "blueyonder-foundry";
+const PROVIDER_NAME = "Acme Azure Foundry";
+const PROVIDER_ID = "acme-foundry";
 const DEPLOYMENT = "gpt-5-mini";
 const CATALOG_NOISE = "gpt-5-mini-2025-08-07";
 
@@ -50,14 +51,15 @@ async function denApiDelete(ctx, name) {
 }
 
 export default {
-  id: "llm-provider-blueyonder-foundry",
-  title: "Blue Yonder Azure Foundry sets up gpt-5-mini with only name + URL + key",
+  id: "llm-provider-azure-foundry",
+  title: "Azure Foundry sets up gpt-5-mini with only name + URL + key",
   spec: "evals/cloud-provider-sync-flows.md",
   requiredEnv: [
     "OPENWORK_EVAL_DEN_WEB_URL",
     "OPENWORK_EVAL_DEN_EMAIL",
     "OPENWORK_EVAL_DEN_PASSWORD",
-    "OPENWORK_EVAL_BLUEYONDER_API_KEY",
+    "OPENWORK_EVAL_AZURE_FOUNDRY_RESOURCE",
+    "OPENWORK_EVAL_AZURE_FOUNDRY_API_KEY",
   ],
   steps: [
     {
@@ -122,7 +124,7 @@ export default {
               ));
               await ctx.eval(fillInputExpr(
                 `document.querySelector('input[type="password"]')`,
-                ctx.env.OPENWORK_EVAL_BLUEYONDER_API_KEY,
+                ctx.env.OPENWORK_EVAL_AZURE_FOUNDRY_API_KEY,
               ));
             },
             assert: async () => {
@@ -206,7 +208,7 @@ export default {
               ctx.assert(config.npm === "@ai-sdk/openai", `Wrong npm package persisted: ${config?.npm}`);
               ctx.assert(config.api === HEALED_API, `Wrong api persisted: ${config?.api}`);
               ctx.assert(
-                JSON.stringify(config.env) === JSON.stringify(["BLUEYONDER_FOUNDRY_API_KEY"]),
+                JSON.stringify(config.env) === JSON.stringify(["ACME_FOUNDRY_API_KEY"]),
                 `Wrong env persisted: ${JSON.stringify(config?.env)}`,
               );
               ctx.assert(
