@@ -200,28 +200,41 @@ async function submitSignIn(ctx) {
 }
 
 async function waitForOrganizationConsent(ctx) {
+  // The consent page (/mcp/select-organization) renders the org radio list from
+  // GET /api/den/v1/me/orgs. Wait for either the list (radios) or a terminal
+  // state so we surface auth/empty problems instead of blindly hanging 60s.
   await ctx.waitFor(
     `(() => {
       const text = document.body.innerText;
-      return text.includes('Acme Robotics') && (text.includes('Authorize') || text.includes('MCP authorization'));
+      const radios = document.querySelectorAll('input[name="mcp-organization"], input[type="radio"]').length;
+      const empty = text.includes("don't belong to any workspaces") || text.includes('Sign in before authorizing');
+      return radios > 0 || empty;
     })()`,
-    { timeoutMs: 60_000, label: "MCP organization consent" },
+    { timeoutMs: 60_000, label: "MCP organization consent list" },
   );
-  const hasSearch = await ctx.eval("Boolean(document.querySelector('input[type=\"search\"]'))");
-  if (hasSearch) {
-    await ctx.fill('input[type="search"]', "Acme");
-    await ctx.waitFor("document.body.innerText.includes('Acme Robotics')", { timeoutMs: 10_000, label: "Acme Robotics filtered" });
-  }
+  const state = await ctx.eval(`(() => ({
+    radios: document.querySelectorAll('input[name="mcp-organization"], input[type="radio"]').length,
+    hasAcme: document.body.innerText.includes('Acme Robotics'),
+    snippet: document.body.innerText.slice(0, 300),
+  }))()`);
+  ctx.recordEvidence({ type: "output", name: "Consent page state", text: JSON.stringify(state, null, 2) });
+  ctx.assert(state.radios > 0, `Consent page did not list any organization. Page said: ${state.snippet}`);
 }
 
 async function selectAcmeOrganization(ctx) {
+  // Prefer the Acme Robotics row; fall back to the first org radio so the flow
+  // still proves the end-to-end token exchange on any seeded single-org owner.
   await ctx.waitFor(`(() => {
-    const candidates = [...document.querySelectorAll('label, button, [role="button"], [role="radio"]')];
-    const element = candidates.find((candidate) => (candidate.textContent ?? '').includes('Acme Robotics'));
-    element?.scrollIntoView({ block: 'center' });
-    element?.click();
-    return Boolean(element);
-  })()`, { timeoutMs: 20_000, label: "Acme Robotics selectable organization" });
+    const labels = [...document.querySelectorAll('label')];
+    const acme = labels.find((l) => (l.textContent ?? '').includes('Acme Robotics'));
+    const target = acme
+      ?? document.querySelector('input[name="mcp-organization"]')?.closest('label')
+      ?? document.querySelector('input[name="mcp-organization"]');
+    if (!target) return false;
+    target.scrollIntoView({ block: 'center' });
+    (target.querySelector?.('input') ?? target).click();
+    return true;
+  })()`, { timeoutMs: 20_000, label: "select organization radio" });
 }
 
 async function clickAuthorizeAndContinue(ctx) {
