@@ -3,6 +3,7 @@ import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
+  ConnectedAccountTable,
   ConnectorAccountTable,
   ConnectorInstanceAccessGrantTable,
   ConnectorInstanceTable,
@@ -11,12 +12,14 @@ import {
   ConnectorSourceTombstoneTable,
   ConnectorSyncEventTable,
   ConnectorTargetTable,
+  ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
   MarketplaceAccessGrantTable,
   MarketplacePluginTable,
   MarketplaceTable,
   MemberTable,
   OrganizationTable,
+  OrgOAuthClientTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginTable,
@@ -65,6 +68,7 @@ import {
   DEFAULT_OPENWORK_MARKETPLACE_NAME,
   type DefaultMarketplacePluginEntry,
 } from "./default-marketplaces.js"
+import { externalMcpConnectionIdsFromPayload, planManagedImportedConfigObjectCleanup } from "./managed-component-cleanup.js"
 import { db } from "../../../db.js"
 import { env } from "../../../env.js"
 import { roleIncludesOwner } from "../../../orgs.js"
@@ -116,6 +120,7 @@ type ConnectorSyncEventId = ConnectorSyncEventRow["id"]
 type MemberRow = typeof MemberTable.$inferSelect
 type OrganizationRow = typeof OrganizationTable.$inferSelect
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+type DbReader = Pick<typeof db, "select">
 
 type CursorPage<TItem extends { id: string }> = {
   items: TItem[]
@@ -562,12 +567,12 @@ function pageItems<TItem extends { id: string }>(items: TItem[], cursor: string 
   return { items: sliced, nextCursor }
 }
 
-async function getLatestVersions(configObjectIds: ConfigObjectId[]) {
+async function getLatestVersions(configObjectIds: ConfigObjectId[], reader: DbReader = db) {
   if (configObjectIds.length === 0) {
     return new Map<string, ConfigObjectVersionRow>()
   }
 
-  const rows = await db
+  const rows = await reader
     .select()
     .from(ConfigObjectVersionTable)
     .where(inArray(ConfigObjectVersionTable.configObjectId, configObjectIds))
@@ -1663,7 +1668,12 @@ export async function setConfigObjectLifecycle(input: { context: PluginArchActor
       ? { deletedAt: now, status: "deleted" as const, updatedAt: now }
       : { deletedAt: null, status: "active" as const, updatedAt: now }
 
-  await db.update(ConfigObjectTable).set(patch).where(eq(ConfigObjectTable.id, row.id))
+  await db.transaction(async (tx) => {
+    await tx.update(ConfigObjectTable).set(patch).where(eq(ConfigObjectTable.id, row.id))
+    if (input.action === "delete") {
+      await cleanupDeletedImportedConfigObject({ configObject: row, tx })
+    }
+  })
   return getConfigObjectDetail(input.context, row.id)
 }
 
@@ -1930,27 +1940,228 @@ export async function updatePlugin(input: { context: PluginArchActorContext; des
   return getPluginDetail(input.context, row.id)
 }
 
-function externalMcpConnectionIdsFromPayload(payload: unknown, options?: { ownedOnly?: boolean }): string[] {
-  const ids = new Set<string>()
-  const collect = (value: unknown) => {
-    if (!isRecord(value) || value.openworkManaged !== "den_external_mcp") return
-    if (options?.ownedOnly === true && value.externalMcpConnectionOwnedByPlugin !== true) return
-    if (typeof value.externalMcpConnectionId === "string" && value.externalMcpConnectionId.trim()) {
-      ids.add(value.externalMcpConnectionId.trim())
-    }
+async function activeImportedConfigObjectIds(input: {
+  excludingConfigObjectIds?: ConfigObjectId[]
+  objectType: ConfigObjectRow["objectType"]
+  organizationId: OrganizationId
+  tx: DbTransaction
+}) {
+  const rows = await input.tx
+    .select({ id: ConfigObjectTable.id })
+    .from(ConfigObjectTable)
+    .where(and(
+      eq(ConfigObjectTable.organizationId, input.organizationId),
+      eq(ConfigObjectTable.objectType, input.objectType),
+      eq(ConfigObjectTable.sourceMode, "import"),
+      eq(ConfigObjectTable.status, "active"),
+    ))
+  const excluded = new Set(input.excludingConfigObjectIds ?? [])
+  return rows.flatMap((row) => excluded.has(row.id) ? [] : [row.id])
+}
+
+async function activePluginOwnedImportedConfigObjectIds(input: {
+  objectType: ConfigObjectRow["objectType"]
+  organizationId: OrganizationId
+  pluginId: PluginId
+  tx: DbTransaction
+}) {
+  const pluginConfigObjectRows = await input.tx
+    .select({ configObjectId: ConfigObjectTable.id })
+    .from(PluginConfigObjectTable)
+    .innerJoin(ConfigObjectTable, eq(ConfigObjectTable.id, PluginConfigObjectTable.configObjectId))
+    .where(and(
+      eq(PluginConfigObjectTable.organizationId, input.organizationId),
+      eq(PluginConfigObjectTable.pluginId, input.pluginId),
+      isNull(PluginConfigObjectTable.removedAt),
+      eq(ConfigObjectTable.objectType, input.objectType),
+      eq(ConfigObjectTable.sourceMode, "import"),
+      eq(ConfigObjectTable.status, "active"),
+    ))
+  const pluginConfigObjectIds = uniqueIds(pluginConfigObjectRows.map((row) => row.configObjectId))
+  if (pluginConfigObjectIds.length === 0) {
+    return []
   }
 
-  collect(payload)
-  if (isRecord(payload)) {
-    const containers = [
-      isRecord(payload.mcpServers) ? payload.mcpServers : null,
-      isRecord(payload.mcp) ? payload.mcp : null,
-    ].filter((entry): entry is Record<string, unknown> => Boolean(entry))
-    for (const container of containers) {
-      for (const value of Object.values(container)) collect(value)
-    }
+  const activeMembershipRows = await input.tx
+    .select({ configObjectId: PluginConfigObjectTable.configObjectId, pluginId: PluginConfigObjectTable.pluginId })
+    .from(PluginConfigObjectTable)
+    .where(and(
+      eq(PluginConfigObjectTable.organizationId, input.organizationId),
+      inArray(PluginConfigObjectTable.configObjectId, pluginConfigObjectIds),
+      isNull(PluginConfigObjectTable.removedAt),
+    ))
+  const configObjectsUsedByOtherPlugins = new Set(activeMembershipRows
+    .filter((row) => row.pluginId !== input.pluginId)
+    .map((row) => row.configObjectId))
+
+  return pluginConfigObjectIds.filter((configObjectId) => !configObjectsUsedByOtherPlugins.has(configObjectId))
+}
+
+async function markImportedConfigObjectsDeleted(input: {
+  configObjectIds: ConfigObjectId[]
+  organizationId: OrganizationId
+  tx: DbTransaction
+}) {
+  if (input.configObjectIds.length === 0) return
+  const now = new Date()
+  await input.tx.update(ConfigObjectTable).set({
+    deletedAt: now,
+    status: "deleted",
+    updatedAt: now,
+  }).where(and(
+    eq(ConfigObjectTable.organizationId, input.organizationId),
+    inArray(ConfigObjectTable.id, input.configObjectIds),
+  ))
+}
+
+async function cleanupDeletedImportedSkills(input: {
+  configObjectIds: ConfigObjectId[]
+  organizationId: OrganizationId
+  tx: DbTransaction
+}) {
+  if (input.configObjectIds.length === 0) return
+  const latestVersions = await getLatestVersions(input.configObjectIds, input.tx)
+  const activeSkillConfigObjectIds = await activeImportedConfigObjectIds({
+    excludingConfigObjectIds: input.configObjectIds,
+    objectType: "skill",
+    organizationId: input.organizationId,
+    tx: input.tx,
+  })
+  const activeSkillVersions = await getLatestVersions(activeSkillConfigObjectIds, input.tx)
+  const cleanupPlan = planManagedImportedConfigObjectCleanup({
+    active: activeSkillConfigObjectIds.map((configObjectId) => ({
+      latestVersion: activeSkillVersions.get(configObjectId),
+      objectType: "skill",
+    })),
+    deleting: input.configObjectIds.map((configObjectId) => ({
+      latestVersion: latestVersions.get(configObjectId),
+      objectType: "skill",
+    })),
+  })
+  const removableSkillIds = cleanupPlan.skillIds
+  if (removableSkillIds.length === 0) return
+
+  const skillHubRows = await input.tx
+    .select({ skillHubId: SkillHubSkillTable.skillHubId })
+    .from(SkillHubSkillTable)
+    .where(inArray(SkillHubSkillTable.skillId, removableSkillIds))
+  const skillHubIds = uniqueIds(skillHubRows.map((row) => row.skillHubId))
+
+  await input.tx.delete(SkillHubSkillTable).where(inArray(SkillHubSkillTable.skillId, removableSkillIds))
+  await input.tx.delete(SkillTable).where(and(
+    eq(SkillTable.organizationId, input.organizationId),
+    inArray(SkillTable.id, removableSkillIds),
+  ))
+
+  if (skillHubIds.length === 0) return
+  const remainingHubSkillRows = await input.tx
+    .select({ skillHubId: SkillHubSkillTable.skillHubId })
+    .from(SkillHubSkillTable)
+    .where(inArray(SkillHubSkillTable.skillHubId, skillHubIds))
+  const skillHubsStillInUse = new Set(remainingHubSkillRows.map((row) => row.skillHubId))
+  const emptySkillHubIds = skillHubIds.filter((skillHubId) => !skillHubsStillInUse.has(skillHubId))
+  if (emptySkillHubIds.length === 0) return
+
+  await input.tx.delete(SkillHubMemberTable).where(inArray(SkillHubMemberTable.skillHubId, emptySkillHubIds))
+  await input.tx.delete(SkillHubTable).where(and(
+    eq(SkillHubTable.organizationId, input.organizationId),
+    inArray(SkillHubTable.id, emptySkillHubIds),
+  ))
+}
+
+async function cleanupDeletedImportedMcps(input: {
+  configObjectIds: ConfigObjectId[]
+  organizationId: OrganizationId
+  tx: DbTransaction
+}) {
+  if (input.configObjectIds.length === 0) return
+  const latestVersions = await getLatestVersions(input.configObjectIds, input.tx)
+  const activeMcpConfigObjectIds = await activeImportedConfigObjectIds({
+    excludingConfigObjectIds: input.configObjectIds,
+    objectType: "mcp",
+    organizationId: input.organizationId,
+    tx: input.tx,
+  })
+  const activeMcpVersions = await getLatestVersions(activeMcpConfigObjectIds, input.tx)
+  const cleanupPlan = planManagedImportedConfigObjectCleanup({
+    active: activeMcpConfigObjectIds.map((configObjectId) => ({
+      latestVersion: activeMcpVersions.get(configObjectId),
+      objectType: "mcp",
+    })),
+    deleting: input.configObjectIds.map((configObjectId) => ({
+      latestVersion: latestVersions.get(configObjectId),
+      objectType: "mcp",
+    })),
+  })
+  const removableConnectionIds = cleanupPlan.externalMcpConnectionIds
+  if (removableConnectionIds.length === 0) return
+
+  await input.tx.delete(ExternalMcpConnectionAccessGrantTable).where(inArray(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, removableConnectionIds))
+  await input.tx.delete(ConnectedAccountTable).where(and(
+    eq(ConnectedAccountTable.organizationId, input.organizationId),
+    inArray(ConnectedAccountTable.providerId, removableConnectionIds),
+  ))
+  await input.tx.delete(OrgOAuthClientTable).where(and(
+    eq(OrgOAuthClientTable.organizationId, input.organizationId),
+    inArray(OrgOAuthClientTable.providerId, removableConnectionIds),
+  ))
+  await input.tx.delete(ExternalMcpConnectionTable).where(and(
+    eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+    inArray(ExternalMcpConnectionTable.id, removableConnectionIds),
+  ))
+}
+
+async function cleanupDeletedImportedConfigObject(input: {
+  configObject: ConfigObjectRow
+  tx: DbTransaction
+}) {
+  if (input.configObject.sourceMode !== "import") return
+  if (input.configObject.objectType === "skill") {
+    await cleanupDeletedImportedSkills({
+      configObjectIds: [input.configObject.id],
+      organizationId: input.configObject.organizationId,
+      tx: input.tx,
+    })
   }
-  return [...ids]
+  if (input.configObject.objectType === "mcp") {
+    await cleanupDeletedImportedMcps({
+      configObjectIds: [input.configObject.id],
+      organizationId: input.configObject.organizationId,
+      tx: input.tx,
+    })
+  }
+}
+
+async function cleanupRemovedPluginSkills(input: {
+  context: PluginArchActorContext
+  pluginId: PluginId
+  tx: DbTransaction
+}) {
+  const organizationId = input.context.organizationContext.organization.id
+  const removableConfigObjectIds = await activePluginOwnedImportedConfigObjectIds({
+    objectType: "skill",
+    organizationId,
+    pluginId: input.pluginId,
+    tx: input.tx,
+  })
+  await markImportedConfigObjectsDeleted({ configObjectIds: removableConfigObjectIds, organizationId, tx: input.tx })
+  await cleanupDeletedImportedSkills({ configObjectIds: removableConfigObjectIds, organizationId, tx: input.tx })
+}
+
+async function cleanupRemovedPluginMcps(input: {
+  context: PluginArchActorContext
+  pluginId: PluginId
+  tx: DbTransaction
+}) {
+  const organizationId = input.context.organizationContext.organization.id
+  const removableConfigObjectIds = await activePluginOwnedImportedConfigObjectIds({
+    objectType: "mcp",
+    organizationId,
+    pluginId: input.pluginId,
+    tx: input.tx,
+  })
+  await markImportedConfigObjectsDeleted({ configObjectIds: removableConfigObjectIds, organizationId, tx: input.tx })
+  await cleanupDeletedImportedMcps({ configObjectIds: removableConfigObjectIds, organizationId, tx: input.tx })
 }
 
 async function pluginOwnedExternalMcpConnectionIds(input: {
@@ -2024,15 +2235,27 @@ async function deletePluginOwnedExternalMcpConnections(input: {
   }
 }
 
-export async function setPluginLifecycle(input: { action: "archive" | "restore"; context: PluginArchActorContext; pluginId: PluginId }) {
+export async function setPluginLifecycle(input: { action: "archive" | "remove" | "restore"; context: PluginArchActorContext; pluginId: PluginId }) {
   const row = await ensureVisiblePlugin(input.context, input.pluginId)
   await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "plugin", role: "manager" })
   const updatedAt = new Date()
-  await db.update(PluginTable).set({
-    deletedAt: input.action === "archive" ? row.deletedAt : null,
-    status: input.action === "archive" ? "archived" : "active",
-    updatedAt,
-  }).where(eq(PluginTable.id, row.id))
+  await db.transaction(async (tx) => {
+    await tx.update(PluginTable).set({
+      deletedAt: input.action === "restore" ? null : row.deletedAt,
+      status: input.action === "restore" ? "active" : "archived",
+      updatedAt,
+    }).where(eq(PluginTable.id, row.id))
+
+    if (input.action === "remove") {
+      await cleanupRemovedPluginSkills({ context: input.context, pluginId: row.id, tx })
+      await cleanupRemovedPluginMcps({ context: input.context, pluginId: row.id, tx })
+      await tx.update(PluginConfigObjectTable).set({ removedAt: updatedAt }).where(and(
+        eq(PluginConfigObjectTable.organizationId, row.organizationId),
+        eq(PluginConfigObjectTable.pluginId, row.id),
+        isNull(PluginConfigObjectTable.removedAt),
+      ))
+    }
+  })
   if (input.action === "archive") {
     await deletePluginOwnedExternalMcpConnections({ context: input.context, pluginId: row.id })
   }

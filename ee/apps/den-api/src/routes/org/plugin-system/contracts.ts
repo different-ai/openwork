@@ -157,6 +157,7 @@ export const pluginArchRoutePaths = {
   plugins: `${orgBasePath}/plugins`,
   plugin: `${orgBasePath}/plugins/:pluginId`,
   pluginArchive: `${orgBasePath}/plugins/:pluginId/archive`,
+  pluginRemove: `${orgBasePath}/plugins/:pluginId/remove`,
   pluginRestore: `${orgBasePath}/plugins/:pluginId/restore`,
   pluginConfigObjects: `${orgBasePath}/plugins/:pluginId/config-objects`,
   pluginConfigObject: `${orgBasePath}/plugins/:pluginId/config-objects/:configObjectId`,
@@ -397,6 +398,15 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     path: pluginArchRoutePaths.pluginArchive,
     request: { params: pluginParamsSchema },
     response: { description: "Archived plugin detail.", schema: pluginMutationResponseSchema, status: 200 },
+    tag: "Plugins",
+  },
+  removePlugin: {
+    audience: "admin",
+    description: "Remove a plugin from active Den plugin surfaces and delete imported components owned only by that plugin.",
+    method: "POST",
+    path: pluginArchRoutePaths.pluginRemove,
+    request: { params: pluginParamsSchema },
+    response: { description: "Removed plugin detail.", schema: pluginMutationResponseSchema, status: 200 },
     tag: "Plugins",
   },
   restorePlugin: {

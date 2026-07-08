@@ -736,13 +736,15 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
-  for (const [path, action] of [[pluginArchRoutePaths.pluginArchive, "archive"], [pluginArchRoutePaths.pluginRestore, "restore"]] as const) {
+  for (const [path, action, label] of [[pluginArchRoutePaths.pluginArchive, "archive", "archive"], [pluginArchRoutePaths.pluginRemove, "remove", "remove"], [pluginArchRoutePaths.pluginRestore, "restore", "restore"]] as const) {
     withPluginArchOrgContext(app, "post", path,
       paramValidator(pluginParamsSchema),
       describeRoute({
         tags: ["Plugins"],
-        summary: `${action} plugin`,
-        description: `${action} a plugin without touching its historical memberships.`,
+        summary: `${label} plugin`,
+        description: label === "remove"
+          ? "Remove a plugin and delete imported skill/MCP components owned only by that plugin."
+          : `${label} a plugin without touching its historical memberships.`,
         responses: {
           200: jsonResponse("Plugin lifecycle updated successfully.", pluginMutationResponseSchema),
           400: jsonResponse("The plugin lifecycle path parameters were invalid.", invalidRequestSchema),
