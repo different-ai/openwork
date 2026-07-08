@@ -68,5 +68,4 @@ transcript-analysis
 # Eval runner output
 evals/results/
 .playwright-mcp/
-.warden/
 .vscode/
