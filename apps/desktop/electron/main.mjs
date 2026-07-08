@@ -32,6 +32,7 @@ import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
+import { openExternalUrl } from "./open-external.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -1549,7 +1550,7 @@ async function createMainWindow() {
       try {
         void shell.openPath(fileURLToPath(url));
       } catch {
-        void shell.openExternal(url);
+        void openExternalUrl(url);
       }
 
       return { action: "deny" };
@@ -1559,7 +1560,7 @@ async function createMainWindow() {
       url.startsWith("http://127.0.0.1") ||
       url.startsWith("http://localhost");
     if (!local) {
-      void shell.openExternal(url);
+      void openExternalUrl(url);
       return { action: "deny" };
     }
     return { action: "allow" };
@@ -1602,9 +1603,10 @@ async function createMainWindow() {
 
 ipcMain.handle("openwork:desktop", handleDesktopInvoke);
 ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
-  if (typeof url === "string" && url.trim().length > 0) {
-    await shell.openExternal(url);
+  if (typeof url !== "string" || url.trim().length === 0) {
+    return { ok: false, error: "empty url" };
   }
+  return openExternalUrl(url.trim());
 });
 ipcMain.handle("openwork:shell:relaunch", async () => {
   app.relaunch();

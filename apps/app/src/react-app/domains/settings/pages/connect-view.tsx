@@ -58,6 +58,7 @@ type ConnectSession = Pick<
   | "baseUrlDraft"
   | "baseUrlError"
   | "sessionBusy"
+  | "signinFallbackUrl"
   | "onApplyBaseUrl"
   | "onBaseUrlDraftChange"
   | "onClearAuthError"
@@ -126,6 +127,10 @@ function ConnectSignInPanel(props: ConnectViewProps) {
   const [manualAuthOpen, setManualAuthOpen] = useState(false);
   const [manualAuthInput, setManualAuthInput] = useState("");
 
+  useEffect(() => {
+    if (props.session.signinFallbackUrl) setManualAuthOpen(true);
+  }, [props.session.signinFallbackUrl]);
+
   const submitManualAuth = async () => {
     const ok = await props.session.onSubmitManualAuth(manualAuthInput);
     if (!ok) return;
@@ -141,6 +146,7 @@ function ConnectSignInPanel(props: ConnectViewProps) {
       baseUrlDraft={props.session.baseUrlDraft}
       baseUrlError={props.session.baseUrlError}
       statusMessage={statusMessage}
+      signinFallbackUrl={props.session.signinFallbackUrl}
       authError={props.session.authError}
       authBusy={props.session.authBusy}
       baseUrlBusy={false}

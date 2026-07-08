@@ -13,6 +13,7 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
+import { SignInFallbackNotice } from "@/react-app/domains/cloud/signin-fallback-notice";
 import { CloudAccountSection } from "../cloud/cloud-account-section";
 import { useCloudSession } from "../cloud/cloud-session-provider";
 import { CloudDevMode } from "../cloud/dev-mode";
@@ -41,6 +42,7 @@ type CloudAccountSession = Pick<
   | "orgsBusy"
   | "orgsError"
   | "sessionBusy"
+  | "signinFallbackUrl"
   | "summaryLabel"
   | "summaryTone"
   | "onActiveOrgChange"
@@ -68,6 +70,7 @@ type DenSignedOutPanelProps = Pick<
   | "onOpenBrowserAuth"
   | "onSubmitManualAuth"
   | "sessionBusy"
+  | "signinFallbackUrl"
 >;
 
 function DenSignedOutPanel({
@@ -77,10 +80,15 @@ function DenSignedOutPanel({
   onOpenBrowserAuth,
   onSubmitManualAuth,
   sessionBusy,
+  signinFallbackUrl,
 }: DenSignedOutPanelProps) {
   const [manualAuthOpen, setManualAuthOpen] = React.useState(false);
   const [manualAuthInput, setManualAuthInput] = React.useState("");
   const controlsDisabled = [authBusy, sessionBusy].some(Boolean);
+
+  React.useEffect(() => {
+    if (signinFallbackUrl) setManualAuthOpen(true);
+  }, [signinFallbackUrl]);
 
   const submitManualAuth = async () => {
     const ok = await onSubmitManualAuth(manualAuthInput);
@@ -111,6 +119,8 @@ function DenSignedOutPanel({
             <ArrowUpRight size={13} />
           </Button>
         </div>
+
+        {signinFallbackUrl ? <SignInFallbackNotice url={signinFallbackUrl} /> : null}
 
         <Collapsible
           open={manualAuthOpen}
@@ -237,6 +247,7 @@ export function CloudAccountView({ developerMode, session }: CloudAccountViewPro
           onOpenBrowserAuth={session.onOpenBrowserAuth}
           onSubmitManualAuth={session.onSubmitManualAuth}
           sessionBusy={session.sessionBusy}
+          signinFallbackUrl={session.signinFallbackUrl}
         />
       ) : null}
     </SettingsStack>

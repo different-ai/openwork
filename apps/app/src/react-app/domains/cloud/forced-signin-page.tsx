@@ -21,6 +21,7 @@ import { useBootState } from "../../shell/boot-state";
 import { useDenAuth } from "./den-auth-provider";
 import { useDesktopConfig } from "./desktop-config-provider";
 import { DenSignInSurface } from "./den-signin-surface";
+import { tryOpenBrowserAuthUrl } from "./open-browser-auth";
 import { saveControlPlaneUrl } from "../settings/cloud/control-plane-url";
 
 export type ForcedSigninPageProps = {
@@ -89,6 +90,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   const [manualAuthInput, setManualAuthInput] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [signinFallbackUrl, setSigninFallbackUrl] = useState<string | null>(null);
 
   const openControlPlane = useCallback(() => {
     platform.openLink(resolveDenBaseUrls(baseUrl).baseUrl);
@@ -96,15 +98,22 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   const openBrowserAuth = useCallback(
     (mode: "sign-in" | "sign-up") => {
-      platform.openLink(buildDenAuthUrl(baseUrl, mode));
+      const url = buildDenAuthUrl(baseUrl, mode);
+      setSigninFallbackUrl(null);
       setStatusMessage(
         mode === "sign-up"
           ? t("den.status_browser_signup")
           : t("den.status_browser_signin"),
       );
       setAuthError(null);
+      void tryOpenBrowserAuthUrl(url).then((opened) => {
+        if (opened) return;
+        setStatusMessage(null);
+        setSigninFallbackUrl(url);
+        setManualAuthOpen(true);
+      });
     },
-    [baseUrl, platform],
+    [baseUrl],
   );
 
   const submitManualAuth = useCallback(async () => {
@@ -141,6 +150,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
         setBaseUrlDraft(nextBaseUrl);
       }
 
+      setSigninFallbackUrl(null);
       setManualAuthInput("");
       setManualAuthOpen(false);
       return true;
@@ -209,6 +219,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
       if (customEvent.detail?.status === "success") {
         setAuthError(null);
+        setSigninFallbackUrl(null);
         const email = customEvent.detail.email?.trim();
         setStatusMessage(
           email
@@ -239,6 +250,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       baseUrlDraft={baseUrlDraft}
       baseUrlError={baseUrlError}
       statusMessage={statusMessage}
+      signinFallbackUrl={signinFallbackUrl}
       authError={authError ?? denAuth.error}
       authBusy={authBusy}
       baseUrlBusy={baseUrlBusy}

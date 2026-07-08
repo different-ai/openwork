@@ -24,6 +24,7 @@ import {
   type DenSessionUpdatedDetail,
 } from "@/app/lib/den-session-events";
 import { t } from "@/i18n";
+import { tryOpenBrowserAuthUrl } from "../../cloud/open-browser-auth";
 import { useCloudSession } from "./cloud-session-provider";
 import { defaultControlPlaneUrl, saveControlPlaneUrl } from "./control-plane-url";
 
@@ -92,6 +93,7 @@ export function useDenSession({
   const [authBusy, setAuthBusy] = React.useState(false);
   const [sessionBusy, setSessionBusy] = React.useState(false);
   const [authError, setAuthError] = React.useState<string | null>(null);
+  const [signinFallbackUrl, setSigninFallbackUrl] = React.useState<string | null>(null);
 
   const [activeOrgId, setActiveOrgId] = React.useState(initial.activeOrgId?.trim() || "");
   const [orgsBusy, setOrgsBusy] = React.useState(false);
@@ -163,6 +165,7 @@ export function useDenSession({
       clearSessionState();
       setBaseUrlError(null);
       setAuthError(null);
+      setSigninFallbackUrl(null);
       setStatusMessage(message ?? null);
       // Remove ONLY the cloud (lpr_*) provider IDs from the acknowledged
       // list. Local providers (openai, opencode) stay acknowledged so they
@@ -200,15 +203,21 @@ export function useDenSession({
 
   const openBrowserAuth = React.useCallback(
     (mode: "sign-in" | "sign-up") => {
-      openLink(buildDenAuthUrl(baseUrl, mode));
+      const url = buildDenAuthUrl(baseUrl, mode);
+      setSigninFallbackUrl(null);
       setStatusMessage(
         mode === "sign-up"
           ? t("den.status_browser_signup")
           : t("den.status_browser_signin"),
       );
       setAuthError(null);
+      void tryOpenBrowserAuthUrl(url).then((opened) => {
+        if (opened) return;
+        setStatusMessage(null);
+        setSigninFallbackUrl(url);
+      });
     },
-    [baseUrl, openLink],
+    [baseUrl, setStatusMessage],
   );
 
   const applyBaseUrl = React.useCallback(async () => {
@@ -416,6 +425,7 @@ export function useDenSession({
       setActiveOrgId(nextSettings.activeOrgId?.trim() || "");
       if (event.detail?.status === "success") {
         clearSessionState();
+        setSigninFallbackUrl(null);
         if (event.detail.user) {
           setUser(event.detail.user);
         }
@@ -463,6 +473,7 @@ export function useDenSession({
         setBaseUrl(nextBaseUrl);
         setBaseUrlDraft(nextBaseUrl);
       }
+      setSigninFallbackUrl(null);
       return true;
     } finally {
       setAuthBusy(false);
@@ -560,6 +571,7 @@ export function useDenSession({
     orgsBusy,
     orgsError,
     sessionBusy,
+    signinFallbackUrl,
     summaryLabel,
     summaryTone,
     syncCurrentDenSettings,

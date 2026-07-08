@@ -14,6 +14,7 @@ import { DEFAULT_DEN_BASE_URL } from "../../../app/lib/den";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "../../design-system/text-input";
 import { OrganizationServerAffordance } from "../settings/cloud/organization-server-affordance";
+import { SignInFallbackNotice } from "./signin-fallback-notice";
 
 export type DenSignInSurfaceVariant = "panel" | "fullscreen";
 
@@ -24,6 +25,7 @@ export type DenSignInSurfaceProps = {
   baseUrlDraft: string;
   baseUrlError: string | null;
   statusMessage: string | null;
+  signinFallbackUrl?: string | null;
   authError: string | null;
   authBusy: boolean;
   baseUrlBusy: boolean;
@@ -223,6 +225,10 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
         <div className={softNoticeClass}>{props.statusMessage}</div>
       ) : null}
 
+      {props.signinFallbackUrl ? (
+        <SignInFallbackNotice url={props.signinFallbackUrl} />
+      ) : null}
+
       <div className="space-y-2">
         <div className="max-w-[54ch] text-sm text-dls-secondary">
           {t("den.auto_reconnect_hint")}
@@ -345,6 +351,10 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
 
               {props.statusMessage && !props.authError ? (
                 <div className={softNoticeClass}>{props.statusMessage}</div>
+              ) : null}
+
+              {props.signinFallbackUrl ? (
+                <SignInFallbackNotice url={props.signinFallbackUrl} />
               ) : null}
 
               {props.authError ? (
