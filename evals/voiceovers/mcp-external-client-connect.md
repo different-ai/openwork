@@ -15,7 +15,7 @@ exchange, and real tool calls — all against the API origin.
 
 3. Playing a Cursor-like client, I register via dynamic client registration with a loopback redirect and get sent to the real OpenWork sign-in page to authorize.
 
-4. I sign in as the demo owner and land on the organization consent screen — I pick Acme Robotics and approve, and the browser bounces back to the client's loopback callback with the code.
+4. I sign in as the demo owner and land on the organization consent screen — I pick my workspace and approve, and the browser bounces back to the client's loopback callback with the code.
 
 5. The client trades the code for tokens against the API origin's resource and the client page flips to connected — access token accepted, audience validated.
 

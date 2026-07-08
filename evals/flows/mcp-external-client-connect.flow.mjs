@@ -214,7 +214,7 @@ async function waitForOrganizationConsent(ctx) {
   );
   const state = await ctx.eval(`(() => ({
     radios: document.querySelectorAll('input[name="mcp-organization"], input[type="radio"]').length,
-    hasAcme: document.body.innerText.includes('Acme Robotics'),
+    orgLabel: (document.querySelector("input[name=\"mcp-organization\"]")?.closest("label")?.innerText || "").slice(0,60),
     snippet: document.body.innerText.slice(0, 300),
   }))()`);
   ctx.recordEvidence({ type: "output", name: "Consent page state", text: JSON.stringify(state, null, 2) });
@@ -610,10 +610,10 @@ export default {
             await selectAcmeOrganization(ctx);
             // ctx.prove captures screenshots after assertions, but this frame's
             // meaningful UI is the consent page before the redirect fires.
-            await ctx.screenshot("frame-4-acme-consent-before-authorize", {
+            await ctx.screenshot("frame-4-workspace-consent-before-authorize", {
               claim: vo[3],
               voiceover: vo[3],
-              requireText: ["Acme Robotics"],
+              requireText: ["CHOOSE WORKSPACE"],
             });
             await clickAuthorizeAndContinue(ctx);
           },
