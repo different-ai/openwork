@@ -952,6 +952,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         args: { prompt },
         context: { directory: selectedWorkspaceRoot || undefined },
       });
+      if (!response.ok) {
+        setImageGenerationError(response.message);
+        return;
+      }
       const result = response.result;
       const path = typeof result === "object" && result !== null && "path" in result && typeof result.path === "string"
         ? result.path
