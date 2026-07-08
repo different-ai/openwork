@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
@@ -14,6 +14,7 @@ const execFileAsync = promisify(execFile);
 const HTTP_REMOTE_WORKSPACE_ID = "ws_fraimz_remote";
 const HTTP_REMOTE_WORKSPACE_NAME = "Fraimz remote worker";
 const REMOTE_URL_INPUT = 'input[placeholder="https://worker.example.com"]';
+const WELCOME_FOLDER_INPUT = 'input[placeholder="/workspace/my-project"]';
 
 const state = {
   originalDeveloperMode: null,
@@ -26,6 +27,8 @@ const state = {
   httpServer: null,
   httpServerUrl: null,
   previousWorkspaceId: null,
+  starterWorkspaceDir: null,
+  starterWorkspaceId: null,
   createdWorkspaceId: null,
 };
 
@@ -79,6 +82,17 @@ async function dismissOpenWorkModelsDialog(ctx) {
     return Boolean(button);
   })()`);
   if (clicked) await sleep(300);
+}
+
+async function clickExactButtonIfPresent(ctx, label) {
+  const clicked = await ctx.eval(`(() => {
+    const button = [...document.querySelectorAll('button')]
+      .find((candidate) => (candidate.textContent ?? '').trim() === ${JSON.stringify(label)} && !candidate.disabled);
+    button?.click();
+    return Boolean(button);
+  })()`);
+  if (clicked) await sleep(300);
+  return clicked;
 }
 
 async function ensureDeveloperMode(ctx) {
@@ -162,41 +176,6 @@ async function returnToApp(ctx) {
   });
 }
 
-async function openWelcomeCreateWorkspaceModal(ctx) {
-  await ctx.waitFor("location.hash.includes('/welcome') && (document.body?.innerText ?? '').includes('Welcome to OpenWork')", {
-    timeoutMs: 30_000,
-    label: "welcome route ready for create modal",
-  });
-  const opened = await ctx.eval(`(() => {
-    const root = document.getElementById('root');
-    const key = root ? Object.keys(root).find((candidate) => candidate.startsWith('__reactContainer$') || candidate.startsWith('__reactFiber$')) : '';
-    const containerFiber = key ? root[key] : null;
-    const start = containerFiber?.stateNode?.current ?? containerFiber;
-    const stack = start ? [start] : [];
-    while (stack.length > 0) {
-      const fiber = stack.pop();
-      for (let hook = fiber?.memoizedState; hook; hook = hook.next) {
-        const value = hook.memoizedState;
-        if (
-          value &&
-          typeof value === 'object' &&
-          Object.prototype.hasOwnProperty.call(value, 'modalOpen') &&
-          Object.prototype.hasOwnProperty.call(value, 'remoteError') &&
-          typeof hook.queue?.dispatch === 'function'
-        ) {
-          hook.queue.dispatch({ type: 'open' });
-          return true;
-        }
-      }
-      if (fiber?.sibling) stack.push(fiber.sibling);
-      if (fiber?.child) stack.push(fiber.child);
-    }
-    return false;
-  })()`);
-  ctx.assert(opened, "Welcome CreateWorkspaceModal reducer dispatch was not found.");
-  await ctx.waitForText("Create Workspace", { timeoutMs: 30_000 });
-}
-
 async function ensureWorkspaceShellForRemote(ctx) {
   await rememberPreviousWorkspace(ctx);
   await returnToApp(ctx);
@@ -206,31 +185,63 @@ async function ensureWorkspaceShellForRemote(ctx) {
     if (state.originalPreferences === null) {
       state.originalPreferences = await ctx.eval("localStorage.getItem('openwork.preferences')");
     }
-    return "welcome";
+    await createStarterWorkspaceFromWelcome(ctx);
   }
   await ctx.waitFor("(document.body?.innerText ?? '').includes('Add workspace')", {
     timeoutMs: 60_000,
     label: "session sidebar with Add workspace",
   });
-  return "workspace";
 }
 
 async function openConnectRemoteDialog(ctx) {
-  const surface = await ensureWorkspaceShellForRemote(ctx);
+  await ensureWorkspaceShellForRemote(ctx);
   await closeStaleDialogs(ctx);
   await dismissOpenWorkModelsDialog(ctx);
-  if (surface === "welcome") {
-    await openWelcomeCreateWorkspaceModal(ctx);
-  } else {
-    await ctx.clickText("Add workspace", { selector: "button", timeoutMs: 30_000 });
-    await ctx.waitForText("Create Workspace", { timeoutMs: 30_000 });
-  }
+  await ctx.clickText("Add workspace", { selector: "button", timeoutMs: 30_000 });
+  await ctx.waitForText("Create Workspace", { timeoutMs: 30_000 });
   await ctx.clickText("Connect custom remote", { selector: "button", timeoutMs: 30_000 });
   await ctx.waitForText("Remote server details", { timeoutMs: 30_000 });
   await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(REMOTE_URL_INPUT)}))`, {
     timeoutMs: 10_000,
     label: "remote worker URL input",
   });
+}
+
+async function createStarterWorkspaceFromWelcome(ctx) {
+  const starterDir = await mkdtemp(join(tmpdir(), "openwork-fraimz-starter-"));
+  state.starterWorkspaceDir = starterDir;
+
+  await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(WELCOME_FOLDER_INPUT)}))`, {
+    timeoutMs: 30_000,
+    label: "welcome manual folder input",
+  });
+  const filled = await ctx.eval(`(() => {
+    const input = document.querySelector(${JSON.stringify(WELCOME_FOLDER_INPUT)});
+    if (!(input instanceof HTMLInputElement)) return '';
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(input, ${JSON.stringify(starterDir)});
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${JSON.stringify(starterDir)} }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return input.value;
+  })()`);
+  ctx.assert(filled === starterDir, `Expected welcome folder input to contain ${starterDir}, got ${filled}.`);
+  await ctx.waitFor(`(() => {
+    const button = [...document.querySelectorAll('button')]
+      .find((candidate) => (candidate.textContent ?? '').trim() === 'Use this folder');
+    return Boolean(button && !button.disabled);
+  })()`, { timeoutMs: 10_000, label: "Use this folder enabled" });
+  await ctx.clickText("Use this folder", { selector: "button", timeoutMs: 10_000 });
+  const starterWorkspace = await waitForWorkspacePath(ctx, starterDir);
+  state.starterWorkspaceId = starterWorkspace.id;
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const ready = await ctx.eval("(document.body?.innerText ?? '').includes('Add workspace')");
+    if (ready) return;
+    await dismissOpenWorkModelsDialog(ctx);
+    await clickExactButtonIfPresent(ctx, "Skip and use the free model");
+    await clickExactButtonIfPresent(ctx, "Skip");
+    await sleep(500);
+  }
 }
 
 async function startSelfSignedOpenworkServer() {
@@ -330,6 +341,149 @@ async function desktopWorkspaceList(ctx) {
   return ctx.eval("window.__OPENWORK_ELECTRON__.invokeDesktop('workspaceBootstrap')", { awaitPromise: true });
 }
 
+async function forgetDesktopWorkspace(ctx, workspaceId) {
+  await ctx.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop('workspaceForget', ${JSON.stringify(workspaceId)})`, {
+    awaitPromise: true,
+  });
+}
+
+async function deleteOpenworkServerWorkspace(ctx, workspaceId) {
+  if (!workspaceId) return;
+  await ctx.eval(`(async () => {
+    const baseUrl = localStorage.getItem('openwork.server.urlOverride') || localStorage.getItem('openwork.server.active');
+    if (!baseUrl || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return null;
+    const token = localStorage.getItem('openwork.server.token') || '';
+    const hostToken = localStorage.getItem('openwork.server.hostToken') || '';
+    const headers = {};
+    if (token) headers.authorization = 'Bearer ' + token;
+    if (hostToken) headers['x-openwork-host-token'] = hostToken;
+    return window.__OPENWORK_ELECTRON__.invokeDesktop('__fetch', baseUrl.replace(/\/+$/, '') + '/workspaces/' + encodeURIComponent(${JSON.stringify(workspaceId)}), {
+      method: 'DELETE',
+      headers,
+      timeoutMs: 8_000,
+    });
+  })()`, { awaitPromise: true }).catch(() => null);
+}
+
+async function restartOpenworkServer(ctx) {
+  await ctx.eval("window.__OPENWORK_ELECTRON__.invokeDesktop('openworkServerRestart', {})", { awaitPromise: true }).catch(() => null);
+}
+
+function isEvalStarterWorkspace(workspace) {
+  const workspacePath = String(workspace?.path ?? "");
+  return workspacePath.includes("/openwork-fraimz-starter-") || workspacePath.includes("\\openwork-fraimz-starter-");
+}
+
+function isEvalStarterPath(value) {
+  return String(value ?? "").includes("openwork-fraimz-starter-");
+}
+
+function desktopUserDataDir() {
+  const appId = "com.differentai.openwork.dev";
+  if (process.platform === "darwin") return join(homedir(), "Library", "Application Support", appId);
+  if (process.platform === "win32") return join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), appId);
+  return join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), appId);
+}
+
+async function readJson(path, fallback) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+async function writeJson(path, value) {
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function pruneEvalStarterRecoveryStores() {
+  const userDataDir = desktopUserDataDir();
+  const workspaceStatePath = join(userDataDir, "openwork-workspaces.json");
+  const workspaceState = await readJson(workspaceStatePath, null);
+  if (workspaceState && Array.isArray(workspaceState.workspaces)) {
+    const workspaces = workspaceState.workspaces.filter((workspace) => !isEvalStarterPath(workspace?.path));
+    if (workspaces.length !== workspaceState.workspaces.length) {
+      const selectedId = workspaces.some((workspace) => workspace?.id === workspaceState.selectedId) ? workspaceState.selectedId : "";
+      await writeJson(workspaceStatePath, {
+        ...workspaceState,
+        selectedId,
+        watchedId: selectedId || null,
+        activeId: selectedId || null,
+        selectedWorkspaceId: selectedId,
+        watchedWorkspaceId: selectedId,
+        workspaces,
+      });
+    }
+  }
+
+  const tokenStorePath = join(userDataDir, "openwork-server-tokens.json");
+  const tokenStore = await readJson(tokenStorePath, null);
+  if (tokenStore?.workspaces && typeof tokenStore.workspaces === "object") {
+    const workspaces = Object.fromEntries(Object.entries(tokenStore.workspaces).filter(([workspacePath]) => !isEvalStarterPath(workspacePath)));
+    if (Object.keys(workspaces).length !== Object.keys(tokenStore.workspaces).length) {
+      await writeJson(tokenStorePath, { ...tokenStore, workspaces });
+    }
+  }
+
+  const serverStatePath = join(userDataDir, "openwork-server-state.json");
+  const serverState = await readJson(serverStatePath, null);
+  if (serverState?.workspacePorts && typeof serverState.workspacePorts === "object") {
+    const workspacePorts = Object.fromEntries(Object.entries(serverState.workspacePorts).filter(([workspacePath]) => !isEvalStarterPath(workspacePath)));
+    if (Object.keys(workspacePorts).length !== Object.keys(serverState.workspacePorts).length) {
+      await writeJson(serverStatePath, { ...serverState, workspacePorts });
+    }
+  }
+
+  for (const serverConfigPath of [
+    join(userDataDir, "openwork-dev-data", "xdg", "config", "openwork", "server.json"),
+    join(userDataDir, "openwork-dev-data", "home", ".config", "openwork", "server.json"),
+  ]) {
+    const serverConfig = await readJson(serverConfigPath, null);
+    if (!serverConfig) continue;
+    const workspaces = Array.isArray(serverConfig.workspaces)
+      ? serverConfig.workspaces.filter((workspace) => !isEvalStarterPath(workspace?.path))
+      : serverConfig.workspaces;
+    const authorizedRoots = Array.isArray(serverConfig.authorizedRoots)
+      ? serverConfig.authorizedRoots.filter((workspacePath) => !isEvalStarterPath(workspacePath))
+      : serverConfig.authorizedRoots;
+    if (workspaces !== serverConfig.workspaces || authorizedRoots !== serverConfig.authorizedRoots) {
+      await writeJson(serverConfigPath, { ...serverConfig, workspaces, authorizedRoots });
+    }
+  }
+}
+
+async function cleanupEvalStarterWorkspaces(ctx) {
+  let removed = 0;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const list = await desktopWorkspaceList(ctx).catch(() => null);
+    const leftovers = (list?.workspaces ?? []).filter((workspace) => {
+      return workspace?.id && workspace.id !== state.previousWorkspaceId && isEvalStarterWorkspace(workspace);
+    });
+    if (leftovers.length === 0) return removed;
+    for (const workspace of leftovers) {
+      await deleteOpenworkServerWorkspace(ctx, workspace.id);
+      await forgetDesktopWorkspace(ctx, workspace.id);
+      if (workspace.path) await rm(workspace.path, { recursive: true, force: true });
+      removed += 1;
+    }
+    await pruneEvalStarterRecoveryStores();
+    await sleep(500);
+  }
+  return removed;
+}
+
+async function waitForWorkspacePath(ctx, workspacePath) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 60_000) {
+    const list = await desktopWorkspaceList(ctx);
+    const workspace = (list?.workspaces ?? []).find((entry) => entry?.path === workspacePath);
+    if (workspace?.id) return workspace;
+    await sleep(500);
+  }
+  throw new Error(`Timed out waiting for starter workspace at ${workspacePath}.`);
+}
+
 async function rememberPreviousWorkspace(ctx) {
   if (state.previousWorkspaceCaptured) return;
   state.previousWorkspaceCaptured = true;
@@ -342,9 +496,22 @@ async function cleanupCreatedWorkspace(ctx) {
   const created = (list?.workspaces ?? []).find((workspace) => workspace?.openworkWorkspaceId === HTTP_REMOTE_WORKSPACE_ID)
     ?? (state.createdWorkspaceId ? { id: state.createdWorkspaceId } : null);
   if (created?.id) {
-    await ctx.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop('workspaceForget', ${JSON.stringify(created.id)})`, {
-      awaitPromise: true,
-    });
+    await forgetDesktopWorkspace(ctx, created.id);
+  }
+  const starter = (list?.workspaces ?? []).find((workspace) => {
+    return workspace?.id === state.starterWorkspaceId || workspace?.path === state.starterWorkspaceDir;
+  }) ?? (state.starterWorkspaceId ? { id: state.starterWorkspaceId } : null);
+  if (starter?.id && starter.id !== state.previousWorkspaceId && starter.id !== created?.id) {
+    await deleteOpenworkServerWorkspace(ctx, starter.id);
+    await forgetDesktopWorkspace(ctx, starter.id);
+  }
+  if (state.starterWorkspaceDir) {
+    await rm(state.starterWorkspaceDir, { recursive: true, force: true });
+  }
+  await pruneEvalStarterRecoveryStores();
+  await cleanupEvalStarterWorkspaces(ctx);
+  if (state.startedFromWelcome && !state.previousWorkspaceId) {
+    await restartOpenworkServer(ctx);
   }
   if (state.previousWorkspaceId) {
     await ctx.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop('workspaceSetSelected', ${JSON.stringify(state.previousWorkspaceId)})`, {
@@ -355,26 +522,34 @@ async function cleanupCreatedWorkspace(ctx) {
     });
   }
   state.createdWorkspaceId = null;
+  state.starterWorkspaceDir = null;
+  state.starterWorkspaceId = null;
 }
 
 async function restoreFreshWelcome(ctx) {
   if (!state.startedFromWelcome || state.previousWorkspaceId) return;
+  await cleanupEvalStarterWorkspaces(ctx);
   await ctx.eval(`(() => {
     const original = ${JSON.stringify(state.originalPreferences)};
     if (original === null) {
       localStorage.setItem('openwork.preferences', JSON.stringify({ hasCompletedOnboarding: false }));
-      return true;
+    } else {
+      try {
+        const prefs = JSON.parse(original);
+        prefs.hasCompletedOnboarding = false;
+        localStorage.setItem('openwork.preferences', JSON.stringify(prefs));
+      } catch {
+        localStorage.setItem('openwork.preferences', JSON.stringify({ hasCompletedOnboarding: false }));
+      }
     }
-    try {
-      const prefs = JSON.parse(original);
-      prefs.hasCompletedOnboarding = false;
-      localStorage.setItem('openwork.preferences', JSON.stringify(prefs));
-    } catch {
-      localStorage.setItem('openwork.preferences', JSON.stringify({ hasCompletedOnboarding: false }));
-    }
+    localStorage.removeItem('openwork.react.activeWorkspace');
     return true;
   })()`);
-  await ctx.navigateHash("/welcome");
+  await ctx.eval("(() => { window.location.hash = '/welcome'; window.location.reload(); return true; })()");
+  await ctx.waitFor("Boolean(window.__openworkControl)", {
+    timeoutMs: 60_000,
+    label: "control API after welcome restore reload",
+  });
   await ctx.waitFor("location.hash.includes('/welcome')", {
     timeoutMs: 30_000,
     label: "welcome route restored",
@@ -384,6 +559,14 @@ async function restoreFreshWelcome(ctx) {
     label: "welcome screen restored",
   });
   await ctx.eval("new Promise((resolve) => setTimeout(resolve, 800))", { awaitPromise: true });
+  const removedLateStarter = await cleanupEvalStarterWorkspaces(ctx);
+  if (removedLateStarter > 0) {
+    await ctx.eval("(() => { localStorage.removeItem('openwork.react.activeWorkspace'); window.location.hash = '/welcome'; window.location.reload(); return true; })()");
+    await ctx.waitFor("Boolean(window.__openworkControl)", {
+      timeoutMs: 60_000,
+      label: "control API after late starter cleanup reload",
+    });
+  }
   await ctx.waitFor("location.hash.includes('/welcome') && (document.body?.innerText ?? '').includes('Welcome to OpenWork')", {
     timeoutMs: 30_000,
     label: "welcome screen remained restored",
