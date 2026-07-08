@@ -1735,7 +1735,7 @@ export function DenAdminPanel() {
                           }}
                           className="h-4 w-4 rounded border-slate-300"
                         />
-                        OpenWork Connect (beta)
+                        OpenWork Connect (alpha)
                       </label>
                     </div>
                     {capabilityError?.orgId === org.id ? (

@@ -126,20 +126,26 @@ async function uiSignIn(ctx, email, password) {
 }
 
 async function uiSignOut(ctx) {
-  // The org switcher trigger sits at the bottom of the sidebar; Sign out
-  // lives inside its dropdown.
-  const opened = await ctx.eval(`(() => {
-    const trigger = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Acme Robotics') || el.textContent.includes('Owner') || el.textContent.includes('Member'));
-    trigger?.click();
-    return Boolean(trigger);
+  // Single-org shells render direct sign-out; multi-org shells keep it in the org switcher.
+  const clickedDirect = await ctx.eval(`(() => {
+    const button = document.querySelector('button[aria-label="Sign out"]');
+    button?.click();
+    return Boolean(button);
   })()`);
-  ctx.assert(opened, "Could not open the org switcher.");
-  await ctx.waitFor("[...document.querySelectorAll('button')].some((el) => el.textContent.trim() === 'Sign out')", { timeoutMs: 10_000, label: "sign out option" });
-  await ctx.eval(`(() => {
-    const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Sign out');
-    btn?.click();
-    return true;
-  })()`);
+  if (!clickedDirect) {
+    const opened = await ctx.eval(`(() => {
+      const trigger = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Acme Robotics') || el.textContent.includes('Owner') || el.textContent.includes('Member'));
+      trigger?.click();
+      return Boolean(trigger);
+    })()`);
+    ctx.assert(opened, "Could not open the org switcher.");
+    await ctx.waitFor("[...document.querySelectorAll('button')].some((el) => el.textContent.trim() === 'Sign out')", { timeoutMs: 10_000, label: "sign out option" });
+    await ctx.eval(`(() => {
+      const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Sign out');
+      btn?.click();
+      return true;
+    })()`);
+  }
   await ctx.waitFor("!location.pathname.startsWith('/dashboard') || document.body.innerText.includes('Sign in')", { timeoutMs: 30_000, label: "signed out" });
   await sleep(1_000);
 }
@@ -163,7 +169,7 @@ async function navChildLabels(ctx) {
 }
 
 function stripBetaLabel(label) {
-  return label.replace(/beta$/i, "").trim();
+  return label.replace(/alpha$/i, "").trim();
 }
 
 export default {
@@ -176,7 +182,7 @@ export default {
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("The admin sidebar is seven top-level entries with only Your Connections marked Beta", {
+        await ctx.prove("The admin sidebar is seven top-level entries with only Your Connections marked Alpha", {
           voiceover: vo[0],
           action: async () => {
             await ensureJordanInAcme(ctx);
@@ -191,13 +197,13 @@ export default {
               ctx.assert(!nav.includes(retired), `Retired top-level label still in the resting sidebar: ${retired}`);
             }
             ctx.assert(!/\bnew\b/i.test(nav), "The sidebar must not show New badges anymore.");
-            ctx.assert(/Your Connections\s*Beta/i.test(nav), "Your Connections keeps the visible Beta badge.");
-            const betaMatches = nav.match(/\bbeta\b/gi) ?? [];
-            ctx.assert(betaMatches.length === 1, `Only Your Connections should be badged at rest, saw ${betaMatches.length}: ${nav}`);
+            ctx.assert(/Your Connections\s*Alpha/i.test(nav), "Your Connections keeps the visible Alpha badge.");
+            const betaMatches = nav.match(/\balpha\b/gi) ?? [];
+            ctx.assert(betaMatches.length === 1, `Only Your Connections should be badged Alpha at rest, saw ${betaMatches.length}: ${nav}`);
           },
           screenshot: {
             name: "sidebar-seven",
-            claim: "The admin sidebar shows seven top-level entries, no New badges, and the remaining Beta badge on Your Connections.",
+            claim: "The admin sidebar shows seven top-level entries, no New badges, and the remaining Alpha badge on Your Connections.",
             requireText: ["Dashboard", "Your Connections", "Extensions", "Models", "Members", "Analytics", "Settings"],
             rejectText: ["MCP Connections", "SCIM"],
           },
@@ -214,13 +220,13 @@ export default {
           },
           assert: async () => {
             await ctx.waitFor("location.pathname.includes('/integrations')", { timeoutMs: 15_000, label: "sources route (old integrations URL)" });
-            ctx.assert(!(await ctx.eval("location.pathname.includes('/mcp-connections')")), "Extensions must not land on the beta Connections route.");
+            ctx.assert(!(await ctx.eval("location.pathname.includes('/mcp-connections')")), "Extensions must not land on the alpha Connections route.");
             await ctx.expectText("Sources", { timeoutMs: 15_000 });
             await ctx.expectText("GitHub", { timeoutMs: 15_000 });
           },
           screenshot: {
             name: "extensions-sources-default",
-            claim: "Extensions lands on Sources, not the beta Connections page.",
+            claim: "Extensions lands on Sources, not the alpha Connections page.",
             requireText: ["Extensions", "Sources", "GitHub"],
             rejectText: ["Something went wrong"],
           },
@@ -230,7 +236,7 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        await ctx.prove("Connections is last in Extensions, wearing a Beta badge", {
+        await ctx.prove("Connections is last in Extensions, wearing an Alpha badge", {
           voiceover: vo[2],
           action: async () => {
             const children = await navChildLabels(ctx);
@@ -239,7 +245,7 @@ export default {
               JSON.stringify(stripped) === JSON.stringify(["Sources", "Plugins", "Marketplaces", "Connections"]),
               `Extensions children must read in pipeline order, got ${JSON.stringify(children)}`,
             );
-            ctx.assert(/Connections\s*Beta/i.test(children[children.length - 1] ?? ""), `Connections child must carry the Beta badge, got ${JSON.stringify(children)}`);
+            ctx.assert(/Connections\s*Alpha/i.test(children[children.length - 1] ?? ""), `Connections child must carry the Alpha badge, got ${JSON.stringify(children)}`);
             await clickNav(ctx, "Connections");
           },
           assert: async () => {
@@ -249,7 +255,7 @@ export default {
           },
           screenshot: {
             name: "extensions-connections-beta-last",
-            claim: "Connections is reachable only after choosing the last Beta child in Extensions.",
+            claim: "Connections is reachable only after choosing the last Alpha child in Extensions.",
             requireText: ["Connections", "Google Workspace", "Notion"],
             rejectText: ["Something went wrong"],
           },

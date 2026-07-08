@@ -79,7 +79,7 @@ export function YourConnectionsScreen() {
     <DashboardPageTemplate
       icon={Plug}
       title="Your Connections"
-      badgeLabel="Beta"
+      badgeLabel="Alpha"
       description="Tools your organization has made available to you. Connect your own account where needed — your AI coworker then acts as you, with your permissions."
       colors={["#DBEAFE", "#1E3A8A", "#2563EB", "#93C5FD"]}
     >

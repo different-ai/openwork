@@ -168,15 +168,15 @@ export function McpConnectionsScreen() {
     <DashboardPageTemplate
       icon={Plug}
       title="Connections"
-      badgeLabel="Beta"
+      badgeLabel="Alpha"
       description="Connect any MCP server — Notion, Linear, Stripe, or a custom URL — once for the whole org. search_capabilities and execute_capability pick these up automatically."
       colors={["#E2E8F0", "#020617", "#0F172A", "#94A3B8"]}
     >
       {showStagingBanner ? (
         <div data-testid="mcp-connections-staging-banner" className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] leading-6 text-amber-800">
-          <p className="font-semibold text-amber-900">OpenWork Connect (beta) is staged for this org.</p>
+          <p className="font-semibold text-amber-900">OpenWork Connect (alpha) is staged for this org.</p>
           <p className="mt-1">
-            Connections and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (beta) for this org. Admin management remains fully usable.
+            Connections and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (alpha) for this org. Admin management remains fully usable.
           </p>
         </div>
       ) : null}
