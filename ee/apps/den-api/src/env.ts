@@ -14,6 +14,7 @@ const EnvSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().min(1),
   DEN_MCP_RESOURCE_URL: z.string().optional(),
+  DEN_MCP_ADDITIONAL_RESOURCES: z.string().optional(),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
   DEN_WEB_APP_HOSTS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
@@ -217,9 +218,34 @@ function normalizeOrigin(origin: string) {
   return value.replace(/\/+$/, "")
 }
 
+function normalizeAbsoluteUrlCsv(envName: string, value: string | undefined) {
+  const entries = splitCsv(value)
+  const invalidEntries: string[] = []
+
+  for (const entry of entries) {
+    try {
+      new URL(entry)
+    } catch {
+      invalidEntries.push(entry)
+    }
+  }
+
+  if (invalidEntries.length > 0) {
+    const label = invalidEntries.length === 1 ? "entry" : "entries"
+    throw new Error(`${envName} must contain only absolute URLs; invalid ${label}: ${invalidEntries.join(", ")}`)
+  }
+
+  return entries.map((entry) => normalizeOrigin(entry))
+}
+
 const corsOrigins = splitCsv(parsed.CORS_ORIGINS).map((origin) => normalizeOrigin(origin))
 const betterAuthTrustedOrigins = splitCsv(parsed.DEN_BETTER_AUTH_TRUSTED_ORIGINS)
   .map((origin) => normalizeOrigin(origin))
+const mcpResourceUrl = optionalString(parsed.DEN_MCP_RESOURCE_URL)
+const mcpAdditionalResources = normalizeAbsoluteUrlCsv(
+  "DEN_MCP_ADDITIONAL_RESOURCES",
+  parsed.DEN_MCP_ADDITIONAL_RESOURCES,
+)
 
 const polarFeatureGateEnabled =
   (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
@@ -271,11 +297,12 @@ export const env = {
   planetscale: planetscaleCredentials,
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl: normalizeOrigin(parsed.BETTER_AUTH_URL),
-  mcpResourceUrl: optionalString(parsed.DEN_MCP_RESOURCE_URL)
-    ? normalizeOrigin(parsed.DEN_MCP_RESOURCE_URL!)
+  mcpResourceUrl: mcpResourceUrl
+    ? normalizeOrigin(mcpResourceUrl)
     : devMode
       ? `http://127.0.0.1:${port}/mcp`
       : undefined,
+  mcpAdditionalResources,
   betterAuthTrustedOrigins: betterAuthTrustedOrigins.length > 0 ? betterAuthTrustedOrigins : corsOrigins,
   // Extra hostnames that serve the den-web frontend (and therefore expose
   // the Den API behind the /api/den proxy path). Entries starting with "."

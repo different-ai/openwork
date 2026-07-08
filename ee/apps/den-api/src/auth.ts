@@ -92,7 +92,9 @@ export const DEN_MCP_RESOURCES = Array.from(new Set([
   // Audience compatibility: tokens issued before the proxied default carry
   // the bare-origin resource (`<betterAuthUrl>/mcp`); keep accepting them.
   `${env.betterAuthUrl}/mcp`,
+  ...env.mcpAdditionalResources,
   ...localMcpResourceAliases(DEN_MCP_RESOURCE),
+  ...env.mcpAdditionalResources.flatMap((resource) => localMcpResourceAliases(resource)),
 ]));
 export const DEN_MCP_TOKEN_USE_CLAIM = `${env.mcpClaimNamespace}/token_use`;
 export const DEN_MCP_ORG_ID_CLAIM = `${env.mcpClaimNamespace}/org_id`;

@@ -16,6 +16,7 @@
 #   DEN_PUBLIC_HOST         — browser-facing host/IP for LAN access (set by den-dev-up.sh)
 #   DEN_BETTER_AUTH_URL     — browser-facing auth origin (default: http://<DEN_PUBLIC_HOST>:<DEN_WEB_PORT>)
 #   DEN_BETTER_AUTH_TRUSTED_ORIGINS — Better Auth trusted origins (defaults to DEN_CORS_ORIGINS)
+#   DEN_MCP_ADDITIONAL_RESOURCES — Extra public MCP resource URLs this deployment serves, e.g. https://api.openworklabs.com/mcp — needed when den-api is reachable on more than one public origin
 #   DEN_CORS_ORIGINS        — comma-separated trusted origins for Better Auth + CORS
 #   DEN_ORG_MODE            — single_org or multi_org (default: single_org)
 #   DEN_SINGLE_ORG_NAME / DEN_SINGLE_ORG_SLUG / DEN_SINGLE_ORG_OWNER_EMAILS
@@ -86,6 +87,7 @@ services:
       DEN_SINGLE_ORG_ALLOW_EMAIL_PASSWORD_AFTER_SSO: ${DEN_SINGLE_ORG_ALLOW_EMAIL_PASSWORD_AFTER_SSO:-false}
       DEN_REQUIRE_EMAIL_VERIFICATION: ${DEN_REQUIRE_EMAIL_VERIFICATION:-false}
       DEN_MCP_RESOURCE_URL: ${DEN_MCP_RESOURCE_URL:-http://localhost:8788/mcp}
+      DEN_MCP_ADDITIONAL_RESOURCES: ${DEN_MCP_ADDITIONAL_RESOURCES:-}
       DEN_BETTER_AUTH_TRUSTED_ORIGINS: ${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-}
       PORT: "8788"
       CORS_ORIGINS: ${DEN_CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005,http://0.0.0.0:3005,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8788,http://127.0.0.1:8788}
