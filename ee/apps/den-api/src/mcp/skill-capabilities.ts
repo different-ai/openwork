@@ -37,6 +37,10 @@ export function parseSkillCapabilityName(name: string): string | null {
 function scoreText(nameTokens: string[], summaryTokens: string[], queryTokens: string[]): number {
   let score = 0
   for (const queryToken of queryTokens) {
+    if (queryToken === "skill" || queryToken === "skills") {
+      score += 1
+      continue
+    }
     if (nameTokens.includes(queryToken)) {
       score += 5
     } else if (nameTokens.some((token) => token.startsWith(queryToken) || queryToken.startsWith(token))) {

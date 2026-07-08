@@ -17,6 +17,7 @@ let isAgentApiKeyConnection: typeof import("../src/routes/org/mcp-connections.js
 let isAgentOAuthClientConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentOAuthClientConnection"]
 let buildMcpCatalog: typeof import("../src/mcp/catalog.js")["buildMcpCatalog"]
 let searchCapabilities: typeof import("../src/mcp/search.js")["searchCapabilities"]
+let searchCapabilitySourceFilter: typeof import("../src/mcp/search.js")["searchCapabilitySourceFilter"]
 let document: OpenApiDocument
 
 function findOperation(operationId: string) {
@@ -40,6 +41,7 @@ beforeAll(async () => {
   isMcpOperationAllowed = (await import("../src/mcp/policy.js")).isMcpOperationAllowed
   buildMcpCatalog = (await import("../src/mcp/catalog.js")).buildMcpCatalog
   searchCapabilities = (await import("../src/mcp/search.js")).searchCapabilities
+  searchCapabilitySourceFilter = (await import("../src/mcp/search.js")).searchCapabilitySourceFilter
   const mcpConnections = await import("../src/routes/org/mcp-connections.js")
   isAgentApiKeyConnection = mcpConnections.isAgentApiKeyConnection
   isAgentOAuthClientConnection = mcpConnections.isAgentOAuthClientConnection
@@ -84,6 +86,21 @@ describe("agent-configurable org connections policy", () => {
       path: "/v1/mcp-connections",
       hasBody: true,
     }))
+  })
+
+  test("agent capability search source filter can restrict searches to skills", () => {
+    expect(searchCapabilitySourceFilter()).toEqual({
+      api: true,
+      mcp: true,
+      marketplace: true,
+      skills: true,
+    })
+    expect(searchCapabilitySourceFilter("skills")).toEqual({
+      api: false,
+      mcp: false,
+      marketplace: true,
+      skills: true,
+    })
   })
 
   test("API-key connections are blocked only for the internal agent principal", () => {

@@ -17,6 +17,7 @@ import { getParameters, hasJsonRequestBody, pathParameterNamesFromTemplate, type
  */
 
 export const SEARCH_CAPABILITIES_TOOL_NAME = "search_capabilities"
+export type SearchCapabilityType = "all" | "api" | "mcp" | "marketplace" | "skills"
 
 export type CapabilityMatch = {
   name: string
@@ -30,6 +31,16 @@ export type CapabilityMatch = {
   queryParams: string[]
   /** Whether calling this tool requires a JSON `body`. */
   hasBody: boolean
+}
+
+export function searchCapabilitySourceFilter(type?: SearchCapabilityType) {
+  const capabilityType = type ?? "all"
+  return {
+    api: capabilityType === "all" || capabilityType === "api",
+    mcp: capabilityType === "all" || capabilityType === "mcp",
+    marketplace: capabilityType === "all" || capabilityType === "marketplace" || capabilityType === "skills",
+    skills: capabilityType === "all" || capabilityType === "skills",
+  }
 }
 
 export function tokenize(value: string): string[] {

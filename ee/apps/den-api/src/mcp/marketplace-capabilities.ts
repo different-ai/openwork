@@ -28,6 +28,7 @@ type PluginId = DenTypeId<"plugin">
 type ConfigObjectId = DenTypeId<"configObject">
 type ConfigObjectRow = typeof ConfigObjectTable.$inferSelect
 type ConfigObjectType = ConfigObjectRow["objectType"]
+export type MarketplaceCapabilityObjectType = ConfigObjectType
 type ConfigObjectVersionRow = typeof ConfigObjectVersionTable.$inferSelect
 type MemberRow = Pick<typeof MemberTable.$inferSelect, "id" | "role">
 type UsableExternalMcpConnection = Awaited<ReturnType<typeof listUsableExternalMcpConnections>>[number]
@@ -199,12 +200,16 @@ function summaryFor(row: MarketplaceCapabilityRow): string {
 }
 
 function scoreMarketplaceRow(row: MarketplaceCapabilityRow, queryTokens: string[]): number {
-  return scoreText(
+  const score = scoreText(
     tokenize(row.configObject.title),
     tokenize(row.configObject.description ?? ""),
     queryTokens,
     tokenize(row.configObject.searchText ?? ""),
   )
+  if (row.configObject.objectType !== "skill") return score
+  return queryTokens.some((queryToken) => queryToken === "skill" || queryToken === "skills")
+    ? score + 1
+    : score
 }
 
 function basePayload(row: MarketplaceCapabilityRow): MarketplaceCapabilityExecutePayload {
@@ -694,6 +699,7 @@ export async function searchMarketplaceCapabilities(input: {
   enabled?: boolean
   limit?: number
   member: McpMemberIdentity | null
+  objectTypes?: MarketplaceCapabilityObjectType[]
   organizationId: string
   query: string
 }): Promise<MarketplaceCapabilityMatch[]> {
@@ -714,6 +720,7 @@ export async function searchMarketplaceCapabilities(input: {
   const matchesByName = new Map<string, MarketplaceCapabilityMatch>()
 
   for (const row of rows) {
+    if (input.objectTypes && !input.objectTypes.includes(row.configObject.objectType)) continue
     const score = scoreMarketplaceRow(row, queryTokens)
     if (score <= 0) continue
     const name = buildMarketplaceCapabilityName(row.plugin.id, row.configObject.id)
