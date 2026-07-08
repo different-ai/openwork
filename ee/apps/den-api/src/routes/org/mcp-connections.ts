@@ -24,6 +24,7 @@ import {
   manifestPrincipalFor,
   revalidateManifest,
   deleteManifests,
+  type ExternalMcpToolManifestRow,
   type ManifestPrincipal,
 } from "../../capability-sources/external-mcp-manifests.js"
 import {
@@ -42,7 +43,7 @@ import {
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { listNativeProviderUsableEntries } from "../../capability-sources/native-provider-connections.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
-import { getConnectedAccount, upsertOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
+import { getConnectedAccount, getConnectedAccounts, upsertOrgOAuthClient, type ConnectedAccountRow } from "../../capability-sources/oauth-credentials.js"
 import { assertPublicUrl } from "../../capability-sources/url-guard.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import { EXTERNAL_MCP_PRESETS } from "../../capability-sources/external-mcp-presets.js"
@@ -200,28 +201,37 @@ function isConnectionConnected(row: ExternalMcpConnectionRow): boolean {
   return Boolean(row.accessToken || row.apiKey || (row.authType === "none" && row.connectedAt))
 }
 
+function responseManifestPrincipal(row: ExternalMcpConnectionRow, callerOrgMembershipId: DenTypeId<"member">): ManifestPrincipal {
+  return row.credentialMode === "per_member" ? callerOrgMembershipId : "shared"
+}
+
 async function toConnectionResponse(
   row: ExternalMcpConnectionRow,
   options: {
     callerOrgMembershipId: DenTypeId<"member">
+    connectedAccount?: ConnectedAccountRow | null
     includeAccess: boolean
+    manifest?: ExternalMcpToolManifestRow | null
   },
 ) {
   let connectedForMe = isConnectionConnected(row) && row.credentialMode === "shared"
   if (row.credentialMode === "per_member") {
-    const account = await getConnectedAccount({
-      organizationId: row.organizationId,
-      orgMembershipId: options.callerOrgMembershipId,
-      providerId: row.id,
-    })
+    const account = options.connectedAccount === undefined
+      ? await getConnectedAccount({
+        organizationId: row.organizationId,
+        orgMembershipId: options.callerOrgMembershipId,
+        providerId: row.id,
+      })
+      : options.connectedAccount
     connectedForMe = Boolean(account?.accessToken)
   }
 
-  const principal: ManifestPrincipal = row.credentialMode === "per_member"
-    ? options.callerOrgMembershipId
-    : "shared"
-  const manifests = await getManifests({ pairs: [{ connection: row, principal }] })
-  const manifest = manifests.get(manifestMapKey(row.id, principal))
+  let manifest = options.manifest
+  if (manifest === undefined) {
+    const principal = responseManifestPrincipal(row, options.callerOrgMembershipId)
+    const manifests = await getManifests({ pairs: [{ connection: row, principal }] })
+    manifest = manifests.get(manifestMapKey(row.id, principal)) ?? null
+  }
 
   let access: { orgWide: boolean; memberIds: string[]; teamIds: string[] } | null = null
   if (options.includeAccess) {
@@ -253,6 +263,33 @@ async function toConnectionResponse(
         }
       : null,
   }
+}
+
+async function toConnectionResponses(input: {
+  callerOrgMembershipId: DenTypeId<"member">
+  includeAccess: boolean
+  organizationId: DenTypeId<"organization">
+  rows: ExternalMcpConnectionRow[]
+}) {
+  const manifestPairs = input.rows.map((row) => ({
+    connection: row,
+    principal: responseManifestPrincipal(row, input.callerOrgMembershipId),
+  }))
+  const manifests = await getManifests({ pairs: manifestPairs })
+  const connectedAccounts = await getConnectedAccounts({
+    organizationId: input.organizationId,
+    orgMembershipId: input.callerOrgMembershipId,
+    providerIds: input.rows.flatMap((row) => row.credentialMode === "per_member" ? [row.id] : []),
+  })
+  return Promise.all(input.rows.map((row) => {
+    const principal = responseManifestPrincipal(row, input.callerOrgMembershipId)
+    return toConnectionResponse(row, {
+      callerOrgMembershipId: input.callerOrgMembershipId,
+      connectedAccount: row.credentialMode === "per_member" ? connectedAccounts.get(row.id) ?? null : null,
+      includeAccess: input.includeAccess,
+      manifest: manifests.get(manifestMapKey(row.id, principal)) ?? null,
+    })
+  }))
 }
 
 function callbackRedirectUri(request: Request, connectionId: string) {
@@ -317,8 +354,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           return c.json({ error: "forbidden", message: "Only workspace owners and admins can list all MCP connections." }, 403)
         }
         const rows = await listExternalMcpConnections(payload.organization.id)
-        const connections = await Promise.all(rows.map((row) =>
-          toConnectionResponse(row, { callerOrgMembershipId: payload.currentMember.id, includeAccess: true })))
+        const connections = await toConnectionResponses({
+          callerOrgMembershipId: payload.currentMember.id,
+          includeAccess: true,
+          organizationId: payload.organization.id,
+          rows,
+        })
         return c.json({ connections })
       }
 
@@ -335,8 +376,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         orgMembershipId: payload.currentMember.id,
         teamIds: memberTeams.map((team) => team.id),
       })
-      const connections = await Promise.all(rows.map((row) =>
-        toConnectionResponse(row, { callerOrgMembershipId: payload.currentMember.id, includeAccess: false })))
+      const connections = await toConnectionResponses({
+        callerOrgMembershipId: payload.currentMember.id,
+        includeAccess: false,
+        organizationId: payload.organization.id,
+        rows,
+      })
       // Native providers (e.g. google-workspace) join the same list once the
       // org saved an OAuth client for them — same card, same connect flow,
       // same rollout gate (this sits after the gate check on purpose).
