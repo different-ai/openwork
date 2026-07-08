@@ -214,7 +214,7 @@ async function waitForOrganizationConsent(ctx) {
   );
   const state = await ctx.eval(`(() => ({
     radios: document.querySelectorAll('input[name="mcp-organization"], input[type="radio"]').length,
-    orgLabel: (document.querySelector("input[name=\"mcp-organization\"]")?.closest("label")?.innerText || "").slice(0,60),
+    orgLabel: (document.querySelector('input[name="mcp-organization"]')?.closest('label')?.innerText || '').slice(0, 60),
     snippet: document.body.innerText.slice(0, 300),
   }))()`);
   ctx.recordEvidence({ type: "output", name: "Consent page state", text: JSON.stringify(state, null, 2) });
