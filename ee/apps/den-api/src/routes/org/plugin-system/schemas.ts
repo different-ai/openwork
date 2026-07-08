@@ -381,6 +381,34 @@ export const githubDiscoveryApplySchema = z.object({
   selectedKeys: z.array(z.string().trim().min(1).max(255)).max(200),
 })
 
+export const githubPluginMcpImportAccessSchema = z.object({
+  orgWide: z.boolean().optional().default(true),
+  memberIds: z.array(memberIdSchema).max(200).optional().default([]),
+  teamIds: z.array(teamIdSchema).max(200).optional().default([]),
+}).superRefine((value, ctx) => {
+  if (!value.orgWide && value.memberIds.length === 0 && value.teamIds.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide orgWide=true or at least one member/team grant.",
+      path: ["orgWide"],
+    })
+  }
+})
+
+export const githubPluginMcpImportPreviewSchema = z.object({
+  githubUrl: z.string().trim().url().max(2048),
+})
+
+export const githubPluginMcpImportSchema = githubPluginMcpImportPreviewSchema.extend({
+  access: githubPluginMcpImportAccessSchema.optional(),
+  authType: z.enum(["oauth", "none"]).optional().default("oauth"),
+  credentialMode: z.enum(["shared", "per_member"]).optional().default("per_member"),
+  marketplaceId: marketplaceIdSchema,
+  selectedSkillKeys: z.array(z.string().trim().min(1).max(1024)).max(200).optional(),
+  selectedServerKeys: z.array(z.string().trim().min(1).max(1024)).max(200).optional(),
+  selectedServerNames: z.array(z.string().trim().min(1).max(255)).max(200).optional(),
+})
+
 export const githubDiscoveryTreeQuerySchema = z.object({
   cursor: z.string().trim().min(1).max(255).optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
@@ -775,6 +803,84 @@ export const marketplaceResolvedResponseSchema = pluginArchMutationResponseSchem
       repositoryFullName: z.string().trim().min(1),
       branch: z.string().trim().min(1).nullable(),
     }).nullable(),
+  }),
+)
+
+const githubPluginMcpImportServerSchema = z.object({
+  authType: z.literal("oauth"),
+  connectionId: z.string().nullable(),
+  name: z.string(),
+  pluginKey: z.string(),
+  pluginName: z.string(),
+  serverKey: z.string(),
+  skippedReason: z.enum(["missing_url", "local_unsupported", "invalid_url", "unsupported_auth"]).nullable(),
+  sourcePath: z.string(),
+  supported: z.boolean(),
+  url: z.string().nullable(),
+}).meta({ ref: "GithubPluginMcpImportServer" })
+
+const githubPluginMcpImportPlanSchema = z.object({
+  branch: z.string(),
+  classification: z.enum(["claude_marketplace_repo", "claude_multi_plugin_repo", "claude_single_plugin_repo", "folder_inferred_repo", "unsupported"]),
+  marketplace: z.object({
+    description: z.string().nullable(),
+    name: z.string().nullable(),
+    owner: z.string().nullable(),
+    version: z.string().nullable(),
+  }).nullable(),
+  plugins: z.array(z.object({
+    description: z.string().nullable(),
+    key: z.string(),
+    mcpCount: z.number().int().nonnegative(),
+    name: z.string(),
+    skillCount: z.number().int().nonnegative(),
+  })),
+  repositoryFullName: z.string(),
+  rootPath: z.string(),
+  servers: z.array(githubPluginMcpImportServerSchema),
+  skills: z.array(z.object({
+    description: z.string().nullable(),
+    name: z.string(),
+    pluginKey: z.string(),
+    pluginName: z.string(),
+    skillKey: z.string(),
+    skippedReason: z.enum(["invalid_skill"]).nullable(),
+    sourcePath: z.string(),
+    supported: z.boolean(),
+  })),
+  sourceRevisionRef: z.string(),
+  warnings: z.array(z.string()),
+}).meta({ ref: "GithubPluginMcpImportPlan" })
+
+export const githubPluginMcpImportPreviewResponseSchema = pluginArchMutationResponseSchema(
+  "GithubPluginMcpImportPreviewResponse",
+  githubPluginMcpImportPlanSchema,
+)
+
+export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSchema(
+  "GithubPluginMcpImportResponse",
+  z.object({
+    imported: z.array(z.object({
+      connectionId: z.string(),
+      name: z.string(),
+      url: z.string(),
+    })),
+    importedSkills: z.array(z.object({
+      name: z.string(),
+      skillId: denTypeIdSchema("skill"),
+      sourcePath: z.string(),
+    })),
+    marketplaceId: marketplaceIdSchema,
+    plugin: pluginSchema,
+    skipped: z.array(z.object({
+      name: z.string(),
+      reason: z.enum(["missing_url", "local_unsupported", "invalid_url", "unsupported_auth"]),
+    })),
+    skippedSkills: z.array(z.object({
+      name: z.string(),
+      reason: z.enum(["invalid_skill"]),
+      sourcePath: z.string(),
+    })),
   }),
 )
 export const marketplacePluginListResponseSchema = pluginArchListResponseSchema("PluginArchMarketplacePluginListResponse", marketplacePluginSchema)

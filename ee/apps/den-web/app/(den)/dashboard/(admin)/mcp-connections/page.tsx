@@ -1,5 +1,6 @@
-import { McpConnectionsScreen } from "../../_components/mcp-connections-screen";
+import { redirect } from "next/navigation";
+import { getConnectionsRoute } from "../../../_lib/den-org";
 
 export default function McpConnectionsPage() {
-  return <McpConnectionsScreen />;
+  redirect(getConnectionsRoute());
 }

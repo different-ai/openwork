@@ -472,8 +472,12 @@ export function getGithubIntegrationRoute(orgSlug?: string | null): string {
   return `${getIntegrationsRoute(orgSlug)}/github`;
 }
 
+export function getConnectionsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/connections`;
+}
+
 export function getMcpConnectionsRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
+  return getConnectionsRoute(orgSlug);
 }
 
 export function getYourConnectionsRoute(orgSlug?: string | null): string {

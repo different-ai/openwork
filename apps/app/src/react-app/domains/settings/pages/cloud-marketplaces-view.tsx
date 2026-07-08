@@ -17,6 +17,7 @@ import { resolveMarketplaceDeliveryAction } from "@/react-app/domains/settings/c
 import { isDesktopInstallableMarketplacePlugin } from "@/react-app/domains/settings/connect-cloud-readiness";
 import {
   isOrgMcpConnectionItem,
+  isOrgMcpConnectionReady,
   isToggleControlledExtension,
   orgMcpConnectionActionLabel,
   type ExtensionItem,
@@ -69,6 +70,7 @@ type MarketplacePackageRow = {
   marketplaceName: string;
   plugin: DenOrgPlugin;
   imported: CloudImportedPlugin | null;
+  item: ExtensionItem | null;
   status: MarketplacePackageStatus;
   counts: string[];
   composition: Array<{ count: number; label: string; type: string }>;
@@ -113,6 +115,7 @@ export type CloudMarketplacesViewProps = {
   configSlotForBuiltIn?: (entry: McpDirectoryInfo) => React.ReactNode | null;
   isBuiltInConnected?: (entry: McpDirectoryInfo) => boolean;
   extensionItems?: ExtensionItem[];
+  orgMcpConnections?: DenExternalMcpConnection[];
   orgMcpConnectingId?: string | null;
   onConnectOrgMcp?: (connectionId: string) => void;
   refreshOrgMcpConnections?: () => Promise<unknown> | void;
@@ -200,6 +203,7 @@ export function CloudMarketplacesView({
   configSlotForBuiltIn,
   isBuiltInConnected,
   extensionItems = [],
+  orgMcpConnections = [],
   orgMcpConnectingId = null,
   onConnectOrgMcp,
   refreshOrgMcpConnections,
@@ -266,6 +270,7 @@ export function CloudMarketplacesView({
         marketplaceName: marketplace.marketplace.name,
         plugin,
         imported,
+        item: item ?? null,
         status,
         counts,
         composition,
@@ -657,7 +662,10 @@ export function CloudMarketplacesView({
           resolved={resolvedPlugins[detailRow.plugin.id] ?? null}
           resolving={detailLoadingId === detailRow.plugin.id}
           resolveError={detailError}
+          orgMcpConnections={orgMcpConnections}
+          orgMcpConnectingId={orgMcpConnectingId}
           onClose={() => setDetailRow(null)}
+          onConnectOrgMcp={onConnectOrgMcp}
           onImportPlugin={importPlugin}
           connectEnabled={connectEnabled}
           onRemovePlugin={removePlugin}
@@ -778,6 +786,7 @@ function MarketplaceCard(props: {
     importedLocally: Boolean(row.imported),
   });
   const cloudDelivery = deliveryAction !== "install";
+  const needsSetup = Boolean(row.imported && row.item?.setupState === "needs_setup");
 
   return (
     <div ref={highlightRef} className={`flex flex-col gap-2 ${highlightClass}`}>
@@ -787,10 +796,10 @@ function MarketplaceCard(props: {
         iconSlug={manifest?.icon?.simpleIconSlug}
         iconSrc={manifest?.icon?.src}
         kind="extension"
-        connected={cloudBuiltIn || cloudDelivery || Boolean(row.imported)}
-        connectedLabel={cloudDelivery ? t("extensions.marketplace_active_cloud_label") : cloudBuiltIn ? "Built-in" : updateAvailable ? t("extensions.update_available") : "Installed"}
+        connected={cloudBuiltIn || (cloudDelivery && !needsSetup) || (Boolean(row.imported) && !needsSetup)}
+        connectedLabel={cloudDelivery && !needsSetup ? t("extensions.marketplace_active_cloud_label") : cloudBuiltIn ? "Built-in" : updateAvailable ? t("extensions.update_available") : "Installed"}
         connecting={actionBusy}
-        actionLabel={cloudDelivery ? t("extensions.marketplace_runs_in_cloud") : cloudBuiltIn ? "View details" : actionBusy ? "Working..." : actionLabelForStatus(row.status)}
+        actionLabel={needsSetup ? "View setup" : cloudDelivery ? t("extensions.marketplace_runs_in_cloud") : cloudBuiltIn ? "View details" : actionBusy ? "Working..." : actionLabelForStatus(row.status)}
         onClick={() => onOpenDetail(row)}
       />
       {updateAvailable && !cloudDelivery ? (
@@ -894,11 +903,26 @@ function MarketplacePackageDetailModal(props: {
   resolving: boolean;
   resolveError: string | null;
   connectEnabled?: boolean;
+  orgMcpConnections: DenExternalMcpConnection[];
+  orgMcpConnectingId: string | null;
   onClose: () => void;
+  onConnectOrgMcp?: (connectionId: string) => void;
   onImportPlugin: (marketplaceId: string | null, plugin: DenOrgPlugin) => void | Promise<void>;
   onRemovePlugin: (pluginId: string, pluginName: string) => void | Promise<void>;
 }) {
-  const { actionId, row, resolved, resolving, resolveError, onClose, onImportPlugin, onRemovePlugin } = props;
+  const {
+    actionId,
+    row,
+    resolved,
+    resolving,
+    resolveError,
+    orgMcpConnections,
+    orgMcpConnectingId,
+    onClose,
+    onConnectOrgMcp,
+    onImportPlugin,
+    onRemovePlugin,
+  } = props;
   const actionBusy = actionId === row.plugin.id;
   const cloudBuiltIn = isCloudBuiltInPlugin(row.plugin);
   const manifest = row.plugin.extension?.manifest;
@@ -907,7 +931,14 @@ function MarketplacePackageDetailModal(props: {
     importedLocally: Boolean(row.imported),
   });
   const cloudDelivery = deliveryAction !== "install";
+  const needsSetup = Boolean(row.imported && row.item?.setupState === "needs_setup");
   const canAddOrUpdate = !cloudDelivery && !cloudBuiltIn && (row.status === "available" || row.status === "update_available");
+  const importedExternalConnectionIds = row.imported?.files.flatMap((file) => file.externalMcpConnectionId ? [file.externalMcpConnectionId] : []) ?? [];
+  const importedConnections = [...new Set(importedExternalConnectionIds)].flatMap((connectionId) => {
+    const connection = orgMcpConnections.find((entry) => entry.id === connectionId);
+    return connection ? [connection] : [];
+  });
+  const missingImportedConnectionCount = new Set(importedExternalConnectionIds).size - importedConnections.length;
 
   return (
     <ExtensionDetailModal
@@ -918,10 +949,11 @@ function MarketplacePackageDetailModal(props: {
       iconSlug={manifest?.icon?.simpleIconSlug}
       iconSrc={manifest?.icon?.src}
       kind="extension"
-      connected={cloudBuiltIn || cloudDelivery || Boolean(row.imported)}
-      connectedLabel={cloudDelivery ? t("extensions.marketplace_active_cloud_label") : cloudBuiltIn ? "Built-in" : "Installed"}
+      connected={cloudBuiltIn || (cloudDelivery && !needsSetup) || (Boolean(row.imported) && !needsSetup)}
+      connectedLabel={cloudDelivery && !needsSetup ? t("extensions.marketplace_active_cloud_label") : cloudBuiltIn ? "Built-in" : "Installed"}
+      disconnectedLabel={needsSetup ? "Needs setup" : undefined}
       connecting={actionBusy}
-      connectLabel={row.status === "update_available" ? "Update" : "Add"}
+      connectLabel={needsSetup ? "View setup" : row.status === "update_available" ? "Update" : "Add"}
       connectingLabel={row.status === "update_available" ? "Updating..." : "Adding..."}
       uninstallLabel="Remove"
       showEnablementCard={false}
@@ -933,8 +965,8 @@ function MarketplacePackageDetailModal(props: {
       configSlot={(
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2">
-            <SettingsPill className={cloudDelivery ? "border-green-7/30 bg-green-3/20 text-green-11" : statusClass(row.status)}>
-              {cloudDelivery ? t("extensions.marketplace_active_cloud_label") : cloudBuiltIn ? "Built-in" : statusLabel(row.status)}
+            <SettingsPill className={needsSetup ? "border-amber-7/30 bg-amber-3/20 text-amber-11" : statusClass(row.status)}>
+              {needsSetup ? "Needs setup" : cloudDelivery ? t("extensions.marketplace_active_cloud_label") : cloudBuiltIn ? "Built-in" : statusLabel(row.status)}
             </SettingsPill>
             <SettingsPill>{row.marketplaceName}</SettingsPill>
             {row.counts.map((label) => <SettingsPill key={label}>{label}</SettingsPill>)}
@@ -955,6 +987,44 @@ function MarketplacePackageDetailModal(props: {
           ) : null}
           {resolving ? (
             <SettingsNotice>Loading extension contents...</SettingsNotice>
+          ) : null}
+          {missingImportedConnectionCount > 0 ? (
+            <SettingsNotice tone="error">
+              You do not have access to {missingImportedConnectionCount === 1 ? "one required MCP connection" : `${missingImportedConnectionCount} required MCP connections`}. Ask an admin to update the connection sharing settings.
+            </SettingsNotice>
+          ) : null}
+          {importedConnections.length > 0 ? (
+            <div className="rounded-xl border border-dls-border bg-dls-hover px-3 py-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Cloud MCP connections</div>
+              <div className="mt-3 grid gap-2">
+                {importedConnections.map((connection) => {
+                  const ready = isOrgMcpConnectionReady(connection);
+                  const needsMemberConnect = connection.credentialMode === "per_member" && !connection.connectedForMe;
+                  const connecting = orgMcpConnectingId === connection.id;
+                  return (
+                    <div key={connection.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dls-border bg-dls-surface px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-card-foreground">{connection.name}</div>
+                        <div className="truncate text-xs text-muted-foreground">{connection.url}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <SettingsPill>{ready ? "Ready" : needsMemberConnect ? "Needs setup" : "Waiting for admin"}</SettingsPill>
+                        {needsMemberConnect && onConnectOrgMcp ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            disabled={connecting}
+                            onClick={() => onConnectOrgMcp(connection.id)}
+                          >
+                            {connecting ? "Waiting for browser..." : "Connect account"}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           ) : null}
           {resolved ? (
             <div className="space-y-2">

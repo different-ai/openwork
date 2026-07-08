@@ -164,6 +164,8 @@ export const pluginArchRoutePaths = {
   pluginReleases: `${orgBasePath}/plugins/:pluginId/releases`,
   pluginAccess: `${orgBasePath}/plugins/:pluginId/access`,
   pluginAccessGrant: `${orgBasePath}/plugins/:pluginId/access/:grantId`,
+  pluginGithubMcpImportPreview: `${orgBasePath}/plugins/import-mcps-from-github-url/preview`,
+  pluginGithubMcpImport: `${orgBasePath}/plugins/import-mcps-from-github-url`,
   marketplaces: `${orgBasePath}/marketplaces`,
   marketplace: `${orgBasePath}/marketplaces/:marketplaceId`,
   marketplaceResolved: `${orgBasePath}/marketplaces/:marketplaceId/resolved`,

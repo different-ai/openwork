@@ -37,6 +37,10 @@ import {
   githubConnectorDiscoveryResponseSchema,
   githubDiscoveryApplyResponseSchema,
   githubDiscoveryApplySchema,
+  githubPluginMcpImportPreviewResponseSchema,
+  githubPluginMcpImportPreviewSchema,
+  githubPluginMcpImportResponseSchema,
+  githubPluginMcpImportSchema,
   githubDiscoveryTreeQuerySchema,
   githubDiscoveryTreeResponseSchema,
   connectorInstanceDetailResponseSchema,
@@ -150,6 +154,8 @@ import {
   getConnectorInstanceConfiguration,
   getGithubConnectorDiscovery,
   getGithubConnectorDiscoveryTree,
+  importGithubPluginMcps,
+  previewGithubPluginMcpImport,
   removeConnectorInstance,
   setConnectorInstanceAutoImport,
   queueConnectorTargetResync,
@@ -843,6 +849,65 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       try {
         const params = validParam<any>(c)
         return c.json(await listPluginMemberships({ context: actorContext(c), includeConfigObjects: true, onlyActive: true, pluginId: params.pluginId }))
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginGithubMcpImportPreview,
+    jsonValidator(githubPluginMcpImportPreviewSchema),
+    describeRoute({
+      tags: ["GitHub"],
+      summary: "Preview GitHub plugin MCP import",
+      description: "Reads a public GitHub plugin URL and returns remote MCP servers that can be imported as Den External MCP Connections.",
+      responses: {
+        200: jsonResponse("GitHub plugin MCP import preview returned successfully.", githubPluginMcpImportPreviewResponseSchema),
+        400: jsonResponse("The GitHub plugin MCP import preview request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to preview plugin MCP imports.", unauthorizedSchema),
+        404: jsonResponse("The GitHub plugin path could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const body = validJson<{
+          githubUrl: string
+        }>(c)
+        return c.json({ ok: true, item: await previewGithubPluginMcpImport({ githubUrl: body.githubUrl }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginGithubMcpImport,
+    jsonValidator(githubPluginMcpImportSchema),
+    describeRoute({
+      tags: ["GitHub"],
+      summary: "Import GitHub plugin MCPs",
+      description: "Creates/reuses Den External MCP Connections for selected remote MCP servers from a public GitHub plugin URL and publishes one marketplace plugin that references them.",
+      responses: {
+        200: jsonResponse("GitHub plugin MCPs imported successfully.", githubPluginMcpImportResponseSchema),
+        400: jsonResponse("The GitHub plugin MCP import request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to import plugin MCPs.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to import plugin MCPs.", forbiddenSchema),
+        404: jsonResponse("The GitHub plugin path or marketplace could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "plugin.create")
+        const body = validJson<z.infer<typeof githubPluginMcpImportSchema>>(c)
+        return c.json({ ok: true, item: await importGithubPluginMcps({
+          access: body.access,
+          authType: body.authType,
+          context,
+          credentialMode: body.credentialMode,
+          githubUrl: body.githubUrl,
+          marketplaceId: body.marketplaceId,
+          selectedSkillKeys: body.selectedSkillKeys,
+          selectedServerKeys: body.selectedServerKeys,
+          selectedServerNames: body.selectedServerNames,
+        }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }
