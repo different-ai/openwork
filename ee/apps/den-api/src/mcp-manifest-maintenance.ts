@@ -1,4 +1,4 @@
-import { and, eq, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
   ExternalMcpConnectionTable,
@@ -10,8 +10,6 @@ import { env } from "./env.js"
 import { listTeamsForMember } from "./orgs.js"
 import {
   deleteManifests,
-  getManifests,
-  manifestMapKey,
   revalidateManifest,
   type ManifestPrincipal,
 } from "./capability-sources/external-mcp-manifests.js"
@@ -98,16 +96,31 @@ async function refreshManifestRow(row: typeof ExternalMcpToolManifestTable.$infe
 }
 
 async function seedSharedConnectionRows(limit: number) {
-  const connections = await db
-    .select()
+  if (limit <= 0) return 0
+  const rows = await db
+    .select({ connection: ExternalMcpConnectionTable })
     .from(ExternalMcpConnectionTable)
-    .where(eq(ExternalMcpConnectionTable.credentialMode, "shared"))
+    .leftJoin(
+      ExternalMcpToolManifestTable,
+      and(
+        eq(ExternalMcpToolManifestTable.externalMcpConnectionId, ExternalMcpConnectionTable.id),
+        eq(ExternalMcpToolManifestTable.principal, "shared"),
+      ),
+    )
+    .where(and(
+      eq(ExternalMcpConnectionTable.credentialMode, "shared"),
+      isNull(ExternalMcpToolManifestTable.id),
+      or(
+        eq(ExternalMcpConnectionTable.authType, "none"),
+        and(eq(ExternalMcpConnectionTable.authType, "oauth"), isNotNull(ExternalMcpConnectionTable.accessToken)),
+        and(eq(ExternalMcpConnectionTable.authType, "apikey"), isNotNull(ExternalMcpConnectionTable.apiKey)),
+      ),
+    ))
+    .orderBy(ExternalMcpConnectionTable.createdAt)
     .limit(limit)
   let seeded = 0
-  for (const connection of connections) {
+  for (const { connection } of rows) {
     if (!isSharedRefreshable(connection)) continue
-    const manifests = await getManifests({ pairs: [{ connection, principal: "shared" }] })
-    if (manifests.has(manifestMapKey(connection.id, "shared"))) continue
     const redirectUri = redirectUriForRefresh(connection.id)
     if (!redirectUri) continue
     await revalidateManifest({ connection, principal: "shared", redirectUri })
