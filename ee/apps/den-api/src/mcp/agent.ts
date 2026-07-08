@@ -11,7 +11,7 @@ import { db } from "../db.js"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
-import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities } from "./search.js"
+import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter } from "./search.js"
 import { executeExternalCapability, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities } from "./external-capabilities.js"
 import { executeMarketplaceCapability, parseMarketplaceCapabilityName, searchMarketplaceCapabilities } from "./marketplace-capabilities.js"
 import { executeSkillCapability, parseSkillCapabilityName, searchSkillCapabilities } from "./skill-capabilities.js"
@@ -19,6 +19,7 @@ import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { env } from "../env.js"
 
 export const EXECUTE_CAPABILITY_TOOL_NAME = "execute_capability"
+const searchCapabilityTypeSchema = z.enum(["all", "api", "mcp", "marketplace", "skills"])
 
 function textContent(text: string): { text: string; type: "text" }[] {
   return [{ type: "text", text }]
@@ -96,16 +97,18 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         inputSchema: z.object({
           query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
           limit: z.number().int().min(1).max(20).optional().describe("Max number of matches to return. Defaults to 5."),
+          type: searchCapabilityTypeSchema.optional().describe("Optional capability source filter. Use skills to search only stored organization skills. Defaults to all."),
         }),
       },
-      async ({ query, limit }) => {
+      async ({ query, limit, type }) => {
         const boundedLimit = limit ?? 5
-        const restMatches = searchCapabilities(catalog, query, boundedLimit)
+        const sourceFilter = searchCapabilitySourceFilter(type)
+        const restMatches = sourceFilter.api ? searchCapabilities(catalog, query, boundedLimit) : []
         // Merged in from each connected External MCP Connection's live
         // tools/list (capability-sources/external-mcp-client.ts) — a
         // Notion/Linear/Stripe/... connection an admin added in Den shows
         // up here exactly like any native capability, ranked together.
-        const externalMatches = externalMcpConnectionsEnabled
+        const externalMatches = sourceFilter.mcp && externalMcpConnectionsEnabled
           ? await searchExternalCapabilities({
             organizationId: principal.organizationId,
             member: memberIdentity,
@@ -114,7 +117,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             limit: boundedLimit,
           })
           : []
-        const marketplaceMatches = externalMcpConnectionsEnabled
+        const marketplaceMatches = sourceFilter.marketplace && externalMcpConnectionsEnabled
           ? await searchMarketplaceCapabilities({
             organizationId: principal.organizationId,
             member: memberIdentity,
@@ -123,12 +126,14 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             enabled: externalMcpConnectionsEnabled,
           })
           : []
-        const skillMatches = await searchSkillCapabilities({
-          organizationId: principal.organizationId,
-          member: memberIdentity,
-          query,
-          limit: boundedLimit,
-        })
+        const skillMatches = sourceFilter.skills
+          ? await searchSkillCapabilities({
+            organizationId: principal.organizationId,
+            member: memberIdentity,
+            query,
+            limit: boundedLimit,
+          })
+          : []
         const matches = [...restMatches, ...externalMatches, ...marketplaceMatches, ...skillMatches]
           .sort((a, b) => b.score - a.score)
           .slice(0, boundedLimit)
