@@ -468,13 +468,6 @@ export function OpenworkRouteControlActions() {
       execute: () => navigate("/settings/general"),
     },
     {
-      id: "route.settings.extensions",
-      label: "Open MCP and extension settings",
-      description: "Navigate to extension and MCP settings.",
-      sideEffect: "navigation",
-      execute: () => navigate("/settings/extensions"),
-    },
-    {
       id: "route.settings.skills",
       label: "Open skills settings",
       description: "Navigate to skills settings.",
