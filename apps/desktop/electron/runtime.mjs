@@ -5,6 +5,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 
@@ -483,6 +484,35 @@ function loadUserEnvFile() {
   }
 }
 
+export async function resolveSystemCaEnv({
+  tlsModule = tls,
+  userDataDir,
+  parentEnv = process.env,
+  logInfo = console.info,
+} = {}) {
+  const env = parentEnv ?? {};
+  if (Object.prototype.hasOwnProperty.call(env, "NODE_EXTRA_CA_CERTS")) {
+    if (typeof logInfo === "function") {
+      logInfo("OpenWork runtime: NODE_EXTRA_CA_CERTS is already set; skipping system CA bundle export.");
+    }
+    return {};
+  }
+
+  try {
+    if (typeof tlsModule?.getCACertificates !== "function") return {};
+    const certs = tlsModule.getCACertificates("system");
+    if (!Array.isArray(certs) || certs.length === 0) return {};
+    const pem = certs.filter((cert) => typeof cert === "string" && cert.trim()).join("\n");
+    if (!pem) return {};
+    const bundlePath = path.join(userDataDir, "system-ca-bundle.pem");
+    await mkdir(path.dirname(bundlePath), { recursive: true });
+    await writeFile(bundlePath, `${pem}\n`, "utf8");
+    return { NODE_EXTRA_CA_CERTS: bundlePath };
+  } catch {
+    return {};
+  }
+}
+
 export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
@@ -515,6 +545,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null,
     path.join(path.dirname(app.getPath("exe")), "sidecars"),
   ].filter(Boolean);
+  let systemCaEnvPromise = null;
+
+  function systemCaEnv() {
+    systemCaEnvPromise ??= resolveSystemCaEnv({ tlsModule: tls, userDataDir, parentEnv: process.env });
+    return systemCaEnvPromise;
+  }
 
   function openworkServerTokenStorePath() {
     return path.join(userDataDir, "openwork-server-tokens.json");
@@ -688,6 +724,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function buildChildEnv(extra = {}) {
+    const caEnv = await systemCaEnv();
     /** @type {NodeJS.ProcessEnv} */
     // User env is layered first so process.env + any caller overrides always
     // win. See apps/server/src/env-file.ts and apps/orchestrator/src/cli.ts —
@@ -696,6 +733,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       ...loadUserEnvFile(),
       ...process.env,
       BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
+      // Bun honors Node's NODE_EXTRA_CA_CERTS, so bundled Bun sidecars inherit
+      // the exported OS trust store through the same child env variable.
+      ...caEnv,
       ...extra,
     };
     const pathKey =
