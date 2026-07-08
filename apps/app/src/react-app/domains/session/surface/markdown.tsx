@@ -207,7 +207,7 @@ function MarkdownBlockInner(props: {
     if (!props.text.trim()) return "";
     return markdownParser.parse(props.text, { async: false });
   }, [props.text]);
-  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
+  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; theme: string; html: string } | null>(null);
 
   useEffect(() => {
     if (props.streaming || !hasFencedCodeBlock(props.text)) {
@@ -217,7 +217,7 @@ function MarkdownBlockInner(props: {
 
     let cancelled = false;
     void highlightedMarkdownParser.parse(props.text, { async: true }).then((html) => {
-      if (!cancelled && html.trim()) setHighlightedHtml({ text: props.text, html });
+      if (!cancelled && html.trim()) setHighlightedHtml({ text: props.text, theme: shikiTheme, html });
     }).catch(() => {
       if (!cancelled) setHighlightedHtml(null);
     });
@@ -236,7 +236,9 @@ function MarkdownBlockInner(props: {
     });
   }, [props.highlightQuery, props.streaming, props.text]);
 
-  const html = highlightedHtml?.text === props.text ? highlightedHtml.html : syncHtml;
+  const html = highlightedHtml?.text === props.text && highlightedHtml.theme === shikiTheme
+    ? highlightedHtml.html
+    : syncHtml;
 
   if (!html) return null;
 

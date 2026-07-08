@@ -388,7 +388,7 @@ function MarkdownBlockInner({
     }
     return sanitizeMarkdownHtml(markdownParser.parse(text, { async: false }));
   }, [text]);
-  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
+  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; theme: string; html: string } | null>(null);
 
   useEffect(() => {
     if (streaming || !hasFencedCodeBlock(text)) {
@@ -401,7 +401,7 @@ function MarkdownBlockInner({
       const sanitizedHtml = sanitizeMarkdownHtml(html);
 
       if (!cancelled && sanitizedHtml.trim()) {
-        setHighlightedHtml({ text, html: sanitizedHtml });
+        setHighlightedHtml({ text, theme: shikiTheme, html: sanitizedHtml });
       }
     }).catch(() => {
       if (!cancelled) {
@@ -413,7 +413,9 @@ function MarkdownBlockInner({
     };
   }, [shikiTheme, streaming, text]);
 
-  const html = !streaming && highlightedHtml?.text === text ? highlightedHtml.html : syncHtml;
+  const html = !streaming && highlightedHtml?.text === text && highlightedHtml.theme === shikiTheme
+    ? highlightedHtml.html
+    : syncHtml;
 
   useEffect(() => {
     const root = rootRef.current;
