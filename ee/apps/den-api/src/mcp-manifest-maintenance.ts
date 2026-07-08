@@ -53,8 +53,7 @@ async function refreshManifestRow(row: typeof ExternalMcpToolManifestTable.$infe
       await deleteManifests({ connectionId: connection.id, principal: "shared" })
       return "deleted" as const
     }
-    await revalidateManifest({ connection, principal: "shared", redirectUri })
-    return "refreshed" as const
+    return revalidateManifest({ connection, principal: "shared", redirectUri })
   }
 
   if (!isDenTypeId("member", row.principal)) {
@@ -86,13 +85,12 @@ async function refreshManifestRow(row: typeof ExternalMcpToolManifestTable.$infe
     await deleteManifests({ connectionId: connection.id, principal: orgMembershipId })
     return "deleted" as const
   }
-  await revalidateManifest({
+  return revalidateManifest({
     connection,
     principal: orgMembershipId,
     redirectUri,
     member: { orgMembershipId },
   })
-  return "refreshed" as const
 }
 
 async function seedSharedConnectionRows(limit: number) {
@@ -123,8 +121,8 @@ async function seedSharedConnectionRows(limit: number) {
     if (!isSharedRefreshable(connection)) continue
     const redirectUri = redirectUriForRefresh(connection.id)
     if (!redirectUri) continue
-    await revalidateManifest({ connection, principal: "shared", redirectUri })
-    seeded += 1
+    const result = await revalidateManifest({ connection, principal: "shared", redirectUri })
+    if (result === "refreshed") seeded += 1
   }
   return seeded
 }
@@ -162,6 +160,7 @@ export async function runMcpManifestMaintenanceOnce() {
     try {
       const result = await refreshManifestRow(row)
       if (result === "refreshed") refreshed += 1
+      if (result === "failed") failures += 1
       if (result === "deleted") deleted += 1
     } catch (error) {
       failures += 1

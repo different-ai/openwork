@@ -24,6 +24,8 @@ export type ManifestClassification =
   | { state: "stale"; row: ExternalMcpToolManifestRow }
   | { state: "miss"; row: ExternalMcpToolManifestRow | null }
 
+export type ManifestRevalidationResult = "failed" | "lease_held" | "refreshed"
+
 type SaveListingInput = {
   connection: ExternalMcpConnectionRow
   principal: ManifestPrincipal
@@ -46,6 +48,56 @@ type RevalidationInput = {
 }
 
 const inFlightRevalidations = new Map<string, Promise<void>>()
+const MAX_REVALIDATION_BACKLOG = 20
+
+type QueuedManifestRevalidation = {
+  reject: (error: unknown) => void
+  resolve: () => void
+  run: () => Promise<void>
+}
+
+export function createBoundedManifestRevalidationQueue(input: {
+  concurrency: number
+  maxBacklog: number
+}) {
+  const concurrency = Math.max(1, Math.floor(input.concurrency))
+  const maxBacklog = Math.max(0, Math.floor(input.maxBacklog))
+  const queue: QueuedManifestRevalidation[] = []
+  let active = 0
+
+  const drain = () => {
+    while (active < concurrency) {
+      const item = queue.shift()
+      if (!item) return
+      active += 1
+      void item.run()
+        .then(item.resolve, item.reject)
+        .finally(() => {
+          active -= 1
+          drain()
+        })
+    }
+  }
+
+  return {
+    enqueue(run: () => Promise<void>): Promise<void> | null {
+      if (queue.length >= maxBacklog && active >= concurrency) return null
+      const task = new Promise<void>((resolve, reject) => {
+        queue.push({ reject, resolve, run })
+      })
+      drain()
+      return task
+    },
+    stats() {
+      return { active, queued: queue.length }
+    },
+  }
+}
+
+const manifestRevalidationQueue = createBoundedManifestRevalidationQueue({
+  concurrency: env.mcpManifestRevalidateConcurrency,
+  maxBacklog: MAX_REVALIDATION_BACKLOG,
+})
 
 export function manifestPrincipalFor(
   connection: ExternalMcpConnectionRow,
@@ -340,20 +392,30 @@ export async function createRefreshLeaseForPair(input: {
 export function scheduleManifestRevalidation(input: RevalidationInput): void {
   const key = rowKey(input.connection.id, input.principal)
   if (inFlightRevalidations.has(key)) return
-  const task = revalidateManifest(input)
-    .catch((error) => {
-      console.warn(`[mcp-manifest][revalidate_failed] connectionId=${input.connection.id} principal=${input.principal} reason=${shortErrorMessage(error)}`)
-    })
-    .finally(() => {
-      inFlightRevalidations.delete(key)
-    })
+  const task = manifestRevalidationQueue.enqueue(async () => {
+    const result = await revalidateManifest(input)
+    if (result === "failed") {
+      console.warn(`[mcp-manifest][revalidate_failed] connectionId=${input.connection.id} principal=${input.principal}`)
+    }
+  })
+  if (!task) {
+    console.warn(`[mcp-manifest][revalidate_dropped] connectionId=${input.connection.id} principal=${input.principal} reason=queue_full`)
+    return
+  }
+  task.catch((error) => {
+    console.warn(`[mcp-manifest][revalidate_failed] connectionId=${input.connection.id} principal=${input.principal} reason=${shortErrorMessage(error)}`)
+  }).finally(() => {
+    inFlightRevalidations.delete(key)
+  })
   inFlightRevalidations.set(key, task)
 }
 
-export async function revalidateManifest(input: RevalidationInput): Promise<void> {
-  const row = await createRefreshLeaseForPair({ connection: input.connection, principal: input.principal })
-  const claimed = await claimManifestRefresh({ rowId: row.id })
-  if (!claimed) return
+export async function revalidateManifestWithClaim(input: RevalidationInput & {
+  claimRefresh: (rowId: DenTypeId<"externalMcpToolManifest">) => Promise<boolean>
+  row: ExternalMcpToolManifestRow
+}): Promise<ManifestRevalidationResult> {
+  const claimed = await input.claimRefresh(input.row.id)
+  if (!claimed) return "lease_held"
   const startedAt = Date.now()
   try {
     const tools = await listExternalMcpToolsWithOptions(input.connection, input.redirectUri, input.member, {
@@ -365,6 +427,7 @@ export async function revalidateManifest(input: RevalidationInput): Promise<void
       tools,
       durationMs: Date.now() - startedAt,
     })
+    return "refreshed"
   } catch (error) {
     await saveManifestFailure({
       connection: input.connection,
@@ -372,7 +435,17 @@ export async function revalidateManifest(input: RevalidationInput): Promise<void
       error,
       durationMs: Date.now() - startedAt,
     })
+    return "failed"
   }
+}
+
+export async function revalidateManifest(input: RevalidationInput): Promise<ManifestRevalidationResult> {
+  const row = await createRefreshLeaseForPair({ connection: input.connection, principal: input.principal })
+  return revalidateManifestWithClaim({
+    ...input,
+    row,
+    claimRefresh: (rowId) => claimManifestRefresh({ rowId }),
+  })
 }
 
 function rowsAffected(result: unknown): number {

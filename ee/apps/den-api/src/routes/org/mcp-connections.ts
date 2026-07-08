@@ -175,7 +175,7 @@ const connectionValidationFailedSchema = z.object({
 }).meta({ ref: "ExternalMcpConnectionValidationFailedError" })
 
 const refreshToolsResponseSchema = z.object({
-  status: z.enum(["ok", "error"]),
+  status: z.enum(["ok", "error", "in_progress"]),
   toolCount: z.number(),
   listedAt: z.string().nullable(),
   message: z.string().optional(),
@@ -607,6 +607,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       description: "Admins can refresh any connection. Granted members can refresh their own per-member principal. The refresh uses the same bounded MCP tools/list path as search.",
       responses: {
         200: jsonResponse("Refresh attempted.", refreshToolsResponseSchema),
+        202: jsonResponse("Refresh already in progress.", refreshToolsResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("The caller cannot refresh this connection.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
@@ -642,7 +643,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         ? { orgMembershipId: payload.currentMember.id }
         : undefined
       const principal = manifestPrincipalFor(connection, member)
-      await revalidateManifest({
+      const refreshResult = await revalidateManifest({
         connection,
         principal,
         redirectUri: callbackRedirectUri(c.req.raw, connection.id),
@@ -650,6 +651,14 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       })
       const manifests = await getManifests({ pairs: [{ connection, principal }] })
       const manifest = manifests.get(manifestMapKey(connection.id, principal))
+      if (refreshResult === "lease_held") {
+        return c.json({
+          status: "in_progress",
+          toolCount: manifest?.toolCount ?? 0,
+          listedAt: manifest?.listedAt ? manifest.listedAt.toISOString() : null,
+          message: "A refresh for this connection is already in progress.",
+        }, 202)
+      }
       return c.json({
         status: manifest?.status ?? "error",
         toolCount: manifest?.toolCount ?? 0,
