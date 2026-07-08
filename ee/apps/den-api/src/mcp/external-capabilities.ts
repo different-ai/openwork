@@ -11,8 +11,8 @@ import { callExternalMcpTool, listExternalMcpTools } from "../capability-sources
 import { getConnectedAccount } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
 import { listTeamsForMember } from "../orgs.js"
-import { tokenize } from "./search.js"
-import type { CapabilityMatch } from "./search.js"
+import { rankCapabilities } from "./ranking.js"
+import type { CapabilityCandidate, CapabilityMatchFields, RankedCapabilityMatch } from "./ranking.js"
 
 /**
  * Merges org-level External MCP Connections (capability-sources/) into the
@@ -90,26 +90,14 @@ function redirectUriFor(redirectUriBase: string, connectionId: string): string {
   return `${redirectUriBase}/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/callback`
 }
 
-function scoreText(nameTokens: string[], summaryTokens: string[], queryTokens: string[]): number {
-  let score = 0
-  for (const queryToken of queryTokens) {
-    if (nameTokens.includes(queryToken)) {
-      score += 5
-    } else if (nameTokens.some((token) => token.startsWith(queryToken) || queryToken.startsWith(token))) {
-      score += 3
-    }
-    if (summaryTokens.includes(queryToken)) {
-      score += 2
-    }
-  }
-  return score
-}
-
-export type ExternalCapabilityMatch = CapabilityMatch & {
+export type ExternalCapabilityFields = CapabilityMatchFields & {
   /** Set for connection-level status rows: the tool exists but needs a human/admin fix before real tools can be listed. */
   status?: "needs_connection" | "error"
   hint?: string
 }
+
+export type ExternalCapabilityCandidate = CapabilityCandidate<ExternalCapabilityFields>
+export type ExternalCapabilityMatch = RankedCapabilityMatch<ExternalCapabilityFields>
 
 function shortErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
@@ -122,23 +110,19 @@ function shortErrorMessage(error: unknown): string {
  * CapabilityMatch shape the REST catalog uses. Each connection is
  * best-effort: one unreachable external server doesn't fail the whole search.
  */
-export async function searchExternalCapabilities(input: {
+export async function listExternalCapabilityCandidates(input: {
   organizationId: string
   member: McpMemberIdentity | null
-  query: string
   redirectUriBase: string
-  limit?: number
-}): Promise<ExternalCapabilityMatch[]> {
+}): Promise<ExternalCapabilityCandidate[]> {
   if (!input.member) return []
-  const queryTokens = tokenize(input.query)
-  if (queryTokens.length === 0) return []
 
   const connections = await listUsableExternalMcpConnections({
     organizationId: normalizeDenTypeId("organization", input.organizationId),
     orgMembershipId: input.member.orgMembershipId,
     teamIds: input.member.teamIds,
   })
-  const matches: ExternalCapabilityMatch[] = []
+  const candidates: ExternalCapabilityCandidate[] = []
 
   for (const connection of connections) {
     if (connection.credentialMode === "per_member") {
@@ -151,41 +135,39 @@ export async function searchExternalCapabilities(input: {
         // Granted but not yet connected: surface the connection itself (not
         // its tools — we can't list them without the member's credential) so
         // the agent can tell the human exactly what to do.
-        const nameTokens = tokenize(connection.name)
-        const score = scoreText(nameTokens, nameTokens, queryTokens)
-        if (score > 0) {
-          matches.push({
+        candidates.push({
+          match: {
             name: buildExternalCapabilityName(connection.id, "*"),
             method: "MCP",
             path: connection.url,
-            score,
             summary: `[${connection.name}] Available to you, but you haven't connected your ${connection.name} account yet.`,
             pathParams: [],
             queryParams: [],
             hasBody: false,
+            source: "external_mcp",
             status: "needs_connection",
             hint: `Ask the user to open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}", then search again.`,
-          })
-        }
+          },
+          searchText: { name: connection.name, summary: connection.name, keywords: [connection.name] },
+        })
         continue
       }
     } else if (!hasSharedCredential(connection)) {
-      const nameTokens = tokenize(connection.name)
-      const score = scoreText(nameTokens, nameTokens, queryTokens)
-      if (score > 0) {
-        matches.push({
+      candidates.push({
+        match: {
           name: buildExternalCapabilityName(connection.id, "*"),
           method: "MCP",
           path: connection.url,
-          score,
           summary: `[${connection.name}] Available to your organization, but an admin hasn't connected it yet.`,
           pathParams: [],
           queryParams: [],
           hasBody: false,
+          source: "external_mcp",
           status: "needs_connection",
           hint: `Ask an org admin to open the OpenWork Cloud dashboard -> Connections and connect "${connection.name}", then search again.`,
-        })
-      }
+        },
+        searchText: { name: connection.name, summary: connection.name, keywords: [connection.name] },
+      })
       continue
     }
 
@@ -197,46 +179,61 @@ export async function searchExternalCapabilities(input: {
       tools = await listExternalMcpTools(connection, redirectUriFor(input.redirectUriBase, connection.id), member)
     } catch (error) {
       const message = shortErrorMessage(error)
-      const nameTokens = tokenize(connection.name)
-      const score = scoreText(nameTokens, nameTokens, queryTokens)
-      if (score > 0) {
-        matches.push({
+      candidates.push({
+        match: {
           name: buildExternalCapabilityName(connection.id, "*"),
           method: "MCP",
           path: connection.url,
-          score,
           summary: `[${connection.name}] This connection is set up but not responding right now (${message}).`,
           pathParams: [],
           queryParams: [],
           hasBody: false,
+          source: "external_mcp",
           status: "error",
           hint: `The stored credential may be expired or the server may be unreachable. Reconnect "${connection.name}" from the OpenWork Cloud dashboard -> Connections, then search again.`,
-        })
-      }
+        },
+        searchText: { name: connection.name, summary: connection.name, keywords: [connection.name] },
+      })
       continue
     }
 
     for (const tool of tools) {
       const summary = tool.description ?? tool.title ?? tool.name
-      const nameTokens = tokenize(`${connection.name} ${tool.name}`)
-      const summaryTokens = tokenize(summary)
-      const score = scoreText(nameTokens, summaryTokens, queryTokens)
-      if (score <= 0) continue
-      matches.push({
-        name: buildExternalCapabilityName(connection.id, tool.name),
-        method: "MCP",
-        path: connection.url,
-        score,
-        summary: `[${connection.name}] ${summary}`,
-        pathParams: [],
-        queryParams: [],
-        hasBody: true,
+      candidates.push({
+        match: {
+          name: buildExternalCapabilityName(connection.id, tool.name),
+          method: "MCP",
+          path: connection.url,
+          summary: `[${connection.name}] ${summary}`,
+          pathParams: [],
+          queryParams: [],
+          hasBody: true,
+          source: "external_mcp",
+        },
+        searchText: {
+          name: `${connection.name} ${tool.name}`,
+          summary,
+          keywords: [connection.name],
+        },
       })
     }
   }
 
-  matches.sort((a, b) => (b.score - a.score) || a.name.localeCompare(b.name))
-  return matches.slice(0, input.limit ?? 5)
+  return candidates
+}
+
+export async function searchExternalCapabilities(input: {
+  organizationId: string
+  member: McpMemberIdentity | null
+  query: string
+  redirectUriBase: string
+  limit?: number
+}): Promise<ExternalCapabilityMatch[]> {
+  return rankCapabilities(input.query, await listExternalCapabilityCandidates({
+    organizationId: input.organizationId,
+    member: input.member,
+    redirectUriBase: input.redirectUriBase,
+  }), { limit: input.limit })
 }
 
 export type ExternalCapabilityExecuteResult =

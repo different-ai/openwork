@@ -11,9 +11,11 @@ import { db } from "../db.js"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
-import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities } from "./search.js"
-import { executeExternalCapability, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities } from "./external-capabilities.js"
-import { executeMarketplaceCapability, parseMarketplaceCapabilityName, searchMarketplaceCapabilities } from "./marketplace-capabilities.js"
+import { SEARCH_CAPABILITIES_TOOL_NAME, buildRestCandidates } from "./search.js"
+import { buildZeroResultSuggestions, parseQuery, rankCapabilities } from "./ranking.js"
+import type { CapabilityCandidate } from "./ranking.js"
+import { executeExternalCapability, listExternalCapabilityCandidates, parseExternalCapabilityName, resolveMcpMemberIdentity } from "./external-capabilities.js"
+import { executeMarketplaceCapability, listMarketplaceCapabilityCandidates, parseMarketplaceCapabilityName } from "./marketplace-capabilities.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { env } from "../env.js"
 
@@ -87,9 +89,11 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
       {
         title: "Search capabilities",
         description: [
-          "Search for a capability by keyword. This connection only exposes this tool and execute_capability —",
+          "Search for a capability by natural-language keyword. This connection only exposes this tool and execute_capability —",
           "there is no list of individually-named tools to browse. Always search first.",
           "Each match includes pathParams/queryParams/hasBody describing exactly what execute_capability needs.",
+          "Scores are 0-100 relevance values that should only be compared within one response.",
+          "Each match includes source, which can guide a follow-up search. Zero-result responses may include suggestions.",
         ].join(" "),
         inputSchema: z.object({
           query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
@@ -98,36 +102,47 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
       },
       async ({ query, limit }) => {
         const boundedLimit = limit ?? 5
-        const restMatches = searchCapabilities(catalog, query, boundedLimit)
+        if (parseQuery(query).length === 0) {
+          const text = JSON.stringify({
+            matches: [],
+            hint: "Query contains only common words. Use a domain keyword, e.g. \"save memory\", \"list workers\", \"create skill\".",
+          }, null, 2)
+          return { content: textContent(text) }
+        }
+
+        const restCandidates = buildRestCandidates(catalog)
         // Merged in from each connected External MCP Connection's live
         // tools/list (capability-sources/external-mcp-client.ts) — a
         // Notion/Linear/Stripe/... connection an admin added in Den shows
         // up here exactly like any native capability, ranked together.
-        const externalMatches = externalMcpConnectionsEnabled
-          ? await searchExternalCapabilities({
-            organizationId: principal.organizationId,
-            member: memberIdentity,
-            query,
-            redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
-            limit: boundedLimit,
-          })
-          : []
-        const marketplaceMatches = externalMcpConnectionsEnabled
-          ? await searchMarketplaceCapabilities({
-            organizationId: principal.organizationId,
-            member: memberIdentity,
-            query,
-            limit: boundedLimit,
-            enabled: externalMcpConnectionsEnabled,
-          })
-          : []
-        const matches = [...restMatches, ...externalMatches, ...marketplaceMatches]
-          .sort((a, b) => b.score - a.score)
-          .slice(0, boundedLimit)
+        const [externalCandidates, marketplaceCandidates] = externalMcpConnectionsEnabled
+          ? await Promise.all([
+            listExternalCapabilityCandidates({
+              organizationId: principal.organizationId,
+              member: memberIdentity,
+              redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
+            }),
+            listMarketplaceCapabilityCandidates({
+              organizationId: principal.organizationId,
+              member: memberIdentity,
+              enabled: externalMcpConnectionsEnabled,
+            }),
+          ])
+          : [[], []]
+        const candidates: CapabilityCandidate[] = [
+          ...restCandidates,
+          ...externalCandidates,
+          ...marketplaceCandidates,
+        ]
+        const matches = rankCapabilities(query, candidates, { limit: boundedLimit })
         const text = matches.length > 0
           ? JSON.stringify({ matches }, null, 2)
-          : JSON.stringify({ matches: [], hint: "No matches. Try broader or different keywords." }, null, 2)
-        return { content: [{ type: "text" as const, text }] }
+          : JSON.stringify({
+            matches: [],
+            hint: "No matches. Try broader or different keywords.",
+            suggestions: buildZeroResultSuggestions(query, candidates),
+          }, null, 2)
+        return { content: textContent(text) }
       },
     )
 

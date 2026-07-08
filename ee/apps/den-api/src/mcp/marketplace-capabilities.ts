@@ -16,9 +16,9 @@ import { listUsableExternalMcpConnections } from "../capability-sources/external
 import { getConnectedAccount } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
 import { resolvePluginArchGrantRole } from "../routes/org/plugin-system/access.js"
-import { scoreText, tokenize } from "./search.js"
+import { rankCapabilities } from "./ranking.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
-import type { CapabilityMatch } from "./search.js"
+import type { CapabilityCandidate, CapabilityMatchFields, RankedCapabilityMatch } from "./ranking.js"
 
 const MARKETPLACE_CAPABILITY_PREFIX = "plugin:"
 const PROVENANCE_SUFFIX = "in your organization's library."
@@ -45,13 +45,16 @@ type GrantRow = {
 }
 type GrantWithResourceId = GrantRow & { resourceId: string }
 
-export type MarketplaceCapabilityMatch = CapabilityMatch & {
+export type MarketplaceCapabilityFields = CapabilityMatchFields & {
   kind: ConfigObjectType
   plugin: string
   marketplace?: string
   status?: "needs_install" | "content_not_synced"
   hint?: string
 }
+
+export type MarketplaceCapabilityCandidate = CapabilityCandidate<MarketplaceCapabilityFields>
+export type MarketplaceCapabilityMatch = RankedCapabilityMatch<MarketplaceCapabilityFields>
 
 type MarketplaceCapabilityStatus = "connection_available" | "content_not_synced" | "needs_connection" | "needs_install" | "unsupported"
 
@@ -196,15 +199,6 @@ function summaryFor(row: MarketplaceCapabilityRow): string {
   const prefix = `[${row.marketplace.name} / ${row.plugin.name}] ${row.configObject.title}`
   const description = row.configObject.description?.trim()
   return description ? `${prefix}: ${description}` : prefix
-}
-
-function scoreMarketplaceRow(row: MarketplaceCapabilityRow, queryTokens: string[]): number {
-  return scoreText(
-    tokenize(row.configObject.title),
-    tokenize(row.configObject.description ?? ""),
-    queryTokens,
-    tokenize(row.configObject.searchText ?? ""),
-  )
 }
 
 function basePayload(row: MarketplaceCapabilityRow): MarketplaceCapabilityExecutePayload {
@@ -690,16 +684,12 @@ function commandArguments(body: unknown): string {
   return typeof body.arguments === "string" ? body.arguments : ""
 }
 
-export async function searchMarketplaceCapabilities(input: {
+export async function listMarketplaceCapabilityCandidates(input: {
   enabled?: boolean
-  limit?: number
   member: McpMemberIdentity | null
   organizationId: string
-  query: string
-}): Promise<MarketplaceCapabilityMatch[]> {
+}): Promise<MarketplaceCapabilityCandidate[]> {
   if (input.enabled === false || !input.member) return []
-  const queryTokens = tokenize(input.query)
-  if (queryTokens.length === 0) return []
 
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   const memberRow = await getActiveMember(organizationId, input.member)
@@ -711,22 +701,20 @@ export async function searchMarketplaceCapabilities(input: {
     memberRow,
     rows: await listActiveMarketplaceRows(organizationId),
   })
-  const matchesByName = new Map<string, MarketplaceCapabilityMatch>()
+  const candidatesByName = new Map<string, MarketplaceCapabilityCandidate>()
 
   for (const row of rows) {
-    const score = scoreMarketplaceRow(row, queryTokens)
-    if (score <= 0) continue
     const name = buildMarketplaceCapabilityName(row.plugin.id, row.configObject.id)
-    if (matchesByName.has(name)) continue
-    const match: MarketplaceCapabilityMatch = {
+    if (candidatesByName.has(name)) continue
+    const match: MarketplaceCapabilityFields = {
       name,
       method: "PLUGIN",
       path: pluginPath(row),
-      score,
       summary: summaryFor(row),
       pathParams: [],
       queryParams: [],
       hasBody: row.configObject.objectType === "command",
+      source: "marketplace",
       kind: row.configObject.objectType,
       plugin: row.plugin.name,
       marketplace: row.marketplace.name,
@@ -735,12 +723,34 @@ export async function searchMarketplaceCapabilities(input: {
       match.status = "needs_install"
       match.hint = objectHint(row)
     }
-    matchesByName.set(name, match)
+    candidatesByName.set(name, {
+      match,
+      searchText: {
+        name: `${row.plugin.name} ${row.configObject.title}`,
+        summary: [row.configObject.description, row.configObject.searchText]
+          .filter((entry) => typeof entry === "string" && entry.trim().length > 0)
+          .join(" ") || row.configObject.title,
+        path: pluginPath(row),
+        keywords: [row.marketplace.name, row.plugin.name, row.configObject.objectType],
+      },
+    })
   }
 
-  return [...matchesByName.values()]
-    .sort((a, b) => (b.score - a.score) || a.name.localeCompare(b.name))
-    .slice(0, input.limit ?? 5)
+  return [...candidatesByName.values()]
+}
+
+export async function searchMarketplaceCapabilities(input: {
+  enabled?: boolean
+  limit?: number
+  member: McpMemberIdentity | null
+  organizationId: string
+  query: string
+}): Promise<MarketplaceCapabilityMatch[]> {
+  return rankCapabilities(input.query, await listMarketplaceCapabilityCandidates({
+    enabled: input.enabled,
+    member: input.member,
+    organizationId: input.organizationId,
+  }), { limit: input.limit })
 }
 
 export async function executeMarketplaceCapability(input: {

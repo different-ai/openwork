@@ -401,7 +401,7 @@ test("per-member-name-mismatch: needs_connection only appears when query matches
   expect(matches[0]?.status).toBe("needs_connection")
 })
 
-test("user-transcript-repro: Slack connection status ranks above Notion's summary-only Slack hit", async () => {
+test("user-transcript-repro: Slack connection status suppresses Notion's summary-only Slack hit", async () => {
   if (!notionServer) throw new Error("Notion MCP server was not started")
   if (!slackServer) throw new Error("Slack MCP server was not started")
 
@@ -422,10 +422,9 @@ test("user-transcript-repro: Slack connection status ranks above Notion's summar
   await expectConnectionListed(seed, notionConnection.id)
   await expectConnectionListed(seed, slackConnection.id)
   const matches = await search(seed, "slack")
-  expect(matches.length).toBe(2)
+  expect(matches.length).toBe(1)
   expect(matches[0]?.name).toBe(`mcp:${slackConnection.id}:*`)
   expect(matches[0]?.status).toBe("needs_connection")
   expect(matches[0]?.score).toBeGreaterThanOrEqual(7)
-  expect(matches[1]?.name).toBe(`mcp:${notionConnection.id}:notion-search`)
-  expect(matches[1]?.score).toBe(2)
+  expect(matches.some((match) => match.name === `mcp:${notionConnection.id}:notion-search`)).toBe(false)
 })
