@@ -5,16 +5,20 @@ import { fileURLToPath } from "node:url"
 import { deriveDenMcpResource, resolveMcpResourceFromRequest } from "../src/mcp/resource.js"
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..")
+const denApiRoot = path.join(repoRoot, "ee/apps/den-api")
 
 type ProbeOptions = {
   betterAuthUrl: string
   apiPublicUrl?: string
   additionalResources?: string
+  headers?: Record<string, string>
   requestUrl: string
   expectedResource: string
   metadataUrl?: string
   expectedMetadataResource?: string
   expectedAuthorizationServer?: string
+  authMetadataUrl?: string
+  expectedAuthIssuer?: string
 }
 
 function runMcpResourceProbe(options: ProbeOptions) {
@@ -25,8 +29,10 @@ if (!requestUrl || !expectedResource) {
   throw new Error("Missing MCP resource probe inputs")
 }
 
-const { getMcpResourceUrl } = await import("./ee/apps/den-api/src/mcp/auth.js")
-const resource = getMcpResourceUrl(new Request(requestUrl))
+const { getMcpResourceUrl } = await import("./src/mcp/auth.js")
+const requestHeaders = JSON.parse(process.env.TEST_REQUEST_HEADERS ?? "{}")
+const requestInit = { headers: requestHeaders }
+const resource = getMcpResourceUrl(new Request(requestUrl, requestInit))
 if (resource !== expectedResource) {
   throw new Error(\`Expected resource \${expectedResource}, got \${resource}\`)
 }
@@ -39,8 +45,8 @@ if (metadataUrl) {
     throw new Error("Missing MCP metadata probe expectations")
   }
 
-  const { protectedResourceMetadata } = await import("./ee/apps/den-api/src/mcp/index.js")
-  const metadata = protectedResourceMetadata(new Request(metadataUrl))
+  const { protectedResourceMetadata } = await import("./src/mcp/index.js")
+  const metadata = protectedResourceMetadata(new Request(metadataUrl, requestInit))
   const authorizationServer = metadata.authorization_servers[0]
   if (metadata.resource !== expectedMetadataResource) {
     throw new Error(\`Expected metadata resource \${expectedMetadataResource}, got \${metadata.resource}\`)
@@ -50,11 +56,32 @@ if (metadataUrl) {
   }
 }
 
+const authMetadataUrl = process.env.TEST_AUTH_METADATA_URL
+if (authMetadataUrl) {
+  const expectedAuthIssuer = process.env.EXPECTED_AUTH_ISSUER
+  if (!expectedAuthIssuer) {
+    throw new Error("Missing auth metadata probe expectations")
+  }
+
+  const { Hono } = await import("hono")
+  const { registerAuthRoutes } = await import("./src/routes/auth/index.js")
+  const app = new Hono()
+  registerAuthRoutes(app)
+  const response = await app.request(new Request(authMetadataUrl, requestInit))
+  if (!response.ok) {
+    throw new Error(\`Expected auth metadata response to be ok, got \${response.status}: \${await response.text()}\`)
+  }
+  const metadata = await response.json()
+  if (metadata.issuer !== expectedAuthIssuer) {
+    throw new Error(\`Expected auth issuer \${expectedAuthIssuer}, got \${metadata.issuer}\`)
+  }
+}
+
 console.log("ok")
 `
 
   const result = spawnSync(process.execPath, ["--conditions", "development", "--eval", script], {
-    cwd: repoRoot,
+    cwd: denApiRoot,
     encoding: "utf8",
     env: {
       PATH: process.env.PATH ?? "",
@@ -72,11 +99,14 @@ console.log("ok")
       DEN_MCP_RESOURCE_URL: "",
       DEN_MCP_ADDITIONAL_RESOURCES: options.additionalResources ?? "",
       DEN_WEB_APP_HOSTS: "",
+      TEST_REQUEST_HEADERS: JSON.stringify(options.headers ?? {}),
       TEST_REQUEST_URL: options.requestUrl,
       EXPECTED_RESOURCE: options.expectedResource,
       TEST_METADATA_URL: options.metadataUrl ?? "",
       EXPECTED_METADATA_RESOURCE: options.expectedMetadataResource ?? "",
       EXPECTED_AUTHORIZATION_SERVER: options.expectedAuthorizationServer ?? "",
+      TEST_AUTH_METADATA_URL: options.authMetadataUrl ?? "",
+      EXPECTED_AUTH_ISSUER: options.expectedAuthIssuer ?? "",
     },
   })
 
@@ -102,6 +132,30 @@ describe("getMcpResourceUrl", () => {
       metadataUrl: "https://api.example.com/mcp/agent",
       expectedMetadataResource: "https://api.example.com/mcp",
       expectedAuthorizationServer: "https://api.example.com/api/auth",
+    })
+  })
+
+  test("selects the https public API resource behind a TLS-terminating proxy", () => {
+    runMcpResourceProbe({
+      betterAuthUrl: "https://app.example.com",
+      apiPublicUrl: "https://api.example.com",
+      headers: { "x-forwarded-proto": "https, http" },
+      requestUrl: "http://api.example.com/mcp/agent",
+      expectedResource: "https://api.example.com/mcp",
+      metadataUrl: "http://api.example.com/mcp/agent",
+      expectedMetadataResource: "https://api.example.com/mcp",
+      expectedAuthorizationServer: "https://api.example.com/api/auth",
+      authMetadataUrl: "http://api.example.com/api/auth/.well-known/oauth-authorization-server",
+      expectedAuthIssuer: "https://api.example.com/api/auth",
+    })
+  })
+
+  test("keeps plain-http origins when no forwarded proto", () => {
+    runMcpResourceProbe({
+      betterAuthUrl: "https://app.example.com",
+      apiPublicUrl: "https://api.example.com",
+      requestUrl: "http://api.example.com/mcp/agent",
+      expectedResource: "https://app.example.com/api/den/mcp",
     })
   })
 

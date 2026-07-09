@@ -1,8 +1,8 @@
-const BLOCKED_CUSTOM_REDIRECT_PROTOCOLS = new Set([
-  "data:",
-  "file:",
-  "javascript:",
-  "vbscript:",
+const BLOCKED_CUSTOM_REDIRECT_SCHEMES = new Set([
+  "data",
+  "file",
+  "javascript",
+  "vbscript",
 ])
 
 function isIpv4Loopback(hostname: string) {
@@ -30,9 +30,9 @@ function isLoopbackHostname(hostname: string) {
     || isIpv4Loopback(normalized)
 }
 
-function isPrivateUseCustomScheme(protocol: string) {
+function isCustomAppScheme(protocol: string) {
   const scheme = protocol.endsWith(":") ? protocol.slice(0, -1) : protocol
-  return /^[a-z][a-z0-9+.-]*$/.test(scheme) && scheme.includes(".")
+  return /^[a-z][a-z0-9+.-]*$/.test(scheme) && !BLOCKED_CUSTOM_REDIRECT_SCHEMES.has(scheme)
 }
 
 export function isAllowedMcpOAuthRedirectUri(uri: string) {
@@ -43,15 +43,15 @@ export function isAllowedMcpOAuthRedirectUri(uri: string) {
     return false
   }
 
-  if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+  if (parsed.protocol === "https:") {
+    return true
+  }
+
+  if (parsed.protocol === "http:") {
     return isLoopbackHostname(parsed.hostname)
   }
 
-  if (BLOCKED_CUSTOM_REDIRECT_PROTOCOLS.has(parsed.protocol)) {
-    return false
-  }
-
-  return isPrivateUseCustomScheme(parsed.protocol)
+  return isCustomAppScheme(parsed.protocol)
 }
 
 export function getInvalidMcpOAuthRedirectUris(value: unknown) {

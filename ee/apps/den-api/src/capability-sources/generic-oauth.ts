@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { publicRequestUrl } from "../request-url.js"
 import { clientSelectedFeatures, resolveProviderScopes, type NativeOAuthProviderConfig } from "./provider-registry.js"
 import {
   getConnectedAccount,
@@ -28,14 +29,15 @@ function base64UrlEncode(input: Buffer | string) {
  * reverse proxy (e.g. Daytona's port-forwarding proxy), `request.url`
  * reflects the *internal* bind address (http://127.0.0.1:8788) rather than
  * the public URL the browser actually called, since the proxy doesn't
- * rewrite the request's own URL — only `DEN_API_PUBLIC_URL`, when set,
- * reliably gives the real public origin in that case.
+ * rewrite the request's own URL — `x-forwarded-proto` can correct the
+ * scheme, while `DEN_API_PUBLIC_URL`, when set, is still needed when the
+ * proxy does not preserve the public host.
  */
 export function resolvePublicOrigin(request: Request, apiPublicUrl: string | undefined): string {
   if (apiPublicUrl) {
     return new URL(apiPublicUrl).origin
   }
-  return new URL(request.url).origin
+  return publicRequestUrl(request).origin
 }
 
 export function createPkcePair() {

@@ -16,6 +16,7 @@ import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, tokenRoute } from "../../middleware/index.js"
 import { emptyResponse, jsonResponse } from "../../openapi.js"
 import { getSingletonSsoStatus } from "../../orgs.js"
+import { publicRequestUrl } from "../../request-url.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import type { AuthContextVariables } from "../../session.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
@@ -184,7 +185,7 @@ async function rewriteMcpClientRegistrationRequest(request: Request, path: strin
     return oauthRegistrationError(
       400,
       "invalid_redirect_uri",
-      "MCP OAuth redirect URIs must use loopback HTTP(S) or a private-use custom scheme.",
+      "MCP OAuth redirect URIs must use HTTPS, loopback HTTP, or a custom app scheme.",
     )
   }
 
@@ -227,7 +228,7 @@ async function rewriteMetadataOrigin(response: Response, origin: string) {
 }
 
 function requestOrigin(request: Request) {
-  return new URL(request.url).origin
+  return publicRequestUrl(request).origin
 }
 
 const authLoginLockedSchema = z.object({

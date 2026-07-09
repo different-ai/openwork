@@ -4,24 +4,34 @@ import {
   isAllowedMcpOAuthRedirectUri,
 } from "../src/mcp/oauth-client-policy.js"
 
-test("MCP OAuth redirect policy allows loopback redirects", () => {
-  expect(isAllowedMcpOAuthRedirectUri("http://127.0.0.1:49321/callback")).toBe(true)
-  expect(isAllowedMcpOAuthRedirectUri("http://localhost:49321/callback")).toBe(true)
-  expect(isAllowedMcpOAuthRedirectUri("https://dev.localhost/callback")).toBe(true)
-  expect(isAllowedMcpOAuthRedirectUri("http://[::1]:49321/callback")).toBe(true)
+test("MCP OAuth redirect policy allows HTTPS, loopback HTTP, and custom schemes", () => {
+  for (const uri of [
+    "http://127.0.0.1:49321/callback",
+    "http://localhost:49321/callback",
+    "http://[::1]:49321/callback",
+    "https://dev.localhost/callback",
+    "com.openwork.desktop:/oauth/callback",
+    "cursor://anysphere.cursor-mcp/oauth/callback",
+    "openwork:/oauth/callback",
+    "https://www.cursor.com/agents/mcp/oauth/callback",
+    "https://claude.ai/api/mcp/auth_callback",
+    "https://example.com/oauth/callback",
+  ]) {
+    expect(isAllowedMcpOAuthRedirectUri(uri)).toBe(true)
+  }
 })
 
-test("MCP OAuth redirect policy allows private-use custom schemes", () => {
-  expect(isAllowedMcpOAuthRedirectUri("com.openwork.desktop:/oauth/callback")).toBe(true)
-  expect(isAllowedMcpOAuthRedirectUri("software.openwork.app://oauth/callback")).toBe(true)
-})
-
-test("MCP OAuth redirect policy rejects public web and dangerous redirects", () => {
-  expect(isAllowedMcpOAuthRedirectUri("https://example.com/oauth/callback")).toBe(false)
-  expect(isAllowedMcpOAuthRedirectUri("http://example.com/oauth/callback")).toBe(false)
-  expect(isAllowedMcpOAuthRedirectUri("javascript:alert(1)")).toBe(false)
-  expect(isAllowedMcpOAuthRedirectUri("file:///tmp/callback")).toBe(false)
-  expect(isAllowedMcpOAuthRedirectUri("openwork:/oauth/callback")).toBe(false)
+test("MCP OAuth redirect policy rejects non-loopback HTTP, blocked schemes, and non-URLs", () => {
+  for (const uri of [
+    "http://example.com/oauth/callback",
+    "javascript:alert(1)",
+    "file:///tmp/callback",
+    "data:text/plain,callback",
+    "vbscript:foo",
+    "not a url",
+  ]) {
+    expect(isAllowedMcpOAuthRedirectUri(uri)).toBe(false)
+  }
 })
 
 test("MCP OAuth redirect policy lists invalid registration redirect URIs", () => {
@@ -29,9 +39,16 @@ test("MCP OAuth redirect policy lists invalid registration redirect URIs", () =>
     "http://127.0.0.1:49321/callback",
     "https://example.com/oauth/callback",
     "com.openwork.desktop:/oauth/callback",
+    "openwork:/oauth/callback",
+    "http://example.com/oauth/callback",
     "data:text/plain,callback",
   ])).toEqual([
-    "https://example.com/oauth/callback",
+    "http://example.com/oauth/callback",
     "data:text/plain,callback",
   ])
+
+  expect(getInvalidMcpOAuthRedirectUris([
+    "cursor://anysphere.cursor-mcp/oauth/callback",
+    "https://www.cursor.com/agents/mcp/oauth/callback",
+  ])).toEqual([])
 })

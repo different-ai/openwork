@@ -14,6 +14,7 @@ import {
 } from "../auth.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { publicRequestUrl } from "../request-url.js"
 import { DEN_JWT_SIGNING_ALGORITHM, getDenAuthIssuer } from "./jwt-policy.js"
 import { resolveMcpResourceFromRequest } from "./resource.js"
 
@@ -35,7 +36,7 @@ export function getMcpResourceUrl(request: Request) {
   // candidates from the request origin for multi-origin deployments, but only
   // honor static boot-time allowlist entries so a Host header cannot mint an
   // arbitrary audience.
-  return resolveMcpResourceFromRequest(request.url, DEN_MCP_RESOURCES, DEN_MCP_RESOURCE)
+  return resolveMcpResourceFromRequest(publicRequestUrl(request).toString(), DEN_MCP_RESOURCES, DEN_MCP_RESOURCE)
 }
 
 export function getMcpJwtVerifyOptions(): McpJwtVerifyOptions {
