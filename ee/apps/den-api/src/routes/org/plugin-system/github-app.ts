@@ -79,6 +79,25 @@ export type GithubInstallStatePayload = {
 
 const GITHUB_API_BASE = "https://api.github.com"
 const GITHUB_API_VERSION = "2022-11-28"
+const GITHUB_HEAD_REF_PREFIX = "refs/heads/"
+
+export function normalizeGithubBranchRef(input: { branch: string; ref: string }) {
+  const rawBranch = input.branch.trim()
+  const rawRef = input.ref.trim()
+  const branch = rawBranch.startsWith(GITHUB_HEAD_REF_PREFIX)
+    ? rawBranch.slice(GITHUB_HEAD_REF_PREFIX.length).trim()
+    : rawBranch
+  if (!branch || !rawRef) {
+    return null
+  }
+
+  const ref = `${GITHUB_HEAD_REF_PREFIX}${branch}`
+  if (rawRef === branch || rawRef === ref) {
+    return { branch, ref }
+  }
+
+  return null
+}
 
 function base64UrlEncode(value: unknown) {
   const buffer = typeof value === "string"
@@ -695,8 +714,8 @@ export async function validateGithubInstallationTarget(input: {
     }
   }
 
-  const expectedRef = `refs/heads/${input.branch.trim()}`
-  if (input.ref.trim() !== expectedRef) {
+  const normalizedTarget = normalizeGithubBranchRef(input)
+  if (!normalizedTarget) {
     return {
       branchExists: false,
       defaultBranch,
@@ -708,11 +727,11 @@ export async function validateGithubInstallationTarget(input: {
     allowStatuses: [404],
     fetchFn: input.fetchFn,
     headers: authHeaders,
-    path: `/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/branches/${encodeURIComponent(input.branch.trim())}`,
+    path: `/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/branches/${encodeURIComponent(normalizedTarget.branch)}`,
   })
 
   return {
-    branchExists: branchResponse.ok && branchResponse.body.name === input.branch.trim(),
+    branchExists: branchResponse.ok && branchResponse.body.name === normalizedTarget.branch,
     defaultBranch,
     repositoryAccessible: true,
   }

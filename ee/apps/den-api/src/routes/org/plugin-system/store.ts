@@ -44,6 +44,7 @@ import {
   getGithubRepositoryTree,
   getGithubInstallationSummary,
   listGithubInstallationRepositories,
+  normalizeGithubBranchRef,
   validateGithubInstallationTarget,
   verifyGithubInstallStateToken,
 } from "./github-app.js"
@@ -3113,6 +3114,78 @@ export async function updateConnectorTarget(input: { config?: Record<string, unk
   return getConnectorTargetDetail(input.context, target.id)
 }
 
+async function runGithubConnectorSyncNow(input: {
+  connectorInstance: ConnectorInstanceRow
+  connectorSyncEventId: ConnectorSyncEventId
+  connectorTarget: ConnectorTargetRow
+  requestedByMemberId: string
+}) {
+  const startedAt = new Date()
+  await db.update(ConnectorSyncEventTable).set({
+    completedAt: null,
+    startedAt,
+    status: "running",
+    summaryJson: {
+      queuedBy: input.requestedByMemberId,
+      repositoryFullName: input.connectorTarget.remoteId,
+      targetId: input.connectorTarget.id,
+    },
+  }).where(eq(ConnectorSyncEventTable.id, input.connectorSyncEventId))
+
+  type AutoImportSummary = Awaited<ReturnType<typeof maybeAutoImportGithubConnectorInstance>>
+  let autoImportSummary: AutoImportSummary | null = null
+  let autoImportError: string | null = null
+  try {
+    autoImportSummary = await maybeAutoImportGithubConnectorInstance({
+      connectorInstance: input.connectorInstance,
+      connectorSyncEventId: input.connectorSyncEventId,
+      connectorTarget: input.connectorTarget,
+    })
+  } catch (error) {
+    autoImportError = error instanceof Error ? error.message : String(error)
+    console.error(`[connectors][github] manual sync failed for target ${input.connectorTarget.id}: ${autoImportError}`)
+  }
+
+  const completedAt = new Date()
+  const eventStatus: ConnectorSyncEventRow["status"] = autoImportError
+    ? "failed"
+    : !autoImportSummary
+      ? "failed"
+      : !autoImportSummary.autoImported
+        ? "ignored"
+        : autoImportSummary.materializedConfigObjectCount > 0
+          ? "completed"
+          : "partial"
+  const summaryJson = {
+    autoImportApplied: autoImportSummary?.autoImported ?? false,
+    autoImportNewPlugins: autoImportSummary?.autoImportNewPlugins ?? null,
+    classification: autoImportSummary?.classification ?? null,
+    createdMarketplace: autoImportSummary?.createdMarketplace ?? null,
+    createdPluginCount: autoImportSummary?.createdPluginCount ?? 0,
+    createdPlugins: autoImportSummary?.createdPlugins ?? [],
+    discoveredPluginCount: autoImportSummary?.discoveredPluginCount ?? 0,
+    durationMs: completedAt.getTime() - startedAt.getTime(),
+    error: autoImportError,
+    materializedConfigObjectCount: autoImportSummary?.materializedConfigObjectCount ?? 0,
+    materializedConfigObjects: autoImportSummary?.materializedConfigObjects ?? [],
+    outcome: eventStatus,
+    queuedBy: input.requestedByMemberId,
+    repositoryFullName: input.connectorTarget.remoteId,
+    resolvedSourceRevisionRef: autoImportSummary?.sourceRevisionRef ?? null,
+    startedAt: startedAt.toISOString(),
+    targetId: input.connectorTarget.id,
+    completedAt: completedAt.toISOString(),
+  }
+
+  await db.update(ConnectorSyncEventTable).set({
+    completedAt,
+    sourceRevisionRef: autoImportSummary?.sourceRevisionRef ?? null,
+    startedAt,
+    status: eventStatus,
+    summaryJson,
+  }).where(eq(ConnectorSyncEventTable.id, input.connectorSyncEventId))
+}
+
 export async function queueConnectorTargetResync(input: { connectorTargetId: ConnectorTargetId; context: PluginArchActorContext }) {
   const target = await getConnectorTargetRow(input.context.organizationContext.organization.id, input.connectorTargetId)
   if (!target) throw new PluginArchRouteFailure(404, "connector_target_not_found", "Connector target not found.")
@@ -3132,6 +3205,12 @@ export async function queueConnectorTargetResync(input: { connectorTargetId: Con
     startedAt: new Date(),
     status: "queued",
     summaryJson: { queuedBy: input.context.organizationContext.currentMember.id },
+  })
+  await runGithubConnectorSyncNow({
+    connectorInstance: instance,
+    connectorSyncEventId: eventId,
+    connectorTarget: target,
+    requestedByMemberId: input.context.organizationContext.currentMember.id,
   })
   return { id: eventId }
 }
@@ -3234,8 +3313,18 @@ export async function getConnectorSyncEventDetail(context: PluginArchActorContex
 export async function retryConnectorSyncEvent(input: { connectorSyncEventId: ConnectorSyncEventId; context: PluginArchActorContext }) {
   const row = await getConnectorSyncEventRow(input.context.organizationContext.organization.id, input.connectorSyncEventId)
   if (!row) throw new PluginArchRouteFailure(404, "connector_sync_event_not_found", "Connector sync event not found.")
-  await ensureEditableConnectorInstance(input.context, row.connectorInstanceId)
-  await db.update(ConnectorSyncEventTable).set({ completedAt: null, startedAt: new Date(), status: "queued" }).where(eq(ConnectorSyncEventTable.id, row.id))
+  const instance = await ensureEditableConnectorInstance(input.context, row.connectorInstanceId)
+  if (!row.connectorTargetId) {
+    throw new PluginArchRouteFailure(409, "connector_sync_event_missing_target", "Connector sync event is missing a connector target.")
+  }
+  const target = await getConnectorTargetRow(input.context.organizationContext.organization.id, row.connectorTargetId)
+  if (!target) throw new PluginArchRouteFailure(404, "connector_target_not_found", "Connector target not found.")
+  await runGithubConnectorSyncNow({
+    connectorInstance: instance,
+    connectorSyncEventId: row.id,
+    connectorTarget: target,
+    requestedByMemberId: input.context.organizationContext.currentMember.id,
+  })
   return { id: row.id }
 }
 
@@ -4119,8 +4208,11 @@ async function getGithubDiscoveryContext(input: { connectorInstanceId: Connector
     ? connectorTarget.targetConfigJson as Record<string, unknown>
     : {}
   const repositoryFullName = typeof targetConfig.repositoryFullName === "string" ? targetConfig.repositoryFullName.trim() : connectorTarget.remoteId.trim()
-  const branch = typeof targetConfig.branch === "string" ? targetConfig.branch.trim() : connectorTarget.externalTargetRef?.trim() ?? ""
-  const ref = typeof targetConfig.ref === "string" ? targetConfig.ref.trim() : branch ? `refs/heads/${branch}` : ""
+  const rawBranch = typeof targetConfig.branch === "string" ? targetConfig.branch.trim() : connectorTarget.externalTargetRef?.trim() ?? ""
+  const rawRef = typeof targetConfig.ref === "string" ? targetConfig.ref.trim() : rawBranch
+  const normalizedTarget = normalizeGithubBranchRef({ branch: rawBranch, ref: rawRef })
+  const branch = normalizedTarget?.branch ?? rawBranch
+  const ref = normalizedTarget?.ref ?? rawRef
   const installationId = typeof connectorInstance.instanceConfigJson === "object" && connectorInstance.instanceConfigJson && typeof (connectorInstance.instanceConfigJson as Record<string, unknown>).installationId === "number"
     ? (connectorInstance.instanceConfigJson as Record<string, unknown>).installationId as number
     : Number(connectorAccount.remoteId)
@@ -5315,16 +5407,21 @@ export async function githubSetup(input: {
   repositoryFullName: string
   repositoryId: number
 }) {
+  const target = normalizeGithubBranchRef(input)
+  if (!target) {
+    throw new PluginArchRouteFailure(409, "github_branch_not_found", "GitHub branch/ref could not be validated for this repository.")
+  }
+
   const githubConfig = githubConnectorAppConfig()
   const installationToken = await getGithubInstallationAccessToken({
     config: githubConfig,
     installationId: input.installationId,
   })
   const validation = await validateGithubTarget({
-    branch: input.branch,
+    branch: target.branch,
     config: githubConfig,
     installationId: input.installationId,
-    ref: input.ref,
+    ref: target.ref,
     repositoryFullName: input.repositoryFullName,
     repositoryId: input.repositoryId,
     token: installationToken,
@@ -5337,9 +5434,9 @@ export async function githubSetup(input: {
   }
 
   const discovery = await computeGithubDiscoverySnapshot({
-    branch: input.branch,
+    branch: target.branch,
     installationId: input.installationId,
-    ref: input.ref,
+    ref: target.ref,
     repositoryFullName: input.repositoryFullName,
     token: installationToken,
   })
@@ -5371,9 +5468,9 @@ export async function githubSetup(input: {
 
   const connectorTarget = await createConnectorTarget({
     config: withGithubDiscoveryCache({
-      branch: input.branch,
+      branch: target.branch,
       defaultBranch: validation.defaultBranch,
-      ref: input.ref,
+      ref: target.ref,
       repositoryFullName: input.repositoryFullName,
       repositoryId: input.repositoryId,
     }, {
@@ -5391,7 +5488,7 @@ export async function githubSetup(input: {
     connectorInstanceId: connectorInstance.id,
     connectorType: "github",
     context: input.context,
-    externalTargetRef: input.branch,
+    externalTargetRef: target.branch,
     remoteId: input.repositoryFullName,
     targetKind: "repository_branch",
   })
@@ -5471,7 +5568,10 @@ export async function enqueueGithubWebhookSync(input: {
   const queuedIds: string[] = []
   for (const row of instances) {
     const targetConfig = row.target.targetConfigJson ?? {}
-    const targetRef = typeof targetConfig.ref === "string" ? targetConfig.ref : null
+    const targetBranch = typeof targetConfig.branch === "string" ? targetConfig.branch : row.target.externalTargetRef ?? ""
+    const rawTargetRef = typeof targetConfig.ref === "string" ? targetConfig.ref : targetBranch || null
+    const normalizedTarget = rawTargetRef ? normalizeGithubBranchRef({ branch: targetBranch, ref: rawTargetRef }) : null
+    const targetRef = normalizedTarget?.ref ?? rawTargetRef
     if (targetRef && targetRef !== input.ref) {
       continue
     }
