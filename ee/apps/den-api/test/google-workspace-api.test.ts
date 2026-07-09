@@ -106,6 +106,7 @@ describe("extractCalendarEvents", () => {
         status: "confirmed",
         htmlLink: "https://calendar.google.com/event?eid=event_1",
         attendees: ["ada@example.com", "ben@example.com"],
+        meetLink: null,
       },
       {
         id: "event_2",
@@ -117,6 +118,7 @@ describe("extractCalendarEvents", () => {
         status: "",
         htmlLink: "",
         attendees: [],
+        meetLink: null,
       },
     ])
   })

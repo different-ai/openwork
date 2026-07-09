@@ -139,6 +139,23 @@ function readGmailHeaders(payload: Record<string, unknown>) {
   return headers
 }
 
+export function extractGmailThreadReplyContext(json: unknown): { lastMessageId: string; references: string } | null {
+  const root = isRecord(json) ? json : {}
+  const messages = readArray(root, "messages")
+  const lastMessage = messages.at(-1)
+  if (!isRecord(lastMessage)) return null
+
+  const payload = readRecord(lastMessage, "payload")
+  if (!payload) return null
+
+  const headers = readGmailHeaders(payload)
+  const lastMessageId = headers.get("message-id")?.trim() ?? ""
+  if (!lastMessageId) return null
+
+  const references = `${headers.get("references")?.trim() ?? ""} ${lastMessageId}`.trim()
+  return { lastMessageId, references }
+}
+
 export function truncateText(text: string, maxCharacters: number): { text: string; truncated: boolean } {
   if (text.length <= maxCharacters) {
     return { text, truncated: false }

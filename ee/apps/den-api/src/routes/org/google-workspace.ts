@@ -14,6 +14,7 @@ import {
   extractDriveFiles,
   extractGmailMessage,
   extractGmailMessageIds,
+  extractGmailThreadReplyContext,
   truncateText,
 } from "../../capability-sources/google-workspace-api.js"
 import type { ConnectedAccountRow } from "../../capability-sources/oauth-credentials.js"
@@ -32,9 +33,12 @@ const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open 
 
 const createDraftBodySchema = z.object({
   to: z.string().trim().min(3).max(320).describe("Recipient email address."),
+  cc: z.string().trim().min(3).max(1_000).optional().describe("Optional comma-separated Cc email addresses."),
+  bcc: z.string().trim().min(3).max(1_000).optional().describe("Optional comma-separated Bcc email addresses."),
   subject: z.string().trim().min(1).max(500).describe("Draft subject line."),
   body: z.string().min(1).max(50_000).describe("Plain-text draft body."),
-})
+  threadId: z.string().trim().min(1).max(512).optional().describe("Optional Gmail thread id to reply on. Get it from the gmail-messages capability. When set, the draft is attached to that thread as a reply — keep the thread's subject (e.g. 'Re: …')."),
+}).strict()
 
 const createDraftResponseSchema = z.object({
   ok: z.literal(true),
@@ -42,6 +46,7 @@ const createDraftResponseSchema = z.object({
   messageId: z.string().nullable(),
   to: z.string(),
   subject: z.string(),
+  threadId: z.string().nullable(),
 }).meta({ ref: "GoogleWorkspaceDraftResponse" })
 
 const needsConnectionSchema = z.object({
@@ -736,12 +741,12 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     "/v1/capabilities/google-workspace/gmail-drafts",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "Create a Gmail draft as the calling member",
-      description: "Creates a plain-text Gmail draft in the calling member own mailbox, using the Google account they connected through the org Google Workspace connection. Returns needs_connection when the member has not connected their Google account yet.",
+      summary: "Create a Gmail draft or threaded reply draft as the calling member",
+      description: "Creates a plain-text Gmail draft in the calling member own mailbox, with optional Cc/Bcc recipients. Set threadId to attach the draft to an existing Gmail thread as a reply using the thread's matching subject. Returns needs_connection when the member has not connected their Google account yet or when a threaded reply needs Gmail read permission.",
       responses: {
         200: jsonResponse("Draft created.", createDraftResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        409: jsonResponse("The calling member has not connected their Google account.", needsConnectionSchema),
+        409: jsonResponse("The calling member has not connected their Google account or is missing permission.", needsConnectionSchema),
         502: jsonResponse("Google rejected the request.", upstreamErrorSchema),
       },
     }),
@@ -760,14 +765,46 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json({ error: "needs_connection", message: token.message }, 409)
       }
 
-      const { to, subject, body } = c.req.valid("json")
+      const { to, cc, bcc, subject, body, threadId } = c.req.valid("json")
+      const headers: { name: string; value: string }[] = []
+      if (threadId) {
+        if (missingScope(token.account, [GMAIL_READ_SCOPE])) {
+          return c.json({ error: "needs_connection", message: missingPermissionMessage("Gmail read") }, 409)
+        }
+
+        const threadUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}`)
+        threadUrl.searchParams.set("format", "metadata")
+        threadUrl.searchParams.append("metadataHeaders", "Message-ID")
+        threadUrl.searchParams.append("metadataHeaders", "References")
+        threadUrl.searchParams.append("metadataHeaders", "Subject")
+        const threadResponse = await googleWorkspaceApiFetch(threadUrl, {
+          headers: { authorization: `Bearer ${token.accessToken}` },
+        })
+        if (!threadResponse.ok) {
+          return c.json(await googleApiError("Gmail thread read", threadResponse), 502)
+        }
+
+        const replyContext = extractGmailThreadReplyContext(await readJson(threadResponse))
+        if (!replyContext) {
+          return c.json({ error: "google_api_error", message: "Gmail thread has no Message-ID metadata; cannot build a threaded reply draft." }, 502)
+        }
+        headers.push(
+          { name: "In-Reply-To", value: replyContext.lastMessageId },
+          { name: "References", value: replyContext.references },
+        )
+      }
+
+      const message: { raw: string; threadId?: string } = { raw: buildGmailDraftRaw({ to, cc, bcc, subject, body, headers }) }
+      if (threadId) {
+        message.threadId = threadId
+      }
       const response = await googleWorkspaceApiFetch(`${gmailApiBase()}/gmail/v1/users/me/drafts`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${token.accessToken}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ message: { raw: buildGmailDraftRaw({ to, subject, body }) } }),
+        body: JSON.stringify({ message }),
       })
       const text = await response.text()
       if (!response.ok) {
@@ -779,7 +816,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json({ error: "google_api_error", message: "Gmail returned no draft id." }, 502)
       }
 
-      return c.json({ ok: true, draftId, messageId, to, subject })
+      return c.json({ ok: true, draftId, messageId, to, subject, threadId: threadId ?? null })
     },
   )
 }

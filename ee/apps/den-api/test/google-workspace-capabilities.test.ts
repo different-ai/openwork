@@ -48,6 +48,24 @@ function expectRecord(value: unknown, label: string): Record<string, unknown> {
   return value
 }
 
+function expectString(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Expected ${label} to be a string`)
+  }
+  return value
+}
+
+function expectDraftMessage(): Record<string, unknown> {
+  const payload = expectRecord(lastDraftPayload, "Gmail draft payload")
+  return expectRecord(payload.message, "Gmail draft message")
+}
+
+function decodeDraftRaw(): string {
+  const message = expectDraftMessage()
+  const raw = expectString(message.raw, "Gmail draft raw")
+  return Buffer.from(raw, "base64url").toString("utf8")
+}
+
 const GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 const CALENDAR_READ_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 const CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
@@ -56,22 +74,30 @@ const FULL_SCOPES = [GMAIL_READ_SCOPE, CALENDAR_READ_SCOPE, CALENDAR_EVENTS_SCOP
 
 let lastAuthorization: string | null = null
 let googleCallCount = 0
+let googleCallUrls: string[] = []
 let forceGoogleError = false
+let forceGmailThreadError = false
 let lastDriveQuery: string | null = null
 let lastCalendarEventPayload: unknown = null
 let lastCalendarUrl: string | null = null
 let lastCalendarMethod: string | null = null
 let calendarCreateCount = 0
+let lastDraftPayload: unknown = null
+let lastGmailThreadUrl: string | null = null
 
 function resetFakeGoogle() {
   lastAuthorization = null
   googleCallCount = 0
+  googleCallUrls = []
   forceGoogleError = false
+  forceGmailThreadError = false
   lastDriveQuery = null
   lastCalendarEventPayload = null
   lastCalendarUrl = null
   lastCalendarMethod = null
   calendarCreateCount = 0
+  lastDraftPayload = null
+  lastGmailThreadUrl = null
 }
 
 function gmailMessagePayload() {
@@ -101,6 +127,7 @@ const fakeGoogleServer = Bun.serve({
   async fetch(request) {
     const url = new URL(request.url)
     googleCallCount += 1
+    googleCallUrls.push(request.url)
     lastAuthorization = request.headers.get("authorization")
 
     if (url.pathname.startsWith("/calendar/v3/calendars/primary/events")) {
@@ -117,6 +144,40 @@ const fakeGoogleServer = Bun.serve({
     }
     if (url.pathname === "/gmail/v1/users/me/messages/msg_1") {
       return json(gmailMessagePayload())
+    }
+    if (url.pathname === "/gmail/v1/users/me/threads/thread_1") {
+      lastGmailThreadUrl = request.url
+      if (forceGmailThreadError) {
+        return new Response("thread exploded", { status: 500 })
+      }
+      return json({
+        messages: [
+          {
+            id: "msg_1",
+            payload: {
+              headers: [
+                { name: "Message-ID", value: "<orig-1@mail.gmail.com>" },
+                { name: "Subject", value: "Quarterly plan" },
+              ],
+            },
+          },
+          {
+            id: "msg_2",
+            payload: {
+              headers: [
+                { name: "Message-ID", value: "<orig-2@mail.gmail.com>" },
+                { name: "References", value: "<orig-1@mail.gmail.com>" },
+                { name: "Subject", value: "Quarterly plan" },
+              ],
+            },
+          },
+        ],
+      })
+    }
+    if (url.pathname === "/gmail/v1/users/me/drafts" && request.method === "POST") {
+      const body: unknown = await request.json()
+      lastDraftPayload = body
+      return json({ id: "draft_1", message: { id: "draft_msg_1", threadId: "thread_1" } })
     }
 
     if (url.pathname === "/calendar/v3/calendars/primary/events" && request.method === "GET") {
@@ -457,6 +518,128 @@ test("gmail list returns metadata-mapped messages", async () => {
       },
     ],
   })
+})
+
+test("gmail plain draft supports cc without requiring a thread", async () => {
+  const to = "sam@acme.test"
+  const subject = "Quarterly plan"
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: {
+      to,
+      cc: "ada@acme.test, grace@acme.test",
+      subject,
+      body: "Draft body",
+    },
+  })
+  expect(response.status).toBe(200)
+  expect(googleCallCount).toBe(1)
+  const message = expectDraftMessage()
+  expect("threadId" in message).toBe(false)
+  const decoded = decodeDraftRaw()
+  expect(decoded).toContain("To: sam@acme.test\r\n")
+  expect(decoded).toContain("Cc: ada@acme.test, grace@acme.test\r\n")
+  expect(decoded).toContain("Subject: Quarterly plan\r\n")
+  const body: unknown = await response.json()
+  expect(body).toEqual({ ok: true, draftId: "draft_1", messageId: "draft_msg_1", to, subject, threadId: null })
+})
+
+test("gmail threaded reply draft reads thread metadata and sends reply headers", async () => {
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: {
+      to: "sam@acme.test",
+      cc: "ada@acme.test",
+      subject: "Quarterly plan",
+      threadId: "thread_1",
+      body: "Reply body",
+    },
+  })
+  expect(response.status).toBe(200)
+  expect(googleCallCount).toBe(2)
+  const firstUrl = new URL(expectString(googleCallUrls[0], "first Google URL"))
+  expect(firstUrl.pathname).toBe("/gmail/v1/users/me/threads/thread_1")
+  expect(firstUrl.searchParams.get("format")).toBe("metadata")
+  expect(firstUrl.searchParams.getAll("metadataHeaders")).toEqual(["Message-ID", "References", "Subject"])
+  const secondUrl = new URL(expectString(googleCallUrls[1], "second Google URL"))
+  expect(secondUrl.pathname).toBe("/gmail/v1/users/me/drafts")
+  expect(lastGmailThreadUrl).toBe(expectString(googleCallUrls[0], "first Google URL"))
+  const message = expectDraftMessage()
+  expect(message.threadId).toBe("thread_1")
+  const decoded = decodeDraftRaw()
+  expect(decoded).toContain("In-Reply-To: <orig-2@mail.gmail.com>\r\n")
+  expect(decoded).toContain("References: <orig-1@mail.gmail.com> <orig-2@mail.gmail.com>\r\n")
+  const body: unknown = await response.json()
+  const responseBody = expectRecord(body, "threaded draft response")
+  expect(responseBody.threadId).toBe("thread_1")
+})
+
+test("gmail threaded reply draft requires Gmail read scope before calling Google", async () => {
+  await seedConnectedAccount([CALENDAR_READ_SCOPE, CALENDAR_EVENTS_SCOPE, DRIVE_READ_SCOPE])
+  resetFakeGoogle()
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: {
+      to: "sam@acme.test",
+      subject: "Quarterly plan",
+      threadId: "thread_1",
+      body: "Reply body",
+    },
+  })
+  expect(response.status).toBe(409)
+  expect(googleCallCount).toBe(0)
+  const body: unknown = await response.json()
+  expect(expectMessage(body)).toContain("missing the Gmail read permission")
+})
+
+test("gmail plain draft still works without Gmail read scope", async () => {
+  await seedConnectedAccount([CALENDAR_READ_SCOPE, CALENDAR_EVENTS_SCOPE, DRIVE_READ_SCOPE])
+  resetFakeGoogle()
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: {
+      to: "sam@acme.test",
+      subject: "Quarterly plan",
+      body: "Draft body",
+    },
+  })
+  expect(response.status).toBe(200)
+  expect(googleCallCount).toBe(1)
+})
+
+test("gmail draft rejects unknown body keys without calling Google", async () => {
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: {
+      to: "sam@acme.test",
+      subject: "Quarterly plan",
+      body: "Draft body",
+      replyTo: "x@y.z",
+    },
+  })
+  expect(response.status).toBe(400)
+  expect(googleCallCount).toBe(0)
+  const body: unknown = await response.json()
+  expect(expectRecord(body, "invalid request response").error).toBe("invalid_request")
+})
+
+test("gmail threaded reply draft returns google_api_error when thread metadata fetch fails", async () => {
+  forceGmailThreadError = true
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: {
+      to: "sam@acme.test",
+      subject: "Quarterly plan",
+      threadId: "thread_1",
+      body: "Reply body",
+    },
+  })
+  expect(response.status).toBe(502)
+  expect(googleCallCount).toBe(1)
+  const body: unknown = await response.json()
+  const responseBody = expectRecord(body, "thread error response")
+  expect(responseBody.error).toBe("google_api_error")
+  expect(expectMessage(body).startsWith("Gmail thread read failed: 500")).toBe(true)
 })
 
 test("drive search returns mapped files", async () => {

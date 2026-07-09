@@ -38,15 +38,18 @@ export function readGmailDraftIds(text: string): { draftId: string | null; messa
   }
 }
 
-export function buildGmailDraftRaw(input: { to: string; subject: string; body: string }): string {
+export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: string; subject: string; body: string; headers?: { name: string; value: string }[] }): string {
   const message = [
     `To: ${input.to}`,
+    input.cc ? `Cc: ${input.cc}` : null,
+    input.bcc ? `Bcc: ${input.bcc}` : null,
     `Subject: ${encodeMimeHeaderValue(input.subject)}`,
+    ...(input.headers ?? []).map((header) => `${header.name}: ${header.value}`),
     "MIME-Version: 1.0",
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: base64",
     "",
     Buffer.from(input.body, "utf8").toString("base64"),
-  ].join("\r\n")
+  ].filter((line) => typeof line === "string").join("\r\n")
   return Buffer.from(message, "utf8").toString("base64url")
 }

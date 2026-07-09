@@ -9,11 +9,17 @@ function seedRequiredEnv() {
 }
 
 let gmail: typeof import("../src/capability-sources/gmail.js")
+let googleWorkspaceApi: typeof import("../src/capability-sources/google-workspace-api.js")
 
 beforeAll(async () => {
   seedRequiredEnv()
   gmail = await import("../src/capability-sources/gmail.js")
+  googleWorkspaceApi = await import("../src/capability-sources/google-workspace-api.js")
 })
+
+function decodeRaw(raw: string): string {
+  return Buffer.from(raw, "base64url").toString("utf8")
+}
 
 describe("buildGmailDraftRaw", () => {
   test("encodes a plain-ASCII draft as base64url RFC 822 with the body base64-encoded", () => {
@@ -30,12 +36,119 @@ describe("buildGmailDraftRaw", () => {
 
   test("non-ASCII subjects get RFC 2047 B-encoding, bodies survive UTF-8 round trips", () => {
     const raw = gmail.buildGmailDraftRaw({ to: "sam@acme.test", subject: "Résumé — próxima reunión", body: "Grüße aus Zürich ✅" })
-    const decoded = Buffer.from(raw, "base64url").toString("utf8")
+    const decoded = decodeRaw(raw)
     const subjectLine = decoded.split("\r\n").find((line) => line.startsWith("Subject: "))
     expect(subjectLine).toMatch(/^Subject: =\?UTF-8\?B\?[A-Za-z0-9+/=]+\?=$/)
     expect(Buffer.from(subjectLine!.slice("Subject: =?UTF-8?B?".length, -2), "base64").toString("utf8")).toBe("Résumé — próxima reunión")
     const bodyPart = decoded.split("\r\n\r\n")[1]
     expect(Buffer.from(bodyPart, "base64").toString("utf8")).toBe("Grüße aus Zürich ✅")
+  })
+
+  test("keeps legacy draft output unchanged when optional fields are absent", () => {
+    const raw = gmail.buildGmailDraftRaw({ to: "sam@acme.test", subject: "Follow up", body: "Hello Sam" })
+    expect(decodeRaw(raw)).toBe([
+      "To: sam@acme.test",
+      "Subject: Follow up",
+      "MIME-Version: 1.0",
+      'Content-Type: text/plain; charset="UTF-8"',
+      "Content-Transfer-Encoding: base64",
+      "",
+      Buffer.from("Hello Sam", "utf8").toString("base64"),
+    ].join("\r\n"))
+  })
+
+  test("emits Cc and Bcc header lines exactly when provided", () => {
+    const decoded = decodeRaw(gmail.buildGmailDraftRaw({
+      to: "sam@acme.test",
+      cc: "ada@acme.test, grace@acme.test",
+      bcc: "hidden@acme.test",
+      subject: "Follow up",
+      body: "Hello Sam",
+    }))
+    expect(decoded.split("\r\n").slice(0, 4)).toEqual([
+      "To: sam@acme.test",
+      "Cc: ada@acme.test, grace@acme.test",
+      "Bcc: hidden@acme.test",
+      "Subject: Follow up",
+    ])
+
+    const ccOnly = decodeRaw(gmail.buildGmailDraftRaw({
+      to: "sam@acme.test",
+      cc: "ada@acme.test",
+      subject: "Follow up",
+      body: "Hello Sam",
+    }))
+    expect(ccOnly.split("\r\n").slice(0, 3)).toEqual([
+      "To: sam@acme.test",
+      "Cc: ada@acme.test",
+      "Subject: Follow up",
+    ])
+    expect(ccOnly).not.toContain("Bcc:")
+  })
+
+  test("emits extra headers before MIME headers", () => {
+    const decoded = decodeRaw(gmail.buildGmailDraftRaw({
+      to: "sam@acme.test",
+      subject: "Re: Follow up",
+      body: "Hello Sam",
+      headers: [
+        { name: "In-Reply-To", value: "<orig-2@mail.gmail.com>" },
+        { name: "References", value: "<orig-1@mail.gmail.com> <orig-2@mail.gmail.com>" },
+      ],
+    }))
+    expect(decoded.split("\r\n").slice(0, 5)).toEqual([
+      "To: sam@acme.test",
+      "Subject: Re: Follow up",
+      "In-Reply-To: <orig-2@mail.gmail.com>",
+      "References: <orig-1@mail.gmail.com> <orig-2@mail.gmail.com>",
+      "MIME-Version: 1.0",
+    ])
+  })
+})
+
+describe("extractGmailThreadReplyContext", () => {
+  test("uses the last message Message-ID and appends it to prior References", () => {
+    expect(googleWorkspaceApi.extractGmailThreadReplyContext({
+      messages: [
+        { payload: { headers: [{ name: "Message-ID", value: "<orig-1@mail.gmail.com>" }] } },
+        {
+          payload: {
+            headers: [
+              { name: "Message-ID", value: "<orig-2@mail.gmail.com>" },
+              { name: "References", value: "<orig-1@mail.gmail.com>" },
+            ],
+          },
+        },
+      ],
+    })).toEqual({
+      lastMessageId: "<orig-2@mail.gmail.com>",
+      references: "<orig-1@mail.gmail.com> <orig-2@mail.gmail.com>",
+    })
+  })
+
+  test("uses only Message-ID when the last message has no References", () => {
+    expect(googleWorkspaceApi.extractGmailThreadReplyContext({
+      messages: [
+        {
+          payload: {
+            headers: [{ name: "message-id", value: "<orig-2@mail.gmail.com>" }],
+          },
+        },
+      ],
+    })).toEqual({
+      lastMessageId: "<orig-2@mail.gmail.com>",
+      references: "<orig-2@mail.gmail.com>",
+    })
+  })
+
+  test("returns null for an empty thread", () => {
+    expect(googleWorkspaceApi.extractGmailThreadReplyContext({ messages: [] })).toBeNull()
+  })
+
+  test("returns null when the last message has no Message-ID", () => {
+    expect(googleWorkspaceApi.extractGmailThreadReplyContext({
+      messages: [{ payload: { headers: [{ name: "References", value: "<orig-1@mail.gmail.com>" }] } }],
+    })).toBeNull()
   })
 })
 
