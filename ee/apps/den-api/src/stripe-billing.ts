@@ -10,6 +10,7 @@ import {
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import type { DenOrgMode } from "./env.js"
 import { setInferenceEnabled } from "./inference.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
@@ -148,6 +149,18 @@ export function additionalFreeSeatCountFromMetadata(metadata: Record<string, unk
   return normalizeAdditionalFreeSeats(metadata?.seatsFreeAdditional)
 }
 
+// Seat billing only gates member additions on hosted multi-org deployments
+// where Stripe seat billing is configured. Single-org (self-hosted /
+// enterprise) deployments never restrict member count, and without Stripe
+// configured the 402 would be a dead end the operator cannot resolve.
+export function isSeatBillingGateEnabled(input: {
+  orgMode: DenOrgMode
+  stripeSecretKey: string | undefined
+  stripeSeatPriceId: string | undefined
+}) {
+  return input.orgMode === "multi_org" && Boolean(input.stripeSecretKey && input.stripeSeatPriceId)
+}
+
 export function calculateOrganizationSeatBillingCounts(input: {
   memberCount: number
   metadata?: Record<string, unknown> | null
@@ -255,7 +268,12 @@ export async function organizationHasActiveSeatSubscription(organizationId: OrgI
 
 export async function getOrganizationSeatAddEligibility(organizationId: OrgId) {
   const seatCounts = await getOrganizationSeatBillingCounts({ organizationId })
-  if (seatCounts.total < seatCounts.free) {
+  const gateEnabled = isSeatBillingGateEnabled({
+    orgMode: env.orgMode,
+    stripeSecretKey: env.stripe.secretKey,
+    stripeSeatPriceId: env.stripe.seatPriceId,
+  })
+  if (!gateEnabled || seatCounts.total < seatCounts.free) {
     return {
       allowed: true,
       currentCount: seatCounts.total,
