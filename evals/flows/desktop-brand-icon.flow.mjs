@@ -366,12 +366,85 @@ async function assertSignedIntoDen(ctx) {
   );
 }
 
+/**
+ * First-run gate: a fresh profile lands on #/onboarding or #/welcome, where
+ * the sidebar (and any control actions scoped to a workspace, like
+ * browser.open_url) never mount. Walk through it the same way
+ * admin-to-member-marketplace does, then land on a real
+ * `/workspace/<id>/session/<id>` route.
+ *
+ * Real workspace bootstrap (creating the workspace + booting its opencode
+ * sidecar) takes ~20s on a fresh profile — the wait below is sized for that,
+ * and deliberately does NOT accept `/welcome` as success (a bare hash match
+ * would pass instantly, before the workspace actually exists).
+ *
+ * IMPORTANT: once we're on a concrete `/workspace/…` route, do not blindly
+ * `navigateHash("/session")` — that overwrites the hash with a route that
+ * has no workspace/session id, which can bounce the app back toward
+ * `/welcome` before the control API's action list settles. Only normalize to
+ * `/session` when we're not already on a workspace route.
+ */
+async function ensureWorkspaceReady(ctx) {
+  const workspacePath = ctx.env.OPENWORK_EVAL_WORKSPACE_PATH?.trim() || "/workspace";
+  const onOnboarding = await ctx.eval("location.hash.includes('/onboarding')");
+  if (onOnboarding) {
+    const hasWorkspaceButton = await ctx.eval(
+      "Boolean([...document.querySelectorAll('button')].find(b => b.innerText.includes('Continue to workspace')))",
+    );
+    if (hasWorkspaceButton) {
+      await ctx.clickText("Continue to workspace");
+      await ctx.waitFor(
+        "location.hash.includes('/welcome') || location.hash.includes('/workspace/') || location.hash.includes('/session')",
+        { timeoutMs: 10_000 },
+      );
+    }
+  }
+  if (await ctx.eval("location.hash.includes('/welcome')")) {
+    await ctx.fill("input", workspacePath);
+    await ctx.clickText("Use this folder", { timeoutMs: 5_000 });
+    await ctx.waitFor(
+      "location.hash.includes('/workspace/')",
+      { timeoutMs: 45_000, label: "workspace route after welcome" },
+    );
+    ctx.log(`Workspace ready at ${workspacePath}`);
+  }
+
+  const onWorkspaceRoute = await ctx.eval("location.hash.includes('/workspace/')");
+  if (!onWorkspaceRoute) {
+    await ctx.navigateHash("/session");
+  }
+  await ctx.waitFor(
+    "window.__openworkControl.listActions().some((action) => action.id === 'browser.open_url' && !action.disabled)",
+    { timeoutMs: 30_000, label: "session browser.open_url action" },
+  );
+}
+
 async function waitForGenpactLogo(ctx) {
   await ctx.waitFor(`(() => {
     const img = document.querySelector('[data-testid="brand-logo"] img');
     return img && img.complete && img.naturalWidth > 0;
   })()`, { timeoutMs: 20_000, label: "Genpact sidebar logo loaded" });
 }
+
+export {
+  ORG_SETTINGS_PATH,
+  adminEnsureFreshAuth,
+  assertSignedIntoDen,
+  clickSaveSettings,
+  denFetch,
+  ensureRendererMounted,
+  ensureWorkspaceReady,
+  memberRefresh,
+  navigateAdminOrgSettings,
+  openAdminPanel,
+  panelEval,
+  setIconUrlInPanel,
+  sleep,
+  waitForBrandIconState,
+  waitForDesktopConfig,
+  waitForPanel,
+  waitUntil,
+};
 
 export default {
   id: "desktop-brand-icon",
@@ -395,37 +468,7 @@ export default {
           return status?.status !== "checking" && status?.user ? status : null;
         }, { timeoutMs: 30_000 });
 
-        // First-run gate: a fresh profile lands on #/onboarding or #/welcome,
-        // where the sidebar (and brand logo) never mounts. Walk through it the
-        // same way admin-to-member-marketplace does.
-        const workspacePath = ctx.env.OPENWORK_EVAL_WORKSPACE_PATH?.trim() || "/workspace";
-        const onOnboarding = await ctx.eval("location.hash.includes('/onboarding')");
-        if (onOnboarding) {
-          const hasWorkspaceButton = await ctx.eval(
-            "Boolean([...document.querySelectorAll('button')].find(b => b.innerText.includes('Continue to workspace')))",
-          );
-          if (hasWorkspaceButton) {
-            await ctx.clickText("Continue to workspace");
-            await ctx.waitFor(
-              "location.hash.includes('/welcome') || location.hash.includes('/workspace/') || location.hash.includes('/session')",
-              { timeoutMs: 10_000 },
-            );
-          }
-        }
-        if (await ctx.eval("location.hash.includes('/welcome')")) {
-          await ctx.fill("input", workspacePath);
-          await ctx.clickText("Use this folder", { timeoutMs: 5_000 });
-          await ctx.waitFor(
-            "location.hash.includes('/workspace/') || location.hash.includes('/session')",
-            { timeoutMs: 30_000, label: "workspace route after welcome" },
-          );
-          ctx.log(`Workspace ready at ${workspacePath}`);
-        }
-        await ctx.navigateHash("/session");
-        await ctx.waitFor(
-          "window.__openworkControl.listActions().some((action) => action.id === 'browser.open_url' && !action.disabled)",
-          { timeoutMs: 30_000, label: "session browser.open_url action" },
-        );
+        await ensureWorkspaceReady(ctx);
 
         await denFetch(ctx, "/v1/org", {
           method: "PATCH",
@@ -460,7 +503,8 @@ export default {
           },
           screenshot: {
             name: "frame-1-admin-icon-url",
-            targetUrlIncludes: ORG_SETTINGS_PATH,
+            sandboxCapture: true,
+            textTargetUrlIncludes: ORG_SETTINGS_PATH,
             requireText: ["Brand Appearance", "Icon URL"],
           },
         });
@@ -483,7 +527,8 @@ export default {
           },
           screenshot: {
             name: "frame-2-admin-icon-url-saved",
-            targetUrlIncludes: ORG_SETTINGS_PATH,
+            sandboxCapture: true,
+            textTargetUrlIncludes: ORG_SETTINGS_PATH,
             requireText: ["Brand Appearance", "Icon URL"],
           },
         });

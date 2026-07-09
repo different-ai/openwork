@@ -15,6 +15,7 @@ import {
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { DEN_JWT_SIGNING_ALGORITHM, getDenAuthIssuer } from "./jwt-policy.js"
+import { resolveMcpResourceFromRequest } from "./resource.js"
 
 export type McpPrincipal = {
   userId: string
@@ -28,14 +29,13 @@ type McpJwtVerifyOptions = Parameters<typeof verifyJwsAccessToken>[1]["verifyOpt
 const MCP_JWT_SIGNING_ALGORITHMS = [DEN_JWT_SIGNING_ALGORITHM]
 
 export function getMcpResourceUrl(request: Request) {
-  const url = new URL(request.url)
-  // The admin MCP lives at /mcp/admin but reuses the canonical /mcp resource
-  // (same minted token, same audience) — admin access is gated server-side by
-  // the platform-admin allowlist, not by a distinct OAuth resource. Collapse
-  // the /admin suffix so the 401 challenge and protected-resource metadata
-  // both advertise the resource the desktop app already holds a token for.
-  const requestResource = `${url.origin}/mcp`
-  return DEN_MCP_RESOURCES.includes(requestResource) ? requestResource : DEN_MCP_RESOURCE
+  // /mcp/agent and /mcp/admin reuse the canonical /mcp resource (same minted
+  // token, same audience); admin access is gated server-side by the
+  // platform-admin allowlist, not by a distinct OAuth resource. Derive public
+  // candidates from the request origin for multi-origin deployments, but only
+  // honor static boot-time allowlist entries so a Host header cannot mint an
+  // arbitrary audience.
+  return resolveMcpResourceFromRequest(request.url, DEN_MCP_RESOURCES, DEN_MCP_RESOURCE)
 }
 
 export function getMcpJwtVerifyOptions(): McpJwtVerifyOptions {

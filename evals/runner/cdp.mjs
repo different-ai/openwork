@@ -65,30 +65,62 @@ export async function resolveCdpBaseUrl(candidates) {
   );
 }
 
-export function connect(webSocketDebuggerUrl) {
+// Default upper bound on a single CDP round trip (handshake or a send/reply).
+// Without this, a stalled Daytona proxy WebSocket (seen intermittently — the
+// handshake or a single message reply just never arrives) hangs the calling
+// promise forever with no error, which hangs the whole flow silently.
+const DEFAULT_CDP_TIMEOUT_MS = 20_000;
+
+export function connect(webSocketDebuggerUrl, { connectTimeoutMs = DEFAULT_CDP_TIMEOUT_MS, sendTimeoutMs = DEFAULT_CDP_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(webSocketDebuggerUrl);
     let nextId = 1;
     const pending = new Map();
     let opened = false;
+    let settled = false;
+
+    const connectTimer = connectTimeoutMs > 0
+      ? setTimeout(() => {
+        if (opened) return;
+        settled = true;
+        try {
+          socket.close();
+        } catch {
+          // Socket may already be in a closing state.
+        }
+        reject(new Error(`CDP connect timed out after ${connectTimeoutMs}ms: ${webSocketDebuggerUrl}`));
+      }, connectTimeoutMs)
+      : null;
 
     const rejectPending = (error) => {
-      for (const callbacks of pending.values()) callbacks.reject(error);
+      for (const callbacks of pending.values()) {
+        clearTimeout(callbacks.timer);
+        callbacks.reject(error);
+      }
       pending.clear();
     };
 
     socket.addEventListener("open", () => {
+      if (settled) return;
       opened = true;
+      if (connectTimer) clearTimeout(connectTimer);
       resolve({
         close: () => socket.close(),
         send(method, params = {}) {
           const id = nextId++;
           return new Promise((innerResolve, innerReject) => {
-            pending.set(id, { resolve: innerResolve, reject: innerReject });
+            const timer = sendTimeoutMs > 0
+              ? setTimeout(() => {
+                pending.delete(id);
+                innerReject(new Error(`CDP call ${method} timed out after ${sendTimeoutMs}ms.`));
+              }, sendTimeoutMs)
+              : null;
+            pending.set(id, { resolve: innerResolve, reject: innerReject, timer });
             try {
               socket.send(JSON.stringify({ id, method, params }));
             } catch (error) {
               pending.delete(id);
+              if (timer) clearTimeout(timer);
               innerReject(error);
             }
           });
@@ -101,18 +133,27 @@ export function connect(webSocketDebuggerUrl) {
       const callbacks = pending.get(message.id);
       if (!callbacks) return;
       pending.delete(message.id);
+      clearTimeout(callbacks.timer);
       if (message.error) callbacks.reject(new Error(message.error.message));
       else callbacks.resolve(message.result);
     });
     socket.addEventListener("error", () => {
       const error = new Error("CDP websocket failed.");
       rejectPending(error);
-      if (!opened) reject(error);
+      if (!opened && !settled) {
+        settled = true;
+        if (connectTimer) clearTimeout(connectTimer);
+        reject(error);
+      }
     });
     socket.addEventListener("close", () => {
       const error = new Error("CDP websocket closed.");
       rejectPending(error);
-      if (!opened) reject(error);
+      if (!opened && !settled) {
+        settled = true;
+        if (connectTimer) clearTimeout(connectTimer);
+        reject(error);
+      }
     });
   });
 }

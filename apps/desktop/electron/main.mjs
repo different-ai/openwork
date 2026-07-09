@@ -277,6 +277,9 @@ const APP_ICON_PATH = resolveAppIconPath();
 const APP_ICON_IMAGE = APP_ICON_PATH ? nativeImage.createFromPath(APP_ICON_PATH) : null;
 const BRAND_ICON_MAX_BYTES = 2 * 1024 * 1024;
 const BRAND_ICON_FETCH_TIMEOUT_MS = 10_000;
+// Keep in sync with ee/apps/den-api/src/brand-icon-validation.ts so logo CDNs
+// that expect a browser request behave the same at save time and apply time.
+const BRAND_ICON_FETCH_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 let brandIconApplySequence = 0;
 
 function brandIconCachePath() {
@@ -349,7 +352,13 @@ async function fetchBrandIconBuffer(sourceUrl) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), BRAND_ICON_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(sourceUrl, { signal: controller.signal });
+    const response = await fetch(sourceUrl, {
+      signal: controller.signal,
+      headers: {
+        "user-agent": BRAND_ICON_FETCH_USER_AGENT,
+        accept: "image/*,*/*",
+      },
+    });
     if (!response.ok) return { ok: false, reason: "http-status" };
 
     const contentLength = Number(response.headers.get("content-length") ?? "0");

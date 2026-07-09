@@ -26,6 +26,7 @@ config:
     webOrigin: https://openwork.example.com
     apiOrigin: https://api.openwork.example.com
     mcpResourceUrl: https://api.openwork.example.com/mcp
+    mcpAdditionalResources: ""
     mcpClaimNamespace: ""
     desktopDenBaseUrl: https://openwork.example.com
     corsOrigins: https://openwork.example.com,https://api.openwork.example.com

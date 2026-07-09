@@ -849,12 +849,13 @@ export function SessionRoute() {
         if (!targetSessionId) return;
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!text && draft.attachments.length === 0) return;
-        // One-shot provider selection on the first send: hold the draft,
-        // show the step, and resend automatically once the user chooses.
+        // One-shot provider selection on the first send whenever no user-added
+        // provider is connected. The free default model being usable is the
+        // normal case here, not a reason to skip the step.
         if (
           !providerStepResendRef.current &&
           !local.prefs.providerStepCompleted &&
-          !hasUsableModel &&
+          isDesktopRuntime() &&
           userProviderConnectedIds.length === 0 &&
           draft.mode !== "shell"
         ) {
@@ -1281,7 +1282,10 @@ export function SessionRoute() {
   }, []);
   useEffect(() => {
     if (!firstRunLoaderActive) return;
-    const timeout = window.setTimeout(dismissFirstRunLoader, 30_000);
+    // Safety cap only: a cold first engine boot measured 35–40s on a slow
+    // Windows VM, so 30s cut the loader early and flashed the empty session
+    // page. Errors and settled states still dismiss immediately below.
+    const timeout = window.setTimeout(dismissFirstRunLoader, 120_000);
     return () => window.clearTimeout(timeout);
   }, [firstRunLoaderActive, dismissFirstRunLoader]);
   useEffect(() => {
@@ -1774,7 +1778,10 @@ export function SessionRoute() {
       }
       setCreateWorkspaceOpen(false);
       // Mark onboarding complete so the /welcome redirect never fires again.
-      local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
+      // Completing the classic flow also counts as the provider step so the
+      // OpenWork Models startup promo is not suppressed forever (its
+      // `suppressed` input keys off providerStepCompleted).
+      local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true, providerStepCompleted: true }));
       await refreshRouteState();
       if (targetWorkspaceId) {
         const workspacePath = targetWorkspace?.path?.trim() || folder;
@@ -1877,7 +1884,10 @@ export function SessionRoute() {
       }
       setCreateWorkspaceOpen(false);
       // Mark onboarding complete so the /welcome redirect never fires again.
-      local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
+      // Completing the classic flow also counts as the provider step so the
+      // OpenWork Models startup promo is not suppressed forever (its
+      // `suppressed` input keys off providerStepCompleted).
+      local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true, providerStepCompleted: true }));
       await refreshRouteState();
       return true;
     } catch (error) {

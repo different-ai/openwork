@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, pickAppTarget } from "./cdp.mjs";
+
+const execFileAsync = promisify(execFile);
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const POLL_INTERVAL_MS = 250;
@@ -381,36 +385,115 @@ export class EvalContext {
     return result.result;
   }
 
+  /**
+   * Connect to a specific CDP page target (by id or URL substring), verifying
+   * the connection is actually responsive with a real Page.captureScreenshot
+   * call before returning it — a fresh connection's first call can
+   * intermittently time out through the Daytona proxy even though the target
+   * is healthy. Retries with a brand-new connection up to 3x. Returns the
+   * client plus the screenshot buffer captured during the responsiveness
+   * check (reuse it instead of shooting twice).
+   */
+  async _connectVerifiedTarget(targetId, targetUrlIncludes) {
+    if (!this.cdpBaseUrl) {
+      throw new EvalError("Targeting a specific CDP target requires cdpBaseUrl on the context.");
+    }
+    const attempts = 3;
+    let lastError = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const targets = await listTargets(this.cdpBaseUrl);
+        const target = targets.find((entry) => (
+          entry.type === "page" &&
+          entry.webSocketDebuggerUrl &&
+          (!targetId || entry.id === targetId) &&
+          (!targetUrlIncludes || String(entry.url ?? "").includes(targetUrlIncludes))
+        ));
+        if (!target) {
+          throw new EvalError(`No CDP target found matching ${JSON.stringify({ targetId, targetUrlIncludes })}.`);
+        }
+        const client = await connect(debuggerUrlFor(this.cdpBaseUrl, target));
+        await client.send("Page.enable").catch(() => undefined);
+        const buffer = await captureScreenshot(client);
+        return { client, buffer };
+      } catch (error) {
+        lastError = error;
+        this.log(`CDP target connection attempt ${attempt + 1}/${attempts} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    throw lastError;
+  }
+
+  /**
+   * Real OS-level screen grab (X11, via ffmpeg x11grab) inside a Daytona
+   * sandbox. Needed for content that CDP's Page.captureScreenshot cannot see
+   * at all — an Electron BrowserView/WebContentsView embedded in another
+   * window (e.g. the built-in browser panel) is a separate compositor
+   * surface, invisible to both its own target's AND the parent window's
+   * Page.captureScreenshot. The sandbox's shell script does a true screen
+   * capture, so it sees everything actually composited on screen.
+   *
+   * The daytona CLI joins argv after `--` into one remote shell string, so
+   * nested quoting never survives — ship the whole capture+encode pipeline
+   * as base64 piped into bash (same trick used for other daytona exec calls
+   * in the flows).
+   */
+  async _captureSandboxScreenshot(sandbox) {
+    const remotePath = `/tmp/eval-screenshot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
+    const script = `bash .devcontainer/capture-daytona-screenshot.sh --output ${remotePath} >/tmp/eval-screenshot-capture.log 2>&1 && base64 ${remotePath}`;
+    const encoded = Buffer.from(script, "utf8").toString("base64");
+    const { stdout } = await execFileAsync("daytona", ["exec", sandbox, "--", "echo", encoded, "|", "base64", "-d", "|", "bash"], {
+      timeout: 30_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    const base64Png = stdout.trim();
+    if (!base64Png) {
+      throw new EvalError("Sandbox screenshot capture returned no data.");
+    }
+    return Buffer.from(base64Png, "base64");
+  }
+
   async screenshot(name, options = {}) {
     this.screenshotIndex += 1;
     const fileName = `${this.flowId}-${String(this.screenshotIndex).padStart(2, "0")}-${slug(name)}.png`;
-    const targetSelector = options.targetId || options.targetUrlIncludes;
+    const sandbox = options.sandboxCapture ? this.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim() : null;
+    const targetSelector = !sandbox && (options.targetId || options.targetUrlIncludes);
+    const textTargetSelector = options.textTargetId || options.textTargetUrlIncludes;
     let screenshotClient = this.client;
-    let closeScreenshotClient = false;
-    if (targetSelector) {
-      if (!this.cdpBaseUrl) {
-        throw new EvalError("Targeted screenshots require cdpBaseUrl on the context.");
-      }
-      const targets = await listTargets(this.cdpBaseUrl);
-      const target = targets.find((entry) => (
-        entry.type === "page" &&
-        entry.webSocketDebuggerUrl &&
-        (!options.targetId || entry.id === options.targetId) &&
-        (!options.targetUrlIncludes || String(entry.url ?? "").includes(options.targetUrlIncludes))
-      ));
-      if (!target) {
-        throw new EvalError(`No CDP target found for screenshot ${JSON.stringify({ targetId: options.targetId, targetUrlIncludes: options.targetUrlIncludes })}.`);
-      }
-      screenshotClient = await connect(debuggerUrlFor(this.cdpBaseUrl, target));
-      closeScreenshotClient = true;
-      await screenshotClient.send("Page.enable").catch(() => undefined);
+    let closeClients = [];
+    let preCapturedBuffer = null;
+    if (sandbox) {
+      preCapturedBuffer = await this._captureSandboxScreenshot(sandbox);
+    } else if (targetSelector) {
+      // Some CDP page targets (e.g. an embedded browser-panel WebContentsView
+      // rather than a top-level BrowserWindow page) do not reliably answer
+      // Page.captureScreenshot at all — no amount of retrying fixes that.
+      // Callers who know their target renders visually within the PRIMARY
+      // window (e.g. a split-pane browser panel) should omit targetId/
+      // targetUrlIncludes for the capture and use textTargetId/
+      // textTargetUrlIncludes instead to validate text against the embedded
+      // view's own DOM.
+      const { client, buffer } = await this._connectVerifiedTarget(options.targetId, options.targetUrlIncludes);
+      screenshotClient = client;
+      preCapturedBuffer = buffer;
+      closeClients.push(client);
+    }
+    // Text/URL validation can target a DIFFERENT CDP target than the one
+    // that took the screenshot — needed when the visible pixels come from a
+    // parent window (primary target) but the relevant DOM text lives in an
+    // embedded, separately-targeted view (e.g. the built-in browser panel).
+    let textClient = screenshotClient;
+    if (textTargetSelector) {
+      const { client } = await this._connectVerifiedTarget(options.textTargetId, options.textTargetUrlIncludes);
+      textClient = client;
+      closeClients.push(client);
     }
     try {
-      const buffer = await captureScreenshot(screenshotClient);
+      const buffer = preCapturedBuffer ?? await captureScreenshot(screenshotClient);
       await writeFile(join(this.outDir, fileName), buffer);
       this.screenshots.push(fileName);
-      const bodyText = await evaluate(screenshotClient, "document.body.innerText").catch(() => "");
-      const url = await evaluate(screenshotClient, "location.href").catch(() => "");
+      const bodyText = await evaluate(textClient, "document.body.innerText").catch(() => "");
+      const url = await evaluate(textClient, "location.href").catch(() => "");
       const hash = createHash("sha256").update(buffer).digest("hex");
       const dimensions = pngDimensions(buffer);
       const validations = [
@@ -448,9 +531,9 @@ export class EvalContext {
       }
       return fileName;
     } finally {
-      if (closeScreenshotClient) {
+      for (const client of closeClients) {
         try {
-          screenshotClient.close();
+          client.close();
         } catch {
           // Ignore target cleanup errors.
         }

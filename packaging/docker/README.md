@@ -77,6 +77,7 @@ Optional env vars (via `.env` or `export`):
 - `DEN_PUBLIC_HOST` — host name/IP used for default auth URL + printed LAN/public URLs (defaults to your machine hostname)
 - `DEN_BETTER_AUTH_URL` — browser-facing auth base URL (defaults to `http://$DEN_PUBLIC_HOST:<DEN_WEB_PORT>`)
 - `DEN_MCP_RESOURCE_URL` — API-facing MCP resource URL (defaults to `http://localhost:<DEN_API_PORT>/mcp`)
+- `DEN_MCP_ADDITIONAL_RESOURCES` — extra public MCP resource URLs beyond the `DEN_API_PUBLIC_URL` API origin and web-app defaults
 - `DEN_BETTER_AUTH_TRUSTED_ORIGINS` — trusted origins for Better Auth (defaults to `DEN_CORS_ORIGINS`)
 - `DEN_CORS_ORIGINS` — trusted origins for Express CORS (defaults include hostname, localhost, `127.0.0.1`, `0.0.0.0`, and detected LAN IPv4)
 - `DEN_PROVISIONER_MODE` — `stub` or `render` (defaults to `stub`)

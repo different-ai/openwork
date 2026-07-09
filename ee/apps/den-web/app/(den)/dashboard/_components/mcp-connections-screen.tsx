@@ -1,13 +1,19 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Loader2, Plug, Plus, Trash2, Users } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Check, Loader2, Plug, Puzzle, Server, Trash2, Users } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
+import { DenSelect } from "../../_components/ui/select";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { getPluginRoute } from "../../_lib/den-org";
+import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { IntegrationIcon } from "./integration-icon";
 import { shouldShowMcpConnectionsStagingBanner } from "./mcp-connections-capability";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { marketplaceQueryKeys, useMarketplaces } from "./marketplace-data";
 import {
   type CreatedMcpConnection,
   type CreateMcpConnectionInput,
@@ -17,6 +23,7 @@ import {
   type ExternalMcpPreset,
   type McpConnectionAccessInput,
   formatMcpConnectedTimestamp,
+  mcpConnectionQueryKeys,
   useCreateMcpConnection,
   useDeleteMcpConnection,
   useMcpConnectionPresets,
@@ -25,6 +32,7 @@ import {
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
 } from "./mcp-connections-data";
+import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
@@ -92,6 +100,92 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 }
 
+type GithubPluginImportSkippedReason = "missing_url" | "local_unsupported" | "invalid_url" | "unsupported_auth";
+
+type GithubPluginImportServer = {
+  name: string;
+  serverKey: string;
+  url: string | null;
+  supported: boolean;
+  skippedReason: GithubPluginImportSkippedReason | null;
+};
+
+type GithubPluginImportSkill = {
+  description: string | null;
+  name: string;
+  skillKey: string;
+  sourcePath: string;
+  supported: boolean;
+};
+
+type GithubPluginImportPreview = {
+  repositoryFullName: string;
+  rootPath: string;
+  servers: GithubPluginImportServer[];
+  skills: GithubPluginImportSkill[];
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function parseSkippedReason(value: unknown): GithubPluginImportSkippedReason | null {
+  if (value === "missing_url" || value === "local_unsupported" || value === "invalid_url" || value === "unsupported_auth") {
+    return value;
+  }
+  return null;
+}
+
+function parseGithubPluginImportPreview(payload: unknown): GithubPluginImportPreview {
+  const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
+  if (!item) throw new Error("GitHub plugin preview response was incomplete.");
+
+  return {
+    repositoryFullName: asString(item.repositoryFullName) ?? "",
+    rootPath: asString(item.rootPath) ?? "",
+    servers: Array.isArray(item.servers)
+      ? item.servers.flatMap((entry) => {
+          if (!isRecord(entry)) return [];
+          const name = asString(entry.name);
+          const serverKey = asString(entry.serverKey);
+          if (!name || !serverKey) return [];
+          return [{
+            name,
+            serverKey,
+            url: asString(entry.url),
+            supported: entry.supported === true,
+            skippedReason: parseSkippedReason(entry.skippedReason),
+          }];
+        })
+      : [],
+    skills: Array.isArray(item.skills)
+      ? item.skills.flatMap((entry) => {
+          if (!isRecord(entry)) return [];
+          const name = asString(entry.name);
+          const skillKey = asString(entry.skillKey);
+          if (!name || !skillKey) return [];
+          return [{
+            description: asString(entry.description),
+            name,
+            skillKey,
+            sourcePath: asString(entry.sourcePath) ?? "SKILL.md",
+            supported: entry.supported === true,
+          }];
+        })
+      : [],
+  };
+}
+
+function importServerStatus(server: GithubPluginImportServer): string {
+  if (server.supported) return "ready";
+  if (server.skippedReason === "missing_url") return "missing URL";
+  return "unsupported";
+}
+
 export function McpConnectionsScreen() {
   const { orgContext } = useOrgDashboard();
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections();
@@ -104,6 +198,7 @@ export function McpConnectionsScreen() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [formPreset, setFormPreset] = useState<ExternalMcpPreset | null>(null);
+  const [pluginDialogOpen, setPluginDialogOpen] = useState(false);
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
   const googleConfigured = usableConnections.some((connection) => connection.id === "google-workspace");
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
@@ -187,22 +282,44 @@ export function McpConnectionsScreen() {
         </div>
       ) : null}
 
-      <div className="mb-6 flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-6 py-5">
+      <div className="mb-6 rounded-2xl border border-gray-100 bg-white px-6 py-5">
         <div>
-          <h2 className="text-[15px] font-semibold text-gray-900">Add a custom MCP server</h2>
-          <p className="mt-1 text-[13px] text-gray-500">Connect any MCP server by URL, with OAuth, an API key, or no auth.</p>
+          <h2 className="text-[15px] font-semibold text-gray-900">Add a connection</h2>
+          <p className="mt-1 text-[13px] text-gray-500">
+            Add a single MCP server, or import a plugin bundle so its MCPs and skills become available through capabilities.
+          </p>
         </div>
-        <DenButton
-          variant="primary"
-          size="sm"
-          icon={Plus}
-          onClick={() => {
-            setFormPreset(null);
-            setFormOpen(true);
-          }}
-        >
-          Add Custom
-        </DenButton>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => {
+              setFormPreset(null);
+              setFormOpen(true);
+            }}
+            className="flex items-start gap-3 rounded-2xl border border-gray-100 px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-900 text-white">
+              <Server className="h-4 w-4" />
+            </span>
+            <span>
+              <span className="block text-[14px] font-semibold text-gray-900">MCP server</span>
+              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Connect one remote MCP server by URL.</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPluginDialogOpen(true)}
+            className="flex items-start gap-3 rounded-2xl border border-gray-100 px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-900 text-white">
+              <Puzzle className="h-4 w-4" />
+            </span>
+            <span>
+              <span className="block text-[14px] font-semibold text-gray-900">Plugin bundle</span>
+              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Import from GitHub or choose from your plugin library.</span>
+            </span>
+          </button>
+        </div>
       </div>
 
       <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Quick add</h3>
@@ -290,6 +407,12 @@ export function McpConnectionsScreen() {
         onSubmit={handleCreate}
       />
 
+      <ImportPluginConnectionDialog
+        open={pluginDialogOpen}
+        onClose={() => setPluginDialogOpen(false)}
+        onImported={() => void refetch()}
+      />
+
       <GoogleWorkspaceDialog
         open={googleDialogOpen}
         submitting={saveNativeClient.isPending}
@@ -301,6 +424,336 @@ export function McpConnectionsScreen() {
         }}
       />
     </DashboardPageTemplate>
+  );
+}
+
+function ImportPluginConnectionDialog({
+  open,
+  onClose,
+  onImported,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const { orgSlug, runReauthableAction } = useOrgDashboard();
+  const { data: marketplaces = [] } = useMarketplaces();
+  const { data: plugins = [], isLoading: pluginsLoading } = usePlugins();
+  const [githubUrl, setGithubUrl] = useState("");
+  const [marketplaceId, setMarketplaceId] = useState("");
+  const [authType, setAuthType] = useState<"oauth" | "none">("oauth");
+  const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("per_member");
+  const [preview, setPreview] = useState<GithubPluginImportPreview | null>(null);
+  const [selectedServerKeys, setSelectedServerKeys] = useState<string[]>([]);
+  const [selectedSkillKeys, setSelectedSkillKeys] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!marketplaceId && marketplaces.length > 0) {
+      setMarketplaceId(marketplaces[0].id);
+    }
+  }, [marketplaceId, marketplaces, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setGithubUrl("");
+    setAuthType("oauth");
+    setCredentialMode("per_member");
+    setPreview(null);
+    setSelectedServerKeys([]);
+    setSelectedSkillKeys([]);
+    setError(null);
+  }, [open]);
+
+  const libraryPlugins = useMemo(
+    () => plugins.filter((plugin) => plugin.mcps.length > 0 || plugin.skills.length > 0),
+    [plugins],
+  );
+
+  async function previewGithubPlugin() {
+    if (!githubUrl.trim()) {
+      setError("Paste a GitHub plugin URL.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      let payload: unknown = null;
+      await runReauthableAction("preview-github-connection-plugin", async () => {
+        const result = await requestJson(
+          "/v1/plugins/import-mcps-from-github-url/preview",
+          { method: "POST", body: JSON.stringify({ githubUrl: githubUrl.trim() }) },
+          20000,
+        );
+        if (!result.response.ok) {
+          throw getRequestError(result.payload, result.response, "Failed to preview GitHub plugin.");
+        }
+        payload = result.payload;
+      });
+      const nextPreview = parseGithubPluginImportPreview(payload);
+      setPreview(nextPreview);
+      setSelectedServerKeys(nextPreview.servers.filter((server) => server.supported).map((server) => server.serverKey));
+      setSelectedSkillKeys(nextPreview.skills.filter((skill) => skill.supported).map((skill) => skill.skillKey));
+    } catch (previewError) {
+      setError(previewError instanceof Error ? previewError.message : "Failed to preview GitHub plugin.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importGithubPlugin() {
+    if (!preview) {
+      setError("Preview the GitHub plugin first.");
+      return;
+    }
+    if (!marketplaceId) {
+      setError("Choose a marketplace.");
+      return;
+    }
+    if (selectedServerKeys.length === 0 && selectedSkillKeys.length === 0) {
+      setError("Select at least one MCP or skill.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await runReauthableAction("import-github-connection-plugin", async () => {
+        const result = await requestJson(
+          "/v1/plugins/import-mcps-from-github-url",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              access: { orgWide: true, memberIds: [], teamIds: [] },
+              authType,
+              credentialMode: authType === "oauth" ? credentialMode : "shared",
+              githubUrl: githubUrl.trim(),
+              marketplaceId,
+              selectedServerKeys,
+              selectedSkillKeys,
+            }),
+          },
+          30000,
+        );
+        if (!result.response.ok) {
+          throw getRequestError(result.payload, result.response, "Failed to import GitHub plugin.");
+        }
+      });
+      await queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: pluginQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.all });
+      onImported();
+      onClose();
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "Failed to import GitHub plugin.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleServer(serverKey: string, checked: boolean) {
+    setSelectedServerKeys((current) =>
+      checked ? [...new Set([...current, serverKey])] : current.filter((key) => key !== serverKey),
+    );
+  }
+
+  function toggleSkill(skillKey: string, checked: boolean) {
+    setSelectedSkillKeys((current) =>
+      checked ? [...new Set([...current, skillKey])] : current.filter((key) => key !== skillKey),
+    );
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+      <div
+        className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Add plugin connection</h2>
+        <p className="mt-1 text-[13px] leading-6 text-gray-600">
+          Import a plugin from GitHub. Remote MCPs become Den-hosted org connections; imported skills are saved to Skill Hub storage and show up in capabilities.
+        </p>
+
+        <div className="mt-5 rounded-2xl border border-gray-100 bg-gray-50 p-4">
+          <label className="mb-1.5 block text-[12px] font-medium text-gray-700">GitHub plugin URL</label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <DenInput
+              value={githubUrl}
+              onChange={(event) => {
+                setGithubUrl(event.target.value);
+                setPreview(null);
+                setSelectedServerKeys([]);
+                setSelectedSkillKeys([]);
+                setError(null);
+              }}
+              placeholder="https://github.com/anthropics/knowledge-work-plugins/tree/main/sales"
+              disabled={busy}
+            />
+            <DenButton variant="secondary" onClick={() => void previewGithubPlugin()} disabled={busy || !githubUrl.trim()}>
+              {busy && !preview ? "Previewing..." : "Preview"}
+            </DenButton>
+          </div>
+        </div>
+
+        {preview ? (
+          <div className="mt-4 space-y-4">
+            <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 text-[13px] text-gray-600">
+              Found {preview.servers.filter((server) => server.supported).length} MCPs and {preview.skills.filter((skill) => skill.supported).length} skills in{" "}
+              <span className="font-medium text-gray-900">{preview.repositoryFullName}{preview.rootPath ? `/${preview.rootPath}` : ""}</span>.
+            </div>
+
+            {preview.servers.length > 0 ? (
+              <div className="overflow-hidden rounded-2xl border border-gray-100">
+                <table className="w-full text-left text-[13px]">
+                  <thead className="bg-gray-50 text-[11px] uppercase tracking-[0.12em] text-gray-400">
+                    <tr>
+                      <th className="w-12 px-4 py-3">Use</th>
+                      <th className="px-4 py-3">MCP</th>
+                      <th className="px-4 py-3">URL</th>
+                      <th className="px-4 py-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {preview.servers.map((server) => (
+                      <tr key={server.serverKey}>
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedServerKeys.includes(server.serverKey)}
+                            disabled={!server.supported || busy}
+                            onChange={(event) => toggleServer(server.serverKey, event.target.checked)}
+                          />
+                        </td>
+                        <td className="px-4 py-3 font-medium text-gray-900">{server.name}</td>
+                        <td className="max-w-[240px] truncate px-4 py-3 font-mono text-[12px] text-gray-500">{server.url ?? "—"}</td>
+                        <td className="px-4 py-3 text-gray-500">{importServerStatus(server)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            {preview.skills.length > 0 ? (
+              <div className="overflow-hidden rounded-2xl border border-gray-100">
+                <table className="w-full text-left text-[13px]">
+                  <thead className="bg-gray-50 text-[11px] uppercase tracking-[0.12em] text-gray-400">
+                    <tr>
+                      <th className="w-12 px-4 py-3">Use</th>
+                      <th className="px-4 py-3">Skill</th>
+                      <th className="px-4 py-3">Path</th>
+                      <th className="px-4 py-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {preview.skills.map((skill) => (
+                      <tr key={skill.skillKey}>
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedSkillKeys.includes(skill.skillKey)}
+                            disabled={!skill.supported || busy}
+                            onChange={(event) => toggleSkill(skill.skillKey, event.target.checked)}
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-900">{skill.name}</div>
+                          {skill.description ? <div className="mt-0.5 text-[12px] text-gray-500">{skill.description}</div> : null}
+                        </td>
+                        <td className="max-w-[240px] truncate px-4 py-3 font-mono text-[12px] text-gray-500">{skill.sourcePath}</td>
+                        <td className="px-4 py-3 text-gray-500">{skill.supported ? "ready" : "unsupported"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="block">
+                <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</span>
+                <DenSelect value={authType} onChange={(event) => setAuthType(event.target.value === "none" ? "none" : "oauth")} disabled={busy}>
+                  <option value="oauth">OAuth</option>
+                  <option value="none">No auth</option>
+                </DenSelect>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Account mode</span>
+                <DenSelect
+                  value={credentialMode}
+                  onChange={(event) => setCredentialMode(event.target.value === "shared" ? "shared" : "per_member")}
+                  disabled={busy || authType === "none"}
+                >
+                  <option value="per_member">Individual accounts</option>
+                  <option value="shared">Org account</option>
+                </DenSelect>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Marketplace</span>
+                <DenSelect value={marketplaceId} onChange={(event) => setMarketplaceId(event.target.value)} disabled={busy}>
+                  {marketplaces.map((marketplace) => (
+                    <option key={marketplace.id} value={marketplace.id}>
+                      {marketplace.name}
+                    </option>
+                  ))}
+                </DenSelect>
+              </label>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="mt-6">
+          <h3 className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">Plugin library</h3>
+          <div className="mt-3 rounded-2xl border border-gray-100 bg-white">
+            {pluginsLoading ? (
+              <div className="px-4 py-5 text-[13px] text-gray-500">Loading plugin library...</div>
+            ) : libraryPlugins.length === 0 ? (
+              <div className="px-4 py-5 text-[13px] text-gray-500">No imported plugins with MCPs or skills yet.</div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {libraryPlugins.slice(0, 6).map((plugin) => (
+                  <Link
+                    key={plugin.id}
+                    href={getPluginRoute(orgSlug, plugin.id)}
+                    className="flex items-center justify-between gap-3 px-4 py-3 transition hover:bg-gray-50"
+                    onClick={onClose}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13px] font-semibold text-gray-900">{plugin.name}</span>
+                      <span className="mt-0.5 block truncate text-[12px] text-gray-500">{getPluginPartsSummary(plugin)}</span>
+                    </span>
+                    <span className="text-[12px] font-medium text-gray-500">Open</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {error ? (
+          <p className="mt-3 text-[13px] text-red-600">{error}</p>
+        ) : null}
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <DenButton variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </DenButton>
+          <DenButton
+            variant="primary"
+            loading={busy && Boolean(preview)}
+            disabled={!preview || !marketplaceId || (selectedServerKeys.length === 0 && selectedSkillKeys.length === 0)}
+            onClick={() => void importGithubPlugin()}
+          >
+            Import selected
+          </DenButton>
+        </div>
+      </div>
+    </div>
   );
 }
 

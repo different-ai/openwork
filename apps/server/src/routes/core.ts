@@ -1,5 +1,10 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import {
+  getConnectSnapshot,
+  googleWorkspaceStatusConnectExtra,
+  writeConnectState,
+} from "../connect-state.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { ApiError } from "../errors.js";
 import {
@@ -263,12 +268,27 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsonResponse(buildCapabilities(config));
   });
 
+  addRoute(routes, "GET", "/experimental/connect/state", "client", async () => {
+    return jsonResponse({ ok: true, schemaVersion: 1, ...(await getConnectSnapshot(config)) });
+  });
+
+  addRoute(routes, "PUT", "/experimental/connect/state", "host", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.connectEnabled !== "boolean" || Object.keys(body).some((key) => key !== "connectEnabled")) {
+      throw new ApiError(400, "invalid_payload", "connectEnabled must be a boolean");
+    }
+    await writeConnectState(config, { connectEnabled: body.connectEnabled });
+    return jsonResponse({ ok: true, schemaVersion: 1, ...(await getConnectSnapshot(config)) });
+  });
+
   addRoute(routes, "GET", "/experimental/extensions/actions", "client", async (ctx) => {
     const extensionId = ctx.url.searchParams.get("extensionId") ?? "";
+    const connectSnapshot = await getConnectSnapshot(config);
     return jsonResponse({
       ok: true,
       schemaVersion: 1,
-      actions: listExperimentalExtensionActions(extensionId),
+      actions: listExperimentalExtensionActions(extensionId, connectSnapshot),
     });
   });
 
@@ -277,11 +297,12 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       throw new ApiError(403, "forbidden", "Viewer tokens cannot call extension actions");
     }
     const body = await readJsonBody(ctx.request);
-    return jsonResponse(await callExperimentalExtensionAction(config, env, body));
+    return jsonResponse(await callExperimentalExtensionAction(config, env, body, await getConnectSnapshot(config)));
   });
 
   addRoute(routes, "GET", "/experimental/google-workspace/status", "client", async () => {
-    return jsonResponse(await googleWorkspaceStatus(config));
+    const connectSnapshot = await getConnectSnapshot(config);
+    return jsonResponse(await googleWorkspaceStatus(config, googleWorkspaceStatusConnectExtra(connectSnapshot)));
   });
 
   addRoute(routes, "POST", "/experimental/google-workspace/connect/start", "client", async (ctx) => {

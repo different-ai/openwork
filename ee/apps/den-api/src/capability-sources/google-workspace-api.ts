@@ -27,6 +27,7 @@ export type GoogleWorkspaceCalendarEvent = {
   status: string
   htmlLink: string
   attendees: string[]
+  meetLink: string | null
 }
 
 export type GoogleWorkspaceDriveFile = {
@@ -193,6 +194,22 @@ function calendarEventTime(event: Record<string, unknown>, key: string): string 
   return readString(time, "date")
 }
 
+function calendarEventMeetLink(event: Record<string, unknown>): string | null {
+  const hangoutLink = readString(event, "hangoutLink")
+  if (hangoutLink) return hangoutLink
+
+  const conferenceData = readRecord(event, "conferenceData")
+  if (!conferenceData) return null
+
+  for (const entryPoint of readArray(conferenceData, "entryPoints")) {
+    if (!isRecord(entryPoint)) continue
+    if (readString(entryPoint, "entryPointType") !== "video") continue
+    const uri = readString(entryPoint, "uri")
+    if (uri) return uri
+  }
+  return null
+}
+
 export function extractCalendarEvents(json: unknown): GoogleWorkspaceCalendarEvent[] {
   const root = isRecord(json) ? json : {}
   const events: GoogleWorkspaceCalendarEvent[] = []
@@ -214,6 +231,7 @@ export function extractCalendarEvents(json: unknown): GoogleWorkspaceCalendarEve
       status: readString(item, "status"),
       htmlLink: readString(item, "htmlLink"),
       attendees,
+      meetLink: calendarEventMeetLink(item),
     })
   }
   return events

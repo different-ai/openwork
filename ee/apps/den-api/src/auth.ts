@@ -86,13 +86,29 @@ function localMcpResourceAliases(resource: string) {
   return [];
 }
 
+function apiPublicMcpResource(apiPublicUrl: string | undefined) {
+  if (!apiPublicUrl) return [];
+
+  try {
+    return [`${new URL(apiPublicUrl).origin}/mcp`];
+  } catch {
+    return [];
+  }
+}
+
 export const DEN_MCP_RESOURCE = env.mcpResourceUrl ?? deriveDenMcpResource(env.betterAuthUrl, env.webAppHosts);
+const DEN_API_PUBLIC_MCP_RESOURCES = apiPublicMcpResource(env.apiPublicUrl);
 export const DEN_MCP_RESOURCES = Array.from(new Set([
   DEN_MCP_RESOURCE,
   // Audience compatibility: tokens issued before the proxied default carry
   // the bare-origin resource (`<betterAuthUrl>/mcp`); keep accepting them.
   `${env.betterAuthUrl}/mcp`,
+  // Auto-trust the public API origin so multi-origin clients work without extra config.
+  ...DEN_API_PUBLIC_MCP_RESOURCES,
+  ...env.mcpAdditionalResources,
   ...localMcpResourceAliases(DEN_MCP_RESOURCE),
+  ...DEN_API_PUBLIC_MCP_RESOURCES.flatMap((resource) => localMcpResourceAliases(resource)),
+  ...env.mcpAdditionalResources.flatMap((resource) => localMcpResourceAliases(resource)),
 ]));
 export const DEN_MCP_TOKEN_USE_CLAIM = `${env.mcpClaimNamespace}/token_use`;
 export const DEN_MCP_ORG_ID_CLAIM = `${env.mcpClaimNamespace}/org_id`;

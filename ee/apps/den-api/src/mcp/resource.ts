@@ -39,3 +39,27 @@ export function deriveDenMcpResource(betterAuthUrl: string, webAppHosts: readonl
   }
   return `${origin}/mcp`
 }
+
+export function resolveMcpResourceFromRequest(
+  requestUrl: string,
+  resources: readonly string[],
+  fallback: string,
+): string {
+  const url = new URL(requestUrl)
+  const bareResource = `${url.origin}/mcp`
+  const proxiedResource = `${url.origin}/api/den/mcp`
+  // Prefer the shape the client actually requested, then the configured
+  // same-origin fallback, so the legacy bare compat resource does not shadow
+  // the proxied public route on web-app origins.
+  if (url.pathname.startsWith("/api/den") && resources.includes(proxiedResource)) {
+    return proxiedResource
+  }
+
+  if ((fallback === bareResource || fallback === proxiedResource) && resources.includes(fallback)) {
+    return fallback
+  }
+
+  const candidates = [bareResource, proxiedResource]
+  const match = candidates.find((candidate) => resources.includes(candidate))
+  return match ?? fallback
+}

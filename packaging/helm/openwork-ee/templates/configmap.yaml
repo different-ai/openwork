@@ -20,6 +20,10 @@ data:
   GITHUB_CONNECTOR_APP_CLIENT_ID: {{ .Values.config.githubConnector.clientId | quote }}
   BETTER_AUTH_URL: {{ .Values.config.public.webOrigin | quote }}
   DEN_MCP_RESOURCE_URL: {{ .Values.config.public.mcpResourceUrl | quote }}
+  # Extra MCP resource URLs beyond the DEN_API_PUBLIC_URL API origin and web-app defaults.
+  {{ if .Values.config.public.mcpAdditionalResources }}
+  DEN_MCP_ADDITIONAL_RESOURCES: {{ .Values.config.public.mcpAdditionalResources | quote }}
+  {{ end }}
   DEN_MCP_CLAIM_NAMESPACE: {{ .Values.config.public.mcpClaimNamespace | quote }}
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: {{ .Values.config.public.betterAuthTrustedOrigins | quote }}
   DEN_WEB_APP_HOSTS: {{ .Values.config.public.webAppHosts | quote }}

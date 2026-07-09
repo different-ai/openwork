@@ -25,10 +25,12 @@ import {
   type DenDesktopConfig,
 } from "../../../app/lib/den";
 import { applyBrandIcon } from "../../../app/lib/desktop";
+import { createOpenworkServerClient } from "../../../app/lib/openwork-server";
 import {
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
 } from "../../../app/lib/den-session-events";
+import { resolveOpenworkConnection } from "../../shell/openwork-connection";
 import { useDenAuth } from "./den-auth-provider";
 
 export type DesktopConfigStore = {
@@ -148,13 +150,14 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   const denAuth = useDenAuth();
   const [desktopConfigState, setDesktopConfigState] = useState<DesktopConfigState>({
     config: DEFAULT_DESKTOP_CONFIG,
-    loading: false,
+    loading: true,
   });
   const { config, loading } = desktopConfigState;
   // Bumped whenever the browser tells us the Den session or settings changed.
   const [settingsVersion, bumpSettingsVersion] = useReducer((value: number) => value + 1, 0);
   // Monotonic run id — same guard-against-stale-resolution pattern as DenAuthProvider.
   const refreshRunRef = useRef(0);
+  const lastPushedConnectEnabledRef = useRef<boolean | null>(null);
   // Safe in-memory copy of the last config we actually applied. State drives
   // rendering, while this ref lets the handler compare without stale closures.
   const currentDesktopConfigRef = useRef<DenDesktopConfig>(DEFAULT_DESKTOP_CONFIG);
@@ -282,6 +285,29 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       window.clearInterval(interval);
     };
   }, [desktopConfigHandler, isSignedIn]);
+
+  const connectEnabled = config.connectEnabled === true;
+
+  useEffect(() => {
+    if (loading) return;
+    if (lastPushedConnectEnabledRef.current === connectEnabled) return;
+    let cancelled = false;
+
+    void (async () => {
+      const connection = await resolveOpenworkConnection();
+      if (cancelled || !connection.normalizedBaseUrl || !connection.resolvedHostToken) return;
+      lastPushedConnectEnabledRef.current = connectEnabled;
+      await createOpenworkServerClient({
+        baseUrl: connection.normalizedBaseUrl,
+        token: connection.resolvedToken,
+        hostToken: connection.resolvedHostToken,
+      }).setConnectState(connectEnabled);
+    })().catch(() => null);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectEnabled, loading]);
 
   // Dev-only: expose a bridge so evals can inject config directly without
   // requiring a cloud sign-in. This simply applies the config to React state.

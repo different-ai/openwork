@@ -131,11 +131,15 @@ function resourceFromImportedFile(file: CloudImportedPluginFile): ExtensionResou
 
 function childKeysForPlugin(plugin: CloudImportedPlugin) {
   const mcpServerNames = new Set<string>();
+  const externalMcpConnectionIds = new Set<string>();
   const skillPaths = new Set<string>();
   const skillNames = new Set<string>();
   for (const file of plugin.files) {
     if (file.path.startsWith(MCP_IMPORT_PATH_PREFIX)) {
       mcpServerNames.add(file.path.slice(MCP_IMPORT_PATH_PREFIX.length));
+    }
+    if (file.externalMcpConnectionId) {
+      externalMcpConnectionIds.add(file.externalMcpConnectionId);
     }
     if (file.objectType === "skill") {
       skillPaths.add(file.path);
@@ -144,7 +148,7 @@ function childKeysForPlugin(plugin: CloudImportedPlugin) {
       skillNames.add(file.title);
     }
   }
-  return { mcpServerNames, skillPaths, skillNames };
+  return { externalMcpConnectionIds, mcpServerNames, skillPaths, skillNames };
 }
 
 export function buildExtensionItems(input: ExtensionItemBuildInput) {
@@ -178,14 +182,24 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     const enablement = manifest?.enablement ? evaluateEnablement(manifest.enablement, input.enablementContext) : null;
     const pendingChange = input.pendingCloudPluginChanges?.[plugin.id];
     const installState = imported && pendingChange === "modified" ? "update_available" : cloudPluginStatus(imported, plugin);
+    const externalConnectionIds = new Set(imported?.files.flatMap((file) => file.externalMcpConnectionId ? [file.externalMcpConnectionId] : []) ?? []);
+    const connectionStates = [...externalConnectionIds].flatMap((id) => {
+      const connection = input.orgMcpConnections?.find((entry) => entry.id === id);
+      return connection ? [isOrgMcpConnectionReady(connection)] : [false];
+    });
+    const connectionSetupState = connectionStates.length === 0
+      ? null
+      : connectionStates.every(Boolean)
+        ? "ready"
+        : "needs_setup";
     return {
       id: `marketplace:${marketplace.marketplace.id}:${plugin.id}`,
       source: "marketplace",
       name: plugin.extension?.name ?? plugin.name,
       description: plugin.extension?.description ?? plugin.description,
       installState,
-      setupState: enablement ? setupStateFromEnablement(enablement) : installState === "available" ? "needs_setup" : "ready",
-      active: enablement?.active ?? installState !== "available",
+      setupState: enablement ? setupStateFromEnablement(enablement) : installState === "available" ? "needs_setup" : connectionSetupState ?? "ready",
+      active: enablement?.active ?? (installState !== "available" && connectionSetupState !== "needs_setup"),
       enablement,
       resources: imported?.files.map(resourceFromImportedFile) ?? Object.entries(plugin.componentCounts).flatMap(([type, count]) => count > 0 ? [{
         id: `${plugin.id}:${type}`,
@@ -242,10 +256,12 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
   };
 
   const groupedMcpServerNames = new Set<string>();
+  const groupedExternalMcpConnectionIds = new Set<string>();
   const groupedSkillPaths = new Set<string>();
   const groupedSkillNames = new Set<string>();
   for (const plugin of Object.values(input.importedCloudPlugins)) {
     const keys = childKeysForPlugin(plugin);
+    keys.externalMcpConnectionIds.forEach((value) => groupedExternalMcpConnectionIds.add(value));
     keys.mcpServerNames.forEach((value) => groupedMcpServerNames.add(value));
     keys.skillPaths.forEach((value) => groupedSkillPaths.add(value));
     keys.skillNames.forEach((value) => groupedSkillNames.add(value));
@@ -275,6 +291,9 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     skill,
   }));
 
+  const visibleOrgMcpConnectionItems = orgMcpConnectionItems.filter((item) =>
+    !item.orgMcpConnection || !groupedExternalMcpConnectionIds.has(item.orgMcpConnection.id));
+
   return {
     // Org-managed MCP connections are beta, so keep them last in unified lists.
     items: [...builtInItems, ...cloudPluginItems, ...importedPluginItems, ...standaloneMcpEntries.map((entry): ExtensionItem => ({
@@ -288,10 +307,10 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
       enablement: null,
       resources: [{ id: getMcpServerName(entry), type: "mcp", title: entry.name }],
       mcpEntry: entry,
-    })), ...standaloneSkillItems, ...orgMcpConnectionItems],
+    })), ...standaloneSkillItems, ...visibleOrgMcpConnectionItems],
     builtInItems,
     cloudPluginItems: [...cloudPluginItems, ...importedPluginItems],
-    orgMcpConnectionItems,
+    orgMcpConnectionItems: visibleOrgMcpConnectionItems,
     installedMcpEntries: [
       ...builtInItems.flatMap((item) => item.active && item.builtInEntry ? [item.builtInEntry] : []),
       ...standaloneMcpEntries,
