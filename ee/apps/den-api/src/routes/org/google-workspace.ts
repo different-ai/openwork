@@ -1,4 +1,5 @@
 import type { Hono } from "hono"
+import { randomUUID } from "node:crypto"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
@@ -100,6 +101,10 @@ const calendarEventsQuerySchema = z.object({
   maxResults: z.coerce.number().int().min(1).max(100).default(25).describe("Maximum events to return, capped at 100."),
 }).meta({ ref: "GoogleWorkspaceCalendarEventsQuery" })
 
+const calendarEventParamSchema = z.object({
+  eventId: z.string().trim().min(1).max(512).describe("Google Calendar event id."),
+}).meta({ ref: "GoogleWorkspaceCalendarEventParams" })
+
 const calendarEventSchema = z.object({
   id: z.string(),
   summary: z.string(),
@@ -110,6 +115,7 @@ const calendarEventSchema = z.object({
   status: z.string(),
   htmlLink: z.string(),
   attendees: z.array(z.string()),
+  meetLink: z.string().nullable(),
 }).meta({ ref: "GoogleWorkspaceCalendarEvent" })
 
 const calendarEventsResponseSchema = z.object({
@@ -125,6 +131,7 @@ const createCalendarEventBodySchema = z.object({
   end: z.string().datetime().describe("Event end date-time."),
   timeZone: z.string().trim().min(1).max(128).optional().describe("Optional IANA time zone for start and end."),
   attendees: z.array(z.string().email()).max(100).optional().describe("Optional attendee email addresses."),
+  createMeetLink: z.boolean().optional().describe("Set true to create a Google Meet conferencing link for this event; the response returns meetLink when Google creates it."),
 }).meta({ ref: "GoogleWorkspaceCreateCalendarEventBody" })
 
 const createCalendarEventResponseSchema = z.object({
@@ -134,7 +141,22 @@ const createCalendarEventResponseSchema = z.object({
   summary: z.string(),
   start: z.string(),
   end: z.string(),
+  meetLink: z.string().nullable(),
 }).meta({ ref: "GoogleWorkspaceCreateCalendarEventResponse" })
+
+const updateCalendarEventBodySchema = z.object({
+  createMeetLink: z.literal(true).describe("Set true to add a Google Meet conferencing link to this existing event."),
+}).meta({ ref: "GoogleWorkspaceUpdateCalendarEventBody" })
+
+const updateCalendarEventResponseSchema = z.object({
+  ok: z.literal(true),
+  eventId: z.string(),
+  htmlLink: z.string(),
+  summary: z.string(),
+  start: z.string(),
+  end: z.string(),
+  meetLink: z.string().nullable(),
+}).meta({ ref: "GoogleWorkspaceUpdateCalendarEventResponse" })
 
 const driveFilesQuerySchema = z.object({
   query: z.string().trim().min(1).max(500).describe("Text to search in Drive file names and full text."),
@@ -172,6 +194,13 @@ type GoogleWorkspaceAccessToken =
   | { kind: "needs_connection"; message: string }
   | { kind: "google_api_error"; message: string }
 
+type CalendarConferenceData = {
+  createRequest: {
+    requestId: string
+    conferenceSolutionKey: { type: "hangoutsMeet" }
+  }
+}
+
 type CalendarEventCreatePayload = {
   summary: string
   description?: string
@@ -179,6 +208,7 @@ type CalendarEventCreatePayload = {
   start: { dateTime: string; timeZone?: string }
   end: { dateTime: string; timeZone?: string }
   attendees?: { email: string }[]
+  conferenceData?: CalendarConferenceData
 }
 
 function gmailApiBase(): string {
@@ -260,6 +290,15 @@ function buildCalendarEventPayload(input: z.infer<typeof createCalendarEventBody
     payload.attendees = input.attendees.map((email) => ({ email }))
   }
   return payload
+}
+
+function buildCalendarConferenceData(): CalendarConferenceData {
+  return {
+    createRequest: {
+      requestId: `openwork-${randomUUID()}`,
+      conferenceSolutionKey: { type: "hangoutsMeet" },
+    },
+  }
 }
 
 /**
@@ -444,7 +483,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Create a Google Calendar event as the calling member",
-      description: "Creates an event on the calling member's primary Google Calendar, using their connected Google Workspace account.",
+      description: "Creates an event on the calling member's primary Google Calendar, using their connected Google Workspace account. Set createMeetLink to true to request a Google Meet conferencing link and return meetLink.",
       responses: {
         200: jsonResponse("Google Calendar event created.", createCalendarEventResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -471,13 +510,20 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const input = c.req.valid("json")
-      const response = await googleWorkspaceApiFetch(`${calendarApiBase()}/calendar/v3/calendars/primary/events`, {
+      const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events`)
+      const eventPayload = buildCalendarEventPayload(input)
+      if (input.createMeetLink) {
+        url.searchParams.set("conferenceDataVersion", "1")
+        eventPayload.conferenceData = buildCalendarConferenceData()
+      }
+
+      const response = await googleWorkspaceApiFetch(url, {
         method: "POST",
         headers: {
           authorization: `Bearer ${token.accessToken}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify(buildCalendarEventPayload(input)),
+        body: JSON.stringify(eventPayload),
       })
       if (!response.ok) {
         return c.json(await googleApiError("Google Calendar event create", response), 502)
@@ -495,6 +541,71 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         summary: event.summary,
         start: event.start,
         end: event.end,
+        meetLink: event.meetLink,
+      })
+    },
+  )
+
+  app.patch(
+    "/v1/capabilities/google-workspace/calendar-event/:eventId",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Add a Google Meet link to a Calendar event",
+      description: "Updates one primary-calendar event by id to request Google Meet conferencing, using the calling member's connected Google Workspace account. Use this for an existing event that needs a Meet link without creating a duplicate.",
+      responses: {
+        200: jsonResponse("Google Calendar event updated.", updateCalendarEventResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Google account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Google rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(calendarEventParamSchema),
+    jsonValidator(updateCalendarEventBodySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const token = await googleWorkspaceToken({
+        organizationId: payload.organization.id,
+        orgMembershipId: payload.currentMember.id,
+      })
+      if (token.kind === "google_api_error") {
+        return c.json({ error: "google_api_error", message: token.message }, 502)
+      }
+      if (token.kind === "needs_connection") {
+        return c.json({ error: "needs_connection", message: token.message }, 409)
+      }
+      if (missingScope(token.account, [CALENDAR_EVENTS_SCOPE])) {
+        return c.json({ error: "needs_connection", message: missingPermissionMessage("Google Calendar write") }, 409)
+      }
+
+      const { eventId } = c.req.valid("param")
+      const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`)
+      url.searchParams.set("conferenceDataVersion", "1")
+      const response = await googleWorkspaceApiFetch(url, {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${token.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ conferenceData: buildCalendarConferenceData() }),
+      })
+      if (!response.ok) {
+        return c.json(await googleApiError("Google Calendar event update", response), 502)
+      }
+
+      const event = extractCalendarEvents({ items: [await readJson(response)] })[0]
+      if (!event?.id) {
+        return c.json({ error: "google_api_error", message: "Google Calendar returned no event id." }, 502)
+      }
+
+      return c.json({
+        ok: true,
+        eventId: event.id,
+        htmlLink: event.htmlLink,
+        summary: event.summary,
+        start: event.start,
+        end: event.end,
+        meetLink: event.meetLink,
       })
     },
   )
