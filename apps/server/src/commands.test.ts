@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { listCommands, upsertCommand } from "./commands.js";
+import { listCommands, repairCommands, upsertCommand } from "./commands.js";
 
 describe("commands", () => {
   test("upsertCommand omits null model from frontmatter", async () => {
@@ -36,5 +36,27 @@ describe("commands", () => {
     const repaired = await readFile(commandPath, "utf8");
     expect(repaired).not.toContain("model: null");
     expect(repaired).not.toContain("model:");
+  });
+
+  test("listCommands skips files with malformed frontmatter instead of throwing", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "openwork-commands-"));
+    const commandsDir = join(workspace, ".opencode", "commands");
+
+    await mkdir(commandsDir, { recursive: true });
+    await writeFile(join(commandsDir, "broken.md"), "---\nname: broken\n  bad: [unclosed\n---\nBody\n", "utf8");
+    await writeFile(join(commandsDir, "good.md"), "---\nname: good\ndescription: Good\n---\nDo the thing\n", "utf8");
+
+    const commands = await listCommands(workspace, "workspace");
+    expect(commands.map((c) => c.name)).toEqual(["good"]);
+  });
+
+  test("repairCommands does not throw on malformed frontmatter", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "openwork-commands-"));
+    const commandsDir = join(workspace, ".opencode", "commands");
+
+    await mkdir(commandsDir, { recursive: true });
+    await writeFile(join(commandsDir, "broken.md"), "---\nname: broken\n  bad: [unclosed\n---\nBody\n", "utf8");
+
+    expect(await repairCommands(workspace)).toBe(false);
   });
 });

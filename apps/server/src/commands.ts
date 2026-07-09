@@ -14,8 +14,14 @@ function normalizeCommandFrontmatter(data: Record<string, unknown>): Record<stri
   );
 }
 
-async function repairLegacyCommandFile(filePath: string, content: string): Promise<{ data: Record<string, unknown>; body: string; changed: boolean }> {
-  const parsed = parseFrontmatter(content);
+async function repairLegacyCommandFile(filePath: string, content: string): Promise<{ data: Record<string, unknown>; body: string; changed: boolean } | null> {
+  let parsed: { data: Record<string, unknown>; body: string };
+  try {
+    parsed = parseFrontmatter(content);
+  } catch {
+    // Malformed YAML frontmatter: skip this file rather than crash the caller.
+    return null;
+  }
   if (parsed.data.model !== null) {
     return { ...parsed, changed: false };
   }
@@ -38,7 +44,9 @@ async function listCommandsInDir(dir: string, scope: "workspace" | "global"): Pr
     if (!entry.name.endsWith(".md")) continue;
     const filePath = join(dir, entry.name);
     const content = await readFile(filePath, "utf8");
-    const { data, body } = await repairLegacyCommandFile(filePath, content);
+    const repaired = await repairLegacyCommandFile(filePath, content);
+    if (!repaired) continue;
+    const { data, body } = repaired;
     const name = typeof data.name === "string" ? data.name : entry.name.replace(/\.md$/, "");
     try {
       validateCommandName(name);
@@ -114,6 +122,7 @@ export async function repairCommands(workspaceRoot: string): Promise<boolean> {
     const filePath = join(dir, entry.name);
     const content = await readFile(filePath, "utf8");
     const result = await repairLegacyCommandFile(filePath, content);
+    if (!result) continue;
     changed ||= result.changed;
   }
   return changed;
