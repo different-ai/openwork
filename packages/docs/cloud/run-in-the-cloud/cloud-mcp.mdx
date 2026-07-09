@@ -1,26 +1,19 @@
 ---
-title: "Connect OpenWork Cloud MCP"
-description: "Use the hosted OpenWork Cloud MCP server from OpenWork or another OAuth-capable MCP client"
+title: "OpenWork Connect MCP"
+description: "Use your OpenWork organization, skills, and connected tools from OpenCode, Cursor, Claude Code, VS Code, or any MCP client"
 ---
 
-OpenWork Cloud exposes a hosted MCP server through the Den web URL at `https://app.openworklabs.com/api/den/mcp`. Add it to an MCP client when you want agents to use your OpenWork Cloud organization, skills, plugins, marketplaces, workers, and other Cloud API resources through MCP tools.
+import { OpenWorkConnectInstaller } from "/snippets/openwork-connect-installer.jsx";
 
-The server uses OAuth. Your MCP client opens a browser, you sign in to OpenWork Cloud, choose the organization to authorize, and the client stores the returned token.
+OpenWork Connect lets your own agent use everything available to your OpenWork organization. Sign in once to use your shared skills and connected tools, including Gmail, Slack, Notion, and other services your organization has configured.
+
+The server uses OAuth. Your MCP client opens a browser, you sign in to OpenWork, choose the organization to authorize, and the client stores the returned token.
+
+<OpenWorkConnectInstaller />
 
 ## In the OpenWork desktop app
 
-If you use the OpenWork desktop app, there is nothing to configure. When you
-sign in to OpenWork Cloud, the app connects the `openwork-cloud` MCP for you
-with a token scoped to your active organization — no browser OAuth round-trip.
-It is enabled while you are signed in and hidden from the default **Settings →
-Extensions** list; use **Show hidden** on that page to reveal **OpenWork Cloud
-Control** when you want to inspect, disable, or remove it. Switching
-organizations refreshes the token automatically.
-
-The desktop app derives the MCP URL from the single Cloud `baseUrl`. For the
-hosted service, that means `https://app.openworklabs.com/api/den/mcp`; for a
-self-hosted Den web deployment, use `<baseUrl>/api/den/mcp`. There is no
-separate desktop API URL to configure.
+If you use the OpenWork desktop app, there is nothing to configure. When you sign in, the app injects OpenWork Connect by default with access scoped to your active organization. Switching organizations refreshes that access automatically.
 
 ## What you can ask the agent
 
@@ -45,43 +38,10 @@ deployment (see `evals/cloud-mcp-agent-flows.md` in the repository):
 Org policy still applies: invitations respect seat limits and domain rules,
 and resource creation follows your organization's roles.
 
-## MCP config
-
-The manual configuration below is for **other MCP clients** (or the desktop
-app when signed out).
-
-Add this server to your MCP config:
-
-```json
-{
-  "mcp": {
-    "openwork-cloud": {
-      "type": "remote",
-      "enabled": true,
-      "url": "https://app.openworklabs.com/api/den/mcp",
-      "oauth": {}
-    }
-  }
-}
-```
-
-If your client expects the server map directly, use just the server entry:
-
-```json
-{
-  "openwork-cloud": {
-    "type": "remote",
-    "enabled": true,
-    "url": "https://app.openworklabs.com/api/den/mcp",
-    "oauth": {}
-  }
-}
-```
-
 ## Authorize access
 
 1. Save the MCP config in your client.
-2. Start the client's MCP auth flow for `openwork-cloud`.
+2. Start the client's MCP auth flow for `openwork`.
 3. Sign in at `app.openworklabs.com` when the browser opens.
 4. Choose the OpenWork Cloud organization that should receive MCP access.
 5. Return to your MCP client after authorization completes.
@@ -124,4 +84,4 @@ It intentionally does not expose authentication internals, admin-only system rou
 - An MCP client that supports remote Streamable HTTP MCP servers.
 - OAuth support in the MCP client, including browser-based authorization.
 
-If your client does not support OAuth for remote MCP servers, it cannot connect to `openwork-cloud` yet.
+If your client does not support OAuth for remote MCP servers, it cannot connect to OpenWork Connect yet.
