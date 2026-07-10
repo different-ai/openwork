@@ -96,7 +96,7 @@ export type WorkspaceExportSummary = {
 };
 
 export type BrandIconApplyResult = { ok: boolean; reason?: string };
-export type BrandIconState = { applied: boolean; sourceUrl: string | null };
+export type BrandIconState = { applied: boolean; sourceUrl: string | null; reason: string | null };
 export type EvalRelaunchResult = { ok: true };
 
 export type OpencodeCommandDraft = {

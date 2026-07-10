@@ -4,6 +4,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, pickAppTarget } from "./cdp.mjs";
+import { captureDaytonaComputerUseScreenshot } from "./daytona-computer-use.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -463,17 +464,31 @@ export class EvalContext {
     return Buffer.from(base64Png, "base64");
   }
 
+  async _captureComputerUseScreenshot(sandbox) {
+    const buffer = await captureDaytonaComputerUseScreenshot(sandbox);
+    if (buffer.length === 0) {
+      throw new EvalError("Daytona Computer Use screenshot capture returned no data.");
+    }
+    return buffer;
+  }
+
   async screenshot(name, options = {}) {
     this.screenshotIndex += 1;
     const fileName = `${this.flowId}-${String(this.screenshotIndex).padStart(2, "0")}-${slug(name)}.png`;
-    const sandbox = options.sandboxCapture ? this.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim() : null;
+    const sandbox = options.sandboxCapture === "computer-use"
+      ? (this.env.OPENWORK_EVAL_DAYTONA_SANDBOX_ID || this.env.OPENWORK_EVAL_DAYTONA_SANDBOX)?.trim()
+      : options.sandboxCapture
+        ? this.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim()
+        : null;
     const targetSelector = !sandbox && (options.targetId || options.targetUrlIncludes);
     const textTargetSelector = options.textTargetId || options.textTargetUrlIncludes;
     let screenshotClient = this.client;
     let closeClients = [];
     let preCapturedBuffer = null;
     if (sandbox) {
-      preCapturedBuffer = await this._captureSandboxScreenshot(sandbox);
+      preCapturedBuffer = options.sandboxCapture === "computer-use"
+        ? await this._captureComputerUseScreenshot(sandbox)
+        : await this._captureSandboxScreenshot(sandbox);
     } else if (targetSelector) {
       // Some CDP page targets (e.g. an embedded browser-panel WebContentsView
       // rather than a top-level BrowserWindow page) do not reliably answer

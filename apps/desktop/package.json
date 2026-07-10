@@ -20,7 +20,7 @@
     "check:electron": "node ./scripts/check-electron-bridge.mjs",
     "typecheck:electron": "pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs",
-    "test": "node --test electron/open-external.test.mjs electron/runtime.test.mjs electron/runtime-ca.test.mjs electron/updater.test.mjs electron/remote-workspace.test.mjs electron/workspace-store.test.mjs"
+    "test": "node --test electron/brand-icon-windows.test.mjs electron/open-external.test.mjs electron/runtime.test.mjs electron/runtime-ca.test.mjs electron/updater.test.mjs electron/remote-workspace.test.mjs electron/workspace-store.test.mjs"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.17.11",

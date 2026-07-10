@@ -163,6 +163,12 @@ async function navigateAdminOrgSettings(ctx) {
   // keeps the failed access-check state. A full document load with the fresh
   // cookie recovers it.
   await panelEval(ctx, `location.replace(${JSON.stringify(orgSettingsUrl(ctx))})`).catch(() => undefined);
+  // Daytona's proxy can serve a fully cached Next dev document/chunk set that
+  // never hydrates (the visible page stays on "Checking workspace access"
+  // even though every resource returned 200). Bypass the browser cache for
+  // this proof navigation so the panel executes the current client bundle.
+  await sleep(500);
+  await withPanelClient(ctx, (client) => client.send("Page.reload", { ignoreCache: true })).catch(() => undefined);
   // Cold next-dev compiles and the workspace-access check can exceed 30s on a
   // freshly (re)started stack; retry the reload once midway.
   try {
@@ -170,6 +176,8 @@ async function navigateAdminOrgSettings(ctx) {
   } catch {
     ctx.log("Org settings not ready after 45s; hard-reloading once (cold dev-server compile).");
     await panelEval(ctx, `location.replace(${JSON.stringify(orgSettingsUrl(ctx))})`).catch(() => undefined);
+    await sleep(500);
+    await withPanelClient(ctx, (client) => client.send("Page.reload", { ignoreCache: true })).catch(() => undefined);
     await waitForPanel(ctx, settingsReady, { timeoutMs: 60_000, label: "Brand Appearance card with Icon URL (retry)" });
   }
   await panelEval(ctx, `(() => {
