@@ -135,6 +135,15 @@ installerArtifacts:
   hostPath: ""
   mountPath: /var/lib/openwork/installer-artifacts
 
+brandAssets:
+  enabled: true
+  existingClaim: ""
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  mountPath: /var/lib/openwork/brand-assets
+
 denApi:
   replicaCount: 1
   image:

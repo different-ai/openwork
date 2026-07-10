@@ -20,6 +20,7 @@ DEN_WORKER_PROXY_PORT="${DEN_WORKER_PROXY_PORT:-8789}"
 PNPM_STORE="${PNPM_STORE:-$REPO_DIR/.openwork-daytona/pnpm-store}"
 
 DEN_API_PUBLIC_URL="${DEN_API_PUBLIC_URL:-http://localhost:$DEN_API_PORT}"
+DEN_BRAND_ASSETS_DIR="${DEN_BRAND_ASSETS_DIR:-$REPO_DIR/.openwork-daytona/brand-assets}"
 DEN_WEB_PUBLIC_URL="${DEN_WEB_PUBLIC_URL:-http://localhost:$DEN_WEB_PORT}"
 DEN_WORKER_PROXY_PUBLIC_URL="${DEN_WORKER_PROXY_PUBLIC_URL:-http://localhost:$DEN_WORKER_PROXY_PORT}"
 DEN_WEB_PUBLIC_HOST="${DEN_WEB_PUBLIC_URL#http://}"
@@ -32,6 +33,8 @@ export DEN_DB_ENCRYPTION_KEY="${DEN_DB_ENCRYPTION_KEY:-daytona-den-db-encryption
 export BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET:-daytona-den-auth-secret-please-change-1234567890}"
 export BETTER_AUTH_URL="${BETTER_AUTH_URL:-$DEN_WEB_PUBLIC_URL}"
 export DEN_BETTER_AUTH_URL="$BETTER_AUTH_URL"
+export DEN_API_PUBLIC_URL
+export DEN_BRAND_ASSETS_DIR
 export DEN_MCP_RESOURCE_URL="${DEN_MCP_RESOURCE_URL:-$DEN_API_PUBLIC_URL/mcp}"
 export DEN_API_BASE="${DEN_API_BASE:-http://127.0.0.1:$DEN_API_PORT}"
 export DEN_AUTH_ORIGIN="${DEN_AUTH_ORIGIN:-$DEN_WEB_PUBLIC_URL}"
@@ -104,7 +107,7 @@ FLUSH PRIVILEGES;
 SQL
 
 echo "==> Installing dependencies if needed..."
-mkdir -p "$PNPM_STORE" .openwork-daytona
+mkdir -p "$PNPM_STORE" "$DEN_BRAND_ASSETS_DIR"
 baseline=.openwork-daytona/pnpm-lock.sha256
 current="$(sha256sum pnpm-lock.yaml | cut -d " " -f 1)"
 if [ ! -d node_modules ] || [ ! -f "$baseline" ] || [ "$(cat "$baseline")" != "$current" ]; then
@@ -125,6 +128,8 @@ nohup env \
   DEN_DB_ENCRYPTION_KEY="$DEN_DB_ENCRYPTION_KEY" \
   BETTER_AUTH_SECRET="$BETTER_AUTH_SECRET" \
   BETTER_AUTH_URL="$BETTER_AUTH_URL" \
+  DEN_API_PUBLIC_URL="$DEN_API_PUBLIC_URL" \
+  DEN_BRAND_ASSETS_DIR="$DEN_BRAND_ASSETS_DIR" \
   DEN_MCP_RESOURCE_URL="$DEN_MCP_RESOURCE_URL" \
   DEN_BETTER_AUTH_TRUSTED_ORIGINS="$DEN_BETTER_AUTH_TRUSTED_ORIGINS" \
   CORS_ORIGINS="$CORS_ORIGINS" \

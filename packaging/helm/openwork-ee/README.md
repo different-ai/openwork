@@ -390,6 +390,19 @@ installerArtifacts:
 
 Use either `installerArtifacts.existingClaim` or `installerArtifacts.hostPath`, not both. The mounted directory must contain `openwork-installer-mac-arm64.zip`, `openwork-installer-mac-x64.zip`, and `openwork-installer-win-x64.exe`.
 
+## Managed brand assets
+
+The chart provisions a 1 GiB persistent claim for organization wordmarks and app icons by default. To reuse a shared or pre-provisioned claim (for example, `ReadWriteMany` storage when running multiple Den API replicas), set:
+
+```yaml
+brandAssets:
+  enabled: true
+  existingClaim: openwork-brand-assets
+  mountPath: /var/lib/openwork/brand-assets
+```
+
+Set `brandAssets.enabled=false` only when managed uploads are intentionally ephemeral or an external storage implementation replaces the filesystem adapter. Uploads are owner-only; served asset URLs are capability-signed, immutable, and remain inside the configured Den API origin.
+
 ## Health Probes
 
 The chart uses the existing service health endpoints:

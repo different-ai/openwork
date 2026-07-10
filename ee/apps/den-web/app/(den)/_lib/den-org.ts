@@ -215,8 +215,23 @@ export type DenOrganizationMetadata = {
   brandAppName?: string;
   brandLogoUrl?: string;
   brandIconUrl?: string;
+  brandLogoAsset?: DenManagedBrandAsset;
+  brandIconAsset?: DenManagedBrandAsset;
   brandAccentColor?: string;
 } & Record<string, unknown>;
+
+export type DenManagedBrandAsset = {
+  kind: "logo" | "icon";
+  version: string;
+  extension: "png" | "jpg";
+  contentType: "image/png" | "image/jpeg";
+  url: string;
+  width: number;
+  height: number;
+  byteLength: number;
+  originalName: string;
+  uploadedAt: string;
+};
 
 export const DEN_ROLE_PERMISSION_OPTIONS = {
   organization: ["update", "delete"],
@@ -289,6 +304,42 @@ export function getAllowedDesktopVersionsFromMetadata(metadata: string | null): 
 export function getRequireSsoFromMetadata(metadata: string | null): boolean {
   const parsed = parseOrganizationMetadata(metadata);
   return parsed?.requireSso === true;
+}
+
+export function getManagedBrandAssetFromMetadata(
+  metadata: string | null,
+  kind: "logo" | "icon",
+): DenManagedBrandAsset | null {
+  const parsed = parseOrganizationMetadata(metadata);
+  const value = kind === "logo" ? parsed?.brandLogoAsset : parsed?.brandIconAsset;
+  if (!isRecord(value) || value.kind !== kind) {
+    return null;
+  }
+  if (
+    typeof value.version !== "string" ||
+    (value.extension !== "png" && value.extension !== "jpg") ||
+    (value.contentType !== "image/png" && value.contentType !== "image/jpeg") ||
+    typeof value.url !== "string" ||
+    typeof value.width !== "number" ||
+    typeof value.height !== "number" ||
+    typeof value.byteLength !== "number" ||
+    typeof value.originalName !== "string" ||
+    typeof value.uploadedAt !== "string"
+  ) {
+    return null;
+  }
+  return {
+    kind,
+    version: value.version,
+    extension: value.extension,
+    contentType: value.contentType,
+    url: value.url,
+    width: value.width,
+    height: value.height,
+    byteLength: value.byteLength,
+    originalName: value.originalName,
+    uploadedAt: value.uploadedAt,
+  };
 }
 
 function parsePermissionRecord(value: unknown): Record<string, string[]> {

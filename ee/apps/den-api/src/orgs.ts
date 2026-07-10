@@ -24,7 +24,12 @@ import {
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
-import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata, serializeOrganizationMetadata } from "./organization-limits.js"
+import {
+  DEFAULT_ORGANIZATION_LIMITS,
+  normalizeOrganizationMetadata,
+  serializeOrganizationMetadata,
+  type ManagedBrandAssetMetadata,
+} from "./organization-limits.js"
 import {
   denDefaultDynamicOrganizationRoles,
   denOrganizationStaticRoles,
@@ -965,6 +970,8 @@ export async function updateOrganizationSettings(input: {
   brandAppName?: string | null
   brandLogoUrl?: string | null
   brandIconUrl?: string | null
+  brandLogoAsset?: ManagedBrandAssetMetadata | null
+  brandIconAsset?: ManagedBrandAssetMetadata | null
   brandAccentColor?: string | null
 }) {
   const nextName = typeof input.name === "string" ? input.name.trim() : null
@@ -979,7 +986,7 @@ export async function updateOrganizationSettings(input: {
   if (input.allowedEmailDomains !== undefined) {
     updates.allowedEmailDomains = normalizeAllowedEmailDomains(input.allowedEmailDomains).domains
   }
-  if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandAccentColor !== undefined) {
+  if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined) {
     const rows = await db
       .select({ metadata: OrganizationTable.metadata })
       .from(OrganizationTable)
@@ -1021,6 +1028,9 @@ export async function updateOrganizationSettings(input: {
       } else {
         nextMetadata.brandLogoUrl = input.brandLogoUrl
       }
+      if (input.brandLogoAsset === undefined) {
+        delete nextMetadata.brandLogoAsset
+      }
     }
 
     if (input.brandIconUrl !== undefined) {
@@ -1028,6 +1038,25 @@ export async function updateOrganizationSettings(input: {
         delete nextMetadata.brandIconUrl
       } else {
         nextMetadata.brandIconUrl = input.brandIconUrl
+      }
+      if (input.brandIconAsset === undefined) {
+        delete nextMetadata.brandIconAsset
+      }
+    }
+
+    if (input.brandLogoAsset !== undefined) {
+      if (input.brandLogoAsset === null) {
+        delete nextMetadata.brandLogoAsset
+      } else {
+        nextMetadata.brandLogoAsset = input.brandLogoAsset
+      }
+    }
+
+    if (input.brandIconAsset !== undefined) {
+      if (input.brandIconAsset === null) {
+        delete nextMetadata.brandIconAsset
+      } else {
+        nextMetadata.brandIconAsset = input.brandIconAsset
       }
     }
 

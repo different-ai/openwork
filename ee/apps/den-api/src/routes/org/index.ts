@@ -2,6 +2,7 @@ import type { Hono } from "hono"
 import { delegatedRoute } from "../../middleware/index.js"
 import { registerOrgApiKeyRoutes } from "./api-keys.js"
 import { registerOrgBillingRoutes } from "./billing.js"
+import { registerOrgBrandAssetRoutes } from "./brand-assets.js"
 import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgCoreRoutes } from "./core.js"
@@ -52,6 +53,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(ap
   registerOrgCoreRoutes(app)
   registerOrgApiKeyRoutes(app)
   registerOrgBillingRoutes(app)
+  registerOrgBrandAssetRoutes(app)
   registerOrgDesktopPolicyRoutes(app)
   registerOrgInferenceRoutes(app)
   registerOrgScimRoutes(app)

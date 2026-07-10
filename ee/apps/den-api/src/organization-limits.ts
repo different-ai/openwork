@@ -14,6 +14,19 @@ export type OrganizationLimits = {
   workers: number
 }
 
+export type ManagedBrandAssetMetadata = {
+  kind: "logo" | "icon"
+  version: string
+  extension: "png" | "jpg"
+  contentType: "image/png" | "image/jpeg"
+  url: string
+  width: number
+  height: number
+  byteLength: number
+  originalName: string
+  uploadedAt: string
+}
+
 type OrganizationId = typeof OrganizationTable.$inferSelect.id
 
 export type OrganizationMetadata = {
@@ -24,6 +37,8 @@ export type OrganizationMetadata = {
   brandAppName?: string
   brandLogoUrl?: string
   brandIconUrl?: string
+  brandLogoAsset?: ManagedBrandAssetMetadata
+  brandIconAsset?: ManagedBrandAssetMetadata
   brandAccentColor?: string
 } & Record<string, unknown>
 
