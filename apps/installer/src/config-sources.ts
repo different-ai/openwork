@@ -2,7 +2,7 @@ import { installConfigSchema, installConfigUrlFor, INSTALL_SIDECAR_FILENAME, par
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
-import { BUILD_API_URL, BUILD_CLIENT_NAME, BUILD_LOGO_URL, BUILD_REQUIRE_SIGNIN, BUILD_WEB_URL } from "./generated/build-config"
+import { BUILD_API_URL, BUILD_APP_NAME, BUILD_CLIENT_NAME, BUILD_LOGO_URL, BUILD_REQUIRE_SIGNIN, BUILD_WEB_URL } from "./generated/build-config"
 import type { InstallerConfig } from "./config"
 
 export type InstallerConfigSource = "env" | "sidecar" | "filename" | "build" | "install-link"
@@ -50,6 +50,7 @@ function normalizeUrl(value: string, label: string): string {
 
 function toInstallerConfig(config: InstallConfig): InstallerConfig {
   return {
+    appName: config.appName.trim(),
     clientName: config.clientName.trim(),
     webUrl: normalizeUrl(config.webUrl, "web URL"),
     apiUrl: normalizeUrl(config.apiUrl, "API URL"),
@@ -85,6 +86,7 @@ function parseRequireSignin(value: string | undefined, fallback: boolean) {
 }
 
 export function envOverrides(env: NodeJS.ProcessEnv = process.env): InstallerConfig | null {
+  const appName = env.OPENWORK_INSTALLER_APP_NAME?.trim() || "OpenWork"
   const clientName = env.OPENWORK_INSTALLER_CLIENT_NAME?.trim() ?? ""
   const webUrl = env.OPENWORK_INSTALLER_WEB_URL?.trim() ?? ""
   const apiUrl = env.OPENWORK_INSTALLER_API_URL?.trim() ?? ""
@@ -99,6 +101,7 @@ export function envOverrides(env: NodeJS.ProcessEnv = process.env): InstallerCon
   }
 
   return {
+    appName,
     clientName,
     webUrl: normalizeUrl(webUrl, "web URL"),
     apiUrl: normalizeUrl(apiUrl, "API URL"),
@@ -271,6 +274,7 @@ export async function installLinkConfig(input: string, options: ConfigSourceOpti
 }
 
 export function buildConstantsConfig(): InstallerConfig | null {
+  const appName = BUILD_APP_NAME.trim() || "OpenWork"
   const clientName = BUILD_CLIENT_NAME.trim()
   const webUrl = BUILD_WEB_URL.trim()
   const apiUrl = BUILD_API_URL.trim()
@@ -280,6 +284,7 @@ export function buildConstantsConfig(): InstallerConfig | null {
   }
 
   return {
+    appName,
     clientName,
     webUrl: normalizeUrl(webUrl, "web URL"),
     apiUrl: normalizeUrl(apiUrl, "API URL"),

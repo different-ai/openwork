@@ -245,10 +245,14 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       return id && role && url && expiresAt ? [{ id, role, ...(token ? { token } : {}), url, expiresAt }] : [];
     });
     const writtenAt = typeof input?.writtenAt === "string" ? input.writtenAt.trim() : "";
+    const brandAppName = typeof input?.brandAppName === "string" ? input.brandAppName.trim().slice(0, 64) : "";
+    const brandLogoUrl = typeof input?.brandLogoUrl === "string" ? input.brandLogoUrl.trim() : "";
 
     return {
       baseUrl,
       requireSignin: forceRequireSignin || input?.requireSignin === true,
+      ...(brandAppName ? { brandAppName } : {}),
+      ...(brandLogoUrl ? { brandLogoUrl } : {}),
       ...(writtenAt ? { writtenAt } : {}),
       ...(claimLinks.length > 0 ? { claimLinks } : {}),
       ...(normalizedHandoff ? { handoff: normalizedHandoff } : {}),

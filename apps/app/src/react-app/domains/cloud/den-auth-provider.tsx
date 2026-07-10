@@ -219,6 +219,8 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     void setDenBootstrapConfig({
       baseUrl: denBaseUrl,
       requireSignin: bootstrap.requireSignin,
+      ...(bootstrap.brandAppName ? { brandAppName: bootstrap.brandAppName } : {}),
+      ...(bootstrap.brandLogoUrl ? { brandLogoUrl: bootstrap.brandLogoUrl } : {}),
       ...(bootstrap.claimLinks ? { claimLinks: bootstrap.claimLinks } : {}),
       handoff: null,
       ...(bootstrap.prepared ? { prepared: bootstrap.prepared } : {}),

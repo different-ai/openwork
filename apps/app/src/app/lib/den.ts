@@ -110,6 +110,8 @@ export type DenBootstrapPrepared = DenBootstrapOrgSkill & {
 
 export type DenBootstrapConfig = DenBaseUrls & {
   requireSignin: boolean;
+  brandAppName?: string | null;
+  brandLogoUrl?: string | null;
   claimLinks?: Array<{
     id: string;
     role: string;
@@ -565,6 +567,8 @@ function resolveDenBootstrapConfig(
     baseUrl: string;
     apiBaseUrl?: string | null;
     requireSignin?: boolean | null;
+    brandAppName?: string | null;
+    brandLogoUrl?: string | null;
     handoff?: DenBootstrapHandoff | null;
     prepared?: DenBootstrapPrepared | null;
   },
@@ -572,6 +576,8 @@ function resolveDenBootstrapConfig(
   return {
     ...resolveDenBaseUrls(input),
     requireSignin: input.requireSignin === true,
+    ...(input.brandAppName?.trim() ? { brandAppName: input.brandAppName.trim().slice(0, 64) } : {}),
+    ...(input.brandLogoUrl?.trim() ? { brandLogoUrl: input.brandLogoUrl.trim() } : {}),
     ...(input.handoff ? { handoff: input.handoff } : {}),
     ...(input.prepared ? { prepared: input.prepared } : {}),
   };
@@ -586,6 +592,8 @@ function getPendingBootstrapConfig(next: DenSettings): DenBootstrapConfig | null
   return resolveDenBootstrapConfig({
     baseUrl: next.baseUrl ?? previous.baseUrl,
     requireSignin: previous.requireSignin,
+    brandAppName: previous.brandAppName,
+    brandLogoUrl: previous.brandLogoUrl,
   });
 }
 
@@ -662,6 +670,8 @@ export async function setDenBootstrapConfig(
     const persisted = await setDesktopBootstrapConfigInShell({
       baseUrl: normalized.baseUrl,
       requireSignin: normalized.requireSignin,
+      ...(normalized.brandAppName ? { brandAppName: normalized.brandAppName } : {}),
+      ...(normalized.brandLogoUrl ? { brandLogoUrl: normalized.brandLogoUrl } : {}),
       ...(normalized.handoff ? { handoff: normalized.handoff } : {}),
       ...(normalized.prepared ? { prepared: normalized.prepared } : {}),
     }) as ShellDesktopBootstrapConfig;
@@ -785,6 +795,8 @@ export function writeDenSettings(next: DenSettings, options?: { persistBootstrap
       void setDenBootstrapConfig({
         baseUrl: pendingBootstrap.baseUrl,
         requireSignin: currentBootstrap.requireSignin,
+        brandAppName: currentBootstrap.brandAppName,
+        brandLogoUrl: currentBootstrap.brandLogoUrl,
       }).catch(() => undefined);
     }
   }

@@ -61,6 +61,7 @@ describe("releaseAssetFor", () => {
 describe("resolveInstallerConfig", () => {
   test("reads env overrides and normalizes URLs", async () => {
     const { config, source } = await resolveInstallerConfig({ env: {
+      OPENWORK_INSTALLER_APP_NAME: "Acme Work",
       OPENWORK_INSTALLER_CLIENT_NAME: "Acme Corp",
       OPENWORK_INSTALLER_WEB_URL: "https://openwork.acme.com/",
       OPENWORK_INSTALLER_API_URL: "https://openwork-api.acme.com",
@@ -68,6 +69,7 @@ describe("resolveInstallerConfig", () => {
     } })
     expect(source).toBe("env")
     expect(config).toEqual({
+      appName: "Acme Work",
       clientName: "Acme Corp",
       webUrl: "https://openwork.acme.com",
       apiUrl: "https://openwork-api.acme.com",
@@ -234,6 +236,7 @@ describe("macOS App Translocation helpers", () => {
         readMountTable: () => `${originalAppPath} on ${mountPoint} (nullfs, local, read-only)\n`,
         warn: () => undefined,
       })).toEqual({
+        appName: "OpenWork",
         clientName: "Translocated Sidecar",
         webUrl: "https://translocated.example.com",
         apiUrl: "https://translocated-api.example.com",
@@ -316,7 +319,7 @@ describe("writeBootstrapConfig", () => {
         claimLinks: [{ id: "claim" }],
       }))
       const written = writeBootstrapConfig(
-        { clientName: "Acme", webUrl: "https://openwork.acme.com", apiUrl: "https://openwork-api.acme.com", requireSignin: true, logoUrl: null },
+        { appName: "Acme Work", clientName: "Acme", webUrl: "https://openwork.acme.com", apiUrl: "https://openwork-api.acme.com", requireSignin: true, logoUrl: "https://openwork.acme.com/assets/wordmark.svg" },
         { OPENWORK_DESKTOP_BOOTSTRAP_PATH: target, HOME: home, USERPROFILE: home },
       )
       expect(written).toBe(target)
@@ -324,6 +327,8 @@ describe("writeBootstrapConfig", () => {
       expect(parsed.baseUrl).toBe("https://openwork.acme.com")
       expect(parsed.apiBaseUrl).toBe("https://openwork-api.acme.com")
       expect(parsed.requireSignin).toBe(true)
+      expect(parsed.brandAppName).toBe("Acme Work")
+      expect(parsed.brandLogoUrl).toBe("https://openwork.acme.com/assets/wordmark.svg")
       expect(parsed.handoff).toBeUndefined()
       expect(parsed.prepared).toEqual({ orgId: "org" })
       expect(parsed.claimLinks).toEqual([{ id: "claim" }])

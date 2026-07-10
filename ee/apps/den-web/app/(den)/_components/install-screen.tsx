@@ -6,6 +6,7 @@ import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import { isMobileUserAgent } from "../_lib/platform";
 
 type InstallConfig = {
+  appName: string;
   clientName: string;
   webUrl: string;
   apiUrl: string;
@@ -42,6 +43,7 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   }
 
   const clientName = typeof value.clientName === "string" ? value.clientName.trim() : "";
+  const appName = typeof value.appName === "string" && value.appName.trim() ? value.appName.trim() : "OpenWork";
   const webUrl = typeof value.webUrl === "string" ? value.webUrl.trim() : "";
   const apiUrl = typeof value.apiUrl === "string" ? value.apiUrl.trim() : "";
   const requireSignin = value.requireSignin;
@@ -55,6 +57,7 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   }
 
   return {
+    appName,
     clientName,
     webUrl,
     apiUrl,
@@ -190,14 +193,20 @@ export function InstallScreen() {
     <section className="den-page py-4 lg:py-6" data-testid="install-page">
       <div className="den-frame grid max-w-[48rem] gap-6 p-6 md:p-8">
         <div className="grid gap-3">
-          <p className="den-eyebrow">OpenWork Desktop</p>
-          <h1 className="den-title-xl">Download OpenWork for {config.clientName}</h1>
+          <p className="den-eyebrow">{config.appName} Desktop</p>
+          {config.logoUrl ? (
+            // Organization logos may be served by private on-prem hosts that
+            // are intentionally absent from this deployment's image allowlist.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={config.logoUrl} alt={`${config.clientName} wordmark`} className="max-h-16 max-w-64 object-contain object-left" />
+          ) : null}
+          <h1 className="den-title-xl">Download {config.appName} for {config.clientName}</h1>
           <p className="den-copy">Run it, then sign in — your team's workspace is preconfigured.</p>
         </div>
 
         {isMobile ? (
           <div className="den-frame-inset grid gap-3 rounded-[1.5rem] p-5" data-testid="install-mobile-note">
-            <p className="m-0 text-base font-medium text-[var(--dls-text-primary)]">OpenWork runs on your computer.</p>
+            <p className="m-0 text-base font-medium text-[var(--dls-text-primary)]">{config.appName} runs on your computer.</p>
             <p className="den-copy">Open this link on your Mac, Windows, or Linux machine. You can also copy it and send it to yourself.</p>
             <button type="button" className="den-button-secondary w-full sm:w-auto" onClick={() => void copyCurrentLink()}>
               {copied ? "Copied" : "Copy install link"}

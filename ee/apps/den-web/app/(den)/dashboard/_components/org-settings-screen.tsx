@@ -172,6 +172,7 @@ export function OrgSettingsScreen() {
   >(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageSuccess, setPageSuccess] = useState<string | null>(null);
+  const [brandAppNameDraft, setBrandAppNameDraft] = useState("");
   const [brandLogoUrlDraft, setBrandLogoUrlDraft] = useState("");
   const [brandIconUrlDraft, setBrandIconUrlDraft] = useState("");
   const [brandAccentColorDraft, setBrandAccentColorDraft] = useState("");
@@ -217,6 +218,7 @@ export function OrgSettingsScreen() {
     );
     setRequireSsoEnabled(getRequireSsoFromMetadata(orgContext.organization.metadata));
     const meta = parseOrganizationMetadata(orgContext.organization.metadata);
+    setBrandAppNameDraft(typeof meta?.brandAppName === "string" ? meta.brandAppName : "");
     setBrandLogoUrlDraft(typeof meta?.brandLogoUrl === "string" ? meta.brandLogoUrl : "");
     setBrandIconUrlDraft(typeof meta?.brandIconUrl === "string" ? meta.brandIconUrl : "");
     setBrandAccentColorDraft(typeof meta?.brandAccentColor === "string" ? meta.brandAccentColor : "");
@@ -394,6 +396,7 @@ export function OrgSettingsScreen() {
             }
           : {}),
         requireSso: requireSsoEnabled,
+        brandAppName: brandAppNameDraft.trim() || null,
         brandLogoUrl: brandLogoUrlDraft.trim() || null,
         brandIconUrl: brandIconUrlDraft.trim() || null,
         brandAccentColor: brandAccentColorDraft.trim() || null,
@@ -686,6 +689,23 @@ export function OrgSettingsScreen() {
           ) : (
           <div className="grid gap-5 lg:grid-cols-2">
             <div className="grid gap-5">
+              <label className="grid gap-3">
+                <span className="text-[14px] font-medium text-gray-700">
+                  Application name
+                </span>
+                <DenInput
+                  type="text"
+                  value={brandAppNameDraft}
+                  onChange={(event) => setBrandAppNameDraft(event.target.value)}
+                  placeholder="OpenWork"
+                  maxLength={64}
+                  disabled={!isOwner}
+                />
+                <span className="text-[11px] text-gray-400">
+                  Displayed on download, setup, and desktop screens. The signed application identity stays OpenWork.
+                </span>
+              </label>
+
               <label className="grid gap-3">
                 <span className="text-[14px] font-medium text-gray-700">
                   Logo URL

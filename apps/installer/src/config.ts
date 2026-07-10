@@ -1,4 +1,6 @@
 export type InstallerConfig = {
+  /** Organization-controlled display name. Signed app identity remains OpenWork. */
+  appName: string
   clientName: string
   /** Den web origin — becomes `baseUrl` in desktop-bootstrap.json. */
   webUrl: string

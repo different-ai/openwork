@@ -67,6 +67,8 @@ export function writeBootstrapConfig(config: InstallerConfig, env: NodeJS.Proces
     baseUrl: config.webUrl,
     apiBaseUrl: config.apiUrl,
     requireSignin: config.requireSignin,
+    brandAppName: config.appName,
+    ...(config.logoUrl ? { brandLogoUrl: config.logoUrl } : {}),
     writtenAt: new Date().toISOString(),
   }
   delete next.handoff

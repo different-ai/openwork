@@ -20,6 +20,8 @@ export type DenSignInSurfaceVariant = "panel" | "fullscreen";
 
 export type DenSignInSurfaceProps = {
   variant?: DenSignInSurfaceVariant;
+  appName?: string;
+  logoUrl?: string | null;
   developerMode: boolean;
   baseUrl: string;
   baseUrlDraft: string;
@@ -159,6 +161,7 @@ function ShowcasePanel() {
  */
 export function DenSignInSurface(props: DenSignInSurfaceProps) {
   const variant: DenSignInSurfaceVariant = props.variant ?? "panel";
+  const appName = props.appName?.trim() || "OpenWork";
 
   /* -- Panel content (reused by both variants) -- */
   const panelContent = (
@@ -319,8 +322,11 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
           <div className="flex w-full flex-col items-center justify-center px-8 py-16 lg:w-[45%] lg:px-12">
             <div className="w-full max-w-md space-y-8">
               <div className="space-y-2">
+                {props.logoUrl ? (
+                  <img src={props.logoUrl} alt={`${appName} logo`} className="mb-6 max-h-16 max-w-64 object-contain object-left" />
+                ) : null}
                 <h1 className="text-2xl font-semibold tracking-tight text-dls-text">
-                  Welcome to OpenWork
+                  Welcome to {appName}
                 </h1>
                 <p className="text-sm text-dls-secondary">
                   Sign in to get started with your workspace.
@@ -336,7 +342,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                 onClick={() => props.onOpenBrowserAuth("sign-up")}
                 disabled={props.authBusy || props.sessionBusy}
               >
-                Sign in with OpenWork Cloud
+                Sign in to {appName}
                 <ArrowUpRight size={15} />
               </button>
 

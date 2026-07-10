@@ -3,6 +3,7 @@ import { z } from "zod"
 export const INSTALL_SIDECAR_FILENAME = "openwork-installer.json"
 
 export const installConfigSchema = z.object({
+  appName: z.string().trim().min(1).max(64).default("OpenWork"),
   clientName: z.string().trim().min(1),
   webUrl: z.string().trim().url(),
   apiUrl: z.string().trim().url(),

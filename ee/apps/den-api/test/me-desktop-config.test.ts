@@ -29,8 +29,9 @@ const capabilityOrganizationId = createDenTypeId("organization")
 const capabilityMemberId = createDenTypeId("member")
 const flatConnectMetadata = {
   connectEnabled: true,
-  brandLogoUrl: "https://cdn.example.com/openwork-logo.svg",
-  brandIconUrl: "https://cdn.example.com/openwork-icon.png",
+  brandAppName: "Acme Work",
+  brandLogoUrl: "https://den.example-corp.internal/assets/wordmark.svg",
+  brandIconUrl: "https://den.example-corp.internal/assets/icon.png",
 }
 const capabilityMetadata = { capabilities: { mcpConnections: true } }
 
@@ -122,6 +123,7 @@ function expectConnectEnabled(body: Record<string, unknown>, metadata: Record<st
 test("GET /v1/me/desktop-config exposes the effective connectEnabled org flag", async () => {
   const flatBody = await requestDesktopConfig(organizationId)
   expectConnectEnabled(flatBody, flatConnectMetadata)
+  expect(flatBody.brandAppName).toBe(flatConnectMetadata.brandAppName)
   expect(flatBody.brandLogoUrl).toBe(flatConnectMetadata.brandLogoUrl)
   expect(flatBody.brandIconUrl).toBe(flatConnectMetadata.brandIconUrl)
 

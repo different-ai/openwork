@@ -406,7 +406,7 @@ function DesktopPolicyBanner() {
   const hasRestriction = Object.entries(config).some(
     ([key, value]) => typeof value === "boolean" && value === false && key !== "allowedDesktopVersions",
   );
-  const hasBranding = Boolean(config.brandLogoUrl ?? config.brandAccentColor);
+  const hasBranding = Boolean(config.brandAppName ?? config.brandLogoUrl ?? config.brandAccentColor);
 
   if (!hasRestriction && !hasBranding) return null;
 

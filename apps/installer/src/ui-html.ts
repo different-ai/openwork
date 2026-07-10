@@ -26,11 +26,12 @@ export function renderInstallerHtml(resolution: InstallerConfigResolution | null
     ? `<img class="logo" src="${escapeHtml(config.logoUrl)}" alt="${escapeHtml(config.clientName)}" />`
     : `<div class="logo">${OPENWORK_LOGO_SVG}</div>`
   const sourceLabel = resolution ? installerConfigSourceLabel(resolution.source) : ""
+  const appName = config?.appName ?? "OpenWork"
   const configuredContent = config
     ? `
   ${logo}
-  <div class="title">OpenWork Installer</div>
-  <div class="client">This sets up OpenWork for ${escapeHtml(config.clientName)} (${escapeHtml(config.webUrl)}).</div>
+  <div class="title">${escapeHtml(config.appName)} Installer</div>
+  <div class="client">This sets up ${escapeHtml(config.appName)} for ${escapeHtml(config.clientName)} (${escapeHtml(config.webUrl)}).</div>
   <div class="source">Configured via ${escapeHtml(sourceLabel)}.</div>
   <div class="bar" id="bar"><div id="bar-fill"></div></div>
   <div class="buttons">
@@ -55,7 +56,7 @@ export function renderInstallerHtml(resolution: InstallerConfigResolution | null
 <html>
 <head>
 <meta charset="utf-8" />
-<title>OpenWork Installer</title>
+<title>${escapeHtml(appName)} Installer</title>
 <style>
   :root { color-scheme: light; }
   html, body { height: 100%; margin: 0; }

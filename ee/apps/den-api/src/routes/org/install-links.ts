@@ -14,10 +14,11 @@ import { env } from "../../env.js"
 import { jsonValidator, orgRoleRoute, publicRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import { organizationCapabilityKeySchema, organizationHasCapability } from "../../organization-capabilities.js"
+import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { resolveInstallerArtifact } from "../../utils/installer-artifacts.js"
 import { appendStoredEntryToZip } from "../../utils/zip-append.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureInviteManager, getInvitationOrigin, orgAccessFailureStatus } from "./shared.js"
+import { ensureInviteManager, orgAccessFailureStatus } from "./shared.js"
 
 const INSTALL_LINK_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 60
 const INSTALL_CONFIG_RATE_LIMIT_MAX = 60
@@ -106,16 +107,25 @@ async function enforceRateLimit(headers: Headers, scope: string, maxRequests: nu
 }
 
 function installPageUrl(token: string) {
-  return new URL(`/install?token=${encodeURIComponent(token)}`, getInvitationOrigin()).toString()
+  return new URL(`/install?token=${encodeURIComponent(token)}`, env.betterAuthUrl).toString()
 }
 
-function buildInstallConfig(input: { organization: { name: string; logo: string | null }; request: Request }) {
+function organizationMetadataInput(value: unknown): Record<string, unknown> | string | null {
+  if (typeof value === "string" || value === null) {
+    return value
+  }
+  return typeof value === "object" && !Array.isArray(value) ? { ...value } : null
+}
+
+function buildInstallConfig(input: { organization: { name: string; logo: string | null; metadata: unknown }; request: Request }) {
+  const metadata = normalizeOrganizationMetadata(organizationMetadataInput(input.organization.metadata)).metadata
   return installConfigSchema.parse({
+    appName: typeof metadata.brandAppName === "string" ? metadata.brandAppName : "OpenWork",
     clientName: input.organization.name,
-    webUrl: getInvitationOrigin(),
+    webUrl: env.betterAuthUrl,
     apiUrl: resolvePublicOrigin(input.request, env.apiPublicUrl),
     requireSignin: true,
-    logoUrl: input.organization.logo ?? null,
+    logoUrl: typeof metadata.brandLogoUrl === "string" ? metadata.brandLogoUrl : input.organization.logo ?? null,
   })
 }
 

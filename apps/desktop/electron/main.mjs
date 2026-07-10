@@ -45,6 +45,7 @@ const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
 const APP_NAME =
   process.env.OPENWORK_ELECTRON_APP_NAME?.trim() ||
   (isDevMode ? "OpenWork - Dev" : "OpenWork");
+let currentDisplayAppName = APP_NAME;
 const APP_IDENTIFIER =
   process.env.OPENWORK_ELECTRON_APP_IDENTIFIER?.trim() ||
   (isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER);
@@ -1490,6 +1491,13 @@ const desktopCommandHandlers = {
         return null;
       }
   },
+  "__applyBrandAppName": async (event, ...args) => {
+      const requested = args[0] === null ? "" : String(args[0] ?? "").trim();
+      currentDisplayAppName = requested.slice(0, 64) || APP_NAME;
+      applicationMenu.setAppName(currentDisplayAppName);
+      mainWindow?.setTitle(currentDisplayAppName);
+      return { ok: true, appName: currentDisplayAppName };
+  },
   "__applyBrandIcon": async (event, ...args) => {
       const value = args[0] === null ? null : String(args[0] ?? "");
       return applyBrandIconUrl(value);
@@ -1727,7 +1735,7 @@ async function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 820,
-    title: APP_NAME,
+    title: currentDisplayAppName,
     show: false,
     ...windowAppearanceOptions,
     ...(windowIconImage && !windowIconImage.isEmpty() ? { icon: windowIconImage } : {}),
@@ -1746,18 +1754,14 @@ async function createMainWindow() {
   });
   applicationMenu.applyVisibility(mainWindow);
 
-  if (isDevMode) {
-    mainWindow.on("page-title-updated", (event) => {
-      event.preventDefault();
-      mainWindow?.setTitle(APP_NAME);
-    });
-    mainWindow.setTitle(APP_NAME);
-  }
+  mainWindow.on("page-title-updated", (event) => {
+    event.preventDefault();
+    mainWindow?.setTitle(currentDisplayAppName);
+  });
+  mainWindow.setTitle(currentDisplayAppName);
 
   mainWindow.once("ready-to-show", () => {
-    if (isDevMode) {
-      mainWindow?.setTitle(APP_NAME);
-    }
+    mainWindow?.setTitle(currentDisplayAppName);
     mainWindow?.show();
     flushPendingDeepLinks();
   });

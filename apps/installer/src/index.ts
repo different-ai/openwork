@@ -170,7 +170,7 @@ if (headless) {
   })
 
   const { config, source } = resolution
-  console.log(`OpenWork Installer — ${config.clientName}`)
+  console.log(`${config.appName} Installer — ${config.clientName}`)
   console.log(`[openwork-installer] Configured via ${installerConfigSourceLabel(source)}.`)
   const result = await runInstall(config, {
     dryRun,
@@ -196,6 +196,9 @@ const uiServer = await (process.platform === "win32" ? startChildInstallerServer
 })
 const ready = { url: uiServer.url, token: uiServer.token }
 process.on("exit", () => uiServer.stop())
+
+const uiResolution = await resolveOptionalInstallerConfig()
+const installerWindowTitle = `${uiResolution?.config.appName ?? "OpenWork"} Installer`
 
 async function installIsRunning(): Promise<boolean> {
   try {
@@ -232,7 +235,7 @@ try {
   const { Webview, SizeHint } = await import("webview-bun")
   const { lib } = await import("webview-bun/src/ffi")
   const webview = new Webview(false, { width: 420, height: 440, hint: SizeHint.FIXED })
-  webview.title = "OpenWork Installer"
+  webview.title = installerWindowTitle
   // The page's Exit button calls this bound global. Only terminate the native
   // run loop here — run() destroys the webview after the loop exits.
   // Destroying inside the callback frees the executing FFI trampoline and

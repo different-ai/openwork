@@ -212,6 +212,7 @@ export type DenOrgCapabilities = {
 export type DenOrganizationMetadata = {
   allowedDesktopVersions?: string[];
   requireSso?: boolean;
+  brandAppName?: string;
   brandLogoUrl?: string;
   brandIconUrl?: string;
   brandAccentColor?: string;

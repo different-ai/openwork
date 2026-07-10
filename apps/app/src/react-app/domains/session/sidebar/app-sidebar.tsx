@@ -38,6 +38,7 @@ import {
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { useBrandAppName, useBrandLogoUrl } from "../../cloud/brand-theme";
 
 import {
   Sidebar,
@@ -102,7 +103,6 @@ import {
   type SessionGroupDefinition,
 } from "./session-management-store";
 import { cn } from "@/lib/utils";
-import { useBrandLogoUrl } from "../../cloud/brand-theme";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
 
@@ -730,6 +730,8 @@ export function AppSidebar(props: AppSidebarProps) {
   };
 
   const brandLogoUrl = useBrandLogoUrl();
+  const brandAppName = useBrandAppName();
+  const hasManagedBrand = brandLogoUrl || brandAppName !== "OpenWork";
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -738,16 +740,19 @@ export function AppSidebar(props: AppSidebarProps) {
         className="mac:**:data-[sidebar=sidebar]:bg-transparent"
       >
         <div className="hidden h-14 mac:block mac:titlebar-drag"/>
-        {brandLogoUrl ? (
+        {hasManagedBrand ? (
           <div
             data-testid="brand-logo"
-            className="flex shrink-0 items-center px-3 pb-3 pt-2 mac:pt-0"
+            className="flex shrink-0 items-center gap-2 px-3 pb-3 pt-2 mac:pt-0"
           >
-            <img
-              src={brandLogoUrl}
-              alt="Organization logo"
-              className="h-9 max-h-9 w-auto max-w-[180px] object-contain object-left"
-            />
+            {brandLogoUrl ? (
+              <img
+                src={brandLogoUrl}
+                alt={`${brandAppName} logo`}
+                className="h-9 max-h-9 w-auto max-w-[140px] object-contain object-left"
+              />
+            ) : null}
+            <span className="truncate text-sm font-semibold" data-testid="brand-app-name">{brandAppName}</span>
           </div>
         ) : null}
         {props.onOpenSessionSearch ? (

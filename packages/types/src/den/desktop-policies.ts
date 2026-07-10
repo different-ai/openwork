@@ -148,6 +148,7 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     allowedDesktopVersions: z
       .array(z.string().trim().min(1).max(32))
       .optional(),
+    brandAppName: z.string().trim().min(1).max(64).optional(),
     brandLogoUrl: z.string().url().max(2048).optional(),
     brandIconUrl: z.string().url().max(2048).optional(),
     brandAccentColor: z.enum(brandAccentColorValues).optional(),
@@ -261,6 +262,12 @@ function normalizeBrandUrl(value: unknown): string | undefined {
   }
 }
 
+function normalizeBrandAppName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, 64) : undefined;
+}
+
 function normalizeBrandAccentColor(value: unknown): BrandAccentColor | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim().toLowerCase();
@@ -275,6 +282,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const allowedDesktopVersions = normalizeAllowedDesktopVersions(
     raw?.allowedDesktopVersions,
   );
+  const brandAppName = normalizeBrandAppName(raw?.brandAppName);
   const brandLogoUrl = normalizeBrandUrl(raw?.brandLogoUrl);
   const brandIconUrl = normalizeBrandUrl(raw?.brandIconUrl);
   const brandAccentColor = normalizeBrandAccentColor(raw?.brandAccentColor);
@@ -284,6 +292,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   return {
     ...policy,
     ...(allowedDesktopVersions !== undefined ? { allowedDesktopVersions } : {}),
+    ...(brandAppName !== undefined ? { brandAppName } : {}),
     ...(brandLogoUrl !== undefined ? { brandLogoUrl } : {}),
     ...(brandIconUrl !== undefined ? { brandIconUrl } : {}),
     ...(brandAccentColor !== undefined ? { brandAccentColor } : {}),

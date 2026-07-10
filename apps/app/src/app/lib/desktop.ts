@@ -380,6 +380,11 @@ export async function getDesktopFileIcon(target: string, size?: "small" | "norma
   return invokeElectronHelper("__getFileIcon", target, size);
 }
 
+export async function applyBrandAppName(appName: string | null): Promise<string> {
+  const result = await invokeElectronHelper("__applyBrandAppName", appName);
+  return result.appName;
+}
+
 export async function applyBrandIcon(url: string | null): Promise<boolean> {
   const apply = typeof window !== "undefined" ? window.__OPENWORK_ELECTRON__?.brandIcon?.apply : undefined;
   if (!apply) return false;
