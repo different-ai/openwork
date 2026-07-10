@@ -218,6 +218,13 @@
       "when": 1783392573893,
       "tag": "0031_telemetry_session_dimension",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "5",
+      "when": 1783659724738,
+      "tag": "0032_new_outlaw_kid",
+      "breakpoints": true
     }
   ]
 }

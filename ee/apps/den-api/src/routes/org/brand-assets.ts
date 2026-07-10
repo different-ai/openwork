@@ -6,13 +6,13 @@ import { z } from "zod"
 import {
   BRAND_ASSET_REQUEST_MAX_BYTES,
   buildManagedBrandAssetMetadata,
-  createFileBrandAssetStorage,
   validateAndNormalizeBrandAsset,
   verifyBrandAssetSignature,
   type BrandAssetKind,
   type BrandAssetStorage,
   type BrandAssetStorageKey,
 } from "../../brand-assets.js"
+import { databaseBrandAssetStorage } from "../../brand-asset-storage.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
 import { forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -49,8 +49,6 @@ const invalidAssetSchema = z.object({
   message: z.string(),
 }).meta({ ref: "InvalidManagedBrandAssetError" })
 
-const defaultStorage = createFileBrandAssetStorage(env.brandAssetsDir)
-
 function publicBaseUrl() {
   return env.apiPublicUrl ?? `http://127.0.0.1:${env.port}`
 }
@@ -80,7 +78,7 @@ function normalizeAssetRoute(input: {
 async function uploadedAsset(input: {
   file: File
   kind: BrandAssetKind
-  organizationId: string
+  organizationId: BrandAssetStorageKey["organizationId"]
   storage: BrandAssetStorage
   assetPublicBaseUrl: string
   signingSecret: string
@@ -113,7 +111,7 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
   app: Hono<T>,
   options: { storage?: BrandAssetStorage; publicBaseUrl?: string; signingSecret?: string } = {},
 ) {
-  const storage = options.storage ?? defaultStorage
+  const storage = options.storage ?? databaseBrandAssetStorage
   const assetPublicBaseUrl = options.publicBaseUrl ?? publicBaseUrl()
   const signingSecret = options.signingSecret ?? env.betterAuthSecret
 

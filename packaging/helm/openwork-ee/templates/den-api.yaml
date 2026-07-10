@@ -60,10 +60,7 @@ spec:
       {{- if not (or .Values.installerArtifacts.existingClaim .Values.installerArtifacts.hostPath) }}
       {{- fail "installerArtifacts.existingClaim or installerArtifacts.hostPath is required when installerArtifacts.enabled=true" }}
       {{- end }}
-      {{- end }}
-      {{- if or .Values.installerArtifacts.enabled .Values.brandAssets.enabled }}
       volumes:
-        {{- if .Values.installerArtifacts.enabled }}
         - name: installer-artifacts
           {{- if .Values.installerArtifacts.existingClaim }}
           persistentVolumeClaim:
@@ -73,12 +70,6 @@ spec:
             path: {{ .Values.installerArtifacts.hostPath | quote }}
             type: Directory
           {{- end }}
-        {{- end }}
-        {{- if .Values.brandAssets.enabled }}
-        - name: brand-assets
-          persistentVolumeClaim:
-            claimName: {{ default (printf "%s-brand-assets" (include "openwork-ee.fullname" .)) .Values.brandAssets.existingClaim | quote }}
-        {{- end }}
       {{- end }}
       containers:
         - name: den-api
@@ -87,18 +78,11 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.denApi.containerPort }}
-          {{- if or .Values.installerArtifacts.enabled .Values.brandAssets.enabled }}
+          {{- if .Values.installerArtifacts.enabled }}
           volumeMounts:
-            {{- if .Values.installerArtifacts.enabled }}
             - name: installer-artifacts
               mountPath: {{ .Values.installerArtifacts.mountPath | quote }}
               readOnly: true
-            {{- end }}
-            {{- if .Values.brandAssets.enabled }}
-            - name: brand-assets
-              mountPath: {{ .Values.brandAssets.mountPath | quote }}
-              readOnly: false
-            {{- end }}
           {{- end }}
           envFrom:
             - configMapRef:
@@ -111,10 +95,6 @@ spec:
             {{- if .Values.installerArtifacts.enabled }}
             - name: OPENWORK_INSTALLER_ARTIFACTS_DIR
               value: {{ .Values.installerArtifacts.mountPath | quote }}
-            {{- end }}
-            {{- if .Values.brandAssets.enabled }}
-            - name: DEN_BRAND_ASSETS_DIR
-              value: {{ .Values.brandAssets.mountPath | quote }}
             {{- end }}
             {{- range $key, $value := .Values.denApi.env }}
             - name: {{ $key }}

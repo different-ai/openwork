@@ -55,7 +55,6 @@ mock.module("../src/db.js", () => ({
 mock.module("../src/env.js", () => ({
   env: {
     apiPublicUrl: "https://den.examplecorp.test",
-    brandAssetsDir: "/tmp/unused-brand-assets",
     port: 8788,
   },
 }))

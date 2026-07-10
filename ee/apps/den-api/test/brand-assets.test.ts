@@ -1,22 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises"
-import os from "node:os"
-import path from "node:path"
-import { afterEach, expect, test } from "bun:test"
+import { expect, test } from "bun:test"
 import sharp from "sharp"
 import {
   BRAND_ASSET_MAX_BYTES,
   brandAssetVersion,
   buildManagedBrandAssetMetadata,
-  createFileBrandAssetStorage,
   validateAndNormalizeBrandAsset,
   type BrandAssetStorageKey,
 } from "../src/brand-assets.js"
-
-const temporaryDirectories: string[] = []
-
-afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
-})
 
 async function imageBytes(width: number, height: number, format: "png" | "jpeg" = "png") {
   const image = sharp({
@@ -80,10 +70,7 @@ test("rejects type spoofing, oversized requests, and the wrong geometry", async 
   expect(wideIcon).toMatchObject({ ok: false, reason: "invalid-aspect" })
 })
 
-test("stores content-addressed bytes under an immutable Den URL", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "openwork-brand-assets-"))
-  temporaryDirectories.push(directory)
-  const storage = createFileBrandAssetStorage(directory)
+test("builds an immutable content-addressed Den URL", async () => {
   const asset = await validateAndNormalizeBrandAsset({
     kind: "icon",
     bytes: await imageBytes(256, 256),
@@ -107,16 +94,11 @@ test("stores content-addressed bytes under an immutable Den URL", async () => {
     extension: metadata.extension,
   }
 
-  await storage.put(key, asset.bytes)
-  await storage.put(key, asset.bytes)
-  const stored = await storage.read(key)
-
   expect(metadata.version).toBe(brandAssetVersion(asset.bytes))
   const assetUrl = new URL(metadata.url)
   expect(`${assetUrl.origin}${assetUrl.pathname}`).toBe(`https://den.examplecorp.test/v1/brand-assets/org_example_corp/icon/${metadata.version}.png`)
   expect(assetUrl.searchParams.get("signature")).toMatch(/^[A-Za-z0-9_-]{43}$/)
-  expect(stored).not.toBeNull()
-  expect(Array.from(new Uint8Array(stored ?? new ArrayBuffer(0)))).toEqual(Array.from(new Uint8Array(asset.bytes)))
+  expect(key).toMatchObject({ organizationId: "org_example_corp", kind: "icon", extension: "png" })
 })
 
 test("different image bytes produce a new asset version and URL", async () => {

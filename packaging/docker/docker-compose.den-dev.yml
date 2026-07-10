@@ -66,8 +66,6 @@ services:
         condition: service_healthy
     ports:
       - "${DEN_API_PORT:-8788}:8788"
-    volumes:
-      - den-brand-assets:/var/lib/openwork/brand-assets
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8788/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
@@ -91,7 +89,6 @@ services:
       DEN_MCP_RESOURCE_URL: ${DEN_MCP_RESOURCE_URL:-http://localhost:8788/mcp}
       DEN_MCP_ADDITIONAL_RESOURCES: ${DEN_MCP_ADDITIONAL_RESOURCES:-}
       DEN_API_PUBLIC_URL: ${DEN_API_PUBLIC_URL:-http://localhost:8788}
-      DEN_BRAND_ASSETS_DIR: /var/lib/openwork/brand-assets
       DEN_BETTER_AUTH_TRUSTED_ORIGINS: ${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-}
       PORT: "8788"
       CORS_ORIGINS: ${DEN_CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005,http://0.0.0.0:3005,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8788,http://127.0.0.1:8788}
@@ -141,4 +138,3 @@ services:
 
 volumes:
   den-mysql-data:
-  den-brand-assets:

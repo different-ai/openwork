@@ -1,5 +1,5 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto"
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { createHash, createHmac, timingSafeEqual } from "node:crypto"
+import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import path from "node:path"
 import sharp from "sharp"
 import type { ManagedBrandAssetMetadata } from "./organization-limits.js"
@@ -31,7 +31,7 @@ type NormalizedBrandAsset = {
 export type BrandAssetValidationResult = BrandAssetFailure | NormalizedBrandAsset
 
 export type BrandAssetStorageKey = {
-  organizationId: string
+  organizationId: DenTypeId<"organization">
   kind: BrandAssetKind
   version: string
   extension: BrandAssetExtension
@@ -142,42 +142,6 @@ export async function validateAndNormalizeBrandAsset(input: {
   }
 }
 
-function storagePath(root: string, key: BrandAssetStorageKey) {
-  return path.join(root, key.organizationId, key.kind, `${key.version}.${key.extension}`)
-}
-
-function isMissingFile(error: unknown) {
-  return error instanceof Error && "code" in error && error.code === "ENOENT"
-}
-
-export function createFileBrandAssetStorage(root: string): BrandAssetStorage {
-  return {
-    async put(key, bytes) {
-      const destination = storagePath(root, key)
-      const temporary = `${destination}.${process.pid}-${randomUUID()}.tmp`
-      await mkdir(path.dirname(destination), { recursive: true })
-      try {
-        await writeFile(temporary, new Uint8Array(bytes), { flag: "wx" })
-        await rename(temporary, destination)
-      } catch (error) {
-        await rm(temporary, { force: true }).catch(() => undefined)
-        if (isMissingFile(error)) throw error
-        const existing = await readFile(destination).catch(() => null)
-        const expected = new Uint8Array(bytes)
-        if (!existing || existing.byteLength !== expected.byteLength || existing.some((value, index) => value !== expected[index])) throw error
-      }
-    },
-    async read(key) {
-      try {
-        return Uint8Array.from(await readFile(storagePath(root, key))).buffer
-      } catch (error) {
-        if (isMissingFile(error)) return null
-        throw error
-      }
-    },
-  }
-}
-
 export function brandAssetVersion(bytes: ArrayBuffer) {
   return createHash("sha256").update(new Uint8Array(bytes)).digest("hex")
 }
@@ -199,7 +163,7 @@ export function verifyBrandAssetSignature(key: BrandAssetStorageKey, signature: 
 }
 
 export function buildManagedBrandAssetMetadata(input: {
-  organizationId: string
+  organizationId: DenTypeId<"organization">
   kind: BrandAssetKind
   asset: NormalizedBrandAsset
   originalName: string

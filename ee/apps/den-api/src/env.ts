@@ -49,7 +49,6 @@ const EnvSchema = z.object({
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   DEN_API_PUBLIC_URL: z.string().optional(),
-  DEN_BRAND_ASSETS_DIR: z.string().optional(),
   OPENWORK_INSTALLER_ARTIFACTS_DIR: z.string().optional(),
   OPENWORK_INSTALLER_RELEASE_TAG: z.string().optional(),
   OPENWORK_INSTALLER_RELEASE_REPO: z.string().optional(),
@@ -359,7 +358,6 @@ export const env = {
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
   corsOrigins,
   apiPublicUrl: optionalString(parsed.DEN_API_PUBLIC_URL),
-  brandAssetsDir: optionalString(parsed.DEN_BRAND_ASSETS_DIR) ?? path.join(os.homedir(), ".openwork-den", "brand-assets"),
   installerArtifactsDir: optionalString(parsed.OPENWORK_INSTALLER_ARTIFACTS_DIR),
   // Generic installer release assets (release-generic-installer.yml): the
   // release tag to download from, defaulting to the pinned app release this
