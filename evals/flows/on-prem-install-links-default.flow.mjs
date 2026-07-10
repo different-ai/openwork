@@ -68,6 +68,12 @@ export default {
             await ctx.waitForText("User backoffice", { timeoutMs: 30_000 });
             await clickText(ctx, "Organizations");
             await ctx.waitForText("Install links", { timeoutMs: 30_000 });
+            await ctx.eval(`(() => {
+              const row = [...document.querySelectorAll('[data-testid^="admin-org-row-"]')]
+                .find((candidate) => candidate.textContent?.includes(${JSON.stringify(harness.ORGANIZATION_NAME)}));
+              row?.scrollIntoView({ block: 'center' });
+              return Boolean(row);
+            })()`);
           },
           assert: async () => {
             const raw = await harness.denApiFetch(

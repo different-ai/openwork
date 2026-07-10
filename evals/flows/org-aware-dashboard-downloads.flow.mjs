@@ -304,6 +304,7 @@ export default {
             await uiSignIn(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
             await navigateTo(ctx, `${DEN_WEB_URL}/dashboard`);
             await ctx.waitForText(`Download OpenWork for ${ORGANIZATION_NAME}`, { timeoutMs: 30_000 });
+            await ctx.eval("document.querySelector('[data-testid=\"organization-download-card\"]')?.scrollIntoView({ block: 'center' }); true");
           },
           assert: async () => {
             await ctx.expectText(`Download OpenWork for ${ORGANIZATION_NAME}`);
@@ -364,6 +365,7 @@ export default {
             await navigateTo(ctx, `${DEN_WEB_URL}/dashboard`);
             await ctx.waitForText("WORKSPACE MEMBER", { timeoutMs: 30_000 });
             await ctx.waitForText("Download for this workspace", { timeoutMs: 30_000 });
+            await ctx.eval("document.querySelector('[data-testid=\"organization-download-card\"]')?.scrollIntoView({ block: 'center' }); true");
           },
           assert: async () => {
             await ctx.expectText(`Download OpenWork for ${ORGANIZATION_NAME}`);
