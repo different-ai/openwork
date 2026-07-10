@@ -20,7 +20,7 @@ function withApprovedProof(ctx, index, claim) {
 async function clickText(ctx, text) {
   const clicked = await ctx.eval(`(() => {
     const element = [...document.querySelectorAll('button, a')]
-      .find((candidate) => candidate.textContent?.trim() === ${JSON.stringify(text)});
+      .find((candidate) => candidate.textContent?.trim().startsWith(${JSON.stringify(text)}));
     element?.click();
     return Boolean(element);
   })()`);
