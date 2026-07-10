@@ -7,6 +7,7 @@ import {
   denFetch,
   ensureRendererMounted,
   ensureWorkspaceReady,
+  getPanelTargetId,
   memberRefresh,
   openAdminPanel,
   panelEval,
@@ -20,9 +21,12 @@ import {
 // Narration is loaded from the approved script (evals/voiceovers/managed-brand-asset-uploads.md).
 // The runner fails this flow if the narration drifts from that script.
 const vo = await loadVoiceoverParagraphs("managed-brand-asset-uploads");
+const ADMIN_PASSWORD = "OpenWorkDemo123!";
+const RAW_REAUTH_MESSAGE = "For security, confirm it's you before changing workspace settings.";
 
 let firstAssets = null;
 let firstIconBytes = null;
+let adminPanelTargetId = null;
 
 function orgSettingsUrl(ctx) {
   return `${ctx.env.OPENWORK_EVAL_DEN_WEB_URL.replace(/\/$/, "")}${ORG_SETTINGS_PATH}`;
@@ -77,6 +81,46 @@ async function ensureDesktopSession(ctx) {
     const status = await ctx.control("auth.status", {}).catch(() => null);
     return status?.status === "signed_in" ? status : null;
   }, { timeoutMs: 30_000 });
+}
+
+async function stageBrandUploadReauthResponse(ctx) {
+  await panelEval(ctx, `(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const [input, init] = args;
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      const method = String(init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      if (method === 'POST' && url.includes('/api/den/v1/org/brand-assets')) {
+        window.fetch = originalFetch;
+        window.__openworkBrandReauthIntercepted = true;
+        return new Response(${JSON.stringify(JSON.stringify({
+          error: "reauth",
+          reason: "fresh_auth_required",
+          message: RAW_REAUTH_MESSAGE,
+        }))}, {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return originalFetch(...args);
+    };
+    return true;
+  })()`);
+}
+
+async function verifyPasswordInPanel(ctx) {
+  await panelEval(ctx, `(() => {
+    const input = document.querySelector('input[autocomplete="current-password"]');
+    if (!(input instanceof HTMLInputElement)) throw new Error('Reauth password input not found');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (!setter) throw new Error('Native password setter not found');
+    setter.call(input, ${JSON.stringify(ADMIN_PASSWORD)});
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const button = Array.from(document.querySelectorAll('button')).find((candidate) => candidate.textContent?.trim() === 'Verify password');
+    if (!button || button.disabled) throw new Error('Verify password button not available');
+    button.click();
+    return true;
+  })()`);
 }
 
 async function navigateBrandSettings(ctx) {
@@ -189,6 +233,7 @@ export default {
         await openAdminPanel(ctx);
         await adminEnsureFreshAuth(ctx);
         await navigateBrandSettings(ctx);
+        adminPanelTargetId = await getPanelTargetId(ctx);
       },
     },
     {
@@ -215,7 +260,8 @@ export default {
           screenshot: {
             name: "frame-1-local-brand-files",
             sandboxCapture: true,
-            textTargetUrlIncludes: ORG_SETTINGS_PATH,
+            targetId: adminPanelTargetId,
+            textTargetId: adminPanelTargetId,
             requireText: ["Brand Appearance", "Ready to upload: example-corp-logo.png", "Ready to upload: example-corp-icon.png"],
           },
         });
@@ -232,6 +278,11 @@ export default {
               timeoutMs: 10_000,
               label: "square-icon validation message",
             });
+            await panelEval(ctx, `(() => {
+              document.querySelector('[data-testid="brand-asset-error"]')?.scrollIntoView({ block: 'center' });
+              return true;
+            })()`);
+            await sleep(500);
           },
           assert: async () => {
             const state = await panelEval(ctx, `(() => ({
@@ -247,7 +298,8 @@ export default {
           screenshot: {
             name: "frame-2-validation-and-previews",
             sandboxCapture: true,
-            textTargetUrlIncludes: ORG_SETTINGS_PATH,
+            targetId: adminPanelTargetId,
+            textTargetId: adminPanelTargetId,
             requireText: ["Ready to upload", "Use a square image for the app icon."],
           },
         });
@@ -256,12 +308,59 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        await ctx.prove("Saving stores immutable assets in the Example Corp Den for members", {
+        await ctx.prove("A stale Brand Appearance save opens the security check without leaking the server response", {
           voiceover: vo[2],
           action: async () => {
             await selectGeneratedAsset(ctx, "icon", "initial");
             await waitForReadyDrafts(ctx);
+            await stageBrandUploadReauthResponse(ctx);
             await clickSaveSettings(ctx);
+            await waitForPanel(ctx, `(() => {
+              const dialog = document.querySelector('[role="dialog"]');
+              const passwordInput = dialog?.querySelector('input[autocomplete="current-password"]');
+              return Boolean(dialog && passwordInput && dialog.textContent?.includes("Confirm it's you to continue"));
+            })()`, { timeoutMs: 30_000, label: "Brand Appearance password reauth dialog" });
+          },
+          assert: async () => {
+            const state = await panelEval(ctx, `(() => {
+              const dialog = document.querySelector('[role="dialog"]');
+              const pageText = Array.from(document.body.children)
+                .filter((element) => !element.querySelector('[role="dialog"]'))
+                .map((element) => element.textContent ?? '')
+                .join(' ');
+              return {
+                dialogText: dialog?.textContent ?? '',
+                rawMessageOutsideDialog: pageText.includes(${JSON.stringify(RAW_REAUTH_MESSAGE)}),
+                interceptedReauth: window.__openworkBrandReauthIntercepted === true,
+                selectedLogo: document.querySelector('#brand-logo-upload')?.files?.[0]?.name ?? null,
+                selectedIcon: document.querySelector('#brand-icon-upload')?.files?.[0]?.name ?? null,
+              };
+            })()`);
+            ctx.assert(state.dialogText.includes("Confirm it's you to continue"), `Reauth dialog was missing: ${JSON.stringify(state)}`);
+            ctx.assert(state.dialogText.includes("Signing in as"), `Polished account context was missing: ${JSON.stringify(state)}`);
+            ctx.assert(!state.rawMessageOutsideDialog, `Raw reauth response leaked into the page: ${JSON.stringify(state)}`);
+            ctx.assert(state.interceptedReauth, `The brand upload did not receive the staged production reauth response: ${JSON.stringify(state)}`);
+            ctx.assert(state.selectedLogo === "example-corp-logo.png" && state.selectedIcon === "example-corp-icon.png", `Selected files were lost: ${JSON.stringify(state)}`);
+            ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "The polished security dialog replaces the raw reauth response and both selected files remain queued", actual: state });
+          },
+          screenshot: {
+            name: "frame-3-brand-upload-security-check",
+            sandboxCapture: true,
+            targetId: adminPanelTargetId,
+            textTargetId: adminPanelTargetId,
+            requireText: ["SECURITY CHECK", "Confirm it's you to continue", "SIGNING IN AS", "Verify password"],
+            rejectText: [RAW_REAUTH_MESSAGE],
+          },
+        });
+      },
+    },
+    {
+      name: "Frame 4",
+      run: async (ctx) => {
+        await ctx.prove("Verifying once resumes the queued brand upload without reselecting files", {
+          voiceover: vo[3],
+          action: async () => {
+            await verifyPasswordInPanel(ctx);
             firstAssets = await waitUntil(ctx, "managed asset metadata", async () => {
               const assets = await readManagedAssets(ctx);
               return assets.logo?.version && assets.icon?.version ? assets : null;
@@ -294,19 +393,40 @@ export default {
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Both assets have signed content-addressed Den URLs; unsigned access is rejected and signed responses are immutable", actual: { logo: firstAssets.logo.url, icon: firstAssets.icon.url } });
           },
           screenshot: {
-            name: "frame-3-saved-in-example-corp-den",
+            name: "frame-4-reauthenticated-upload-saved",
             sandboxCapture: true,
-            textTargetUrlIncludes: ORG_SETTINGS_PATH,
+            targetId: adminPanelTargetId,
+            textTargetId: adminPanelTargetId,
             requireText: ["Stored in this Den"],
           },
         });
       },
     },
     {
-      name: "Frame 4",
+      name: "Frame 5",
+      run: async (ctx) => {
+        await ctx.prove("The saved assets are available to every member through the Example Corp Den", {
+          voiceover: vo[4],
+          assert: async () => {
+            ctx.assert(firstAssets?.logoUrl === firstAssets?.logo?.url, "Wordmark URL and managed metadata diverged.");
+            ctx.assert(firstAssets?.iconUrl === firstAssets?.icon?.url, "Icon URL and managed metadata diverged.");
+            ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Both managed asset URLs were committed to the organization after reauth", actual: { logo: firstAssets.logo.url, icon: firstAssets.icon.url } });
+          },
+          screenshot: {
+            name: "frame-5-saved-in-example-corp-den",
+            sandboxCapture: true,
+            targetId: adminPanelTargetId,
+            textTargetId: adminPanelTargetId,
+            requireText: ["Stored in this Den"],
+          },
+        });
+      },
+    },
+    {
+      name: "Frame 6",
       run: async (ctx) => {
         await ctx.prove("A member desktop loads both brand URLs only from its Den", {
-          voiceover: vo[3],
+          voiceover: vo[5],
           action: async () => {
             await ctx.eval("performance.clearResourceTimings()");
             await memberRefresh(ctx);
@@ -335,18 +455,18 @@ export default {
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Sidebar wordmark and native icon source URLs use only the configured Den API origin", actual: { desktop, iconState, denOrigin } });
           },
           screenshot: {
-            name: "frame-4-member-desktop-den-branding",
+            name: "frame-6-member-desktop-den-branding",
             requireText: ["Search sessions"],
           },
         });
       },
     },
     {
-      name: "Frame 5",
+      name: "Frame 7",
       run: async (ctx) => {
         let replacement = null;
         await ctx.prove("Replacing an asset creates a new immutable version without invalidating the old bytes", {
-          voiceover: vo[4],
+          voiceover: vo[6],
           action: async () => {
             await openAdminPanel(ctx);
             await adminEnsureFreshAuth(ctx);
@@ -382,19 +502,20 @@ export default {
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Replacement has a new SHA-256 URL while both old and new immutable bytes remain readable", actual: { oldVersion: firstAssets.icon.version, newVersion: replacement.version, oldSha256: oldResult.sha256, newSha256: newResult.sha256 } });
           },
           screenshot: {
-            name: "frame-5-versioned-replacement",
+            name: "frame-7-versioned-replacement",
             sandboxCapture: true,
-            textTargetUrlIncludes: ORG_SETTINGS_PATH,
+            targetId: adminPanelTargetId,
+            textTargetId: adminPanelTargetId,
             requireText: ["Stored in this Den"],
           },
         });
       },
     },
     {
-      name: "Frame 6",
+      name: "Frame 8",
       run: async (ctx) => {
         await ctx.prove("Clearing managed assets restores default desktop branding", {
-          voiceover: vo[5],
+          voiceover: vo[7],
           action: async () => {
             await clearManagedAssetsInPanel(ctx);
             await sleep(250);
@@ -418,7 +539,7 @@ export default {
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Desktop config has no managed URLs, the sidebar wordmark is gone, and native icon state is default", actual: { brandLogoUrl: config.body.brandLogoUrl ?? null, brandIconUrl: config.body.brandIconUrl ?? null, iconState } });
           },
           screenshot: {
-            name: "frame-6-default-branding-restored",
+            name: "frame-8-default-branding-restored",
             requireText: ["Search sessions"],
           },
         });

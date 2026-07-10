@@ -6,10 +6,14 @@ This proof covers Den-managed wordmark and square-icon uploads for an on-prem de
 
 2. OpenWork previews both files and validates their format, dimensions, and intended use.
 
-3. Saving makes the assets available to every member through the Example Corp deployment.
+3. If the owner's sign-in is no longer recent, saving opens a clear security check instead of exposing a raw server error.
 
-4. A teammate’s desktop loads the branding without contacting a public image CDN.
+4. The owner verifies once, and OpenWork resumes the pending upload automatically without making them choose the files again.
 
-5. Replacing an image produces a versioned asset, so desktops receive the new bytes instead of stale cache.
+5. The saved assets are now available to every member through the Example Corp deployment.
 
-6. Clearing the assets restores default branding.
+6. A teammate’s desktop loads the branding without contacting a public image CDN.
+
+7. Replacing an image produces a versioned asset, so desktops receive the new bytes instead of stale cache.
+
+8. Clearing the assets restores default branding.

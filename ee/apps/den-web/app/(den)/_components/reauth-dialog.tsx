@@ -1,5 +1,6 @@
 "use client";
 
+import { ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
@@ -312,82 +313,114 @@ export function ReauthDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-[2px]">
       <div
         role="dialog"
         aria-modal="true"
+        aria-labelledby="reauth-dialog-title"
         // Test seam: the reauth popup eval matches the completion message to this nonce.
         data-reauth-nonce={nonce}
-        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        className="w-full max-w-[460px] overflow-hidden rounded-[28px] border border-white/80 bg-white shadow-[0_32px_100px_-28px_rgba(15,23,42,0.55)]"
       >
-        <div className="grid gap-3">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">Security check</p>
-          <div className="grid gap-2">
-            <h2 className="text-[24px] font-semibold tracking-[-0.03em] text-gray-950">Confirm it's you to continue</h2>
-            <p className="text-[15px] leading-7 text-gray-600">
-              Changing workspace settings requires a recent sign-in. Choose a sign-in method below; after you confirm, OpenWork retries the pending action automatically.
+        <div className="relative border-b border-slate-100 bg-gradient-to-br from-slate-50 via-white to-indigo-50/60 px-6 pb-6 pt-7">
+          <button
+            type="button"
+            aria-label="Close security check"
+            className="absolute right-4 top-4 flex size-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-white hover:text-slate-700"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            <X size={17} aria-hidden="true" />
+          </button>
+          <div className="mb-5 flex size-12 items-center justify-center rounded-2xl border border-indigo-100 bg-white text-indigo-600 shadow-sm">
+            <ShieldCheck size={24} strokeWidth={1.8} aria-hidden="true" />
+          </div>
+          <div className="grid gap-2 pr-8">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-500">Security check</p>
+            <h2 id="reauth-dialog-title" className="text-[25px] font-semibold tracking-[-0.035em] text-slate-950">
+              Confirm it's you to continue
+            </h2>
+            <p className="text-[14px] leading-6 text-slate-600">
+              Changing workspace settings requires a recent sign-in. OpenWork retries the pending action automatically after you confirm.
             </p>
           </div>
         </div>
 
-        {error ? (
-          <div className="mt-5 rounded-[18px] border border-red-200 bg-red-50 px-4 py-3 text-[14px] text-red-700">
-            {error}
-          </div>
-        ) : null}
-
-        <div className="mt-6 grid gap-4">
-          {loadingMethods ? (
-            <div className="rounded-[18px] border border-gray-200 bg-gray-50 px-4 py-3 text-[14px] text-gray-500">
-              Checking available sign-in methods...
+        <div className="p-6">
+          {user?.email ? (
+            <div className="mb-5 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[12px] font-semibold uppercase text-white">
+                {user.email.slice(0, 1)}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-400">Signing in as</p>
+                <p className="truncate text-[13px] font-medium text-slate-700">{user.email}</p>
+              </div>
             </div>
           ) : null}
 
-          {hasManagedOrgSignIn ? (
-            <DenButton onClick={continueSso} loading={busy || loadingMethods} disabled={!ssoUrl || busy || loadingMethods}>
-              Continue with organization SSO
-            </DenButton>
+          {error ? (
+            <div className="mb-5 rounded-[18px] border border-red-200 bg-red-50 px-4 py-3 text-[14px] text-red-700">
+              {error}
+            </div>
           ) : null}
 
-          {socialProviders.map((provider) => {
-            const primarySocial = !hasManagedOrgSignIn && (provider === "google" || socialProviders.length === 1);
-            return (
-              <button
-                key={provider}
-                type="button"
-                className={buttonVariants({ variant: primarySocial ? "primary" : "secondary", className: "w-full" })}
-                disabled={busy}
-                onClick={() => void continueSocial(provider)}
-              >
-                Continue with {getSocialLabel(provider)}
-              </button>
-            );
-          })}
+          <div className="grid gap-4">
+            {loadingMethods ? (
+              <div className="rounded-[18px] border border-gray-200 bg-gray-50 px-4 py-3 text-[14px] text-gray-500">
+                Checking available sign-in methods...
+              </div>
+            ) : null}
 
-          {hasPassword ? (
-            <form className="grid gap-3" onSubmit={submitPassword}>
-              <label className="grid gap-2">
-                <span className="text-[13px] font-medium text-gray-700">Password for {user?.email ?? "your account"}</span>
-                <DenInput
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  autoComplete="current-password"
-                  disabled={busy}
-                  required
-                />
-              </label>
-              <DenButton type="submit" loading={busy} disabled={!password.trim()}>
-                Verify password
+            {hasManagedOrgSignIn ? (
+              <DenButton className="w-full" onClick={continueSso} loading={busy || loadingMethods} disabled={!ssoUrl || busy || loadingMethods}>
+                Continue with organization SSO
               </DenButton>
-            </form>
-          ) : null}
-        </div>
+            ) : null}
 
-        <div className="mt-6 flex justify-end">
-          <DenButton variant="secondary" onClick={onCancel} disabled={busy}>
+            {socialProviders.map((provider) => {
+              const primarySocial = !hasManagedOrgSignIn && (provider === "google" || socialProviders.length === 1);
+              return (
+                <button
+                  key={provider}
+                  type="button"
+                  className={buttonVariants({ variant: primarySocial ? "primary" : "secondary", className: "w-full" })}
+                  disabled={busy}
+                  onClick={() => void continueSocial(provider)}
+                >
+                  Continue with {getSocialLabel(provider)}
+                </button>
+              );
+            })}
+
+            {hasPassword ? (
+              <form className="grid gap-3" onSubmit={submitPassword}>
+                <label className="grid gap-2">
+                  <span className="text-[13px] font-medium text-gray-700">Password</span>
+                  <DenInput
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete="current-password"
+                    disabled={busy}
+                    required
+                  />
+                </label>
+                <DenButton className="w-full" type="submit" loading={busy} disabled={!password.trim()}>
+                  Verify password
+                </DenButton>
+              </form>
+            ) : null}
+          </div>
+
+          <button
+            type="button"
+            className="mt-5 w-full rounded-full py-2 text-[13px] font-medium text-slate-500 transition-colors hover:text-slate-800 disabled:opacity-60"
+            onClick={onCancel}
+            disabled={busy}
+          >
             Cancel
-          </DenButton>
+          </button>
         </div>
       </div>
     </div>

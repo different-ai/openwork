@@ -2,7 +2,7 @@
 
 import { Check, Copy, ImageUp, Pencil, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { getAllowedDesktopVersionsFromMetadata, getManagedBrandAssetFromMetadata, getRequireSsoFromMetadata, parseOrganizationMetadata, type DenManagedBrandAsset } from "../../_lib/den-org";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
@@ -286,6 +286,7 @@ export function OrgSettingsScreen() {
     orgBusy,
     orgError,
     mutationBusy,
+    runReauthableAction,
     updateOrganizationSettings,
   } = useOrgDashboard();
   const [orgNameDraft, setOrgNameDraft] = useState("");
@@ -564,20 +565,27 @@ export function OrgSettingsScreen() {
 
   async function uploadBrandAssetDrafts() {
     if (!brandLogoDraft && !brandIconDraft) return;
-    const body = new FormData();
-    if (brandLogoDraft) body.set("logo", brandLogoDraft.file);
-    if (brandIconDraft) body.set("icon", brandIconDraft.file);
 
     setBrandAssetUploadBusy(true);
     try {
-      const { response, payload } = await requestJson(
-        "/v1/org/brand-assets",
-        { method: "POST", body },
-        30000,
-      );
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Could not upload brand images (${response.status}).`));
-      }
+      await runReauthableAction("upload-brand-assets", async () => {
+        const body = new FormData();
+        if (brandLogoDraft) body.set("logo", brandLogoDraft.file);
+        if (brandIconDraft) body.set("icon", brandIconDraft.file);
+
+        const { response, payload } = await requestJson(
+          "/v1/org/brand-assets",
+          { method: "POST", body },
+          30000,
+        );
+        if (!response.ok) {
+          throw getRequestError(
+            payload,
+            response,
+            `Could not upload brand images (${response.status}).`,
+          );
+        }
+      });
     } finally {
       setBrandAssetUploadBusy(false);
     }

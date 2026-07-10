@@ -106,6 +106,14 @@ async function panelEval(ctx, expression, options = {}) {
   return withPanelClient(ctx, (client) => evaluate(client, expression, options));
 }
 
+async function getPanelTargetId(ctx) {
+  const target = await waitUntil(ctx, "built-in browser panel CDP target", () => findPanelTarget(ctx), {
+    timeoutMs: 30_000,
+    intervalMs: 250,
+  });
+  return target.id;
+}
+
 async function waitForPanel(ctx, expression, { timeoutMs = 20_000, label = expression } = {}) {
   return waitUntil(ctx, label, () => panelEval(ctx, expression, { awaitPromise: true }), {
     timeoutMs,
@@ -442,6 +450,7 @@ export {
   denFetch,
   ensureRendererMounted,
   ensureWorkspaceReady,
+  getPanelTargetId,
   memberRefresh,
   navigateAdminOrgSettings,
   openAdminPanel,
