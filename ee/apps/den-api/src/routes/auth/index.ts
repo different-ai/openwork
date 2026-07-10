@@ -16,7 +16,6 @@ import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, tokenRoute } from "../../middleware/index.js"
 import { emptyResponse, jsonResponse } from "../../openapi.js"
 import { getSingletonSsoStatus } from "../../orgs.js"
-import { publicRequestUrl } from "../../request-url.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import { revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
@@ -214,28 +213,6 @@ async function handleMcpClientRegistrationRequest(request: Request, path: string
   return rewritten instanceof Response ? rewritten : auth.handler(rewritten)
 }
 
-async function rewriteMetadataOrigin(response: Response, origin: string) {
-  const metadata = await response.json() as Record<string, unknown>
-  const headers = new Headers(response.headers)
-  headers.delete("content-length")
-  headers.set("content-type", "application/json")
-
-  for (const [key, value] of Object.entries(metadata)) {
-    if (typeof value === "string") {
-      metadata[key] = value.replace(env.betterAuthUrl, origin)
-    }
-  }
-
-  return new Response(JSON.stringify(metadata), {
-    status: response.status,
-    headers,
-  })
-}
-
-function requestOrigin(request: Request) {
-  return publicRequestUrl(request).origin
-}
-
 const authLoginLockedSchema = z.object({
   error: z.literal("login_locked"),
   message: z.string(),
@@ -290,12 +267,15 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
   registerScimAuthRoutes(app)
   app.use("/api/auth/sso/saml2/callback/*", samlResponsePolicyMiddleware)
   app.use("/api/auth/sso/saml2/sp/acs/*", samlResponsePolicyMiddleware)
-  app.get("/api/auth/.well-known/oauth-authorization-server", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/api/auth/.well-known/openid-configuration", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/.well-known/oauth-authorization-server/api/auth", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/.well-known/openid-configuration/api/auth", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
-  app.get("/.well-known/oauth-authorization-server", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/oauth-authorization-server")), requestOrigin(c.req.raw)))
-  app.get("/.well-known/openid-configuration", publicRoute, async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/openid-configuration")), requestOrigin(c.req.raw)))
+  // Better Auth uses this configured base URL for the callback `iss` value.
+  // Keep discovery on that same canonical issuer even when these routes are
+  // reached through a separate API or reverse-proxy origin.
+  app.get("/api/auth/.well-known/oauth-authorization-server", publicRoute, (c) => oauthProviderAuthServerMetadata(auth)(c.req.raw))
+  app.get("/api/auth/.well-known/openid-configuration", publicRoute, (c) => oauthProviderOpenIdConfigMetadata(auth)(c.req.raw))
+  app.get("/.well-known/oauth-authorization-server/api/auth", publicRoute, (c) => oauthProviderAuthServerMetadata(auth)(c.req.raw))
+  app.get("/.well-known/openid-configuration/api/auth", publicRoute, (c) => oauthProviderOpenIdConfigMetadata(auth)(c.req.raw))
+  app.get("/.well-known/oauth-authorization-server", publicRoute, (c) => oauthProviderAuthServerMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/oauth-authorization-server")))
+  app.get("/.well-known/openid-configuration", publicRoute, (c) => oauthProviderOpenIdConfigMetadata(auth)(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/openid-configuration")))
   app.post("/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
   app.post("/api/auth/oauth2/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
   app.get("/api/auth/oauth2/authorize", tokenRoute, (c) => auth.handler(c.req.raw))

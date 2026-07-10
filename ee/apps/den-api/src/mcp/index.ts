@@ -2,10 +2,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
 import { z } from "zod"
+import { env } from "../env.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { buildMcpCatalog, getToolDescription, loadOpenApiDocument, type McpToolOperation } from "./catalog.js"
 import { invokeMcpOperation } from "./invoke.js"
+import { getDenAuthIssuer } from "./jwt-policy.js"
 import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities } from "./search.js"
 
 const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000
@@ -34,7 +36,10 @@ export function protectedResourceMetadata(request: Request) {
   const resource = getMcpResourceUrl(request)
   return {
     resource,
-    authorization_servers: [resource.replace(/\/mcp$/, "/api/auth")],
+    // OAuth issuers are invariant; the resource may live on a separate API or
+    // reverse-proxy origin, but Better Auth completes the callback with this
+    // configured issuer.
+    authorization_servers: [getDenAuthIssuer(env.betterAuthUrl)],
     // The MCP SDK uses protected-resource scopes for both dynamic client
     // registration and the authorization request. Advertising offline access
     // lets it explicitly request a rotating refresh grant (and prompt for

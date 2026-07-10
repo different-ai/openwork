@@ -29,6 +29,7 @@ beforeAll(async () => {
 
 test("MCP resource metadata requests an offline refresh grant", () => {
   expect(mcpRoutes.protectedResourceMetadata(new Request("http://127.0.0.1:8790/mcp"))).toMatchObject({
+    authorization_servers: [getDenAuthIssuer("http://127.0.0.1:8790")],
     scopes_supported: ["mcp:read", "mcp:write", "offline_access"],
   })
 })

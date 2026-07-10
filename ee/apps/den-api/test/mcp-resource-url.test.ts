@@ -75,6 +75,12 @@ if (authMetadataUrl) {
   if (metadata.issuer !== expectedAuthIssuer) {
     throw new Error(\`Expected auth issuer \${expectedAuthIssuer}, got \${metadata.issuer}\`)
   }
+  for (const key of ["authorization_endpoint", "token_endpoint", "registration_endpoint"]) {
+    const endpoint = metadata[key]
+    if (typeof endpoint !== "string" || !endpoint.startsWith(\`\${expectedAuthIssuer}/\`)) {
+      throw new Error(\`Expected \${key} to use canonical auth issuer \${expectedAuthIssuer}, got \${endpoint}\`)
+    }
+  }
 }
 
 console.log("ok")
@@ -131,7 +137,7 @@ describe("getMcpResourceUrl", () => {
       expectedResource: "https://api.example.com/mcp",
       metadataUrl: "https://api.example.com/mcp/agent",
       expectedMetadataResource: "https://api.example.com/mcp",
-      expectedAuthorizationServer: "https://api.example.com/api/auth",
+      expectedAuthorizationServer: "https://app.example.com/api/auth",
     })
   })
 
@@ -143,7 +149,7 @@ describe("getMcpResourceUrl", () => {
       expectedResource: "https://openwork.example/api/den/mcp",
       metadataUrl: "https://openwork.example/api/den/mcp/agent",
       expectedMetadataResource: "https://openwork.example/api/den/mcp",
-      expectedAuthorizationServer: "https://openwork.example/api/den/api/auth",
+      expectedAuthorizationServer: "https://app.example.com/api/auth",
     })
   })
 
@@ -156,9 +162,9 @@ describe("getMcpResourceUrl", () => {
       expectedResource: "https://api.example.com/mcp",
       metadataUrl: "http://api.example.com/mcp/agent",
       expectedMetadataResource: "https://api.example.com/mcp",
-      expectedAuthorizationServer: "https://api.example.com/api/auth",
+      expectedAuthorizationServer: "https://app.example.com/api/auth",
       authMetadataUrl: "http://api.example.com/api/auth/.well-known/oauth-authorization-server",
-      expectedAuthIssuer: "https://api.example.com/api/auth",
+      expectedAuthIssuer: "https://app.example.com/api/auth",
     })
   })
 
@@ -179,7 +185,7 @@ describe("getMcpResourceUrl", () => {
       expectedResource: "https://api.openworklabs.com/mcp",
       metadataUrl: "https://api.openworklabs.com/mcp/agent",
       expectedMetadataResource: "https://api.openworklabs.com/mcp",
-      expectedAuthorizationServer: "https://api.openworklabs.com/api/auth",
+      expectedAuthorizationServer: "https://app.openworklabs.com/api/auth",
     })
   })
 
@@ -207,7 +213,7 @@ describe("getMcpResourceUrl", () => {
       expectedResource: "https://app.example.com/api/den/mcp",
       metadataUrl: "https://app.example.com/api/den/mcp",
       expectedMetadataResource: "https://app.example.com/api/den/mcp",
-      expectedAuthorizationServer: "https://app.example.com/api/den/api/auth",
+      expectedAuthorizationServer: "https://app.example.com/api/auth",
     })
   })
 })
