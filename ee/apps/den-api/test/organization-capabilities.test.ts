@@ -20,6 +20,15 @@ describe("normalizeOrganizationCapabilities", () => {
     expect(normalizeOrganizationCapabilities({ capabilities: { installLinks: false, mcpConnections: false } })).toEqual(defaultCapabilities)
   })
 
+  test("applies deployment defaults only when an organization has no explicit value", () => {
+    const selfHostedDefaults = { installLinks: true }
+
+    expect(normalizeOrganizationCapabilities(null, selfHostedDefaults)).toEqual({ installLinks: true, mcpConnections: false })
+    expect(normalizeOrganizationCapabilities({ capabilities: {} }, selfHostedDefaults)).toEqual({ installLinks: true, mcpConnections: false })
+    expect(normalizeOrganizationCapabilities({ capabilities: { installLinks: false } }, selfHostedDefaults)).toEqual(defaultCapabilities)
+    expect(normalizeOrganizationCapabilities({ capabilities: { installLinks: "true" } }, selfHostedDefaults)).toEqual(defaultCapabilities)
+  })
+
   test("reads an explicit opt-in from JSON string metadata", () => {
     expect(normalizeOrganizationCapabilities(JSON.stringify({ capabilities: { installLinks: true, mcpConnections: true } }))).toEqual({ installLinks: true, mcpConnections: true })
   })
@@ -52,5 +61,11 @@ describe("organizationHasCapability", () => {
     expect(organizationHasCapability({ capabilities: { mcpConnections: true } }, "mcpConnections")).toBe(true)
     expect(organizationHasCapability(JSON.stringify({ capabilities: { installLinks: true } }), "installLinks")).toBe(true)
     expect(organizationHasCapability(JSON.stringify({ capabilities: { mcpConnections: true } }), "mcpConnections")).toBe(true)
+  })
+
+  test("supports an on-prem default without changing the hosted default", () => {
+    expect(organizationHasCapability(null, "installLinks", { installLinks: true })).toBe(true)
+    expect(organizationHasCapability(null, "installLinks")).toBe(false)
+    expect(organizationHasCapability({ capabilities: { installLinks: false } }, "installLinks", { installLinks: true })).toBe(false)
   })
 })

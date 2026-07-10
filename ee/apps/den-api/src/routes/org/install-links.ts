@@ -278,9 +278,9 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       const input = c.req.valid("json")
       const payload = c.get("organizationContext")
 
-      // Org capability gate: install links ship dark and are enabled
-      // org-by-org from the platform /admin backoffice.
-      if (!organizationHasCapability(payload.organization.metadata, "installLinks")) {
+      // Hosted organizations retain the explicit rollout gate. Single-org
+      // deployments get the supported download path without database setup.
+      if (!organizationHasCapability(payload.organization.metadata, "installLinks", { installLinks: env.orgMode === "single_org" })) {
         return c.json({ error: "capability_disabled", capability: "installLinks" }, 403)
       }
 

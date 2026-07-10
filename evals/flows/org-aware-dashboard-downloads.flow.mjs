@@ -3,7 +3,8 @@
  *
  * Run this against a single-org Den sandbox configured as Acme Robotics with:
  * - alex@acme.test in DEN_SINGLE_ORG_OWNER_EMAILS and DEN_BOOTSTRAP_ADMIN_EMAILS
- * - installLinks enabled by this flow through the platform-admin API
+ * - installLinks absent from stored organization capabilities, exercising the
+ *   single-org deployment default
  * - a generic win-x64 installer available through OPENWORK_INSTALLER_ARTIFACTS_DIR
  *
  * Riley is created through ordinary sign-up and single-org membership
@@ -125,17 +126,16 @@ async function ensureSetup(ctx) {
   witness(ctx, typeof org.body?.organization?.id === "string", "Acme exposes an organization id", org.body?.organization);
   state.organizationId = org.body.organization.id;
 
-  const capability = await denApiFetch(`/v1/admin/organizations/${state.organizationId}/capabilities`, {
-    method: "PUT",
+  const storedCapabilities = await denApiFetch(`/v1/admin/organizations/${state.organizationId}/capabilities`, {
     headers: authHeaders(state.adminToken),
-    body: JSON.stringify({ capabilities: { installLinks: true } }),
   });
   witness(
     ctx,
-    capability.response.ok,
-    "Alex is allowlisted as a platform admin and enables Acme install links",
-    { status: capability.response.status, body: capability.body },
+    storedCapabilities.response.ok && storedCapabilities.body?.capabilities?.installLinks === false,
+    "Acme has no stored install-links opt-in",
+    { status: storedCapabilities.response.status, body: storedCapabilities.body },
   );
+  witness(ctx, org.body?.capabilities?.installLinks === true, "Single-org Den enables install links by deployment default", org.body?.capabilities);
 
   state.memberToken = await ensureAccount(ctx, {
     email: MEMBER_EMAIL,
@@ -160,6 +160,22 @@ async function ensureSetup(ctx) {
     memberProvisioning: "single-org sign-up; no invitation endpoint",
   }, null, 2));
 }
+
+export const orgAwareDashboardDownloadsHarness = {
+  ADMIN_EMAIL,
+  ADMIN_PASSWORD,
+  DEN_API_URL,
+  DEN_WEB_URL,
+  MEMBER_EMAIL,
+  MEMBER_PASSWORD,
+  ORGANIZATION_NAME,
+  authHeaders,
+  denApiFetch,
+  ensureSetup,
+  navigateTo,
+  state,
+  uiSignIn,
+};
 
 async function navigateTo(ctx, url) {
   await ctx.eval(`location.assign(${JSON.stringify(url)}); true`);

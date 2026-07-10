@@ -28,7 +28,7 @@ function installPageUrl(token: string) {
 }
 
 export async function mintOrganizationInstallLink(input: MintOrganizationInstallLinkInput) {
-  if (!organizationHasCapability(input.metadata, "installLinks")) {
+  if (!organizationHasCapability(input.metadata, "installLinks", { installLinks: env.orgMode === "single_org" })) {
     return null
   }
 

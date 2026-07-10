@@ -487,7 +487,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
-      const capabilities = normalizeOrganizationCapabilities(payload.organization.metadata)
+      const capabilities = normalizeOrganizationCapabilities(payload.organization.metadata, {
+        installLinks: env.orgMode === "single_org",
+      })
       const [ssoRows, scimRows] = await Promise.all([
         db
           .select({ id: SsoConnectionTable.id })

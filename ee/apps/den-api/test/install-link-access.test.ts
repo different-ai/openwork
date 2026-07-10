@@ -217,6 +217,17 @@ test("the organization capability still gates member install links", async () =>
   expect(insertedInstallLinks()).toHaveLength(0)
 })
 
+test("single-org members can mint install links without stored capability metadata", async () => {
+  const installLink = await installLinkMintingModule.mintOrganizationInstallLink({
+    organizationId,
+    createdByUserId: userId,
+    metadata: {},
+  })
+
+  expect(installLink?.installPageUrl).toContain("/install?token=")
+  expect(insertedInstallLinks()).toHaveLength(1)
+})
+
 test("invitation downloads mint the same org install page without storing the raw token", async () => {
   const downloadUrl = await installLinkMintingModule.resolveInvitationDownloadUrl({
     organizationId,
