@@ -191,16 +191,29 @@ async function clearBrowserSession(ctx) {
 
 async function uiSignIn(ctx, email, password) {
   await clearBrowserSession(ctx);
-  await ctx.waitFor("document.body.innerText.includes('Sign in')", { timeoutMs: 30_000, label: "Den sign-in screen" });
-  await ctx.eval(`(() => {
-    const tab = [...document.querySelectorAll('button, a')].find((element) => element.textContent?.trim() === 'Sign in');
-    tab?.click();
-    return true;
-  })()`);
-  await ctx.waitFor("Boolean(document.querySelector('input[type=\"email\"], input[name=\"email\"]'))", {
-    timeoutMs: 15_000,
-    label: "email input",
+  await ctx.waitFor("document.body.innerText.includes('Continue to OpenWork') || document.body.innerText.includes('Sign in')", {
+    timeoutMs: 30_000,
+    label: "Den sign-in screen",
   });
+  const emailFirst = await ctx.eval("document.body.innerText.includes('Continue to OpenWork')");
+  if (emailFirst) {
+    await ctx.fill('input[type="email"], input[name="email"]', email);
+    await ctx.clickText("Next");
+    await ctx.waitFor("Boolean(document.querySelector('input[type=\"password\"]'))", {
+      timeoutMs: 15_000,
+      label: "email-first password input",
+    });
+  } else {
+    await ctx.eval(`(() => {
+      const tab = [...document.querySelectorAll('button, a')].find((element) => element.textContent?.trim() === 'Sign in');
+      tab?.click();
+      return true;
+    })()`);
+    await ctx.waitFor("Boolean(document.querySelector('input[type=\"email\"], input[name=\"email\"]'))", {
+      timeoutMs: 15_000,
+      label: "email input",
+    });
+  }
   const submitted = await ctx.eval(`(() => {
     const setValue = (element, value) => {
       const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value');
@@ -210,8 +223,8 @@ async function uiSignIn(ctx, email, password) {
     };
     const emailInput = document.querySelector('input[type="email"], input[name="email"]');
     const passwordInput = document.querySelector('input[type="password"]');
-    if (!emailInput || !passwordInput) return false;
-    setValue(emailInput, ${JSON.stringify(email)});
+    if (!passwordInput || (!emailInput && !${JSON.stringify(emailFirst)})) return false;
+    if (emailInput) setValue(emailInput, ${JSON.stringify(email)});
     setValue(passwordInput, ${JSON.stringify(password)});
     const buttons = [...document.querySelectorAll('button')]
       .filter((button) => button.textContent?.trim() === 'Sign in' && !button.disabled);
