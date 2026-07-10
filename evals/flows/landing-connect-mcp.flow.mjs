@@ -369,14 +369,17 @@ export default {
                 const panel = document.querySelector(${JSON.stringify(`${SECTION_SELECTOR} [role="tabpanel"]:not([hidden])`)});
                 const tabs = Array.from(document.querySelectorAll(${JSON.stringify(`${SECTION_SELECTOR} [role="tab"]`)}));
                 const codexTab = tabs.find((tab) => (tab.textContent || "").trim() === "Codex");
+                const codexIcon = codexTab?.querySelector('img[data-product-icon="codex"]');
                 const settings = Array.from(panel?.querySelectorAll("a") || [])
                   .find((link) => (link.textContent || "").trim() === "Open settings + copy URL");
                 return Boolean(panel
                   && panel.innerText.includes(${JSON.stringify(CODEX_COMMAND)})
-                  && codexTab?.querySelector("svg")
+                  && codexIcon?.complete
+                  && codexIcon.naturalWidth > 0
+                  && codexIcon.src.includes("connect-icons%2Fcodex.png")
                   && settings?.getAttribute("href") === ${JSON.stringify(CODEX_CONNECTIONS_DEEPLINK)});
               })()`,
-              { timeoutMs: 10_000, label: "Codex command and desktop settings link visible" },
+              { timeoutMs: 10_000, label: "Codex product icon, command, and desktop settings link visible" },
             );
             await grantClipboardPermissions(ctx);
             await realMouseClick(
@@ -452,11 +455,15 @@ export default {
               const panel = section?.querySelector('[role="tabpanel"]:not([hidden])');
               const settings = Array.from(panel?.querySelectorAll("a") || [])
                 .find((link) => (link.textContent || "").trim() === "Open settings + copy URL");
+              const codexTab = tabs.find((tab) => (tab.textContent || "").trim() === "Codex");
               const chatgptTab = tabs.find((tab) => (tab.textContent || "").trim() === "ChatGPT Desktop");
+              const codexIcon = codexTab?.querySelector('img[data-product-icon="codex"]');
+              const chatgptIcon = chatgptTab?.querySelector('img[data-product-icon="chatgpt"]');
               return {
                 labels: tabs.map((tab) => (tab.textContent || "").trim()),
                 chatgptSelected: chatgptTab?.getAttribute("aria-selected"),
-                chatgptHasIcon: Boolean(chatgptTab?.querySelector("svg")),
+                codexIconLoaded: Boolean(codexIcon?.complete && codexIcon.naturalWidth > 0 && codexIcon.src.includes("connect-icons%2Fcodex.png")),
+                chatgptIconLoaded: Boolean(chatgptIcon?.complete && chatgptIcon.naturalWidth > 0 && chatgptIcon.src.includes("connect-icons%2Fchatgpt.png")),
                 panelText: panel?.innerText || "",
                 settingsHref: settings?.getAttribute("href") || "",
               };
@@ -480,11 +487,12 @@ export default {
             );
             recordAssertion(
               ctx,
-              "The installer exposes Codex and ChatGPT Desktop, with ChatGPT's guided settings link and server URL visible",
+              "The installer exposes real Codex and ChatGPT product icons with ChatGPT's guided settings link and server URL visible",
               desktopScan.labels.includes("Codex")
                 && desktopScan.labels.includes("ChatGPT Desktop")
                 && desktopScan.chatgptSelected === "true"
-                && desktopScan.chatgptHasIcon === true
+                && desktopScan.codexIconLoaded === true
+                && desktopScan.chatgptIconLoaded === true
                 && desktopScan.panelText.toLowerCase().includes("guided desktop setup")
                 && desktopScan.panelText.includes(MCP_SERVER_URL)
                 && desktopScan.settingsHref === CODEX_CONNECTIONS_DEEPLINK,

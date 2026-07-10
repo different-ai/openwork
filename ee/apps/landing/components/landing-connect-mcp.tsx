@@ -1,7 +1,8 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Bot, ChevronRight, MessageCircle, Plug } from "lucide-react";
+import { ChevronRight, Plug } from "lucide-react";
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
 import { capturePosthogEvent } from "../lib/posthog-client";
@@ -103,11 +104,11 @@ const CLIENT_INSTALLS: Record<ClientId, ClientInstall> = {
 
 function ClientIcon({ clientId, className }: { clientId: ClientId; className: string }) {
   if (clientId === "codex") {
-    return <Bot className={className} aria-hidden="true" />;
+    return <Image className={`${className} rounded-[3px]`} src="/connect-icons/codex.png" width={20} height={20} alt="" data-product-icon="codex" />;
   }
 
   if (clientId === "chatgpt-desktop") {
-    return <MessageCircle className={className} aria-hidden="true" />;
+    return <Image className={`${className} rounded-[3px]`} src="/connect-icons/chatgpt.png" width={20} height={20} alt="" data-product-icon="chatgpt" />;
   }
 
   if (clientId === "cursor") {
