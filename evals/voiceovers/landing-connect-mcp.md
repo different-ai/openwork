@@ -15,6 +15,6 @@ carries a sign-up path. No protocol/tool-name jargon anywhere.
 
 4. The run unfolds in plain sight — Granola notes queried, the meeting-brief skill executed — and the brief lands with three talking points, no setup on their side at all.
 
-5. Below, developers point their own agent at the org too: one click or one command, a free OpenWork account the first time, pick your org, and your team's tools appear.
+5. Below, I choose Codex or ChatGPT Desktop alongside the other agents. Codex gives me its native command, while either desktop option opens the MCP connections screen and copies the OpenWork server URL for me.
 
-6. Read the docs points at the Cloud MCP guide with the OAuth details — sign in in the browser, pick your org, and the token does the rest.
+6. The same choices appear in the docs, with an honest distinction between guided desktop setup and true one-click installs. I sign in once, pick my org, and my team's tools appear.

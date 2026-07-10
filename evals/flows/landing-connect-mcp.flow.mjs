@@ -2,13 +2,13 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "landing-connect-mcp";
 const MCP_SERVER_URL = "https://api.openworklabs.com/mcp/agent";
-const DOCS_URL = "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp";
+const DOCS_URL = "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-codex";
 const SECTION_SELECTOR = "#connect-mcp";
 const BRING_SELECTOR = '[data-testid="connect-mcp-bring"]';
 const EXAMPLE_SELECTOR = '[data-testid="connect-mcp-example"]';
 const INSTALL_SELECTOR = '[data-testid="connect-mcp-install"]';
-const SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
-const CLAUDE_CODE_COMMAND = `claude mcp add --transport http openwork ${MCP_SERVER_URL}`;
+const CODEX_COMMAND = `codex mcp add openwork --url ${MCP_SERVER_URL}`;
+const CODEX_CONNECTIONS_DEEPLINK = "codex://settings/connections";
 const INSTALL_COPY_BUTTON_SELECTOR = `${SECTION_SELECTOR} [role="tabpanel"]:not([hidden]) button[aria-label="Copy the OpenWork MCP install command"]`;
 
 // Narration is loaded from the approved script (evals/voiceovers/landing-connect-mcp.md).
@@ -355,53 +355,28 @@ export default {
     {
       name: "Frame 5",
       run: async (ctx) => {
-        let cursorScan = null;
-        let clipboardRead = { text: "", error: "not read" };
+        let codexClipboardRead = { text: "", error: "not read" };
+        let desktopClipboardRead = { text: "", error: "not read" };
 
-        await ctx.prove("Connecting an agent starts with Cursor by default, then Claude Code copies the exact MCP command and reveals the OAuth steps.", {
+        await ctx.prove("Codex and ChatGPT Desktop get first-class setup choices without claiming an unsupported one-click install.", {
           voiceover: vo[4],
           action: async () => {
             await ensureConnectSection(ctx);
             await scrollSelectorIntoView(ctx, INSTALL_SELECTOR);
-            cursorScan = await ctx.eval(`(() => {
-              const section = document.querySelector(${JSON.stringify(SECTION_SELECTOR)});
-              const tabs = Array.from(section ? section.querySelectorAll('[role="tab"]') : []);
-              const cursorTab = tabs.find((tab) => (tab.textContent || "").trim() === "Cursor");
-              const links = Array.from(section ? section.querySelectorAll("a") : []);
-              const addToCursor = links.find((link) => (link.textContent || "").trim() === "Add to Cursor");
-              const href = addToCursor ? addToCursor.href : "";
-              let decodedConfig = "";
-              let decodedUrl = "";
-              let parseError = "";
-
-              try {
-                const config = new URL(href).searchParams.get("config") || "";
-                decodedConfig = atob(config);
-                const parsed = JSON.parse(decodedConfig);
-                decodedUrl = typeof parsed.url === "string" ? parsed.url : "";
-              } catch (error) {
-                parseError = error instanceof Error ? error.message : String(error);
-              }
-
-              return {
-                cursorSelected: cursorTab ? cursorTab.getAttribute("aria-selected") : null,
-                addToCursorExists: Boolean(addToCursor),
-                href,
-                decodedConfig,
-                decodedUrl,
-                parseError,
-              };
-            })()`);
-
-            await realMouseClick(ctx, tabByLabelExpression("Claude Code"), "Claude Code tab");
+            await realMouseClick(ctx, tabByLabelExpression("Codex"), "Codex tab");
             await ctx.waitFor(
               `(() => {
                 const panel = document.querySelector(${JSON.stringify(`${SECTION_SELECTOR} [role="tabpanel"]:not([hidden])`)});
                 const tabs = Array.from(document.querySelectorAll(${JSON.stringify(`${SECTION_SELECTOR} [role="tab"]`)}));
-                const claudeTab = tabs.find((tab) => (tab.textContent || "").trim() === "Claude Code");
-                return Boolean(panel && panel.innerText.includes(${JSON.stringify(CLAUDE_CODE_COMMAND)}) && claudeTab && claudeTab.querySelector("svg"));
+                const codexTab = tabs.find((tab) => (tab.textContent || "").trim() === "Codex");
+                const settings = Array.from(panel?.querySelectorAll("a") || [])
+                  .find((link) => (link.textContent || "").trim() === "Open settings + copy URL");
+                return Boolean(panel
+                  && panel.innerText.includes(${JSON.stringify(CODEX_COMMAND)})
+                  && codexTab?.querySelector("svg")
+                  && settings?.getAttribute("href") === ${JSON.stringify(CODEX_CONNECTIONS_DEEPLINK)});
               })()`,
-              { timeoutMs: 10_000, label: "Claude Code command and tab icon visible" },
+              { timeoutMs: 10_000, label: "Codex command and desktop settings link visible" },
             );
             await grantClipboardPermissions(ctx);
             await realMouseClick(
@@ -412,17 +387,58 @@ export default {
             await ctx.waitFor(
               `(() => {
                 const section = document.querySelector(${JSON.stringify(SECTION_SELECTOR)});
-                const text = section ? section.innerText : "";
-                return Boolean(section && section.querySelector('[data-feedback="true"]') && text.includes("Copied") && text.includes("Create your free account or sign in") && text.includes("Pick your org"));
+                return Boolean(section && section.querySelector('[data-feedback="true"]') && section.innerText.includes("Copied"));
               })()`,
-              { timeoutMs: 10_000, label: "Copied feedback state and reveal steps" },
+              { timeoutMs: 10_000, label: "Codex command copied" },
             );
 
             try {
               const text = await ctx.eval("navigator.clipboard.readText()", { awaitPromise: true });
-              clipboardRead = { text, error: "" };
+              codexClipboardRead = { text, error: "" };
             } catch (error) {
-              clipboardRead = {
+              codexClipboardRead = {
+                text: "",
+                error: error instanceof Error ? error.message : String(error),
+              };
+            }
+
+            await realMouseClick(ctx, tabByLabelExpression("ChatGPT Desktop"), "ChatGPT Desktop tab");
+            await ctx.waitFor(
+              `(() => {
+                const panel = document.querySelector(${JSON.stringify(`${SECTION_SELECTOR} [role="tabpanel"]:not([hidden])`)});
+                const settings = Array.from(panel?.querySelectorAll("a") || [])
+                  .find((link) => (link.textContent || "").trim() === "Open settings + copy URL");
+                return Boolean(panel
+                  && panel.innerText.toLowerCase().includes("guided desktop setup")
+                  && panel.innerText.includes(${JSON.stringify(MCP_SERVER_URL)})
+                  && settings?.getAttribute("href") === ${JSON.stringify(CODEX_CONNECTIONS_DEEPLINK)});
+              })()`,
+              { timeoutMs: 10_000, label: "ChatGPT Desktop guided setup" },
+            );
+            await ctx.eval(`(() => {
+              document.addEventListener("click", (event) => {
+                const link = event.target instanceof Element ? event.target.closest("a") : null;
+                if (link?.getAttribute("href") === ${JSON.stringify(CODEX_CONNECTIONS_DEEPLINK)}) {
+                  event.preventDefault();
+                }
+              }, { capture: true, once: true });
+              return true;
+            })()`);
+            await realMouseClick(
+              ctx,
+              `Array.from(document.querySelectorAll(${JSON.stringify(`${SECTION_SELECTOR} [role="tabpanel"]:not([hidden]) a`)}))
+                .find((link) => (link.textContent || "").trim() === "Open settings + copy URL")`,
+              "ChatGPT Desktop MCP settings link",
+            );
+            await ctx.waitFor(
+              `navigator.clipboard.readText().then((text) => text === ${JSON.stringify(MCP_SERVER_URL)}).catch(() => false)`,
+              { timeoutMs: 10_000, label: "Opening settings copies the server URL" },
+            );
+            try {
+              const text = await ctx.eval("navigator.clipboard.readText()", { awaitPromise: true });
+              desktopClipboardRead = { text, error: "" };
+            } catch (error) {
+              desktopClipboardRead = {
                 text: "",
                 error: error instanceof Error ? error.message : String(error),
               };
@@ -430,68 +446,52 @@ export default {
             await sleep(150);
           },
           assert: async () => {
-            ctx.recordEvidence({
-              type: "output",
-              name: "Decoded Cursor MCP config",
-              text: cursorScan?.decodedConfig ?? "",
-            });
-            recordAssertion(
-              ctx,
-              "Cursor is selected by default and Add to Cursor decodes to the OpenWork MCP server URL",
-              cursorScan?.cursorSelected === "true"
-                && cursorScan.addToCursorExists === true
-                && cursorScan.parseError === ""
-                && cursorScan.decodedUrl === MCP_SERVER_URL,
-              cursorScan,
-            );
-
-            const feedbackScan = await ctx.eval(`(() => {
+            const desktopScan = await ctx.eval(`(() => {
               const section = document.querySelector(${JSON.stringify(SECTION_SELECTOR)});
-              const links = Array.from(section ? section.querySelectorAll("a") : []);
               const tabs = Array.from(section ? section.querySelectorAll('[role="tab"]') : []);
-              const signup = links.find((link) => (link.textContent || "").trim() === "create one free");
-              const claudeTab = tabs.find((tab) => (tab.textContent || "").trim() === "Claude Code");
+              const panel = section?.querySelector('[role="tabpanel"]:not([hidden])');
+              const settings = Array.from(panel?.querySelectorAll("a") || [])
+                .find((link) => (link.textContent || "").trim() === "Open settings + copy URL");
+              const chatgptTab = tabs.find((tab) => (tab.textContent || "").trim() === "ChatGPT Desktop");
               return {
-                feedbackActive: Boolean(section && section.querySelector('[data-feedback="true"]')),
-                copiedVisible: Boolean(section && section.innerText.includes("Copied")),
-                accountStepVisible: Boolean(section && section.innerText.includes("Create your free account or sign in")),
-                pickOrgStepVisible: Boolean(section && section.innerText.includes("Pick your org")),
-                signupExists: Boolean(signup),
-                signupHref: signup ? signup.getAttribute("href") : "",
-                claudeTabSelected: claudeTab ? claudeTab.getAttribute("aria-selected") : null,
-                claudeTabHasSvg: Boolean(claudeTab && claudeTab.querySelector("svg")),
+                labels: tabs.map((tab) => (tab.textContent || "").trim()),
+                chatgptSelected: chatgptTab?.getAttribute("aria-selected"),
+                chatgptHasIcon: Boolean(chatgptTab?.querySelector("svg")),
+                panelText: panel?.innerText || "",
+                settingsHref: settings?.getAttribute("href") || "",
               };
             })()`);
             ctx.recordEvidence({
               type: "output",
-              name: "Clipboard readText result",
-              text: JSON.stringify(clipboardRead, null, 2),
+              name: "Codex command clipboard result",
+              text: JSON.stringify(codexClipboardRead, null, 2),
             });
             recordAssertion(
               ctx,
-              "navigator.clipboard.readText returns the exact Claude Code MCP command",
-              clipboardRead.error === "" && clipboardRead.text === CLAUDE_CODE_COMMAND,
-              clipboardRead,
+              "navigator.clipboard.readText returns the exact native Codex MCP command",
+              codexClipboardRead.error === "" && codexClipboardRead.text === CODEX_COMMAND,
+              codexClipboardRead,
             );
             recordAssertion(
               ctx,
-              "The active Claude Code tab button contains a brand SVG icon",
-              feedbackScan.claudeTabSelected === "true" && feedbackScan.claudeTabHasSvg === true,
-              feedbackScan,
+              "Opening ChatGPT Desktop MCP settings copies the OpenWork server URL",
+              desktopClipboardRead.error === "" && desktopClipboardRead.text === MCP_SERVER_URL,
+              desktopClipboardRead,
             );
             recordAssertion(
               ctx,
-              "The install card shows the Copied feedback state and browser sign-in reveal steps after copying",
-              feedbackScan.feedbackActive === true
-                && feedbackScan.copiedVisible === true
-                && feedbackScan.accountStepVisible === true
-                && feedbackScan.pickOrgStepVisible === true
-                && feedbackScan.signupExists === true
-                && feedbackScan.signupHref === SIGNUP_URL,
-              feedbackScan,
+              "The installer exposes Codex and ChatGPT Desktop, with ChatGPT's guided settings link and server URL visible",
+              desktopScan.labels.includes("Codex")
+                && desktopScan.labels.includes("ChatGPT Desktop")
+                && desktopScan.chatgptSelected === "true"
+                && desktopScan.chatgptHasIcon === true
+                && desktopScan.panelText.toLowerCase().includes("guided desktop setup")
+                && desktopScan.panelText.includes(MCP_SERVER_URL)
+                && desktopScan.settingsHref === CODEX_CONNECTIONS_DEEPLINK,
+              desktopScan,
             );
           },
-          screenshot: { name: "frame-5", requireText: ["Copied"] },
+          screenshot: { name: "frame-5", requireText: ["Codex", "ChatGPT Desktop", "GUIDED DESKTOP SETUP", "Open settings + copy URL"] },
         });
       },
     },

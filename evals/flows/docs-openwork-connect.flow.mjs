@@ -3,7 +3,7 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const vo = await loadVoiceoverParagraphs("docs-openwork-connect");
 
 const MCP_SERVER_URL = "https://api.openworklabs.com/mcp/agent";
-const CLIENTS = ["Cursor", "Claude Code", "OpenCode", "VS Code", "Any client"];
+const CLIENTS = ["Cursor", "Codex", "ChatGPT Desktop", "Claude Code", "OpenCode", "VS Code", "Any client"];
 
 function baseUrl(name) {
   return process.env[name].replace(/\/$/, "");
@@ -81,7 +81,7 @@ export default {
             })()`);
             recordAssertion(
               ctx,
-              "The docs installer shows the developer prompt, current server URL, and all five clients",
+              "The docs installer shows the developer prompt, current server URL, and all supported clients",
               actual.exists === true
                 && actual.hasDeveloperPrompt === true
                 && actual.hasCursorInstall === true
@@ -187,7 +187,7 @@ export default {
     {
       name: "Frame 5",
       run: async (ctx) => {
-        await ctx.prove("The landing page keeps the same five-client OpenWork Connect installer.", {
+        await ctx.prove("The landing page keeps the same OpenWork Connect installer, including Codex and ChatGPT Desktop.", {
           voiceover: vo[4],
           action: async () => {
             await navigate(ctx, `${baseUrl("OPENWORK_EVAL_LANDING_URL")}/#connect-mcp`);
@@ -204,12 +204,12 @@ export default {
             })()`);
             recordAssertion(
               ctx,
-              "The landing installer uses the current server and exposes the same five clients",
+              "The landing installer uses the current server and exposes the same supported clients",
               actual.hasServerUrl === true && CLIENTS.every((client) => actual.tabs.includes(client)),
               actual,
             );
           },
-          screenshot: { name: "frame-5", requireText: ["Cursor", "Claude Code", "OpenCode", "VS Code", "Any client"] },
+          screenshot: { name: "frame-5", requireText: ["Cursor", "Codex", "ChatGPT Desktop", "Claude Code", "OpenCode", "VS Code", "Any client"] },
         });
       },
     },

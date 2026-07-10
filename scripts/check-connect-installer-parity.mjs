@@ -15,6 +15,8 @@ assert.ok(serverUrlMatch, "Landing installer is missing MCP_SERVER_URL");
 const serverUrl = serverUrlMatch[1];
 const cursorDeepLinkMatch = landingConfig.match(/export const CURSOR_DEEPLINK = "([^"]+)";/);
 assert.ok(cursorDeepLinkMatch, "Landing installer is missing CURSOR_DEEPLINK");
+const codexDeepLinkMatch = landingConfig.match(/export const CODEX_CONNECTIONS_DEEPLINK = "([^"]+)";/);
+assert.ok(codexDeepLinkMatch, "Landing installer is missing CODEX_CONNECTIONS_DEEPLINK");
 
 const clientsMatch = landingConfig.match(/export const CONNECT_CLIENTS[^=]*= \[([^\]]+)\];/);
 assert.ok(clientsMatch, "Landing installer is missing CONNECT_CLIENTS");
@@ -27,6 +29,7 @@ for (const client of clients) {
 const sharedValueNames = [
   "CURSOR_SNIPPET",
   "CLAUDE_CODE_COMMAND",
+  "CODEX_COMMAND",
   "OPENCODE_SNIPPET",
   "VS_CODE_COMMAND",
   "ANY_CLIENT_COMMAND",
@@ -34,6 +37,7 @@ const sharedValueNames = [
 
 assert.ok(docsInstaller.includes(serverUrl), "Docs installer is using a different MCP server URL");
 assert.ok(docsInstaller.includes(cursorDeepLinkMatch[1]), "Docs installer is using a different Cursor install link");
+assert.ok(docsInstaller.includes(codexDeepLinkMatch[1]), "Docs installer is using a different Codex connections link");
 
 for (const name of sharedValueNames) {
   const valueMatch = landingConfig.match(new RegExp("export const " + name + " = `([\\s\\S]*?)`;"));

@@ -8,4 +8,4 @@
 
 4. I open the direct OpenCode documentation link. It lands on the installer with OpenCode already selected, so this link can be shared directly with customers.
 
-5. I return to the landing page. The same shared installer is still present there and supports Cursor, Claude Code, OpenCode, VS Code, and any MCP client.
+5. I return to the landing page. The same shared installer is still present there and supports Codex and ChatGPT Desktop alongside Cursor, Claude Code, OpenCode, VS Code, and any MCP client.

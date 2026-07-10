@@ -1,6 +1,7 @@
 export const OpenWorkConnectInstaller = () => {
   const MCP_SERVER_URL = "https://api.openworklabs.com/mcp/agent";
   const CURSOR_DEEPLINK = "https://cursor.com/en/install-mcp?name=openwork&config=eyJ1cmwiOiJodHRwczovL2FwaS5vcGVud29ya2xhYnMuY29tL21jcC9hZ2VudCJ9";
+  const CODEX_CONNECTIONS_DEEPLINK = "codex://settings/connections";
   const installs = [
     {
       id: "cursor",
@@ -14,6 +15,20 @@ export const OpenWorkConnectInstaller = () => {
     }
   }
 }`,
+    },
+    {
+      id: "codex",
+      label: "Codex",
+      eyebrow: "Codex desktop, CLI, and IDE",
+      helper: "Add OpenWork once. Codex desktop, the CLI, and the IDE extension share this MCP configuration.",
+      copyText: `codex mcp add openwork --url ${MCP_SERVER_URL}`,
+    },
+    {
+      id: "chatgpt-desktop",
+      label: "ChatGPT Desktop",
+      eyebrow: "Guided desktop setup",
+      helper: "Open MCP connections, then paste the copied OpenWork server URL.",
+      copyText: MCP_SERVER_URL,
     },
     {
       id: "claude-code",
@@ -98,7 +113,7 @@ export const OpenWorkConnectInstaller = () => {
           Developers: point your own agent at your org — one click or one command.
         </div>
         <div className="mt-1 text-xs text-gray-400">
-          Works with Claude Code, Cursor, VS Code — any MCP agent
+          Works with Codex, ChatGPT, Claude Code, Cursor — any MCP agent
         </div>
       </div>
 
@@ -134,6 +149,10 @@ export const OpenWorkConnectInstaller = () => {
           {activeInstall.id === "cursor" ? (
             <a href={CURSOR_DEEPLINK} className="shrink-0 rounded-full bg-[#011627] px-5 py-2.5 text-sm font-medium text-white">
               Add to Cursor
+            </a>
+          ) : activeInstall.id === "codex" || activeInstall.id === "chatgpt-desktop" ? (
+            <a href={CODEX_CONNECTIONS_DEEPLINK} onClick={() => void copyText(MCP_SERVER_URL)} className="shrink-0 rounded-full bg-[#011627] px-5 py-2.5 text-sm font-medium text-white">
+              Open settings + copy URL
             </a>
           ) : null}
         </div>

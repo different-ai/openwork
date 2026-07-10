@@ -1,13 +1,15 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronRight, Plug } from "lucide-react";
+import { Bot, ChevronRight, MessageCircle, Plug } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { capturePosthogEvent } from "../lib/posthog-client";
 import {
   ANY_CLIENT_COMMAND,
   CLAUDE_CODE_COMMAND,
+  CODEX_COMMAND,
+  CODEX_CONNECTIONS_DEEPLINK,
   CONNECT_CLIENTS,
   CURSOR_DEEPLINK,
   CURSOR_SNIPPET,
@@ -17,7 +19,7 @@ import {
 } from "./openwork-connect-installer-config";
 import type { OpenWorkConnectClientId } from "./openwork-connect-installer-config";
 
-const DOCS_URL = "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-opencode";
+const DOCS_URL = "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-codex";
 const SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
 
 type CopyMethod = "clipboard" | "execCommand" | "none";
@@ -39,6 +41,8 @@ const VS_CODE_ICON_PATH = "M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.4
 
 const clientIconClass: Record<ClientId, string> = {
   cursor: "text-[#111111]",
+  codex: "text-[#111111]",
+  "chatgpt-desktop": "text-[#10A37F]",
   "claude-code": "text-[#D97757]",
   opencode: "text-[#656363]",
   "vs-code": "text-[#007ACC]",
@@ -52,6 +56,20 @@ const CLIENT_INSTALLS: Record<ClientId, ClientInstall> = {
     eyebrow: "One-click install or ~/.cursor/mcp.json",
     copyText: CURSOR_SNIPPET,
     helper: "Use the one-click button, or paste this into ~/.cursor/mcp.json."
+  },
+  codex: {
+    id: "codex",
+    label: "Codex",
+    eyebrow: "Codex desktop, CLI, and IDE",
+    copyText: CODEX_COMMAND,
+    helper: "Add OpenWork once. Codex desktop, the CLI, and the IDE extension share this MCP configuration."
+  },
+  "chatgpt-desktop": {
+    id: "chatgpt-desktop",
+    label: "ChatGPT Desktop",
+    eyebrow: "Guided desktop setup",
+    copyText: MCP_SERVER_URL,
+    helper: "Open MCP connections, then paste the copied OpenWork server URL."
   },
   "claude-code": {
     id: "claude-code",
@@ -84,6 +102,14 @@ const CLIENT_INSTALLS: Record<ClientId, ClientInstall> = {
 };
 
 function ClientIcon({ clientId, className }: { clientId: ClientId; className: string }) {
+  if (clientId === "codex") {
+    return <Bot className={className} aria-hidden="true" />;
+  }
+
+  if (clientId === "chatgpt-desktop") {
+    return <MessageCircle className={className} aria-hidden="true" />;
+  }
+
   if (clientId === "cursor") {
     return (
       <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -313,7 +339,7 @@ export function LandingConnectMcp() {
           <div className="flex min-w-0 shrink-0 items-center gap-2 text-gray-400">
             <Plug size={14} aria-hidden="true" />
             <span className="text-xs text-gray-400">
-              Works with Claude Code, Cursor, VS Code — any MCP agent
+              Works with Codex, ChatGPT, Claude Code, Cursor — any MCP agent
             </span>
           </div>
         </div>
@@ -322,7 +348,7 @@ export function LandingConnectMcp() {
           <div
             role="tablist"
             aria-label="OpenWork MCP client install options"
-            className="landing-chip mb-4 flex flex-nowrap gap-2 overflow-x-auto rounded-full p-1"
+            className="landing-chip mb-4 flex flex-nowrap gap-1 overflow-x-auto rounded-full p-1"
           >
             {CLIENT_ORDER.map((clientId) => {
               const client = CLIENT_INSTALLS[clientId];
@@ -338,7 +364,7 @@ export function LandingConnectMcp() {
                   aria-controls={`connect-mcp-panel-${client.id}`}
                   tabIndex={selected ? 0 : -1}
                   onClick={() => setActiveClient(client.id)}
-                  className={`relative shrink-0 cursor-pointer whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                  className={`relative shrink-0 cursor-pointer whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition-colors ${
                     selected ? "text-[#011627]" : "text-gray-600 hover:text-gray-900"
                   }`}
                 >
@@ -394,6 +420,16 @@ export function LandingConnectMcp() {
                             className="inline-flex min-h-[42px] shrink-0 items-center justify-center rounded-full bg-[#011627] px-5 text-sm font-medium text-white shadow-[0_14px_32px_-16px_rgba(1,22,39,0.55)] transition-colors hover:bg-black"
                           >
                             Add to Cursor
+                          </a>
+                        ) : install.id === "codex" || install.id === "chatgpt-desktop" ? (
+                          <a
+                            href={CODEX_CONNECTIONS_DEEPLINK}
+                            onClick={() => {
+                              void writeClipboardText(MCP_SERVER_URL);
+                            }}
+                            className="inline-flex min-h-[42px] shrink-0 items-center justify-center rounded-full bg-[#011627] px-5 text-sm font-medium text-white shadow-[0_14px_32px_-16px_rgba(1,22,39,0.55)] transition-colors hover:bg-black"
+                          >
+                            Open settings + copy URL
                           </a>
                         ) : null}
                       </div>
