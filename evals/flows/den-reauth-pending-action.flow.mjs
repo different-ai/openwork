@@ -224,7 +224,31 @@ async function stageStaleSessionAndInstallLinks(ctx) {
 
     UPDATE session SET created_at = DATE_SUB(NOW(3), INTERVAL 1 HOUR);
   `);
+
+  if (!ctx.client?.send) {
+    return;
+  }
+
+  const cookieResult = await ctx.client.send("Network.getAllCookies", {});
+  const cachedSessionCookies = cookieResult.cookies.filter((cookie) => cookie.name.includes("session_data"));
+  for (const cookie of cachedSessionCookies) {
+    await ctx.client.send("Network.deleteCookies", {
+      name: cookie.name,
+      domain: cookie.domain,
+      path: cookie.path,
+    });
+  }
 }
+
+export {
+  applyDesktopViewport,
+  clickExactText,
+  clickSelectorWithMouse,
+  grantClipboardPermissions,
+  navigateTo,
+  signInToDenWeb,
+  stageStaleSessionAndInstallLinks,
+};
 
 export default {
   id: FLOW_ID,

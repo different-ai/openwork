@@ -4,6 +4,7 @@ import { ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
+import { DenNotice } from "./ui/notice";
 import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider } from "../_lib/den-flow";
 import { type DenOrgContext, getRequireSsoFromMetadata } from "../_lib/den-org";
 
@@ -360,9 +361,7 @@ export function ReauthDialog({
           ) : null}
 
           {error ? (
-            <div className="mb-5 rounded-[18px] border border-red-200 bg-red-50 px-4 py-3 text-[14px] text-red-700">
-              {error}
-            </div>
+            <DenNotice message={error} tone="error" className="mb-5" />
           ) : null}
 
           <div className="grid gap-4">

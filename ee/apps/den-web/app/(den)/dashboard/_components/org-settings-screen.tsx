@@ -9,6 +9,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
+import { DenNotice } from "../../_components/ui/notice";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
@@ -640,9 +641,7 @@ export function OrgSettingsScreen() {
         <EnterprisePlanNotice feature="Enforced SSO and desktop version control" />
       ) : null}
       {pageError ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
-          {pageError}
-        </div>
+        <DenNotice message={pageError} className="mb-6" />
       ) : null}
       {pageSuccess ? (
         <div className="mb-6 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-700">

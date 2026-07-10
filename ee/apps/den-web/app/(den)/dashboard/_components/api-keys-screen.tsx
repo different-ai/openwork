@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Copy, KeyRound, Trash2 } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
+import { DenNotice } from "../../_components/ui/notice";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
@@ -283,9 +284,7 @@ export function ApiKeysScreen() {
             ) : (
                 <>
                     {error ? (
-                        <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
-                            {error}
-                        </div>
+                        <DenNotice message={error} className="mb-6" />
                     ) : null}
 
                     <DenCard className="mb-6">

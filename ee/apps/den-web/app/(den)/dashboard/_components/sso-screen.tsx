@@ -4,6 +4,7 @@ import { Copy, KeyRound, RefreshCw, Shield, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
+import { DenNotice } from "../../_components/ui/notice";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -279,7 +280,7 @@ export function SsoScreen() {
       ) : (
         <>
           {!orgContext.entitlements.sso ? <EnterprisePlanNotice feature="SSO" /> : null}
-          {error ? <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">{error}</div> : null}
+          {error ? <DenNotice message={error} className="mb-6" /> : null}
 
           {showConnectionForm ? (
             <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
