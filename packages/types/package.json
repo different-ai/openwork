@@ -33,6 +33,11 @@
       "types": "./src/desktop-ipc.ts",
       "development": "./src/desktop-ipc.ts",
       "default": "./src/desktop-ipc.ts"
+    },
+    "./connect-link": {
+      "types": "./src/connect-link.ts",
+      "development": "./src/connect-link.ts",
+      "default": "./src/connect-link.ts"
     }
   },
   "files": [
