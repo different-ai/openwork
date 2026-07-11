@@ -34,6 +34,29 @@ const ELECTRON_UPDATER_FEEDS = Object.freeze({
   alpha: "https://github.com/different-ai/openwork/releases/download/alpha-macos-latest",
 });
 
+// The client-only flavor updates from its own metadata files (client*.yml,
+// emitted by electron-builder.client.yml) on the same stable release assets,
+// so a fleet of OpenWork Client installs can never be swapped to the bundled
+// build by the auto-updater.
+let _cachedClientOnly = null;
+function resolveClientOnlyFlag(app) {
+  if (_cachedClientOnly !== null) return _cachedClientOnly;
+  if (process.env.OPENWORK_CLIENT_ONLY === "1") {
+    _cachedClientOnly = true;
+    return _cachedClientOnly;
+  }
+  try {
+    const pkgPath = app.isPackaged
+      ? path.join(app.getAppPath(), "package.json")
+      : path.resolve(__updater_dirname, "..", "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    _cachedClientOnly = pkg.openworkClientOnly === true;
+  } catch {
+    _cachedClientOnly = false;
+  }
+  return _cachedClientOnly;
+}
+
 function normalizeElectronUpdaterChannel(value) {
   if (value === "alpha" && process.platform === "darwin") return "alpha";
   return "stable";
@@ -151,6 +174,21 @@ function updaterChannelState(app, channel) {
 }
 
 async function applyElectronUpdaterFeed(app, updater) {
+  if (resolveClientOnlyFlag(app)) {
+    const state = {
+      channel: "client",
+      feedUrl: ELECTRON_UPDATER_FEEDS.stable,
+      currentVersion: resolveAppVersion(app),
+    };
+    updater.allowPrerelease = false;
+    updater.allowDowngrade = false;
+    if (updater?.setFeedURL) {
+      // channel makes electron-updater request client-mac.yml / client.yml
+      // instead of the standard latest*.yml.
+      updater.setFeedURL({ provider: "generic", url: state.feedUrl, channel: state.channel });
+    }
+    return state;
+  }
   const channel = await readElectronUpdaterChannel(app);
   const state = updaterChannelState(app, channel);
   updater.allowPrerelease = state.channel === "alpha";

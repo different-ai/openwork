@@ -32,6 +32,9 @@ import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
+import { createConnectLinkReplayGuard, verifyConnectLinkUrl } from "./connect-link.mjs";
+import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
+import { createEnterpriseConnectionGuard } from "./enterprise-network.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import {
   applyWindowsTaskbarIcon,
@@ -50,15 +53,33 @@ const pty = require(["node", "pty"].join("-"));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
 const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
+const ENTERPRISE_APP_IDENTIFIER = "com.differentai.openwork.enterprise";
+const ENTERPRISE_DEV_APP_IDENTIFIER = "com.differentai.openwork.enterprise.dev";
 const DESKTOP_PROTOCOL_SCHEME = "openwork";
 const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
+// The enterprise flavor starts network-neutral and expects an organization
+// deployment. It also omits the local execution stack from its artifact.
+// Packaged builds carry the flag in extraMetadata; dev runs opt in with
+// OPENWORK_ENTERPRISE=1.
+function readPackagedEnterpriseFlag() {
+  try {
+    return require(path.join(app.getAppPath(), "package.json")).openworkEnterprise === true;
+  } catch {
+    return false;
+  }
+}
+const ENTERPRISE_BUILD = readPackagedEnterpriseFlag() || process.env.OPENWORK_ENTERPRISE === "1";
 const APP_NAME =
   process.env.OPENWORK_ELECTRON_APP_NAME?.trim() ||
-  (isDevMode ? "OpenWork - Dev" : "OpenWork");
+  (ENTERPRISE_BUILD
+    ? (isDevMode ? "OpenWork Enterprise - Dev" : "OpenWork Enterprise")
+    : (isDevMode ? "OpenWork - Dev" : "OpenWork"));
 let currentDisplayAppName = APP_NAME;
 const APP_IDENTIFIER =
   process.env.OPENWORK_ELECTRON_APP_IDENTIFIER?.trim() ||
-  (isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER);
+  (ENTERPRISE_BUILD
+    ? (isDevMode ? ENTERPRISE_DEV_APP_IDENTIFIER : ENTERPRISE_APP_IDENTIFIER)
+    : (isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER));
 const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
 const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
 const DOCS_PAGE_URL = "https://openworklabs.com/docs";
@@ -72,6 +93,10 @@ const uiControlServer = createUiControlServer({
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
+});
+
+const enterpriseConnectionGuard = createEnterpriseConnectionGuard({
+  enterprise: ENTERPRISE_BUILD,
 });
 
 const terminalProcesses = new Map();
@@ -895,6 +920,51 @@ const workspaceStore = createWorkspaceStore({
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
 });
 
+const connectLinkReplayGuard = createConnectLinkReplayGuard({
+  filePath: path.join(app.getPath("userData"), "connect-link-seen.json"),
+});
+
+// Defense in depth for the enterprise flavor: the renderer never asks for a
+// local runtime (desktop-runtime-boot gates on appBuildInfo.enterprise), and
+// the artifact ships neither server bundle nor sidecars — but if anything
+// still reaches these handlers, refuse loudly instead of failing strangely.
+function assertLocalRuntimeAvailable() {
+  if (ENTERPRISE_BUILD) {
+    throw new Error("The local runtime is not included in the enterprise build.");
+  }
+}
+
+/**
+ * @param {string} rawUrl
+ * @returns {import("@openwork/types/connect-link").ConnectLinkVerifyResult}
+ */
+function verifyConnectLink(rawUrl) {
+  return verifyConnectLinkUrl(String(rawUrl ?? ""), {
+    publicKeys: resolveConnectLinkPublicKeys(),
+    // http is refused everywhere except loopback targets in dev runs.
+    allowInsecureLoopback: isDevMode,
+  });
+}
+
+function applyDesktopBootstrapAppName(config) {
+  currentDisplayAppName = config.brandAppName?.slice(0, 64) || APP_NAME;
+  app.setName(currentDisplayAppName);
+  applicationMenu.setAppName(currentDisplayAppName);
+  applicationMenu.install();
+}
+
+async function applyDesktopBootstrapBrandIcon(config) {
+  // The same bootstrap contract drives every desktop platform. Apply or clear
+  // the native icon immediately after managed JSON, manual setup, or a signed
+  // link changes configuration; do not make macOS/Linux wait for a relaunch.
+  await applyBrandIconUrl(config.brandIconUrl?.trim() || null);
+}
+
+async function applyDesktopBootstrapBranding(config) {
+  applyDesktopBootstrapAppName(config);
+  await applyDesktopBootstrapBrandIcon(config);
+}
+
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
   if (value === "win32") return "windows";
@@ -1012,6 +1082,7 @@ const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  localRuntimeAvailable: !ENTERPRISE_BUILD,
 });
 
 let runtimeDisposedForQuit = false;
@@ -1075,6 +1146,9 @@ function assertOpenworkServerReady(info) {
 }
 
 async function bootRuntimeForSelectedWorkspace() {
+  if (ENTERPRISE_BUILD) {
+    return { ok: true, skipped: true, reason: "enterprise" };
+  }
   const list = await workspaceStore.readWorkspaceState();
   const selectedId = list.selectedId || list.activeId || list.workspaces[0]?.id || "";
   const workspace = selectedId
@@ -1495,11 +1569,13 @@ const desktopCommandHandlers = {
       );
   },
   "engineStart": async (event, ...args) => {
+      assertLocalRuntimeAvailable();
       const projectDir = String(args[0] ?? "").trim();
       const options = args[1] ?? {};
       return runtimeManager.engineStart(projectDir, options);
   },
   "prepareFreshRuntime": async (event, ...args) => {
+      assertLocalRuntimeAvailable();
       return runtimeManager.prepareFreshRuntime();
   },
   "runtimeBootstrap": async (event, ...args) => {
@@ -1512,6 +1588,7 @@ const desktopCommandHandlers = {
       return runtimeManager.engineStop();
   },
   "engineRestart": async (event, ...args) => {
+      assertLocalRuntimeAvailable();
       return runtimeManager.engineRestart(args[0] ?? {});
   },
   "engineInfo": async (event, ...args) => {
@@ -1521,6 +1598,7 @@ const desktopCommandHandlers = {
       return engineDoctor(args[0]);
   },
   "engineInstall": async (event, ...args) => {
+      assertLocalRuntimeAvailable();
       return runtimeManager.engineInstall();
   },
   "orchestratorStatus": async (event, ...args) => {
@@ -1538,6 +1616,8 @@ const desktopCommandHandlers = {
         gitSha: process.env.OPENWORK_GIT_SHA ?? null,
         buildEpoch: process.env.OPENWORK_BUILD_EPOCH ?? null,
         openworkDevMode: process.env.OPENWORK_DEV_MODE === "1",
+        enterprise: ENTERPRISE_BUILD,
+        enterpriseNetworkLocked: enterpriseConnectionGuard.isLocked(),
       };
   },
   "desktopNotificationShow": async (event, ...args) => {
@@ -1591,10 +1671,52 @@ const desktopCommandHandlers = {
       return workspaceStore.debugDesktopBootstrapConfig();
   },
   "clearDesktopBootstrapConfig": async (event, ...args) => {
-      return workspaceStore.clearDesktopBootstrapConfig();
+      const result = await workspaceStore.clearDesktopBootstrapConfig();
+      enterpriseConnectionGuard.setConfigured(false);
+      await applyDesktopBootstrapBranding({});
+      return result;
   },
   "setDesktopBootstrapConfig": async (event, ...args) => {
-      return workspaceStore.setDesktopBootstrapConfig(args[0] ?? {});
+      const config = await workspaceStore.setDesktopBootstrapConfig(args[0] ?? {});
+      enterpriseConnectionGuard.setConfigured(true);
+      await applyDesktopBootstrapBranding(config);
+      return config;
+  },
+  "connectLinkVerify": async (event, ...args) => {
+      // Read-only check — parses + verifies the deep link, writes nothing.
+      // Replay is surfaced here too so an already-used link gets its refusal
+      // before the user is ever shown a confirmation.
+      const verified = verifyConnectLink(String(args[0] ?? ""));
+      if (verified.ok === false) return verified;
+      if (await connectLinkReplayGuard.has(verified.claims.jti)) {
+        return { ok: false, code: "replayed", message: "This connect link was already used on this machine." };
+      }
+      return verified;
+  },
+  "connectLinkAccept": async (event, ...args) => {
+      // The renderer passes the raw URL back after the user confirmed; claims
+      // shaped in the renderer are never trusted (desktop-ipc trust boundary).
+      const verified = verifyConnectLink(String(args[0] ?? ""));
+      if (verified.ok === false) return verified;
+      if (await connectLinkReplayGuard.has(verified.claims.jti)) {
+        return { ok: false, code: "replayed", message: "This connect link was already used on this machine." };
+      }
+      // Consume before mutation. If the replay ledger cannot be persisted,
+      // fail closed and leave the existing bootstrap untouched.
+      if (!(await connectLinkReplayGuard.remember(verified.claims.jti))) {
+        return { ok: false, code: "replayed", message: "This connect link was already used on this machine." };
+      }
+      const config = await workspaceStore.setDesktopBootstrapConfig({
+        baseUrl: verified.claims.den.baseUrl,
+        ...(verified.claims.den.apiBaseUrl ? { apiBaseUrl: verified.claims.den.apiBaseUrl } : {}),
+        requireSignin: verified.claims.requireSignin,
+        brandAppName: verified.claims.brand.appName,
+        ...(verified.claims.brand.logoUrl ? { brandLogoUrl: verified.claims.brand.logoUrl } : {}),
+        ...(verified.claims.brand.iconUrl ? { brandIconUrl: verified.claims.brand.iconUrl } : {}),
+      });
+      enterpriseConnectionGuard.setConfigured(true);
+      await applyDesktopBootstrapBranding(config);
+      return { ok: true, config };
   },
   "nukeOpenworkAndOpencodeConfigAndExit": async (event, ...args) => {
       await rm(app.getPath("userData"), { recursive: true, force: true });
@@ -1602,6 +1724,7 @@ const desktopCommandHandlers = {
       return undefined;
   },
   "orchestratorStartDetached": async (event, ...args) => {
+      assertLocalRuntimeAvailable();
       return runtimeManager.orchestratorStartDetached(args[0] ?? {});
   },
   "sandboxDoctor": async (event, ...args) => {
@@ -1620,6 +1743,7 @@ const desktopCommandHandlers = {
       return runtimeManager.openworkServerInfo();
   },
   "openworkServerRestart": async (event, ...args) => {
+      assertLocalRuntimeAvailable();
       return runtimeManager.openworkServerRestart(args[0] ?? {});
   },
   "pickDirectory": async (event, ...args) => {
@@ -1897,6 +2021,9 @@ const desktopCommandHandlers = {
       const url = String(args[0] ?? "").trim();
       const init = args[1] ?? {};
       if (!url) throw new Error("URL is required.");
+      if (enterpriseConnectionGuard.shouldBlock(url)) {
+        throw new Error("OpenWork Enterprise needs an organization configuration before contacting OpenWork Cloud.");
+      }
       const timeoutMs = Number(init.timeoutMs);
       const response = await electronNet.fetch(url, {
         method: typeof init.method === "string" ? init.method : undefined,
@@ -2262,17 +2389,17 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     installMediaPermissionHandlers(session, () => mainWindow);
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
-    currentDisplayAppName = bootstrapConfig.brandAppName?.slice(0, 64) || APP_NAME;
-    app.setName(currentDisplayAppName);
-    applicationMenu.setAppName(currentDisplayAppName);
+    enterpriseConnectionGuard.setConfigured(bootstrapConfig.configured === true);
+    enterpriseConnectionGuard.install(session.defaultSession);
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
-    if (process.platform === "win32" && bootstrapConfig.brandIconUrl) {
-      await applyBrandIconUrl(bootstrapConfig.brandIconUrl);
+    // Apply the name before creating the window, then the native icon after a
+    // window exists (required for Linux; macOS/Windows also converge here).
+    applyDesktopBootstrapAppName(bootstrapConfig);
+    if (!ENTERPRISE_BUILD) {
+      await runtimeManager.prepareFreshRuntime().catch(() => undefined);
     }
-    applicationMenu.install();
-    await runtimeManager.prepareFreshRuntime().catch(() => undefined);
 
     // Use Tauri's existing workspace state file as canonical so rollback and
     // Electron see the same workspace list. Import the short-lived
@@ -2288,6 +2415,7 @@ if (!app.requestSingleInstanceLock()) {
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();
+    await applyDesktopBootstrapBrandIcon(bootstrapConfig);
     win.webContents.on("did-finish-load", () => {
       flushPendingDeepLinks();
     });

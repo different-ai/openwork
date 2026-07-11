@@ -348,19 +348,22 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const legacyPath = legacyDesktopBootstrapPath();
     const legacy = legacyPath ? await readDesktopBootstrapCandidate(legacyPath) : null;
 
+    // `configured` reports whether a real bootstrap file backed this config
+    // (vs. built-in defaults). It is derived here on read — never persisted —
+    // and the enterprise flavor keys its "ready to connect" gate off it.
     if (primary.ok && legacy?.ok) {
       if (compareDesktopBootstrapCandidates(legacy, primary) > 0) {
         await migrateLegacyDesktopBootstrapConfig(configPath, legacy);
-        return legacy.normalized;
+        return { ...legacy.normalized, configured: true };
       }
-      return primary.normalized;
+      return { ...primary.normalized, configured: true };
     }
 
-    if (primary.ok) return primary.normalized;
+    if (primary.ok) return { ...primary.normalized, configured: true };
 
     if (legacy?.ok) {
       await migrateLegacyDesktopBootstrapConfig(configPath, legacy);
-      return legacy.normalized;
+      return { ...legacy.normalized, configured: true };
     }
 
     console.warn("[desktop-bootstrap] falling back to defaults", {
@@ -370,6 +373,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     return {
       baseUrl: defaultDenBaseUrl,
       requireSignin: defaultRequireSignin,
+      configured: false,
     };
   }
 
@@ -406,7 +410,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const outputPath = desktopBootstrapPath();
     const stamped = { ...normalized, writtenAt: new Date().toISOString() };
     await writeJsonFileAtomic(outputPath, stamped);
-    return stamped;
+    return { ...stamped, configured: true };
   }
 
   async function clearDesktopBootstrapFiles() {

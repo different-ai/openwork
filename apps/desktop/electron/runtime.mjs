@@ -556,7 +556,7 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
   };
 }
 
-export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
+export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, localRuntimeAvailable = true }) {
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
   const orchestratorState = createOrchestratorState();
@@ -1149,6 +1149,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   let inProcessServer = null;
 
   async function startOpenworkServer(options) {
+    if (!localRuntimeAvailable) {
+      // Client-only builds ship no server bundle; this path must be
+      // unreachable (desktop-runtime-boot + main.mjs gate it) but fail
+      // clearly if something regresses.
+      throw new Error("The embedded OpenWork server is not included in the enterprise build.");
+    }
     const currentPort = openworkServerState.port;
     // Stop any previously running in-process server
     if (inProcessServer) {
