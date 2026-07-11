@@ -6,6 +6,8 @@
 branch for the MCP diagnostics program. It is intentionally based on upstream
 `dev` and does not contain any of the three implementation branches yet.
 
+Parent draft: [#2674](https://github.com/different-ai/openwork/pull/2674).
+
 The goal is to let Jalil review one understandable capability at a time,
 record what was personally verified, address findings on the source branch,
 and only then integrate that capability here. The parent draft pull request is
@@ -129,6 +131,7 @@ are integrated into this branch only after approval.
 | Date | Checkpoint | Result |
 | --- | --- | --- |
 | 2026-07-11 | Parent integration branch created from current upstream `dev` | Complete |
+| 2026-07-11 | Parent draft opened and linked from all three source PRs | Complete |
 | 2026-07-11 | Initial technical review of the three source PRs recorded | Complete |
 | 2026-07-11 | Jalil-led capability verification | Not started |
 | 2026-07-11 | Implementation merged into parent | None |
