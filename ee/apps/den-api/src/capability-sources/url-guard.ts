@@ -175,7 +175,6 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
   if (url.protocol !== "https:") {
     throw new PrivateUrlError(rawUrl, "hosted MCP egress requires HTTPS")
   }
-
   // URL brackets IPv6 literals: strip them for isIP().
   const hostname = url.hostname.replace(/^\[|\]$/g, "")
   if (isIP(hostname)) {
@@ -230,12 +229,6 @@ export async function normalizeResponseRealm(res: Response): Promise<Response> {
   })
 }
 
-/**
- * A fetch wrapper that re-applies assertPublicUrl to EVERY outbound request
- * — the MCP SDK follows discovery documents to other hosts (authorization
- * servers, token endpoints), and DNS answers can change after create-time
- * validation, so each request is checked at the moment it's made.
- */
 function redirectedRequestInit(init: RequestInit | undefined, status: number, from: URL, to: URL): RequestInit {
   const headers = new Headers(init?.headers)
   if (from.protocol === "https:" && to.protocol !== "https:") {
@@ -244,24 +237,14 @@ function redirectedRequestInit(init: RequestInit | undefined, status: number, fr
 
   const method = (init?.method ?? "GET").toUpperCase()
   if (from.origin !== to.origin) {
-    // A 307/308 preserves the method and body. Forwarding an OAuth token POST
-    // (code + verifier) or a tools/call body to another origin would disclose
-    // credentials or tool arguments even if Authorization is stripped. Block
-    // every cross-origin non-idempotent/body-bearing redirect instead.
     if ((method !== "GET" && method !== "HEAD") || init?.body != null) {
       throw new PrivateUrlError(to.toString(), "a request body cannot be redirected to another origin")
     }
-    // Native fetch strips credentials on cross-origin redirects. Manual
-    // redirects must preserve that boundary explicitly.
-    for (const name of [
-      "authorization",
-      "cookie",
-      "proxy-authorization",
-      "mcp-session-id",
-      "last-event-id",
-      "x-api-key",
-      "x-auth-token",
-    ]) headers.delete(name)
+    for (const name of [...headers.keys()]) {
+      if (/^(authorization|cookie|proxy-authorization|mcp-session-id|last-event-id)$/iu.test(name)
+        || /(?:^|[-_])(?:api[-_]?key|token|session|resume)(?:[-_]|$)/iu.test(name)
+      ) headers.delete(name)
+    }
   }
 
   const switchToGet = (status === 303 && method !== "HEAD")
@@ -279,7 +262,7 @@ function createRedirectSafeFetch(
   validateUrl: (url: string) => Promise<void>,
 ): FetchLike {
   return async (input, init) => {
-    let current = new URL(String(input))
+    let current = parseHttpUrl(String(input))
     let currentInit: RequestInit = { ...init, redirect: "manual" }
     for (let redirectCount = 0; ; redirectCount += 1) {
       await validateUrl(current.toString())
@@ -288,26 +271,30 @@ function createRedirectSafeFetch(
       if (!REDIRECT_STATUSES.has(response.status) || !location) {
         return normalizeResponseRealm(response)
       }
-      if (redirectCount >= MAX_GUARDED_REDIRECTS) {
-        await response.body?.cancel()
-        throw new Error("MCP outbound request exceeded the guarded redirect limit.")
-      }
-      const next = new URL(location, current)
-      // Validate before issuing the next request. This closes the public URL
-      // -> loopback/link-local redirect SSRF path.
-      await validateUrl(next.toString())
       try {
+        if (redirectCount >= MAX_GUARDED_REDIRECTS) {
+          throw new Error("MCP outbound request exceeded the guarded redirect limit.")
+        }
+        const next = parseHttpUrl(new URL(location, current).toString())
+        await validateUrl(next.toString())
         currentInit = redirectedRequestInit(currentInit, response.status, current, next)
-      } catch (error) {
-        await response.body?.cancel()
-        throw error
+        current = next
+      } finally {
+        // A redirect response is never returned to the caller. Always release
+        // its body exactly once, including when Location parsing, per-hop SSRF
+        // validation, downgrade/body-replay checks, or the hop cap rejects it.
+        await response.body?.cancel().catch(() => undefined)
       }
-      current = next
-      await response.body?.cancel()
     }
   }
 }
 
+/**
+ * A fetch wrapper that re-applies assertPublicUrl to EVERY outbound request
+ * — the MCP SDK follows discovery documents to other hosts (authorization
+ * servers, token endpoints), and DNS answers can change after create-time
+ * validation, so each request is checked at the moment it's made.
+ */
 export function createGuardedFetch(fetchImpl: FetchLike = fetch): FetchLike {
   return createRedirectSafeFetch(fetchImpl, assertPublicUrl)
 }
