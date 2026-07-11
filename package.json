@@ -14,6 +14,7 @@
     "dev:sandbox": "bash .devcontainer/dev-sandbox.sh",
     "dev:ui": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/app dev",
     "dev:ui-demo": "pnpm --filter @openwork/ui-demo dev",
+    "dev:mcp-diagnostics-proof": "pnpm --filter @openwork/mcp-diagnostics-proof dev",
     "dev:web": "pnpm run dev:den:web",
     "dev:web-local": "pnpm run dev:den",
     "dev:den": "node scripts/dev-local.mjs",

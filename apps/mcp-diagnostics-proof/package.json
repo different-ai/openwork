@@ -1,0 +1,24 @@
+{
+  "name": "@openwork/mcp-diagnostics-proof",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 3334 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 3334 --strictPort",
+    "test": "node --test scripts/verify-evidence.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12"
+  }
+}

@@ -40,6 +40,7 @@ const UNREACHABLE_NAME = `rehearsal-unreachable-${RUN_ID}`;
 const SERVICENOW_NAME = `rehearsal-servicenow-${RUN_ID}`;
 const SAFE_READ_TOOL = "look_up_incident_records";
 const SAFE_READ_ARGS = { query: "active=true^ORDERBYDESCsys_updated_on", limit: 1 };
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function configuredMockPort() {
   const explicit = process.env.MCP_DIAGNOSTIC_MOCK_PORT?.trim();
@@ -66,6 +67,8 @@ const state = {
   mockHealth: null,
   stableProtocolVersion: null,
   mockRequestBaseline: 0,
+  connectionTestRequestBaseline: 0,
+  connectionTestRequests: [],
   unreachableConnectionId: null,
   serviceNowConnectionId: null,
 };
@@ -174,6 +177,27 @@ async function connectionIdNamed(name) {
   return (listed.body.connections ?? []).find((entry) => entry.name === name)?.id ?? null;
 }
 
+async function removePriorRehearsalConnections(ctx) {
+  const listed = await authenticatedApi("/v1/mcp-connections?scope=manageable");
+  if (!listed.response.ok) {
+    throw new Error(`Listing prior rehearsal connections failed: ${listed.response.status}`);
+  }
+  const staleConnections = (listed.body.connections ?? []).filter((connection) => (
+    typeof connection?.name === "string"
+    && (connection.name.startsWith("rehearsal-unreachable-")
+      || connection.name.startsWith("rehearsal-servicenow-"))
+  ));
+  const removals = await Promise.all(staleConnections.map((connection) => (
+    authenticatedApi(`/v1/mcp-connections/${connection.id}`, { method: "DELETE" })
+  )));
+  witness(
+    ctx,
+    removals.every((result) => result.response.ok),
+    "The replay removes prior synthetic rehearsal connections before capturing new evidence.",
+    { removedCount: staleConnections.length },
+  );
+}
+
 async function deleteConnection(connectionId, ctx, label) {
   if (!connectionId) return;
   const removed = await authenticatedApi(`/v1/mcp-connections/${connectionId}`, { method: "DELETE" });
@@ -251,6 +275,7 @@ export default {
 
         state.adminSession = await signInApi(ADMIN_EMAIL, ADMIN_PASSWORD);
         witness(ctx, Boolean(state.adminSession), `The Den owner can sign in as ${ADMIN_EMAIL}.`);
+        await removePriorRehearsalConnections(ctx);
         await signInViaBrowser(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
 
         const created = await authenticatedApi("/v1/mcp-connections", {
@@ -270,6 +295,15 @@ export default {
           { status: created.response.status },
         );
         state.unreachableConnectionId = created.body.id;
+        await openAdminConnections(ctx);
+        await ctx.waitForText(UNREACHABLE_NAME, { timeoutMs: 30_000 });
+        await ctx.eval(rowScript(UNREACHABLE_NAME, { contains: "Diagnose", connectionId: state.unreachableConnectionId }));
+        await sleep(1_500);
+        await ctx.screenshot("mcp-rehearsal-setup-ready", {
+          claim: "The replay begins with one deliberate synthetic failure target and no prior rehearsal rows.",
+          requireText: ["Add a connection", UNREACHABLE_NAME, "Diagnose"],
+          rejectText: ["rehearsal-servicenow-", MOCK_CLIENT_SECRET, "mock-access-token"],
+        });
       },
     },
     {
@@ -360,6 +394,11 @@ export default {
               { origin: callbackUrl.origin, path: callbackUrl.pathname },
             );
             await configureMock("/__mock/preregistered-client-redirect", { redirectUri: callback });
+            await ctx.screenshot("mcp-rehearsal-servicenow-callback-ready", {
+              claim: "OpenWork displays the exact connection-bound Den callback before provider authorization starts.",
+              requireText: ["Almost done — add this redirect URL to your app", "/connect/callback"],
+              rejectText: [MOCK_CLIENT_SECRET, "mock-access-token", "mock-refresh-token"],
+            });
             await ctx.clickText("Done", { selector: "button", timeoutMs: 10_000 });
             await ctx.waitForText(SERVICENOW_NAME, { timeoutMs: 20_000 });
             const connectClicked = await ctx.eval(rowScript(SERVICENOW_NAME, { button: "Connect", connectionId: state.serviceNowConnectionId }));
@@ -402,9 +441,16 @@ export default {
         await ctx.prove("Test connection exhausts the paged catalog and invokes no provider operation", {
           voiceover: vo[2],
           action: async () => {
+            state.connectionTestRequestBaseline = (await mockRequests()).length;
             const clicked = await ctx.eval(rowScript(SERVICENOW_NAME, { button: "Test connection", connectionId: state.serviceNowConnectionId }));
             witness(ctx, clicked, "The connected row exposes its read-only Test connection action.");
             await ctx.waitForText("Protocol ready · 2025-06-18 · 4 tools across 2 pages", { timeoutMs: 45_000 });
+            state.connectionTestRequests = (await mockRequests()).slice(state.connectionTestRequestBaseline);
+            await ctx.eval(`(() => {
+              const row = document.querySelector('[data-connection-id="${state.serviceNowConnectionId}"]');
+              row?.scrollIntoView({ block: 'center', behavior: 'instant' });
+              return Boolean(row);
+            })()`);
           },
           assert: async () => {
             await ctx.expectText("look_up_incident_records");
@@ -415,6 +461,27 @@ export default {
               state.mockHealth.operationFault === "none",
               "Catalog readiness is proven before any provider-operation fault is enabled.",
               { operationFault: state.mockHealth.operationFault },
+            );
+            const endpointRequests = state.connectionTestRequests.filter((request) => (
+              request?.path === new URL(state.mockHealth.resource).pathname
+            ));
+            const rpcMethods = endpointRequests.flatMap((request) => (
+              Array.isArray(request.rpcMethods) ? request.rpcMethods : []
+            ));
+            witness(
+              ctx,
+              rpcMethods.includes("initialize")
+                && rpcMethods.includes("notifications/initialized")
+                && rpcMethods.filter((method) => method === "tools/list").length === 2,
+              "The one-shot test initializes MCP, sends initialized, and exhausts exactly two catalog pages.",
+              rpcMethods,
+            );
+            witness(
+              ctx,
+              endpointRequests.some((request) => request.method === "DELETE")
+                && !rpcMethods.includes("tools/call"),
+              "The one-shot test shuts down its session and never invokes a provider tool.",
+              endpointRequests.map((request) => ({ method: request.method, rpcMethods: request.rpcMethods ?? [] })),
             );
           },
           screenshot: {
@@ -580,10 +647,30 @@ export default {
               "The Den operation error returns neither credentials, session identifiers, provider content, nor the tool arguments.",
               { responseCharacterCount: execution.text.length },
             );
+            const visibleHealth = await ctx.eval("document.querySelector('[data-testid=\"mcp-diagnostic-health\"]')?.textContent ?? ''");
+            witness(
+              ctx,
+              visibleHealth.includes("Catalog Ready"),
+              "The provider-operation denial does not downgrade the already proven catalog health.",
+              visibleHealth,
+            );
+            await ctx.trustedClick('button[aria-label="Close diagnostics"]', { timeoutMs: 10_000 });
+            await ctx.waitFor(rowScript(SERVICENOW_NAME, { contains: "Connected", connectionId: state.serviceNowConnectionId }), {
+              timeoutMs: 10_000,
+              label: "connection remains connected after provider denial",
+            });
           },
           assert: async () => {
-            await ctx.expectText("Catalog Ready");
-            await ctx.expectText("Catalog Ready proves the complete tool catalog. Provider operations and mutations were not tested.");
+            await ctx.expectText(SERVICENOW_NAME);
+            await ctx.expectText("Connected");
+            await ctx.expectText("Protocol ready · 2025-06-18 · 4 tools across 2 pages");
+            await ctx.expectNoText("Connection failed");
+          },
+          screenshot: {
+            name: "mcp-rehearsal-provider-denial-keeps-connection-ready",
+            claim: "A provider policy denial remains an operation-level failure while the connection and complete catalog stay healthy.",
+            requireText: [SERVICENOW_NAME, "Connected", "Protocol ready", "4 tools", "2 pages"],
+            rejectText: ["Connection failed", MOCK_CLIENT_SECRET, "mock-access-token", "MCP-Session-Id"],
           },
         });
       },
@@ -596,10 +683,33 @@ export default {
         if (state.stableProtocolVersion) {
           await configureMock("/__mock/protocol-version", { protocolVersion: state.stableProtocolVersion });
         }
+        const restoredHealth = await fetch(`${MOCK_ORIGIN}/health`).then((response) => response.json());
+        witness(
+          ctx,
+          restoredHealth.fault === "none"
+            && restoredHealth.operationFault === "none"
+            && restoredHealth.protocolVersion === state.stableProtocolVersion,
+          "Cleanup restores the deterministic fixture to its healthy protocol and operation settings.",
+          {
+            fault: restoredHealth.fault,
+            operationFault: restoredHealth.operationFault,
+            protocolVersion: restoredHealth.protocolVersion,
+          },
+        );
         await deleteConnection(state.unreachableConnectionId, ctx, "The unreachable fixture connection");
         await deleteConnection(state.serviceNowConnectionId, ctx, "The ServiceNow fixture connection");
         state.unreachableConnectionId = null;
         state.serviceNowConnectionId = null;
+        await refreshConnectionsPage(ctx);
+        await ctx.eval("(() => { window.scrollTo(0, document.body.scrollHeight); return true; })()");
+        await sleep(200);
+        await ctx.eval("(() => { window.scrollTo(0, 0); return true; })()");
+        await sleep(1_500);
+        await ctx.screenshot("mcp-rehearsal-cleanup-complete", {
+          claim: "The replay removes every synthetic connection and resets the deterministic fixture after collecting evidence.",
+          requireText: ["Connections", "Add a connection", "MCP server"],
+          rejectText: ["rehearsal-unreachable-", "rehearsal-servicenow-", MOCK_CLIENT_SECRET, "mock-access-token"],
+        });
       },
     },
   ],

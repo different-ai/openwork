@@ -595,6 +595,15 @@ function record(req, url) {
   return correlationId;
 }
 
+function annotateMcpRequest(correlationId, messages) {
+  const entry = requests.find((request) => request.correlationId === correlationId);
+  if (!entry) return;
+  entry.rpcMethods = [...new Set(messages
+    .map((message) => message?.method)
+    .filter((method) => typeof method === "string" && method.length <= 128))]
+    .slice(0, 16);
+}
+
 function protectedResourceMetadata() {
   if (fault === "bad_resource_metadata") return { resource: `${issuer}/wrong-resource`, authorization_servers: [] };
   return {
@@ -1194,6 +1203,7 @@ async function handleMcp(req, res, correlationId) {
     return;
   }
   const messages = Array.isArray(body) ? body : [body];
+  annotateMcpRequest(correlationId, messages);
   const isInitialize = messages.length === 1 && messages[0]?.method === "initialize";
   let session;
   let sessionId;

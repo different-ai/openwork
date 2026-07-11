@@ -439,6 +439,61 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
     expect(requestLog).toContain("REDACTED");
   });
 
+  test("records MCP method names without retaining arguments or session values", async () => {
+    const mock = await startMock({ profile: "servicenow" });
+    const endpoint = "/sncapps/mcp-server/mcp/sn_mcp_server_default";
+    const initialized = await initialize(mock.baseUrl, endpoint, "mock-access-token");
+    await listEntireCatalog(
+      mock.baseUrl,
+      endpoint,
+      "mock-access-token",
+      initialized.protocolVersion,
+      initialized.sessionId,
+    );
+    const argumentSentinel = "request-log-argument-sentinel";
+    const probe = await fetch(`${mock.baseUrl}${endpoint}`, {
+      method: "POST",
+      headers: mcpHeaders("mock-access-token", initialized.protocolVersion, initialized.sessionId),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "request-log-probe",
+        method: "diagnostics/probe",
+        params: { query: argumentSentinel },
+      }),
+    });
+    if (probe.status !== 200) throw new Error(`request-log probe returned ${probe.status}`);
+    const deleted = await fetch(`${mock.baseUrl}${endpoint}`, {
+      method: "DELETE",
+      headers: mcpHeaders("mock-access-token", initialized.protocolVersion, initialized.sessionId),
+    });
+    expect(deleted.status).toBe(200);
+
+    const requestLogResponse = await fetch(`${mock.baseUrl}/requests`, { headers: diagnosticsHeaders });
+    expect(requestLogResponse.status).toBe(200);
+    const requestLog: unknown = await requestLogResponse.json();
+    if (!isRecord(requestLog) || !Array.isArray(requestLog.requests)) {
+      throw new Error("request log omitted requests");
+    }
+    const endpointRequests = requestLog.requests.filter((request) => (
+      isRecord(request) && request.path === endpoint
+    ));
+    const rpcMethods = endpointRequests.flatMap((request) => (
+      isRecord(request) && Array.isArray(request.rpcMethods) ? request.rpcMethods : []
+    ));
+    expect(rpcMethods).toEqual([
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "tools/list",
+      "diagnostics/probe",
+    ]);
+    expect(endpointRequests.some((request) => isRecord(request) && request.method === "DELETE")).toBe(true);
+    const serialized = JSON.stringify(endpointRequests);
+    expect(serialized).not.toContain(initialized.sessionId);
+    expect(serialized).not.toContain(argumentSentinel);
+    expect(serialized).not.toContain("mock-access-token");
+  });
+
   test("binds ServiceNow manual registration to its configured client, exact redirect, S256, resource, and scope", async () => {
     const mock = await startMock({ profile: "servicenow" });
     const endpoint = "/sncapps/mcp-server/mcp/sn_mcp_server_default";
