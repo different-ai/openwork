@@ -3,6 +3,11 @@ import { createServer, type Server } from "node:http"
 import { getRequestListener } from "@hono/node-server"
 import { parseErrorResponse } from "@modelcontextprotocol/sdk/client/auth.js"
 import { createRealmSafeFetch, normalizeResponseRealm } from "../src/capability-sources/url-guard.js"
+import {
+  EXTERNAL_MCP_JSON_RESPONSE_LIMIT_BYTES,
+  ExternalMcpDiagnosticTracker,
+  createExternalMcpDiagnosticFetch,
+} from "../src/capability-sources/external-mcp-diagnostics.js"
 
 getRequestListener(async () => new globalThis.Response("ok"))
 
@@ -99,5 +104,47 @@ describe("OAuth response realm normalization", () => {
       expect(normalized).toBe(response)
       expect(await normalized.text()).toBe("ok")
     })
+  })
+
+  test("streams old-realm error bodies through the diagnostic byte ceiling before buffering", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(500, { "content-type": "application/json" })
+      const chunk = Buffer.alloc(64 * 1024, 0x61)
+      for (let sent = 0; sent <= EXTERNAL_MCP_JSON_RESPONSE_LIMIT_BYTES; sent += chunk.byteLength) {
+        response.write(chunk)
+      }
+      response.end()
+    })
+    const url = await listen(server)
+    try {
+      const tracker = new ExternalMcpDiagnosticTracker("req_cross_realm_body_limit")
+      const diagnosticFetch = createExternalMcpDiagnosticFetch({
+        endpoint: `${url}/mcp`,
+        tracker,
+        fetch: createRealmSafeFetch(),
+      })
+      const bounded = await diagnosticFetch(`${url}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      })
+
+      let bodyError: unknown
+      try {
+        await bounded.arrayBuffer()
+      } catch (error) {
+        bodyError = error
+      }
+      expect(bodyError).toBeDefined()
+      expect(tracker.error(bodyError)).toMatchObject({
+        diagnostic: {
+          phase: "MCP_TOOL_DISCOVERY",
+          category: "response_too_large",
+          code: "MCP_RESPONSE_BODY_LIMIT",
+        },
+      })
+    } finally {
+      await close(server)
+    }
   })
 })

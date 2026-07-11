@@ -20,6 +20,7 @@ let schema: typeof import("@openwork-ee/den-db/schema")
 let drizzle: typeof import("@openwork-ee/den-db/drizzle")
 let session: typeof import("../src/session.js")
 let createExternalMcpConnection: typeof import("../src/capability-sources/external-mcp-connections.js").createExternalMcpConnection
+let createOAuthStateToken: typeof import("../src/capability-sources/generic-oauth.js").createOAuthStateToken
 
 const userId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
@@ -38,13 +39,14 @@ beforeAll(async () => {
   }).db
   mock.module("../src/db.js", () => ({ db: realDb }))
 
-  const [appMod, dbMod, schemaMod, drizzleMod, sessionMod, connectionsMod] = await Promise.all([
+  const [appMod, dbMod, schemaMod, drizzleMod, sessionMod, connectionsMod, genericOAuthMod] = await Promise.all([
     import("../src/app.js"),
     import("../src/db.js"),
     import("@openwork-ee/den-db/schema"),
     import("@openwork-ee/den-db/drizzle"),
     import("../src/session.js"),
     import("../src/capability-sources/external-mcp-connections.js"),
+    import("../src/capability-sources/generic-oauth.js"),
   ])
   app = appMod.default
   db = dbMod.db
@@ -52,6 +54,7 @@ beforeAll(async () => {
   drizzle = drizzleMod
   session = sessionMod
   createExternalMcpConnection = connectionsMod.createExternalMcpConnection
+  createOAuthStateToken = genericOAuthMod.createOAuthStateToken
 
   await db.insert(schema.AuthUserTable).values({
     id: userId,
@@ -145,6 +148,18 @@ test("GET /v1/mcp-connections/:connectionId/connect/start maps OAuth handshake f
   }
   expect(body.message.length).toBeGreaterThan(0)
   expect(body.message).toContain(connectionName)
+  expect(body.message).not.toContain("Unable to connect")
+  expect(isRecord(body.diagnostic)).toBe(true)
+  if (!isRecord(body.diagnostic)) {
+    throw new Error("connect/start response did not include a diagnostic envelope")
+  }
+  expect(body.diagnostic.phase).toBe("NETWORK_TCP")
+  expect(body.diagnostic.category).toBe("network_failure")
+  expect(body.diagnostic.code).toBe("MCP_ECONNREFUSED")
+  expect(body.diagnostic.highestPassed).toBe("configured")
+  expect(body.diagnostic.actionOwner).toBe("network_admin")
+  expect(typeof body.diagnostic.operatorAction).toBe("string")
+  expect(body.diagnostic.referenceId).toBe(response.headers.get("x-request-id"))
 })
 
 test("GET /v1/mcp-connections/:connectionId/connect/start still returns connection_not_found", async () => {
@@ -157,6 +172,88 @@ test("GET /v1/mcp-connections/:connectionId/connect/start still returns connecti
     throw new Error("connect/start 404 response was not an object")
   }
   expect(body.error).toBe("connection_not_found")
+})
+
+test("public OAuth callback scopes the signed connection lookup to its organization", async () => {
+  const state = createOAuthStateToken({
+    organizationId: createDenTypeId("organization"),
+    orgMembershipId: memberId,
+    providerId: seededConnectionId(),
+    secret: process.env.BETTER_AUTH_SECRET ?? "",
+  })
+  const callbackUrl = new URL(`http://den-api.local/v1/mcp-connections/${seededConnectionId()}/connect/callback`)
+  callbackUrl.searchParams.set("code", "must-not-be-redeemed")
+  callbackUrl.searchParams.set("state", state)
+
+  const response = await app.fetch(new Request(callbackUrl))
+  expect(response.status).toBe(400)
+  const body: unknown = await response.json()
+  expect(body).toEqual({ error: "invalid_request", message: "Unknown connection." })
+})
+
+test("public OAuth callback validates state and renders a safe provider-denial diagnostic", async () => {
+  const state = createOAuthStateToken({
+    organizationId,
+    orgMembershipId: memberId,
+    providerId: seededConnectionId(),
+    secret: process.env.BETTER_AUTH_SECRET ?? "",
+  })
+  const callbackUrl = new URL(`http://den-api.local/v1/mcp-connections/${seededConnectionId()}/connect/callback`)
+  callbackUrl.searchParams.set("error", "access_denied")
+  callbackUrl.searchParams.set("error_description", "tenant=user@example.invalid secret-detail")
+  callbackUrl.searchParams.set("session_state", "opaque-provider-session")
+  callbackUrl.searchParams.set("state", state)
+
+  const response = await app.fetch(new Request(callbackUrl))
+  expect(response.status).toBe(400)
+  expect(response.headers.get("content-type")).toContain("text/html")
+  const html = await response.text()
+  expect(html).toContain("The provider did not grant authorization")
+  expect(html).toContain("Diagnostic reference")
+  expect(html).not.toContain("user@example.invalid")
+  expect(html).not.toContain("secret-detail")
+  expect(html).not.toContain("opaque-provider-session")
+})
+
+test("non-OAuth create validation returns the same structured network diagnostic", async () => {
+  const response = await staleSessionRequest("/v1/mcp-connections", "POST", {
+    name: "Broken no-auth MCP",
+    url: "http://127.0.0.1:9/mcp",
+    authType: "none",
+    credentialMode: "shared",
+  })
+  expect(response.status).toBe(502)
+  const body: unknown = await response.json()
+  expect(isRecord(body)).toBe(true)
+  if (!isRecord(body) || !isRecord(body.diagnostic)) {
+    throw new Error("create validation response did not include a diagnostic envelope")
+  }
+  expect(body.error).toBe("connection_validation_failed")
+  expect(body.diagnostic).toMatchObject({
+    referenceId: response.headers.get("x-request-id"),
+    phase: "NETWORK_TCP",
+    category: "network_failure",
+    code: "MCP_ECONNREFUSED",
+  })
+})
+
+test("connection configuration rejects credentials embedded in MCP URLs", async () => {
+  for (const url of [
+    "not a url",
+    "file:///tmp/mcp.sock",
+    "ftp://mcp.example.invalid/mcp",
+    "https://user:password@mcp.example.invalid/mcp",
+    "https://mcp.example.invalid/mcp?access_token=secret",
+    "https://mcp.example.invalid/mcp#secret",
+  ]) {
+    const response = await staleSessionRequest("/v1/mcp-connections", "POST", {
+      name: "Unsafe MCP URL",
+      url,
+      authType: "oauth",
+      credentialMode: "shared",
+    })
+    expect(response.status).toBe(400)
+  }
 })
 
 test("stale admin sessions can configure and connect shared MCPs but cannot disconnect or delete them", async () => {
