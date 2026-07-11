@@ -74,6 +74,11 @@ import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/auth
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
+import {
+  COMPOSER_SPELLCHECK_CHANGED_EVENT,
+  readComposerSpellcheckEnabled,
+  writeComposerSpellcheckEnabled,
+} from "@/react-app/domains/session/surface/composer/spellcheck";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
 import { ConnectView } from "@/react-app/domains/settings/pages/connect-view";
 import { CloudMarketplacesView } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
@@ -404,6 +409,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   });
   const [themeMode, setThemeModeState] = useState<ThemeMode>(getInitialThemeMode);
   const [hideTitlebar, setHideTitlebar] = useState(() => readStoredBoolean(SETTINGS_HIDE_TITLEBAR_KEY, false));
+  const [composerSpellcheckEnabled, setComposerSpellcheckEnabled] = useState(() => readComposerSpellcheckEnabled());
   const [updateAutoCheck, setUpdateAutoCheck] = useState(() =>
     readStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, true),
   );
@@ -1074,6 +1080,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useEffect(() => {
     writeStoredBoolean(SETTINGS_HIDE_TITLEBAR_KEY, hideTitlebar);
   }, [hideTitlebar]);
+
+  useEffect(() => {
+    writeComposerSpellcheckEnabled(composerSpellcheckEnabled);
+    window.dispatchEvent(new Event(COMPOSER_SPELLCHECK_CHANGED_EVENT));
+    void window.__OPENWORK_ELECTRON__?.invokeDesktop?.(
+      "__setSpellCheckerEnabled",
+      composerSpellcheckEnabled,
+    );
+  }, [composerSpellcheckEnabled]);
 
   useEffect(() => {
     writeStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, updateAutoCheck);
@@ -2262,6 +2277,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             setLanguage={setLocale}
             hideTitlebar={hideTitlebar}
             toggleHideTitlebar={() => setHideTitlebar((current) => !current)}
+            composerSpellcheckEnabled={composerSpellcheckEnabled}
+            toggleComposerSpellcheck={() => setComposerSpellcheckEnabled((current) => !current)}
           />
         );
       case "updates":
