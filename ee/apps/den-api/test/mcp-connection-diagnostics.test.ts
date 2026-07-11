@@ -337,6 +337,35 @@ test("safe evidence strips query credentials and templates enterprise server ide
   expect(JSON.stringify(generic)).not.toContain("instance-42")
 })
 
+test("post-OAuth wrong-audience failures persist resource validation instead of MCP initialization", async () => {
+  const attempt = await diagnostics.createMcpDiagnosticAttempt({
+    organizationId,
+    connectionId: requireConnectionId(),
+    createdByOrgMembershipId: adminMemberId,
+  })
+  const attemptId = normalizeDenTypeId("mcpDiagnosticAttempt", attempt.id)
+  const error = externalMcpClient.postAuthorizationResourceValidationError(
+    "https://mcp.example.test/mcp?token=must-not-appear",
+  )
+
+  expect(externalMcpClient.diagnosticPhaseFromError(error)).toBe("AUTH_RESOURCE_VALIDATION")
+  await diagnostics.failMcpDiagnosticAttempt({
+    organizationId,
+    attemptId,
+    phase: externalMcpClient.diagnosticPhaseFromError(error),
+    healthLevel: "reachable",
+    error,
+    evidence: externalMcpClient.diagnosticEvidenceFromError(error),
+  })
+
+  const snapshot = await diagnostics.getMcpDiagnosticSnapshot({ organizationId, attemptId })
+  expect(snapshot?.attempt.status).toBe("failed")
+  expect(snapshot?.attempt.firstFailedPhase).toBe("AUTH_RESOURCE_VALIDATION")
+  expect(snapshot?.attempt.firstFailureCategory).toBe("oauth_invalid_token")
+  expect(snapshot?.attempt.firstFailureActionOwner).toBe("member")
+  expect(JSON.stringify(snapshot)).not.toContain("must-not-appear")
+})
+
 test("PKCE grants are state-bound, concurrency-safe, expiring, and one-time", async () => {
   const connection = requireConnectionId()
   const client = await oauthCredentials.upsertOrgOAuthClient({
