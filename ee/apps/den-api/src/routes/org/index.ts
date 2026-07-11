@@ -5,6 +5,7 @@ import { registerOrgBillingRoutes } from "./billing.js"
 import { registerOrgBrandAssetRoutes } from "./brand-assets.js"
 import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
 import type { OrgRouteVariables } from "./shared.js"
+import { registerOrgConnectLinkRoutes } from "./connect-links.js"
 import { registerOrgCoreRoutes } from "./core.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
@@ -62,6 +63,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(ap
   registerOrgSsoRoutes(app)
   registerOrgInvitationRoutes(app)
   registerOrgInstallLinkRoutes(app)
+  registerOrgConnectLinkRoutes(app)
   registerOrgLlmProviderRoutes(app)
   registerOrgMemberRoutes(app)
   registerOAuthProviderRoutes(app)

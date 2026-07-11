@@ -29,6 +29,10 @@ data:
   DEN_WEB_APP_HOSTS: {{ .Values.config.public.webAppHosts | quote }}
   DEN_BOOTSTRAP_ADMIN_EMAILS: {{ .Values.config.public.bootstrapAdminEmails | quote }}
   DEN_INSTALL_LINKS_GATING_ENABLED: {{ .Values.config.public.installLinksGatingEnabled | quote }}
+  DEN_CONNECT_LINKS_GATING_ENABLED: {{ .Values.config.public.connectLinksGatingEnabled | quote }}
+  {{ if .Values.config.public.connectLinkKeyId }}
+  DEN_CONNECT_LINK_KEY_ID: {{ .Values.config.public.connectLinkKeyId | quote }}
+  {{ end }}
   CORS_ORIGINS: {{ .Values.config.public.corsOrigins | quote }}
   DEN_CORS_ORIGINS: {{ .Values.config.public.corsOrigins | quote }}
   DEN_API_PUBLIC_URL: {{ .Values.config.public.apiOrigin | quote }}

@@ -34,6 +34,8 @@ config:
     webAppHosts: openwork.example.com
     bootstrapAdminEmails: ""
     installLinksGatingEnabled: "false"
+    connectLinksGatingEnabled: "false"
+    connectLinkKeyId: ""
     openworkAppConnectUrl: ""
     installerReleaseTag: ""
     installerReleaseRepo: ""
@@ -111,6 +113,7 @@ secret:
     githubConnectorAppClientSecret: GITHUB_CONNECTOR_APP_CLIENT_SECRET
     githubConnectorAppPrivateKey: GITHUB_CONNECTOR_APP_PRIVATE_KEY
     githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
+    connectLinkPrivateKey: DEN_CONNECT_LINK_PRIVATE_KEY
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
     betterAuthSecret: CHANGE_ME_32_CHARS_MINIMUM_BETTER_AUTH
@@ -129,6 +132,7 @@ secret:
     githubConnectorAppClientSecret: ""
     githubConnectorAppPrivateKey: ""
     githubConnectorAppWebhookSecret: ""
+    connectLinkPrivateKey: ""
 
 installerArtifacts:
   enabled: false

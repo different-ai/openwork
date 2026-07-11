@@ -91,6 +91,9 @@ const EnvSchema = z.object({
   VERCEL_DNS_DOMAIN: z.string().optional(),
   DEN_PLAN_GATING_ENABLED: z.string().optional(),
   DEN_INSTALL_LINKS_GATING_ENABLED: z.string().optional(),
+  DEN_CONNECT_LINKS_GATING_ENABLED: z.string().optional(),
+  DEN_CONNECT_LINK_PRIVATE_KEY: z.string().optional(),
+  DEN_CONNECT_LINK_KEY_ID: z.string().max(64).optional(),
   DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
@@ -264,6 +267,27 @@ const planGatingEnabled =
 const installLinksGatingEnabled =
   (parsed.DEN_INSTALL_LINKS_GATING_ENABLED ?? String(planGatingEnabled)).toLowerCase() === "true"
 
+// Connect links follow the install-links rollout model: hosted deployments
+// keep the feature opt-in per organization, self-hosted deployments get it as
+// soon as a signing key is configured. An explicit setting wins.
+const connectLinksGatingEnabled =
+  (parsed.DEN_CONNECT_LINKS_GATING_ENABLED ?? String(planGatingEnabled)).toLowerCase() === "true"
+
+// The connect-link signing key is a dedicated Ed25519 keypair owned by the
+// deployment operator (for OpenWork Cloud: the vendor). It is deliberately
+// NOT the better-auth JWKS: those keys rotate every 24h, which would
+// invalidate emailed links, and they carry a different audience/purpose.
+const connectLinkPrivateKeyPem = optionalString(parsed.DEN_CONNECT_LINK_PRIVATE_KEY)
+const connectLinkKid = optionalString(parsed.DEN_CONNECT_LINK_KEY_ID)
+if (Boolean(connectLinkPrivateKeyPem) !== Boolean(connectLinkKid)) {
+  throw new Error(
+    "DEN_CONNECT_LINK_PRIVATE_KEY and DEN_CONNECT_LINK_KEY_ID must be set together (or both left unset).",
+  )
+}
+const connectLink = connectLinkPrivateKeyPem && connectLinkKid
+  ? { privateKeyPem: connectLinkPrivateKeyPem, kid: connectLinkKid }
+  : null
+
 // Staged rollout for member-facing org MCP connections: when gating is
 // enabled (hosted deployments), GET /v1/mcp-connections?scope=usable returns
 // an empty list unless the organization opted in via the mcpConnections
@@ -330,6 +354,8 @@ export const env = {
   allowPrivateMcpUrls,
   planGatingEnabled,
   installLinksGatingEnabled,
+  connectLinksGatingEnabled,
+  connectLink,
   mcpConnectionsGatingEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   requireEmailVerification,

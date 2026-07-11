@@ -15,6 +15,7 @@ function normalizeEmailTemplate(value: string | null): EmailTemplate | null | un
     case "passwordReset":
     case "organizationInvite":
     case "downloadLink":
+    case "connectDesktop":
     case "feedback":
       return value
     default:
