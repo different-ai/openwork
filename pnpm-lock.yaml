@@ -425,6 +425,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@openwork/connect-link':
+        specifier: workspace:*
+        version: link:../../../packages/connect-link
       '@openwork/email':
         specifier: workspace:*
         version: link:../../../packages/email
@@ -740,6 +743,25 @@ importers:
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
       typescript:
         specifier: ^5.5.4
+        version: 5.9.3
+
+  packages/connect-link:
+    dependencies:
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../types
+      zod:
+        specifier: 4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.7
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      typescript:
+        specifier: ^5.6.3
         version: 5.9.3
 
   packages/email:
