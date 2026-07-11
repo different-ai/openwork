@@ -4,6 +4,10 @@
  *
  * Start beside the isolated Den with:
  *   MCP_MOCK_ENABLE_DCR=1 pnpm dev:mcp-diagnostic -- --profile servicenow
+ *
+ * The flow uses MOCK_DIAGNOSTIC_MCP_URL when supplied. Otherwise it derives
+ * the ServiceNow endpoint from MCP_DIAGNOSTIC_MOCK_PORT, the first isolated
+ * OPENWORK_EXTRA_APP_PORTS value, or the mock's 3978 default.
  */
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 import { denApiFetch, openAdminConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
@@ -11,8 +15,26 @@ import { denApiFetch, openAdminConnections, signInApi, signInViaBrowser } from "
 const vo = await loadVoiceoverParagraphs("mcp-diagnostic-mock-server");
 const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MCP_URL = (process.env.MOCK_DIAGNOSTIC_MCP_URL
-  || "http://127.0.0.1:20508/sncapps/mcp-server/mcp/sn_mcp_server_default").trim();
+const SERVICENOW_MCP_PATH = "/sncapps/mcp-server/mcp/sn_mcp_server_default";
+
+function configuredMockPort() {
+  const explicit = process.env.MCP_DIAGNOSTIC_MOCK_PORT?.trim();
+  const isolated = process.env.OPENWORK_EXTRA_APP_PORTS?.split(",")[0]?.trim();
+  const raw = explicit || isolated || "3978";
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`Invalid MCP diagnostic mock port: ${JSON.stringify(raw)}.`);
+  }
+  return port;
+}
+
+function diagnosticMcpUrl() {
+  const explicit = process.env.MOCK_DIAGNOSTIC_MCP_URL?.trim();
+  if (explicit) return new URL(explicit).toString().replace(/\/$/, "");
+  return `http://127.0.0.1:${configuredMockPort()}${SERVICENOW_MCP_PATH}`;
+}
+
+const MCP_URL = diagnosticMcpUrl();
 const MOCK_ORIGIN = new URL(MCP_URL).origin;
 const CONNECTION_NAME = `diagnostic-servicenow-${Date.now()}`;
 const state = { adminSession: null, connectionId: null };
@@ -99,11 +121,18 @@ export default {
         });
         const prepared = await ctx.eval(`(() => {
           const button = [...document.querySelectorAll("button")].find((entry) => (entry.textContent ?? "").trim() === "Add connection" && entry.getClientRects().length > 0);
-          if (!button) return false;
+          if (!button || button.disabled) return false;
           button.id = "fraimz-add-mcp-connection";
+          button.scrollIntoView({ block: "center", behavior: "instant" });
           return true;
         })()`);
         ctx.assert(prepared, "The Add connection button was not available for a trusted click.");
+        await ctx.waitFor(`(() => {
+          const button = document.querySelector("#fraimz-add-mcp-connection");
+          if (!button) return false;
+          const rect = button.getBoundingClientRect();
+          return rect.top >= 0 && rect.bottom <= window.innerHeight;
+        })()`, { timeoutMs: 5_000, label: "Add connection button in viewport" });
         await ctx.trustedClick("#fraimz-add-mcp-connection", { timeoutMs: 20_000 });
       },
     },
@@ -113,21 +142,17 @@ export default {
         await ctx.prove("The synthetic provider completes Den's real OAuth callback", {
           voiceover: vo[2],
           action: async () => {
-            await ctx.switchToNewTab({ timeoutMs: 20_000, label: "diagnostic OAuth popup" });
-            await ctx.waitForText("Connected", { timeoutMs: 30_000 });
+            // Auto-approved local OAuth can complete and close its popup before
+            // CDP reports the short-lived tab. The durable user-visible proof is
+            // the parent Connections row transitioning to Connected after Den's
+            // callback persists and validates the credential.
+            await ctx.waitFor(rowScript("connected"), { timeoutMs: 30_000, label: "diagnostic OAuth callback" });
           },
           assert: async () => {
             await ctx.expectText(CONNECTION_NAME);
             await ctx.expectNoText("Connection failed");
           },
-          screenshot: {
-            name: "diagnostic-oauth-connected",
-            claim: "Protected-resource discovery, the mock-only DCR override, PKCE, token exchange, and Den callback completed.",
-            requireText: ["Connected", CONNECTION_NAME],
-            rejectText: ["Connection failed"],
-          },
         });
-        await ctx.switchBack();
       },
     },
     {

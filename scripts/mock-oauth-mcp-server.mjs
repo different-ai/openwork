@@ -55,7 +55,8 @@ const port = Number(
     || 3978,
 );
 const issuer = process.env.ISSUER || `http://${hostForUrl(host)}:${port}`;
-const autoApprove = process.env.AUTO_APPROVE !== "0";
+let autoApprove = process.env.AUTO_APPROVE !== "0";
+let selectedProtocolVersion = process.env.MOCK_MCP_PROTOCOL_VERSION || null;
 const disableDcrRequested = process.env.DISABLE_DCR === "1" || fault === "dcr_unsupported";
 const enableDcrRequested = process.env.MCP_MOCK_ENABLE_DCR === "1";
 const mockClientId = process.env.MOCK_CLIENT_ID || "mock-preregistered-client";
@@ -491,6 +492,11 @@ function responseHeaders(correlationId, headers = {}) {
   };
 }
 
+function oauthApprovalContentSecurityPolicy(redirectUri) {
+  const callbackOrigin = new URL(redirectUri).origin;
+  return `default-src 'none'; form-action 'self' ${callbackOrigin}; base-uri 'none'; frame-ancestors 'none'`;
+}
+
 function json(res, status, body, correlationId, headers = {}) {
   res.writeHead(status, responseHeaders(correlationId, { "content-type": "application/json", ...headers }));
   res.end(JSON.stringify(body));
@@ -713,7 +719,10 @@ function issueAuthorizationCode(res, grant, correlationId) {
   const callback = new URL(grant.redirectUri);
   callback.searchParams.set("code", code);
   callback.searchParams.set("state", grant.state);
-  res.writeHead(302, responseHeaders(correlationId, { location: callback.toString() }));
+  res.writeHead(302, responseHeaders(correlationId, {
+    location: callback.toString(),
+    "content-security-policy": oauthApprovalContentSecurityPolicy(grant.redirectUri),
+  }));
   res.end();
 }
 
@@ -740,7 +749,9 @@ async function authorize(res, url, correlationId) {
 <body><h1>Mock MCP OAuth</h1><p>Profile: <strong>${escapeHtml(profileName)}</strong>. Synthetic data only.</p>
 ${requestedScopesHtml}<form method="post" action="/approve">
 <input type="hidden" name="approval_transaction" value="${escapeHtml(approvalTransaction)}">
-<button>Approve OpenWork</button></form></body></html>`, correlationId);
+<button>Approve OpenWork</button></form></body></html>`, correlationId, {
+    "content-security-policy": oauthApprovalContentSecurityPolicy(grant.redirectUri),
+  });
 }
 
 async function approveAuthorization(req, res, correlationId) {
@@ -959,6 +970,7 @@ function providerError(message, category, providerStatus, providerCode, correlat
 
 function selectedProtocol(requested) {
   if (fault === "unsupported_version") return "2099-01-01";
+  if (selectedProtocolVersion) return selectedProtocolVersion;
   return profile.protocols.includes(requested) ? requested : profile.protocols[0];
 }
 
@@ -1325,6 +1337,7 @@ const server = http.createServer(async (req, res) => {
         profile: profileName,
         endpoint: profile.endpoint,
         protocols: profile.protocols,
+        protocolVersion: selectedProtocolVersion || profile.protocols[0],
         responseMode,
         authMode,
         fault,
@@ -1353,6 +1366,34 @@ const server = http.createServer(async (req, res) => {
         requests: requests.length,
         requestLogEnabled: diagnosticsKey !== null,
       }, correlationId);
+      return;
+    }
+    if (url.pathname === "/__mock/protocol-version" && req.method === "POST") {
+      if (diagnosticsKey && !hasDiagnosticsAccess(req)) {
+        json(res, 404, { error: "not_found" }, correlationId);
+        return;
+      }
+      const body = await readJson(req).catch(() => ({}));
+      if (typeof body.protocolVersion !== "string" || body.protocolVersion.length > 32) {
+        json(res, 400, { error: "invalid_protocol_version" }, correlationId);
+        return;
+      }
+      selectedProtocolVersion = body.protocolVersion;
+      json(res, 200, { protocolVersion: selectedProtocolVersion }, correlationId);
+      return;
+    }
+    if (url.pathname === "/__mock/auto-approve" && req.method === "POST") {
+      if (diagnosticsKey && !hasDiagnosticsAccess(req)) {
+        json(res, 404, { error: "not_found" }, correlationId);
+        return;
+      }
+      const body = await readJson(req).catch(() => ({}));
+      if (typeof body.autoApprove !== "boolean") {
+        json(res, 400, { error: "invalid_auto_approve" }, correlationId);
+        return;
+      }
+      autoApprove = body.autoApprove;
+      json(res, 200, { autoApprove }, correlationId);
       return;
     }
     if (url.pathname === "/requests") {

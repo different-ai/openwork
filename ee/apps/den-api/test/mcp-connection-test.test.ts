@@ -495,10 +495,11 @@ test("default enterprise confidential-client OAuth completes through the product
           createdByOrgMembershipId: adminMemberId,
         })
 
+        const signedState = `signed-state-${connection.id}-${scenario.profile}-${responseMode}`
         const started = await mcpClient.connectExternalMcp(
           connection,
           DEN_SDK_REDIRECT_URI,
-          `signed-state-${scenario.profile}-${responseMode}`,
+          signedState,
         )
         expect(started.status).toBe("needs_auth")
         if (started.status !== "needs_auth") throw new Error(`${scenario.profile} did not request authorization`)
@@ -513,11 +514,23 @@ test("default enterprise confidential-client OAuth completes through the product
         const callback = new URL(location)
         const code = callback.searchParams.get("code")
         if (!code) throw new Error(`${scenario.profile} authorization omitted code`)
-        expect(callback.searchParams.get("state")).toBe(`signed-state-${scenario.profile}-${responseMode}`)
+        expect(callback.searchParams.get("state")).toBe(signedState)
 
         const pending = await connections.getExternalMcpConnection({ organizationId, connectionId: connection.id })
-        if (!pending?.pendingCodeVerifier) throw new Error(`${scenario.profile} did not persist its PKCE verifier`)
-        await mcpClient.completeExternalMcpAuth(pending, code, DEN_SDK_REDIRECT_URI)
+        if (!pending) throw new Error(`${scenario.profile} connection disappeared before its OAuth callback`)
+        const pendingGrant = await connections.getExternalMcpOAuthPendingGrantForCallback({
+          organizationId,
+          connectionId: connection.id,
+          orgMembershipId: null,
+          signedState,
+        })
+        expect(pendingGrant.codeVerifier.length).toBeGreaterThan(0)
+        await mcpClient.completeExternalMcpAuth({
+          connection: pending,
+          code,
+          redirectUri: DEN_SDK_REDIRECT_URI,
+          signedState,
+        })
 
         const connected = await connections.getExternalMcpConnection({ organizationId, connectionId: connection.id })
         if (!connected?.accessToken || !connected.refreshToken) throw new Error(`${scenario.profile} did not persist OAuth tokens`)

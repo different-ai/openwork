@@ -44,6 +44,7 @@ import {
 } from "./mcp-connection-test-state";
 import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
 import { TelegramDialog } from "./telegram-dialog";
+import { McpConnectionDiagnosticsDialog } from "./mcp-connection-diagnostics-dialog";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
@@ -214,6 +215,7 @@ export function McpConnectionsScreen() {
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
   const [microsoftDialogOpen, setMicrosoftDialogOpen] = useState(false);
   const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
+  const [diagnosticConnection, setDiagnosticConnection] = useState<ExternalMcpConnection | null>(null);
   const googleConfigured = usableConnections.some((connection) => connection.id === "google-workspace");
   const microsoftConfigured = usableConnections.some((connection) => connection.id === "microsoft-365");
   const telegramConnection = useTelegramConnection(true);
@@ -486,6 +488,7 @@ export function McpConnectionsScreen() {
               testOutcome={testOutcome?.connectionId === connection.id ? testOutcome.outcome : null}
               onConnect={() => void handleConnectOAuth(connection.id)}
               onTest={() => void handleTestConnection(connection.id)}
+              onDiagnose={() => setDiagnosticConnection(connection)}
               onRemove={() => deleteConnection.mutate(connection.id)}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
             />
@@ -534,6 +537,7 @@ export function McpConnectionsScreen() {
       />
 
       <TelegramDialog open={telegramDialogOpen} onClose={() => setTelegramDialogOpen(false)} />
+      <McpConnectionDiagnosticsDialog connection={diagnosticConnection} onClose={() => setDiagnosticConnection(null)} />
     </DashboardPageTemplate>
   );
 }
@@ -1107,6 +1111,7 @@ function ConnectionRow({
   testOutcome,
   onConnect,
   onTest,
+  onDiagnose,
   onRemove,
   removing,
 }: {
@@ -1122,6 +1127,7 @@ function ConnectionRow({
   } | null;
   onConnect: () => void;
   onTest: () => void;
+  onDiagnose: () => void;
   onRemove: () => void;
   removing: boolean;
 }) {
@@ -1184,6 +1190,9 @@ function ConnectionRow({
               Test connection
             </DenButton>
           ) : null}
+          <DenButton variant="secondary" size="sm" onClick={onDiagnose}>
+            Diagnose
+          </DenButton>
           <DenButton
             variant="destructive"
             size="sm"
@@ -1385,7 +1394,7 @@ function AddConnectionDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        className="max-h-[88vh] w-full max-w-md overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
         {oauthCallback ? (

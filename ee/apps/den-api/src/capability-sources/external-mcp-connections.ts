@@ -1,8 +1,11 @@
-import { and, eq, inArray, or } from "@openwork-ee/den-db/drizzle"
+import { createHash } from "node:crypto"
+import { and, eq, inArray, isNull, lt, or } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
   ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
+  ExternalMcpOAuthPendingGrantTable,
+  McpDiagnosticAttemptTable,
   OrgOAuthClientTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
@@ -22,6 +25,48 @@ type OrganizationId = DenTypeId<"organization">
 type OrgMembershipId = DenTypeId<"member">
 type TeamId = DenTypeId<"team">
 type ExternalMcpConnectionId = DenTypeId<"externalMcpConnection">
+const EXTERNAL_MCP_PENDING_GRANT_TTL_MS = 10 * 60 * 1000
+const EXTERNAL_MCP_PENDING_GRANT_CLEANUP_INTERVAL_MS = 10 * 60 * 1000
+let pendingGrantCleanupTimer: ReturnType<typeof setInterval> | null = null
+
+function oauthStateHash(signedState: string): string {
+  return createHash("sha256").update(signedState).digest("hex")
+}
+
+function pendingGrantMemberCondition(orgMembershipId: OrgMembershipId | null) {
+  return orgMembershipId
+    ? eq(ExternalMcpOAuthPendingGrantTable.orgMembershipId, orgMembershipId)
+    : isNull(ExternalMcpOAuthPendingGrantTable.orgMembershipId)
+}
+
+export class ExternalMcpPendingGrantError extends Error {
+  constructor() {
+    super("The pending MCP OAuth authorization is missing, expired, or already consumed.")
+    this.name = "ExternalMcpPendingGrantError"
+  }
+}
+
+export class McpDiagnosticCredentialFenceError extends Error {
+  constructor() {
+    super("The MCP diagnostic authorization lease is stale or no longer eligible to write credentials.")
+    this.name = "McpDiagnosticCredentialFenceError"
+  }
+}
+
+export class ExternalMcpOAuthClientRevisionError extends Error {
+  constructor() {
+    super("The MCP OAuth client registration changed after authorization started.")
+    this.name = "ExternalMcpOAuthClientRevisionError"
+  }
+}
+
+export class ExternalMcpCallbackDeadlineError extends Error {
+  readonly code = "MCP_LIFECYCLE_DEADLINE"
+  constructor() {
+    super("The external MCP lifecycle exceeded its deadline before callback credentials could be committed.")
+    this.name = "ExternalMcpCallbackDeadlineError"
+  }
+}
 
 export async function listExternalMcpConnections(organizationId: OrganizationId): Promise<ExternalMcpConnectionRow[]> {
   return db
@@ -41,6 +86,16 @@ export async function getExternalMcpConnection(input: {
       eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
       eq(ExternalMcpConnectionTable.id, input.connectionId),
     ))
+    .limit(1)
+  return rows[0] ?? null
+}
+
+/** Callback-only lookup; callers must independently verify signed tenant state. */
+export async function getExternalMcpConnectionById(connectionId: ExternalMcpConnectionId): Promise<ExternalMcpConnectionRow | null> {
+  const rows = await db
+    .select()
+    .from(ExternalMcpConnectionTable)
+    .where(eq(ExternalMcpConnectionTable.id, connectionId))
     .limit(1)
   return rows[0] ?? null
 }
@@ -189,6 +244,7 @@ export async function deleteExternalMcpConnection(input: {
   // No FK cascades on these tables — clean up everything that hangs off the
   // connection: access grants, every member's connected account (per-member
   // tokens), and the dynamically-registered OAuth client.
+  await db.delete(ExternalMcpOAuthPendingGrantTable).where(eq(ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId, existing.id))
   await db.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, existing.id))
   await db.delete(ConnectedAccountTable).where(and(
     eq(ConnectedAccountTable.organizationId, input.organizationId),
@@ -200,6 +256,216 @@ export async function deleteExternalMcpConnection(input: {
   ))
   await db.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
   return true
+}
+
+export async function cleanupExpiredExternalMcpOAuthPendingGrants(now = new Date()): Promise<number> {
+  let deleted = 0
+  while (true) {
+    const expired = await db
+      .select({ stateHash: ExternalMcpOAuthPendingGrantTable.stateHash })
+      .from(ExternalMcpOAuthPendingGrantTable)
+      .where(lt(ExternalMcpOAuthPendingGrantTable.expiresAt, now))
+      .limit(200)
+    if (expired.length === 0) return deleted
+    await db
+      .delete(ExternalMcpOAuthPendingGrantTable)
+      .where(inArray(ExternalMcpOAuthPendingGrantTable.stateHash, expired.map((row) => row.stateHash)))
+    deleted += expired.length
+    if (expired.length < 200) return deleted
+  }
+}
+
+export function startExternalMcpOAuthPendingGrantCleanupLoop(): void {
+  if (pendingGrantCleanupTimer) return
+  const run = () => {
+    void cleanupExpiredExternalMcpOAuthPendingGrants().catch((error) => {
+      console.error("external_mcp_pending_oauth_grant_cleanup_failed", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      })
+    })
+  }
+  run()
+  pendingGrantCleanupTimer = setInterval(run, EXTERNAL_MCP_PENDING_GRANT_CLEANUP_INTERVAL_MS)
+  pendingGrantCleanupTimer.unref()
+}
+
+export async function saveExternalMcpOAuthPendingGrant(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId | null
+  signedState: string
+  codeVerifier: string
+  orgOAuthClientId: DenTypeId<"orgOAuthClient">
+  clientRevision: number
+  diagnosticAttemptId?: DenTypeId<"mcpDiagnosticAttempt"> | null
+  diagnosticGeneration?: number | null
+  now?: Date
+}): Promise<void> {
+  const now = input.now ?? new Date()
+  await cleanupExpiredExternalMcpOAuthPendingGrants(now)
+  await db.insert(ExternalMcpOAuthPendingGrantTable).values({
+    stateHash: oauthStateHash(input.signedState),
+    organizationId: input.organizationId,
+    externalMcpConnectionId: input.connectionId,
+    orgMembershipId: input.orgMembershipId,
+    codeVerifier: input.codeVerifier,
+    orgOAuthClientId: input.orgOAuthClientId,
+    clientRevision: input.clientRevision,
+    diagnosticAttemptId: input.diagnosticAttemptId ?? null,
+    diagnosticGeneration: input.diagnosticGeneration ?? null,
+    expiresAt: new Date(now.getTime() + EXTERNAL_MCP_PENDING_GRANT_TTL_MS),
+    createdAt: now,
+  })
+}
+
+export type ExternalMcpOAuthPendingGrantBinding = {
+  orgOAuthClientId: DenTypeId<"orgOAuthClient">
+  clientRevision: number
+  diagnosticAttemptId: DenTypeId<"mcpDiagnosticAttempt"> | null
+  diagnosticGeneration: number | null
+}
+
+export async function getExternalMcpOAuthPendingGrantBinding(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId | null
+  signedState: string
+  diagnosticAttemptId?: DenTypeId<"mcpDiagnosticAttempt"> | null
+  diagnosticGeneration?: number | null
+  now?: Date
+}): Promise<ExternalMcpOAuthPendingGrantBinding> {
+  const now = input.now ?? new Date()
+  const rows = await db
+    .select()
+    .from(ExternalMcpOAuthPendingGrantTable)
+    .where(and(
+      eq(ExternalMcpOAuthPendingGrantTable.stateHash, oauthStateHash(input.signedState)),
+      eq(ExternalMcpOAuthPendingGrantTable.organizationId, input.organizationId),
+      eq(ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId, input.connectionId),
+      pendingGrantMemberCondition(input.orgMembershipId),
+      input.diagnosticAttemptId
+        ? eq(ExternalMcpOAuthPendingGrantTable.diagnosticAttemptId, input.diagnosticAttemptId)
+        : isNull(ExternalMcpOAuthPendingGrantTable.diagnosticAttemptId),
+      input.diagnosticGeneration !== undefined && input.diagnosticGeneration !== null
+        ? eq(ExternalMcpOAuthPendingGrantTable.diagnosticGeneration, input.diagnosticGeneration)
+        : isNull(ExternalMcpOAuthPendingGrantTable.diagnosticGeneration),
+    ))
+    .limit(1)
+  const grant = rows[0]
+  if (!grant || grant.expiresAt.getTime() <= now.getTime()) throw new ExternalMcpPendingGrantError()
+  return {
+    orgOAuthClientId: grant.orgOAuthClientId,
+    clientRevision: grant.clientRevision,
+    diagnosticAttemptId: grant.diagnosticAttemptId,
+    diagnosticGeneration: grant.diagnosticGeneration,
+  }
+}
+
+/**
+ * Reads the callback's PKCE verifier without consuming it. The grant is locked,
+ * validated, and deleted later in the same transaction that persists tokens, so
+ * a failed or timed-out token exchange leaves every durable callback artifact
+ * unchanged while concurrent successful callbacks still have one CAS winner.
+ */
+export async function getExternalMcpOAuthPendingGrantForCallback(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId | null
+  signedState: string
+  diagnosticAttemptId?: DenTypeId<"mcpDiagnosticAttempt"> | null
+  diagnosticGeneration?: number | null
+  now?: Date
+}): Promise<ExternalMcpOAuthPendingGrantBinding & { codeVerifier: string }> {
+  const now = input.now ?? new Date()
+  const rows = await db
+    .select()
+    .from(ExternalMcpOAuthPendingGrantTable)
+    .where(and(
+      eq(ExternalMcpOAuthPendingGrantTable.stateHash, oauthStateHash(input.signedState)),
+      eq(ExternalMcpOAuthPendingGrantTable.organizationId, input.organizationId),
+      eq(ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId, input.connectionId),
+      pendingGrantMemberCondition(input.orgMembershipId),
+      input.diagnosticAttemptId
+        ? eq(ExternalMcpOAuthPendingGrantTable.diagnosticAttemptId, input.diagnosticAttemptId)
+        : isNull(ExternalMcpOAuthPendingGrantTable.diagnosticAttemptId),
+      input.diagnosticGeneration !== undefined && input.diagnosticGeneration !== null
+        ? eq(ExternalMcpOAuthPendingGrantTable.diagnosticGeneration, input.diagnosticGeneration)
+        : isNull(ExternalMcpOAuthPendingGrantTable.diagnosticGeneration),
+    ))
+    .limit(1)
+  const grant = rows[0]
+  if (!grant || grant.expiresAt.getTime() <= now.getTime()) throw new ExternalMcpPendingGrantError()
+  return {
+    codeVerifier: grant.codeVerifier,
+    orgOAuthClientId: grant.orgOAuthClientId,
+    clientRevision: grant.clientRevision,
+    diagnosticAttemptId: grant.diagnosticAttemptId,
+    diagnosticGeneration: grant.diagnosticGeneration,
+  }
+}
+
+export async function consumeExternalMcpOAuthPendingGrant(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId | null
+  signedState: string
+  diagnosticAttemptId?: DenTypeId<"mcpDiagnosticAttempt"> | null
+  diagnosticGeneration?: number | null
+  now?: Date
+}): Promise<ExternalMcpOAuthPendingGrantBinding & { codeVerifier: string }> {
+  const stateHash = oauthStateHash(input.signedState)
+  const now = input.now ?? new Date()
+  const grant = await db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpOAuthPendingGrantTable)
+      .where(and(
+        eq(ExternalMcpOAuthPendingGrantTable.stateHash, stateHash),
+        eq(ExternalMcpOAuthPendingGrantTable.organizationId, input.organizationId),
+        eq(ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId, input.connectionId),
+        pendingGrantMemberCondition(input.orgMembershipId),
+        input.diagnosticAttemptId
+          ? eq(ExternalMcpOAuthPendingGrantTable.diagnosticAttemptId, input.diagnosticAttemptId)
+          : isNull(ExternalMcpOAuthPendingGrantTable.diagnosticAttemptId),
+        input.diagnosticGeneration !== undefined && input.diagnosticGeneration !== null
+          ? eq(ExternalMcpOAuthPendingGrantTable.diagnosticGeneration, input.diagnosticGeneration)
+          : isNull(ExternalMcpOAuthPendingGrantTable.diagnosticGeneration),
+      ))
+      .limit(1)
+      .for("update")
+    const grant = rows[0]
+    if (!grant) throw new ExternalMcpPendingGrantError()
+
+    await tx
+      .delete(ExternalMcpOAuthPendingGrantTable)
+      .where(eq(ExternalMcpOAuthPendingGrantTable.stateHash, stateHash))
+    if (grant.expiresAt.getTime() <= now.getTime()) return null
+    return {
+      codeVerifier: grant.codeVerifier,
+      orgOAuthClientId: grant.orgOAuthClientId,
+      clientRevision: grant.clientRevision,
+      diagnosticAttemptId: grant.diagnosticAttemptId,
+      diagnosticGeneration: grant.diagnosticGeneration,
+    }
+  })
+  if (!grant) throw new ExternalMcpPendingGrantError()
+  return grant
+}
+
+export async function deleteExternalMcpOAuthPendingGrant(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId | null
+  signedState: string
+}): Promise<void> {
+  await db
+    .delete(ExternalMcpOAuthPendingGrantTable)
+    .where(and(
+      eq(ExternalMcpOAuthPendingGrantTable.stateHash, oauthStateHash(input.signedState)),
+      eq(ExternalMcpOAuthPendingGrantTable.organizationId, input.organizationId),
+      eq(ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId, input.connectionId),
+      pendingGrantMemberCondition(input.orgMembershipId),
+    ))
 }
 
 export async function saveExternalMcpPendingCodeVerifier(input: {
@@ -254,6 +520,215 @@ export async function saveExternalMcpTokens(input: {
     .where(eq(ExternalMcpConnectionTable.id, input.connectionId))
 }
 
+export async function saveExternalMcpCallbackTokens(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId | null
+  orgOAuthClientId: DenTypeId<"orgOAuthClient">
+  clientRevision: number
+  diagnosticFence?: {
+    attemptId: DenTypeId<"mcpDiagnosticAttempt">
+    generation: number
+    leaseId: string
+  }
+  pendingGrant: {
+    signedState: string
+    diagnosticAttemptId?: DenTypeId<"mcpDiagnosticAttempt"> | null
+    diagnosticGeneration?: number | null
+  }
+  lifecycleDeadlineAt?: Date
+  accessToken: string
+  refreshToken?: string | null
+  tokenType?: string | null
+  scope?: string | null
+  expiresAt?: Date | null
+  now?: Date
+}): Promise<void> {
+  const stateHash = oauthStateHash(input.pendingGrant.signedState)
+  await db.transaction(async (tx) => {
+    const grants = await tx
+      .select()
+      .from(ExternalMcpOAuthPendingGrantTable)
+      .where(and(
+        eq(ExternalMcpOAuthPendingGrantTable.stateHash, stateHash),
+        eq(ExternalMcpOAuthPendingGrantTable.organizationId, input.organizationId),
+        eq(ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId, input.connectionId),
+        pendingGrantMemberCondition(input.orgMembershipId),
+        input.pendingGrant.diagnosticAttemptId
+          ? eq(ExternalMcpOAuthPendingGrantTable.diagnosticAttemptId, input.pendingGrant.diagnosticAttemptId)
+          : isNull(ExternalMcpOAuthPendingGrantTable.diagnosticAttemptId),
+        input.pendingGrant.diagnosticGeneration !== undefined && input.pendingGrant.diagnosticGeneration !== null
+          ? eq(ExternalMcpOAuthPendingGrantTable.diagnosticGeneration, input.pendingGrant.diagnosticGeneration)
+          : isNull(ExternalMcpOAuthPendingGrantTable.diagnosticGeneration),
+      ))
+      .limit(1)
+      .for("update")
+    const grant = grants[0]
+    if (
+      !grant
+      || grant.orgOAuthClientId !== input.orgOAuthClientId
+      || grant.clientRevision !== input.clientRevision
+    ) throw new ExternalMcpPendingGrantError()
+    if (input.diagnosticFence) {
+      if (
+        grant.diagnosticAttemptId !== input.diagnosticFence.attemptId
+        || grant.diagnosticGeneration !== input.diagnosticFence.generation
+      ) throw new McpDiagnosticCredentialFenceError()
+    } else if (grant.diagnosticAttemptId !== null || grant.diagnosticGeneration !== null) {
+      throw new McpDiagnosticCredentialFenceError()
+    }
+
+    const clients = await tx
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(and(
+        eq(OrgOAuthClientTable.id, input.orgOAuthClientId),
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, input.connectionId),
+        eq(OrgOAuthClientTable.revision, input.clientRevision),
+      ))
+      .limit(1)
+      .for("update")
+    if (!clients[0]) throw new ExternalMcpOAuthClientRevisionError()
+
+    let diagnosticAttempt: typeof McpDiagnosticAttemptTable.$inferSelect | undefined
+    if (input.diagnosticFence) {
+      const attempts = await tx
+        .select()
+        .from(McpDiagnosticAttemptTable)
+        .where(and(
+          eq(McpDiagnosticAttemptTable.id, input.diagnosticFence.attemptId),
+          eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+          eq(McpDiagnosticAttemptTable.externalMcpConnectionId, input.connectionId),
+          eq(McpDiagnosticAttemptTable.authorizationGeneration, input.diagnosticFence.generation),
+          eq(McpDiagnosticAttemptTable.authorizationClaimId, input.diagnosticFence.leaseId),
+        ))
+        .limit(1)
+        .for("update")
+      diagnosticAttempt = attempts[0]
+    }
+
+    const connections = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connections[0]
+    if (!connection) throw new ExternalMcpOAuthClientRevisionError()
+
+    // Evaluate all time fences only after every row that can block this callback
+    // is locked. A callback that lost its absolute deadline or diagnostic lease
+    // must roll back before credentials or the one-time grant are mutated.
+    const now = input.now ?? new Date()
+    if (grant.expiresAt.getTime() <= now.getTime()) throw new ExternalMcpPendingGrantError()
+    if (input.lifecycleDeadlineAt && input.lifecycleDeadlineAt.getTime() <= now.getTime()) {
+      throw new ExternalMcpCallbackDeadlineError()
+    }
+    if (
+      input.diagnosticFence
+      && (
+        !diagnosticAttempt
+        || diagnosticAttempt.status !== "waiting_for_authorization"
+        || !diagnosticAttempt.authorizationLeaseExpiresAt
+        || diagnosticAttempt.authorizationLeaseExpiresAt.getTime() <= now.getTime()
+        || (input.orgMembershipId !== null && diagnosticAttempt.createdByOrgMembershipId !== input.orgMembershipId)
+      )
+    ) throw new McpDiagnosticCredentialFenceError()
+
+    if (connection.credentialMode === "per_member") {
+      if (!input.orgMembershipId) throw new ExternalMcpOAuthClientRevisionError()
+      const accounts = await tx
+        .select()
+        .from(ConnectedAccountTable)
+        .where(and(
+          eq(ConnectedAccountTable.organizationId, input.organizationId),
+          eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+          eq(ConnectedAccountTable.providerId, input.connectionId),
+        ))
+        .limit(1)
+        .for("update")
+      const existing = accounts[0]
+      if (existing) {
+        await tx
+          .update(ConnectedAccountTable)
+          .set({
+            accessToken: input.accessToken,
+            refreshToken: input.refreshToken ?? existing.refreshToken ?? null,
+            tokenType: input.tokenType ?? null,
+            scopes: input.scope ? input.scope.split(" ") : null,
+            expiresAt: input.expiresAt ?? null,
+            pendingCodeVerifier: null,
+          })
+          .where(eq(ConnectedAccountTable.id, existing.id))
+      } else {
+        await tx.insert(ConnectedAccountTable).values({
+          id: createDenTypeId("connectedAccount"),
+          organizationId: input.organizationId,
+          orgMembershipId: input.orgMembershipId,
+          providerId: input.connectionId,
+          accessToken: input.accessToken,
+          refreshToken: input.refreshToken ?? null,
+          tokenType: input.tokenType ?? null,
+          scopes: input.scope ? input.scope.split(" ") : null,
+          expiresAt: input.expiresAt ?? null,
+          pendingCodeVerifier: null,
+        })
+      }
+    } else {
+      await tx
+        .update(ExternalMcpConnectionTable)
+        .set({
+          accessToken: input.accessToken,
+          refreshToken: input.refreshToken ?? connection.refreshToken ?? null,
+          tokenType: input.tokenType ?? null,
+          scope: input.scope ?? null,
+          expiresAt: input.expiresAt ?? null,
+          pendingCodeVerifier: null,
+          connectedAt: now,
+        })
+        .where(eq(ExternalMcpConnectionTable.id, input.connectionId))
+    }
+
+    if (input.diagnosticFence) {
+      // This update is the callback's transactional CAS win. The diagnostic
+      // leaves the timeout-eligible waiting state in the same transaction as
+      // its credential write, so timeout and callback cannot both win.
+      await tx
+        .update(McpDiagnosticAttemptTable)
+        .set({
+          status: "running",
+          authorizationClaimId: null,
+          authorizationLeaseExpiresAt: null,
+        })
+        .where(and(
+          eq(McpDiagnosticAttemptTable.id, input.diagnosticFence.attemptId),
+          eq(McpDiagnosticAttemptTable.authorizationGeneration, input.diagnosticFence.generation),
+          eq(McpDiagnosticAttemptTable.authorizationClaimId, input.diagnosticFence.leaseId),
+        ))
+    }
+
+    await tx
+      .delete(ExternalMcpOAuthPendingGrantTable)
+      .where(eq(ExternalMcpOAuthPendingGrantTable.stateHash, stateHash))
+
+    // Recheck immediately before the transaction callback returns. If token
+    // persistence itself crossed either absolute boundary, throwing here rolls
+    // back the credential update, diagnostic CAS, and grant deletion together.
+    const commitNow = input.now ?? new Date()
+    if (input.lifecycleDeadlineAt && input.lifecycleDeadlineAt.getTime() <= commitNow.getTime()) {
+      throw new ExternalMcpCallbackDeadlineError()
+    }
+    if (
+      diagnosticAttempt?.authorizationLeaseExpiresAt
+      && diagnosticAttempt.authorizationLeaseExpiresAt.getTime() <= commitNow.getTime()
+    ) throw new McpDiagnosticCredentialFenceError()
+  })
+}
+
 export async function disconnectExternalMcpConnection(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
@@ -261,10 +736,14 @@ export async function disconnectExternalMcpConnection(input: {
   const existing = await getExternalMcpConnection(input)
   if (!existing) return false
   await clearExternalMcpTokens(input)
+  await db.delete(ExternalMcpOAuthPendingGrantTable).where(eq(ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId, existing.id))
   await db
     .update(ExternalMcpConnectionTable)
     .set({
       pendingCodeVerifier: null,
+      oauthRegistrationLeaseHash: null,
+      oauthRegistrationLeaseExpiresAt: null,
+      connectedAt: null,
     })
     .where(eq(ExternalMcpConnectionTable.id, existing.id))
   return true

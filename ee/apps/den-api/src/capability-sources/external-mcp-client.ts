@@ -1,36 +1,50 @@
+import { randomUUID } from "node:crypto"
 import { Buffer } from "node:buffer"
-import { createHash, randomUUID } from "node:crypto"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js"
 import { env } from "../env.js"
-import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
+import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch, PrivateUrlError } from "./url-guard.js"
 import {
   type OAuthClientProvider,
   UnauthorizedError,
 } from "@modelcontextprotocol/sdk/client/auth.js"
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import type {
-  OAuthClientInformationFull,
   OAuthClientInformationMixed,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js"
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import type {
+  McpDiagnosticAttemptStatus,
+  McpDiagnosticActionOwner,
+  McpDiagnosticEventOutcome,
+  McpDiagnosticHealthLevel,
+  McpDiagnosticPhase,
+  McpDiagnosticSafeEvidence,
+} from "@openwork/types/den/mcp-diagnostics"
 import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
 import {
   clearExternalMcpTokens,
+  getExternalMcpOAuthPendingGrantBinding,
+  getExternalMcpOAuthPendingGrantForCallback,
   getExternalMcpConnection,
-  saveExternalMcpPendingCodeVerifier,
+  saveExternalMcpOAuthPendingGrant,
+  saveExternalMcpCallbackTokens,
   saveExternalMcpTokens,
 } from "./external-mcp-connections.js"
 import {
-  deleteOrgOAuthClient,
   getConnectedAccount,
+  getOrClaimExternalMcpClientRegistration,
   getOrgOAuthClient,
+  getOrgOAuthClientRevision,
+  saveExternalMcpRegisteredClient,
+  type OrgOAuthClientRow,
   upsertConnectedAccount,
-  upsertOrgOAuthClient,
 } from "./oauth-credentials.js"
+import { safeMcpDiagnosticEvidence } from "./external-mcp-live-diagnostics.js"
 import {
-  ExternalMcpDiagnosticError,
+  ExternalMcpDiagnosticError as StructuredExternalMcpDiagnosticError,
   ExternalMcpDiagnosticTracker,
   catalogDiagnosticError,
   createExternalMcpDiagnosticFetch,
@@ -58,15 +72,33 @@ import {
 const CLIENT_NAME = "OpenWork"
 const EXTERNAL_MCP_CALL_TIMEOUT_MS = 30_000
 const EXTERNAL_MCP_LIFECYCLE_TIMEOUT_MS = 45_000
-const EXTERNAL_MCP_TOOL_PAGE_LIMIT = 20
-const EXTERNAL_MCP_TOOL_ITEM_LIMIT = 2_000
-const EXTERNAL_MCP_TOOL_NAME_LIMIT_BYTES = 512
-const EXTERNAL_MCP_TOOL_TITLE_LIMIT_BYTES = 4 * 1024
-const EXTERNAL_MCP_TOOL_DESCRIPTION_LIMIT_BYTES = 64 * 1024
-const EXTERNAL_MCP_TOOL_SCHEMA_LIMIT_BYTES = 512 * 1024
-const EXTERNAL_MCP_TOOL_SCHEMA_DEPTH_LIMIT = 64
-const EXTERNAL_MCP_CURSOR_LIMIT_BYTES = 16 * 1024
-const EXTERNAL_MCP_CATALOG_LIMIT_BYTES = 8 * 1024 * 1024
+const EXTERNAL_MCP_CLOSE_TIMEOUT_MS = 5_000
+const DIAGNOSTIC_FETCH_TIMEOUT_MS = 30_000
+const DIAGNOSTIC_MAX_TOOL_PAGES = 20
+const DIAGNOSTIC_MAX_TOOLS = 2_000
+const DIAGNOSTIC_TOOL_NAME_LIMIT_BYTES = 512
+const DIAGNOSTIC_TOOL_TITLE_LIMIT_BYTES = 4 * 1024
+const DIAGNOSTIC_TOOL_DESCRIPTION_LIMIT_BYTES = 64 * 1024
+const DIAGNOSTIC_TOOL_SCHEMA_LIMIT_BYTES = 512 * 1024
+const DIAGNOSTIC_SCHEMA_DEPTH_LIMIT = 64
+const DIAGNOSTIC_SCHEMA_NODE_LIMIT = 20_000
+const DIAGNOSTIC_SCHEMA_KEY_LIMIT = 20_000
+const DIAGNOSTIC_SCHEMA_ARRAY_ITEM_LIMIT = 20_000
+const DIAGNOSTIC_SCHEMA_STRING_LIMIT_BYTES = 64 * 1024
+const DIAGNOSTIC_SCHEMA_KEY_LIMIT_BYTES = 4 * 1024
+const DIAGNOSTIC_CURSOR_LIMIT_BYTES = 16 * 1024
+const DIAGNOSTIC_CATALOG_LIMIT_BYTES = 8 * 1024 * 1024
+export const EXTERNAL_MCP_JSON_RESPONSE_LIMIT_BYTES = 4 * 1024 * 1024
+export const EXTERNAL_MCP_SSE_RESPONSE_LIMIT_BYTES = 16 * 1024 * 1024
+const DIAGNOSTIC_PROTOCOL_VERSIONS = new Set(SUPPORTED_PROTOCOL_VERSIONS)
+
+export class ExternalMcpLifecycleDeadlineError extends Error {
+  readonly code = "MCP_LIFECYCLE_DEADLINE"
+  constructor() {
+    super("The external MCP lifecycle exceeded its deadline.")
+    this.name = "ExternalMcpLifecycleDeadlineError"
+  }
+}
 
 export type ExternalMcpLifecycleDeadline = {
   expiresAt: number
@@ -74,9 +106,7 @@ export type ExternalMcpLifecycleDeadline = {
   abort: (reason?: unknown) => void
 }
 
-export function createExternalMcpLifecycleDeadline(
-  timeoutMs = EXTERNAL_MCP_LIFECYCLE_TIMEOUT_MS,
-): ExternalMcpLifecycleDeadline {
+export function createExternalMcpLifecycleDeadline(timeoutMs = EXTERNAL_MCP_LIFECYCLE_TIMEOUT_MS): ExternalMcpLifecycleDeadline {
   const controller = new AbortController()
   return {
     expiresAt: Date.now() + Math.max(1, timeoutMs),
@@ -85,31 +115,34 @@ export function createExternalMcpLifecycleDeadline(
   }
 }
 
-function assertExternalMcpLifecycleActive(input: {
-  deadline: ExternalMcpLifecycleDeadline
-  diagnostic: ExternalMcpDiagnosticTracker
-  phase: ExternalMcpDiagnosticPhase
-}): void {
-  if (!input.deadline.signal.aborted && Date.now() < input.deadline.expiresAt) return
-  const reason = input.deadline.signal.reason
-  if (reason instanceof ExternalMcpDiagnosticError) throw reason
-  const error = lifecycleDeadlineDiagnosticError({ tracker: input.diagnostic, phase: input.phase })
-  if (!input.deadline.signal.aborted) input.deadline.abort(error)
+function externalMcpLifecycleDeadlineError(
+  deadline: ExternalMcpLifecycleDeadline,
+): ExternalMcpLifecycleDeadlineError | StructuredExternalMcpDiagnosticError {
+  const reason = deadline.signal.reason
+  return reason instanceof ExternalMcpLifecycleDeadlineError || reason instanceof StructuredExternalMcpDiagnosticError
+    ? reason
+    : new ExternalMcpLifecycleDeadlineError()
+}
+
+function assertExternalMcpLifecycleActive(deadline: ExternalMcpLifecycleDeadline): void {
+  if (!deadline.signal.aborted && Date.now() < deadline.expiresAt) return
+  const error = externalMcpLifecycleDeadlineError(deadline)
+  if (!deadline.signal.aborted) deadline.abort(error)
   throw error
 }
 
 /**
- * The MCP SDK owns OAuth discovery, registration, refresh, and finishAuth
- * fetches. finishAuth accepts no RequestOptions, so bind the transport fetch
- * itself to the lifecycle signal instead of relying on the outer promise race.
+ * Binds SDK-owned fetches (notably finishAuth(), which accepts no RequestOptions)
+ * to the same absolute lifecycle deadline as the outer operation. The caller's
+ * signal is preserved so transport shutdown and the lifecycle deadline can both
+ * cancel discovery, token exchange, and response streaming.
  */
 export function bindExternalMcpFetchToLifecycle(
   baseFetch: (url: string | URL, init?: RequestInit) => Promise<Response>,
   deadline: ExternalMcpLifecycleDeadline,
-  diagnostic: ExternalMcpDiagnosticTracker,
 ) {
   return async (url: string | URL, init?: RequestInit): Promise<Response> => {
-    assertExternalMcpLifecycleActive({ deadline, diagnostic, phase: diagnostic.activePhase })
+    assertExternalMcpLifecycleActive(deadline)
     const signal = init?.signal
       ? AbortSignal.any([init.signal, deadline.signal])
       : deadline.signal
@@ -117,16 +150,52 @@ export function bindExternalMcpFetchToLifecycle(
   }
 }
 
+class ExternalMcpCloseTimeoutError extends Error {
+  readonly code = "MCP_CLOSE_TIMEOUT"
+  constructor() {
+    super("The external MCP client did not close before its deadline.")
+    this.name = "ExternalMcpCloseTimeoutError"
+  }
+}
+
+class ExternalMcpResponseBodyLimitError extends Error {
+  readonly code = "MCP_RESPONSE_BODY_LIMIT"
+  constructor() {
+    super("The external MCP response exceeded its byte limit.")
+    this.name = "ExternalMcpResponseBodyLimitError"
+  }
+}
+
+class ExternalMcpCatalogLimitError extends Error {
+  readonly code: string
+  constructor(code: string) {
+    super("The external MCP tool catalog exceeded a safety limit.")
+    this.name = "ExternalMcpCatalogLimitError"
+    this.code = code
+  }
+}
+
 export async function runExternalMcpRequestWithinDeadline<T>(input: {
   deadline: ExternalMcpLifecycleDeadline
-  diagnostic: ExternalMcpDiagnosticTracker
-  phase: ExternalMcpDiagnosticPhase
   operation: (options: RequestOptions) => Promise<T>
+  diagnostic?: ExternalMcpDiagnosticTracker
+  phase?: ExternalMcpDiagnosticPhase
 }): Promise<T> {
-  input.diagnostic.begin(input.phase)
+  const phase = input.phase ?? input.diagnostic?.activePhase ?? "MCP_INITIALIZE"
+  input.diagnostic?.begin(phase)
+  const deadlineError = () => {
+    const reason = input.deadline.signal.reason
+    if (reason instanceof StructuredExternalMcpDiagnosticError) return reason
+    return input.diagnostic
+      ? lifecycleDeadlineDiagnosticError({ tracker: input.diagnostic, phase })
+      : externalMcpLifecycleDeadlineError(input.deadline)
+  }
   const remaining = Math.floor(input.deadline.expiresAt - Date.now())
-  assertExternalMcpLifecycleActive({ deadline: input.deadline, diagnostic: input.diagnostic, phase: input.phase })
-
+  if (remaining <= 0 || input.deadline.signal.aborted) {
+    const error = deadlineError()
+    if (!input.deadline.signal.aborted) input.deadline.abort(error)
+    throw error
+  }
   const controller = new AbortController()
   const options: RequestOptions = {
     signal: AbortSignal.any([controller.signal, input.deadline.signal]),
@@ -139,10 +208,7 @@ export async function runExternalMcpRequestWithinDeadline<T>(input: {
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
-      const error = lifecycleDeadlineDiagnosticError({
-        tracker: input.diagnostic,
-        phase: input.diagnostic.activePhase,
-      })
+      const error = deadlineError()
       input.deadline.abort(error)
       controller.abort(error)
       reject(error)
@@ -163,410 +229,14 @@ export async function runExternalMcpRequestWithinDeadline<T>(input: {
     )
   })
 }
-const EXTERNAL_MCP_TEST_MAX_PAGES = 25
-const EXTERNAL_MCP_TEST_MAX_TOOLS = 1_000
-const EXTERNAL_MCP_TEST_MAX_TOOLS_PER_PAGE = 200
-const EXTERNAL_MCP_TEST_TIMEOUT_MS = 40_000
-const EXTERNAL_MCP_TEST_MAX_CLEANUP_RESERVE_MS = 50
-const EXTERNAL_MCP_TEST_NETWORK_SETTLE_MS = 50
-const EXTERNAL_MCP_TEST_MAX_RESPONSE_BYTES = 512 * 1024
-const EXTERNAL_MCP_TEST_MAX_TOTAL_RESPONSE_BYTES = 2 * 1024 * 1024
-const EXTERNAL_MCP_TEST_MAX_TOOL_NAME_CHARS = 256
-const EXTERNAL_MCP_TEST_MAX_TOOL_NAME_BYTES = 1_024
-const EXTERNAL_MCP_TEST_MAX_TOTAL_TOOL_NAME_BYTES = 128 * 1024
-const EXTERNAL_MCP_TEST_MAX_CURSOR_CHARS = 2_048
-const EXTERNAL_MCP_TEST_MAX_CURSOR_BYTES = 8 * 1024
-const EXTERNAL_MCP_TEST_MAX_SERVER_INFO_CHARS = 256
-const EXTERNAL_MCP_TEST_MAX_SERVER_INFO_BYTES = 1_024
-const EXTERNAL_MCP_TEST_MAX_PROTOCOL_CHARS = 64
 
-type DiagnosticJsonBounds = {
-  maxDepth: number
-  maxNodes: number
-  maxObjectKeys: number
-  maxArrayItems: number
-  maxStringChars: number
-  maxStringBytes: number
-  maxTotalStringBytes: number
-  maxSerializedBytes: number
-}
-
-const EXTERNAL_MCP_TEST_TOOL_BOUNDS: DiagnosticJsonBounds = {
-  maxDepth: 20,
-  maxNodes: 4_096,
-  maxObjectKeys: 512,
-  maxArrayItems: 1_024,
-  maxStringChars: 16_384,
-  maxStringBytes: 64 * 1024,
-  maxTotalStringBytes: 160 * 1024,
-  maxSerializedBytes: 192 * 1024,
-}
-
-const EXTERNAL_MCP_TEST_SCHEMA_BOUNDS: DiagnosticJsonBounds = {
-  maxDepth: 16,
-  maxNodes: 2_048,
-  maxObjectKeys: 256,
-  maxArrayItems: 512,
-  maxStringChars: 8_192,
-  maxStringBytes: 32 * 1024,
-  maxTotalStringBytes: 96 * 1024,
-  maxSerializedBytes: 128 * 1024,
-}
-
-export const EXTERNAL_MCP_CONNECTION_TEST_FAILURE_CODES = [
-  "mcp_test_timeout",
-  "mcp_initialize_failed",
-  "mcp_reauth_required",
-  "mcp_catalog_unavailable",
-  "mcp_catalog_cursor_cycle",
-  "mcp_catalog_duplicate_tool",
-  "mcp_catalog_limit_exceeded",
-  "mcp_response_limit_exceeded",
-  "mcp_catalog_page_limit_exceeded",
-  "mcp_catalog_item_limit_exceeded",
-  "mcp_catalog_cursor_limit_exceeded",
-  "mcp_catalog_tool_name_invalid",
-] as const
-
-export const EXTERNAL_MCP_CONNECTION_TEST_WARNING_CODES = [
-  "empty_tool_catalog",
-] as const
-
-export type ExternalMcpConnectionTestWarningCode = typeof EXTERNAL_MCP_CONNECTION_TEST_WARNING_CODES[number]
-
-export type ExternalMcpConnectionTestFailureCode = typeof EXTERNAL_MCP_CONNECTION_TEST_FAILURE_CODES[number]
-
-export const EXTERNAL_MCP_CONNECTION_TEST_FAILURE_MESSAGES = {
-  mcp_test_timeout: "The MCP connection test timed out.",
-  mcp_initialize_failed: "The MCP server did not complete protocol initialization.",
-  mcp_reauth_required: "The existing MCP credential was rejected. Reconnect this account, then test again.",
-  mcp_catalog_unavailable: "The MCP server did not return a valid tool catalog.",
-  mcp_catalog_cursor_cycle: "The MCP server repeated a tool-catalog pagination cursor.",
-  mcp_catalog_duplicate_tool: "The MCP server returned duplicate tool names.",
-  mcp_catalog_limit_exceeded: "The MCP tool catalog exceeded the diagnostic safety limit.",
-  mcp_response_limit_exceeded: "An MCP response exceeded the diagnostic byte limit.",
-  mcp_catalog_page_limit_exceeded: "An MCP tool-catalog page contained too many tools.",
-  mcp_catalog_item_limit_exceeded: "An MCP tool-catalog item exceeded the diagnostic size or nesting limits.",
-  mcp_catalog_cursor_limit_exceeded: "The MCP server returned an oversized pagination cursor.",
-  mcp_catalog_tool_name_invalid: "The MCP server returned an invalid or oversized tool name.",
-} as const satisfies Record<ExternalMcpConnectionTestFailureCode, string>
-
-export class ExternalMcpConnectionTestFailure extends Error {
-  readonly name = "ExternalMcpConnectionTestFailure"
-
-  constructor(
-    readonly testId: string,
-    readonly code: ExternalMcpConnectionTestFailureCode,
-  ) {
-    super(EXTERNAL_MCP_CONNECTION_TEST_FAILURE_MESSAGES[code])
-  }
-}
-
-function connectionTestFailure(
-  testId: string,
-  code: ExternalMcpConnectionTestFailureCode,
-): ExternalMcpConnectionTestFailure {
-  return new ExternalMcpConnectionTestFailure(testId, code)
-}
-
-function utf8Bytes(value: string): number {
-  return Buffer.byteLength(value, "utf8")
-}
-
-function assertBoundedText(input: {
-  value: string
-  maxChars: number
-  maxBytes: number
-  testId: string
-  code: ExternalMcpConnectionTestFailureCode
-  requireSafeName?: boolean
-}): number {
-  const bytes = utf8Bytes(input.value)
-  const unsafeName = input.requireSafeName
-    && (input.value.length === 0
-      || input.value !== input.value.trim()
-      || /[\u0000-\u001f\u007f]/u.test(input.value))
-  if (unsafeName || input.value.length > input.maxChars || bytes > input.maxBytes) {
-    throw connectionTestFailure(input.testId, input.code)
-  }
-  return bytes
-}
-
-function serializeBoundedDiagnosticJson(
-  value: unknown,
-  bounds: DiagnosticJsonBounds,
-  testId: string,
-): string {
-  const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }]
-  const seen = new WeakSet<object>()
-  let nodes = 0
-  let totalStringBytes = 0
-
-  while (stack.length > 0) {
-    const current = stack.pop()
-    if (!current) break
-    nodes += 1
-    if (nodes > bounds.maxNodes || current.depth > bounds.maxDepth) {
-      throw connectionTestFailure(testId, "mcp_catalog_item_limit_exceeded")
-    }
-
-    const item = current.value
-    if (typeof item === "string") {
-      const bytes = assertBoundedText({
-        value: item,
-        maxChars: bounds.maxStringChars,
-        maxBytes: bounds.maxStringBytes,
-        testId,
-        code: "mcp_catalog_item_limit_exceeded",
-      })
-      totalStringBytes += bytes
-      if (totalStringBytes > bounds.maxTotalStringBytes) {
-        throw connectionTestFailure(testId, "mcp_catalog_item_limit_exceeded")
-      }
-      continue
-    }
-    if (item === null || typeof item === "boolean") continue
-    if (typeof item === "number") {
-      if (!Number.isFinite(item)) throw connectionTestFailure(testId, "mcp_catalog_item_limit_exceeded")
-      continue
-    }
-    if (typeof item !== "object") {
-      throw connectionTestFailure(testId, "mcp_catalog_item_limit_exceeded")
-    }
-    if (seen.has(item)) throw connectionTestFailure(testId, "mcp_catalog_item_limit_exceeded")
-    seen.add(item)
-
-    if (Array.isArray(item)) {
-      if (item.length > bounds.maxArrayItems) {
-        throw connectionTestFailure(testId, "mcp_catalog_item_limit_exceeded")
-      }
-      for (let index = item.length - 1; index >= 0; index -= 1) {
-        stack.push({ value: item[index], depth: current.depth + 1 })
-      }
-      continue
-    }
-
-    const keys = Object.keys(item)
-    if (keys.length > bounds.maxObjectKeys) {
-      throw connectionTestFailure(testId, "mcp_catalog_item_limit_exceeded")
-    }
-    for (let index = keys.length - 1; index >= 0; index -= 1) {
-      const key = keys[index]
-      const keyBytes = assertBoundedText({
-        value: key,
-        maxChars: bounds.maxStringChars,
-        maxBytes: bounds.maxStringBytes,
-        testId,
-        code: "mcp_catalog_item_limit_exceeded",
-      })
-      totalStringBytes += keyBytes
-      if (totalStringBytes > bounds.maxTotalStringBytes) {
-        throw connectionTestFailure(testId, "mcp_catalog_item_limit_exceeded")
-      }
-      stack.push({ value: (item as Record<string, unknown>)[key], depth: current.depth + 1 })
-    }
-  }
-
-  let serialized: string
-  try {
-    serialized = JSON.stringify(value)
-  } catch {
-    throw connectionTestFailure(testId, "mcp_catalog_item_limit_exceeded")
-  }
-  if (utf8Bytes(serialized) > bounds.maxSerializedBytes) {
-    throw connectionTestFailure(testId, "mcp_catalog_item_limit_exceeded")
-  }
-  return serialized
-}
-
-type ExternalMcpFetch = ReturnType<typeof createRealmSafeFetch>
-
-type BoundedConnectionTestFetch = {
-  fetch: ExternalMcpFetch
-  cancelActiveResponses: (reason?: unknown) => Promise<void>
-}
-
-function forwardAbort(source: AbortSignal | null | undefined, target: AbortController): void {
-  if (!source) return
-  if (source.aborted) {
-    abortLifecycle(target, source.reason)
-    return
-  }
-  source.addEventListener("abort", () => abortLifecycle(target, source.reason), { once: true })
-}
-
-function copyResponseMetadata(target: Response, source: Response): void {
-  for (const [property, value] of [
-    ["url", source.url],
-    ["redirected", source.redirected],
-    ["type", source.type],
-  ] as const) {
-    try {
-      Object.defineProperty(target, property, { value })
-    } catch {
-      // These metadata properties are advisory; the bounded body is authoritative.
-    }
-  }
-}
-
-function createBoundedConnectionTestFetch(testId: string, lifecycleSignal: AbortSignal): BoundedConnectionTestFetch {
-  let totalResponseBytes = 0
-  const activeCancellations = new Set<(reason?: unknown) => Promise<void>>()
-  const requestControllers = new Set<AbortController>()
-  const redirectSafeFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
-
-  const fetch: ExternalMcpFetch = async (input, init) => {
-    const requestController = new AbortController()
-    requestControllers.add(requestController)
-    forwardAbort(lifecycleSignal, requestController)
-    forwardAbort(init?.signal, requestController)
-    const response = await redirectSafeFetch(input, {
-      ...init,
-      signal: requestController.signal,
-    })
-    const remainingTotalBytes = EXTERNAL_MCP_TEST_MAX_TOTAL_RESPONSE_BYTES - totalResponseBytes
-    const contentLengthHeader = response.headers.get("content-length")
-    const contentLength = contentLengthHeader ? Number(contentLengthHeader) : Number.NaN
-    if ((Number.isFinite(contentLength) && contentLength > EXTERNAL_MCP_TEST_MAX_RESPONSE_BYTES)
-      || (Number.isFinite(contentLength) && contentLength > remainingTotalBytes)
-      || remainingTotalBytes <= 0
-    ) {
-      await response.body?.cancel().catch(() => undefined)
-      throw connectionTestFailure(testId, "mcp_response_limit_exceeded")
-    }
-
-    if (!response.body) {
-      const bounded = new globalThis.Response(null, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      })
-      copyResponseMetadata(bounded, response)
-      return bounded
-    }
-
-    const reader = response.body.getReader()
-    let responseBytes = 0
-    let finalized = false
-    let cancellation: Promise<void> | undefined
-    const finalize = () => {
-      if (finalized) return
-      finalized = true
-      activeCancellations.delete(cancel)
-      try {
-        reader.releaseLock()
-      } catch {
-        // The underlying stream may already have released its reader.
-      }
-    }
-    const cancel = (reason?: unknown): Promise<void> => {
-      if (cancellation) return cancellation
-      cancellation = reader.cancel(reason).catch(() => undefined).finally(finalize)
-      return cancellation
-    }
-    activeCancellations.add(cancel)
-
-    const body = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        try {
-          const { done, value } = await reader.read()
-          if (done) {
-            finalize()
-            controller.close()
-            return
-          }
-          responseBytes += value.byteLength
-          totalResponseBytes += value.byteLength
-          if (responseBytes > EXTERNAL_MCP_TEST_MAX_RESPONSE_BYTES
-            || totalResponseBytes > EXTERNAL_MCP_TEST_MAX_TOTAL_RESPONSE_BYTES
-          ) {
-            const failure = connectionTestFailure(testId, "mcp_response_limit_exceeded")
-            await cancel(failure)
-            controller.error(failure)
-            return
-          }
-          controller.enqueue(value)
-        } catch (error) {
-          finalize()
-          controller.error(error)
-        }
-      },
-      cancel,
-    })
-    const bounded = new globalThis.Response(body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    })
-    copyResponseMetadata(bounded, response)
-    return bounded
-  }
-
-  return {
-    fetch,
-    async cancelActiveResponses(reason) {
-      for (const controller of requestControllers) abortLifecycle(controller, reason)
-      await Promise.allSettled([...activeCancellations].map((cancel) => cancel(reason)))
-      requestControllers.clear()
-    },
-  }
-}
-
-function isTimeoutFailure(error: unknown, deadline: number): boolean {
-  return Date.now() >= deadline
-    || (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
-}
-
-function sanitizeConnectionTestFailure(
-  error: unknown,
-  testId: string,
-  stage: "initialize" | "catalog",
-  deadline: number,
-): ExternalMcpConnectionTestFailure {
-  if (error instanceof ExternalMcpConnectionTestFailure) return error
-  if (isTimeoutFailure(error, deadline)) return connectionTestFailure(testId, "mcp_test_timeout")
-  if (error instanceof StreamableHTTPError && (error.code === 401 || error.code === 403)) {
-    return connectionTestFailure(testId, "mcp_reauth_required")
-  }
-  return connectionTestFailure(
-    testId,
-    stage === "initialize" ? "mcp_initialize_failed" : "mcp_catalog_unavailable",
-  )
-}
-
-export function toExternalMcpConnectionTestFailure(error: unknown): ExternalMcpConnectionTestFailure {
-  if (error instanceof ExternalMcpConnectionTestFailure) return error
-  return connectionTestFailure(`mcp-test-${randomUUID()}`, "mcp_initialize_failed")
-}
-
-function connectionTestRequestOptions(deadline: number, testId: string): RequestOptions {
-  const remaining = deadline - Date.now()
-  if (remaining <= 0) throw connectionTestFailure(testId, "mcp_test_timeout")
-  return { timeout: remaining, resetTimeoutOnProgress: false }
-}
-
-function abortLifecycle(controller: AbortController, reason: unknown): void {
-  if (!controller.signal.aborted) controller.abort(reason)
-}
-
-async function waitForOperationOrAbort(operation: Promise<unknown>, signal: AbortSignal): Promise<void> {
-  const settled = operation.then(() => undefined, () => undefined)
-  if (signal.aborted) return
-  await Promise.race([
-    settled,
-    new Promise<void>((resolveAbort) => signal.addEventListener("abort", () => resolveAbort(), { once: true })),
-  ])
-}
-
-async function waitForOperationUntilDeadline(operation: Promise<unknown>, deadline: number): Promise<void> {
-  const remaining = deadline - Date.now()
-  if (remaining <= 0) return
+async function boundedExternalMcpClose(close: () => Promise<void>, timeoutMs = EXTERNAL_MCP_CLOSE_TIMEOUT_MS): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     await Promise.race([
-      operation.then(() => undefined, () => undefined),
-      new Promise<void>((resolveDeadline) => {
-        timer = setTimeout(resolveDeadline, remaining)
+      Promise.resolve().then(close),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new ExternalMcpCloseTimeoutError()), timeoutMs)
       }),
     ])
   } finally {
@@ -574,53 +244,524 @@ async function waitForOperationUntilDeadline(operation: Promise<unknown>, deadli
   }
 }
 
-async function allowNetworkCancellationToSettle(deadline: number): Promise<void> {
-  const remaining = deadline - Date.now()
-  if (remaining <= 0) return
-  await new Promise<void>((resolveDelay) => {
-    setTimeout(resolveDelay, Math.min(EXTERNAL_MCP_TEST_NETWORK_SETTLE_MS, remaining))
-  })
-}
-
-async function terminateConnectionTestSession(
-  transport: StreamableHTTPClientTransport | undefined,
-  lifecycleController: AbortController,
-  deadline: number,
-  testId: string,
-): Promise<void> {
-  if (!transport?.sessionId || lifecycleController.signal.aborted) return
-  const remaining = Math.min(2_000, deadline - Date.now())
-  if (remaining <= 0) {
-    abortLifecycle(lifecycleController, connectionTestFailure(testId, "mcp_test_timeout"))
-    return
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined
+export async function runExternalMcpLifecycleWithClose<T>(input: {
+  operation: () => Promise<T>
+  close: () => Promise<void>
+  closeTimeoutMs?: number
+}): Promise<T> {
+  let result: T | undefined
+  let primaryError: unknown
   try {
-    timer = setTimeout(() => {
-      abortLifecycle(lifecycleController, connectionTestFailure(testId, "mcp_test_timeout"))
-    }, remaining)
-    await waitForOperationOrAbort(transport.terminateSession(), lifecycleController.signal)
-  } catch {
-    // Teardown is best effort and never replaces the bounded diagnostic result.
+    result = await input.operation()
+  } catch (error) {
+    primaryError = error
   } finally {
-    if (timer) clearTimeout(timer)
+    try {
+      await boundedExternalMcpClose(input.close, input.closeTimeoutMs)
+    } catch (error) {
+      if (primaryError === undefined) primaryError = error
+    }
+  }
+  if (primaryError !== undefined) throw primaryError
+  return result as T
+}
+
+/**
+ * Small injectable lifecycle used by regression tests and support probes. The
+ * production callback below uses the fenced provider, but this keeps the
+ * structured deadline/no-late-write contract independently testable.
+ */
+export async function runExternalMcpAuthCompletionLifecycle(input: {
+  diagnostic: ExternalMcpDiagnosticTracker
+  finishAuth: () => Promise<void>
+  validateMcp: (options?: RequestOptions) => Promise<void>
+  invalidateTokens: () => Promise<void>
+  close: () => Promise<void>
+  deadline?: ExternalMcpLifecycleDeadline
+}): Promise<void> {
+  const deadline = input.deadline ?? createExternalMcpLifecycleDeadline()
+  let exchangedTokens = false
+  let primaryError: StructuredExternalMcpDiagnosticError | null = null
+  try {
+    await runExternalMcpRequestWithinDeadline({
+      deadline,
+      diagnostic: input.diagnostic,
+      phase: "AUTH_TOKEN_ACQUISITION",
+      operation: () => input.finishAuth(),
+    })
+    exchangedTokens = true
+    input.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
+    await runExternalMcpRequestWithinDeadline({
+      deadline,
+      diagnostic: input.diagnostic,
+      phase: "MCP_INITIALIZE",
+      operation: (options) => input.validateMcp(options),
+    })
+    input.diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
+  } catch (error) {
+    primaryError = error instanceof StructuredExternalMcpDiagnosticError
+      ? error
+      : input.diagnostic.error(error, exchangedTokens ? "MCP_INITIALIZE" : "AUTH_TOKEN_ACQUISITION")
+    if (exchangedTokens) await input.invalidateTokens().catch(() => undefined)
+  } finally {
+    try {
+      await boundedExternalMcpClose(input.close)
+    } catch (error) {
+      if (!primaryError) primaryError = input.diagnostic.error(error, "SHUTDOWN")
+    }
+  }
+  if (primaryError) throw primaryError
+}
+
+export type ExternalMcpDiagnosticSignal = {
+  phase: McpDiagnosticPhase
+  outcome: McpDiagnosticEventOutcome
+  healthLevel: McpDiagnosticHealthLevel
+  messageSafe: string
+  phaseDurationMs?: number | null
+  category?: string | null
+  retryable?: boolean | null
+  actionOwner?: McpDiagnosticActionOwner | null
+  operatorAction?: string | null
+  evidence?: McpDiagnosticSafeEvidence
+  attemptStatus?: McpDiagnosticAttemptStatus
+}
+
+export type ExternalMcpDiagnosticObserver = (signal: ExternalMcpDiagnosticSignal) => Promise<void>
+
+export class ExternalMcpDiagnosticError extends Error {
+  readonly phase: McpDiagnosticPhase
+  readonly evidence?: McpDiagnosticSafeEvidence
+  readonly http?: ExternalMcpHttpDiagnostic
+
+  constructor(
+    phase: McpDiagnosticPhase,
+    cause: unknown,
+    evidence?: McpDiagnosticSafeEvidence,
+    http?: ExternalMcpHttpDiagnostic,
+  ) {
+    super("The external MCP diagnostic failed.", { cause })
+    this.name = "ExternalMcpDiagnosticError"
+    this.phase = phase
+    this.evidence = evidence
+    this.http = http
   }
 }
 
-async function closeConnectionTestClient(
-  client: { close: () => Promise<void> },
-  lifecycleController: AbortController,
-  deadline: number,
-  testId: string,
-): Promise<void> {
-  const remaining = deadline - Date.now()
-  if (remaining <= 0) {
-    abortLifecycle(lifecycleController, connectionTestFailure(testId, "mcp_test_timeout"))
+export type ExternalMcpHttpDiagnostic = {
+  phase: McpDiagnosticPhase
+  status: number
+  hadAuthorization: boolean
+  bearerChallenge: boolean
+  invalidToken: boolean
+  insufficientScope: boolean
+}
+
+export class ExternalMcpHttpStatusError extends Error {
+  readonly status: number
+  readonly http: ExternalMcpHttpDiagnostic
+
+  constructor(http: ExternalMcpHttpDiagnostic) {
+    super(`The MCP endpoint returned HTTP ${http.status}.`)
+    this.name = "ExternalMcpHttpStatusError"
+    this.status = http.status
+    this.http = http
   }
+}
+
+export type DiagnosticContext = {
+  connectionUrl: string
+  networkPassed: boolean
+  routingPassed?: boolean
+  lastPhase: McpDiagnosticPhase
+  lastEvidence: McpDiagnosticSafeEvidence
+  lastHttp?: ExternalMcpHttpDiagnostic
+  observing: boolean
+  observe: ExternalMcpDiagnosticObserver
+}
+
+async function observe(context: DiagnosticContext | undefined, signal: ExternalMcpDiagnosticSignal): Promise<void> {
+  if (context) await context.observe(signal)
+}
+
+function requestBodyText(body: BodyInit | null | undefined): string | null {
+  return typeof body === "string" ? body : body instanceof URLSearchParams ? body.toString() : null
+}
+
+function requestHeader(init: RequestInit | undefined, name: string): string | null {
+  return init?.headers ? new Headers(init.headers).get(name) : null
+}
+
+function jsonRpcMethod(body: string | null): string | null {
+  if (!body || Buffer.byteLength(body, "utf8") > 64 * 1024) return null
   try {
-    await waitForOperationOrAbort(client.close(), lifecycleController.signal)
+    const value: unknown = JSON.parse(body)
+    return typeof value === "object" && value !== null && "method" in value && typeof value.method === "string"
+      ? value.method
+      : null
   } catch {
-    // Closing is best effort and cannot replace the diagnostic's causal result.
+    return null
+  }
+}
+
+export function classifyExternalMcpRequestPhase(
+  url: URL,
+  init: RequestInit | undefined,
+  connectionUrl: string,
+): McpDiagnosticPhase {
+  if (url.pathname.includes("oauth-protected-resource")) return "AUTH_RESOURCE_DISCOVERY"
+  if (url.pathname.includes("oauth-authorization-server") || url.pathname.includes("openid-configuration")) return "AUTH_ISSUER_DISCOVERY"
+
+  const body = requestBodyText(init?.body)
+  const contentType = requestHeader(init, "content-type")?.toLowerCase() ?? ""
+  if (contentType.includes("application/x-www-form-urlencoded") && body) {
+    const grantType = new URLSearchParams(body).get("grant_type")
+    return grantType === "refresh_token" ? "CONTINUITY_REFRESH" : "AUTH_TOKEN_ACQUISITION"
+  }
+  if (contentType.includes("application/json") && body) {
+    try {
+      const parsed: unknown = JSON.parse(body)
+      if (
+        typeof parsed === "object"
+        && parsed !== null
+        && "redirect_uris" in parsed
+        && "client_name" in parsed
+      ) return "AUTH_CLIENT_REGISTRATION"
+    } catch {
+      // A malformed body is classified by the consumer, never substring-matched.
+    }
+  }
+
+  const endpoint = new URL(connectionUrl)
+  if (url.origin === endpoint.origin && url.pathname === endpoint.pathname) {
+    const method = jsonRpcMethod(body)
+    if (method === "initialize") return "MCP_INITIALIZE"
+    if (method === "notifications/initialized") return "MCP_INITIALIZED"
+    if (method === "tools/list") return "MCP_TOOL_DISCOVERY"
+    if (method === "tools/call") return "MCP_TOOL_EXECUTION"
+    return "MCP_TRANSPORT"
+  }
+  return "HTTP_ROUTING"
+}
+
+function nestedErrorCode(error: unknown, depth = 0): string | null {
+  if (typeof error !== "object" || error === null || depth > 6) return null
+  if ("code" in error && typeof error.code === "string") return error.code
+  return "cause" in error ? nestedErrorCode(error.cause, depth + 1) : null
+}
+
+function nestedErrorName(error: unknown, depth = 0): string | null {
+  if (typeof error !== "object" || error === null || depth > 6) return null
+  if ("name" in error && typeof error.name === "string") return error.name
+  return "cause" in error ? nestedErrorName(error.cause, depth + 1) : null
+}
+
+function nestedErrorText(error: unknown, depth = 0): string {
+  if (typeof error !== "object" || error === null || depth > 6) return ""
+  const message = "message" in error && typeof error.message === "string" ? error.message.toLowerCase() : ""
+  const cause = "cause" in error ? nestedErrorText(error.cause, depth + 1) : ""
+  return `${message} ${cause}`.trim()
+}
+
+function initializeFailurePhase(error: unknown, fallback: McpDiagnosticPhase): McpDiagnosticPhase {
+  const text = nestedErrorText(error)
+  if (text.includes("protocol version") || text.includes("unsupported version")) return "MCP_VERSION"
+  return fallback === "HTTP_ROUTING" ? "MCP_INITIALIZE" : fallback
+}
+
+function diagnosticPhaseAfterSdkFailure(error: unknown, context: DiagnosticContext): McpDiagnosticPhase {
+  const http = context.lastHttp
+  if (http?.phase.startsWith("MCP_") && http.status === 404) return "HTTP_ROUTING"
+  if (http?.phase.startsWith("MCP_") && http.status === 405) return "MCP_TRANSPORT"
+  return initializeFailurePhase(error, context.lastPhase)
+}
+
+export function externalMcpNetworkFailureProof(error: unknown): {
+  phase: McpDiagnosticPhase | null
+  passed: McpDiagnosticPhase[]
+} {
+  if (error instanceof PrivateUrlError || nestedErrorName(error) === "PrivateUrlError") {
+    return { phase: "CONFIGURATION", passed: [] }
+  }
+  const code = nestedErrorCode(error)
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN") return { phase: "NETWORK_DNS", passed: [] }
+  if (code && [
+    "CERT_HAS_EXPIRED",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+  ].includes(code)) return { phase: "NETWORK_TLS", passed: ["NETWORK_DNS", "NETWORK_TCP"] }
+  if (code && ["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH"].includes(code)) {
+    return { phase: "NETWORK_TCP", passed: ["NETWORK_DNS"] }
+  }
+  if (code === "ETIMEDOUT" && nestedErrorText(error).includes("connect")) {
+    return { phase: "NETWORK_TCP", passed: ["NETWORK_DNS"] }
+  }
+  // TimeoutError, AbortError, redirect rejections, parser failures, and
+  // unrecognized fetch failures do not prove any lower network layer.
+  return { phase: null, passed: [] }
+}
+
+function timedRequestInit(init: RequestInit | undefined): RequestInit {
+  const timeoutSignal = AbortSignal.timeout(DIAGNOSTIC_FETCH_TIMEOUT_MS)
+  const callerSignal = init?.signal
+  return {
+    ...init,
+    signal: callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal,
+  }
+}
+
+export async function assertSafeMcpAuthorizationUrl(rawUrl: string): Promise<void> {
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl)
+  } catch {
+    throw new PrivateUrlError(rawUrl, "the authorization URL is invalid")
+  }
+  if ((parsed.protocol !== "https:" && parsed.protocol !== "http:") || parsed.username || parsed.password) {
+    throw new PrivateUrlError(rawUrl, "the authorization URL scheme or authority is unsafe")
+  }
+  if (!env.allowPrivateMcpUrls) {
+    if (parsed.protocol !== "https:") {
+      throw new PrivateUrlError(rawUrl, "hosted authorization URLs must use HTTPS")
+    }
+    await assertPublicUrl(rawUrl)
+  }
+}
+
+function responseBodyLimit(contentType: string): number {
+  return contentType === "text/event-stream"
+    ? EXTERNAL_MCP_SSE_RESPONSE_LIMIT_BYTES
+    : EXTERNAL_MCP_JSON_RESPONSE_LIMIT_BYTES
+}
+
+function preserveResponseMetadata(target: Response, source: Response): void {
+  for (const key of ["url", "redirected", "type"] as const) {
+    try {
+      Object.defineProperty(target, key, { configurable: true, value: source[key] })
+    } catch {
+      // Status, headers, and the bounded body are protocol-relevant.
+    }
+  }
+}
+
+function cancelExternalMcpResponseBody(response: Response, reason: unknown): Promise<void> {
+  if (!response.body) return Promise.resolve()
+  try {
+    return response.body.cancel(reason).catch(() => undefined)
+  } catch {
+    return Promise.resolve()
+  }
+}
+
+export function boundExternalMcpResponse(response: Response): Response {
+  if (!response.body) return response
+  const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? ""
+  const limit = responseBodyLimit(contentType)
+  const advertised = response.headers.get("content-length")
+  if (advertised && /^\d+$/.test(advertised)) {
+    const length = Number(advertised)
+    if (Number.isSafeInteger(length) && length > limit) {
+      const error = new ExternalMcpResponseBodyLimitError()
+      void cancelExternalMcpResponseBody(response, error)
+      throw error
+    }
+  }
+
+  const reader = response.body.getReader()
+  let bytesRead = 0
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await reader.read()
+        if (next.done) {
+          controller.close()
+          return
+        }
+        bytesRead += next.value.byteLength
+        if (bytesRead > limit) {
+          const error = new ExternalMcpResponseBodyLimitError()
+          await reader.cancel(error).catch(() => undefined)
+          controller.error(error)
+          return
+        }
+        controller.enqueue(next.value)
+      } catch (error) {
+        controller.error(error)
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason)
+    },
+  })
+  const bounded = new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  })
+  preserveResponseMetadata(bounded, response)
+  return bounded
+}
+
+export function observedFetch(baseFetch: (url: string | URL, init?: RequestInit) => Promise<Response>, context: DiagnosticContext) {
+  return async (input: string | URL, init?: RequestInit): Promise<Response> => {
+    if (!context.observing) return baseFetch(input, init)
+    const url = input instanceof URL ? input : new URL(input)
+    const phase = classifyExternalMcpRequestPhase(url, init, context.connectionUrl)
+    context.lastPhase = phase
+    context.lastHttp = undefined
+    const method = init?.method ?? "GET"
+    context.lastEvidence = safeMcpDiagnosticEvidence({ url, method })
+    const startedAt = Date.now()
+    if (!context.networkPassed) {
+      await observe(context, {
+        phase: "NETWORK_DNS",
+        outcome: "running",
+        healthLevel: "configured",
+        messageSafe: "Resolving the MCP destination from the Den server.",
+        evidence: safeMcpDiagnosticEvidence({ url }),
+      })
+    }
+    if (!context.routingPassed && phase !== "HTTP_ROUTING") {
+      await observe(context, {
+        phase: "HTTP_ROUTING",
+        outcome: "running",
+        healthLevel: context.networkPassed ? "reachable" : "configured",
+        messageSafe: "Checking the configured MCP endpoint route.",
+        evidence: safeMcpDiagnosticEvidence({ url, method }),
+      })
+    }
+    await observe(context, {
+      phase,
+      outcome: "running",
+      healthLevel: context.networkPassed ? "reachable" : "configured",
+      messageSafe: phase === "HTTP_ROUTING" ? "Checking the configured MCP endpoint." : "Checking this handshake phase.",
+      evidence: safeMcpDiagnosticEvidence({ url, method: init?.method ?? "GET" }),
+    })
+
+    let response: Response
+    try {
+      response = await baseFetch(input, timedRequestInit(init))
+    } catch (error) {
+      const proof = externalMcpNetworkFailureProof(error)
+      if (proof.passed.includes("NETWORK_DNS")) {
+        await observe(context, {
+          phase: "NETWORK_DNS",
+          outcome: "passed",
+          healthLevel: "configured",
+          messageSafe: "The completed connection attempt confirms that DNS resolution succeeded.",
+          evidence: safeMcpDiagnosticEvidence({ url }),
+        })
+      }
+      if (proof.passed.includes("NETWORK_TCP")) {
+        await observe(context, {
+          phase: "NETWORK_TCP",
+          outcome: "passed",
+          healthLevel: "configured",
+          messageSafe: "The TLS attempt confirms that Den opened a TCP connection to the provider.",
+          evidence: safeMcpDiagnosticEvidence({ url }),
+        })
+      }
+      throw new ExternalMcpDiagnosticError(proof.phase ?? phase, error, context.lastEvidence)
+    }
+
+    const duration = Date.now() - startedAt
+    const responseEvidence = safeMcpDiagnosticEvidence({
+      url,
+      method,
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+    })
+    context.lastEvidence = responseEvidence
+    const challenge = response.headers.get("www-authenticate") ?? ""
+    const http: ExternalMcpHttpDiagnostic = {
+      phase,
+      status: response.status,
+      hadAuthorization: Boolean(requestHeader(init, "authorization")),
+      bearerChallenge: /\bbearer\b/i.test(challenge),
+      invalidToken: /\binvalid_token\b/i.test(challenge),
+      insufficientScope: /\binsufficient_scope\b/i.test(challenge),
+    }
+    if (!response.ok) context.lastHttp = http
+    if (!context.networkPassed) {
+      context.networkPassed = true
+      await observe(context, {
+        phase: "NETWORK_DNS",
+        outcome: "passed",
+        healthLevel: "configured",
+        messageSafe: "The completed HTTP exchange confirms that DNS resolution succeeded.",
+        evidence: safeMcpDiagnosticEvidence({ url }),
+      })
+      await observe(context, {
+        phase: "NETWORK_TCP",
+        outcome: "passed",
+        healthLevel: "configured",
+        messageSafe: "The completed HTTP exchange confirms that Den established a network connection.",
+        evidence: safeMcpDiagnosticEvidence({ url }),
+      })
+      await observe(context, {
+        phase: "NETWORK_TLS",
+        outcome: url.protocol === "https:" ? "passed" : "skipped",
+        healthLevel: "configured",
+        messageSafe: url.protocol === "https:"
+          ? "The completed HTTPS exchange confirms that Den accepted the provider TLS connection."
+          : "TLS is not used by this development endpoint.",
+        evidence: safeMcpDiagnosticEvidence({ url }),
+      })
+    }
+    if (!context.routingPassed && response.status !== 404) {
+      context.routingPassed = true
+      if (phase !== "HTTP_ROUTING") {
+        await observe(context, {
+          phase: "HTTP_ROUTING",
+          outcome: "passed",
+          healthLevel: "reachable",
+          messageSafe: "The request reached the configured MCP endpoint route.",
+          phaseDurationMs: duration,
+          evidence: responseEvidence,
+        })
+      }
+    }
+
+    if (!response.ok) {
+      // The MCP SDK is the protocol state machine. It must receive every
+      // bounded HTTP response so it can perform discovery fallbacks, parse
+      // OAuth errors, refresh/upscope and retry, and accept optional GET 405.
+      // If recovery is exhausted, the enclosing lifecycle wraps the SDK error
+      // with this request's typed, redacted context for final classification.
+      await observe(context, {
+        phase,
+        outcome: "running",
+        healthLevel: "reachable",
+        messageSafe: phase === "AUTH_RESOURCE_DISCOVERY" || phase === "AUTH_ISSUER_DISCOVERY"
+          ? "This metadata candidate was not accepted; continuing the standards-based discovery fallback."
+          : phase.startsWith("MCP_") && (response.status === 401 || http.insufficientScope)
+            ? "The MCP SDK is evaluating this authentication challenge and any bounded recovery."
+            : "The MCP SDK is evaluating this OAuth response.",
+        phaseDurationMs: duration,
+        evidence: responseEvidence,
+      })
+    }
+
+    if (response.ok) {
+      if (phase === "HTTP_ROUTING") context.routingPassed = true
+      await observe(context, {
+        phase,
+        outcome: "passed",
+        healthLevel: "reachable",
+        messageSafe: phase === "HTTP_ROUTING"
+          ? "The request reached the configured MCP endpoint."
+          : "The provider accepted this handshake request.",
+        phaseDurationMs: duration,
+        evidence: responseEvidence,
+      })
+    }
+    try {
+      return boundExternalMcpResponse(response)
+    } catch (error) {
+      throw new ExternalMcpDiagnosticError(phase, error, responseEvidence, http)
+    }
   }
 }
 
@@ -633,29 +774,73 @@ export type ExternalMcpMemberContext = {
   orgMembershipId: DenTypeId<"member">
 }
 
+export type ExternalMcpDiagnosticAuthorization = {
+  attemptId: DenTypeId<"mcpDiagnosticAttempt">
+  generation: number
+}
+
+export type ExternalMcpDiagnosticCredentialFence = ExternalMcpDiagnosticAuthorization & {
+  leaseId: string
+}
+
+function clientInformationFromRow(client: OrgOAuthClientRow): OAuthClientInformationMixed {
+  const extra = (client.extra ?? {}) as { clientInformation?: Record<string, unknown> }
+  return {
+    ...(extra.clientInformation ?? {}),
+    client_id: client.clientId,
+    ...(client.clientSecret ? { client_secret: client.clientSecret } : {}),
+    token_endpoint_auth_method: typeof extra.clientInformation?.token_endpoint_auth_method === "string"
+      ? extra.clientInformation.token_endpoint_auth_method
+      : client.clientSecret ? "client_secret_post" : "none",
+  } as OAuthClientInformationMixed
+}
+
+function safeClientInformationExtra(clientInformation: OAuthClientInformationMixed): Record<string, unknown> {
+  const source = clientInformation as unknown as Record<string, unknown>
+  const safe: Record<string, unknown> = {}
+  for (const key of [
+    "client_id_issued_at",
+    "client_secret_expires_at",
+    "token_endpoint_auth_method",
+  ]) {
+    const value = source[key]
+    if (typeof value === "string" || typeof value === "number") safe[key] = value
+  }
+  return { clientInformation: safe }
+}
+
 export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   private connection: ExternalMcpConnectionRow
   private readonly redirectUri: string
-  private readonly signedState?: string
+  private readonly stateValue: string
   private readonly member?: ExternalMcpMemberContext
-  private readonly diagnostic: ExternalMcpDiagnosticTracker
+  private readonly diagnosticAuthorization?: ExternalMcpDiagnosticAuthorization
+  private readonly credentialFence?: ExternalMcpDiagnosticCredentialFence
+  private readonly authorizationCallback: boolean
   private readonly lifecycleDeadline?: ExternalMcpLifecycleDeadline
+  private activeClient: OrgOAuthClientRow | null = null
+  private callbackGrant: Awaited<ReturnType<typeof getExternalMcpOAuthPendingGrantForCallback>> | null = null
+  private tokensInvalidatedForLifecycle = false
   /** Captured by redirectToAuthorization so the HTTP route can hand it back to the admin's browser instead of actually redirecting anything server-side. */
   lastAuthorizeUrl: string | null = null
 
   constructor(
     connection: ExternalMcpConnectionRow,
     redirectUri: string,
-    signedState: string | undefined,
-    member: ExternalMcpMemberContext | undefined,
-    diagnostic: ExternalMcpDiagnosticTracker,
+    signedState?: string,
+    member?: ExternalMcpMemberContext,
+    diagnosticAuthorization?: ExternalMcpDiagnosticAuthorization,
+    credentialFence?: ExternalMcpDiagnosticCredentialFence,
+    authorizationCallback = false,
     lifecycleDeadline?: ExternalMcpLifecycleDeadline,
   ) {
     this.connection = connection
     this.redirectUri = redirectUri
-    this.signedState = signedState
+    this.stateValue = signedState ?? randomUUID()
     this.member = member
-    this.diagnostic = diagnostic
+    this.diagnosticAuthorization = diagnosticAuthorization
+    this.credentialFence = credentialFence
+    this.authorizationCallback = authorizationCallback
     this.lifecycleDeadline = lifecycleDeadline
     if (connection.credentialMode === "per_member" && connection.authType === "oauth" && !member) {
       throw new Error(`Connection "${connection.id}" uses per-member credentials; a member context is required.`)
@@ -675,9 +860,8 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     })
   }
 
-  private assertLifecycleActive(phase: ExternalMcpDiagnosticPhase): void {
-    if (!this.lifecycleDeadline) return
-    assertExternalMcpLifecycleActive({ deadline: this.lifecycleDeadline, diagnostic: this.diagnostic, phase })
+  private assertLifecycleActive(): void {
+    if (this.lifecycleDeadline) assertExternalMcpLifecycleActive(this.lifecycleDeadline)
   }
 
   get redirectUrl(): string {
@@ -698,7 +882,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     // connect/start, which always supplies signedState); this fallback only
     // exists to satisfy the type when connect() is attempted opportunistically
     // with an existing valid token and no authorization step is needed.
-    return this.signedState ?? randomUUID()
+    return this.stateValue
   }
 
   get clientMetadata() {
@@ -712,34 +896,72 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
-    this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
-    const client = await getOrgOAuthClient(this.connection.organizationId, this.connection.id)
-    this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
-    if (!client) return undefined
-    this.diagnostic.passed("AUTH_CLIENT_REGISTRATION", "reachable")
-    const extra = (client.extra ?? {}) as { clientInformation?: OAuthClientInformationFull }
-    if (extra.clientInformation) return extra.clientInformation
-    return { client_id: client.clientId, client_secret: client.clientSecret ?? undefined }
+    this.assertLifecycleActive()
+    if (this.callbackGrant) {
+      const client = await getOrgOAuthClientRevision({
+        organizationId: this.connection.organizationId,
+        providerId: this.connection.id,
+        clientId: this.callbackGrant.orgOAuthClientId,
+        revision: this.callbackGrant.clientRevision,
+      })
+      this.assertLifecycleActive()
+      if (!client) throw new Error("The MCP OAuth client registration changed after authorization started.")
+      this.activeClient = client
+      return clientInformationFromRow(client)
+    }
+    if (this.authorizationCallback) {
+      const binding = await getExternalMcpOAuthPendingGrantBinding({
+        organizationId: this.connection.organizationId,
+        connectionId: this.connection.id,
+        orgMembershipId: this.isPerMember && this.member ? this.member.orgMembershipId : null,
+        signedState: this.stateValue,
+        diagnosticAttemptId: this.diagnosticAuthorization?.attemptId ?? null,
+        diagnosticGeneration: this.diagnosticAuthorization?.generation ?? null,
+      })
+      this.assertLifecycleActive()
+      const client = await getOrgOAuthClientRevision({
+        organizationId: this.connection.organizationId,
+        providerId: this.connection.id,
+        clientId: binding.orgOAuthClientId,
+        revision: binding.clientRevision,
+      })
+      this.assertLifecycleActive()
+      if (!client) throw new Error("The MCP OAuth client registration changed after authorization started.")
+      this.activeClient = client
+      return clientInformationFromRow(client)
+    }
+    if (this.activeClient) return clientInformationFromRow(this.activeClient)
+    const registration = await getOrClaimExternalMcpClientRegistration({
+      organizationId: this.connection.organizationId,
+      connectionId: this.connection.id,
+      signedState: this.stateValue,
+    })
+    this.assertLifecycleActive()
+    if (registration.status === "claimed") return undefined
+    this.activeClient = registration.client
+    return clientInformationFromRow(registration.client)
   }
 
   async saveClientInformation(clientInformation: OAuthClientInformationMixed): Promise<void> {
-    this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
-    await upsertOrgOAuthClient({
+    this.assertLifecycleActive()
+    this.activeClient = await saveExternalMcpRegisteredClient({
       organizationId: this.connection.organizationId,
-      providerId: this.connection.id,
+      connectionId: this.connection.id,
+      signedState: this.stateValue,
       clientId: clientInformation.client_id,
       clientSecret: clientInformation.client_secret ?? null,
-      extra: { clientInformation },
+      safeExtra: safeClientInformationExtra(clientInformation),
       createdByOrgMembershipId: this.connection.createdByOrgMembershipId,
     })
-    this.diagnostic.passed("AUTH_CLIENT_REGISTRATION", "reachable")
+    this.assertLifecycleActive()
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
-    this.assertLifecycleActive("CONTINUITY_REFRESH")
+    this.assertLifecycleActive()
+    if (this.tokensInvalidatedForLifecycle) return undefined
     if (this.isPerMember) {
       const account = await this.memberAccount()
-      this.assertLifecycleActive("CONTINUITY_REFRESH")
+      this.assertLifecycleActive()
       if (!account?.accessToken) return undefined
       return {
         access_token: account.accessToken,
@@ -758,10 +980,47 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
+    this.assertLifecycleActive()
     const expiresAt = tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null
+    if (this.authorizationCallback) {
+      if (!this.callbackGrant) {
+        throw new Error("The pending MCP OAuth authorization was not loaded before token persistence.")
+      }
+      if (this.lifecycleDeadline) assertExternalMcpLifecycleActive(this.lifecycleDeadline)
+      await saveExternalMcpCallbackTokens({
+        organizationId: this.connection.organizationId,
+        connectionId: this.connection.id,
+        orgMembershipId: this.isPerMember && this.member ? this.member.orgMembershipId : null,
+        orgOAuthClientId: this.callbackGrant.orgOAuthClientId,
+        clientRevision: this.callbackGrant.clientRevision,
+        diagnosticFence: this.credentialFence,
+        pendingGrant: {
+          signedState: this.stateValue,
+          diagnosticAttemptId: this.callbackGrant.diagnosticAttemptId,
+          diagnosticGeneration: this.callbackGrant.diagnosticGeneration,
+        },
+        lifecycleDeadlineAt: this.lifecycleDeadline ? new Date(this.lifecycleDeadline.expiresAt) : undefined,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token ?? null,
+        tokenType: tokens.token_type ?? null,
+        scope: tokens.scope ?? null,
+        expiresAt,
+      })
+      this.assertLifecycleActive()
+      if (!this.isPerMember) {
+        const refreshed = await getExternalMcpConnection({
+          organizationId: this.connection.organizationId,
+          connectionId: this.connection.id,
+        })
+        this.assertLifecycleActive()
+        if (refreshed) this.connection = refreshed
+      }
+      this.tokensInvalidatedForLifecycle = false
+      return
+    }
     if (this.isPerMember && this.member) {
       const existing = await this.memberAccount()
-      this.assertLifecycleActive(this.diagnostic.activePhase === "CONTINUITY_REFRESH" ? "CONTINUITY_REFRESH" : "AUTH_TOKEN_ACQUISITION")
+      this.assertLifecycleActive()
       await upsertConnectedAccount({
         organizationId: this.connection.organizationId,
         orgMembershipId: this.member.orgMembershipId,
@@ -774,10 +1033,10 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
         expiresAt,
         pendingCodeVerifier: null,
       })
-      this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
+      this.assertLifecycleActive()
+      this.tokensInvalidatedForLifecycle = false
       return
     }
-    this.assertLifecycleActive(this.diagnostic.activePhase === "CONTINUITY_REFRESH" ? "CONTINUITY_REFRESH" : "AUTH_TOKEN_ACQUISITION")
     await saveExternalMcpTokens({
       connectionId: this.connection.id,
       accessToken: tokens.access_token,
@@ -786,91 +1045,83 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       scope: tokens.scope ?? null,
       expiresAt,
     })
+    this.assertLifecycleActive()
     // Refresh the in-memory row so a subsequent tokens()/refresh in the same
     // connection attempt sees the just-saved values.
     const refreshed = await getExternalMcpConnection({
       organizationId: this.connection.organizationId,
       connectionId: this.connection.id,
     })
+    this.assertLifecycleActive()
     if (refreshed) this.connection = refreshed
-    this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
+    this.tokensInvalidatedForLifecycle = false
   }
 
   async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
-    if (scope === "all" || scope === "client") {
-      await deleteOrgOAuthClient(this.connection.organizationId, this.connection.id)
-    }
-    if (scope === "all" || scope === "tokens") {
-      if (this.isPerMember && this.member) {
-        await upsertConnectedAccount({
-          organizationId: this.connection.organizationId,
-          orgMembershipId: this.member.orgMembershipId,
-          providerId: this.connection.id,
-          accessToken: null,
-          refreshToken: null,
-          tokenType: null,
-          scopes: null,
-          expiresAt: null,
-          ...(scope === "all" ? { pendingCodeVerifier: null } : {}),
-        })
-      } else {
-        await clearExternalMcpTokens({
-          organizationId: this.connection.organizationId,
-          connectionId: this.connection.id,
-        })
-        const refreshed = await getExternalMcpConnection({
-          organizationId: this.connection.organizationId,
-          connectionId: this.connection.id,
-        })
-        if (refreshed) this.connection = refreshed
-      }
-    }
-    if ((scope === "all" || scope === "verifier") && !this.isPerMember) {
-      await saveExternalMcpPendingCodeVerifier({ connectionId: this.connection.id, codeVerifier: null })
-    }
-    if (scope === "verifier" && this.isPerMember && this.member) {
-      await upsertConnectedAccount({
-        organizationId: this.connection.organizationId,
-        orgMembershipId: this.member.orgMembershipId,
-        providerId: this.connection.id,
-        pendingCodeVerifier: null,
-      })
-    }
-  }
-
-  redirectToAuthorization(authorizationUrl: URL): void {
-    this.lastAuthorizeUrl = authorizationUrl.toString()
-    this.diagnostic.begin("AUTH_USER_OR_WORKLOAD")
-  }
-
-  async saveCodeVerifier(codeVerifier: string): Promise<void> {
-    this.assertLifecycleActive("AUTH_USER_OR_WORKLOAD")
+    if (scope !== "tokens" && scope !== "all") return
+    // InvalidGrant recovery must not retry a revoked refresh token in this or
+    // the next lifecycle. Clear both the in-memory view and Den-owned durable
+    // credential while leaving the fenced replacement path atomic.
+    this.tokensInvalidatedForLifecycle = true
     if (this.isPerMember && this.member) {
       await upsertConnectedAccount({
         organizationId: this.connection.organizationId,
         orgMembershipId: this.member.orgMembershipId,
         providerId: this.connection.id,
-        pendingCodeVerifier: codeVerifier,
+        accessToken: null,
+        refreshToken: null,
+        tokenType: null,
+        scopes: null,
+        expiresAt: null,
       })
-      return
+    } else {
+      await clearExternalMcpTokens({
+        organizationId: this.connection.organizationId,
+        connectionId: this.connection.id,
+      })
+      const refreshed = await getExternalMcpConnection({
+        organizationId: this.connection.organizationId,
+        connectionId: this.connection.id,
+      })
+      if (refreshed) this.connection = refreshed
     }
-    await saveExternalMcpPendingCodeVerifier({ connectionId: this.connection.id, codeVerifier })
+  }
+
+  redirectToAuthorization(authorizationUrl: URL): void {
+    this.lastAuthorizeUrl = authorizationUrl.toString()
+  }
+
+  async saveCodeVerifier(codeVerifier: string): Promise<void> {
+    this.assertLifecycleActive()
+    const client = this.activeClient ?? await getOrgOAuthClient(this.connection.organizationId, this.connection.id)
+    this.assertLifecycleActive()
+    if (!client) throw new Error("The MCP OAuth client registration is missing before PKCE persistence.")
+    await saveExternalMcpOAuthPendingGrant({
+      organizationId: this.connection.organizationId,
+      connectionId: this.connection.id,
+      orgMembershipId: this.isPerMember && this.member ? this.member.orgMembershipId : null,
+      signedState: this.stateValue,
+      codeVerifier,
+      orgOAuthClientId: client.id,
+      clientRevision: client.revision,
+      diagnosticAttemptId: this.diagnosticAuthorization?.attemptId ?? null,
+      diagnosticGeneration: this.diagnosticAuthorization?.generation ?? null,
+    })
+    this.assertLifecycleActive()
   }
 
   async codeVerifier(): Promise<string> {
-    this.assertLifecycleActive("AUTH_TOKEN_ACQUISITION")
-    if (this.isPerMember) {
-      const account = await this.memberAccount()
-      this.assertLifecycleActive("AUTH_TOKEN_ACQUISITION")
-      if (!account?.pendingCodeVerifier) {
-        throw new Error("No pending PKCE code verifier for this member on this external MCP connection.")
-      }
-      return account.pendingCodeVerifier
-    }
-    if (!this.connection.pendingCodeVerifier) {
-      throw new Error("No pending PKCE code verifier for this external MCP connection.")
-    }
-    return this.connection.pendingCodeVerifier
+    if (this.lifecycleDeadline) assertExternalMcpLifecycleActive(this.lifecycleDeadline)
+    this.callbackGrant = await getExternalMcpOAuthPendingGrantForCallback({
+      organizationId: this.connection.organizationId,
+      connectionId: this.connection.id,
+      orgMembershipId: this.isPerMember && this.member ? this.member.orgMembershipId : null,
+      signedState: this.stateValue,
+      diagnosticAttemptId: this.diagnosticAuthorization?.attemptId ?? null,
+      diagnosticGeneration: this.diagnosticAuthorization?.generation ?? null,
+    })
+    if (this.lifecycleDeadline) assertExternalMcpLifecycleActive(this.lifecycleDeadline)
+    return this.callbackGrant.codeVerifier
   }
 }
 
@@ -879,63 +1130,45 @@ function buildTransport(
   redirectUri: string,
   signedState?: string,
   member?: ExternalMcpMemberContext,
-  diagnosticReferenceId?: string,
+  diagnosticContext?: DiagnosticContext,
+  diagnosticAuthorization?: ExternalMcpDiagnosticAuthorization,
+  credentialFence?: ExternalMcpDiagnosticCredentialFence,
+  authorizationCallback = false,
   lifecycleDeadline?: ExternalMcpLifecycleDeadline,
+  structuredDiagnostic?: ExternalMcpDiagnosticTracker,
 ) {
-  const diagnostic = new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID(), {
-    authType: connection.authType,
-    credentialMode: connection.credentialMode,
-  })
   const provider = connection.authType === "oauth"
-    ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member, diagnostic, lifecycleDeadline)
+    ? new ExternalMcpOAuthProvider(
+        connection,
+        redirectUri,
+        signedState,
+        member,
+        diagnosticAuthorization,
+        credentialFence,
+        authorizationCallback,
+        lifecycleDeadline,
+      )
     : undefined
   const guardedFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
-  const lifecycleFetch = lifecycleDeadline
-    ? bindExternalMcpFetchToLifecycle(guardedFetch, lifecycleDeadline, diagnostic)
+  const baseFetch = lifecycleDeadline
+    ? bindExternalMcpFetchToLifecycle(guardedFetch, lifecycleDeadline)
     : guardedFetch
+  const observed = diagnosticContext ? observedFetch(baseFetch, diagnosticContext) : baseFetch
+  const instrumentedFetch = structuredDiagnostic
+    ? createExternalMcpDiagnosticFetch({ fetch: observed, endpoint: connection.url, tracker: structuredDiagnostic })
+    : observed
   const transport = new StreamableHTTPClientTransport(new URL(connection.url), {
     authProvider: provider,
     // SSRF guard: every outbound request (the MCP endpoint itself, but also
     // discovery documents and token endpoints the SDK follows to OTHER
     // hosts) is checked against private/reserved address ranges at request
     // time. Hosted-deployment protection; self-hosted/dev opt out via env.
-    fetch: createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint: connection.url, tracker: diagnostic }),
+    fetch: instrumentedFetch,
     requestInit: connection.authType === "apikey" && connection.apiKey
       ? { headers: { authorization: `Bearer ${connection.apiKey}` } }
       : undefined,
   })
-  return { transport, provider, diagnostic }
-}
-
-async function buildConnectionTestTransport(
-  connection: ExternalMcpConnectionRow,
-  member: ExternalMcpMemberContext | undefined,
-  fetch: ExternalMcpFetch,
-): Promise<StreamableHTTPClientTransport> {
-  let bearerToken: string | null = null
-  if (connection.authType === "apikey") {
-    bearerToken = connection.apiKey
-  } else if (connection.authType === "oauth") {
-    if (connection.credentialMode === "per_member") {
-      if (!member) throw new Error(`Connection "${connection.id}" requires a member credential.`)
-      const account = await getConnectedAccount({
-        organizationId: connection.organizationId,
-        orgMembershipId: member.orgMembershipId,
-        providerId: connection.id,
-      })
-      bearerToken = account?.accessToken ?? null
-    } else {
-      bearerToken = connection.accessToken
-    }
-  }
-
-  // Deliberately omit authProvider. A readiness test may consume an existing
-  // bearer credential, but a 401/403 must never trigger discovery, DCR,
-  // refresh persistence, authorization redirects, or PKCE verifier writes.
-  return new StreamableHTTPClientTransport(new URL(connection.url), {
-    fetch,
-    requestInit: bearerToken ? { headers: { authorization: `Bearer ${bearerToken}` } } : undefined,
-  })
+  return { transport, provider }
 }
 
 function buildClient() {
@@ -943,27 +1176,31 @@ function buildClient() {
 }
 
 type ExternalMcpToolPage = Awaited<ReturnType<Client["listTools"]>>
-
 type SerializedMeasurement =
   | { ok: true; bytes: number }
-  | { ok: false; reason: "size" | "depth" | "cycle" }
+  | { ok: false; reason: "size" | "depth" | "cycle" | "nodes" | "keys" | "array_items" | "string" | "key_size" }
+
+function utf8Bytes(value: string): number {
+  return Buffer.byteLength(value, "utf8")
+}
 
 function serializedStringBytes(value: string): number {
   return utf8Bytes(JSON.stringify(value))
 }
 
-function measureSerializedJson(
+export function measureExternalMcpSerializedJson(
   value: unknown,
-  byteLimit: number,
-  depthLimit: number,
+  byteLimit = DIAGNOSTIC_TOOL_SCHEMA_LIMIT_BYTES,
+  depthLimit = DIAGNOSTIC_SCHEMA_DEPTH_LIMIT,
 ): SerializedMeasurement {
-  type Frame =
-    | { kind: "value"; value: unknown; depth: number }
-    | { kind: "leave"; value: object }
+  type Frame = { kind: "value"; value: unknown; depth: number } | { kind: "leave"; value: object }
   const stack: Frame[] = [{ kind: "value", value, depth: 0 }]
   const active = new WeakSet<object>()
   let bytes = 0
-  const add = (amount: number): boolean => {
+  let nodes = 0
+  let keys = 0
+  let arrayItems = 0
+  const add = (amount: number) => {
     bytes += amount
     return bytes <= byteLimit
   }
@@ -975,6 +1212,8 @@ function measureSerializedJson(
       active.delete(frame.value)
       continue
     }
+    nodes += 1
+    if (nodes > DIAGNOSTIC_SCHEMA_NODE_LIMIT) return { ok: false, reason: "nodes" }
     if (frame.depth > depthLimit) return { ok: false, reason: "depth" }
     const current = frame.value
     if (current === null) {
@@ -982,11 +1221,9 @@ function measureSerializedJson(
       continue
     }
     if (typeof current === "string") {
-      // Two quote bytes plus the UTF-8 payload. Escaping can only make the
-      // serialized value larger, so account for the exact JSON string when
-      // it contains characters that need escaping.
-      const serialized = JSON.stringify(current)
-      if (!add(utf8Bytes(serialized))) return { ok: false, reason: "size" }
+      const stringBytes = serializedStringBytes(current)
+      if (stringBytes > DIAGNOSTIC_SCHEMA_STRING_LIMIT_BYTES) return { ok: false, reason: "string" }
+      if (!add(stringBytes)) return { ok: false, reason: "size" }
       continue
     }
     if (typeof current === "number" || typeof current === "boolean") {
@@ -1002,6 +1239,8 @@ function measureSerializedJson(
     stack.push({ kind: "leave", value: current })
 
     if (Array.isArray(current)) {
+      arrayItems += current.length
+      if (arrayItems > DIAGNOSTIC_SCHEMA_ARRAY_ITEM_LIMIT) return { ok: false, reason: "array_items" }
       if (!add(2 + Math.max(0, current.length - 1))) return { ok: false, reason: "size" }
       for (let index = current.length - 1; index >= 0; index -= 1) {
         stack.push({ kind: "value", value: current[index], depth: frame.depth + 1 })
@@ -1010,199 +1249,157 @@ function measureSerializedJson(
     }
 
     const entries = Object.entries(current)
+    keys += entries.length
+    if (keys > DIAGNOSTIC_SCHEMA_KEY_LIMIT) return { ok: false, reason: "keys" }
     if (!add(2 + Math.max(0, entries.length - 1))) return { ok: false, reason: "size" }
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const [key, child] = entries[index]!
-      if (!add(utf8Bytes(JSON.stringify(key)) + 1)) return { ok: false, reason: "size" }
+      const keyBytes = serializedStringBytes(key)
+      if (keyBytes > DIAGNOSTIC_SCHEMA_KEY_LIMIT_BYTES) return { ok: false, reason: "key_size" }
+      if (!add(keyBytes + 1)) return { ok: false, reason: "size" }
       stack.push({ kind: "value", value: child, depth: frame.depth + 1 })
     }
   }
   return { ok: true, bytes }
 }
 
-function fieldLimitError(input: {
-  diagnostic: ExternalMcpDiagnosticTracker
-  code: "MCP_CATALOG_TOOL_NAME_LIMIT" | "MCP_CATALOG_TOOL_DESCRIPTION_LIMIT" | "MCP_CATALOG_TOOL_TITLE_LIMIT"
-  field: string
-  limit: number
-}): ExternalMcpDiagnosticError {
-  return catalogDiagnosticError({
-    tracker: input.diagnostic,
-    code: input.code,
-    operatorAction: `Reduce each serialized tool ${input.field} below ${input.limit} UTF-8 bytes.`,
-  })
-}
+type ExternalMcpCatalogCode =
+  | "MCP_CATALOG_CURSOR_LOOP"
+  | "MCP_CATALOG_PAGE_LIMIT"
+  | "MCP_CATALOG_ITEM_LIMIT"
+  | "MCP_CATALOG_DUPLICATE_TOOL"
+  | "MCP_CATALOG_TOOL_NAME_LIMIT"
+  | "MCP_CATALOG_TOOL_DESCRIPTION_LIMIT"
+  | "MCP_CATALOG_TOOL_TITLE_LIMIT"
+  | "MCP_CATALOG_SCHEMA_SIZE_LIMIT"
+  | "MCP_CATALOG_SCHEMA_DEPTH_LIMIT"
+  | "MCP_CATALOG_SCHEMA_CYCLE"
+  | "MCP_CATALOG_SCHEMA_NODE_LIMIT"
+  | "MCP_CATALOG_SCHEMA_KEY_LIMIT"
+  | "MCP_CATALOG_SCHEMA_ARRAY_LIMIT"
+  | "MCP_CATALOG_SCHEMA_STRING_LIMIT"
+  | "MCP_CATALOG_CURSOR_SIZE_LIMIT"
+  | "MCP_CATALOG_BYTE_LIMIT"
 
-function validateToolCatalogField(input: {
-  diagnostic: ExternalMcpDiagnosticTracker
-  value: string | undefined
-  limit: number
-  field: string
-  code: "MCP_CATALOG_TOOL_NAME_LIMIT" | "MCP_CATALOG_TOOL_DESCRIPTION_LIMIT" | "MCP_CATALOG_TOOL_TITLE_LIMIT"
-}): void {
-  if (input.value !== undefined && serializedStringBytes(input.value) > input.limit) {
-    throw fieldLimitError(input)
+function catalogLimit(code: ExternalMcpCatalogCode, diagnostic?: ExternalMcpDiagnosticTracker): never {
+  if (diagnostic) {
+    throw catalogDiagnosticError({
+      tracker: diagnostic,
+      code,
+      operatorAction: "Reduce and validate the provider tool catalog within OpenWork's documented safety limits.",
+    })
   }
+  throw new ExternalMcpCatalogLimitError(code)
 }
 
-function validateToolSchema(input: {
-  diagnostic: ExternalMcpDiagnosticTracker
-  schema: unknown
-}): void {
-  const measurement = measureSerializedJson(
-    input.schema,
-    EXTERNAL_MCP_TOOL_SCHEMA_LIMIT_BYTES,
-    EXTERNAL_MCP_TOOL_SCHEMA_DEPTH_LIMIT,
-  )
+function validateToolField(
+  value: string | undefined,
+  limit: number,
+  code: ExternalMcpCatalogCode,
+  diagnostic?: ExternalMcpDiagnosticTracker,
+): void {
+  if (value !== undefined && serializedStringBytes(value) > limit) catalogLimit(code, diagnostic)
+}
+
+function validateToolSchema(schema: unknown, diagnostic?: ExternalMcpDiagnosticTracker): void {
+  const measurement = measureExternalMcpSerializedJson(schema)
   if (measurement.ok) return
   const code = measurement.reason === "depth"
     ? "MCP_CATALOG_SCHEMA_DEPTH_LIMIT"
     : measurement.reason === "cycle"
       ? "MCP_CATALOG_SCHEMA_CYCLE"
-      : "MCP_CATALOG_SCHEMA_SIZE_LIMIT"
-  const operatorAction = measurement.reason === "depth"
-    ? `Flatten each tool schema below ${EXTERNAL_MCP_TOOL_SCHEMA_DEPTH_LIMIT} nested levels.`
-    : measurement.reason === "cycle"
-      ? "Return JSON-serializable, acyclic tool schemas."
-      : `Reduce each serialized tool schema below ${EXTERNAL_MCP_TOOL_SCHEMA_LIMIT_BYTES} bytes.`
-  throw catalogDiagnosticError({ tracker: input.diagnostic, code, operatorAction })
+      : measurement.reason === "nodes"
+        ? "MCP_CATALOG_SCHEMA_NODE_LIMIT"
+        : measurement.reason === "keys" || measurement.reason === "key_size"
+          ? "MCP_CATALOG_SCHEMA_KEY_LIMIT"
+          : measurement.reason === "array_items"
+            ? "MCP_CATALOG_SCHEMA_ARRAY_LIMIT"
+            : measurement.reason === "string"
+              ? "MCP_CATALOG_SCHEMA_STRING_LIMIT"
+              : "MCP_CATALOG_SCHEMA_SIZE_LIMIT"
+  catalogLimit(code, diagnostic)
 }
 
-function measureCatalogTool(input: {
-  diagnostic: ExternalMcpDiagnosticTracker
-  tool: ExternalMcpToolPage["tools"][number]
-  remainingBytes: number
-}): number {
-  validateToolCatalogField({
-    diagnostic: input.diagnostic,
-    value: input.tool.name,
-    field: "name",
-    limit: EXTERNAL_MCP_TOOL_NAME_LIMIT_BYTES,
-    code: "MCP_CATALOG_TOOL_NAME_LIMIT",
-  })
-  validateToolCatalogField({
-    diagnostic: input.diagnostic,
-    value: input.tool.title,
-    field: "title",
-    limit: EXTERNAL_MCP_TOOL_TITLE_LIMIT_BYTES,
-    code: "MCP_CATALOG_TOOL_TITLE_LIMIT",
-  })
-  validateToolCatalogField({
-    diagnostic: input.diagnostic,
-    value: input.tool.description,
-    field: "description",
-    limit: EXTERNAL_MCP_TOOL_DESCRIPTION_LIMIT_BYTES,
-    code: "MCP_CATALOG_TOOL_DESCRIPTION_LIMIT",
-  })
-  validateToolSchema({ diagnostic: input.diagnostic, schema: input.tool.inputSchema })
-  if (input.tool.outputSchema !== undefined) {
-    validateToolSchema({ diagnostic: input.diagnostic, schema: input.tool.outputSchema })
-  }
-
-  const measurement = measureSerializedJson(
-    input.tool,
-    Math.max(0, input.remainingBytes),
-    EXTERNAL_MCP_TOOL_SCHEMA_DEPTH_LIMIT + 4,
+function measureCatalogTool(
+  tool: ExternalMcpToolPage["tools"][number],
+  remainingBytes: number,
+  diagnostic?: ExternalMcpDiagnosticTracker,
+): number {
+  validateToolField(tool.name, DIAGNOSTIC_TOOL_NAME_LIMIT_BYTES, "MCP_CATALOG_TOOL_NAME_LIMIT", diagnostic)
+  validateToolField(tool.title, DIAGNOSTIC_TOOL_TITLE_LIMIT_BYTES, "MCP_CATALOG_TOOL_TITLE_LIMIT", diagnostic)
+  validateToolField(tool.description, DIAGNOSTIC_TOOL_DESCRIPTION_LIMIT_BYTES, "MCP_CATALOG_TOOL_DESCRIPTION_LIMIT", diagnostic)
+  validateToolSchema(tool.inputSchema, diagnostic)
+  if (tool.outputSchema !== undefined) validateToolSchema(tool.outputSchema, diagnostic)
+  const measurement = measureExternalMcpSerializedJson(
+    tool,
+    Math.max(0, remainingBytes),
+    DIAGNOSTIC_SCHEMA_DEPTH_LIMIT + 4,
   )
-  if (!measurement.ok) {
-    throw catalogDiagnosticError({
-      tracker: input.diagnostic,
-      code: "MCP_CATALOG_BYTE_LIMIT",
-      operatorAction: `Reduce the complete serialized tool catalog below ${EXTERNAL_MCP_CATALOG_LIMIT_BYTES} bytes.`,
-    })
-  }
+  if (!measurement.ok) catalogLimit("MCP_CATALOG_BYTE_LIMIT", diagnostic)
   return measurement.bytes
 }
 
 export async function collectExternalMcpToolPages(input: {
   listPage: (cursor: string | undefined, options: RequestOptions) => Promise<ExternalMcpToolPage>
-  diagnostic: ExternalMcpDiagnosticTracker
+  deadline?: ExternalMcpLifecycleDeadline
+  diagnostic?: ExternalMcpDiagnosticTracker
   pageLimit?: number
   itemLimit?: number
-  deadline?: ExternalMcpLifecycleDeadline
-}): Promise<ExternalMcpToolPage["tools"]> {
-  const pageLimit = input.pageLimit ?? EXTERNAL_MCP_TOOL_PAGE_LIMIT
-  const itemLimit = input.itemLimit ?? EXTERNAL_MCP_TOOL_ITEM_LIMIT
+}): Promise<{ tools: ExternalMcpToolPage["tools"]; pageCount: number }> {
   const deadline = input.deadline ?? createExternalMcpLifecycleDeadline()
+  const pageLimit = input.pageLimit ?? DIAGNOSTIC_MAX_TOOL_PAGES
+  const itemLimit = input.itemLimit ?? DIAGNOSTIC_MAX_TOOLS
   const tools: ExternalMcpToolPage["tools"] = []
   const seenCursors = new Set<string>()
   const seenToolNames = new Set<string>()
   let catalogBytes = 0
   let cursor: string | undefined
   for (let page = 0; page < pageLimit; page += 1) {
-    input.diagnostic.begin("MCP_TOOL_DISCOVERY")
     const result = await runExternalMcpRequestWithinDeadline({
       deadline,
       diagnostic: input.diagnostic,
       phase: "MCP_TOOL_DISCOVERY",
       operation: (options) => input.listPage(cursor, options),
     })
-    if (tools.length + result.tools.length > itemLimit) {
-      throw catalogDiagnosticError({
-        tracker: input.diagnostic,
-        code: "MCP_CATALOG_ITEM_LIMIT",
-        operatorAction: `Reduce the provider catalog below ${itemLimit} tools or use a scoped MCP server.`,
-      })
-    }
+    if (tools.length + result.tools.length > itemLimit) catalogLimit("MCP_CATALOG_ITEM_LIMIT", input.diagnostic)
     for (const tool of result.tools) {
-      catalogBytes += measureCatalogTool({
-        diagnostic: input.diagnostic,
-        tool,
-        remainingBytes: EXTERNAL_MCP_CATALOG_LIMIT_BYTES - catalogBytes,
-      })
-      if (seenToolNames.has(tool.name)) {
-        throw catalogDiagnosticError({
-          tracker: input.diagnostic,
-          code: "MCP_CATALOG_DUPLICATE_TOOL",
-          operatorAction: "Ensure every tools/list page uses a unique, stable tool name.",
-        })
-      }
+      catalogBytes += measureCatalogTool(tool, DIAGNOSTIC_CATALOG_LIMIT_BYTES - catalogBytes, input.diagnostic)
+      if (seenToolNames.has(tool.name)) catalogLimit("MCP_CATALOG_DUPLICATE_TOOL", input.diagnostic)
       seenToolNames.add(tool.name)
       tools.push(tool)
     }
     if (!result.nextCursor) {
-      input.diagnostic.passed("MCP_TOOL_DISCOVERY", "catalog_ready")
-      return tools
+      input.diagnostic?.passed("MCP_TOOL_DISCOVERY", "catalog_ready")
+      return { tools, pageCount: page + 1 }
     }
-    if (serializedStringBytes(result.nextCursor) > EXTERNAL_MCP_CURSOR_LIMIT_BYTES) {
-      throw catalogDiagnosticError({
-        tracker: input.diagnostic,
-        code: "MCP_CATALOG_CURSOR_SIZE_LIMIT",
-        operatorAction: `Reduce each serialized tools/list cursor below ${EXTERNAL_MCP_CURSOR_LIMIT_BYTES} UTF-8 bytes.`,
-      })
+    if (serializedStringBytes(result.nextCursor) > DIAGNOSTIC_CURSOR_LIMIT_BYTES) {
+      catalogLimit("MCP_CATALOG_CURSOR_SIZE_LIMIT", input.diagnostic)
     }
-    const cursorMeasurement = measureSerializedJson(
+    const cursorMeasurement = measureExternalMcpSerializedJson(
       result.nextCursor,
-      EXTERNAL_MCP_CATALOG_LIMIT_BYTES - catalogBytes,
+      DIAGNOSTIC_CATALOG_LIMIT_BYTES - catalogBytes,
       1,
     )
-    if (!cursorMeasurement.ok) {
-      throw catalogDiagnosticError({
-        tracker: input.diagnostic,
-        code: "MCP_CATALOG_BYTE_LIMIT",
-        operatorAction: `Reduce the complete serialized tool catalog below ${EXTERNAL_MCP_CATALOG_LIMIT_BYTES} bytes.`,
-      })
-    }
+    if (!cursorMeasurement.ok) catalogLimit("MCP_CATALOG_BYTE_LIMIT", input.diagnostic)
     catalogBytes += cursorMeasurement.bytes
-    if (seenCursors.has(result.nextCursor)) {
-      throw catalogDiagnosticError({
-        tracker: input.diagnostic,
-        code: "MCP_CATALOG_CURSOR_LOOP",
-        operatorAction: "Fix the provider's tools/list pagination so each nextCursor advances.",
-      })
-    }
+    if (seenCursors.has(result.nextCursor)) catalogLimit("MCP_CATALOG_CURSOR_LOOP", input.diagnostic)
     seenCursors.add(result.nextCursor)
     cursor = result.nextCursor
   }
-  throw catalogDiagnosticError({
-    tracker: input.diagnostic,
-    code: "MCP_CATALOG_PAGE_LIMIT",
-    operatorAction: `Reduce the provider catalog to at most ${pageLimit} pages or use a scoped MCP server.`,
-  })
+  catalogLimit("MCP_CATALOG_PAGE_LIMIT", input.diagnostic)
 }
 
 export type ExternalMcpConnectResult =
   | { status: "connected" }
+  | { status: "needs_auth"; authorizeUrl: string }
+
+export type ExternalMcpDiagnosticResult =
+  | {
+      status: "connected"
+      protocolVersion: string
+      toolCount: number
+      pageCount: number
+    }
   | { status: "needs_auth"; authorizeUrl: string }
 
 /**
@@ -1224,125 +1421,362 @@ export async function connectExternalMcp(
 ): Promise<ExternalMcpConnectResult> {
   const client = buildClient()
   const deadline = createExternalMcpLifecycleDeadline()
-  const { transport, provider, diagnostic } = buildTransport(
+  const diagnostic = new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID(), {
+    authType: connection.authType,
+    credentialMode: connection.credentialMode,
+  })
+  const { transport, provider } = buildTransport(
     connection,
     redirectUri,
     signedState,
     member,
-    diagnosticReferenceId,
+    undefined,
+    undefined,
+    undefined,
+    false,
     deadline,
+    diagnostic,
   )
-  let result: ExternalMcpConnectResult | undefined
-  let primaryError: unknown
   try {
-    await runExternalMcpRequestWithinDeadline({
-      deadline,
-      diagnostic,
-      phase: "MCP_INITIALIZE",
-      operation: (options) => client.connect(transport, options),
+    return await runExternalMcpLifecycleWithClose({
+      operation: async () => {
+        try {
+          await runExternalMcpRequestWithinDeadline({
+            deadline,
+            diagnostic,
+            phase: "MCP_INITIALIZE",
+            operation: (options) => client.connect(transport, options),
+          })
+          diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
+          return { status: "connected" as const }
+        } catch (error) {
+          if (error instanceof UnauthorizedError && provider?.lastAuthorizeUrl) {
+            await assertSafeMcpAuthorizationUrl(provider.lastAuthorizeUrl)
+            diagnostic.begin("AUTH_USER_OR_WORKLOAD")
+            return { status: "needs_auth" as const, authorizeUrl: provider.lastAuthorizeUrl }
+          }
+          throw diagnostic.error(error)
+        }
+      },
+      close: () => client.close(),
     })
-    diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
-    result = { status: "connected" }
   } catch (error) {
-    if (error instanceof UnauthorizedError && provider?.lastAuthorizeUrl) {
-      diagnostic.begin("AUTH_USER_OR_WORKLOAD")
-      result = { status: "needs_auth", authorizeUrl: provider.lastAuthorizeUrl }
-    } else {
-      // Freeze the causal phase before close() can perform any additional
-      // transport work and move the tracker to another lifecycle phase.
-      primaryError = diagnostic.error(error)
-    }
-  } finally {
-    try {
-      await client.close()
-    } catch (error) {
-      // Never replace the causal handshake error. A close failure after a
-      // successful connection is its own lifecycle diagnostic; closing an
-      // unauthenticated transport is best-effort but still always attempted.
-      if (!primaryError && result?.status === "connected") {
-        primaryError = diagnostic.error(error, "SHUTDOWN")
-      }
-    }
+    if (error instanceof StructuredExternalMcpDiagnosticError) throw error
+    throw diagnostic.error(error, "SHUTDOWN")
   }
-  if (primaryError) throw diagnostic.error(primaryError)
-  if (!result) throw diagnostic.error(new Error("MCP connection ended without a result."), "MCP_INITIALIZE")
-  return result
 }
 
 /** Completes the OAuth code exchange after the browser is redirected back with `code`. For per-member connections, `member` (from the signed state token) decides whose account the tokens are saved against. */
-export async function runExternalMcpAuthCompletionLifecycle(input: {
-  diagnostic: ExternalMcpDiagnosticTracker
-  finishAuth: () => Promise<void>
-  validateMcp: (options?: RequestOptions) => Promise<void>
-  invalidateTokens: () => Promise<void>
-  close: () => Promise<void>
-  deadline?: ExternalMcpLifecycleDeadline
+export async function completeExternalMcpAuth(input: {
+  connection: ExternalMcpConnectionRow
+  code: string
+  redirectUri: string
+  signedState: string
+  credentialFence?: ExternalMcpDiagnosticCredentialFence
+  member?: ExternalMcpMemberContext
+  diagnosticObserver?: ExternalMcpDiagnosticObserver
+  lifecycleDeadline?: ExternalMcpLifecycleDeadline
+  diagnosticReferenceId?: string
 }): Promise<void> {
-  const deadline = input.deadline ?? createExternalMcpLifecycleDeadline()
-  input.diagnostic.begin("AUTH_TOKEN_ACQUISITION")
-  let exchangedTokens = false
-  let primaryError: ExternalMcpDiagnosticError | null = null
-  try {
-    await runExternalMcpRequestWithinDeadline({
-      deadline,
-      diagnostic: input.diagnostic,
-      phase: "AUTH_TOKEN_ACQUISITION",
-      operation: () => input.finishAuth(),
-    })
-    exchangedTokens = true
-    input.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
-    await runExternalMcpRequestWithinDeadline({
-      deadline,
-      diagnostic: input.diagnostic,
-      phase: "MCP_INITIALIZE",
-      operation: (options) => input.validateMcp(options),
-    })
-    input.diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
-  } catch (error) {
-    primaryError = input.diagnostic.error(error, exchangedTokens ? "MCP_INITIALIZE" : "AUTH_TOKEN_ACQUISITION")
-    if (exchangedTokens) {
-      try {
-        await input.invalidateTokens()
-      } catch {
-        // Cleanup must not replace the causal validation diagnostic.
+  const {
+    connection,
+    code,
+    redirectUri,
+    signedState,
+    credentialFence,
+    member,
+    diagnosticObserver,
+    diagnosticReferenceId,
+  } = input
+  const context: DiagnosticContext | undefined = diagnosticObserver
+    ? {
+        connectionUrl: connection.url,
+        networkPassed: false,
+        lastPhase: "AUTH_TOKEN_ACQUISITION" as const,
+        lastEvidence: safeMcpDiagnosticEvidence({ url: connection.url }),
+        observing: true,
+        observe: diagnosticObserver,
       }
-    }
-  } finally {
-    try {
-      await input.close()
-    } catch (error) {
-      if (!primaryError) primaryError = input.diagnostic.error(error, "SHUTDOWN")
-    }
-  }
-  if (primaryError) throw primaryError
-}
-
-export async function completeExternalMcpAuth(
-  connection: ExternalMcpConnectionRow,
-  code: string,
-  redirectUri: string,
-  member?: ExternalMcpMemberContext,
-  diagnosticReferenceId?: string,
-): Promise<void> {
-  const client = buildClient()
-  const deadline = createExternalMcpLifecycleDeadline()
-  const { transport, provider, diagnostic } = buildTransport(
+    : undefined
+  const diagnosticAuthorization = credentialFence
+    ? { attemptId: credentialFence.attemptId, generation: credentialFence.generation }
+    : undefined
+  const deadline = input.lifecycleDeadline ?? createExternalMcpLifecycleDeadline()
+  const structuredDiagnostic = diagnosticObserver
+    ? undefined
+    : new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID(), {
+        authType: connection.authType,
+        credentialMode: connection.credentialMode,
+      })
+  const validationClient = diagnosticObserver ? null : buildClient()
+  const { transport, provider } = buildTransport(
     connection,
     redirectUri,
-    undefined,
+    signedState,
     member,
-    diagnosticReferenceId,
+    context,
+    diagnosticAuthorization,
+    credentialFence,
+    true,
+    deadline,
+    structuredDiagnostic,
+  )
+  const startedAt = Date.now()
+  await observe(context, {
+    phase: "AUTH_TOKEN_ACQUISITION",
+    outcome: "running",
+    healthLevel: "reachable",
+    messageSafe: "Exchanging the authorization response for an MCP access token.",
+    evidence: safeMcpDiagnosticEvidence(),
+  })
+  let exchangedTokens = false
+  try {
+    await runExternalMcpLifecycleWithClose({
+      operation: async () => {
+        await runExternalMcpRequestWithinDeadline({
+          deadline,
+          diagnostic: structuredDiagnostic,
+          phase: "AUTH_TOKEN_ACQUISITION",
+          operation: async () => transport.finishAuth(code),
+        })
+        exchangedTokens = true
+        structuredDiagnostic?.passed("AUTH_TOKEN_ACQUISITION")
+        await observe(context, {
+          phase: "AUTH_TOKEN_ACQUISITION",
+          outcome: "passed",
+          healthLevel: "reachable",
+          messageSafe: "The authorization server completed the token exchange.",
+          phaseDurationMs: Date.now() - startedAt,
+          evidence: safeMcpDiagnosticEvidence(),
+        })
+        await observe(context, {
+          phase: "AUTH_USER_OR_WORKLOAD",
+          outcome: "passed",
+          healthLevel: "reachable",
+          messageSafe: "The provider completed administrator authorization for this MCP connection.",
+          phaseDurationMs: Date.now() - startedAt,
+          evidence: safeMcpDiagnosticEvidence(),
+        })
+        if (validationClient) {
+          try {
+            await runExternalMcpRequestWithinDeadline({
+              deadline,
+              diagnostic: structuredDiagnostic,
+              phase: "MCP_INITIALIZE",
+              operation: (options) => validationClient.connect(transport, options),
+            })
+            structuredDiagnostic?.passed("MCP_INITIALIZED", "protocol_ready")
+          } catch (error) {
+            await provider?.invalidateCredentials?.("tokens").catch(() => undefined)
+            throw error
+          }
+        }
+      },
+      close: () => validationClient ? validationClient.close() : transport.close(),
+    })
+  } catch (error) {
+    if (structuredDiagnostic) {
+      if (error instanceof StructuredExternalMcpDiagnosticError) throw error
+      throw structuredDiagnostic.error(error, exchangedTokens ? "MCP_INITIALIZE" : "AUTH_TOKEN_ACQUISITION")
+    }
+    throw error instanceof ExternalMcpDiagnosticError
+      ? error
+      : new ExternalMcpDiagnosticError(
+          context?.lastPhase ?? "AUTH_TOKEN_ACQUISITION",
+          error,
+          context?.lastEvidence,
+          context?.lastHttp,
+        )
+  }
+}
+
+export function diagnosticPhaseFromError(error: unknown): McpDiagnosticPhase {
+  if (error instanceof ExternalMcpDiagnosticError) return error.phase
+  if (error instanceof StructuredExternalMcpDiagnosticError) return error.diagnostic.phase
+  return "MCP_INITIALIZE"
+}
+
+export function diagnosticEvidenceFromError(error: unknown, depth = 0): McpDiagnosticSafeEvidence | undefined {
+  if (typeof error !== "object" || error === null || depth > 6) return undefined
+  if (error instanceof ExternalMcpDiagnosticError && error.evidence) return error.evidence
+  return "cause" in error ? diagnosticEvidenceFromError(error.cause, depth + 1) : undefined
+}
+
+export async function diagnoseExternalMcp(input: {
+  connection: ExternalMcpConnectionRow
+  redirectUri: string
+  signedState?: string
+  member?: ExternalMcpMemberContext
+  diagnosticAuthorization?: ExternalMcpDiagnosticAuthorization
+  observe: ExternalMcpDiagnosticObserver
+}): Promise<ExternalMcpDiagnosticResult> {
+  const context: DiagnosticContext = {
+    connectionUrl: input.connection.url,
+    networkPassed: false,
+    lastPhase: "HTTP_ROUTING",
+    lastEvidence: safeMcpDiagnosticEvidence({ url: input.connection.url }),
+    observing: true,
+    observe: input.observe,
+  }
+  const client = buildClient()
+  const deadline = createExternalMcpLifecycleDeadline()
+  const { transport, provider } = buildTransport(
+    input.connection,
+    input.redirectUri,
+    input.signedState,
+    input.member,
+    context,
+    input.diagnosticAuthorization,
+    undefined,
+    false,
     deadline,
   )
-  await runExternalMcpAuthCompletionLifecycle({
-    diagnostic,
-    finishAuth: () => transport.finishAuth(code),
-    // A token response alone does not prove audience, tenant, scopes, or MCP
-    // readiness. Initialize with the newly stored credential before success.
-    validateMcp: (options) => client.connect(transport, options),
-    invalidateTokens: () => provider?.invalidateCredentials?.("tokens") ?? Promise.resolve(),
-    close: () => client.close(),
-    deadline,
+
+  return runExternalMcpLifecycleWithClose({
+    operation: async () => {
+      const initializeStartedAt = Date.now()
+      await observe(context, {
+        phase: "MCP_INITIALIZE",
+        outcome: "running",
+        healthLevel: "configured",
+        messageSafe: "Starting the MCP initialization exchange.",
+        evidence: safeMcpDiagnosticEvidence({ url: input.connection.url, method: "POST" }),
+      })
+
+      try {
+        await runExternalMcpRequestWithinDeadline({
+          deadline,
+          operation: (options) => client.connect(transport, options),
+        })
+      } catch (error) {
+        if (error instanceof UnauthorizedError && provider?.lastAuthorizeUrl) {
+          try {
+            await assertSafeMcpAuthorizationUrl(provider.lastAuthorizeUrl)
+          } catch (authorizationUrlError) {
+            throw new ExternalMcpDiagnosticError(
+              "AUTH_USER_OR_WORKLOAD",
+              authorizationUrlError,
+              safeMcpDiagnosticEvidence({ url: provider.lastAuthorizeUrl }),
+            )
+          }
+          await observe(context, {
+            phase: "AUTH_USER_OR_WORKLOAD",
+            outcome: "waiting",
+            healthLevel: "reachable",
+            messageSafe: "The provider is waiting for administrator authorization in the new tab.",
+            actionOwner: input.connection.credentialMode === "shared" ? "organization_admin" : "member",
+            operatorAction: "complete_provider_authorization",
+            evidence: safeMcpDiagnosticEvidence(),
+            attemptStatus: "waiting_for_authorization",
+          })
+          return { status: "needs_auth", authorizeUrl: provider.lastAuthorizeUrl }
+        }
+        throw error instanceof ExternalMcpDiagnosticError
+          ? error
+          : new ExternalMcpDiagnosticError(
+              diagnosticPhaseAfterSdkFailure(error, context),
+              error,
+              context.lastEvidence,
+              context.lastHttp,
+            )
+      }
+
+      try {
+        await observe(context, {
+          phase: "AUTH_RESOURCE_VALIDATION",
+          outcome: input.connection.authType === "none" ? "skipped" : "passed",
+          healthLevel: "authorized",
+          messageSafe: input.connection.authType === "none"
+            ? "This MCP server does not require a credential."
+            : "The MCP resource accepted the configured credential.",
+          evidence: safeMcpDiagnosticEvidence({ url: input.connection.url }),
+        })
+        await observe(context, {
+          phase: "MCP_TRANSPORT",
+          outcome: "passed",
+          healthLevel: "authorized",
+          messageSafe: "The server completed the Streamable HTTP transport exchange.",
+          phaseDurationMs: Date.now() - initializeStartedAt,
+          evidence: safeMcpDiagnosticEvidence({ url: input.connection.url, method: "POST" }),
+        })
+
+        const selectedVersion = transport.protocolVersion
+        await observe(context, {
+          phase: "MCP_VERSION",
+          outcome: "running",
+          healthLevel: "authorized",
+          messageSafe: "Checking the negotiated stable MCP revision.",
+          evidence: safeMcpDiagnosticEvidence(),
+        })
+        if (!selectedVersion || !DIAGNOSTIC_PROTOCOL_VERSIONS.has(selectedVersion)) {
+          throw new ExternalMcpDiagnosticError("MCP_VERSION", new Error("Unsupported protocol version."))
+        }
+        const protocolVersion = selectedVersion
+        await observe(context, {
+          phase: "MCP_VERSION",
+          outcome: "passed",
+          healthLevel: "authorized",
+          messageSafe: `The server negotiated MCP ${protocolVersion}.`,
+          evidence: safeMcpDiagnosticEvidence({ protocolVersion }),
+        })
+        await observe(context, {
+          phase: "MCP_INITIALIZE",
+          outcome: "passed",
+          healthLevel: "protocol_ready",
+          messageSafe: "The MCP initialize request and response were valid.",
+          phaseDurationMs: Date.now() - initializeStartedAt,
+          evidence: safeMcpDiagnosticEvidence({ protocolVersion }),
+        })
+        await observe(context, {
+          phase: "MCP_INITIALIZED",
+          outcome: "passed",
+          healthLevel: "protocol_ready",
+          messageSafe: "The server accepted the initialized lifecycle notification.",
+          evidence: safeMcpDiagnosticEvidence({ protocolVersion }),
+        })
+
+        const catalogStartedAt = Date.now()
+        await observe(context, {
+          phase: "MCP_TOOL_DISCOVERY",
+          outcome: "running",
+          healthLevel: "protocol_ready",
+          messageSafe: "Reading the complete MCP tool catalog.",
+          evidence: safeMcpDiagnosticEvidence({ protocolVersion }),
+        })
+        let catalog
+        try {
+          catalog = await collectExternalMcpToolPages({
+            deadline,
+            listPage: (cursor, options) => client.listTools(cursor ? { cursor } : undefined, options),
+          })
+        } catch (error) {
+          throw error instanceof ExternalMcpDiagnosticError
+            ? error
+            : new ExternalMcpDiagnosticError("MCP_TOOL_DISCOVERY", error, context.lastEvidence, context.lastHttp)
+        }
+        const pageCount = catalog.pageCount
+        const toolCount = catalog.tools.length
+
+        await observe(context, {
+          phase: "MCP_TOOL_DISCOVERY",
+          outcome: "passed",
+          healthLevel: "catalog_ready",
+          messageSafe: `The complete tool catalog is available (${toolCount} tools across ${pageCount} pages).`,
+          phaseDurationMs: Date.now() - catalogStartedAt,
+          evidence: safeMcpDiagnosticEvidence({ protocolVersion, toolCount, pageCount }),
+          attemptStatus: "succeeded",
+        })
+        return { status: "connected", protocolVersion, toolCount, pageCount }
+      } catch (error) {
+        throw error instanceof ExternalMcpDiagnosticError
+          ? error
+          : new ExternalMcpDiagnosticError(context.lastPhase, error, context.lastEvidence, context.lastHttp)
+      }
+    },
+    close: async () => {
+      context.observing = false
+      await client.close()
+    },
   })
 }
 
@@ -1355,216 +1789,44 @@ export async function listExternalMcpTools(
 ) {
   const client = buildClient()
   const deadline = lifecycleDeadline ?? createExternalMcpLifecycleDeadline()
-  const { transport, diagnostic } = buildTransport(
+  const diagnostic = new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID(), {
+    authType: connection.authType,
+    credentialMode: connection.credentialMode,
+  })
+  const { transport } = buildTransport(
     connection,
     redirectUri,
     undefined,
     member,
-    diagnosticReferenceId,
+    undefined,
+    undefined,
+    undefined,
+    false,
     deadline,
+    diagnostic,
   )
-  let operationError: unknown
   try {
-    await runExternalMcpRequestWithinDeadline({
-      deadline,
-      diagnostic,
-      phase: "MCP_INITIALIZE",
-      operation: (options) => client.connect(transport, options),
-    })
-    diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
-    return await collectExternalMcpToolPages({
-      diagnostic,
-      deadline,
-      listPage: (cursor, options) => client.listTools(cursor ? { cursor } : undefined, options),
+    return await runExternalMcpLifecycleWithClose({
+      operation: async () => {
+        await runExternalMcpRequestWithinDeadline({
+          deadline,
+          diagnostic,
+          phase: "MCP_INITIALIZE",
+          operation: (options) => client.connect(transport, options),
+        })
+        diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
+        const catalog = await collectExternalMcpToolPages({
+          deadline,
+          diagnostic,
+          listPage: (cursor, options) => client.listTools(cursor ? { cursor } : undefined, options),
+        })
+        return catalog.tools
+      },
+      close: () => client.close(),
     })
   } catch (error) {
-    operationError = error
+    if (error instanceof StructuredExternalMcpDiagnosticError) throw error
     throw diagnostic.error(error)
-  } finally {
-    try {
-      await client.close()
-    } catch (error) {
-      if (!operationError) throw diagnostic.error(error, "SHUTDOWN")
-    }
-  }
-}
-
-export type ExternalMcpConnectionTestResult = {
-  status: "ready" | "warning"
-  warnings: ExternalMcpConnectionTestWarningCode[]
-  testId: string
-  protocolVersion: string
-  transport: "streamable_http"
-  sessionUsed: boolean
-  serverName: string | null
-  serverVersion: string | null
-  toolPageCount: number
-  toolCount: number
-  toolNames: string[]
-  catalogHash: string
-  elapsedMs: number
-}
-
-export type ExternalMcpConnectionTestOptions = {
-  /** Test-only/controlled caller override; production routes use the default. */
-  timeoutMs?: number
-}
-
-/**
- * Performs a read-only lifecycle check with the connection's existing Den-owned
- * credential. It initializes the protocol and exhausts tools/list with bounded,
- * cycle-safe pagination. It never invokes a tool, so an arbitrary server cannot
- * turn the dashboard's "Test connection" action into a provider mutation.
- */
-export async function testExternalMcpConnection(
-  connection: ExternalMcpConnectionRow,
-  redirectUri: string,
-  member?: ExternalMcpMemberContext,
-  options?: ExternalMcpConnectionTestOptions,
-): Promise<ExternalMcpConnectionTestResult> {
-  const startedAt = Date.now()
-  const requestedTimeout = options?.timeoutMs ?? EXTERNAL_MCP_TEST_TIMEOUT_MS
-  const timeoutMs = Number.isFinite(requestedTimeout)
-    ? Math.max(10, Math.min(requestedTimeout, EXTERNAL_MCP_TEST_TIMEOUT_MS))
-    : EXTERNAL_MCP_TEST_TIMEOUT_MS
-  const deadline = startedAt + timeoutMs
-  const cleanupReserveMs = Math.min(EXTERNAL_MCP_TEST_MAX_CLEANUP_RESERVE_MS, Math.floor(timeoutMs / 3))
-  const operationDeadline = deadline - cleanupReserveMs
-  const testId = `mcp-test-${randomUUID()}`
-  const lifecycleController = new AbortController()
-  const deadlineTimer = setTimeout(() => {
-    abortLifecycle(lifecycleController, connectionTestFailure(testId, "mcp_test_timeout"))
-  }, Math.max(1, operationDeadline - Date.now()))
-  const boundedFetch = createBoundedConnectionTestFetch(testId, lifecycleController.signal)
-  const client = buildClient()
-  let transport: StreamableHTTPClientTransport | undefined
-  let stage: "initialize" | "catalog" = "initialize"
-  try {
-    transport = await buildConnectionTestTransport(
-      connection,
-      member,
-      boundedFetch.fetch,
-    )
-    await client.connect(transport, connectionTestRequestOptions(deadline, testId))
-    const protocolVersion = transport.protocolVersion ?? "unknown"
-    assertBoundedText({
-      value: protocolVersion,
-      maxChars: EXTERNAL_MCP_TEST_MAX_PROTOCOL_CHARS,
-      maxBytes: EXTERNAL_MCP_TEST_MAX_PROTOCOL_CHARS,
-      testId,
-      code: "mcp_initialize_failed",
-    })
-    const server = client.getServerVersion()
-    for (const value of [server?.name, server?.version]) {
-      if (value !== undefined) {
-        assertBoundedText({
-          value,
-          maxChars: EXTERNAL_MCP_TEST_MAX_SERVER_INFO_CHARS,
-          maxBytes: EXTERNAL_MCP_TEST_MAX_SERVER_INFO_BYTES,
-          testId,
-          code: "mcp_initialize_failed",
-        })
-      }
-    }
-    stage = "catalog"
-    const toolNames: string[] = []
-    const catalogEntries: Array<{ name: string; schemaHash: string }> = []
-    const seenNames = new Set<string>()
-    const seenCursorHashes = new Set<string>()
-    let cursor: string | undefined
-    let toolPageCount = 0
-    let totalToolNameBytes = 0
-
-    while (toolPageCount < EXTERNAL_MCP_TEST_MAX_PAGES) {
-      const page = await client.listTools(cursor ? { cursor } : undefined, connectionTestRequestOptions(deadline, testId))
-      toolPageCount += 1
-      if (page.tools.length > EXTERNAL_MCP_TEST_MAX_TOOLS_PER_PAGE) {
-        throw connectionTestFailure(testId, "mcp_catalog_page_limit_exceeded")
-      }
-      let nextCursorHash: string | undefined
-      if (page.nextCursor) {
-        assertBoundedText({
-          value: page.nextCursor,
-          maxChars: EXTERNAL_MCP_TEST_MAX_CURSOR_CHARS,
-          maxBytes: EXTERNAL_MCP_TEST_MAX_CURSOR_BYTES,
-          testId,
-          code: "mcp_catalog_cursor_limit_exceeded",
-        })
-        nextCursorHash = createHash("sha256").update(page.nextCursor).digest("hex")
-        if (seenCursorHashes.has(nextCursorHash)) {
-          throw connectionTestFailure(testId, "mcp_catalog_cursor_cycle")
-        }
-      }
-      for (const tool of page.tools) {
-        serializeBoundedDiagnosticJson(tool, EXTERNAL_MCP_TEST_TOOL_BOUNDS, testId)
-        const toolNameBytes = assertBoundedText({
-          value: tool.name,
-          maxChars: EXTERNAL_MCP_TEST_MAX_TOOL_NAME_CHARS,
-          maxBytes: EXTERNAL_MCP_TEST_MAX_TOOL_NAME_BYTES,
-          testId,
-          code: "mcp_catalog_tool_name_invalid",
-          requireSafeName: true,
-        })
-        totalToolNameBytes += toolNameBytes
-        if (totalToolNameBytes > EXTERNAL_MCP_TEST_MAX_TOTAL_TOOL_NAME_BYTES) {
-          throw connectionTestFailure(testId, "mcp_catalog_tool_name_invalid")
-        }
-        if (seenNames.has(tool.name)) {
-          throw connectionTestFailure(testId, "mcp_catalog_duplicate_tool")
-        }
-        seenNames.add(tool.name)
-        toolNames.push(tool.name)
-        const schemaJson = serializeBoundedDiagnosticJson(tool.inputSchema, EXTERNAL_MCP_TEST_SCHEMA_BOUNDS, testId)
-        const schemaHash = createHash("sha256").update(schemaJson).digest("hex")
-        catalogEntries.push({ name: tool.name, schemaHash })
-        if (toolNames.length > EXTERNAL_MCP_TEST_MAX_TOOLS) {
-          throw connectionTestFailure(testId, "mcp_catalog_limit_exceeded")
-        }
-      }
-
-      if (!page.nextCursor) {
-        cursor = undefined
-        break
-      }
-      if (!nextCursorHash) throw connectionTestFailure(testId, "mcp_catalog_cursor_limit_exceeded")
-      seenCursorHashes.add(nextCursorHash)
-      cursor = page.nextCursor
-    }
-
-    if (cursor) {
-      throw connectionTestFailure(testId, "mcp_catalog_limit_exceeded")
-    }
-
-    catalogEntries.sort((left, right) => left.name.localeCompare(right.name))
-    const catalogHash = `sha256:${createHash("sha256").update(JSON.stringify(catalogEntries)).digest("hex")}`
-    const warnings: ExternalMcpConnectionTestWarningCode[] = toolNames.length === 0
-      ? ["empty_tool_catalog"]
-      : []
-    return {
-      status: warnings.length > 0 ? "warning" : "ready",
-      warnings,
-      testId,
-      protocolVersion,
-      transport: "streamable_http",
-      sessionUsed: Boolean(transport.sessionId),
-      serverName: server?.name ?? null,
-      serverVersion: server?.version ?? null,
-      toolPageCount,
-      toolCount: toolNames.length,
-      toolNames,
-      catalogHash,
-      elapsedMs: Date.now() - startedAt,
-    }
-  } catch (error) {
-    throw sanitizeConnectionTestFailure(error, testId, stage, deadline)
-  } finally {
-    await terminateConnectionTestSession(transport, lifecycleController, operationDeadline, testId)
-    await closeConnectionTestClient(client, lifecycleController, deadline, testId)
-    const cancellation = boundedFetch.cancelActiveResponses(lifecycleController.signal.reason)
-    await waitForOperationUntilDeadline(cancellation, deadline)
-    await allowNetworkCancellationToSettle(deadline)
-    abortLifecycle(lifecycleController, new DOMException("MCP diagnostic lifecycle complete.", "AbortError"))
-    clearTimeout(deadlineTimer)
   }
 }
 
@@ -1578,43 +1840,62 @@ export async function callExternalMcpTool(input: {
 }) {
   const client = buildClient()
   const deadline = createExternalMcpLifecycleDeadline()
-  const { transport, diagnostic } = buildTransport(
+  const diagnostic = new ExternalMcpDiagnosticTracker(input.diagnosticReferenceId ?? randomUUID(), {
+    authType: input.connection.authType,
+    credentialMode: input.connection.credentialMode,
+  })
+  const { transport } = buildTransport(
     input.connection,
     input.redirectUri,
     undefined,
     input.member,
-    input.diagnosticReferenceId,
+    undefined,
+    undefined,
+    undefined,
+    false,
     deadline,
+    diagnostic,
   )
-  let operationError: unknown
   try {
-    await runExternalMcpRequestWithinDeadline({
-      deadline,
-      diagnostic,
-      phase: "MCP_INITIALIZE",
-      operation: (options) => client.connect(transport, options),
+    return await runExternalMcpLifecycleWithClose({
+      operation: async () => {
+        await runExternalMcpRequestWithinDeadline({
+          deadline,
+          diagnostic,
+          phase: "MCP_INITIALIZE",
+          operation: (options) => client.connect(transport, options),
+        })
+        diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
+        const result = await runExternalMcpRequestWithinDeadline({
+          deadline,
+          diagnostic,
+          phase: "MCP_TOOL_EXECUTION",
+          operation: (options) => client.callTool({ name: input.toolName, arguments: input.args }, undefined, options),
+        })
+        if (result.isError) throw providerToolDiagnosticError({ tracker: diagnostic })
+        diagnostic.passed("MCP_TOOL_EXECUTION", "operation_ready")
+        return result
+      },
+      close: () => client.close(),
     })
-    diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
-    diagnostic.begin("MCP_TOOL_EXECUTION")
-    const result = await runExternalMcpRequestWithinDeadline({
-      deadline,
-      diagnostic,
-      phase: "MCP_TOOL_EXECUTION",
-      operation: (options) => client.callTool({ name: input.toolName, arguments: input.args }, undefined, options),
-    })
-    if (result.isError) {
-      throw providerToolDiagnosticError({ tracker: diagnostic })
-    }
-    diagnostic.passed("PROVIDER_EXECUTION", "operation_ready")
-    return result
   } catch (error) {
-    operationError = error
+    if (error instanceof StructuredExternalMcpDiagnosticError) throw error
     throw diagnostic.error(error)
-  } finally {
-    try {
-      await client.close()
-    } catch (error) {
-      if (!operationError) throw diagnostic.error(error, "SHUTDOWN")
-    }
   }
 }
+
+// The dashboard's byte-stable, read-only readiness probe is deliberately
+// isolated from the production OAuth client. It may consume an existing
+// bearer credential, but it never refreshes, registers, redirects, or writes.
+export {
+  EXTERNAL_MCP_CONNECTION_TEST_FAILURE_CODES,
+  EXTERNAL_MCP_CONNECTION_TEST_FAILURE_MESSAGES,
+  EXTERNAL_MCP_CONNECTION_TEST_WARNING_CODES,
+  ExternalMcpConnectionTestFailure,
+  testExternalMcpConnection,
+  toExternalMcpConnectionTestFailure,
+  type ExternalMcpConnectionTestFailureCode,
+  type ExternalMcpConnectionTestOptions,
+  type ExternalMcpConnectionTestResult,
+  type ExternalMcpConnectionTestWarningCode,
+} from "./external-mcp-connection-test.js"

@@ -1,6 +1,8 @@
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { createHash } from "node:crypto"
+import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
+  ExternalMcpConnectionTable,
   MemberTable,
   OrgOAuthClientTable,
 } from "@openwork-ee/den-db/schema"
@@ -19,6 +21,13 @@ export type ConnectedAccountRow = typeof ConnectedAccountTable.$inferSelect
 
 type OrganizationId = DenTypeId<"organization">
 type OrgMembershipId = DenTypeId<"member">
+type ExternalMcpConnectionId = DenTypeId<"externalMcpConnection">
+const EXTERNAL_MCP_DCR_LEASE_MS = 60_000
+const EXTERNAL_MCP_DCR_WAIT_MS = 45_000
+
+function stateHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex")
+}
 
 function parsedJson(value: unknown): unknown {
   if (typeof value !== "string") return value
@@ -110,6 +119,7 @@ export async function upsertOrgOAuthClient(input: {
         clientId: input.clientId,
         ...(input.clientSecret !== undefined ? { clientSecret: input.clientSecret } : {}),
         ...(input.extra !== undefined ? { extra: input.extra } : {}),
+        revision: sql`${OrgOAuthClientTable.revision} + 1`,
       })
       .where(eq(OrgOAuthClientTable.id, existing.id))
     return (await getOrgOAuthClient(input.organizationId, input.providerId))!
@@ -126,6 +136,152 @@ export async function upsertOrgOAuthClient(input: {
     createdByOrgMembershipId: input.createdByOrgMembershipId,
   })
   return (await getOrgOAuthClient(input.organizationId, input.providerId))!
+}
+
+export async function getOrgOAuthClientRevision(input: {
+  organizationId: OrganizationId
+  providerId: string
+  clientId: OrgOAuthClientRow["id"]
+  revision: number
+}): Promise<OrgOAuthClientRow | null> {
+  const rows = await db
+    .select()
+    .from(OrgOAuthClientTable)
+    .where(and(
+      eq(OrgOAuthClientTable.organizationId, input.organizationId),
+      eq(OrgOAuthClientTable.providerId, input.providerId),
+      eq(OrgOAuthClientTable.id, input.clientId),
+      eq(OrgOAuthClientTable.revision, input.revision),
+    ))
+    .limit(1)
+  return rows[0] ? normalizeOrgOAuthClientRow(rows[0]) : null
+}
+
+export async function getOrClaimExternalMcpClientRegistration(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  signedState: string
+  now?: () => Date
+  waitMs?: number
+}): Promise<{ status: "existing"; client: OrgOAuthClientRow } | { status: "claimed" }> {
+  const ownerHash = stateHash(input.signedState)
+  const now = input.now ?? (() => new Date())
+  const deadline = Date.now() + (input.waitMs ?? EXTERNAL_MCP_DCR_WAIT_MS)
+  while (true) {
+    const result = await db.transaction(async (tx) => {
+      const connections = await tx
+        .select()
+        .from(ExternalMcpConnectionTable)
+        .where(and(
+          eq(ExternalMcpConnectionTable.id, input.connectionId),
+          eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        ))
+        .limit(1)
+        .for("update")
+      const connection = connections[0]
+      if (!connection) throw new Error("Unknown external MCP connection.")
+
+      const clients = await tx
+        .select()
+        .from(OrgOAuthClientTable)
+        .where(and(
+          eq(OrgOAuthClientTable.organizationId, input.organizationId),
+          eq(OrgOAuthClientTable.providerId, input.connectionId),
+        ))
+        .limit(1)
+      if (clients[0]) return { status: "existing" as const, client: normalizeOrgOAuthClientRow(clients[0]) }
+
+      const current = now()
+      const leaseActive = connection.oauthRegistrationLeaseHash
+        && connection.oauthRegistrationLeaseExpiresAt
+        && connection.oauthRegistrationLeaseExpiresAt.getTime() > current.getTime()
+      if (leaseActive && connection.oauthRegistrationLeaseHash !== ownerHash) {
+        return { status: "waiting" as const }
+      }
+      await tx
+        .update(ExternalMcpConnectionTable)
+        .set({
+          oauthRegistrationLeaseHash: ownerHash,
+          oauthRegistrationLeaseExpiresAt: new Date(current.getTime() + EXTERNAL_MCP_DCR_LEASE_MS),
+        })
+        .where(eq(ExternalMcpConnectionTable.id, input.connectionId))
+      return { status: "claimed" as const }
+    })
+    if (result.status !== "waiting") return result
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for the MCP OAuth client registration lease.")
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+}
+
+export async function saveExternalMcpRegisteredClient(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  signedState: string
+  clientId: string
+  clientSecret?: string | null
+  safeExtra?: Record<string, unknown> | null
+  createdByOrgMembershipId: OrgMembershipId
+  now?: Date
+}): Promise<OrgOAuthClientRow> {
+  const ownerHash = stateHash(input.signedState)
+  const now = input.now ?? new Date()
+  return db.transaction(async (tx) => {
+    const connections = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connections[0]
+    if (
+      !connection
+      || connection.oauthRegistrationLeaseHash !== ownerHash
+      || !connection.oauthRegistrationLeaseExpiresAt
+      || connection.oauthRegistrationLeaseExpiresAt.getTime() <= now.getTime()
+    ) throw new Error("The MCP OAuth client registration lease is missing or expired.")
+
+    const existing = await tx
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(and(
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, input.connectionId),
+      ))
+      .limit(1)
+    if (existing[0]) {
+      if (existing[0].clientId !== input.clientId) {
+        throw new Error("A different MCP OAuth client registration already won this connection.")
+      }
+    } else {
+      await tx.insert(OrgOAuthClientTable).values({
+        id: createDenTypeId("orgOAuthClient"),
+        organizationId: input.organizationId,
+        providerId: input.connectionId,
+        clientId: input.clientId,
+        clientSecret: input.clientSecret ?? null,
+        extra: input.safeExtra ?? null,
+        createdByOrgMembershipId: input.createdByOrgMembershipId,
+        revision: 1,
+      })
+    }
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({ oauthRegistrationLeaseHash: null, oauthRegistrationLeaseExpiresAt: null })
+      .where(eq(ExternalMcpConnectionTable.id, input.connectionId))
+    const saved = await tx
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(and(
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, input.connectionId),
+      ))
+      .limit(1)
+    if (!saved[0]) throw new Error("Failed to save the MCP OAuth client registration.")
+    return normalizeOrgOAuthClientRow(saved[0])
+  })
 }
 
 export async function getConnectedAccount(input: {

@@ -232,6 +232,20 @@
       "when": 1783661302153,
       "tag": "0033_lethal_the_professor",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "5",
+      "when": 1783749112984,
+      "tag": "0034_famous_nekra",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "5",
+      "when": 1783794738698,
+      "tag": "0035_lethal_robin_chapel",
+      "breakpoints": true
     }
   ]
 }

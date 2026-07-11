@@ -462,7 +462,7 @@ describe("external MCP diagnostics", () => {
     const diagnostic = new ExternalMcpDiagnosticTracker("req_pages")
     diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
     const cursors: (string | undefined)[] = []
-    const tools = await collectExternalMcpToolPages({
+    const catalog = await collectExternalMcpToolPages({
       diagnostic,
       listPage: async (cursor) => {
         cursors.push(cursor)
@@ -473,7 +473,8 @@ describe("external MCP diagnostics", () => {
     })
 
     expect(cursors).toEqual([undefined, "page-2"])
-    expect(tools.map((tool) => tool.name)).toEqual(["first", "second"])
+    expect(catalog.tools.map((tool) => tool.name)).toEqual(["first", "second"])
+    expect(catalog.pageCount).toBe(2)
   })
 
   test("stops repeated tool cursors without disclosing the cursor", async () => {
@@ -535,7 +536,7 @@ describe("external MCP diagnostics", () => {
           inputSchema: { type: "object", description: "s".repeat(512 * 1024) },
         }],
       }),
-    })).rejects.toHaveProperty("diagnostic.code", "MCP_CATALOG_SCHEMA_SIZE_LIMIT")
+    })).rejects.toHaveProperty("diagnostic.code", "MCP_CATALOG_SCHEMA_STRING_LIMIT")
 
     let deeplyNested: Record<string, unknown> = { type: "string" }
     for (let depth = 0; depth < 66; depth += 1) deeplyNested = { properties: deeplyNested }

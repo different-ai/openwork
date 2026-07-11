@@ -19,19 +19,22 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   scimReconciliationRun: "organization.scim.reconciliation_run",
   ssoConnectionRegistered: "organization.sso.connection_registered",
   ssoConnectionDeleted: "organization.sso.connection_deleted",
+  mcpDiagnosticStarted: "organization.mcp.diagnostic_started",
+  mcpDiagnosticCompleted: "organization.mcp.diagnostic_completed",
 }
 
 type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
 type OrganizationAuditPayload = Record<string, string | number | boolean | null>
 
 export function buildOrganizationAuditEvent(input: {
+  eventId?: DenTypeId<"auditEvent">
   organizationId: DenTypeId<"organization">
   actorUserId: typeof AuditEventTable.$inferInsert.actor_user_id
   action: OrganizationAuditAction
   payload?: OrganizationAuditPayload
 }) {
   return {
-    id: createDenTypeId("auditEvent"),
+    id: input.eventId ?? createDenTypeId("auditEvent"),
     org_id: normalizeDenTypeId("org", input.organizationId),
     worker_id: null,
     actor_user_id: input.actorUserId,
@@ -60,6 +63,8 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted:
       return true
     case ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun:
+    case ORGANIZATION_AUDIT_ACTIONS.mcpDiagnosticStarted:
+    case ORGANIZATION_AUDIT_ACTIONS.mcpDiagnosticCompleted:
       return false
   }
 }
@@ -77,7 +82,14 @@ export function buildOrganizationAuditAlertLogLine(event: OrganizationAuditEvent
 export async function recordOrganizationAuditEvent(input: Parameters<typeof buildOrganizationAuditEvent>[0]) {
   const { db } = await import("./db.js")
   const event = buildOrganizationAuditEvent(input)
-  await db.insert(AuditEventTable).values(event)
+  const insert = db.insert(AuditEventTable).values(event)
+  if (input.eventId) {
+    // Callers that persist an event id can safely retry the same audit write
+    // across request, callback, or process boundaries without duplicating it.
+    await insert.onDuplicateKeyUpdate({ set: { id: event.id } })
+  } else {
+    await insert
+  }
   if (isOrganizationAuditAlertAction(event.action)) {
     console.warn(buildOrganizationAuditAlertLogLine(event))
   }

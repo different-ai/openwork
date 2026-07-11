@@ -486,6 +486,7 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
       scopes: ["mcp:read", "mcp:write"],
     }));
     expect(authorization.status).toBe(200);
+    expect(authorization.headers.get("content-security-policy")).toContain(new URL(REDIRECT_URI).origin);
     const approvalHtml = await authorization.text();
     expect(approvalHtml).not.toContain("mock-state");
     expect(approvalHtml).not.toContain(REDIRECT_URI);
@@ -499,6 +500,7 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
       body: new URLSearchParams({ approval_transaction: approvalTransaction }),
     });
     expect(approved.status).toBe(302);
+    expect(approved.headers.get("content-security-policy")).toContain(new URL(REDIRECT_URI).origin);
     const approvedLocation = approved.headers.get("location");
     if (!approvedLocation) throw new Error("approval omitted redirect");
     const callback = new URL(approvedLocation);
