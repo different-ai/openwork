@@ -17,6 +17,7 @@
     "dev:web": "pnpm run dev:den:web",
     "dev:web-local": "pnpm run dev:den",
     "dev:den": "node scripts/dev-local.mjs",
+    "dev:mcp-diagnostic": "MCP_DIAGNOSTIC_MOCK_PORT=${MCP_DIAGNOSTIC_MOCK_PORT:-${OPENWORK_EXTRA_APP_PORTS%%,*}} node scripts/mock-oauth-mcp-server.mjs",
     "dev:den-local": "pnpm run dev:den",
     "dev:den:mysql": "docker compose -p openwork-den-local -f packaging/docker/docker-compose.web-local.yml up -d --wait mysql",
     "dev:den:mysql:down": "docker compose -p openwork-den-local -f packaging/docker/docker-compose.web-local.yml down",

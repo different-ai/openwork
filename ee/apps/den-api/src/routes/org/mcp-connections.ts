@@ -1,4 +1,5 @@
 import type { Hono } from "hono"
+import { createHash } from "node:crypto"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
@@ -17,6 +18,9 @@ import { createOAuthStateToken, resolvePublicOrigin, verifyOAuthStateToken } fro
 import {
   connectExternalMcp,
   completeExternalMcpAuth,
+  EXTERNAL_MCP_CONNECTION_TEST_FAILURE_CODES,
+  testExternalMcpConnection,
+  toExternalMcpConnectionTestFailure,
 } from "../../capability-sources/external-mcp-client.js"
 import {
   createExternalMcpConnection,
@@ -168,6 +172,33 @@ const connectionValidationFailedSchema = z.object({
   message: z.string(),
 }).meta({ ref: "ExternalMcpConnectionValidationFailedError" })
 
+const connectionTestResponseSchema = z.object({
+  status: z.literal("ready"),
+  testId: z.string(),
+  protocolVersion: z.string(),
+  transport: z.literal("streamable_http"),
+  sessionUsed: z.boolean(),
+  serverName: z.string().nullable(),
+  serverVersion: z.string().nullable(),
+  toolPageCount: z.number().int().nonnegative(),
+  toolCount: z.number().int().nonnegative(),
+  toolNames: z.array(z.string()),
+  catalogHash: z.string(),
+  elapsedMs: z.number().int().nonnegative(),
+}).meta({ ref: "ExternalMcpConnectionTestResponse" })
+
+const connectionNotConnectedSchema = z.object({
+  error: z.literal("connection_not_connected"),
+  message: z.string(),
+}).meta({ ref: "ExternalMcpConnectionNotConnectedError" })
+
+const connectionTestFailedSchema = z.object({
+  error: z.literal("connection_test_failed"),
+  code: z.enum(EXTERNAL_MCP_CONNECTION_TEST_FAILURE_CODES),
+  testId: z.string(),
+  message: z.string(),
+}).meta({ ref: "ExternalMcpConnectionTestFailedError" })
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
@@ -177,6 +208,16 @@ function errorForLog(error: unknown) {
     return { name: error.name, message: error.message, stack: error.stack }
   }
   return { message: String(error) }
+}
+
+function mcpEndpointForLog(rawUrl: string): { origin: string; pathHash: string } {
+  try {
+    const url = new URL(rawUrl)
+    const pathHash = createHash("sha256").update(url.pathname).digest("hex").slice(0, 16)
+    return { origin: url.origin, pathHash: `sha256:${pathHash}` }
+  } catch {
+    return { origin: "invalid_url", pathHash: "invalid_url" }
+  }
 }
 
 function isConnectionConnected(row: ExternalMcpConnectionRow): boolean {
@@ -495,6 +536,93 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
       }
       return c.json({ ok: true })
+    },
+  )
+
+  app.post(
+    "/v1/mcp-connections/:connectionId/test",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "Run a read-only lifecycle test for an External MCP Connection",
+      description: "Uses the calling member's existing Den-owned credential to initialize MCP and exhaust the bounded tools/list catalog. Never invokes a tool and never returns tokens or session identifiers.",
+      responses: {
+        200: jsonResponse("The MCP protocol and complete bounded tool catalog are ready.", connectionTestResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller cannot test this connection.", forbiddenSchema),
+        404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
+        409: jsonResponse("The caller must connect an account first.", connectionNotConnectedSchema),
+        502: jsonResponse("The MCP lifecycle or catalog test failed.", connectionTestFailedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    resolveMemberTeamsMiddleware,
+    paramValidator(connectionParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const { connectionId } = c.req.valid("param")
+      const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
+      const connection = await getExternalMcpConnection({
+        organizationId: payload.organization.id,
+        connectionId: externalMcpConnectionId,
+      })
+      if (!connection) {
+        return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+      }
+
+      let member: { orgMembershipId: DenTypeId<"member"> } | undefined
+      if (connection.credentialMode === "shared") {
+        const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can test an org-account connection.")
+        if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+        const hasCredential = connection.authType === "oauth"
+          ? Boolean(connection.accessToken)
+          : connection.authType === "apikey" ? Boolean(connection.apiKey) : true
+        if (!hasCredential) {
+          return c.json({ error: "connection_not_connected", message: "Connect the org account before testing this MCP connection." }, 409)
+        }
+      } else {
+        const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
+        const isAdmin = verifyOrgRole({ roles: ["admin"], userContext: payload.currentMember })
+        const canUse = await memberCanUseExternalMcpConnection({
+          connectionId: externalMcpConnectionId,
+          orgMembershipId: payload.currentMember.id,
+          teamIds: memberTeams.map((team) => team.id),
+        })
+        if (!canUse && !isAdmin) {
+          return c.json({ error: "forbidden", message: "You have not been granted access to this connection." }, 403)
+        }
+        const account = await getConnectedAccount({
+          organizationId: payload.organization.id,
+          orgMembershipId: payload.currentMember.id,
+          providerId: connection.id,
+        })
+        if (!account?.accessToken) {
+          return c.json({ error: "connection_not_connected", message: "Connect your account before testing this MCP connection." }, 409)
+        }
+        member = { orgMembershipId: payload.currentMember.id }
+      }
+
+      try {
+        return c.json(await testExternalMcpConnection(
+          connection,
+          callbackRedirectUri(c.req.raw, connectionId),
+          member,
+        ))
+      } catch (error) {
+        const failure = toExternalMcpConnectionTestFailure(error)
+        console.error("external_mcp_connection_test_failed", {
+          connectionId: connection.id,
+          organizationId: payload.organization.id,
+          testId: failure.testId,
+          code: failure.code,
+          endpoint: mcpEndpointForLog(connection.url),
+        })
+        return c.json({
+          error: "connection_test_failed",
+          code: failure.code,
+          testId: failure.testId,
+          message: failure.message,
+        }, 502)
+      }
     },
   )
 

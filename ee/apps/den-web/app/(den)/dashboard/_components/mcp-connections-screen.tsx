@@ -33,7 +33,14 @@ import {
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
   useTelegramConnection,
+  useTestMcpConnection,
 } from "./mcp-connections-data";
+import {
+  McpConnectionTestRequestError,
+  type McpConnectionTestResult,
+  summarizeMcpConnectionTest,
+  visibleMcpToolNames,
+} from "./mcp-connection-test-state";
 import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
 import { TelegramDialog } from "./telegram-dialog";
 
@@ -197,6 +204,7 @@ export function McpConnectionsScreen() {
   const createConnection = useCreateMcpConnection();
   const startOAuth = useStartMcpConnectionOAuth();
   const deleteConnection = useDeleteMcpConnection();
+  const testConnection = useTestMcpConnection();
   const saveNativeClient = useSaveNativeProviderClient();
 
   const [formOpen, setFormOpen] = useState(false);
@@ -210,6 +218,14 @@ export function McpConnectionsScreen() {
   const telegramConnection = useTelegramConnection(true);
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
+  const [testOutcome, setTestOutcome] = useState<{
+    connectionId: string;
+    outcome: { status: "ready"; result: McpConnectionTestResult } | {
+      status: "error";
+      message: string;
+      testId: string | null;
+    };
+  } | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -264,6 +280,23 @@ export function McpConnectionsScreen() {
       await handleConnectOAuth(created.id);
     }
     return created;
+  }
+
+  async function handleTestConnection(connectionId: string) {
+    setTestOutcome(null);
+    try {
+      const result = await testConnection.mutateAsync(connectionId);
+      setTestOutcome({ connectionId, outcome: { status: "ready", result } });
+    } catch (error) {
+      setTestOutcome({
+        connectionId,
+        outcome: {
+          status: "error",
+          message: error instanceof Error ? error.message : "Connection test failed.",
+          testId: error instanceof McpConnectionTestRequestError ? error.testId : null,
+        },
+      });
+    }
   }
 
   return (
@@ -432,7 +465,10 @@ export function McpConnectionsScreen() {
               connection={connection}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
+              testing={testConnection.isPending && testConnection.variables === connection.id}
+              testOutcome={testOutcome?.connectionId === connection.id ? testOutcome.outcome : null}
               onConnect={() => void handleConnectOAuth(connection.id)}
+              onTest={() => void handleTestConnection(connection.id)}
               onRemove={() => deleteConnection.mutate(connection.id)}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
             />
@@ -1049,76 +1085,113 @@ function ConnectionRow({
   connection,
   polling,
   connecting,
+  testing,
+  testOutcome,
   onConnect,
+  onTest,
   onRemove,
   removing,
 }: {
   connection: ExternalMcpConnection;
   polling: boolean;
   connecting: boolean;
+  testing: boolean;
+  testOutcome: { status: "ready"; result: McpConnectionTestResult } | {
+    status: "error";
+    message: string;
+    testId: string | null;
+  } | null;
   onConnect: () => void;
+  onTest: () => void;
   onRemove: () => void;
   removing: boolean;
 }) {
   const isPerMember = connection.credentialMode === "per_member";
   const needsOAuthConnect = !isPerMember && connection.authType === "oauth" && !connection.connected;
+  const canTest = connection.authType !== "oauth"
+    || (isPerMember ? connection.connectedForMe : connection.connected);
 
   return (
-    <div className="flex items-center justify-between gap-4 px-6 py-4">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
-            {isPerMember ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-gray-900 px-2 py-0.5 text-[11px] font-medium text-white">
-                <Users className="h-3 w-3" />
-                Individual accounts
-              </span>
-            ) : connection.connected ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                <Check className="h-3 w-3" />
-                Connected
-              </span>
-            ) : polling ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Waiting for authorization…
-              </span>
-            ) : (
-              <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                Not connected
-              </span>
-            )}
-            {connection.access ? (
-              <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                {accessSummaryLabel(connection)}
-              </span>
-            ) : null}
+    <div className="px-6 py-4">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
+              {isPerMember ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-gray-900 px-2 py-0.5 text-[11px] font-medium text-white">
+                  <Users className="h-3 w-3" />
+                  Individual accounts
+                </span>
+              ) : connection.connected ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                  <Check className="h-3 w-3" />
+                  Connected
+                </span>
+              ) : polling ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Waiting for authorization…
+                </span>
+              ) : (
+                <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                  Not connected
+                </span>
+              )}
+              {connection.access ? (
+                <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                  {accessSummaryLabel(connection)}
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-0.5 truncate text-[12px] text-gray-500">
+              {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
+            </p>
           </div>
-          <p className="mt-0.5 truncate text-[12px] text-gray-500">
-            {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
-          </p>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2">
+          {needsOAuthConnect ? (
+            <DenButton variant="secondary" size="sm" loading={connecting || polling} onClick={onConnect}>
+              Connect
+            </DenButton>
+          ) : null}
+          {canTest ? (
+            <DenButton variant="secondary" size="sm" loading={testing} onClick={onTest}>
+              Test connection
+            </DenButton>
+          ) : null}
+          <DenButton
+            variant="destructive"
+            size="sm"
+            icon={Trash2}
+            loading={removing}
+            onClick={onRemove}
+            aria-label={`Remove ${connection.name}`}
+          >
+            Remove
+          </DenButton>
         </div>
       </div>
-
-      <div className="flex shrink-0 items-center gap-2">
-        {needsOAuthConnect ? (
-          <DenButton variant="secondary" size="sm" loading={connecting || polling} onClick={onConnect}>
-            Connect
-          </DenButton>
-        ) : null}
-        <DenButton
-          variant="destructive"
-          size="sm"
-          icon={Trash2}
-          loading={removing}
-          onClick={onRemove}
-          aria-label={`Remove ${connection.name}`}
-        >
-          Remove
-        </DenButton>
-      </div>
+      {testOutcome?.status === "ready" ? (
+        <div data-testid={`mcp-connection-test-result-${connection.id}`} className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] text-emerald-900">
+          <p className="font-semibold">{summarizeMcpConnectionTest(testOutcome.result)}</p>
+          <p className="mt-1 break-words text-emerald-800">{visibleMcpToolNames(testOutcome.result)}</p>
+          <p className="mt-1 font-mono text-[11px] text-emerald-700">
+            {testOutcome.result.catalogHash.slice(0, 22)}… · {testOutcome.result.elapsedMs} ms · {testOutcome.result.sessionUsed ? "session established" : "stateless"}
+          </p>
+          <p className="mt-1 font-mono text-[11px] text-emerald-700">Diagnostic ID: {testOutcome.result.testId}</p>
+        </div>
+      ) : testOutcome?.status === "error" ? (
+        <div data-testid={`mcp-connection-test-error-${connection.id}`} className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] text-red-700">
+          <p className="font-semibold">Connection test failed</p>
+          <p className="mt-1">{testOutcome.message}</p>
+          {testOutcome.testId ? (
+            <p className="mt-1 font-mono text-[11px]">Diagnostic ID: {testOutcome.testId}</p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

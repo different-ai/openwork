@@ -3,6 +3,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import {
+  McpConnectionTestRequestError,
+  parseMcpConnectionTestFailure,
+  parseMcpConnectionTestResult,
+  type McpConnectionTestResult,
+} from "./mcp-connection-test-state";
 
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
 
@@ -218,6 +224,29 @@ export function useStartMcpConnectionOAuth() {
         throw getRequestError(payload, response, `Failed to start OAuth (${response.status}).`);
       }
       return payload as { status: "connected" | "needs_auth"; authorizeUrl: string | null };
+    },
+  });
+}
+
+export function useTestMcpConnection() {
+  const { orgId } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (connectionId: string): Promise<McpConnectionTestResult> => {
+      const { response, payload } = await requestJson(
+        `/v1/mcp-connections/${encodeURIComponent(connectionId)}/test`,
+        { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+        45000,
+      );
+      if (!response.ok) {
+        const failure = parseMcpConnectionTestFailure(payload);
+        if (failure) throw new McpConnectionTestRequestError(failure);
+        if (response.status === 502) {
+          throw new Error("The MCP connection test could not be completed.");
+        }
+        throw getRequestError(payload, response, `Connection test failed (${response.status}).`);
+      }
+      return parseMcpConnectionTestResult(payload);
     },
   });
 }

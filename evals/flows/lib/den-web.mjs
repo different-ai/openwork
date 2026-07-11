@@ -51,32 +51,54 @@ export async function signInViaBrowser(ctx, email, password) {
   await ctx.eval(`(() => { window.location.href = ${JSON.stringify(denWebUrl())}; return true; })()`);
   await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
   await ctx.waitFor(
-    "Boolean(document.querySelector('input[type=\"email\"]')) && Boolean(document.querySelector('input[type=\"password\"]'))",
-    { timeoutMs: 30_000, label: "email + password fields" },
+    "Boolean(document.querySelector('input[type=\"email\"]'))",
+    { timeoutMs: 30_000, label: "email field" },
   );
-  const switchedToSignIn = await ctx.eval(`(() => {
-    const button = [...document.querySelectorAll('button')].find((entry) => (entry.textContent ?? '').trim() === 'Sign in');
-    button?.click();
-    return Boolean(button);
-  })()`);
-  if (switchedToSignIn) {
+  await ctx.fill('input[type="email"]', email);
+  const passwordVisible = await ctx.eval("[...document.querySelectorAll('input[type=\"password\"]')].some((entry) => entry.getClientRects().length > 0 && !entry.disabled)");
+  if (!passwordVisible) {
+    const advanced = await ctx.eval(`(() => {
+      const button = [...document.querySelectorAll('button[type="submit"]')].find((entry) => entry.getClientRects().length > 0 && !entry.disabled);
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`);
+    ctx.assert(advanced, "No submit button found on the email step.");
     await ctx.waitFor(
-      `(() => {
-        const submit = document.querySelector('button[type="submit"]');
-        return (submit?.textContent ?? '').includes('Sign in');
-      })()`,
-      { timeoutMs: 10_000, label: "sign-in form selected" },
+      "[...document.querySelectorAll('input[type=\"password\"]')].some((entry) => entry.getClientRects().length > 0 && !entry.disabled)",
+      { timeoutMs: 20_000, label: "visible password field" },
     );
   }
-  await ctx.fill('input[type="email"]', email);
-  await ctx.fill('input[type="password"]', password);
+  const passwordFilled = await ctx.eval(`(() => {
+    const input = [...document.querySelectorAll('input[type="password"]')].find((entry) => entry.getClientRects().length > 0 && !entry.disabled);
+    if (!input) return false;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    setter.call(input, ${JSON.stringify(password)});
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return input.value === ${JSON.stringify(password)};
+  })()`);
+  ctx.assert(passwordFilled, "The visible password field could not be filled.");
   const submitted = await ctx.eval(`(() => {
-    const button = document.querySelector('button[type="submit"]');
+    const button = [...document.querySelectorAll('button[type="submit"]')].find((entry) => entry.getClientRects().length > 0 && !entry.disabled);
     if (!button) return false;
     button.click();
     return true;
   })()`);
   ctx.assert(submitted, "No submit button found on the sign-in card.");
+  await ctx.waitFor(
+    "document.body.innerText.includes('Dashboard') || document.body.innerText.includes('Signed in as')",
+    { timeoutMs: 30_000, label: "authenticated Den landing state" },
+  );
+  const needsContinue = await ctx.eval("!document.body.innerText.includes('Dashboard') && document.body.innerText.includes('Signed in as')");
+  if (needsContinue) {
+    const continued = await ctx.eval(`(() => {
+      const button = [...document.querySelectorAll('button')].find((entry) => (entry.textContent ?? '').trim().startsWith('Next'));
+      button?.click();
+      return Boolean(button);
+    })()`);
+    ctx.assert(continued, "No Next button found after browser sign-in.");
+  }
   await ctx.waitForText("Dashboard", { timeoutMs: 30_000 });
 }
 

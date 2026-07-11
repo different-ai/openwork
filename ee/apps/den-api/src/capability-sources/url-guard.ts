@@ -29,6 +29,7 @@ import { isIP } from "node:net"
 export class PrivateUrlError extends Error {
   constructor(url: string, detail: string) {
     super(`URL "${url}" is not allowed: ${detail}`)
+    this.name = "PrivateUrlError"
   }
 }
 
@@ -76,11 +77,7 @@ export function isPrivateAddress(address: string): boolean {
   return true // not an IP at all: fail closed
 }
 
-/**
- * Rejects (throws PrivateUrlError) unless the URL is http(s) and its host
- * resolves exclusively to public addresses.
- */
-export async function assertPublicUrl(rawUrl: string): Promise<void> {
+function parseHttpUrl(rawUrl: string): URL {
   let url: URL
   try {
     url = new URL(rawUrl)
@@ -90,6 +87,18 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new PrivateUrlError(rawUrl, `protocol "${url.protocol}" is not allowed`)
   }
+  if (url.username || url.password) {
+    throw new PrivateUrlError(rawUrl, "embedded URL credentials are not allowed")
+  }
+  return url
+}
+
+/**
+ * Rejects (throws PrivateUrlError) unless the URL is http(s) and its host
+ * resolves exclusively to public addresses.
+ */
+export async function assertPublicUrl(rawUrl: string): Promise<void> {
+  const url = parseHttpUrl(rawUrl)
 
   // URL brackets IPv6 literals: strip them for isIP().
   const hostname = url.hostname.replace(/^\[|\]$/g, "")
@@ -117,6 +126,8 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
 }
 
 type FetchLike = (url: string | URL, init?: RequestInit) => Promise<Response>
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+const MAX_GUARDED_REDIRECTS = 5
 
 function isCurrentResponseRealm(res: Response): boolean {
   return res instanceof globalThis.Response
@@ -133,12 +144,71 @@ function isCurrentResponseRealm(res: Response): boolean {
  */
 export async function normalizeResponseRealm(res: Response): Promise<Response> {
   if (res.ok || isCurrentResponseRealm(res)) return res
-  const buffered = await res.arrayBuffer()
-  return new globalThis.Response(buffered, {
+  return new globalThis.Response(res.body, {
     status: res.status,
     statusText: res.statusText,
     headers: res.headers,
   })
+}
+
+function redirectedRequestInit(init: RequestInit | undefined, status: number, from: URL, to: URL): RequestInit {
+  const headers = new Headers(init?.headers)
+  if (from.protocol === "https:" && to.protocol !== "https:") {
+    throw new PrivateUrlError(to.toString(), "an HTTPS request cannot redirect to a less secure protocol")
+  }
+
+  const method = (init?.method ?? "GET").toUpperCase()
+  if (from.origin !== to.origin) {
+    if ((method !== "GET" && method !== "HEAD") || init?.body != null) {
+      throw new PrivateUrlError(to.toString(), "a request body cannot be redirected to another origin")
+    }
+    for (const name of [...headers.keys()]) {
+      if (/^(authorization|cookie|proxy-authorization|mcp-session-id|last-event-id)$/iu.test(name)
+        || /(?:^|[-_])(?:api[-_]?key|token|session|resume)(?:[-_]|$)/iu.test(name)
+      ) headers.delete(name)
+    }
+  }
+
+  const switchToGet = (status === 303 && method !== "HEAD")
+    || ((status === 301 || status === 302) && method === "POST")
+  if (switchToGet) {
+    headers.delete("content-length")
+    headers.delete("content-type")
+    return { ...init, method: "GET", body: undefined, headers, redirect: "manual" }
+  }
+  return { ...init, headers, redirect: "manual" }
+}
+
+function createRedirectSafeFetch(
+  fetchImpl: FetchLike,
+  validateUrl: (url: string) => Promise<void>,
+): FetchLike {
+  return async (input, init) => {
+    let current = parseHttpUrl(String(input))
+    let currentInit: RequestInit = { ...init, redirect: "manual" }
+    for (let redirectCount = 0; ; redirectCount += 1) {
+      await validateUrl(current.toString())
+      const response = await fetchImpl(current, currentInit)
+      const location = response.headers.get("location")
+      if (!REDIRECT_STATUSES.has(response.status) || !location) {
+        return normalizeResponseRealm(response)
+      }
+      try {
+        if (redirectCount >= MAX_GUARDED_REDIRECTS) {
+          throw new Error("MCP outbound request exceeded the guarded redirect limit.")
+        }
+        const next = parseHttpUrl(new URL(location, current).toString())
+        await validateUrl(next.toString())
+        currentInit = redirectedRequestInit(currentInit, response.status, current, next)
+        current = next
+      } finally {
+        // A redirect response is never returned to the caller. Always release
+        // its body exactly once, including when Location parsing, per-hop SSRF
+        // validation, downgrade/body-replay checks, or the hop cap rejects it.
+        await response.body?.cancel().catch(() => undefined)
+      }
+    }
+  }
 }
 
 /**
@@ -147,13 +217,12 @@ export async function normalizeResponseRealm(res: Response): Promise<Response> {
  * servers, token endpoints), and DNS answers can change after create-time
  * validation, so each request is checked at the moment it's made.
  */
-export function createGuardedFetch(): FetchLike {
-  return async (input, init) => {
-    await assertPublicUrl(String(input))
-    return normalizeResponseRealm(await fetch(input, init))
-  }
+export function createGuardedFetch(fetchImpl: FetchLike = fetch): FetchLike {
+  return createRedirectSafeFetch(fetchImpl, assertPublicUrl)
 }
 
-export function createRealmSafeFetch(): FetchLike {
-  return async (input, init) => normalizeResponseRealm(await fetch(input, init))
+export function createRealmSafeFetch(fetchImpl: FetchLike = fetch): FetchLike {
+  return createRedirectSafeFetch(fetchImpl, async (rawUrl) => {
+    parseHttpUrl(rawUrl)
+  })
 }

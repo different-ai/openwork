@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { assertPublicUrl, isPrivateAddress, PrivateUrlError } from "../src/capability-sources/url-guard.js"
+import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch, isPrivateAddress, PrivateUrlError } from "../src/capability-sources/url-guard.js"
 
 describe("isPrivateAddress", () => {
   test.each([
@@ -47,6 +47,130 @@ describe("isPrivateAddress", () => {
   })
 })
 
+describe("redirect-safe MCP fetch", () => {
+  test("blocks a public redirect to loopback or metadata before the pivot request", async () => {
+    for (const location of ["http://127.0.0.1:8080/private", "http://169.254.169.254/latest/meta-data/"]) {
+      const requested: string[] = []
+      const guardedFetch = createGuardedFetch(async (url) => {
+        requested.push(String(url))
+        return new Response(null, { status: 302, headers: { location } })
+      })
+      await expect(guardedFetch("https://1.1.1.1/start")).rejects.toBeInstanceOf(PrivateUrlError)
+      expect(requested).toEqual(["https://1.1.1.1/start"])
+    }
+  })
+
+  test("cancels rejected redirect bodies exactly once for private, credential-bearing, and malformed targets", async () => {
+    for (const location of [
+      "http://127.0.0.1:8080/private",
+      "https://user:password@8.8.8.8/mcp",
+      "http://[",
+    ]) {
+      let activeBodies = 0
+      let cancellations = 0
+      const requested: string[] = []
+      const guardedFetch = createGuardedFetch(async (url) => {
+        requested.push(String(url))
+        const body = new ReadableStream({
+          start() {
+            activeBodies += 1
+          },
+          cancel() {
+            cancellations += 1
+            activeBodies -= 1
+          },
+        })
+        return new Response(body, { status: 302, headers: { location } })
+      })
+
+      await expect(guardedFetch("https://1.1.1.1/start")).rejects.toThrow()
+      expect(requested).toEqual(["https://1.1.1.1/start"])
+      expect(cancellations).toBe(1)
+      expect(activeBodies).toBe(0)
+    }
+  })
+
+  test("strips token, API-key, session, and resume headers on a cross-origin GET redirect", async () => {
+    const observed: string[][] = []
+    const guardedFetch = createGuardedFetch(async (_url, init) => {
+      observed.push([...new Headers(init?.headers).keys()].sort())
+      return observed.length === 1
+        ? new Response(null, { status: 302, headers: { location: "https://8.8.8.8/events" } })
+        : new Response(null, { status: 204 })
+    })
+    await guardedFetch("https://1.1.1.1/events", {
+      headers: {
+        accept: "text/event-stream",
+        authorization: "Bearer secret",
+        cookie: "session=secret",
+        "proxy-authorization": "Basic secret",
+        "mcp-session-id": "session-secret",
+        "last-event-id": "resume-secret",
+        "mcp-resume-token": "resume-token-secret",
+        "x-api-key": "api-key-secret",
+        "api-key": "api-key-secret",
+        "x-auth-token": "auth-token-secret",
+      },
+    })
+    expect(observed).toEqual([
+      ["accept", "api-key", "authorization", "cookie", "last-event-id", "mcp-resume-token", "mcp-session-id", "proxy-authorization", "x-api-key", "x-auth-token"],
+      ["accept"],
+    ])
+  })
+
+  test.each([307, 308])("blocks cross-origin %i replay of OAuth or MCP POST bodies", async (status) => {
+    const requested: string[] = []
+    const guardedFetch = createGuardedFetch(async (url) => {
+      requested.push(String(url))
+      return new Response(null, { status, headers: { location: "https://8.8.8.8/token" } })
+    })
+    await expect(guardedFetch("https://1.1.1.1/token", {
+      method: "POST",
+      headers: { authorization: "Bearer secret", "x-api-key": "api-key-secret" },
+      body: new URLSearchParams({ code: "secret", code_verifier: "secret" }),
+    })).rejects.toBeInstanceOf(PrivateUrlError)
+    expect(requested).toEqual(["https://1.1.1.1/token"])
+  })
+
+  test("blocks HTTPS downgrade and enforces the redirect hop ceiling", async () => {
+    const downgradeFetch = createGuardedFetch(async () => new Response(null, {
+      status: 302,
+      headers: { location: "http://8.8.8.8/mcp" },
+    }))
+    await expect(downgradeFetch("https://1.1.1.1/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
+
+    let hops = 0
+    const loopingFetch = createGuardedFetch(async () => {
+      hops += 1
+      return new Response(null, { status: 302, headers: { location: "/again" } })
+    })
+    await expect(loopingFetch("https://1.1.1.1/start")).rejects.toThrow("redirect limit")
+    expect(hops).toBe(6)
+  })
+
+  test("private mode still blocks cross-origin body replay and strips session credentials", async () => {
+    const requests: Array<{ url: string; headers: string[] }> = []
+    const fetch = createRealmSafeFetch(async (url, init) => {
+      requests.push({ url: String(url), headers: [...new Headers(init?.headers).keys()].sort() })
+      return requests.length === 1
+        ? new Response(null, { status: 302, headers: { location: "http://127.0.0.2/events" } })
+        : new Response(null, { status: 204 })
+    })
+    await fetch("http://127.0.0.1/events", {
+      headers: { accept: "text/event-stream", "mcp-session-id": "secret", "last-event-id": "secret" },
+    })
+    expect(requests).toEqual([
+      { url: "http://127.0.0.1/events", headers: ["accept", "last-event-id", "mcp-session-id"] },
+      { url: "http://127.0.0.2/events", headers: ["accept"] },
+    ])
+    requests.length = 0
+    await expect(fetch("http://127.0.0.1/token", {
+      method: "POST",
+      body: "secret",
+    })).rejects.toBeInstanceOf(PrivateUrlError)
+  })
+})
+
 describe("assertPublicUrl", () => {
   test("rejects private IP literals", async () => {
     await expect(assertPublicUrl("http://127.0.0.1:3978/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
@@ -65,6 +189,7 @@ describe("assertPublicUrl", () => {
     await expect(assertPublicUrl("file:///etc/passwd")).rejects.toBeInstanceOf(PrivateUrlError)
     await expect(assertPublicUrl("gopher://example.com/")).rejects.toBeInstanceOf(PrivateUrlError)
     await expect(assertPublicUrl("not a url")).rejects.toBeInstanceOf(PrivateUrlError)
+    await expect(assertPublicUrl("https://user:password@1.1.1.1/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
   })
 
   test("allows public IP literals without any DNS lookup", async () => {
