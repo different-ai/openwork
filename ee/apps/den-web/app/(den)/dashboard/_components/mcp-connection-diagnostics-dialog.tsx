@@ -9,7 +9,11 @@ import type {
 } from "@openwork/types/den/mcp-diagnostics";
 import { DenButton } from "../../_components/ui/button";
 import type { ExternalMcpConnection } from "./mcp-connections-data";
-import { isSafeMcpAuthorizationUrl, useMcpConnectionDiagnosticStream } from "./mcp-connections-data";
+import {
+  isSafeMcpAuthorizationUrl,
+  selectMcpDiagnosticTimelineEvents,
+  useMcpConnectionDiagnosticStream,
+} from "./mcp-connections-data";
 
 function phaseLabel(value: string): string {
   return value
@@ -29,15 +33,6 @@ function timingLabel(event: McpDiagnosticEvent): string {
   return event.phaseDurationMs === null
     ? `T+${durationLabel(event.elapsedMs)}`
     : durationLabel(event.phaseDurationMs);
-}
-
-function latestPhaseEvents(events: McpDiagnosticEvent[]): McpDiagnosticEvent[] {
-  const byPhase = new Map<string, McpDiagnosticEvent>();
-  for (const event of events) {
-    const previous = byPhase.get(event.phase);
-    if (!previous || previous.sequence < event.sequence) byPhase.set(event.phase, event);
-  }
-  return [...byPhase.values()].sort((left, right) => left.sequence - right.sequence);
 }
 
 function EventStatus({ event }: { event: McpDiagnosticEvent }) {
@@ -96,7 +91,7 @@ export function McpConnectionDiagnosticsDialog({
 
   useEffect(() => () => abortController.current?.abort(), []);
 
-  const phases = useMemo(() => latestPhaseEvents(events), [events]);
+  const phases = useMemo(() => selectMcpDiagnosticTimelineEvents(events), [events]);
 
   function applyMessage(message: McpDiagnosticStreamMessage) {
     if (message.type === "authorization_required") {
@@ -222,13 +217,21 @@ export function McpConnectionDiagnosticsDialog({
           <div data-testid="mcp-diagnostic-timeline" className="divide-y divide-gray-100">
             {phases.length === 0 ? (
               <p className="px-4 py-8 text-center text-[13px] text-gray-500">Run the diagnostic to see each Den-side phase.</p>
-            ) : phases.map((event) => (
-              <div key={event.phase} className="flex items-start gap-3 px-4 py-3">
+            ) : phases.map((event) => {
+              const samePhase = phases.filter((candidate) => candidate.phase === event.phase);
+              const candidateIndex = samePhase.findIndex((candidate) => candidate.id === event.id);
+              return (
+              <div key={event.id} className="flex items-start gap-3 px-4 py-3">
                 <EventStatus event={event} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-[12px] font-semibold text-gray-900">{phaseLabel(event.phase)}</p>
+                      <p className="text-[12px] font-semibold text-gray-900">
+                        {phaseLabel(event.phase)}
+                        {samePhase.length > 1 ? (
+                          <span className="ml-2 font-normal text-gray-400">Candidate {candidateIndex + 1} of {samePhase.length}</span>
+                        ) : null}
+                      </p>
                       <p className="mt-0.5 text-[12px] leading-5 text-gray-600">{event.messageSafe}</p>
                     </div>
                     <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-gray-400">
@@ -239,7 +242,8 @@ export function McpConnectionDiagnosticsDialog({
                   <Evidence event={event} />
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

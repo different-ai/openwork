@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto"
-import { and, asc, eq, inArray, isNull, lt, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, gte, inArray, isNull, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js"
 import {
   McpDiagnosticAttemptTable,
   McpDiagnosticEventTable,
   MemberTable,
+  OrganizationTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
@@ -20,9 +21,16 @@ import {
   type McpDiagnosticSnapshot,
 } from "@openwork/types/den/mcp-diagnostics"
 import { db } from "../db.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../audit-events.js"
 import { roleIncludesPrivileged } from "../organization-member-guards.js"
 
 export const MCP_DIAGNOSTIC_RETENTION_MS = 24 * 60 * 60 * 1000
+export const MCP_DIAGNOSTIC_EXECUTION_LEASE_MS = 30_000
+export const MCP_DIAGNOSTIC_RATE_WINDOW_MS = 10 * 60 * 1000
+export const MCP_DIAGNOSTIC_MAX_ACTIVE_PER_MEMBER = 2
+export const MCP_DIAGNOSTIC_MAX_ACTIVE_PER_ORGANIZATION = 8
+export const MCP_DIAGNOSTIC_MAX_STARTS_PER_MEMBER_WINDOW = 20
+export const MCP_DIAGNOSTIC_MAX_STARTS_PER_ORGANIZATION_WINDOW = 80
 const MCP_DIAGNOSTIC_CLEANUP_INTERVAL_MS = 60 * 60 * 1000
 export const MCP_DIAGNOSTIC_AUTHORIZATION_LEASE_MS = 90_000
 const SAFE_PATH_SEGMENTS = new Set([
@@ -43,6 +51,9 @@ type OrganizationId = DenTypeId<"organization">
 type MemberId = DenTypeId<"member">
 type ConnectionId = DenTypeId<"externalMcpConnection">
 type AttemptId = DenTypeId<"mcpDiagnosticAttempt">
+type AuditEventId = DenTypeId<"auditEvent">
+
+const ACTIVE_ATTEMPT_STATUSES = ["running", "waiting_for_authorization"] as const
 
 type SafeEvidenceInput = {
   url?: string | URL
@@ -68,6 +79,27 @@ export class McpDiagnosticAttemptClosedError extends Error {
   constructor() {
     super("The MCP diagnostic attempt is already complete.")
     this.name = "McpDiagnosticAttemptClosedError"
+  }
+}
+
+export class McpDiagnosticStartLimitError extends Error {
+  readonly kind: "concurrency" | "rate"
+  readonly scope: "member" | "organization"
+  readonly retryAfterSeconds: number
+
+  constructor(input: {
+    kind: "concurrency" | "rate"
+    scope: "member" | "organization"
+    retryAfterSeconds: number
+  }) {
+    const subject = input.scope === "member" ? "this administrator" : "this organization"
+    super(input.kind === "concurrency"
+      ? `Too many MCP diagnostics are already active for ${subject}. Wait for an active diagnostic to finish, then retry.`
+      : `MCP diagnostics were started too frequently for ${subject}. Wait before starting another diagnostic.`)
+    this.name = "McpDiagnosticStartLimitError"
+    this.kind = input.kind
+    this.scope = input.scope
+    this.retryAfterSeconds = input.retryAfterSeconds
   }
 }
 
@@ -625,6 +657,114 @@ export function startMcpDiagnosticCleanupLoop(): void {
   cleanupTimer.unref()
 }
 
+function isTerminalAttemptStatus(status: McpDiagnosticAttemptStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "expired"
+}
+
+function executionLeaseIsAbandoned(
+  attempt: Pick<typeof McpDiagnosticAttemptTable.$inferSelect, "startedAt" | "executionLeaseExpiresAt">,
+  now: Date,
+): boolean {
+  if (attempt.executionLeaseExpiresAt) return attempt.executionLeaseExpiresAt.getTime() <= now.getTime()
+  return attempt.startedAt.getTime() + MCP_DIAGNOSTIC_EXECUTION_LEASE_MS <= now.getTime()
+}
+
+/**
+ * Converts an attempt whose owning Den process stopped heartbeating into a
+ * retryable, redacted terminal result. The row lock makes restart recovery
+ * race safely with a late OAuth callback or a still-live runner heartbeat.
+ */
+export async function recoverAbandonedMcpDiagnosticAttempt(input: {
+  organizationId: OrganizationId
+  attemptId: AttemptId
+  now?: Date
+}): Promise<McpDiagnosticEvent | null> {
+  const now = input.now ?? new Date()
+  const eventId = createDenTypeId("mcpDiagnosticEvent")
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(McpDiagnosticAttemptTable)
+      .where(and(
+        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+        eq(McpDiagnosticAttemptTable.id, input.attemptId),
+      ))
+      .limit(1)
+      .for("update")
+    const attempt = rows[0]
+    if (!attempt || isTerminalAttemptStatus(attempt.status) || !executionLeaseIsAbandoned(attempt, now)) return null
+
+    const sequence = attempt.lastSequence + 1
+    const messageSafe = "The Den diagnostic worker stopped before this attempt completed. Run the diagnostic again."
+    await tx.insert(McpDiagnosticEventTable).values({
+      id: eventId,
+      organizationId: input.organizationId,
+      attemptId: input.attemptId,
+      sequence,
+      phase: "CONTINUITY_SESSION",
+      outcome: "failed",
+      elapsedMs: Math.max(0, now.getTime() - attempt.startedAt.getTime()),
+      phaseDurationMs: null,
+      healthLevel: attempt.highestHealthLevel,
+      messageSafe,
+      category: "diagnostic_execution_interrupted",
+      retryable: true,
+      actionOwner: "openwork",
+      operatorAction: "run_diagnostic_again",
+      evidence: safeMcpDiagnosticEvidence({ errorCode: "MCP_DIAGNOSTIC_EXECUTION_LOST" }),
+      occurredAt: now,
+    })
+    await tx
+      .update(McpDiagnosticAttemptTable)
+      .set({
+        status: "failed",
+        lastSequence: sequence,
+        firstFailedPhase: attempt.firstFailedPhase ?? "CONTINUITY_SESSION",
+        firstFailureCategory: attempt.firstFailureCategory ?? "diagnostic_execution_interrupted",
+        firstFailureMessage: attempt.firstFailureMessage ?? messageSafe,
+        actionOwner: attempt.actionOwner ?? "openwork",
+        operatorAction: attempt.operatorAction ?? "run_diagnostic_again",
+        executionLeaseId: null,
+        executionLeaseExpiresAt: null,
+        authorizationClaimId: null,
+        authorizationLeaseExpiresAt: null,
+        completedAt: now,
+      })
+      .where(and(
+        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+        eq(McpDiagnosticAttemptTable.id, input.attemptId),
+      ))
+    const events = await tx
+      .select()
+      .from(McpDiagnosticEventTable)
+      .where(eq(McpDiagnosticEventTable.id, eventId))
+      .limit(1)
+    return events[0] ? toEvent(events[0]) : null
+  })
+}
+
+async function recoverAbandonedMcpDiagnosticAttemptsForOrganization(input: {
+  organizationId: OrganizationId
+  now: Date
+}): Promise<void> {
+  const active = await db
+    .select({ id: McpDiagnosticAttemptTable.id, startedAt: McpDiagnosticAttemptTable.startedAt, executionLeaseExpiresAt: McpDiagnosticAttemptTable.executionLeaseExpiresAt })
+    .from(McpDiagnosticAttemptTable)
+    .where(and(
+      eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+      inArray(McpDiagnosticAttemptTable.status, ACTIVE_ATTEMPT_STATUSES),
+    ))
+    .limit(100)
+  for (const attempt of active) {
+    if (!executionLeaseIsAbandoned(attempt, input.now)) continue
+    await recoverAbandonedMcpDiagnosticAttempt({
+      organizationId: input.organizationId,
+      attemptId: attempt.id,
+      now: input.now,
+    })
+  }
+}
+
 export async function createMcpDiagnosticAttempt(input: {
   organizationId: OrganizationId
   connectionId: ConnectionId
@@ -633,14 +773,73 @@ export async function createMcpDiagnosticAttempt(input: {
 }): Promise<McpDiagnosticAttempt> {
   const now = input.now ?? new Date()
   const id = createDenTypeId("mcpDiagnosticAttempt")
+  const completionAuditEventId = createDenTypeId("auditEvent")
   await cleanupExpiredMcpDiagnostics(now)
-  await db.insert(McpDiagnosticAttemptTable).values({
-    id,
-    organizationId: input.organizationId,
-    externalMcpConnectionId: input.connectionId,
-    createdByOrgMembershipId: input.createdByOrgMembershipId,
-    startedAt: now,
-    expiresAt: new Date(now.getTime() + MCP_DIAGNOSTIC_RETENTION_MS),
+  await recoverAbandonedMcpDiagnosticAttemptsForOrganization({ organizationId: input.organizationId, now })
+  await db.transaction(async (tx) => {
+    const organizations = await tx
+      .select({ id: OrganizationTable.id })
+      .from(OrganizationTable)
+      .where(eq(OrganizationTable.id, input.organizationId))
+      .limit(1)
+      .for("update")
+    if (!organizations[0]) throw new Error("Unknown organization for MCP diagnostic attempt.")
+
+    const activeOrganizationRows = await tx
+      .select({ count: sql<number>`count(*)` })
+      .from(McpDiagnosticAttemptTable)
+      .where(and(
+        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+        inArray(McpDiagnosticAttemptTable.status, ACTIVE_ATTEMPT_STATUSES),
+      ))
+    const activeMemberRows = await tx
+      .select({ count: sql<number>`count(*)` })
+      .from(McpDiagnosticAttemptTable)
+      .where(and(
+        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+        eq(McpDiagnosticAttemptTable.createdByOrgMembershipId, input.createdByOrgMembershipId),
+        inArray(McpDiagnosticAttemptTable.status, ACTIVE_ATTEMPT_STATUSES),
+      ))
+    const rateWindowStart = new Date(now.getTime() - MCP_DIAGNOSTIC_RATE_WINDOW_MS)
+    const organizationRateRows = await tx
+      .select({ count: sql<number>`count(*)` })
+      .from(McpDiagnosticAttemptTable)
+      .where(and(
+        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+        gte(McpDiagnosticAttemptTable.startedAt, rateWindowStart),
+      ))
+    const memberRateRows = await tx
+      .select({ count: sql<number>`count(*)` })
+      .from(McpDiagnosticAttemptTable)
+      .where(and(
+        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+        eq(McpDiagnosticAttemptTable.createdByOrgMembershipId, input.createdByOrgMembershipId),
+        gte(McpDiagnosticAttemptTable.startedAt, rateWindowStart),
+      ))
+
+    if (Number(activeMemberRows[0]?.count ?? 0) >= MCP_DIAGNOSTIC_MAX_ACTIVE_PER_MEMBER) {
+      throw new McpDiagnosticStartLimitError({ kind: "concurrency", scope: "member", retryAfterSeconds: 5 })
+    }
+    if (Number(activeOrganizationRows[0]?.count ?? 0) >= MCP_DIAGNOSTIC_MAX_ACTIVE_PER_ORGANIZATION) {
+      throw new McpDiagnosticStartLimitError({ kind: "concurrency", scope: "organization", retryAfterSeconds: 5 })
+    }
+    const rateRetryAfterSeconds = Math.ceil(MCP_DIAGNOSTIC_RATE_WINDOW_MS / 1000)
+    if (Number(memberRateRows[0]?.count ?? 0) >= MCP_DIAGNOSTIC_MAX_STARTS_PER_MEMBER_WINDOW) {
+      throw new McpDiagnosticStartLimitError({ kind: "rate", scope: "member", retryAfterSeconds: rateRetryAfterSeconds })
+    }
+    if (Number(organizationRateRows[0]?.count ?? 0) >= MCP_DIAGNOSTIC_MAX_STARTS_PER_ORGANIZATION_WINDOW) {
+      throw new McpDiagnosticStartLimitError({ kind: "rate", scope: "organization", retryAfterSeconds: rateRetryAfterSeconds })
+    }
+
+    await tx.insert(McpDiagnosticAttemptTable).values({
+      id,
+      organizationId: input.organizationId,
+      externalMcpConnectionId: input.connectionId,
+      createdByOrgMembershipId: input.createdByOrgMembershipId,
+      completionAuditEventId,
+      startedAt: now,
+      expiresAt: new Date(now.getTime() + MCP_DIAGNOSTIC_RETENTION_MS),
+    })
   })
   const row = await getMcpDiagnosticAttemptRow({ organizationId: input.organizationId, attemptId: id })
   if (!row) throw new Error("Failed to create MCP diagnostic attempt.")
@@ -674,6 +873,135 @@ export async function getMcpDiagnosticAttemptForCallback(attemptId: AttemptId) {
     .where(eq(McpDiagnosticAttemptTable.id, attemptId))
     .limit(1)
   return rows[0] ?? null
+}
+
+export async function claimMcpDiagnosticExecutionLease(input: {
+  organizationId: OrganizationId
+  attemptId: AttemptId
+  now?: Date
+  leaseMs?: number
+}): Promise<{ leaseId: string; leaseExpiresAt: Date } | null> {
+  const now = input.now ?? new Date()
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(McpDiagnosticAttemptTable)
+      .where(and(
+        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+        eq(McpDiagnosticAttemptTable.id, input.attemptId),
+      ))
+      .limit(1)
+      .for("update")
+    const attempt = rows[0]
+    if (
+      !attempt
+      || isTerminalAttemptStatus(attempt.status)
+      || (attempt.executionLeaseId
+        && attempt.executionLeaseExpiresAt
+        && attempt.executionLeaseExpiresAt.getTime() > now.getTime())
+    ) return null
+
+    const leaseId = randomUUID()
+    const leaseExpiresAt = new Date(now.getTime() + (input.leaseMs ?? MCP_DIAGNOSTIC_EXECUTION_LEASE_MS))
+    await tx
+      .update(McpDiagnosticAttemptTable)
+      .set({ executionLeaseId: leaseId, executionLeaseExpiresAt: leaseExpiresAt })
+      .where(and(
+        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+        eq(McpDiagnosticAttemptTable.id, input.attemptId),
+      ))
+    return { leaseId, leaseExpiresAt }
+  })
+}
+
+export async function renewMcpDiagnosticExecutionLease(input: {
+  organizationId: OrganizationId
+  attemptId: AttemptId
+  leaseId: string
+  now?: Date
+  leaseMs?: number
+}): Promise<void> {
+  const now = input.now ?? new Date()
+  await db
+    .update(McpDiagnosticAttemptTable)
+    .set({ executionLeaseExpiresAt: new Date(now.getTime() + (input.leaseMs ?? MCP_DIAGNOSTIC_EXECUTION_LEASE_MS)) })
+    .where(and(
+      eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+      eq(McpDiagnosticAttemptTable.id, input.attemptId),
+      eq(McpDiagnosticAttemptTable.executionLeaseId, input.leaseId),
+      inArray(McpDiagnosticAttemptTable.status, ACTIVE_ATTEMPT_STATUSES),
+    ))
+}
+
+export async function releaseMcpDiagnosticExecutionLease(input: {
+  organizationId: OrganizationId
+  attemptId: AttemptId
+  leaseId: string
+}): Promise<void> {
+  await db
+    .update(McpDiagnosticAttemptTable)
+    .set({ executionLeaseId: null, executionLeaseExpiresAt: null })
+    .where(and(
+      eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+      eq(McpDiagnosticAttemptTable.id, input.attemptId),
+      eq(McpDiagnosticAttemptTable.executionLeaseId, input.leaseId),
+    ))
+}
+
+/**
+ * A completion audit id is allocated with the attempt. Both the background
+ * runner and OAuth callback can therefore retry this write using the same
+ * primary key, yielding one durable audit row across processes.
+ */
+export async function recordMcpDiagnosticCompletionAuditOnce(input: {
+  organizationId: OrganizationId
+  actorUserId: DenTypeId<"user">
+  attemptId: AttemptId
+  connectionId: ConnectionId
+  status: McpDiagnosticAttemptStatus
+  highestHealthLevel: McpDiagnosticHealthLevel
+  firstFailedPhase: McpDiagnosticPhase | null
+}): Promise<void> {
+  let completionAuditEventId: AuditEventId | null = null
+  await db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(McpDiagnosticAttemptTable)
+      .where(and(
+        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+        eq(McpDiagnosticAttemptTable.id, input.attemptId),
+        eq(McpDiagnosticAttemptTable.externalMcpConnectionId, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const attempt = rows[0]
+    if (!attempt || !isTerminalAttemptStatus(attempt.status)) return
+    completionAuditEventId = attempt.completionAuditEventId ?? createDenTypeId("auditEvent")
+    if (!attempt.completionAuditEventId) {
+      await tx
+        .update(McpDiagnosticAttemptTable)
+        .set({ completionAuditEventId })
+        .where(and(
+          eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+          eq(McpDiagnosticAttemptTable.id, input.attemptId),
+          isNull(McpDiagnosticAttemptTable.completionAuditEventId),
+        ))
+    }
+  })
+  if (!completionAuditEventId) return
+  await recordOrganizationAuditEvent({
+    eventId: completionAuditEventId,
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId,
+    action: ORGANIZATION_AUDIT_ACTIONS.mcpDiagnosticCompleted,
+    payload: {
+      attemptId: input.attemptId,
+      connectionId: input.connectionId,
+      status: input.status,
+      highestHealthLevel: input.highestHealthLevel,
+      firstFailedPhase: input.firstFailedPhase,
+    },
+  })
 }
 
 export async function reserveMcpDiagnosticAuthorizationGeneration(input: {
@@ -818,6 +1146,8 @@ export async function expireMcpDiagnosticAuthorizationIfEligible(input: {
         operatorAction: "restart_provider_authorization",
         authorizationClaimId: null,
         authorizationLeaseExpiresAt: null,
+        executionLeaseId: null,
+        executionLeaseExpiresAt: null,
         completedAt: now,
       })
       .where(eq(McpDiagnosticAttemptTable.id, input.attemptId))
@@ -924,7 +1254,14 @@ export async function appendMcpDiagnosticEvent(input: {
         highestHealthLevel: sql`case when field(${McpDiagnosticAttemptTable.highestHealthLevel}, 'configured', 'reachable', 'authorized', 'protocol_ready', 'catalog_ready') < ${healthRank(input.healthLevel)} then ${input.healthLevel} else ${McpDiagnosticAttemptTable.highestHealthLevel} end`,
         ...(input.attemptStatus ? { status: input.attemptStatus } : {}),
         ...(terminal ? { completedAt: occurredAt } : {}),
-        ...(terminal ? { authorizationClaimId: null, authorizationLeaseExpiresAt: null } : {}),
+        ...(terminal
+          ? {
+              authorizationClaimId: null,
+              authorizationLeaseExpiresAt: null,
+              executionLeaseId: null,
+              executionLeaseExpiresAt: null,
+            }
+          : {}),
       })
       .where(and(
         eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
@@ -943,6 +1280,8 @@ export async function appendMcpDiagnosticEvent(input: {
           status: input.attemptStatus ?? "failed",
           authorizationClaimId: null,
           authorizationLeaseExpiresAt: null,
+          executionLeaseId: null,
+          executionLeaseExpiresAt: null,
           completedAt: occurredAt,
         })
         .where(and(

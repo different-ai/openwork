@@ -26,6 +26,7 @@ import {
 import {
   appendMcpDiagnosticEvent,
   claimMcpDiagnosticAuthorizationCallback,
+  claimMcpDiagnosticExecutionLease,
   classifyMcpDiagnosticFailure,
   createMcpDiagnosticAttempt,
   failMcpDiagnosticAttempt,
@@ -33,6 +34,11 @@ import {
   getMcpDiagnosticAttemptForCallback,
   getMcpDiagnosticSnapshot,
   isMcpDiagnosticAttemptClosedError,
+  McpDiagnosticStartLimitError,
+  MCP_DIAGNOSTIC_AUTHORIZATION_LEASE_MS,
+  recordMcpDiagnosticCompletionAuditOnce,
+  recoverAbandonedMcpDiagnosticAttempt,
+  releaseMcpDiagnosticExecutionLease,
   safeMcpDiagnosticEvidence,
 } from "../../capability-sources/external-mcp-diagnostics.js"
 import {
@@ -66,7 +72,10 @@ import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../
 import {
   MCP_DIAGNOSTIC_ACTION_OWNERS,
   type McpDiagnosticAttempt,
+  type McpDiagnosticAttemptStatus,
   type McpDiagnosticEvent,
+  type McpDiagnosticHealthLevel,
+  type McpDiagnosticPhase,
   type McpDiagnosticSnapshot,
 } from "@openwork/types/den/mcp-diagnostics"
 
@@ -207,6 +216,14 @@ const diagnosticNotFoundSchema = z.object({
   message: z.string(),
 }).meta({ ref: "McpDiagnosticNotFoundError" })
 
+const diagnosticStartLimitedSchema = z.object({
+  error: z.literal("diagnostic_start_limited"),
+  message: z.string(),
+  kind: z.enum(["concurrency", "rate"]),
+  scope: z.enum(["member", "organization"]),
+  retryAfterSeconds: z.number().int().positive(),
+}).meta({ ref: "McpDiagnosticStartLimitedError" })
+
 const diagnosticSnapshotSchema = z.object({
   attempt: z.object({
     id: z.string(),
@@ -322,26 +339,38 @@ async function tailMcpDiagnosticStream(input: {
   stream: SSEStreamingApi
   organizationId: DenTypeId<"organization">
   attemptId: DenTypeId<"mcpDiagnosticAttempt">
+  resumeAfterSequence?: number
 }): Promise<void> {
+  await recoverAbandonedMcpDiagnosticAttempt({
+    organizationId: input.organizationId,
+    attemptId: input.attemptId,
+  })
   const initial = await getMcpDiagnosticSnapshot({
     organizationId: input.organizationId,
     attemptId: input.attemptId,
   })
   if (!initial) return
 
-  let lastSequence = initial.events.at(-1)?.sequence ?? 0
+  const initialLastSequence = initial.events.at(-1)?.sequence ?? 0
+  let lastSequence = Math.min(input.resumeAfterSequence ?? 0, initialLastSequence)
   let authorizationUrlSent: string | null = null
   let lastHeartbeatAt = Date.now()
   try {
     await writeDiagnosticSse(input.stream, {
       event: "snapshot",
+      ...(initialLastSequence > 0 ? { id: String(initialLastSequence) } : {}),
       data: JSON.stringify({ type: "snapshot", snapshot: initial }),
       retry: 1_000,
     })
+    // A full persisted snapshot is authoritative after reconnect. Advance the
+    // tail cursor to its final sequence so Last-Event-ID never causes replayed
+    // event rows or suppresses future rows when a client sent a stale cursor.
+    lastSequence = initialLastSequence
 
     if (isTerminalDiagnostic(initial)) {
       await writeDiagnosticSse(input.stream, {
         event: "complete",
+        ...(initialLastSequence > 0 ? { id: String(initialLastSequence) } : {}),
         data: JSON.stringify({ type: "complete", snapshot: initial }),
       })
       return
@@ -360,6 +389,10 @@ async function tailMcpDiagnosticStream(input: {
         })
       }
 
+      await recoverAbandonedMcpDiagnosticAttempt({
+        organizationId: input.organizationId,
+        attemptId: input.attemptId,
+      })
       const snapshot = await getMcpDiagnosticSnapshot({
         organizationId: input.organizationId,
         attemptId: input.attemptId,
@@ -373,6 +406,7 @@ async function tailMcpDiagnosticStream(input: {
       if (isTerminalDiagnostic(snapshot)) {
         await writeDiagnosticSse(input.stream, {
           event: "complete",
+          ...(lastSequence > 0 ? { id: String(lastSequence) } : {}),
           data: JSON.stringify({ type: "complete", snapshot }),
         })
         return
@@ -396,27 +430,31 @@ async function tailMcpDiagnosticStream(input: {
   }
 }
 
+function diagnosticResumeSequence(request: Request): number {
+  const value = request.headers.get("last-event-id")?.trim()
+  if (!value || !/^\d{1,15}$/.test(value)) return 0
+  const sequence = Number(value)
+  return Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : 0
+}
+
 async function recordDiagnosticCompletionAudit(input: {
   organizationId: DenTypeId<"organization">
   actorUserId: DenTypeId<"user">
-  attemptId: string
-  connectionId: string
-  status: string
-  highestHealthLevel: string
-  firstFailedPhase: string | null
+  attemptId: DenTypeId<"mcpDiagnosticAttempt">
+  connectionId: DenTypeId<"externalMcpConnection">
+  status: McpDiagnosticAttemptStatus
+  highestHealthLevel: McpDiagnosticHealthLevel
+  firstFailedPhase: McpDiagnosticPhase | null
 }) {
   try {
-    await recordOrganizationAuditEvent({
+    await recordMcpDiagnosticCompletionAuditOnce({
       organizationId: input.organizationId,
       actorUserId: input.actorUserId,
-      action: ORGANIZATION_AUDIT_ACTIONS.mcpDiagnosticCompleted,
-      payload: {
-        attemptId: input.attemptId,
-        connectionId: input.connectionId,
-        status: input.status,
-        highestHealthLevel: input.highestHealthLevel,
-        firstFailedPhase: input.firstFailedPhase,
-      },
+      attemptId: input.attemptId,
+      connectionId: input.connectionId,
+      status: input.status,
+      highestHealthLevel: input.highestHealthLevel,
+      firstFailedPhase: input.firstFailedPhase,
     })
   } catch (error) {
     console.error("mcp_diagnostic_audit_write_failed", {
@@ -827,6 +865,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can diagnose MCP connections.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
+        429: jsonResponse("Too many diagnostic attempts.", diagnosticStartLimitedSchema),
       },
     }),
     orgMemberRoute(),
@@ -846,11 +885,24 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
       }
 
-      const attempt = await createMcpDiagnosticAttempt({
-        organizationId: payload.organization.id,
-        connectionId: externalMcpConnectionId,
-        createdByOrgMembershipId: payload.currentMember.id,
-      })
+      let attempt: McpDiagnosticAttempt
+      try {
+        attempt = await createMcpDiagnosticAttempt({
+          organizationId: payload.organization.id,
+          connectionId: externalMcpConnectionId,
+          createdByOrgMembershipId: payload.currentMember.id,
+        })
+      } catch (error) {
+        if (!(error instanceof McpDiagnosticStartLimitError)) throw error
+        c.header("Retry-After", String(error.retryAfterSeconds))
+        return c.json({
+          error: "diagnostic_start_limited",
+          message: error.message,
+          kind: error.kind,
+          scope: error.scope,
+          retryAfterSeconds: error.retryAfterSeconds,
+        }, 429)
+      }
       const attemptId = normalizeDenTypeId("mcpDiagnosticAttempt", attempt.id)
       await recordDiagnosticStartedAudit({
         organizationId: payload.organization.id,
@@ -884,6 +936,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         stream,
         organizationId: payload.organization.id,
         attemptId,
+        resumeAfterSequence: diagnosticResumeSequence(c.req.raw),
       }))
     },
   )
@@ -920,6 +973,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         stream,
         organizationId: payload.organization.id,
         attemptId: normalizedAttemptId,
+        resumeAfterSequence: diagnosticResumeSequence(c.req.raw),
       }))
     },
   )
@@ -1190,6 +1244,13 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ error: "invalid_request", message: "Missing authorization code." }, 400)
       }
 
+      const callbackExecutionLease = diagnosticAttemptId
+        ? await claimMcpDiagnosticExecutionLease({
+            organizationId: statePayload.organizationId,
+            attemptId: diagnosticAttemptId,
+            leaseMs: MCP_DIAGNOSTIC_AUTHORIZATION_LEASE_MS,
+          })
+        : null
       try {
         // For per-member connections, the signed state token (minted at
         // connect/start for the member who initiated) decides whose account
@@ -1269,6 +1330,14 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           }), 400)
         }
         return c.html(connectCallbackPage({ ok: false, name: connection.name, message: error instanceof Error ? error.message : String(error) }), 400)
+      } finally {
+        if (diagnosticAttemptId && callbackExecutionLease) {
+          await releaseMcpDiagnosticExecutionLease({
+            organizationId: statePayload.organizationId,
+            attemptId: diagnosticAttemptId,
+            leaseId: callbackExecutionLease.leaseId,
+          })
+        }
       }
       if (diagnosticAttemptId && diagnosticActorUserId) {
         const snapshot = await getMcpDiagnosticSnapshot({ organizationId: statePayload.organizationId, attemptId: diagnosticAttemptId })

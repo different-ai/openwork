@@ -279,6 +279,9 @@ export const McpDiagnosticAttemptTable = mysqlTable(
     firstFailureMessage: text("first_failure_message"),
     actionOwner: mysqlEnum("action_owner", MCP_DIAGNOSTIC_ACTION_OWNERS),
     operatorAction: varchar("operator_action", { length: 128 }),
+    completionAuditEventId: denTypeIdColumn("auditEvent", "completion_audit_event_id"),
+    executionLeaseId: varchar("execution_lease_id", { length: 64 }),
+    executionLeaseExpiresAt: timestamp("execution_lease_expires_at", { fsp: 3 }),
     authorizationGeneration: int("authorization_generation").notNull().default(0),
     authorizationClaimId: varchar("authorization_claim_id", { length: 64 }),
     authorizationLeaseExpiresAt: timestamp("authorization_lease_expires_at", { fsp: 3 }),
@@ -290,6 +293,16 @@ export const McpDiagnosticAttemptTable = mysqlTable(
   (table) => [
     index("mcp_diagnostic_attempt_organization_id").on(table.organizationId),
     index("mcp_diagnostic_attempt_connection_id").on(table.externalMcpConnectionId),
+    index("mcp_diagnostic_attempt_org_status_member").on(
+      table.organizationId,
+      table.status,
+      table.createdByOrgMembershipId,
+    ),
+    index("mcp_diagnostic_attempt_org_started_member").on(
+      table.organizationId,
+      table.startedAt,
+      table.createdByOrgMembershipId,
+    ),
     index("mcp_diagnostic_attempt_expires_at").on(table.expiresAt),
   ],
 )

@@ -216,10 +216,12 @@ async function waitForTerminalAttempt(attemptId: DenTypeId<"mcpDiagnosticAttempt
   throw new Error(`Diagnostic attempt ${attemptId} did not complete.`)
 }
 
-function request(token: string, path: string, method = "GET") {
+function request(token: string, path: string, method = "GET", headers: Record<string, string> = {}) {
+  const requestHeaders = new Headers(headers)
+  requestHeaders.set("authorization", `Bearer ${token}`)
   return app.fetch(new Request(`http://den-api.local${path}`, {
     method,
-    headers: { authorization: `Bearer ${token}` },
+    headers: requestHeaders,
   }))
 }
 
@@ -1067,9 +1069,19 @@ test("disconnecting the initial SSE does not abort execution and reconnect repla
 
   const completed = await waitForTerminalAttempt(normalizedAttemptId)
   expect(completed.attempt.status).toBe("succeeded")
-  const reconnected = await request(adminToken, `/v1/mcp-connections/${connection}/diagnostics/${attemptId}/stream`)
+  const resumeAfter = completed.events.at(0)?.sequence ?? 0
+  const reconnected = await request(
+    adminToken,
+    `/v1/mcp-connections/${connection}/diagnostics/${attemptId}/stream`,
+    "GET",
+    { "last-event-id": String(resumeAfter) },
+  )
   expect(reconnected.status).toBe(200)
-  const messages = parseSseData(await reconnected.text())
+  const reconnectedText = await reconnected.text()
+  const finalSequence = completed.events.at(-1)?.sequence ?? 0
+  expect(reconnectedText).toContain(`id: ${finalSequence}`)
+  expect(reconnectedText).not.toContain("event: diagnostic")
+  const messages = parseSseData(reconnectedText)
   const replayed = messages.find((message) => isRecord(message) && message.type === "complete")
   expect(replayed).toBeDefined()
   expect(completed.events.map((event) => event.sequence)).toEqual(
@@ -1110,4 +1122,161 @@ test("diagnostic stream is admin-only, tenant-scoped, complete, and redacted", a
   expect(memberSnapshot.status).toBe(403)
   const crossTenant = await request(otherToken, `/v1/mcp-connections/${connection}/diagnostics/${attemptId}`)
   expect(crossTenant.status).toBe(404)
+})
+
+test("diagnostic starts enforce member concurrency and rate limits with a safe 429", async () => {
+  await db.delete(schema.McpDiagnosticEventTable).where(drizzle.eq(schema.McpDiagnosticEventTable.organizationId, organizationId))
+  await db.delete(schema.McpDiagnosticAttemptTable).where(drizzle.eq(schema.McpDiagnosticAttemptTable.organizationId, organizationId))
+  try {
+    const activeAttempts = await Promise.all([0, 1].map(() => diagnostics.createMcpDiagnosticAttempt({
+      organizationId,
+      connectionId: requireConnectionId(),
+      createdByOrgMembershipId: adminMemberId,
+    })))
+    const limited = await request(adminToken, `/v1/mcp-connections/${requireConnectionId()}/diagnostics/stream`, "POST")
+    expect(limited.status).toBe(429)
+    expect(limited.headers.get("retry-after")).toBe("5")
+    expect(await limited.json()).toMatchObject({
+      error: "diagnostic_start_limited",
+      kind: "concurrency",
+      scope: "member",
+    })
+
+    for (const attempt of activeAttempts) {
+      await diagnostics.appendMcpDiagnosticEvent({
+        organizationId,
+        attemptId: normalizeDenTypeId("mcpDiagnosticAttempt", attempt.id),
+        phase: "MCP_TOOL_DISCOVERY",
+        outcome: "passed",
+        healthLevel: "catalog_ready",
+        messageSafe: "The bounded diagnostic completed.",
+        attemptStatus: "succeeded",
+      })
+    }
+    for (let index = activeAttempts.length; index < diagnostics.MCP_DIAGNOSTIC_MAX_STARTS_PER_MEMBER_WINDOW; index += 1) {
+      const attempt = await diagnostics.createMcpDiagnosticAttempt({
+        organizationId,
+        connectionId: requireConnectionId(),
+        createdByOrgMembershipId: adminMemberId,
+      })
+      await diagnostics.appendMcpDiagnosticEvent({
+        organizationId,
+        attemptId: normalizeDenTypeId("mcpDiagnosticAttempt", attempt.id),
+        phase: "MCP_TOOL_DISCOVERY",
+        outcome: "passed",
+        healthLevel: "catalog_ready",
+        messageSafe: "The bounded diagnostic completed.",
+        attemptStatus: "succeeded",
+      })
+    }
+    await expect(diagnostics.createMcpDiagnosticAttempt({
+      organizationId,
+      connectionId: requireConnectionId(),
+      createdByOrgMembershipId: adminMemberId,
+    })).rejects.toMatchObject({ name: "McpDiagnosticStartLimitError", kind: "rate", scope: "member" })
+  } finally {
+    await db.delete(schema.McpDiagnosticEventTable).where(drizzle.eq(schema.McpDiagnosticEventTable.organizationId, organizationId))
+    await db.delete(schema.McpDiagnosticAttemptTable).where(drizzle.eq(schema.McpDiagnosticAttemptTable.organizationId, organizationId))
+  }
+})
+
+test("diagnostic starts enforce an organization-wide concurrency ceiling", async () => {
+  const now = new Date()
+  const rows = Array.from({ length: diagnostics.MCP_DIAGNOSTIC_MAX_ACTIVE_PER_ORGANIZATION }, () => ({
+    id: createDenTypeId("mcpDiagnosticAttempt"),
+    organizationId,
+    externalMcpConnectionId: requireConnectionId(),
+    createdByOrgMembershipId: adminMemberId,
+    completionAuditEventId: createDenTypeId("auditEvent"),
+    startedAt: now,
+    expiresAt: new Date(now.getTime() + diagnostics.MCP_DIAGNOSTIC_RETENTION_MS),
+  }))
+  await db.insert(schema.McpDiagnosticAttemptTable).values(rows)
+  try {
+    await expect(diagnostics.createMcpDiagnosticAttempt({
+      organizationId,
+      connectionId: requireConnectionId(),
+      createdByOrgMembershipId: memberId,
+    })).rejects.toMatchObject({ name: "McpDiagnosticStartLimitError", kind: "concurrency", scope: "organization" })
+  } finally {
+    await db.delete(schema.McpDiagnosticAttemptTable).where(drizzle.eq(schema.McpDiagnosticAttemptTable.organizationId, organizationId))
+  }
+})
+
+test("completion audit emission is idempotent across runner and callback retries", async () => {
+  const attempt = await diagnostics.createMcpDiagnosticAttempt({
+    organizationId,
+    connectionId: requireConnectionId(),
+    createdByOrgMembershipId: adminMemberId,
+  })
+  const attemptId = normalizeDenTypeId("mcpDiagnosticAttempt", attempt.id)
+  await diagnostics.appendMcpDiagnosticEvent({
+    organizationId,
+    attemptId,
+    phase: "MCP_TOOL_DISCOVERY",
+    outcome: "passed",
+    healthLevel: "catalog_ready",
+    messageSafe: "The audit fixture completed.",
+    attemptStatus: "succeeded",
+  })
+  const recordCompletion = () => diagnostics.recordMcpDiagnosticCompletionAuditOnce({
+    organizationId,
+    actorUserId: userId,
+    attemptId,
+    connectionId: requireConnectionId(),
+    status: "succeeded",
+    highestHealthLevel: "catalog_ready",
+    firstFailedPhase: null,
+  })
+  await Promise.all([
+    recordCompletion(),
+    recordCompletion(),
+  ])
+  const attempts = await db
+    .select({ auditEventId: schema.McpDiagnosticAttemptTable.completionAuditEventId })
+    .from(schema.McpDiagnosticAttemptTable)
+    .where(drizzle.eq(schema.McpDiagnosticAttemptTable.id, attemptId))
+    .limit(1)
+  const auditEventId = attempts[0]?.auditEventId
+  if (!auditEventId) throw new Error("Diagnostic attempt did not allocate a completion audit id")
+  const auditRows = await db
+    .select()
+    .from(schema.AuditEventTable)
+    .where(drizzle.eq(schema.AuditEventTable.id, auditEventId))
+  expect(auditRows).toHaveLength(1)
+})
+
+test("an expired process lease becomes a clear retryable terminal result", async () => {
+  const now = new Date()
+  const attempt = await diagnostics.createMcpDiagnosticAttempt({
+    organizationId,
+    connectionId: requireConnectionId(),
+    createdByOrgMembershipId: adminMemberId,
+    now,
+  })
+  const attemptId = normalizeDenTypeId("mcpDiagnosticAttempt", attempt.id)
+  const lease = await diagnostics.claimMcpDiagnosticExecutionLease({
+    organizationId,
+    attemptId,
+    now,
+    leaseMs: 100,
+  })
+  expect(lease).not.toBeNull()
+  expect(await diagnostics.recoverAbandonedMcpDiagnosticAttempt({
+    organizationId,
+    attemptId,
+    now: new Date(now.getTime() + 99),
+  })).toBeNull()
+  const recovered = await diagnostics.recoverAbandonedMcpDiagnosticAttempt({
+    organizationId,
+    attemptId,
+    now: new Date(now.getTime() + 101),
+  })
+  expect(recovered?.phase).toBe("CONTINUITY_SESSION")
+  expect(recovered?.category).toBe("diagnostic_execution_interrupted")
+  expect(recovered?.retryable).toBe(true)
+  expect(recovered?.evidence).toEqual({ errorCode: "MCP_DIAGNOSTIC_EXECUTION_LOST", detailsRedacted: true })
+  const snapshot = await diagnostics.getMcpDiagnosticSnapshot({ organizationId, attemptId })
+  expect(snapshot?.attempt.status).toBe("failed")
+  expect(snapshot?.attempt.actionOwner).toBe("openwork")
 })

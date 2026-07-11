@@ -11,10 +11,14 @@ import {
 } from "./external-mcp-client.js"
 import {
   appendMcpDiagnosticEvent,
+  claimMcpDiagnosticExecutionLease,
   expireMcpDiagnosticAuthorizationIfEligible,
   failMcpDiagnosticAttempt,
   getMcpDiagnosticSnapshot,
   isMcpDiagnosticAttemptClosedError,
+  MCP_DIAGNOSTIC_EXECUTION_LEASE_MS,
+  releaseMcpDiagnosticExecutionLease,
+  renewMcpDiagnosticExecutionLease,
   reserveMcpDiagnosticAuthorizationGeneration,
   safeMcpDiagnosticEvidence,
 } from "./external-mcp-diagnostics.js"
@@ -82,6 +86,8 @@ export async function runExternalMcpDiagnosticExecution(input: {
   authWaitMs?: number
   callbackCompletionWaitMs?: number
   pollMs?: number
+  executionLeaseMs?: number
+  executionHeartbeatMs?: number
   diagnose?: Diagnose
   onComplete?: (snapshot: McpDiagnosticSnapshot) => Promise<void>
 }): Promise<void> {
@@ -92,6 +98,29 @@ export async function runExternalMcpDiagnosticExecution(input: {
     ? { orgMembershipId: input.orgMembershipId }
     : undefined
   let signedState: string | undefined
+  const executionLeaseMs = input.executionLeaseMs ?? MCP_DIAGNOSTIC_EXECUTION_LEASE_MS
+  const executionLease = await claimMcpDiagnosticExecutionLease({
+    organizationId: input.organizationId,
+    attemptId: input.attemptId,
+    leaseMs: executionLeaseMs,
+  })
+  if (!executionLease) return
+  const executionHeartbeatMs = input.executionHeartbeatMs ?? Math.max(1_000, Math.floor(executionLeaseMs / 3))
+  const heartbeat = setInterval(() => {
+    void renewMcpDiagnosticExecutionLease({
+      organizationId: input.organizationId,
+      attemptId: input.attemptId,
+      leaseId: executionLease.leaseId,
+      leaseMs: executionLeaseMs,
+    }).catch((error) => {
+      console.error("external_mcp_diagnostic_execution_heartbeat_failed", {
+        attemptId: input.attemptId,
+        organizationId: input.organizationId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      })
+    })
+  }, executionHeartbeatMs)
+  heartbeat.unref()
 
   try {
     await observer({
@@ -193,6 +222,7 @@ export async function runExternalMcpDiagnosticExecution(input: {
       }
     }
   } finally {
+    clearInterval(heartbeat)
     input.state.authorizationUrl = null
     if (signedState) {
       await deleteExternalMcpOAuthPendingGrant({
@@ -209,6 +239,17 @@ export async function runExternalMcpDiagnosticExecution(input: {
         })
       })
     }
+    await releaseMcpDiagnosticExecutionLease({
+      organizationId: input.organizationId,
+      attemptId: input.attemptId,
+      leaseId: executionLease.leaseId,
+    }).catch((error) => {
+      console.error("external_mcp_diagnostic_execution_lease_release_failed", {
+        attemptId: input.attemptId,
+        organizationId: input.organizationId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      })
+    })
     const snapshot = await getMcpDiagnosticSnapshot({
       organizationId: input.organizationId,
       attemptId: input.attemptId,

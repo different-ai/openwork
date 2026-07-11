@@ -368,12 +368,30 @@ function diagnosticAttemptId(message: McpDiagnosticStreamMessage): string | null
   return null;
 }
 
-async function consumeMcpDiagnosticStream(input: {
+const OAUTH_FALLBACK_PHASES = new Set(["AUTH_RESOURCE_DISCOVERY", "AUTH_ISSUER_DISCOVERY"]);
+
+export function selectMcpDiagnosticTimelineEvents(events: McpDiagnosticEvent[]): McpDiagnosticEvent[] {
+  const latestByPhase = new Map<string, McpDiagnosticEvent>();
+  const retained: McpDiagnosticEvent[] = [];
+  for (const event of events) {
+    if (OAUTH_FALLBACK_PHASES.has(event.phase)) {
+      retained.push(event);
+      continue;
+    }
+    const previous = latestByPhase.get(event.phase);
+    if (!previous || previous.sequence < event.sequence) latestByPhase.set(event.phase, event);
+  }
+  return [...retained, ...latestByPhase.values()].sort((left, right) => left.sequence - right.sequence);
+}
+
+export async function consumeMcpDiagnosticStream(input: {
   response: Response;
   signal: AbortSignal;
   onMessage: (message: McpDiagnosticStreamMessage) => void;
-}): Promise<{ completed: boolean; attemptId: string | null }> {
+  onLastEventId?: (lastEventId: string) => void;
+}): Promise<{ completed: boolean; attemptId: string | null; lastEventId: string | null }> {
   if (!input.response.headers.get("content-type")?.includes("text/event-stream") || !input.response.body) {
+    await input.response.body?.cancel().catch(() => undefined);
     throw new McpDiagnosticStreamProtocolError("The diagnostic stream returned an invalid response.");
   }
 
@@ -382,42 +400,69 @@ async function consumeMcpDiagnosticStream(input: {
   let buffer = "";
   let completed = false;
   let attemptId: string | null = null;
-  while (true) {
-    const result = await reader.read();
-    if (result.done) break;
-    buffer += decoder.decode(result.value, { stream: true });
-    if (buffer.length > 1024 * 1024) {
-      await reader.cancel();
-      throw new McpDiagnosticStreamProtocolError("The diagnostic stream exceeded its safe buffer limit.");
-    }
-    buffer = buffer.replaceAll("\r\n", "\n");
-    let boundary = buffer.indexOf("\n\n");
-    while (boundary >= 0) {
-      const block = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      const data = block
-        .split("\n")
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart())
-        .join("\n");
-      if (data) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(data);
-        } catch {
-          throw new McpDiagnosticStreamProtocolError("The diagnostic stream returned malformed JSON.");
-        }
-        if (!isMcpDiagnosticStreamMessage(parsed)) {
-          throw new McpDiagnosticStreamProtocolError("The diagnostic stream returned an invalid event.");
-        }
-        attemptId = diagnosticAttemptId(parsed) ?? attemptId;
-        if (parsed.type === "complete") completed = true;
-        input.onMessage(parsed);
+  let lastEventId: string | null = null;
+  let readerDone = false;
+  let cancelPromise: Promise<void> | null = null;
+  const cancelReader = (reason?: unknown) => {
+    cancelPromise ??= reader.cancel(reason).catch(() => undefined);
+    return cancelPromise;
+  };
+  const onAbort = () => { void cancelReader(input.signal.reason); };
+  if (input.signal.aborted) onAbort();
+  else input.signal.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) {
+        readerDone = true;
+        break;
       }
-      boundary = buffer.indexOf("\n\n");
+      buffer += decoder.decode(result.value, { stream: true });
+      if (buffer.length > 1024 * 1024) {
+        throw new McpDiagnosticStreamProtocolError("The diagnostic stream exceeded its safe buffer limit.");
+      }
+      buffer = buffer.replaceAll("\r\n", "\n");
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary >= 0) {
+        const block = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const lines = block.split("\n");
+        const eventId = lines
+          .filter((line) => line.startsWith("id:"))
+          .map((line) => line.slice(3).trimStart())
+          .at(-1);
+        if (eventId && /^\d{1,15}$/.test(eventId)) {
+          lastEventId = eventId;
+          input.onLastEventId?.(eventId);
+        }
+        const data = lines
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart())
+          .join("\n");
+        if (data) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(data);
+          } catch {
+            throw new McpDiagnosticStreamProtocolError("The diagnostic stream returned malformed JSON.");
+          }
+          if (!isMcpDiagnosticStreamMessage(parsed)) {
+            throw new McpDiagnosticStreamProtocolError("The diagnostic stream returned an invalid event.");
+          }
+          attemptId = diagnosticAttemptId(parsed) ?? attemptId;
+          if (parsed.type === "complete") completed = true;
+          input.onMessage(parsed);
+        }
+        boundary = buffer.indexOf("\n\n");
+      }
     }
+    return { completed, attemptId, lastEventId };
+  } finally {
+    input.signal.removeEventListener("abort", onAbort);
+    if (!readerDone) await cancelReader();
+    reader.releaseLock();
   }
-  return { completed, attemptId };
 }
 
 async function waitForDiagnosticReconnect(delayMs: number, signal: AbortSignal): Promise<void> {
@@ -456,18 +501,21 @@ export function useMcpConnectionDiagnosticStream() {
     );
     if (!response.ok) throw await diagnosticStreamError(response);
     let attemptId = response.headers.get("x-openwork-mcp-diagnostic-attempt-id");
+    let lastEventId: string | null = null;
     for (let streamAttempt = 0; streamAttempt <= 4; streamAttempt += 1) {
       if (streamAttempt > 0) {
         if (!attemptId) break;
         await waitForDiagnosticReconnect(Math.min(2_000, 250 * 2 ** (streamAttempt - 1)), input.signal);
         try {
+          const reconnectHeaders = new Headers({
+            Accept: "text/event-stream",
+            ...getOrgScopeHeaders(requireOrgId(orgId)),
+          });
+          if (lastEventId) reconnectHeaders.set("Last-Event-ID", lastEventId);
           response = await fetch(
             `/api/den/v1/mcp-connections/${encodeURIComponent(input.connectionId)}/diagnostics/${encodeURIComponent(attemptId)}/stream`,
             {
-              headers: {
-                Accept: "text/event-stream",
-                ...getOrgScopeHeaders(requireOrgId(orgId)),
-              },
+              headers: reconnectHeaders,
               credentials: "include",
               signal: input.signal,
             },
@@ -490,6 +538,7 @@ export function useMcpConnectionDiagnosticStream() {
           response,
           signal: input.signal,
           onMessage: input.onMessage,
+          onLastEventId: (value) => { lastEventId = value; },
         });
         attemptId = result.attemptId ?? attemptId;
         if (result.completed || input.signal.aborted) return;
