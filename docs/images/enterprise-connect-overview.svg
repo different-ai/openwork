@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">OpenWork Enterprise signed connect lifecycle</title>
+  <desc id="desc">A network-neutral enterprise installer receives a signed deep link, verifies and previews it, then becomes the organization's branded app and begins normal sign-in.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#eef2ff"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#1e293b" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1450" cy="80" r="180" fill="#4f46e5" opacity="0.06"/>
+  <circle cx="80" cy="830" r="230" fill="#0ea5e9" opacity="0.06"/>
+
+  <text x="100" y="95" font-family="Inter, Arial, sans-serif" font-size="48" font-weight="750" fill="#0f172a">OpenWork Enterprise: neutral until the organization connects it</text>
+  <text x="100" y="142" font-family="Inter, Arial, sans-serif" font-size="24" fill="#475569">Den stays remote. A fresh install makes no automatic connection to OpenWork Cloud.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="90" y="235" width="320" height="390" rx="28" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="460" y="235" width="320" height="390" rx="28" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="830" y="235" width="320" height="390" rx="28" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="1200" y="235" width="320" height="390" rx="28" fill="#ffffff" stroke="#a5b4fc" stroke-width="2"/>
+  </g>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <circle cx="145" cy="290" r="28" fill="#e0e7ff"/>
+    <text x="145" y="300" text-anchor="middle" font-size="26" font-weight="700" fill="#4338ca">1</text>
+    <text x="130" y="360" font-size="28" font-weight="700" fill="#0f172a">Enterprise installer</text>
+    <text x="130" y="410" font-size="21" fill="#475569">One generic signed app</text>
+    <text x="130" y="448" font-size="21" fill="#475569">Ready to connect</text>
+    <text x="130" y="486" font-size="21" fill="#475569">Vendor cloud blocked</text>
+    <rect x="130" y="535" width="226" height="46" rx="23" fill="#f1f5f9"/>
+    <text x="243" y="565" text-anchor="middle" font-size="18" font-weight="650" fill="#334155">No local execution stack</text>
+
+    <circle cx="515" cy="290" r="28" fill="#dbeafe"/>
+    <text x="515" y="300" text-anchor="middle" font-size="26" font-weight="700" fill="#0369a1">2</text>
+    <text x="500" y="360" font-size="28" font-weight="700" fill="#0f172a">Signed connect link</text>
+    <text x="500" y="410" font-size="21" fill="#475569">openwork://connect</text>
+    <text x="500" y="448" font-size="21" fill="#475569">Company server + brand</text>
+    <text x="500" y="486" font-size="21" fill="#475569">Expires + one-time ID</text>
+    <rect x="500" y="535" width="205" height="46" rx="23" fill="#eff6ff"/>
+    <text x="603" y="565" text-anchor="middle" font-size="18" font-weight="650" fill="#0369a1">No user credentials</text>
+
+    <circle cx="885" cy="290" r="28" fill="#dcfce7"/>
+    <text x="885" y="300" text-anchor="middle" font-size="26" font-weight="700" fill="#15803d">3</text>
+    <text x="870" y="360" font-size="28" font-weight="700" fill="#0f172a">Verify + preview</text>
+    <text x="870" y="410" font-size="21" fill="#475569">Ed25519 signature</text>
+    <text x="870" y="448" font-size="21" fill="#475569">HTTPS + expiry + replay</text>
+    <rect x="870" y="500" width="240" height="82" rx="16" fill="#f0fdf4" stroke="#86efac"/>
+    <text x="990" y="533" text-anchor="middle" font-size="18" font-weight="700" fill="#166534">Set up Acme Work</text>
+    <text x="990" y="560" text-anchor="middle" font-size="17" fill="#166534">for Acme Robotics?</text>
+
+    <circle cx="1255" cy="290" r="28" fill="#ede9fe"/>
+    <text x="1255" y="300" text-anchor="middle" font-size="26" font-weight="700" fill="#6d28d9">4</text>
+    <text x="1240" y="360" font-size="28" font-weight="700" fill="#0f172a">Organization app</text>
+    <text x="1240" y="410" font-size="21" fill="#475569">Server saved locally</text>
+    <text x="1240" y="448" font-size="21" fill="#475569">Name, logo + icon applied</text>
+    <text x="1240" y="486" font-size="21" fill="#475569">Network guard unlocks</text>
+    <rect x="1240" y="535" width="220" height="46" rx="23" fill="#f5f3ff"/>
+    <text x="1350" y="565" text-anchor="middle" font-size="18" font-weight="650" fill="#6d28d9">Normal company SSO</text>
+  </g>
+
+  <path d="M410 430 H448" stroke="#64748b" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M780 430 H818" stroke="#64748b" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M1150 430 H1188" stroke="#64748b" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <rect x="255" y="705" width="1090" height="100" rx="24" fill="#0f172a"/>
+  <text x="800" y="747" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="650" fill="#ffffff">The link proves where to connect — never who the user is.</text>
+  <text x="800" y="782" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="19" fill="#cbd5e1">Den remains remote; the enterprise artifact also omits the local server, engine sidecars, orchestrator, and helper.</text>
+</svg>

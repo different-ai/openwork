@@ -6,6 +6,10 @@ Owner: platform/self-host
 
 Related: `ee/apps/den-api/src/routes/org/install-links.ts`, `apps/installer`, `packages/install-config`
 
+> For pairing an already-installed OpenWork Enterprise app with your deployment
+> via a signed `openwork://connect` link, see
+> [OpenWork Enterprise Installer and Signed Connect Links](./enterprise-connect-link.md).
+
 ## What users download
 
 Organization install links let workspace members download the normal signed
