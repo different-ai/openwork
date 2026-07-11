@@ -11,6 +11,9 @@ const FAULT_PATH_SEGMENT = "fault-path-secret"
 const FAULT_URL_QUERY = "fault-url-query-secret"
 const FAULT_ENDPOINT = `/tenants/${FAULT_PATH_SEGMENT}/mcp`
 const DIAGNOSTICS_KEY = "den-api-connection-test-key"
+const DEN_SDK_REDIRECT_URI = "http://127.0.0.1:8790/v1/mcp-connections/mock/connect/callback"
+const PREREGISTERED_CLIENT_ID = "mock-preregistered-client"
+const PREREGISTERED_CLIENT_SECRET = "mock-preregistered-secret"
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_mcp_connection_test"
@@ -133,6 +136,7 @@ let drizzle: typeof import("@openwork-ee/den-db/drizzle")
 let session: typeof import("../src/session.js")
 let connections: typeof import("../src/capability-sources/external-mcp-connections.js")
 let oauthCredentials: typeof import("../src/capability-sources/oauth-credentials.js")
+let mcpClient: typeof import("../src/capability-sources/external-mcp-client.js")
 let connectionId: DenTypeId<"externalMcpConnection"> | undefined
 let disconnectedConnectionId: DenTypeId<"externalMcpConnection"> | undefined
 let loopingConnectionId: DenTypeId<"externalMcpConnection"> | undefined
@@ -158,7 +162,7 @@ beforeAll(async () => {
   serviceNowBaseUrl = serviceNow.baseUrl
   loopMock = looping.child
 
-  const [appMod, dbMod, schemaMod, drizzleMod, sessionMod, connectionsMod, oauthCredentialsMod] = await Promise.all([
+  const [appMod, dbMod, schemaMod, drizzleMod, sessionMod, connectionsMod, oauthCredentialsMod, mcpClientMod] = await Promise.all([
     import("../src/app.js"),
     import("../src/db.js"),
     import("@openwork-ee/den-db/schema"),
@@ -166,6 +170,7 @@ beforeAll(async () => {
     import("../src/session.js"),
     import("../src/capability-sources/external-mcp-connections.js"),
     import("../src/capability-sources/oauth-credentials.js"),
+    import("../src/capability-sources/external-mcp-client.js"),
   ])
   app = appMod.default
   db = dbMod.db
@@ -174,6 +179,7 @@ beforeAll(async () => {
   session = sessionMod
   connections = connectionsMod
   oauthCredentials = oauthCredentialsMod
+  mcpClient = mcpClientMod
 
   await db.insert(schema.AuthUserTable).values([
     { id: userId, name: "MCP Test Admin", email: `mcp-test-admin+${userId}@test.local` },
@@ -308,6 +314,7 @@ test("POST connection test initializes, exhausts pages, and returns only redacte
   const body: unknown = await response.json()
   if (!isRecord(body)) throw new Error("connection test response was not an object")
   expect(body.status).toBe("ready")
+  expect(body.warnings).toEqual([])
   expect(body.protocolVersion).toBe("2025-06-18")
   expect(body.transport).toBe("streamable_http")
   expect(body.sessionUsed).toBe(true)
@@ -423,6 +430,127 @@ test("OAuth connection tests are byte-stable reads and never start authorization
   expect(JSON.stringify(logAfter)).not.toContain(staleRefreshToken)
   expect(JSON.stringify(logAfter)).not.toContain(pendingCodeVerifier)
 })
+
+test("default enterprise confidential-client OAuth completes through the production Den MCP SDK in JSON and SSE modes", async () => {
+  const scenarios = [
+    {
+      profile: "servicenow",
+      endpoint: "/sncapps/mcp-server/mcp/sn_mcp_server_default",
+      scope: "mcp_server",
+      authorizationPath: "/oauth_auth.do",
+      tokenPath: "/oauth_token.do",
+      toolCount: 4,
+    },
+    {
+      profile: "workiq",
+      endpoint: "/mcp",
+      scope: "api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask",
+      authorizationPath: "/mock-entra/mock-tenant/oauth2/v2.0/authorize",
+      tokenPath: "/mock-entra/mock-tenant/oauth2/v2.0/token",
+      toolCount: 10,
+    },
+    {
+      profile: "microsoft-enterprise",
+      endpoint: "/enterprise",
+      scope: "MCP.User.Read.All",
+      authorizationPath: "/mock-entra/mock-tenant/oauth2/v2.0/authorize",
+      tokenPath: "/mock-entra/mock-tenant/oauth2/v2.0/token",
+      toolCount: 3,
+    },
+    {
+      profile: "agent365-mail",
+      endpoint: "/agents/tenants/mock-tenant/servers/mcp_MailTools",
+      scope: "McpServers.Mail.All",
+      authorizationPath: "/mock-entra/mock-tenant/oauth2/v2.0/authorize",
+      tokenPath: "/mock-entra/mock-tenant/oauth2/v2.0/token",
+      toolCount: 10,
+    },
+  ] as const
+
+  for (const responseMode of ["json", "sse"] as const) {
+    for (const scenario of scenarios) {
+      const mock = await startMock(scenario.profile, "none", {
+        MCP_MOCK_RESPONSE_MODE: responseMode,
+        MOCK_REDIRECT_URIS: DEN_SDK_REDIRECT_URI,
+      })
+      try {
+        const connection = await connections.createExternalMcpConnection({
+          organizationId,
+          name: `Real SDK ${scenario.profile} ${responseMode}`,
+          url: `${mock.baseUrl}${scenario.endpoint}`,
+          authType: "oauth",
+          credentialMode: "shared",
+          createdByOrgMembershipId: adminMemberId,
+          access: { orgWide: true, memberIds: [], teamIds: [] },
+        })
+        // Deliberately persist the legacy/manual shape without an auth-method
+        // hint. This reproduces real Den configuration and forces the SDK to
+        // choose from the provider discovery document.
+        await oauthCredentials.upsertOrgOAuthClient({
+          organizationId,
+          providerId: connection.id,
+          clientId: PREREGISTERED_CLIENT_ID,
+          clientSecret: PREREGISTERED_CLIENT_SECRET,
+          extra: {},
+          createdByOrgMembershipId: adminMemberId,
+        })
+
+        const started = await mcpClient.connectExternalMcp(
+          connection,
+          DEN_SDK_REDIRECT_URI,
+          `signed-state-${scenario.profile}-${responseMode}`,
+        )
+        expect(started.status).toBe("needs_auth")
+        if (started.status !== "needs_auth") throw new Error(`${scenario.profile} did not request authorization`)
+        const authorizeUrl = new URL(started.authorizeUrl)
+        expect(authorizeUrl.pathname).toBe(scenario.authorizationPath)
+        expect(authorizeUrl.searchParams.get("resource")).toBe(`${mock.baseUrl}${scenario.endpoint}`)
+
+        const authorization = await fetch(authorizeUrl, { redirect: "manual" })
+        expect(authorization.status).toBe(302)
+        const location = authorization.headers.get("location")
+        if (!location) throw new Error(`${scenario.profile} authorization omitted callback`)
+        const callback = new URL(location)
+        const code = callback.searchParams.get("code")
+        if (!code) throw new Error(`${scenario.profile} authorization omitted code`)
+        expect(callback.searchParams.get("state")).toBe(`signed-state-${scenario.profile}-${responseMode}`)
+
+        const pending = await connections.getExternalMcpConnection({ organizationId, connectionId: connection.id })
+        if (!pending?.pendingCodeVerifier) throw new Error(`${scenario.profile} did not persist its PKCE verifier`)
+        await mcpClient.completeExternalMcpAuth(pending, code, DEN_SDK_REDIRECT_URI)
+
+        const connected = await connections.getExternalMcpConnection({ organizationId, connectionId: connection.id })
+        if (!connected?.accessToken || !connected.refreshToken) throw new Error(`${scenario.profile} did not persist OAuth tokens`)
+        const readiness = await mcpClient.testExternalMcpConnection(
+          connected,
+          DEN_SDK_REDIRECT_URI,
+          undefined,
+          { timeoutMs: 3_000 },
+        )
+        expect(readiness).toMatchObject({
+          status: "ready",
+          warnings: [],
+          toolCount: scenario.toolCount,
+        })
+
+        const requestLog = await (await fetch(`${mock.baseUrl}/requests`, {
+          headers: { "x-mock-diagnostics-key": DIAGNOSTICS_KEY },
+        })).json() as { requests: Array<{ path: string; url: string }> }
+        const paths = requestLog.requests.map((entry) => entry.path)
+        expect(paths).toContain(scenario.authorizationPath)
+        expect(paths).toContain(scenario.tokenPath)
+        expect(paths).not.toContain("/register")
+        expect(paths).not.toContain("/token")
+        expect(JSON.stringify(requestLog)).not.toContain(code)
+        expect(JSON.stringify(requestLog)).not.toContain(connected.accessToken)
+        expect(JSON.stringify(requestLog)).not.toContain(connected.refreshToken)
+        expect((await diagnosticCounts(mock.baseUrl)).activeRequests).toBe(0)
+      } finally {
+        stopMock(mock.child)
+      }
+    }
+  }
+}, 60_000)
 
 test("test authority and credentials remain tenant-, member-, API-key-, and no-auth-scoped", async () => {
   expect((await request(seededId(connectionId), otherUserId, otherOrganizationId)).status).toBe(404)
@@ -560,7 +688,7 @@ test("advertised MCP lifecycle faults have stable JSON and SSE diagnostic outcom
     ["wrong_content_type", "mcp_initialize_failed"],
     ["broken_sse", "mcp_test_timeout"],
     ["expired_session", "mcp_catalog_unavailable"],
-    ["empty_tool_catalog", "ready"],
+    ["empty_tool_catalog", "warning"],
   ] as const
 
   for (const [fault, expected] of cases) {
@@ -576,11 +704,12 @@ test("advertised MCP lifecycle faults have stable JSON and SSE diagnostic outcom
         if (!connection) throw new Error(`${fault} ${responseMode} fixture was not seeded`)
         const probe = await runNodeConnectionTest(connection, 750)
         const expectedForMode = fault === "broken_sse" && responseMode === "json" ? "ready_nonempty" : expected
-        if (expectedForMode === "ready" || expectedForMode === "ready_nonempty") {
+        if (expectedForMode === "warning" || expectedForMode === "ready_nonempty") {
           expect(probe.ok).toBe(true)
-          expect(isRecord(probe.result) && probe.result.status).toBe("ready")
-          expect(isRecord(probe.result) && probe.result.toolCount).toBe(expectedForMode === "ready" ? 0 : 10)
-          if (expectedForMode === "ready") expect(isRecord(probe.result) && probe.result.toolPageCount).toBe(1)
+          expect(isRecord(probe.result) && probe.result.status).toBe(expectedForMode === "warning" ? "warning" : "ready")
+          expect(isRecord(probe.result) && probe.result.toolCount).toBe(expectedForMode === "warning" ? 0 : 10)
+          expect(isRecord(probe.result) && probe.result.warnings).toEqual(expectedForMode === "warning" ? ["empty_tool_catalog"] : [])
+          if (expectedForMode === "warning") expect(isRecord(probe.result) && probe.result.toolPageCount).toBe(1)
         } else {
           if (probe.ok !== false) throw new Error(`${fault}/${responseMode} unexpectedly returned ${JSON.stringify(probe)}`)
           if (probe.code !== expectedForMode) throw new Error(`${fault}/${responseMode} returned ${String(probe.code)} instead of ${expectedForMode}`)

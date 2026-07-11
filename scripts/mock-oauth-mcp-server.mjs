@@ -96,14 +96,17 @@ const REQUEST_LOG_TTL_MS = testStateTtlMs ?? 60 * 60 * 1000;
 const DRAFT_TTL_MS = testStateTtlMs ?? 15 * 60 * 1000;
 const LEDGER_TTL_MS = testStateTtlMs ?? 60 * 60 * 1000;
 
-const FIXTURE_VERIFIED_AT = "2026-07-10";
+const FIXTURE_VERIFIED_AT = "2026-07-11";
 const SERVICE_NOW_DOCUMENTATION = "https://www.servicenow.com/docs/r/intelligent-experiences/connect-mcp-server-client.html";
+const SERVICE_NOW_OAUTH_DOCUMENTATION = "https://www.servicenow.com/docs/r/platform-security/authentication/authorization-workflow.html";
 const WORK_IQ_DOCUMENTATION = "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/tool-reference";
 const WORK_IQ_PERMISSIONS_DOCUMENTATION = "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/permissions";
 const AGENT_365_MAIL_DOCUMENTATION = "https://learn.microsoft.com/en-us/microsoft-copilot-studio/mcp-mail-work-iq";
 const AGENT_365_TOOLING_DOCUMENTATION = "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/tooling";
+const MICROSOFT_IDENTITY_DOCUMENTATION = "https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols";
 const MOCK_TENANT_ID = process.env.MCP_MOCK_TENANT_ID || "mock-tenant";
 const AGENT_365_MAIL_AUDIENCE = "api://05879165-0320-489e-b644-f72b33f3edf0";
+const MOCK_ENTRA_OAUTH_BASE = `/mock-entra/${MOCK_TENANT_ID}/oauth2/v2.0`;
 
 const SUPPORTED_FAULTS = new Set([
   "none",
@@ -190,6 +193,9 @@ function tool(name, description, properties = {}, required = [], annotations = {
 const profiles = {
   generic: {
     endpoint: "/mcp",
+    authorizationPath: "/authorize",
+    tokenPath: "/token",
+    revocationPath: null,
     scopes: ["mcp:read", "mcp:write"],
     audience: null,
     tenantId: null,
@@ -204,13 +210,16 @@ const profiles = {
   },
   servicenow: {
     endpoint: "/sncapps/mcp-server/mcp/sn_mcp_server_default",
+    authorizationPath: "/oauth_auth.do",
+    tokenPath: "/oauth_token.do",
+    revocationPath: "/oauth_revoke.do",
     scopes: ["mcp_server"],
     audience: null,
     tenantId: null,
     registrationMode: "manual",
     identityProvider: "servicenow-instance-oauth",
     tokenEndpointAuthMethod: "client_secret_post",
-    documentation: [SERVICE_NOW_DOCUMENTATION],
+    documentation: [SERVICE_NOW_DOCUMENTATION, SERVICE_NOW_OAUTH_DOCUMENTATION],
     protocols: ["2025-06-18"],
     pageSize: 2,
     tools: [
@@ -222,13 +231,16 @@ const profiles = {
   },
   workiq: {
     endpoint: "/mcp",
+    authorizationPath: `${MOCK_ENTRA_OAUTH_BASE}/authorize`,
+    tokenPath: `${MOCK_ENTRA_OAUTH_BASE}/token`,
+    revocationPath: null,
     scopes: ["api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask"],
     audience: "api://workiq.svc.cloud.microsoft",
     tenantId: MOCK_TENANT_ID,
     registrationMode: "pre_registered",
     identityProvider: "microsoft-entra-tenant",
     tokenEndpointAuthMethod: "client_secret_post",
-    documentation: [WORK_IQ_DOCUMENTATION, WORK_IQ_PERMISSIONS_DOCUMENTATION],
+    documentation: [WORK_IQ_DOCUMENTATION, WORK_IQ_PERMISSIONS_DOCUMENTATION, MICROSOFT_IDENTITY_DOCUMENTATION],
     protocols: ["2025-11-25", "2025-06-18"],
     pageSize: 3,
     tools: [
@@ -246,13 +258,16 @@ const profiles = {
   },
   "microsoft-enterprise": {
     endpoint: "/enterprise",
+    authorizationPath: `${MOCK_ENTRA_OAUTH_BASE}/authorize`,
+    tokenPath: `${MOCK_ENTRA_OAUTH_BASE}/token`,
+    revocationPath: null,
     scopes: ["MCP.User.Read.All"],
     audience: "api://mock-microsoft-enterprise",
     tenantId: MOCK_TENANT_ID,
     registrationMode: "pre_registered",
     identityProvider: "microsoft-entra-tenant",
     tokenEndpointAuthMethod: "client_secret_post",
-    documentation: [],
+    documentation: [MICROSOFT_IDENTITY_DOCUMENTATION],
     protocols: ["2025-11-25", "2025-06-18"],
     pageSize: 2,
     tools: [
@@ -263,13 +278,16 @@ const profiles = {
   },
   "agent365-mail": {
     endpoint: `/agents/tenants/${MOCK_TENANT_ID}/servers/mcp_MailTools`,
+    authorizationPath: `${MOCK_ENTRA_OAUTH_BASE}/authorize`,
+    tokenPath: `${MOCK_ENTRA_OAUTH_BASE}/token`,
+    revocationPath: null,
     scopes: ["McpServers.Mail.All"],
     audience: AGENT_365_MAIL_AUDIENCE,
     tenantId: MOCK_TENANT_ID,
     registrationMode: "pre_registered",
     identityProvider: "microsoft-entra-tenant",
     tokenEndpointAuthMethod: "client_secret_post",
-    documentation: [AGENT_365_MAIL_DOCUMENTATION, AGENT_365_TOOLING_DOCUMENTATION],
+    documentation: [AGENT_365_MAIL_DOCUMENTATION, AGENT_365_TOOLING_DOCUMENTATION, MICROSOFT_IDENTITY_DOCUMENTATION],
     protocols: ["2025-11-25", "2025-06-18"],
     pageSize: 2,
     tools: [
@@ -343,6 +361,18 @@ const authorizationIssuer = profile.identityProvider === "microsoft-entra-tenant
   ? `${issuer}/mock-entra/${profile.tenantId}/v2.0`
   : issuer;
 const disableDcr = disableDcrRequested || (!enableDcrRequested && profile.registrationMode !== "dynamic");
+const authorizationEndpoint = `${issuer}${profile.authorizationPath}`;
+const tokenEndpoint = `${issuer}${profile.tokenPath}`;
+const revocationEndpoint = profile.revocationPath ? `${issuer}${profile.revocationPath}` : null;
+const configuredTokenEndpointAuthMethod = profile.tokenEndpointAuthMethod || "client_secret_post";
+// A pre-registered confidential client must have one deterministic method.
+// When the explicit DCR convenience mode is enabled, public clients may still
+// register with `none`; this is intentionally separate from provider fidelity.
+const tokenEndpointAuthMethods = disableDcr
+  ? [configuredTokenEndpointAuthMethod]
+  : profile.registrationMode === "dynamic"
+    ? ["none", "client_secret_post", "client_secret_basic"]
+    : ["none", configuredTokenEndpointAuthMethod];
 if (!(await Promise.all(preregisteredRedirectUris.map((redirectUri) => validRedirectUri(redirectUri)))).every(Boolean)) {
   console.error("[mock-oauth-mcp] MOCK_REDIRECT_URIS contains an unsafe redirect URI");
   process.exit(2);
@@ -569,12 +599,13 @@ function protectedResourceMetadata() {
 function authorizationServerMetadata() {
   return {
     issuer: fault === "issuer_mismatch" ? `${authorizationIssuer}/wrong-issuer` : authorizationIssuer,
-    authorization_endpoint: `${issuer}/authorize`,
-    token_endpoint: `${issuer}/token`,
+    authorization_endpoint: authorizationEndpoint,
+    token_endpoint: tokenEndpoint,
+    ...(revocationEndpoint ? { revocation_endpoint: revocationEndpoint } : {}),
     ...(disableDcr ? {} : { registration_endpoint: `${issuer}/register` }),
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
-    token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
+    token_endpoint_auth_methods_supported: tokenEndpointAuthMethods,
     code_challenge_methods_supported: fault === "no_pkce" ? ["plain"] : ["S256"],
     scopes_supported: profile.scopes,
   };
@@ -1307,6 +1338,12 @@ const server = http.createServer(async (req, res) => {
           identityProvider: profile.identityProvider,
           tenantId: profile.tenantId,
           authorizationIssuer,
+          oauthEndpoints: {
+            authorization: authorizationEndpoint,
+            token: tokenEndpoint,
+            ...(revocationEndpoint ? { revocation: revocationEndpoint } : {}),
+          },
+          tokenEndpointAuthMethods,
           resource,
           audience,
           scopes: profile.scopes,
@@ -1349,7 +1386,7 @@ const server = http.createServer(async (req, res) => {
       await registerClient(req, res, correlationId);
       return;
     }
-    if (url.pathname === "/authorize" && req.method === "GET") {
+    if (url.pathname === profile.authorizationPath && req.method === "GET") {
       await authorize(res, url, correlationId);
       return;
     }
@@ -1357,7 +1394,7 @@ const server = http.createServer(async (req, res) => {
       await approveAuthorization(req, res, correlationId);
       return;
     }
-    if (url.pathname === "/token" && req.method === "POST") {
+    if (url.pathname === profile.tokenPath && req.method === "POST") {
       await issueToken(req, res, correlationId);
       return;
     }

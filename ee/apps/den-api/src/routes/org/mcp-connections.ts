@@ -19,6 +19,7 @@ import {
   connectExternalMcp,
   completeExternalMcpAuth,
   EXTERNAL_MCP_CONNECTION_TEST_FAILURE_CODES,
+  EXTERNAL_MCP_CONNECTION_TEST_WARNING_CODES,
   testExternalMcpConnection,
   toExternalMcpConnectionTestFailure,
 } from "../../capability-sources/external-mcp-client.js"
@@ -173,7 +174,8 @@ const connectionValidationFailedSchema = z.object({
 }).meta({ ref: "ExternalMcpConnectionValidationFailedError" })
 
 const connectionTestResponseSchema = z.object({
-  status: z.literal("ready"),
+  status: z.enum(["ready", "warning"]),
+  warnings: z.array(z.enum(EXTERNAL_MCP_CONNECTION_TEST_WARNING_CODES)),
   testId: z.string(),
   protocolVersion: z.string(),
   transport: z.literal("streamable_http"),
@@ -546,7 +548,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       summary: "Run a read-only lifecycle test for an External MCP Connection",
       description: "Uses the calling member's existing Den-owned credential to initialize MCP and exhaust the bounded tools/list catalog. Never invokes a tool and never returns tokens or session identifiers.",
       responses: {
-        200: jsonResponse("The MCP protocol and complete bounded tool catalog are ready.", connectionTestResponseSchema),
+        200: jsonResponse("The MCP protocol and bounded tool catalog were checked; warnings identify incomplete readiness.", connectionTestResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("The caller cannot test this connection.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),

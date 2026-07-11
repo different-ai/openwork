@@ -15,6 +15,18 @@ const PREREGISTERED_CLIENT = {
 const PKCE_VERIFIER = "mock-pkce-verifier-that-is-long-enough-for-testing";
 const PKCE_CHALLENGE = createHash("sha256").update(PKCE_VERIFIER).digest("base64url");
 
+function oauthPaths(endpoint: string) {
+  if (endpoint.startsWith("/sncapps/mcp-server/")) {
+    return { authorization: "/oauth_auth.do", token: "/oauth_token.do" };
+  }
+  if (endpoint === "/enterprise" || endpoint.startsWith("/agents/tenants/") || endpoint === "/mcp") {
+    // `/mcp` is shared by generic and Work IQ. Enterprise callers always use
+    // a pre-registered client; generic public-client tests use the root paths.
+    return { authorization: "/mock-entra/mock-tenant/oauth2/v2.0/authorize", token: "/mock-entra/mock-tenant/oauth2/v2.0/token" };
+  }
+  return { authorization: "/authorize", token: "/token" };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -123,9 +135,13 @@ function buildAuthorizeUrl(input: {
   endpoint: string;
   clientId: string;
   scopes: string[];
+  oauthPathKind?: "generic" | "provider";
   overrides?: Record<string, string | null>;
 }): URL {
-  const authorizeUrl = new URL(`${input.baseUrl}/authorize`);
+  const authorizationPath = input.oauthPathKind === "provider"
+    ? oauthPaths(input.endpoint).authorization
+    : "/authorize";
+  const authorizeUrl = new URL(`${input.baseUrl}${authorizationPath}`);
   const values: Record<string, string> = {
     response_type: "code",
     client_id: input.clientId,
@@ -162,9 +178,11 @@ function exchangeCode(input: {
   endpoint: string;
   clientId: string;
   code: string;
+  oauthPathKind?: "generic" | "provider";
   overrides?: Record<string, string>;
 }): Promise<Response> {
-  return fetch(`${input.baseUrl}/token`, {
+  const tokenPath = input.oauthPathKind === "provider" ? oauthPaths(input.endpoint).token : "/token";
+  return fetch(`${input.baseUrl}${tokenPath}`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -194,7 +212,8 @@ async function authorize(
   let clientId = preregistered?.clientId;
   if (!clientId) clientId = await registerPublicClient(baseUrl);
   const resource = `${baseUrl}${endpoint}`;
-  const authorizeUrl = buildAuthorizeUrl({ baseUrl, endpoint, clientId, scopes });
+  const oauthPathKind = scopes.some((scope) => scope.startsWith("mcp:")) ? "generic" : "provider";
+  const authorizeUrl = buildAuthorizeUrl({ baseUrl, endpoint, clientId, scopes, oauthPathKind });
 
   const authorization = await fetch(authorizeUrl, { redirect: "manual" });
   expect(authorization.status).toBe(302);
@@ -214,7 +233,8 @@ async function authorize(
     resource,
   };
   if (preregistered) tokenInput.client_secret = preregistered.clientSecret;
-  const token = await fetch(`${baseUrl}/token`, {
+  const tokenPath = oauthPathKind === "generic" ? "/token" : oauthPaths(endpoint).token;
+  const token = await fetch(`${baseUrl}${tokenPath}`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(tokenInput),
@@ -387,10 +407,14 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
     const mock = await startMock({ profile: "servicenow" });
     const endpoint = "/sncapps/mcp-server/mcp/sn_mcp_server_default";
     const clientId = PREREGISTERED_CLIENT.clientId;
-    const base = { baseUrl: mock.baseUrl, endpoint, clientId, scopes: ["mcp_server"] };
+    const base = { baseUrl: mock.baseUrl, endpoint, clientId, scopes: ["mcp_server"], oauthPathKind: "provider" as const };
 
     const metadata = await (await fetch(`${mock.baseUrl}/.well-known/oauth-authorization-server`)).json();
     expect(metadata.registration_endpoint).toBeUndefined();
+    expect(metadata.authorization_endpoint).toBe(`${mock.baseUrl}/oauth_auth.do`);
+    expect(metadata.token_endpoint).toBe(`${mock.baseUrl}/oauth_token.do`);
+    expect(metadata.revocation_endpoint).toBe(`${mock.baseUrl}/oauth_revoke.do`);
+    expect(metadata.token_endpoint_auth_methods_supported).toEqual(["client_secret_post"]);
     expect((await fetch(`${mock.baseUrl}/register`, { method: "POST" })).status).toBe(404);
 
     await expectOAuthError(await fetch(buildAuthorizeUrl({ ...base, clientId: "unregistered-client" }), { redirect: "manual" }), "invalid_client");
@@ -787,7 +811,7 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
   test("pins ServiceNow, Work IQ, and Agent 365 enterprise topology and catalog fixtures to official references", async () => {
     const serviceNow = await startMock({ profile: "servicenow" });
     expect(serviceNow.health.fixtureContract).toMatchObject({
-      verifiedAt: "2026-07-10",
+      verifiedAt: "2026-07-11",
       registrationMode: "manual",
       identityProvider: "servicenow-instance-oauth",
       resource: `${serviceNow.baseUrl}/sncapps/mcp-server/mcp/sn_mcp_server_default`,
@@ -795,6 +819,9 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
     });
     expect((serviceNow.health.fixtureContract as { documentation: string[] }).documentation).toContain(
       "https://www.servicenow.com/docs/r/intelligent-experiences/connect-mcp-server-client.html",
+    );
+    expect((serviceNow.health.fixtureContract as { documentation: string[] }).documentation).toContain(
+      "https://www.servicenow.com/docs/r/platform-security/authentication/authorization-workflow.html",
     );
     const serviceNowInitialized = await initialize(
       serviceNow.baseUrl,
@@ -818,7 +845,7 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
 
     const workIq = await startMock({ profile: "workiq" });
     expect(workIq.health.fixtureContract).toMatchObject({
-      verifiedAt: "2026-07-10",
+      verifiedAt: "2026-07-11",
       registrationMode: "pre_registered",
       identityProvider: "microsoft-entra-tenant",
       tenantId: "mock-tenant",
@@ -829,6 +856,9 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
     const workIqMetadata = await (await fetch(`${workIq.baseUrl}/.well-known/oauth-authorization-server`)).json();
     expect(workIqMetadata.issuer).toBe(`${workIq.baseUrl}/mock-entra/mock-tenant/v2.0`);
     expect(workIqMetadata.registration_endpoint).toBeUndefined();
+    expect(workIqMetadata.authorization_endpoint).toBe(`${workIq.baseUrl}/mock-entra/mock-tenant/oauth2/v2.0/authorize`);
+    expect(workIqMetadata.token_endpoint).toBe(`${workIq.baseUrl}/mock-entra/mock-tenant/oauth2/v2.0/token`);
+    expect(workIqMetadata.token_endpoint_auth_methods_supported).toEqual(["client_secret_post"]);
     expect((await fetch(`${workIq.baseUrl}/.well-known/oauth-authorization-server/mock-entra/mock-tenant/v2.0`)).status).toBe(200);
     const workIqInitialized = await initialize(workIq.baseUrl, "/mcp", "mock-access-token");
     const workIqDefinitions = await listEntireCatalogDefinitions(
@@ -879,7 +909,7 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
     expect(agent365.health).toMatchObject({
       endpoint: "/agents/tenants/mock-tenant/servers/mcp_MailTools",
       fixtureContract: {
-        verifiedAt: "2026-07-10",
+        verifiedAt: "2026-07-11",
         registrationMode: "pre_registered",
         tenantId: "mock-tenant",
         audience: "api://05879165-0320-489e-b644-f72b33f3edf0",

@@ -220,7 +220,7 @@ export function McpConnectionsScreen() {
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
   const [testOutcome, setTestOutcome] = useState<{
     connectionId: string;
-    outcome: { status: "ready"; result: McpConnectionTestResult } | {
+    outcome: { status: "result"; result: McpConnectionTestResult } | {
       status: "error";
       message: string;
       testId: string | null;
@@ -286,7 +286,7 @@ export function McpConnectionsScreen() {
     setTestOutcome(null);
     try {
       const result = await testConnection.mutateAsync(connectionId);
-      setTestOutcome({ connectionId, outcome: { status: "ready", result } });
+      setTestOutcome({ connectionId, outcome: { status: "result", result } });
     } catch (error) {
       setTestOutcome({
         connectionId,
@@ -1096,7 +1096,7 @@ function ConnectionRow({
   polling: boolean;
   connecting: boolean;
   testing: boolean;
-  testOutcome: { status: "ready"; result: McpConnectionTestResult } | {
+  testOutcome: { status: "result"; result: McpConnectionTestResult } | {
     status: "error";
     message: string;
     testId: string | null;
@@ -1110,6 +1110,8 @@ function ConnectionRow({
   const needsOAuthConnect = !isPerMember && connection.authType === "oauth" && !connection.connected;
   const canTest = connection.authType !== "oauth"
     || (isPerMember ? connection.connectedForMe : connection.connected);
+  const testResult = testOutcome?.status === "result" ? testOutcome.result : null;
+  const testHasWarning = testResult?.status === "warning";
 
   return (
     <div className="px-6 py-4">
@@ -1174,14 +1176,18 @@ function ConnectionRow({
           </DenButton>
         </div>
       </div>
-      {testOutcome?.status === "ready" ? (
-        <div data-testid={`mcp-connection-test-result-${connection.id}`} className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] text-emerald-900">
-          <p className="font-semibold">{summarizeMcpConnectionTest(testOutcome.result)}</p>
-          <p className="mt-1 break-words text-emerald-800">{visibleMcpToolNames(testOutcome.result)}</p>
-          <p className="mt-1 font-mono text-[11px] text-emerald-700">
-            {testOutcome.result.catalogHash.slice(0, 22)}… · {testOutcome.result.elapsedMs} ms · {testOutcome.result.sessionUsed ? "session established" : "stateless"}
+      {testResult ? (
+        <div
+          data-testid={`mcp-connection-test-result-${connection.id}`}
+          data-status={testResult.status}
+          className={`mt-3 rounded-2xl border px-4 py-3 text-[12px] ${testHasWarning ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}
+        >
+          <p className="font-semibold">{summarizeMcpConnectionTest(testResult)}</p>
+          <p className={`mt-1 break-words ${testHasWarning ? "text-amber-800" : "text-emerald-800"}`}>{visibleMcpToolNames(testResult)}</p>
+          <p className={`mt-1 font-mono text-[11px] ${testHasWarning ? "text-amber-700" : "text-emerald-700"}`}>
+            {testResult.catalogHash.slice(0, 22)}… · {testResult.elapsedMs} ms · {testResult.sessionUsed ? "session established" : "stateless"}
           </p>
-          <p className="mt-1 font-mono text-[11px] text-emerald-700">Diagnostic ID: {testOutcome.result.testId}</p>
+          <p className={`mt-1 font-mono text-[11px] ${testHasWarning ? "text-amber-700" : "text-emerald-700"}`}>Diagnostic ID: {testResult.testId}</p>
         </div>
       ) : testOutcome?.status === "error" ? (
         <div data-testid={`mcp-connection-test-error-${connection.id}`} className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] text-red-700">

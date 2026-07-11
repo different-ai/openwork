@@ -1,5 +1,6 @@
 export type McpConnectionTestResult = {
-  status: "ready";
+  status: "ready" | "warning";
+  warnings: McpConnectionTestWarningCode[];
   testId: string;
   protocolVersion: string;
   transport: "streamable_http";
@@ -12,6 +13,12 @@ export type McpConnectionTestResult = {
   catalogHash: string;
   elapsedMs: number;
 };
+
+export const MCP_CONNECTION_TEST_WARNING_MESSAGES = {
+  empty_tool_catalog: "The MCP server is reachable, but it returned no tools. Check provider assignments, permissions, and catalog configuration.",
+} as const;
+
+export type McpConnectionTestWarningCode = keyof typeof MCP_CONNECTION_TEST_WARNING_MESSAGES;
 
 export const MCP_CONNECTION_TEST_FAILURE_MESSAGES = {
   mcp_test_timeout: "The MCP connection test timed out.",
@@ -62,6 +69,11 @@ function isFailureCode(value: unknown): value is McpConnectionTestFailureCode {
     && Object.prototype.hasOwnProperty.call(MCP_CONNECTION_TEST_FAILURE_MESSAGES, value);
 }
 
+function isWarningCode(value: unknown): value is McpConnectionTestWarningCode {
+  return typeof value === "string"
+    && Object.prototype.hasOwnProperty.call(MCP_CONNECTION_TEST_WARNING_MESSAGES, value);
+}
+
 export function parseMcpConnectionTestFailure(value: unknown): McpConnectionTestFailure | null {
   if (!isRecord(value)
     || value.error !== "connection_test_failed"
@@ -85,6 +97,7 @@ export function parseMcpConnectionTestResult(value: unknown): McpConnectionTestR
   if (!isRecord(value)) throw new Error("Connection test response was incomplete.");
   const {
     status,
+    warnings,
     testId,
     protocolVersion,
     transport,
@@ -98,7 +111,9 @@ export function parseMcpConnectionTestResult(value: unknown): McpConnectionTestR
     elapsedMs,
   } = value;
   if (
-    status !== "ready"
+    (status !== "ready" && status !== "warning")
+    || !Array.isArray(warnings)
+    || !warnings.every(isWarningCode)
     || typeof testId !== "string"
     || typeof protocolVersion !== "string"
     || transport !== "streamable_http"
@@ -116,11 +131,22 @@ export function parseMcpConnectionTestResult(value: unknown): McpConnectionTestR
   ) {
     throw new Error("Connection test response was incomplete.");
   }
-  if (toolPageCount < 0 || toolCount < 0 || elapsedMs < 0 || toolCount !== toolNames.length) {
+  const warningConsistency = status === "warning"
+    && toolCount === 0
+    && warnings.length === 1
+    && warnings[0] === "empty_tool_catalog";
+  if (toolPageCount < 0
+    || toolCount < 0
+    || elapsedMs < 0
+    || toolCount !== toolNames.length
+    || (status === "ready" && warnings.length > 0)
+    || (status === "warning" && !warningConsistency)
+  ) {
     throw new Error("Connection test response had inconsistent counts.");
   }
   return {
     status,
+    warnings,
     testId,
     protocolVersion,
     transport,
@@ -138,10 +164,14 @@ export function parseMcpConnectionTestResult(value: unknown): McpConnectionTestR
 export function summarizeMcpConnectionTest(result: McpConnectionTestResult): string {
   const pages = `${result.toolPageCount} ${result.toolPageCount === 1 ? "page" : "pages"}`;
   const tools = `${result.toolCount} ${result.toolCount === 1 ? "tool" : "tools"}`;
+  if (result.status === "warning") {
+    return `Protocol reached · ${result.protocolVersion} · no tools discovered across ${pages}`;
+  }
   return `Protocol ready · ${result.protocolVersion} · ${tools} across ${pages}`;
 }
 
 export function visibleMcpToolNames(result: McpConnectionTestResult, limit = 5): string {
+  if (result.toolNames.length === 0) return MCP_CONNECTION_TEST_WARNING_MESSAGES.empty_tool_catalog;
   const visible = result.toolNames.slice(0, limit);
   const hidden = result.toolNames.length - visible.length;
   return `${visible.join(", ")}${hidden > 0 ? `, +${hidden} more` : ""}`;

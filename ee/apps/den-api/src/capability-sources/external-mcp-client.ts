@@ -114,6 +114,12 @@ export const EXTERNAL_MCP_CONNECTION_TEST_FAILURE_CODES = [
   "mcp_catalog_tool_name_invalid",
 ] as const
 
+export const EXTERNAL_MCP_CONNECTION_TEST_WARNING_CODES = [
+  "empty_tool_catalog",
+] as const
+
+export type ExternalMcpConnectionTestWarningCode = typeof EXTERNAL_MCP_CONNECTION_TEST_WARNING_CODES[number]
+
 export type ExternalMcpConnectionTestFailureCode = typeof EXTERNAL_MCP_CONNECTION_TEST_FAILURE_CODES[number]
 
 export const EXTERNAL_MCP_CONNECTION_TEST_FAILURE_MESSAGES = {
@@ -786,7 +792,8 @@ export async function listExternalMcpTools(connection: ExternalMcpConnectionRow,
 }
 
 export type ExternalMcpConnectionTestResult = {
-  status: "ready"
+  status: "ready" | "warning"
+  warnings: ExternalMcpConnectionTestWarningCode[]
   testId: string
   protocolVersion: string
   transport: "streamable_http"
@@ -932,8 +939,12 @@ export async function testExternalMcpConnection(
 
     catalogEntries.sort((left, right) => left.name.localeCompare(right.name))
     const catalogHash = `sha256:${createHash("sha256").update(JSON.stringify(catalogEntries)).digest("hex")}`
+    const warnings: ExternalMcpConnectionTestWarningCode[] = toolNames.length === 0
+      ? ["empty_tool_catalog"]
+      : []
     return {
-      status: "ready",
+      status: warnings.length > 0 ? "warning" : "ready",
+      warnings,
       testId,
       protocolVersion,
       transport: "streamable_http",
