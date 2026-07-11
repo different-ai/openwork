@@ -59,6 +59,7 @@ let slackServer: FakeMcpServer | undefined
 let authedSlackServer: FakeMcpServer | undefined
 let notionServer: FakeMcpServer | undefined
 let refreshErrorServer: FakeMcpServer | undefined
+let providerErrorServer: FakeMcpServer | undefined
 
 const slackTools: FakeTool[] = [
   { name: "slack-send-message", description: "Send a message to a Slack channel or DM." },
@@ -127,6 +128,28 @@ function startErrorMcpServer(message: string): FakeMcpServer {
     url: `http://127.0.0.1:${server.port}/mcp`,
     stop: () => server.stop(true),
   }
+}
+
+function startProviderErrorMcpServer(): FakeMcpServer {
+  const app = new Hono()
+  app.all("/mcp", async (c) => {
+    const server = new McpServer({ name: "provider-error", version: "1.0.0" })
+    server.registerTool(
+      "create_change",
+      { description: "Create an enterprise change", inputSchema: z.object({}) },
+      async () => ({
+        isError: true,
+        content: textContent("Provider ACL denied this operation; internal detail must not escape."),
+      }),
+    )
+    const transport = new StreamableHTTPTransport()
+    await server.connect(transport)
+    const response = await transport.handleRequest(c) ?? new Response(null, { status: 204 })
+    response.headers.set("x-servicenow-request-id", "sn-request-provider-error-123")
+    return response
+  })
+  const server = Bun.serve({ port: 0, fetch: app.fetch })
+  return { url: `http://127.0.0.1:${server.port}/mcp`, stop: () => server.stop(true) }
 }
 
 function standaloneConnection(
@@ -251,6 +274,7 @@ beforeAll(async () => {
   authedSlackServer = startFakeMcpServer("fake-authed-slack", slackTools, "valid-key")
   notionServer = startFakeMcpServer("fake-notion", notionTools)
   refreshErrorServer = startErrorMcpServer("Invalid refresh token")
+  providerErrorServer = startProviderErrorMcpServer()
 })
 
 afterAll(() => {
@@ -258,6 +282,7 @@ afterAll(() => {
   authedSlackServer?.stop()
   notionServer?.stop()
   refreshErrorServer?.stop()
+  providerErrorServer?.stop()
   mock.restore()
 })
 
@@ -372,6 +397,71 @@ test("dead-url: Connections list sees Slack and search returns an error status",
   expect(matches[0]?.hint).toContain("inspect")
 })
 
+test("dead-url execution returns a structured connection diagnostic instead of throwing", async () => {
+  const seed = await seedOrganization("dead-url-execute")
+  const connection = await createGrantedConnection(seed, {
+    name: "Ticketing",
+    authType: "none",
+    credentialMode: "shared",
+    url: "http://127.0.0.1:9/mcp",
+  })
+
+  const result = await executeExternalCapability({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId: connection.id,
+    toolName: "lookup_incidents",
+    args: {},
+    redirectUriBase,
+  })
+
+  expect(result.ok).toBe(false)
+  if (result.ok) throw new Error("Dead MCP execution unexpectedly succeeded")
+  expect(result).toMatchObject({
+    error: "connection_failed",
+    diagnostic: {
+      phase: "NETWORK_TCP",
+      category: "network_failure",
+      code: "MCP_ECONNREFUSED",
+      actionOwner: "network_admin",
+    },
+  })
+  expect(result.message).toContain("Diagnostic reference")
+})
+
+test("MCP tool isError is surfaced as a provider failure, not transport success", async () => {
+  if (!providerErrorServer) throw new Error("Provider-error MCP server was not started")
+  const seed = await seedOrganization("provider-is-error")
+  const connection = await createGrantedConnection(seed, {
+    name: "ServiceNow",
+    authType: "none",
+    credentialMode: "shared",
+    url: providerErrorServer.url,
+  })
+  const result = await executeExternalCapability({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId: connection.id,
+    toolName: "create_change",
+    args: {},
+    redirectUriBase,
+  })
+  expect(result.ok).toBe(false)
+  if (result.ok) throw new Error("Provider isError unexpectedly returned success")
+  expect(result).toMatchObject({
+    error: "provider_error",
+    diagnostic: {
+      phase: "PROVIDER_EXECUTION",
+      category: "provider_tool_error",
+      code: "MCP_PROVIDER_TOOL_ERROR",
+      highestPassed: "protocol_ready",
+      providerRequestId: "sn-request-provider-error-123",
+      httpStatus: 200,
+    },
+  })
+  expect(result.message).not.toContain("internal detail")
+})
+
 test("stale-apikey-looks-connected: stored API key looks connected and search returns an error status", async () => {
   if (!authedSlackServer) throw new Error("Authenticated Slack MCP server was not started")
 
@@ -432,7 +522,7 @@ test("stale-oauth-token-looks-connected: stored OAuth token looks connected and 
   expect(matches[0]?.status).toBe("error")
 })
 
-test("JSON-RPC invalid refresh token names the downstream connector and exact recovery action", async () => {
+test("JSON-RPC initialize errors are not mislabeled as OAuth refresh failures", async () => {
   if (!refreshErrorServer) throw new Error("Refresh-error MCP server was not started")
 
   const seed = await seedOrganization("invalid-refresh-token")
@@ -451,20 +541,28 @@ test("JSON-RPC invalid refresh token names the downstream connector and exact re
     kind: "connection_status",
     status: "error",
     connectionStatus: {
-      layer: "downstream_provider",
+      layer: "mcp_connection",
       connectionName: "Knowledge Hub",
       authType: "oauth",
-      state: "reauth_required",
-      errorCode: "invalid_refresh_token",
+      state: "provider_error",
+      errorCode: "provider_error",
       actor: "organization_admin",
       action: {
-        type: "reconnect",
+        type: "inspect_connection",
         surface: "openwork_organization_connections",
         retry: "search_capabilities",
       },
+      diagnostic: {
+        phase: "MCP_INITIALIZE",
+        category: "mcp_protocol_failure",
+        code: "MCP_MCP_INITIALIZE",
+        highestPassed: "reachable",
+        jsonRpcCode: -32603,
+      },
     },
   })
-  expect(matches[0]?.hint).toContain("OpenWork Cloud itself is still connected")
+  expect(matches[0]?.hint).toContain("Diagnostic reference")
+  expect(matches[0]?.hint).not.toContain("Reconnect")
   if (process.env.OPENWORK_EVAL_VERBOSE === "1") {
     console.log("E2E_CONNECTION_STATUS", JSON.stringify(matches[0]?.connectionStatus))
   }

@@ -7,13 +7,14 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { z } from "zod"
 import { memberFacingMcpConnectionsEnabled } from "../capability-sources/external-mcp-rollout.js"
+import { EXTERNAL_MCP_DIAGNOSTIC_PHASES } from "../capability-sources/external-mcp-diagnostics.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { db } from "../db.js"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { compareCapabilityMatches, SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter, type CapabilityMatch } from "./search.js"
-import { executeExternalCapability, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities } from "./external-capabilities.js"
+import { executeExternalCapability, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities, type ExternalCapabilityExecuteResult } from "./external-capabilities.js"
 import { executeMarketplaceCapability, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType } from "./marketplace-capabilities.js"
 import { executeSkillCapability, parseSkillCapabilityName, searchSkillCapabilities } from "./skill-capabilities.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
@@ -38,8 +39,25 @@ export const EXECUTE_CAPABILITY_ANNOTATIONS: ToolAnnotations = {
   openWorldHint: true,
 }
 
+const externalMcpDiagnosticOutputSchema = z.object({
+  referenceId: z.string(),
+  phase: z.enum(EXTERNAL_MCP_DIAGNOSTIC_PHASES),
+  category: z.string(),
+  code: z.string(),
+  highestPassed: z.enum(["configured", "reachable", "authorized", "protocol_ready", "catalog_ready", "operation_ready"]),
+  retryable: z.boolean(),
+  actionOwner: z.enum(["openwork", "network_admin", "provider_admin", "organization_admin", "member"]),
+  operatorAction: z.string(),
+  message: z.string(),
+  httpStatus: z.number().int().optional(),
+  operationPhase: z.enum(EXTERNAL_MCP_DIAGNOSTIC_PHASES).optional(),
+  outbound: z.object({ origin: z.string(), pathHash: z.string() }).optional(),
+  providerRequestId: z.string().optional(),
+  jsonRpcCode: z.number().int().optional(),
+})
+
 const connectionStatusOutputSchema = z.object({
-  layer: z.literal("downstream_provider"),
+  layer: z.enum(["mcp_connection", "downstream_provider"]),
   connectionId: z.string(),
   connectionName: z.string(),
   authType: z.enum(["oauth", "apikey", "none"]),
@@ -54,6 +72,7 @@ const connectionStatusOutputSchema = z.object({
     surface: z.enum(["openwork_your_connections", "openwork_organization_connections", "provider_admin_console"]),
     retry: z.literal("search_capabilities"),
   }),
+  diagnostic: externalMcpDiagnosticOutputSchema.optional(),
 })
 
 const capabilityMatchOutputSchema = z.object({
@@ -96,6 +115,19 @@ export type ExecuteCapabilityToolResult = {
 
 function textContent(text: string): { text: string; type: "text" }[] {
   return [{ type: "text", text }]
+}
+
+export function externalCapabilityErrorToolResult(
+  result: Exclude<ExternalCapabilityExecuteResult, { ok: true }>,
+): ExecuteCapabilityToolResult {
+  return {
+    isError: true,
+    content: textContent(JSON.stringify({
+      error: result.error,
+      message: result.message,
+      ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
+    })),
+  }
 }
 
 export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T[]) {
@@ -363,10 +395,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
                 redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
               })
               if (!result.ok) {
-                return {
-                  isError: true,
-                  content: textContent(JSON.stringify({ error: result.error, message: result.message })),
-                }
+                return externalCapabilityErrorToolResult(result)
               }
               // The SDK's callTool() can return either the standard {content:[...]}
               // shape or a legacy-compatibility {toolResult} shape; normalize to

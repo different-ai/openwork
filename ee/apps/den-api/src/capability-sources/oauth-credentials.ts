@@ -87,6 +87,13 @@ export async function getOrgOAuthClient(organizationId: OrganizationId, provider
   return rows[0] ? normalizeOrgOAuthClientRow(rows[0]) : null
 }
 
+export async function deleteOrgOAuthClient(organizationId: OrganizationId, providerId: string): Promise<void> {
+  await db.delete(OrgOAuthClientTable).where(and(
+    eq(OrgOAuthClientTable.organizationId, organizationId),
+    eq(OrgOAuthClientTable.providerId, providerId),
+  ))
+}
+
 export async function upsertOrgOAuthClient(input: {
   organizationId: OrganizationId
   providerId: string
