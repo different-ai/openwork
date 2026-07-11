@@ -352,6 +352,13 @@ test("desktop bootstrap writes include a fresh writtenAt stamp", async () => {
   });
 });
 
+test("reports configured=false when no bootstrap file backs the config", async () => {
+  await withIsolatedBootstrapStore(async ({ store }) => {
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.configured, false);
+  });
+});
+
 test("clearDesktopBootstrapConfig removes bootstrap files without deleting workspace state", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath, userDataPath }) => {
     const workspaceStatePath = path.join(userDataPath, "openwork-workspaces.json");
