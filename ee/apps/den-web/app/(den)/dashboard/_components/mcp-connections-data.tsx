@@ -34,6 +34,15 @@ export type ExternalMcpAuthType = "oauth" | "apikey" | "none";
 export type ExternalMcpCredentialMode = "shared" | "per_member";
 export type ExternalMcpConnectionScope = "usable" | "manageable";
 
+export const MCP_DIAGNOSTIC_CATALOG_READY_SCOPE_BOUNDARY =
+  "Catalog Ready proves the complete tool catalog. Provider operations and mutations were not tested.";
+
+export function shouldShowMcpDiagnosticScopeBoundary(
+  attempt: Pick<McpDiagnosticAttempt, "status" | "highestHealthLevel"> | null | undefined,
+): boolean {
+  return attempt?.status === "succeeded" && attempt.highestHealthLevel === "catalog_ready";
+}
+
 export type ExternalMcpAccessSummary = {
   orgWide: boolean;
   memberIds: string[];
