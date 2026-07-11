@@ -70,12 +70,51 @@ const EXTERNAL_MCP_CATALOG_LIMIT_BYTES = 8 * 1024 * 1024
 
 export type ExternalMcpLifecycleDeadline = {
   expiresAt: number
+  signal: AbortSignal
+  abort: (reason?: unknown) => void
 }
 
 export function createExternalMcpLifecycleDeadline(
   timeoutMs = EXTERNAL_MCP_LIFECYCLE_TIMEOUT_MS,
 ): ExternalMcpLifecycleDeadline {
-  return { expiresAt: Date.now() + Math.max(1, timeoutMs) }
+  const controller = new AbortController()
+  return {
+    expiresAt: Date.now() + Math.max(1, timeoutMs),
+    signal: controller.signal,
+    abort: (reason?: unknown) => controller.abort(reason),
+  }
+}
+
+function assertExternalMcpLifecycleActive(input: {
+  deadline: ExternalMcpLifecycleDeadline
+  diagnostic: ExternalMcpDiagnosticTracker
+  phase: ExternalMcpDiagnosticPhase
+}): void {
+  if (!input.deadline.signal.aborted && Date.now() < input.deadline.expiresAt) return
+  const reason = input.deadline.signal.reason
+  if (reason instanceof ExternalMcpDiagnosticError) throw reason
+  const error = lifecycleDeadlineDiagnosticError({ tracker: input.diagnostic, phase: input.phase })
+  if (!input.deadline.signal.aborted) input.deadline.abort(error)
+  throw error
+}
+
+/**
+ * The MCP SDK owns OAuth discovery, registration, refresh, and finishAuth
+ * fetches. finishAuth accepts no RequestOptions, so bind the transport fetch
+ * itself to the lifecycle signal instead of relying on the outer promise race.
+ */
+export function bindExternalMcpFetchToLifecycle(
+  baseFetch: (url: string | URL, init?: RequestInit) => Promise<Response>,
+  deadline: ExternalMcpLifecycleDeadline,
+  diagnostic: ExternalMcpDiagnosticTracker,
+) {
+  return async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    assertExternalMcpLifecycleActive({ deadline, diagnostic, phase: diagnostic.activePhase })
+    const signal = init?.signal
+      ? AbortSignal.any([init.signal, deadline.signal])
+      : deadline.signal
+    return baseFetch(url, { ...init, signal })
+  }
 }
 
 export async function runExternalMcpRequestWithinDeadline<T>(input: {
@@ -84,14 +123,13 @@ export async function runExternalMcpRequestWithinDeadline<T>(input: {
   phase: ExternalMcpDiagnosticPhase
   operation: (options: RequestOptions) => Promise<T>
 }): Promise<T> {
+  input.diagnostic.begin(input.phase)
   const remaining = Math.floor(input.deadline.expiresAt - Date.now())
-  if (remaining <= 0) {
-    throw lifecycleDeadlineDiagnosticError({ tracker: input.diagnostic, phase: input.phase })
-  }
+  assertExternalMcpLifecycleActive({ deadline: input.deadline, diagnostic: input.diagnostic, phase: input.phase })
 
   const controller = new AbortController()
   const options: RequestOptions = {
-    signal: controller.signal,
+    signal: AbortSignal.any([controller.signal, input.deadline.signal]),
     timeout: Math.max(1, Math.min(EXTERNAL_MCP_CALL_TIMEOUT_MS, remaining)),
     maxTotalTimeout: remaining,
     resetTimeoutOnProgress: false,
@@ -101,8 +139,13 @@ export async function runExternalMcpRequestWithinDeadline<T>(input: {
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
-      controller.abort()
-      reject(lifecycleDeadlineDiagnosticError({ tracker: input.diagnostic, phase: input.phase }))
+      const error = lifecycleDeadlineDiagnosticError({
+        tracker: input.diagnostic,
+        phase: input.diagnostic.activePhase,
+      })
+      input.deadline.abort(error)
+      controller.abort(error)
+      reject(error)
     }, remaining)
     void Promise.resolve().then(() => input.operation(options)).then(
       (value) => {
@@ -136,6 +179,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   private readonly signedState?: string
   private readonly member?: ExternalMcpMemberContext
   private readonly diagnostic: ExternalMcpDiagnosticTracker
+  private readonly lifecycleDeadline?: ExternalMcpLifecycleDeadline
   /** Captured by redirectToAuthorization so the HTTP route can hand it back to the admin's browser instead of actually redirecting anything server-side. */
   lastAuthorizeUrl: string | null = null
 
@@ -145,12 +189,14 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     signedState: string | undefined,
     member: ExternalMcpMemberContext | undefined,
     diagnostic: ExternalMcpDiagnosticTracker,
+    lifecycleDeadline?: ExternalMcpLifecycleDeadline,
   ) {
     this.connection = connection
     this.redirectUri = redirectUri
     this.signedState = signedState
     this.member = member
     this.diagnostic = diagnostic
+    this.lifecycleDeadline = lifecycleDeadline
     if (connection.credentialMode === "per_member" && connection.authType === "oauth" && !member) {
       throw new Error(`Connection "${connection.id}" uses per-member credentials; a member context is required.`)
     }
@@ -167,6 +213,11 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       orgMembershipId: this.member.orgMembershipId,
       providerId: this.connection.id,
     })
+  }
+
+  private assertLifecycleActive(phase: ExternalMcpDiagnosticPhase): void {
+    if (!this.lifecycleDeadline) return
+    assertExternalMcpLifecycleActive({ deadline: this.lifecycleDeadline, diagnostic: this.diagnostic, phase })
   }
 
   get redirectUrl(): string {
@@ -201,7 +252,9 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
     const client = await getOrgOAuthClient(this.connection.organizationId, this.connection.id)
+    this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
     if (!client) return undefined
     this.diagnostic.passed("AUTH_CLIENT_REGISTRATION", "reachable")
     const extra = (client.extra ?? {}) as { clientInformation?: OAuthClientInformationFull }
@@ -210,6 +263,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveClientInformation(clientInformation: OAuthClientInformationMixed): Promise<void> {
+    this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
     await upsertOrgOAuthClient({
       organizationId: this.connection.organizationId,
       providerId: this.connection.id,
@@ -222,8 +276,10 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
+    this.assertLifecycleActive("CONTINUITY_REFRESH")
     if (this.isPerMember) {
       const account = await this.memberAccount()
+      this.assertLifecycleActive("CONTINUITY_REFRESH")
       if (!account?.accessToken) return undefined
       return {
         access_token: account.accessToken,
@@ -245,6 +301,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     const expiresAt = tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null
     if (this.isPerMember && this.member) {
       const existing = await this.memberAccount()
+      this.assertLifecycleActive(this.diagnostic.activePhase === "CONTINUITY_REFRESH" ? "CONTINUITY_REFRESH" : "AUTH_TOKEN_ACQUISITION")
       await upsertConnectedAccount({
         organizationId: this.connection.organizationId,
         orgMembershipId: this.member.orgMembershipId,
@@ -260,6 +317,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
       return
     }
+    this.assertLifecycleActive(this.diagnostic.activePhase === "CONTINUITY_REFRESH" ? "CONTINUITY_REFRESH" : "AUTH_TOKEN_ACQUISITION")
     await saveExternalMcpTokens({
       connectionId: this.connection.id,
       accessToken: tokens.access_token,
@@ -300,6 +358,11 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
           organizationId: this.connection.organizationId,
           connectionId: this.connection.id,
         })
+        const refreshed = await getExternalMcpConnection({
+          organizationId: this.connection.organizationId,
+          connectionId: this.connection.id,
+        })
+        if (refreshed) this.connection = refreshed
       }
     }
     if ((scope === "all" || scope === "verifier") && !this.isPerMember) {
@@ -321,6 +384,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
+    this.assertLifecycleActive("AUTH_USER_OR_WORKLOAD")
     if (this.isPerMember && this.member) {
       await upsertConnectedAccount({
         organizationId: this.connection.organizationId,
@@ -334,8 +398,10 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async codeVerifier(): Promise<string> {
+    this.assertLifecycleActive("AUTH_TOKEN_ACQUISITION")
     if (this.isPerMember) {
       const account = await this.memberAccount()
+      this.assertLifecycleActive("AUTH_TOKEN_ACQUISITION")
       if (!account?.pendingCodeVerifier) {
         throw new Error("No pending PKCE code verifier for this member on this external MCP connection.")
       }
@@ -354,19 +420,26 @@ function buildTransport(
   signedState?: string,
   member?: ExternalMcpMemberContext,
   diagnosticReferenceId?: string,
+  lifecycleDeadline?: ExternalMcpLifecycleDeadline,
 ) {
-  const diagnostic = new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID())
+  const diagnostic = new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID(), {
+    authType: connection.authType,
+    credentialMode: connection.credentialMode,
+  })
   const provider = connection.authType === "oauth"
-    ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member, diagnostic)
+    ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member, diagnostic, lifecycleDeadline)
     : undefined
   const guardedFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
+  const lifecycleFetch = lifecycleDeadline
+    ? bindExternalMcpFetchToLifecycle(guardedFetch, lifecycleDeadline, diagnostic)
+    : guardedFetch
   const transport = new StreamableHTTPClientTransport(new URL(connection.url), {
     authProvider: provider,
     // SSRF guard: every outbound request (the MCP endpoint itself, but also
     // discovery documents and token endpoints the SDK follows to OTHER
     // hosts) is checked against private/reserved address ranges at request
     // time. Hosted-deployment protection; self-hosted/dev opt out via env.
-    fetch: createExternalMcpDiagnosticFetch({ fetch: guardedFetch, endpoint: connection.url, tracker: diagnostic }),
+    fetch: createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint: connection.url, tracker: diagnostic }),
     requestInit: connection.authType === "apikey" && connection.apiKey
       ? { headers: { authorization: `Bearer ${connection.apiKey}` } }
       : undefined,
@@ -663,8 +736,15 @@ export async function connectExternalMcp(
   diagnosticReferenceId?: string,
 ): Promise<ExternalMcpConnectResult> {
   const client = buildClient()
-  const { transport, provider, diagnostic } = buildTransport(connection, redirectUri, signedState, member, diagnosticReferenceId)
   const deadline = createExternalMcpLifecycleDeadline()
+  const { transport, provider, diagnostic } = buildTransport(
+    connection,
+    redirectUri,
+    signedState,
+    member,
+    diagnosticReferenceId,
+    deadline,
+  )
   let result: ExternalMcpConnectResult | undefined
   let primaryError: unknown
   try {
@@ -758,7 +838,15 @@ export async function completeExternalMcpAuth(
   diagnosticReferenceId?: string,
 ): Promise<void> {
   const client = buildClient()
-  const { transport, provider, diagnostic } = buildTransport(connection, redirectUri, undefined, member, diagnosticReferenceId)
+  const deadline = createExternalMcpLifecycleDeadline()
+  const { transport, provider, diagnostic } = buildTransport(
+    connection,
+    redirectUri,
+    undefined,
+    member,
+    diagnosticReferenceId,
+    deadline,
+  )
   await runExternalMcpAuthCompletionLifecycle({
     diagnostic,
     finishAuth: () => transport.finishAuth(code),
@@ -767,6 +855,7 @@ export async function completeExternalMcpAuth(
     validateMcp: (options) => client.connect(transport, options),
     invalidateTokens: () => provider?.invalidateCredentials?.("tokens") ?? Promise.resolve(),
     close: () => client.close(),
+    deadline,
   })
 }
 
@@ -778,8 +867,15 @@ export async function listExternalMcpTools(
   lifecycleDeadline?: ExternalMcpLifecycleDeadline,
 ) {
   const client = buildClient()
-  const { transport, diagnostic } = buildTransport(connection, redirectUri, undefined, member, diagnosticReferenceId)
   const deadline = lifecycleDeadline ?? createExternalMcpLifecycleDeadline()
+  const { transport, diagnostic } = buildTransport(
+    connection,
+    redirectUri,
+    undefined,
+    member,
+    diagnosticReferenceId,
+    deadline,
+  )
   let operationError: unknown
   try {
     await runExternalMcpRequestWithinDeadline({
@@ -815,14 +911,15 @@ export async function callExternalMcpTool(input: {
   diagnosticReferenceId?: string
 }) {
   const client = buildClient()
+  const deadline = createExternalMcpLifecycleDeadline()
   const { transport, diagnostic } = buildTransport(
     input.connection,
     input.redirectUri,
     undefined,
     input.member,
     input.diagnosticReferenceId,
+    deadline,
   )
-  const deadline = createExternalMcpLifecycleDeadline()
   let operationError: unknown
   try {
     await runExternalMcpRequestWithinDeadline({

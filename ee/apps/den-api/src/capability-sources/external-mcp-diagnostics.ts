@@ -74,7 +74,7 @@ type FetchLike = (url: string | URL, init?: RequestInit) => Promise<Response>
 export const EXTERNAL_MCP_JSON_RESPONSE_LIMIT_BYTES = 4 * 1024 * 1024
 export const EXTERNAL_MCP_SSE_RESPONSE_LIMIT_BYTES = 16 * 1024 * 1024
 
-class ExternalMcpLifecycleDeadlineError extends Error {
+export class ExternalMcpLifecycleDeadlineError extends Error {
   constructor() {
     super("External MCP lifecycle deadline exceeded.")
     this.name = "ExternalMcpLifecycleDeadlineError"
@@ -755,6 +755,10 @@ export class ExternalMcpDiagnosticError extends Error {
 
 export class ExternalMcpDiagnosticTracker {
   readonly referenceId: string
+  private readonly credentialContext?: {
+    authType: "oauth" | "apikey" | "none"
+    credentialMode: "shared" | "per_member"
+  }
   private phase: ExternalMcpDiagnosticPhase = "CONFIGURATION"
   private highestPassed: ExternalMcpHealthLevel = "configured"
   private lastFailedPhase: ExternalMcpDiagnosticPhase | null = null
@@ -764,8 +768,16 @@ export class ExternalMcpDiagnosticTracker {
   private outbound: ExternalMcpSafeOutbound | null = null
   private providerRequestId: string | null = null
 
-  constructor(referenceId: string) {
+  constructor(referenceId: string, credentialContext?: {
+    authType: "oauth" | "apikey" | "none"
+    credentialMode: "shared" | "per_member"
+  }) {
     this.referenceId = referenceId
+    this.credentialContext = credentialContext
+  }
+
+  get activePhase(): ExternalMcpDiagnosticPhase {
+    return this.phase
   }
 
   begin(phase: ExternalMcpDiagnosticPhase): void {
@@ -847,11 +859,23 @@ export class ExternalMcpDiagnosticTracker {
     if (error instanceof ExternalMcpDiagnosticError) return error
     const source = errorCode(error) || !this.capturedFailure ? { phase: fallbackPhase, error } : this.capturedFailure
     const inferredClassification = classifyError(source.error, source.phase)
-    const classification = this.forcedClassification
+    const classified = this.forcedClassification
       && !TYPED_OAUTH_ERROR_NAMES.has(errorName(source.error))
       && inferredClassification.phase !== "MCP_VERSION"
       ? this.forcedClassification
       : inferredClassification
+    const classification: Classification = classified.actionOwner === "member"
+      && this.credentialContext
+      && (classified.phase.startsWith("AUTH_") || classified.phase === "CONTINUITY_REFRESH")
+      && this.credentialContext.credentialMode === "shared"
+      ? {
+          ...classified,
+          actionOwner: "organization_admin",
+          operatorAction: this.credentialContext.authType === "apikey"
+            ? "Update the organization-managed API key for this MCP connection, then retry."
+            : "Reconnect the organization-managed provider account, then retry.",
+        }
+      : classified
     const diagnosticWithoutMessage = {
       referenceId: this.referenceId,
       highestPassed: this.highestPassed,

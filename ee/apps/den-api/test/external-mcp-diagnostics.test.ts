@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
+import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
 import {
   ExternalMcpDiagnosticTracker,
   catalogDiagnosticError,
@@ -27,7 +29,77 @@ function networkError(code: string, secret = "Bearer super-secret-token") {
   return new Error("fetch failed", { cause })
 }
 
+class RecordingOAuthProvider implements OAuthClientProvider {
+  client: OAuthClientInformationMixed | undefined
+  tokensValue: OAuthTokens | undefined
+  savedClients = 0
+  savedTokens = 0
+  savedVerifiers = 0
+  redirects = 0
+
+  constructor(input: {
+    client?: OAuthClientInformationMixed
+    tokens?: OAuthTokens
+  } = {}) {
+    this.client = input.client
+    this.tokensValue = input.tokens
+  }
+
+  get redirectUrl(): string {
+    return "https://den.example.test/v1/mcp/callback"
+  }
+
+  get clientMetadata() {
+    return {
+      redirect_uris: [this.redirectUrl],
+      client_name: "OpenWork deadline test",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }
+  }
+
+  clientInformation(): OAuthClientInformationMixed | undefined {
+    return this.client
+  }
+
+  saveClientInformation(clientInformation: OAuthClientInformationMixed): void {
+    this.client = clientInformation
+    this.savedClients += 1
+  }
+
+  tokens(): OAuthTokens | undefined {
+    return this.tokensValue
+  }
+
+  saveTokens(tokens: OAuthTokens): void {
+    this.tokensValue = tokens
+    this.savedTokens += 1
+  }
+
+  redirectToAuthorization(): void {
+    this.redirects += 1
+  }
+
+  saveCodeVerifier(): void {
+    this.savedVerifiers += 1
+  }
+
+  codeVerifier(): string {
+    return "test-pkce-verifier"
+  }
+}
+
 describe("external MCP diagnostics", () => {
+  test("Turbo propagates the configured public Den API URL into local runtime tasks", async () => {
+    const turboConfig: unknown = await Bun.file(new URL("../../../../turbo.json", import.meta.url)).json()
+    expect(turboConfig).toHaveProperty("globalEnv")
+    if (typeof turboConfig !== "object" || turboConfig === null || !("globalEnv" in turboConfig) || !Array.isArray(turboConfig.globalEnv)) {
+      throw new Error("turbo.json globalEnv is not an array")
+    }
+    expect(turboConfig.globalEnv).toContain("DEN_API_PUBLIC_URL")
+  })
+
   test.each([
     ["ENOTFOUND", "NETWORK_DNS", "dns_failure", "MCP_ENOTFOUND"],
     ["ECONNREFUSED", "NETWORK_TCP", "network_failure", "MCP_ECONNREFUSED"],
@@ -771,5 +843,145 @@ describe("external MCP diagnostics", () => {
       close: async () => { events.push("close") },
     })
     expect(events).toEqual(["token", "initialize", "close"])
+  })
+
+  test("aborts the real SDK finishAuth token request and prevents late token persistence", async () => {
+    const {
+      bindExternalMcpFetchToLifecycle,
+      createExternalMcpLifecycleDeadline,
+      runExternalMcpAuthCompletionLifecycle,
+    } = await import("../src/capability-sources/external-mcp-client.js")
+    const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js")
+
+    let tokenRequests = 0
+    let completedTokenResponses = 0
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url)
+        const origin = url.origin
+        if (url.pathname.includes("oauth-protected-resource")) {
+          return Response.json({
+            resource: `${origin}/mcp`,
+            authorization_servers: [origin],
+          })
+        }
+        if (url.pathname.includes("oauth-authorization-server") || url.pathname.includes("openid-configuration")) {
+          return Response.json({
+            issuer: origin,
+            authorization_endpoint: `${origin}/authorize`,
+            token_endpoint: `${origin}/token`,
+            response_types_supported: ["code"],
+            grant_types_supported: ["authorization_code", "refresh_token"],
+            code_challenge_methods_supported: ["S256"],
+            token_endpoint_auth_methods_supported: ["none"],
+          })
+        }
+        if (url.pathname === "/token") {
+          tokenRequests += 1
+          await Bun.sleep(120)
+          completedTokenResponses += 1
+          return Response.json({ access_token: "must-never-persist", token_type: "Bearer" })
+        }
+        return new Response(null, { status: 404 })
+      },
+    })
+    const endpoint = `http://127.0.0.1:${server.port}/mcp`
+    const diagnostic = new ExternalMcpDiagnosticTracker("req_real_finish_auth_deadline")
+    const deadline = createExternalMcpLifecycleDeadline(25)
+    const provider = new RecordingOAuthProvider({ client: { client_id: "pre-registered-client" } })
+    const lifecycleFetch = bindExternalMcpFetchToLifecycle(fetch, deadline, diagnostic)
+    const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
+      authProvider: provider,
+      fetch: createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint, tracker: diagnostic }),
+    })
+
+    try {
+      await expect(runExternalMcpAuthCompletionLifecycle({
+        diagnostic,
+        finishAuth: () => transport.finishAuth("delayed-authorization-code"),
+        validateMcp: async () => undefined,
+        invalidateTokens: async () => undefined,
+        close: () => transport.close(),
+        deadline,
+      })).rejects.toMatchObject({
+        diagnostic: {
+          phase: "AUTH_TOKEN_ACQUISITION",
+          code: "MCP_LIFECYCLE_DEADLINE",
+        },
+      })
+      await Bun.sleep(150)
+      expect(tokenRequests).toBe(1)
+      expect(completedTokenResponses).toBe(1)
+      expect(provider.savedTokens).toBe(0)
+      expect(provider.savedClients).toBe(0)
+      expect(provider.savedVerifiers).toBe(0)
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("aborts delayed SDK discovery registration before client or PKCE persistence", async () => {
+    const {
+      bindExternalMcpFetchToLifecycle,
+      createExternalMcpLifecycleDeadline,
+      runExternalMcpRequestWithinDeadline,
+    } = await import("../src/capability-sources/external-mcp-client.js")
+    const { auth } = await import("@modelcontextprotocol/sdk/client/auth.js")
+
+    let registrationRequests = 0
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url)
+        const origin = url.origin
+        if (url.pathname.includes("oauth-protected-resource")) {
+          return Response.json({ resource: `${origin}/mcp`, authorization_servers: [origin] })
+        }
+        if (url.pathname.includes("oauth-authorization-server") || url.pathname.includes("openid-configuration")) {
+          return Response.json({
+            issuer: origin,
+            authorization_endpoint: `${origin}/authorize`,
+            token_endpoint: `${origin}/token`,
+            registration_endpoint: `${origin}/register`,
+            response_types_supported: ["code"],
+            grant_types_supported: ["authorization_code", "refresh_token"],
+            code_challenge_methods_supported: ["S256"],
+            token_endpoint_auth_methods_supported: ["none"],
+          })
+        }
+        if (url.pathname === "/register") {
+          registrationRequests += 1
+          await Bun.sleep(120)
+          return Response.json({ client_id: "must-never-persist" })
+        }
+        return new Response(null, { status: 404 })
+      },
+    })
+    const endpoint = `http://127.0.0.1:${server.port}/mcp`
+    const diagnostic = new ExternalMcpDiagnosticTracker("req_real_dcr_deadline")
+    const deadline = createExternalMcpLifecycleDeadline(25)
+    const provider = new RecordingOAuthProvider()
+    const lifecycleFetch = bindExternalMcpFetchToLifecycle(fetch, deadline, diagnostic)
+    const diagnosticFetch = createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint, tracker: diagnostic })
+
+    try {
+      await expect(runExternalMcpRequestWithinDeadline({
+        deadline,
+        diagnostic,
+        phase: "MCP_INITIALIZE",
+        operation: async () => {
+          await auth(provider, { serverUrl: endpoint, fetchFn: diagnosticFetch })
+        },
+      })).rejects.toMatchObject({ diagnostic: { code: "MCP_LIFECYCLE_DEADLINE" } })
+      await Bun.sleep(150)
+      expect(registrationRequests).toBe(1)
+      expect(provider.savedClients).toBe(0)
+      expect(provider.savedTokens).toBe(0)
+      expect(provider.savedVerifiers).toBe(0)
+      expect(provider.redirects).toBe(0)
+    } finally {
+      server.stop(true)
+    }
   })
 })

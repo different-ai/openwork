@@ -17,6 +17,8 @@ import {
 } from "../capability-sources/external-mcp-client.js"
 import {
   ExternalMcpDiagnosticError,
+  externalMcpDiagnosticForLog,
+  safeExternalMcpEndpointForLog,
   type ExternalMcpDiagnostic,
 } from "../capability-sources/external-mcp-diagnostics.js"
 import { getConnectedAccount } from "../capability-sources/oauth-credentials.js"
@@ -159,11 +161,11 @@ export type ExternalConnectionStatus = {
   state: "needs_connection" | "reauth_required" | "provider_error"
   errorCode: "not_connected" | "invalid_refresh_token" | "invalid_grant" | "unauthorized" | "provider_error"
   message: string
-  actor: "member" | "organization_admin" | "provider_admin"
+  actor: ExternalMcpDiagnostic["actionOwner"]
   action: {
-    type: "connect" | "reconnect" | "update_credentials" | "inspect_connection" | "fix_provider"
+    type: "connect" | "reconnect" | "update_credentials" | "inspect_connection" | "fix_provider" | "fix_network" | "contact_openwork"
     label: string
-    surface: "openwork_your_connections" | "openwork_organization_connections" | "provider_admin_console"
+    surface: "openwork_your_connections" | "openwork_organization_connections" | "provider_admin_console" | "network_infrastructure" | "openwork_support"
     retry: "search_capabilities"
   }
   diagnostic?: ExternalMcpDiagnostic
@@ -260,6 +262,43 @@ export function externalConnectionErrorHint(
   return `The downstream provider for "${connectionName}" returned an error: ${message}. Ask an org admin to inspect "${connectionName}" in the OpenWork Cloud dashboard -> Connections, then search again. OpenWork Cloud itself is still connected. ${LIVE_PROBE_HINT}`
 }
 
+function diagnosticConnectionAction(input: {
+  connection: Pick<ExternalMcpConnectionRow, "authType">
+  state: ExternalConnectionStatus["state"]
+  diagnostic: ExternalMcpDiagnostic
+}): Pick<ExternalConnectionStatus, "actor" | "action"> {
+  const actor = input.diagnostic.actionOwner
+  let type: ExternalConnectionStatus["action"]["type"]
+  let surface: ExternalConnectionStatus["action"]["surface"]
+  if (actor === "openwork") {
+    type = "contact_openwork"
+    surface = "openwork_support"
+  } else if (actor === "network_admin") {
+    type = "fix_network"
+    surface = "network_infrastructure"
+  } else if (actor === "provider_admin") {
+    type = "fix_provider"
+    surface = "provider_admin_console"
+  } else if (actor === "member") {
+    type = input.state === "needs_connection" ? "connect" : "reconnect"
+    surface = "openwork_your_connections"
+  } else {
+    type = input.state === "reauth_required"
+      ? input.connection.authType === "apikey" ? "update_credentials" : "reconnect"
+      : "inspect_connection"
+    surface = "openwork_organization_connections"
+  }
+  return {
+    actor,
+    action: {
+      type,
+      surface,
+      label: input.diagnostic.operatorAction,
+      retry: "search_capabilities",
+    },
+  }
+}
+
 export function buildExternalConnectionStatus(input: {
   connection: Pick<ExternalMcpConnectionRow, "id" | "name" | "authType" | "credentialMode">
   state: ExternalConnectionStatus["state"]
@@ -268,6 +307,9 @@ export function buildExternalConnectionStatus(input: {
   diagnostic?: ExternalMcpDiagnostic
 }): ExternalConnectionStatus {
   const connectionName = input.connection.name
+  const diagnosticAction = input.diagnostic
+    ? diagnosticConnectionAction({ connection: input.connection, state: input.state, diagnostic: input.diagnostic })
+    : null
   if (input.state === "provider_error") {
     const providerAdminAction = PROVIDER_ADMIN_ACTION_PATTERN.test(input.message)
     return {
@@ -279,8 +321,8 @@ export function buildExternalConnectionStatus(input: {
       state: input.state,
       errorCode: input.errorCode,
       message: input.message,
-      actor: providerAdminAction ? "provider_admin" : "organization_admin",
-      action: {
+      actor: diagnosticAction?.actor ?? (providerAdminAction ? "provider_admin" : "organization_admin"),
+      action: diagnosticAction?.action ?? {
         type: providerAdminAction ? "fix_provider" : "inspect_connection",
         label: providerAdminAction
           ? `Fix ${connectionName} in the provider admin console`
@@ -319,8 +361,8 @@ export function buildExternalConnectionStatus(input: {
     state: input.state,
     errorCode: input.errorCode,
     message: input.message,
-    actor,
-    action: {
+    actor: diagnosticAction?.actor ?? actor,
+    action: diagnosticAction?.action ?? {
       type: actionType,
       label: `${actionVerb} ${connectionName}`,
       surface,
@@ -422,6 +464,17 @@ export async function collectBoundedExternalMcpSearchMatches<T>(input: {
   return retained
 }
 
+export type ExternalMcpSearchCoverage = {
+  eligibleConnections: number
+  probedConnections: number
+  truncated: boolean
+}
+
+export function externalMcpSearchCoverageHint(coverage: ExternalMcpSearchCoverage): string | undefined {
+  if (!coverage.truncated) return undefined
+  return `External MCP search inspected ${coverage.probedConnections} of ${coverage.eligibleConnections} eligible connections. Results may be incomplete; narrow the query using a connection name and search again.`
+}
+
 async function probeExternalMcpConnection(input: {
   connection: ExternalMcpConnectionRow
   member: McpMemberIdentity
@@ -495,6 +548,14 @@ async function probeExternalMcpConnection(input: {
     const nameTokens = tokenize(connection.name)
     const score = scoreText(nameTokens, nameTokens, input.queryTokens)
     if (score > 0) {
+      if (diagnostic) {
+        console.error("external_mcp_capability_search_probe_failed", {
+          connectionId: connection.id,
+          organizationId: connection.organizationId,
+          connectionEndpoint: safeExternalMcpEndpointForLog(connection.url),
+          ...externalMcpDiagnosticForLog(error, diagnostic.referenceId, "MCP_TOOL_DISCOVERY"),
+        })
+      }
       const authErrorCode = externalMcpAuthErrorCode(error, message)
       const state = authErrorCode ? "reauth_required" : "provider_error"
       add(statusMatch({
@@ -547,6 +608,7 @@ export async function searchExternalCapabilities(input: {
   query: string
   redirectUriBase: string
   limit?: number
+  reportCoverage?: (coverage: ExternalMcpSearchCoverage) => void
 }): Promise<ExternalCapabilityMatch[]> {
   if (!input.member) return []
   const queryTokens = tokenize(input.query)
@@ -561,6 +623,11 @@ export async function searchExternalCapabilities(input: {
     teamIds: input.member.teamIds,
   })
   const selectedConnections = selectExternalMcpSearchConnections(connections, queryTokens)
+  input.reportCoverage?.({
+    eligibleConnections: connections.length,
+    probedConnections: selectedConnections.length,
+    truncated: selectedConnections.length < connections.length,
+  })
   return await collectBoundedExternalMcpSearchMatches({
     connections: selectedConnections,
     deadline,
@@ -583,6 +650,8 @@ export type ExternalCapabilityExecuteResult =
       error: "unknown_capability" | "forbidden" | "connection_not_connected" | "needs_connection" | "connection_failed" | "provider_error"
       message: string
       diagnostic?: ExternalMcpDiagnostic
+      actionOwner?: ExternalMcpDiagnostic["actionOwner"]
+      operatorAction?: string
     }
 
 /**
@@ -669,6 +738,12 @@ export async function executeExternalCapability(input: {
     return { ok: true, result }
   } catch (error) {
     if (error instanceof ExternalMcpDiagnosticError) {
+      console.error("external_mcp_capability_execute_failed", {
+        connectionId: connection.id,
+        organizationId: connection.organizationId,
+        connectionEndpoint: safeExternalMcpEndpointForLog(connection.url),
+        ...externalMcpDiagnosticForLog(error, error.diagnostic.referenceId, "MCP_TOOL_EXECUTION"),
+      })
       return {
         ok: false,
         error: error.diagnostic.phase === "PROVIDER_EXECUTION" || error.diagnostic.phase === "PROVIDER_AUTHORIZATION"
@@ -676,6 +751,8 @@ export async function executeExternalCapability(input: {
           : "connection_failed",
         message: `${error.diagnostic.message} ${error.diagnostic.operatorAction} Diagnostic reference: ${error.diagnostic.referenceId}.`,
         diagnostic: error.diagnostic,
+        actionOwner: error.diagnostic.actionOwner,
+        operatorAction: error.diagnostic.operatorAction,
       }
     }
     throw error

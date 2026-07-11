@@ -60,6 +60,7 @@ let authedSlackServer: FakeMcpServer | undefined
 let notionServer: FakeMcpServer | undefined
 let refreshErrorServer: FakeMcpServer | undefined
 let providerErrorServer: FakeMcpServer | undefined
+let needleServer: FakeMcpServer | undefined
 
 const slackTools: FakeTool[] = [
   { name: "slack-send-message", description: "Send a message to a Slack channel or DM." },
@@ -275,6 +276,10 @@ beforeAll(async () => {
   notionServer = startFakeMcpServer("fake-notion", notionTools)
   refreshErrorServer = startErrorMcpServer("Invalid refresh token")
   providerErrorServer = startProviderErrorMcpServer()
+  needleServer = startFakeMcpServer("fake-needle", [{
+    name: "needle-only-tool",
+    description: "The only catalog entry matching the coverage test keyword.",
+  }])
 })
 
 afterAll(() => {
@@ -283,6 +288,7 @@ afterAll(() => {
   notionServer?.stop()
   refreshErrorServer?.stop()
   providerErrorServer?.stop()
+  needleServer?.stop()
   mock.restore()
 })
 
@@ -391,8 +397,8 @@ test("dead-url: Connections list sees Slack and search returns an error status",
   expect(matches[0]?.connectionStatus).toMatchObject({
     state: "provider_error",
     errorCode: "provider_error",
-    actor: "organization_admin",
-    action: { type: "inspect_connection" },
+    actor: "network_admin",
+    action: { type: "fix_network", surface: "network_infrastructure" },
   })
   expect(matches[0]?.hint).toContain("inspect")
 })
@@ -419,6 +425,7 @@ test("dead-url execution returns a structured connection diagnostic instead of t
   if (result.ok) throw new Error("Dead MCP execution unexpectedly succeeded")
   expect(result).toMatchObject({
     error: "connection_failed",
+    actionOwner: "network_admin",
     diagnostic: {
       phase: "NETWORK_TCP",
       category: "network_failure",
@@ -427,6 +434,76 @@ test("dead-url execution returns a structured connection diagnostic instead of t
     },
   })
   expect(result.message).toContain("Diagnostic reference")
+  if (!result.ok) expect(result.operatorAction).toBe(result.diagnostic?.operatorAction)
+})
+
+test("shared invalid_grant recovery cannot reuse the cleared in-memory refresh token", async () => {
+  if (!slackServer) throw new Error("Slack MCP server was not started")
+  const { ExternalMcpOAuthProvider } = await import("../src/capability-sources/external-mcp-client.js")
+  const { ExternalMcpDiagnosticTracker } = await import("../src/capability-sources/external-mcp-diagnostics.js")
+  const seed = await seedOrganization("shared-invalid-grant")
+  const connection = await createGrantedConnection(seed, {
+    name: "Shared OAuth",
+    authType: "oauth",
+    credentialMode: "shared",
+    url: slackServer.url,
+  })
+  await saveExternalMcpTokens({
+    connectionId: connection.id,
+    accessToken: "stale-access-token",
+    refreshToken: "revoked-refresh-token",
+  })
+  const connected = await getExternalMcpConnection({
+    organizationId: seed.organizationId,
+    connectionId: connection.id,
+  })
+  if (!connected) throw new Error("Shared OAuth connection was not found")
+  const provider = new ExternalMcpOAuthProvider(
+    connected,
+    `${redirectUriBase}/callback`,
+    "signed-state",
+    undefined,
+    new ExternalMcpDiagnosticTracker("req_shared_invalid_grant"),
+  )
+
+  expect(await provider.tokens()).toMatchObject({ refresh_token: "revoked-refresh-token" })
+  await provider.invalidateCredentials("tokens")
+  expect(await provider.tokens()).toBeUndefined()
+  expect(await getExternalMcpConnection({
+    organizationId: seed.organizationId,
+    connectionId: connection.id,
+  })).toMatchObject({ accessToken: null, refreshToken: null })
+})
+
+test("the 16-connection fanout reports incomplete coverage when the only match is connection 17", async () => {
+  if (!slackServer || !needleServer) throw new Error("Coverage MCP servers were not started")
+  const { externalMcpSearchCoverageHint } = await import("../src/mcp/external-capabilities.js")
+  const seed = await seedOrganization("fanout-coverage")
+  for (let index = 0; index < 17; index += 1) {
+    await createGrantedConnection(seed, {
+      name: `Provider ${String(index).padStart(2, "0")}`,
+      authType: "none",
+      credentialMode: "shared",
+      url: index === 16 ? needleServer.url : slackServer.url,
+    })
+  }
+  let coverage: Parameters<typeof externalMcpSearchCoverageHint>[0] | undefined
+  const matches = await searchExternalCapabilities({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    query: "needle",
+    redirectUriBase,
+    limit: 10,
+    reportCoverage: (reported) => {
+      coverage = reported
+    },
+  })
+
+  expect(matches).toEqual([])
+  expect(coverage).toEqual({ eligibleConnections: 17, probedConnections: 16, truncated: true })
+  if (!coverage) throw new Error("External MCP search did not report coverage")
+  expect(externalMcpSearchCoverageHint(coverage)).toContain("16 of 17")
+  expect(externalMcpSearchCoverageHint(coverage)).toContain("Results may be incomplete")
 })
 
 test("MCP tool isError is surfaced as a provider failure, not transport success", async () => {
@@ -546,10 +623,10 @@ test("JSON-RPC initialize errors are not mislabeled as OAuth refresh failures", 
       authType: "oauth",
       state: "provider_error",
       errorCode: "provider_error",
-      actor: "organization_admin",
+      actor: "provider_admin",
       action: {
-        type: "inspect_connection",
-        surface: "openwork_organization_connections",
+        type: "fix_provider",
+        surface: "provider_admin_console",
         retry: "search_capabilities",
       },
       diagnostic: {
