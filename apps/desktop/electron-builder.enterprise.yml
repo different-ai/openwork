@@ -1,0 +1,63 @@
+# OpenWork Enterprise — a network-neutral organization-ready desktop.
+#
+# It ships no in-process OpenWork server, OpenCode/orchestrator sidecars, or
+# computer-use helper. Den remains remote infrastructure; it has never been
+# bundled into the desktop. A fresh install makes no automatic OpenWork Cloud
+# connection and waits for managed desktop-bootstrap.json, a manual server, or
+# a confirmed signed openwork://connect link.
+appId: com.differentai.openwork.enterprise
+productName: OpenWork Enterprise
+protocols:
+  - name: OpenWork
+    schemes:
+      - openwork
+directories:
+  output: dist-electron-enterprise
+files:
+  - electron/**/*
+  - package.json
+extraMetadata:
+  openworkEnterprise: true
+extraResources:
+  - from: ../app/dist
+    to: app-dist
+  - from: ../../packages/docs
+    to: openwork-docs
+    filter:
+      - "**/*.md"
+      - "**/*.mdx"
+      - "docs.json"
+asar: true
+asarUnpack:
+  - node_modules/.pnpm/@lydell+node-pty*/**
+  - node_modules/node-pty/**
+npmRebuild: false
+afterPack: scripts/electron-after-pack.cjs
+afterSign: scripts/electron-after-sign.cjs
+publish:
+  - provider: generic
+    url: https://github.com/different-ai/openwork/releases/latest/download
+    channel: enterprise
+mac:
+  icon: resources/icons/icon.icns
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  target:
+    - dmg
+    - zip
+linux:
+  icon: resources/icons/icon.png
+  target:
+    - AppImage
+    - tar.gz
+win:
+  icon: resources/icons/icon.ico
+  target:
+    - nsis
+nsis:
+  include: build/installer.nsh
+artifactName: openwork-enterprise-${os}-${arch}-${version}.${ext}

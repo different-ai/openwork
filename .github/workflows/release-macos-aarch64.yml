@@ -532,6 +532,47 @@ jobs:
           set -euo pipefail
           echo "::warning::Publishing unsigned Windows installer because SIGN_WINDOWS is not enabled."
 
+      # Enterprise flavor: same signing/notarization environment, separate
+      # identity, separate artifacts + enterprise*.yml updater manifests.
+      # See docs/enterprise-connect-link.md.
+      - name: Build Electron app (enterprise flavor)
+        shell: bash
+        run: pnpm --filter @openwork/desktop build:electron:enterprise
+
+      - name: Package Electron Enterprise (macOS, signed + notarized)
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
+        env:
+          CSC_LINK: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.enterprise.yml \
+            ${{ matrix.electron_args }} \
+            --publish never
+
+      - name: Package Electron Enterprise (Linux)
+        if: matrix.os_type == 'linux'
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.enterprise.yml \
+            ${{ matrix.electron_args }} \
+            --publish never
+
+      - name: Package Electron Enterprise (Windows)
+        if: matrix.os_type == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.enterprise.yml \
+            ${{ matrix.electron_args }} \
+            --publish never
+
       - name: Upload Electron release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -539,7 +580,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(apps/desktop/dist-electron/openwork-*)
+          assets=(apps/desktop/dist-electron/openwork-* apps/desktop/dist-electron-enterprise/openwork-enterprise-*)
           if [ ${#assets[@]} -eq 0 ]; then
             echo "No Electron release assets found in apps/desktop/dist-electron" >&2
             exit 1
@@ -550,7 +591,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: apps/desktop/dist-electron/latest*.yml
+          path: |
+            apps/desktop/dist-electron/latest*.yml
+            apps/desktop/dist-electron-enterprise/enterprise*.yml
           if-no-files-found: error
 
   publish-electron-assets:

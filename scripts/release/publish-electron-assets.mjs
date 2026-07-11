@@ -35,11 +35,13 @@ function walk(dir) {
 }
 
 function isUpdaterManifest(path) {
-  return /^latest.*\.ya?ml$/.test(basename(path));
+  // latest*.yml — standard build; enterprise*.yml — enterprise flavor.
+  return /^(latest|enterprise).*\.ya?ml$/.test(basename(path));
 }
 
 function isReleaseAsset(path) {
   if (isUpdaterManifest(path)) return false;
+  // openwork-enterprise-* also starts with "openwork-".
   if (!basename(path).startsWith("openwork-")) return false;
   return /\.(AppImage|blockmap|dmg|exe|rpm|zip)$/i.test(path) || /\.tar\.gz$/i.test(path);
 }
@@ -164,24 +166,24 @@ function mergeManifests(name, paths) {
 
 function validateManifest(name, manifest) {
   const urls = manifest.files.map((file) => String(file.url || ""));
-  if (name === "latest-mac.yml") {
+  if (name === "latest-mac.yml" || name === "enterprise-mac.yml") {
     for (const arch of ["mac-arm64", "mac-x64"]) {
       if (!urls.some((url) => url.includes(arch))) {
         throw new Error(`${name} is missing ${arch} artifacts.`);
       }
     }
   }
-  if (name === "latest.yml") {
+  if (name === "latest.yml" || name === "enterprise.yml") {
     for (const arch of ["win-arm64", "win-x64"]) {
       if (!urls.some((url) => url.includes(arch))) {
         throw new Error(`${name} is missing ${arch} artifacts.`);
       }
     }
   }
-  if (name === "latest-linux.yml" && urls.some((url) => url.includes("arm64"))) {
-    throw new Error(`${name} should remain the Linux x64 feed; arm64 belongs in latest-linux-arm64.yml.`);
+  if ((name === "latest-linux.yml" || name === "enterprise-linux.yml") && urls.some((url) => url.includes("arm64"))) {
+    throw new Error(`${name} should remain the Linux x64 feed; arm64 belongs in the -arm64 manifest.`);
   }
-  if (name === "latest-linux-arm64.yml" && !urls.some((url) => url.includes("arm64"))) {
+  if ((name === "latest-linux-arm64.yml" || name === "enterprise-linux-arm64.yml") && !urls.some((url) => url.includes("arm64"))) {
     throw new Error(`${name} is missing Linux arm64 artifacts.`);
   }
 }

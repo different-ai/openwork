@@ -34,27 +34,27 @@ const ELECTRON_UPDATER_FEEDS = Object.freeze({
   alpha: "https://github.com/different-ai/openwork/releases/download/alpha-macos-latest",
 });
 
-// The client-only flavor updates from its own metadata files (client*.yml,
-// emitted by electron-builder.client.yml) on the same stable release assets,
-// so a fleet of OpenWork Client installs can never be swapped to the bundled
+// The enterprise flavor updates from its own metadata files (enterprise*.yml,
+// emitted by electron-builder.enterprise.yml) on the same stable release assets,
+// so an enterprise fleet can never be swapped to the bundled
 // build by the auto-updater.
-let _cachedClientOnly = null;
-function resolveClientOnlyFlag(app) {
-  if (_cachedClientOnly !== null) return _cachedClientOnly;
-  if (process.env.OPENWORK_CLIENT_ONLY === "1") {
-    _cachedClientOnly = true;
-    return _cachedClientOnly;
+let _cachedEnterprise = null;
+function resolveEnterpriseFlag(app) {
+  if (_cachedEnterprise !== null) return _cachedEnterprise;
+  if (process.env.OPENWORK_ENTERPRISE === "1") {
+    _cachedEnterprise = true;
+    return _cachedEnterprise;
   }
   try {
     const pkgPath = app.isPackaged
       ? path.join(app.getAppPath(), "package.json")
       : path.resolve(__updater_dirname, "..", "package.json");
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-    _cachedClientOnly = pkg.openworkClientOnly === true;
+    _cachedEnterprise = pkg.openworkEnterprise === true;
   } catch {
-    _cachedClientOnly = false;
+    _cachedEnterprise = false;
   }
-  return _cachedClientOnly;
+  return _cachedEnterprise;
 }
 
 function normalizeElectronUpdaterChannel(value) {
@@ -174,16 +174,16 @@ function updaterChannelState(app, channel) {
 }
 
 async function applyElectronUpdaterFeed(app, updater) {
-  if (resolveClientOnlyFlag(app)) {
+  if (resolveEnterpriseFlag(app)) {
     const state = {
-      channel: "client",
+      channel: "enterprise",
       feedUrl: ELECTRON_UPDATER_FEEDS.stable,
       currentVersion: resolveAppVersion(app),
     };
     updater.allowPrerelease = false;
     updater.allowDowngrade = false;
     if (updater?.setFeedURL) {
-      // channel makes electron-updater request client-mac.yml / client.yml
+      // channel makes electron-updater request enterprise-mac.yml / enterprise.yml
       // instead of the standard latest*.yml.
       updater.setFeedURL({ provider: "generic", url: state.feedUrl, channel: state.channel });
     }

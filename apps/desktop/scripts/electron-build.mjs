@@ -30,33 +30,45 @@ function run(command, args, cwd, env) {
   }
 }
 
-run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
-run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
-// Build the server TS → JS so Electron can import it in-process
-run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
+// --enterprise builds the organization-ready flavor: no sidecar binaries, no
+// computer-use helper, no in-process server bundle. Pairs with
+// electron-builder.enterprise.yml, which also drops those from the artifact.
+const enterprise = process.argv.includes("--enterprise") || process.env.OPENWORK_ENTERPRISE === "1";
+
+if (!enterprise) {
+  run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
+  run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
+  // Build the server TS → JS so Electron can import it in-process
+  run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
+}
 // OPENWORK_ELECTRON_BUILD tells Vite to emit relative asset paths so
 // index.html resolves /assets/* correctly when loaded via file:// from
 // inside the packaged .app bundle.
 run(pnpmCmd, ["--filter", "@openwork/app", "build"], repoRoot, {
   OPENWORK_ELECTRON_BUILD: "1",
 });
-// Copy constants.json next to server dist so the packaged asar can resolve it.
-// Also patch the compiled import path so it works from both dev and packaged layouts.
-const serverDistDir = resolve(repoRoot, "apps", "server", "dist");
-const constantsSrc = resolve(repoRoot, "constants.json");
-copyFileSync(constantsSrc, resolve(serverDistDir, "constants.json"));
-const serverJsPath = resolve(serverDistDir, "server.js");
-const serverJsSrc = readFileSync(serverJsPath, "utf8");
-const patched = serverJsSrc.replace(
-  /from\s+["']\.\.\/\.\.\/\.\.\/constants\.json["']/,
-  'from "./constants.json"',
-);
-if (patched !== serverJsSrc) {
-  writeFileSync(serverJsPath, patched, "utf8");
+if (!enterprise) {
+  // Copy constants.json next to server dist so the packaged asar can resolve it.
+  // Also patch the compiled import path so it works from both dev and packaged layouts.
+  const serverDistDir = resolve(repoRoot, "apps", "server", "dist");
+  const constantsSrc = resolve(repoRoot, "constants.json");
+  copyFileSync(constantsSrc, resolve(serverDistDir, "constants.json"));
+  const serverJsPath = resolve(serverDistDir, "server.js");
+  const serverJsSrc = readFileSync(serverJsPath, "utf8");
+  const patched = serverJsSrc.replace(
+    /from\s+["']\.\.\/\.\.\/\.\.\/constants\.json["']/,
+    'from "./constants.json"',
+  );
+  if (patched !== serverJsSrc) {
+    writeFileSync(serverJsPath, patched, "utf8");
+  }
+  rmSync(packagedServerRoot, { recursive: true, force: true });
+  cpSync(serverDistDir, resolve(packagedServerRoot, "dist"), { recursive: true });
+  copyFileSync(resolve(repoRoot, "apps", "server", "package.json"), resolve(packagedServerRoot, "package.json"));
+} else {
+  // A stale staged server bundle must not leak into the enterprise artifact.
+  rmSync(packagedServerRoot, { recursive: true, force: true });
 }
-rmSync(packagedServerRoot, { recursive: true, force: true });
-cpSync(serverDistDir, resolve(packagedServerRoot, "dist"), { recursive: true });
-copyFileSync(resolve(repoRoot, "apps", "server", "package.json"), resolve(packagedServerRoot, "package.json"));
 for (const fileName of readdirSync(electronRoot).filter((name) => name.endsWith(".mjs")).sort()) {
   run(nodeCmd, ["--check", resolve(electronRoot, fileName)], repoRoot);
 }
