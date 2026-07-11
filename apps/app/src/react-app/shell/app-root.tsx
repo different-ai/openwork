@@ -18,9 +18,11 @@ import {
 import { evalRelaunchDesktopApp } from "../../app/lib/desktop";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
+import { isEnterpriseBuild } from "../../app/lib/app-build-info";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
+import { ReadyToConnectPage } from "../domains/cloud/ready-to-connect-page";
 import { NewProvidersListener } from "./new-providers-listener";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
@@ -52,6 +54,46 @@ const subscribeToRequireSignin = (onStoreChange: () => void) => {
     window.removeEventListener(denSettingsChangedEvent, onStoreChange);
   };
 };
+
+const readBootstrapConfiguredSnapshot = () => readDenBootstrapConfig().configured === true;
+
+type EnterpriseConnectGateProps = {
+  children: ReactNode;
+};
+
+/**
+ * Enterprise flavor gate, one step ahead of the forced-signin gate: a fresh
+ * install has no desktop-bootstrap.json yet, so the app parks on the
+ * "Ready to connect" screen until a connect link (or a manually entered
+ * organization server) configures it. Standard builds never see this gate.
+ */
+function EnterpriseConnectGate({ children }: EnterpriseConnectGateProps) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const configured = useSyncExternalStore(
+    subscribeToRequireSignin,
+    readBootstrapConfiguredSnapshot,
+    readBootstrapConfiguredSnapshot,
+  );
+  const awaitingConnect = isEnterpriseBuild() && !configured;
+
+  useEffect(() => {
+    const path = location.pathname.toLowerCase();
+    const onConnect = path === "/connect" || path.startsWith("/connect/");
+
+    if (awaitingConnect && !onConnect) {
+      navigate("/connect", { replace: true });
+    } else if (!awaitingConnect && onConnect) {
+      navigate("/session", { replace: true });
+    }
+  }, [awaitingConnect, location, navigate]);
+
+  if (awaitingConnect) {
+    return <ReadyToConnectPage />;
+  }
+
+  return <>{children}</>;
+}
 
 /**
  * Forced-signin gate ported from the Solid shell.
@@ -317,8 +359,17 @@ export function AppRoot() {
           <OpenworkRouteControlActions />
           <DenAuthControlActions />
           <BrandThemeControlActions />
+          <EnterpriseConnectGate>
           <DenSigninGate>
             <Routes>
+              <Route
+                path="/connect"
+                element={
+                  <DevProfiler id="ConnectRoute">
+                    <ReadyToConnectPage />
+                  </DevProfiler>
+                }
+              />
               <Route
                 path="/signin"
                 element={
@@ -398,6 +449,7 @@ export function AppRoot() {
               <Route path="*" element={<Navigate to="/session" replace />} />
             </Routes>
           </DenSigninGate>
+          </EnterpriseConnectGate>
         </OpenworkControlProvider>
         </AppMenuProvider>
         </ShellConfigProvider>

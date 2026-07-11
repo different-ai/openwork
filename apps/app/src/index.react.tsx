@@ -5,6 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, HashRouter } from "react-router-dom";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { initializeAppBuildInfo } from "./app/lib/app-build-info";
 import { initializeDenBootstrapConfig } from "./app/lib/den";
 import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { bootstrapTheme } from "./app/theme";
@@ -32,6 +33,7 @@ if (isDesktopWorkspaceRecoveryDisabled()) {
 bootstrapTheme();
 initLocale();
 startDeepLinkBridge();
+await initializeAppBuildInfo();
 await initializeDenBootstrapConfig();
 
 const root = document.getElementById("root");

@@ -16,6 +16,7 @@ import {
   type WorkspaceInfo,
   type WorkspaceList,
 } from "../../app/lib/desktop";
+import { isEnterpriseBuild } from "../../app/lib/app-build-info";
 import { ingestMigrationSnapshotOnElectronBoot } from "../../app/lib/migration";
 import {
   hydrateOpenworkServerSettingsFromEnv,
@@ -72,6 +73,13 @@ export function useDesktopRuntimeBoot() {
   useEffect(() => {
     if (!isDesktopRuntime()) {
       // Web/headless: nothing to spawn, we're instantly "ready".
+      markReady();
+      return;
+    }
+    if (isEnterpriseBuild()) {
+      // Enterprise flavor: there is no local stack to start — the artifact
+      // ships neither the embedded server nor engine sidecars. Workspaces
+      // come from the organization's deployment after connect + sign-in.
       markReady();
       return;
     }

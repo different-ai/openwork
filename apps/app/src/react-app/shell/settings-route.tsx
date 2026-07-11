@@ -15,6 +15,7 @@ import {
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
 } from "@/app/lib/openwork-server";
+import { parseDebugDeepLinkInput } from "@/app/lib/openwork-links";
 import { resolveWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
 import {
@@ -115,6 +116,7 @@ import {
   revealDesktopItemInDir,
 } from "@/app/lib/desktop";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
+import { useConnectLink } from "@/react-app/domains/cloud/connect-link-provider";
 import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
@@ -354,6 +356,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
   const desktopConfig = useDesktopConfig();
+  const connectLinkStore = useConnectLink();
   const reloadCoordinator = useReloadCoordinator();
   const [embeddedPath, setEmbeddedPath] = useState(props.initialPath ?? "general");
   const route = props.embedded ? parseSettingsPath(`/settings/${embeddedPath}`) : parseSettingsPath(location.pathname);
@@ -2229,7 +2232,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               return next;
             })}
             opencodeDevModeEnabled={false}
-            openDebugDeepLink={async () => ({ ok: false, message: "Debug deep links are not wired into the React settings route yet." })}
+            openDebugDeepLink={async (rawUrl) => {
+              const parsed = parseDebugDeepLinkInput(rawUrl);
+              if (parsed?.kind === "connect") {
+                const accepted = connectLinkStore.submitManualConnectLink(parsed.link.rawUrl);
+                return accepted
+                  ? { ok: true, message: "Connect link accepted — check the confirmation dialog." }
+                  : { ok: false, message: "Could not parse that connect link." };
+              }
+              return { ok: false, message: "Only openwork://connect links are wired into the React settings route so far." };
+            }}
             cloudMcpUrl={openworkCloudMcpUrl}
             canMigrateRuntimeConfig={Boolean(openworkClient && selectedWorkspaceId)}
             migrateRuntimeConfig={async () => {

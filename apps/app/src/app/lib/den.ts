@@ -110,6 +110,8 @@ export type DenBootstrapPrepared = DenBootstrapOrgSkill & {
 
 export type DenBootstrapConfig = DenBaseUrls & {
   requireSignin: boolean;
+  /** Whether a real desktop-bootstrap.json backed this config (shell-derived). */
+  configured?: boolean;
   brandAppName?: string | null;
   brandLogoUrl?: string | null;
   brandIconUrl?: string | null;
@@ -571,6 +573,7 @@ function resolveDenBootstrapConfig(
     baseUrl: string;
     apiBaseUrl?: string | null;
     requireSignin?: boolean | null;
+    configured?: boolean | null;
     brandAppName?: string | null;
     brandLogoUrl?: string | null;
     brandIconUrl?: string | null;
@@ -581,6 +584,7 @@ function resolveDenBootstrapConfig(
   return {
     ...resolveDenBaseUrls(input),
     requireSignin: input.requireSignin === true,
+    ...(typeof input.configured === "boolean" ? { configured: input.configured } : {}),
     ...(input.brandAppName?.trim() ? { brandAppName: input.brandAppName.trim().slice(0, 64) } : {}),
     ...(input.brandLogoUrl?.trim() ? { brandLogoUrl: input.brandLogoUrl.trim() } : {}),
     ...(input.brandIconUrl?.trim() ? { brandIconUrl: input.brandIconUrl.trim() } : {}),
@@ -666,6 +670,25 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
   })();
 
   return desktopBootstrapConfig;
+}
+
+/**
+ * Re-reads desktop-bootstrap.json from the shell and applies it to the cached
+ * snapshot, notifying listeners. Used after the shell itself persisted a new
+ * config (e.g. an accepted connect link) so the renderer converges without a
+ * reload.
+ */
+export async function refreshDenBootstrapConfigFromShell(): Promise<DenBootstrapConfig> {
+  if (isDesktopRuntime()) {
+    try {
+      const bootstrap = await getDesktopBootstrapConfigFromShell() as ShellDesktopBootstrapConfig;
+      applyDesktopBootstrapConfig(resolveDenBootstrapConfig(bootstrap));
+      dispatchDenSettingsChanged({ settings: readDenSettings() });
+    } catch {
+      // Bridge hiccup — keep the current cached snapshot.
+    }
+  }
+  return readDenBootstrapConfig();
 }
 
 export async function setDenBootstrapConfig(
