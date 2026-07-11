@@ -113,6 +113,20 @@ async function approveExistingOAuthPopup(ctx) {
       return Boolean(button);
     })()`);
     witness(ctx, clicked, "The administrator approves the MCP OAuth request in the provider tab.");
+    const callbackPath = `/v1/mcp-connections/${state.connectionId}/connect/callback`;
+    let callbackObserved = false;
+    const callbackDeadline = Date.now() + 10_000;
+    while (!callbackObserved && Date.now() < callbackDeadline) {
+      try {
+        const currentUrl = await evaluate(client, "location.href");
+        callbackObserved = new URL(currentUrl).pathname === callbackPath;
+      } catch {
+        // The static callback page closes the provider tab after success.
+        callbackObserved = true;
+      }
+      if (!callbackObserved) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    witness(ctx, callbackObserved, "The provider redirects the approved grant to Den's connection callback.");
   } finally {
     client.close();
   }
