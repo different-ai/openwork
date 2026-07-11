@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle2,
+  ChevronRight,
   Cpu,
   Puzzle,
   Sparkles,
@@ -88,15 +89,19 @@ function SummaryCard({
   }[tone];
 
   return (
-    <section className="rounded-[24px] border border-gray-200 bg-white p-5 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
-      <div className="flex items-start gap-4">
-        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${toneClass}`}>
+    <section
+      className="rounded-2xl border border-gray-100 bg-white px-4 py-3.5"
+      data-resource={title}
+      data-testid="member-resource-card"
+    >
+      <div className="flex items-start gap-3">
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] ${toneClass}`}>
           <Icon className="h-5 w-5" aria-hidden="true" />
         </div>
         <div className="min-w-0">
           <p className="text-[13px] font-medium text-gray-500">{title}</p>
-          <p className="mt-1 text-[24px] font-semibold tracking-[-0.04em] text-gray-950">{value}</p>
-          <p className="mt-1 text-[13px] leading-5 text-gray-500">{detail}</p>
+          <p className="mt-0.5 text-[20px] font-semibold tracking-[-0.03em] text-gray-950">{value}</p>
+          <p className="mt-0.5 text-[12px] leading-5 text-gray-500">{detail}</p>
         </div>
       </div>
     </section>
@@ -143,30 +148,34 @@ export function MemberDashboardScreen() {
   const inferenceLabel = inferenceLoading ? "Checking" : inference?.enabled ? "Enabled" : "Disabled";
 
   return (
-    <div className="mx-auto max-w-[1100px] px-4 pb-10 pt-5 sm:px-6 md:px-8">
-      <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-[#07192C] text-white shadow-[0_24px_70px_-45px_rgba(15,23,42,0.7)]">
-        <div className="grid gap-8 p-6 md:grid-cols-[1.5fr_1fr] md:p-8">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-white/70">
-              <Users className="h-3.5 w-3.5" aria-hidden="true" />
-              Workspace Member
-            </div>
-            <h1 className="mt-4 max-w-[620px] text-[30px] font-semibold tracking-[-0.05em] text-white md:text-[38px]">
-              Your access in {activeOrg?.name ?? "OpenWork"}
-            </h1>
-            <p className="mt-3 max-w-[620px] text-[14px] leading-7 text-white/60">
-              Marketplaces contain plugins. OpenWork Marketplace is built in, and assigned marketplaces become available after you sign in to the app.
-            </p>
+    <div className="mx-auto max-w-[1100px] px-4 pb-10 pt-4 sm:px-6 md:px-8" data-testid="member-dashboard">
+      <div className="flex flex-wrap items-center gap-2.5 border-b border-[#e7e9f0] pb-3">
+        <span className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C]">
+          {activeOrg?.name ?? "OpenWork Cloud"}
+        </span>
+        <ChevronRight className="h-3.5 w-3.5 text-[#9AA5BA]" aria-hidden="true" />
+        <span className="text-[14px] font-medium tracking-[-0.01em] text-[#5A6886]">Dashboard</span>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+        <div>
+          <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-[#07192C]">Your workspace</h1>
+          <p className="mt-1 max-w-[680px] text-[14px] leading-6 text-[#5A6886]">
+            The models, marketplaces, and plugins available to you in OpenWork.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-gray-50 text-gray-500">
+            <Users className="h-4 w-4" aria-hidden="true" />
           </div>
-          <div className="rounded-[22px] border border-white/10 bg-white/[0.06] p-5">
-            <p className="text-[12px] uppercase tracking-[0.14em] text-white/40">Signed in as</p>
-            <p className="mt-2 text-[18px] font-semibold tracking-[-0.03em] text-white">{roleLabel}</p>
-            <p className="mt-4 text-[13px] leading-6 text-white/55">
-              {teamNames.length > 0 ? `Teams: ${teamNames.join(", ")}` : "You are not assigned to any teams yet."}
+          <div className="min-w-0">
+            <p className="text-[12px] text-gray-500">Signed in as {roleLabel}</p>
+            <p className="max-w-[320px] truncate text-[13px] font-medium text-gray-900">
+              {teamNames.length > 0 ? teamNames.join(", ") : "No team assignment"}
             </p>
           </div>
         </div>
-      </section>
+      </div>
 
       {activeOrg && orgContext?.capabilities.installLinks ? (
         <div className="mt-5">
@@ -174,39 +183,45 @@ export function MemberDashboardScreen() {
         </div>
       ) : null}
 
-      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard
-          icon={Sparkles}
-          title="OpenWork Models"
-          value={inferenceLabel}
-          detail={inference?.enabled ? `${openWorkProviders.length} model key group${openWorkProviders.length === 1 ? "" : "s"} visible to you.` : "Ask an admin to enable org-provided models."}
-          tone={inference?.enabled ? "emerald" : "amber"}
-        />
-        <SummaryCard
-          icon={Cpu}
-          title="Custom LLM Providers"
-          value={providersBusy ? "Loading" : `${customProviders.length}`}
-          detail="Provider credentials and models your role or teams can use."
-          tone="blue"
-        />
-        <SummaryCard
-          icon={Store}
-          title="Marketplaces"
-          value={marketplacesLoading ? "Loading" : `${marketplaces.length}`}
-          detail="Plugin collections assigned to you or everyone in your org."
-          tone="amber"
-        />
-        <SummaryCard
-          icon={Puzzle}
-          title="Plugins"
-          value={pluginsLoading ? "Loading" : `${plugins.length}`}
-          detail={`${visiblePluginParts} skill, hook, MCP, agent, or command parts available.`}
-          tone="violet"
-        />
-      </div>
+      <section className="mt-5" aria-labelledby="member-resources-heading" data-testid="member-resource-overview">
+        <div className="mb-3">
+          <h2 id="member-resources-heading" className="text-[16px] font-semibold tracking-[-0.02em] text-gray-950">Available resources</h2>
+          <p className="mt-0.5 text-[13px] text-gray-500">Assigned directly to you, your teams, or everyone in the workspace.</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            icon={Sparkles}
+            title="OpenWork Models"
+            value={inferenceLabel}
+            detail={inference?.enabled ? `${openWorkProviders.length} model key group${openWorkProviders.length === 1 ? "" : "s"} visible to you.` : "Ask an admin to enable org-provided models."}
+            tone={inference?.enabled ? "emerald" : "amber"}
+          />
+          <SummaryCard
+            icon={Cpu}
+            title="Custom LLM Providers"
+            value={providersBusy ? "Loading" : `${customProviders.length}`}
+            detail="Provider credentials and models your role or teams can use."
+            tone="blue"
+          />
+          <SummaryCard
+            icon={Store}
+            title="Marketplaces"
+            value={marketplacesLoading ? "Loading" : `${marketplaces.length}`}
+            detail="Plugin collections assigned to you or everyone in your org."
+            tone="amber"
+          />
+          <SummaryCard
+            icon={Puzzle}
+            title="Plugins"
+            value={pluginsLoading ? "Loading" : `${plugins.length}`}
+            detail={`${visiblePluginParts} skill, hook, MCP, agent, or command parts available.`}
+            tone="violet"
+          />
+        </div>
+      </section>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr]">
-        <section className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+        <section className="rounded-2xl border border-gray-100 bg-white p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">LLM providers</h2>
@@ -247,7 +262,7 @@ export function MemberDashboardScreen() {
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+        <section className="rounded-2xl border border-gray-100 bg-white p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">OpenWork Models</h2>
@@ -278,7 +293,7 @@ export function MemberDashboardScreen() {
       </div>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr]">
-        <section className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+        <section className="rounded-2xl border border-gray-100 bg-white p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">Marketplaces</h2>
@@ -313,7 +328,7 @@ export function MemberDashboardScreen() {
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+        <section className="rounded-2xl border border-gray-100 bg-white p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">Plugins</h2>

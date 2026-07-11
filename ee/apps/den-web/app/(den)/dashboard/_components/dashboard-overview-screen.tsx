@@ -2,13 +2,10 @@
 
 import type { ReactNode } from "react";
 import {
-  ArrowRight,
   ChevronRight,
   Gauge,
   Users,
 } from "lucide-react";
-import Link from "next/link";
-import { getMarketplacesRoute } from "../../_lib/den-org";
 import { useQuery } from "@tanstack/react-query";
 import { requestJson } from "../../_lib/den-flow";
 import { useDenFlow } from "../../_providers/den-flow-provider";
@@ -108,19 +105,6 @@ export function DashboardOverviewScreen() {
       <p className="mt-1 text-[14px] leading-6 text-[#5A6886]">
         Run locally for free. Keep data on your machine and move to shared workflows when ready.
       </p>
-
-      {/* Extensions banner */}
-      <section className="mt-5 rounded-[18px] border border-[#d7e2f5] bg-gradient-to-br from-[#F4F8FF] to-[#EEF3FF] p-5">
-        <h2 className="text-[16px] font-semibold tracking-[-0.02em] text-[#07192C]">Download the app to unlock extensions</h2>
-        <p className="mt-1.5 text-[13px] leading-6 text-[#526582]">
-          Sign in with this account to get Computer Use, Browser, Image Gen, Google Workspace, and your team&apos;s marketplace extensions — all built in.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Link href={getMarketplacesRoute(activeOrg?.slug ?? "")} className="inline-flex items-center gap-1.5 rounded-full border border-[#d8e0ec] bg-white px-3.5 py-1.5 text-[13px] font-semibold text-[#07192C] transition hover:bg-gray-50">
-            View all extensions <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
-        </div>
-      </section>
 
       {/* Download OpenWork */}
       {activeOrg && orgContext?.capabilities.installLinks ? (

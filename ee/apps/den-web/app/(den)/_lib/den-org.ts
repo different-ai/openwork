@@ -489,6 +489,10 @@ export function getOrgSettingsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/org-settings`;
 }
 
+export function getBrandAppearanceRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/brand-appearance`;
+}
+
 export function getApiKeysRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/api-keys`;
 }

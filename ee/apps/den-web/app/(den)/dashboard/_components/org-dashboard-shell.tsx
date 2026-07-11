@@ -27,6 +27,7 @@ import {
   getAnalyticsRoute,
   getBackgroundAgentsRoute,
   getApiKeysRoute,
+  getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
   getDesktopPoliciesRoute,
@@ -219,7 +220,10 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Your Connections";
   }
   if (pathname.startsWith(getBillingRoute(orgSlug))) {
-    return "Billing";
+    return "Stripe";
+  }
+  if (pathname.startsWith(getBrandAppearanceRoute(orgSlug))) {
+    return "Brand appearance";
   }
   if (pathname.startsWith(getOrgSettingsRoute(orgSlug))) {
     return "Org Settings";
@@ -320,8 +324,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         ...(access.isAdmin
           ? [
               { href: getOrgSettingsRoute(activeOrg.slug), label: "General" },
+              { href: getBrandAppearanceRoute(activeOrg.slug), label: "Brand appearance" },
               { href: getDesktopPoliciesRoute(activeOrg.slug), label: "Desktop Policies" },
-              { href: getBillingRoute(activeOrg.slug), label: "Billing" },
+              { href: getBillingRoute(activeOrg.slug), label: "Stripe" },
             ]
           : []),
         ...(access.canManageApiKeys ? [{ href: getApiKeysRoute(activeOrg.slug), label: "API Keys" }] : []),

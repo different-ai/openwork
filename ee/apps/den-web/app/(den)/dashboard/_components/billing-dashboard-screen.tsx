@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CreditCard } from "lucide-react";
+import { CreditCard, RefreshCw } from "lucide-react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getInferenceRoute } from "../../_lib/den-org";
+import { getInferenceRoute, getMembersRoute } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -61,13 +61,24 @@ function parseStripeBilling(payload: unknown): StripeBilling | null {
   if (!stripe || typeof stripe !== "object") return null;
   const value = stripe as Partial<StripeBilling>;
   const seats = value.seats && typeof value.seats === "object" ? value.seats as Partial<StripeSeatBilling> : null;
+  if (
+    typeof value.unitAmount !== "number" ||
+    typeof value.currency !== "string" ||
+    typeof value.interval !== "string" ||
+    typeof value.memberCount !== "number" ||
+    typeof seats?.unitAmount !== "number" ||
+    typeof seats.currency !== "string" ||
+    typeof seats.interval !== "string" ||
+    typeof seats.freeSeatCount !== "number" ||
+    typeof seats.billableSeatCount !== "number"
+  ) return null;
   return {
     configured: value.configured === true,
     priceId: typeof value.priceId === "string" ? value.priceId : null,
-    unitAmount: typeof value.unitAmount === "number" ? value.unitAmount : 1000,
-    currency: typeof value.currency === "string" ? value.currency : "usd",
-    interval: typeof value.interval === "string" ? value.interval : "month",
-    memberCount: typeof value.memberCount === "number" ? value.memberCount : 0,
+    unitAmount: value.unitAmount,
+    currency: value.currency,
+    interval: value.interval,
+    memberCount: value.memberCount,
     hasActiveSubscription: value.hasActiveSubscription === true,
     portalUrl: typeof value.portalUrl === "string" ? value.portalUrl : null,
     subscription: value.subscription && typeof value.subscription === "object"
@@ -81,11 +92,11 @@ function parseStripeBilling(payload: unknown): StripeBilling | null {
     seats: {
       configured: seats?.configured === true,
       priceId: typeof seats?.priceId === "string" ? seats.priceId : null,
-      unitAmount: typeof seats?.unitAmount === "number" ? seats.unitAmount : 1000,
-      currency: typeof seats?.currency === "string" ? seats.currency : "usd",
-      interval: typeof seats?.interval === "string" ? seats.interval : "month",
-      freeSeatCount: typeof seats?.freeSeatCount === "number" ? seats.freeSeatCount : DEFAULT_FREE_SEAT_COUNT,
-      billableSeatCount: typeof seats?.billableSeatCount === "number" ? seats.billableSeatCount : 0,
+      unitAmount: seats.unitAmount,
+      currency: seats.currency,
+      interval: seats.interval,
+      freeSeatCount: seats.freeSeatCount,
+      billableSeatCount: seats.billableSeatCount,
       hasActiveSubscription: seats?.hasActiveSubscription === true,
       subscription: seats?.subscription && typeof seats.subscription === "object"
         ? {
@@ -101,8 +112,6 @@ function parseStripeBilling(payload: unknown): StripeBilling | null {
 
 const STRIPE_RETURN_POLL_ATTEMPTS = 20;
 const STRIPE_RETURN_POLL_INTERVAL_MS = 3000;
-const DEFAULT_FREE_SEAT_COUNT = 5;
-
 function parsePolarBilling(payload: unknown): PolarBilling | null {
   if (!payload || typeof payload !== "object" || !("billing" in payload)) return null;
   const billing = (payload as { billing?: unknown }).billing;
@@ -155,7 +164,7 @@ export function BillingDashboardScreen() {
 
   useEffect(() => {
     if (!sessionHydrated || !user) return;
-    void refreshStripeBilling(true);
+    void refreshStripeBilling(false);
   }, [sessionHydrated, user, orgContext?.organization.id]);
 
   useEffect(() => {
@@ -248,19 +257,20 @@ export function BillingDashboardScreen() {
   }
 
   const showPolar = polarBilling?.hasActivePlan === true && Boolean(polarBilling.portalUrl);
-  const stripePrice = formatMoneyMinor(stripeBilling?.unitAmount ?? 1000, stripeBilling?.currency ?? "usd");
+  const stripePrice = stripeBilling ? formatMoneyMinor(stripeBilling.unitAmount, stripeBilling.currency) : null;
   const seatBilling = stripeBilling?.seats;
-  const seatPrice = formatMoneyMinor(seatBilling?.unitAmount ?? 1000, seatBilling?.currency ?? "usd");
-  const activeMemberCount = stripeBilling?.memberCount ?? orgContext?.members.length ?? 0;
+  const seatPrice = seatBilling ? formatMoneyMinor(seatBilling.unitAmount, seatBilling.currency) : null;
+  const activeMemberCount = stripeBilling?.memberCount ?? 0;
 
   return (
-    <DashboardPageTemplate
-      icon={CreditCard}
-      title="Billing"
-      description="Manage workspace billing for cloud workers and OpenWork Models. Only workspace owners can manage billing."
-      colors={["#EFF6FF", "#1E3A5F", "#3B82F6", "#93C5FD"]}
-    >
-      {stripeError ? (
+    <div data-testid="stripe-billing-screen">
+      <DashboardPageTemplate
+        icon={CreditCard}
+        title="Stripe"
+        description="Manage workspace subscriptions, seats, and OpenWork Models in one place."
+        colors={["#F5F3FF", "#312E81", "#635BFF", "#C4B5FD"]}
+      >
+      {stripeError && stripeBilling ? (
         <div className="mb-6 rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
           {stripeError}
         </div>
@@ -277,6 +287,31 @@ export function BillingDashboardScreen() {
           We&apos;re checking your Stripe subscription. This page will refresh automatically.
         </div>
       ) : null}
+
+      {!stripeBilling ? (
+        <section className="rounded-2xl border border-gray-200 bg-white p-8 shadow-[0_8px_30px_-20px_rgba(49,46,129,0.45)]">
+          {stripeBusy ? (
+            <div className="flex min-h-36 items-center justify-center gap-3 text-[14px] text-gray-500">
+              <RefreshCw className="size-4 animate-spin text-[#635BFF]" aria-hidden="true" />
+              Loading Stripe billing details...
+            </div>
+          ) : (
+            <div className="mx-auto grid max-w-lg justify-items-start gap-3">
+              <p className="text-[16px] font-medium text-gray-950">Stripe details could not be loaded</p>
+              <p className="text-[13px] leading-6 text-gray-500">{stripeError ?? "The billing response did not include the details this page needs."}</p>
+              <DenButton icon={RefreshCw} onClick={() => void refreshStripeBilling(false)}>Try again</DenButton>
+            </div>
+          )}
+        </section>
+      ) : (
+        <>
+          <div className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-violet-100 bg-violet-50/70 px-5 py-4">
+            <div>
+              <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-[#635BFF]">Stripe workspace billing</p>
+              <p className="mt-1 text-[13px] text-violet-950/70">Prices and billing intervals below come directly from your Stripe configuration.</p>
+            </div>
+            <DenButton variant="secondary" icon={RefreshCw} loading={stripeBusy} onClick={() => void refreshStripeBilling(false)}>Refresh</DenButton>
+          </div>
 
       {showPolar ? (
         <section className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
@@ -297,24 +332,21 @@ export function BillingDashboardScreen() {
         </section>
       ) : null}
 
-      <section className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
+      <section className="mb-6 rounded-2xl border border-violet-100 bg-white p-8 shadow-[0_8px_30px_-20px_rgba(49,46,129,0.45)]">
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Stripe</p>
             <h2 className="text-[20px] font-medium text-gray-950">OpenWork Users</h2>
             <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500">
-              The first {seatBilling?.freeSeatCount ?? DEFAULT_FREE_SEAT_COUNT} users in your organization are free. Additional users are billed at {seatPrice}/user/month.
+              The first {seatBilling?.freeSeatCount} users in your organization are included. Additional users are {seatPrice} per user per {seatBilling?.interval}.
             </p>
           </div>
-          <DenButton variant="secondary" loading={stripeBusy} onClick={() => void refreshStripeBilling(false)}>
-            Refresh
-          </DenButton>
         </div>
 
         <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-4">
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="text-[12px] text-gray-500">Included users</p>
-            <p className="mt-1 text-[20px] font-semibold text-gray-950">{seatBilling?.freeSeatCount ?? DEFAULT_FREE_SEAT_COUNT}</p>
+            <p className="mt-1 text-[20px] font-semibold text-gray-950">{seatBilling?.freeSeatCount}</p>
           </div>
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="text-[12px] text-gray-500">Active users</p>
@@ -322,7 +354,7 @@ export function BillingDashboardScreen() {
           </div>
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="text-[12px] text-gray-500">Billable users</p>
-            <p className="mt-1 text-[20px] font-semibold text-gray-950">{seatBilling?.billableSeatCount ?? Math.max(0, activeMemberCount - DEFAULT_FREE_SEAT_COUNT)}</p>
+            <p className="mt-1 text-[20px] font-semibold text-gray-950">{seatBilling?.billableSeatCount}</p>
           </div>
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="text-[12px] text-gray-500">Status</p>
@@ -335,7 +367,7 @@ export function BillingDashboardScreen() {
         {seatBilling?.hasActiveSubscription ? (
           <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
             <DenButton variant="secondary" onClick={() => {
-              window.location.href = "/dashboard/members";
+              window.location.href = getMembersRoute(activeOrg?.slug);
             }}>
               Manage Members
             </DenButton>
@@ -346,7 +378,7 @@ export function BillingDashboardScreen() {
         ) : (
           <div className="flex flex-col gap-4 rounded-[16px] border border-blue-100 bg-blue-50 p-5 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-[15px] font-medium text-blue-950">Subscribe when your workspace grows beyond {seatBilling?.freeSeatCount ?? DEFAULT_FREE_SEAT_COUNT} users</p>
+              <p className="text-[15px] font-medium text-blue-950">Subscribe when your workspace grows beyond {seatBilling?.freeSeatCount} users</p>
               <p className="mt-1 text-[13px] leading-5 text-blue-900/70">You will only be charged for users above the free included seats.</p>
             </div>
             <DenButton disabled={!isOwner || seatBilling?.configured === false} loading={stripeActionBusy === "seat-checkout"} onClick={startSeatCheckout}>
@@ -356,28 +388,25 @@ export function BillingDashboardScreen() {
         )}
       </section>
 
-      <section className="rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
+      <section className="rounded-2xl border border-violet-100 bg-white p-8 shadow-[0_8px_30px_-20px_rgba(49,46,129,0.45)]">
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Stripe</p>
             <h2 className="text-[20px] font-medium text-gray-950">OpenWork Models</h2>
             <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500">
-              Model access is billed at $10/user/month
+              Model access is billed at {stripePrice} per user per {stripeBilling.interval}.
             </p>
           </div>
-          <DenButton variant="secondary" loading={stripeBusy} onClick={() => void refreshStripeBilling(false)}>
-            Refresh
-          </DenButton>
         </div>
 
         <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="text-[12px] text-gray-500">Price</p>
-            <p className="mt-1 text-[20px] font-semibold text-gray-950">{stripePrice}<span className="text-[13px] font-medium text-gray-500">/user/month</span></p>
+            <p className="mt-1 text-[20px] font-semibold text-gray-950">{stripePrice}<span className="text-[13px] font-medium text-gray-500"> / user / {stripeBilling.interval}</span></p>
           </div>
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="text-[12px] text-gray-500">Active members</p>
-            <p className="mt-1 text-[20px] font-semibold text-gray-950">{stripeBilling?.memberCount ?? orgContext?.members.length ?? 0}</p>
+            <p className="mt-1 text-[20px] font-semibold text-gray-950">{stripeBilling.memberCount}</p>
           </div>
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="text-[12px] text-gray-500">Status</p>
@@ -407,6 +436,9 @@ export function BillingDashboardScreen() {
           </div>
         )}
       </section>
-    </DashboardPageTemplate>
+        </>
+      )}
+      </DashboardPageTemplate>
+    </div>
   );
 }

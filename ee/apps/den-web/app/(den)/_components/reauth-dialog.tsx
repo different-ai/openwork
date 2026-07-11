@@ -314,31 +314,31 @@ export function ReauthDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-[2px]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-[2px]">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="reauth-dialog-title"
         // Test seam: the reauth popup eval matches the completion message to this nonce.
         data-reauth-nonce={nonce}
-        className="w-full max-w-[460px] overflow-hidden rounded-[28px] border border-white/80 bg-white shadow-[0_32px_100px_-28px_rgba(15,23,42,0.55)]"
+        className="w-full max-w-[440px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_28px_80px_-36px_rgba(15,23,42,0.6)]"
       >
-        <div className="relative border-b border-slate-100 bg-gradient-to-br from-slate-50 via-white to-indigo-50/60 px-6 pb-6 pt-7">
+        <div className="relative border-b border-slate-100 bg-slate-50/70 px-6 pb-5 pt-6">
           <button
             type="button"
             aria-label="Close security check"
-            className="absolute right-4 top-4 flex size-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-white hover:text-slate-700"
+            className="absolute right-4 top-4 flex size-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white hover:text-slate-700"
             disabled={busy}
             onClick={onCancel}
           >
             <X size={17} aria-hidden="true" />
           </button>
-          <div className="mb-5 flex size-12 items-center justify-center rounded-2xl border border-indigo-100 bg-white text-indigo-600 shadow-sm">
-            <ShieldCheck size={24} strokeWidth={1.8} aria-hidden="true" />
+          <div className="mb-4 flex size-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm">
+            <ShieldCheck size={20} strokeWidth={1.8} aria-hidden="true" />
           </div>
           <div className="grid gap-2 pr-8">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-500">Security check</p>
-            <h2 id="reauth-dialog-title" className="text-[25px] font-semibold tracking-[-0.035em] text-slate-950">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Security check</p>
+            <h2 id="reauth-dialog-title" className="text-[22px] font-semibold tracking-[-0.03em] text-slate-950">
               Confirm it's you to continue
             </h2>
             <p className="text-[14px] leading-6 text-slate-600">
@@ -414,7 +414,7 @@ export function ReauthDialog({
 
           <button
             type="button"
-            className="mt-5 w-full rounded-full py-2 text-[13px] font-medium text-slate-500 transition-colors hover:text-slate-800 disabled:opacity-60"
+            className="mt-5 w-full rounded-lg py-2 text-[13px] font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-800 disabled:opacity-60"
             onClick={onCancel}
             disabled={busy}
           >

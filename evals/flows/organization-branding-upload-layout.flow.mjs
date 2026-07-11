@@ -81,9 +81,9 @@ async function ensureDesktopSession(ctx) {
 
 async function navigateBrandSettings(ctx) {
   await panelEval(ctx, `location.replace(${JSON.stringify(orgSettingsUrl(ctx))})`).catch(() => undefined);
-  await waitForPanel(ctx, `document.body.innerText.includes('Brand Appearance') && document.body.innerText.includes('Wordmark')`, {
+  await waitForPanel(ctx, `document.body.innerText.includes('Brand appearance') && document.body.innerText.includes('Wordmark')`, {
     timeoutMs: 60_000,
-    label: "Brand Appearance settings",
+    label: "Brand appearance settings",
   });
 }
 
@@ -117,7 +117,7 @@ async function layoutState(ctx) {
   return panelEval(ctx, `(() => {
     const field = document.querySelector('[data-testid="brand-logo-asset-field"]');
     const preview = document.querySelector('[data-testid="brand-logo-preview"]');
-    const save = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Save settings');
+    const save = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Save brand appearance');
     const rect = field?.getBoundingClientRect();
     const previewRect = preview?.getBoundingClientRect();
     const saveRect = save?.getBoundingClientRect();
@@ -175,7 +175,7 @@ export default {
             ctx.assert(state.scrollWidth <= state.viewportWidth + 1, `Settings page overflowed before selection: ${JSON.stringify(state)}`);
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Brand settings fit the desktop viewport before selection", actual: state });
           },
-          screenshot: { name: "frame-1-brand-settings", sandboxCapture: true, targetId: adminPanelTargetId, textTargetId: adminPanelTargetId, requireText: ["Brand Appearance", "Wordmark", "Save settings"] },
+          screenshot: { name: "frame-1-brand-settings", sandboxCapture: true, targetId: adminPanelTargetId, textTargetId: adminPanelTargetId, requireText: ["Brand appearance", "Wordmark", "Save brand appearance"] },
         });
       },
     },
@@ -196,7 +196,7 @@ export default {
             assertContained(ctx, state, "Selected long filename");
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Long selected filename wraps without widening the editor", actual: { filenameLength: LONG_FILENAME.length, ...state } });
           },
-          screenshot: { name: "frame-2-contained-long-filename", sandboxCapture: true, targetId: adminPanelTargetId, textTargetId: adminPanelTargetId, requireText: ["Ready to upload", "Replace image", "Save settings"] },
+          screenshot: { name: "frame-2-contained-long-filename", sandboxCapture: true, targetId: adminPanelTargetId, textTargetId: adminPanelTargetId, requireText: ["Ready to upload", "Replace image", "Save brand appearance"] },
         });
       },
     },
@@ -216,7 +216,7 @@ export default {
             assertContained(ctx, state, "Validation feedback");
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Validation feedback leaves the editor and Save action contained", actual: state });
           },
-          screenshot: { name: "frame-3-validation-contained", sandboxCapture: true, targetId: adminPanelTargetId, textTargetId: adminPanelTargetId, requireText: ["Use a square image for the app icon.", "Save settings"] },
+          screenshot: { name: "frame-3-validation-contained", sandboxCapture: true, targetId: adminPanelTargetId, textTargetId: adminPanelTargetId, requireText: ["Use a square image for the app icon.", "Save brand appearance"] },
         });
       },
     },
@@ -240,7 +240,7 @@ export default {
             }
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Editor, preview, and Save action remain horizontally contained at 100% and 90%", actual: states });
           },
-          screenshot: { name: "frame-4-common-zoom", sandboxCapture: true, targetId: adminPanelTargetId, textTargetId: adminPanelTargetId, requireText: ["Ready to upload", "Save settings"] },
+          screenshot: { name: "frame-4-common-zoom", sandboxCapture: true, targetId: adminPanelTargetId, textTargetId: adminPanelTargetId, requireText: ["Ready to upload", "Save brand appearance"] },
         });
       },
     },
@@ -334,7 +334,7 @@ export default {
             assertContained(ctx, state, "Returned editor");
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Saved wordmark remains visible and the returned editor has no horizontal overflow", actual: state });
           },
-          screenshot: { name: "frame-7-saved-editor-contained", sandboxCapture: true, targetId: adminPanelTargetId, textTargetId: adminPanelTargetId, requireText: ["Brand Appearance", "Save settings"] },
+          screenshot: { name: "frame-7-saved-editor-contained", sandboxCapture: true, targetId: adminPanelTargetId, textTargetId: adminPanelTargetId, requireText: ["Brand appearance", "Save brand appearance"] },
         });
       },
     },

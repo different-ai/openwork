@@ -228,9 +228,11 @@ export default {
             await reloadDashboard(ctx);
             await ctx.waitFor(`Boolean(document.querySelector('[data-sidebar-brand-icon="ready"]'))`, { timeoutMs: 30_000, label: "restored managed sidebar icon" });
             await ctx.clickText("Settings", { timeoutMs: 15_000 });
-            await ctx.waitForText("Brand Appearance", { timeoutMs: 30_000 });
+            await ctx.waitForText("Brand appearance", { timeoutMs: 30_000 });
+            await ctx.clickText("Brand appearance", { timeoutMs: 15_000 });
+            await ctx.waitFor("location.pathname.includes('/brand-appearance')", { timeoutMs: 30_000, label: "Brand appearance route" });
             await ctx.eval(`(() => {
-              const heading = [...document.querySelectorAll('h2')].find((node) => node.textContent?.trim() === 'Brand Appearance');
+              const heading = [...document.querySelectorAll('h1')].find((node) => node.textContent?.trim() === 'Brand appearance');
               heading?.scrollIntoView({ block: 'start' });
               return Boolean(heading);
             })()`);
@@ -245,8 +247,8 @@ export default {
           },
           screenshot: {
             name: "brand-controls-and-sidebar-icon",
-            claim: "Brand Appearance still shows the existing managed square-icon controls and stored icon.",
-            requireText: ["Brand Appearance", "Square app icon", "Stored in this Den"],
+            claim: "Brand appearance still shows the existing managed square-icon controls and stored icon.",
+            requireText: ["Brand appearance", "Square app icon", "Stored in this Den"],
             rejectText: ["Something went wrong"],
           },
         });

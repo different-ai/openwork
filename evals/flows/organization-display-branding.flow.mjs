@@ -20,7 +20,7 @@ const vo = await loadVoiceoverParagraphs("organization-display-branding");
 const execFileAsync = promisify(execFile);
 const APP_NAME = "Acme Work";
 const ORG_NAME = "Example Corp";
-const ORG_SETTINGS_PATH = "/dashboard/org-settings";
+const ORG_SETTINGS_PATH = "/dashboard/brand-appearance";
 const ASSET_PORT = 8091;
 const state = {
   logoUrl: null,
@@ -234,7 +234,7 @@ export default {
             })()`);
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Den desktop config returns the owner-saved app name and private wordmark URL", actual: JSON.stringify({ brandAppName: config.brandAppName, brandLogoUrl: config.brandLogoUrl }) });
           },
-          screenshot: { name: "frame-1-owner-saves-acme-work", sandboxCapture: true, textTargetUrlIncludes: ORG_SETTINGS_PATH, requireText: ["Brand Appearance", "Application name"] },
+          screenshot: { name: "frame-1-owner-saves-acme-work", sandboxCapture: true, textTargetUrlIncludes: ORG_SETTINGS_PATH, requireText: ["Brand appearance", "Application name"] },
         });
       },
     },

@@ -295,14 +295,14 @@ export default {
           },
           assert: async () => {
             const children = await navChildLabels(ctx);
-            for (const label of ["General", "Desktop Policies", "Billing", "API Keys", "SSO", "SCIM"]) {
+            for (const label of ["General", "Brand appearance", "Desktop Policies", "Stripe", "API Keys", "SSO", "SCIM"]) {
               ctx.assert(children.includes(label), `Settings children missing ${label}: ${JSON.stringify(children)}`);
             }
           },
           screenshot: {
             name: "settings-group",
-            claim: "Settings groups General, Desktop Policies, Billing, API Keys, SSO, and SCIM.",
-            requireText: ["Settings", "Desktop Policies", "Billing", "API Keys", "SSO", "SCIM"],
+            claim: "Settings groups General, Brand appearance, Desktop Policies, Stripe, API Keys, SSO, and SCIM.",
+            requireText: ["Settings", "Brand appearance", "Desktop Policies", "Stripe", "API Keys", "SSO", "SCIM"],
             rejectText: ["Something went wrong"],
           },
         });

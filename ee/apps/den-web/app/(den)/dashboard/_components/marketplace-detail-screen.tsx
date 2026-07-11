@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useRef, useState, useEffect } from "react";
 import { ArrowLeft, Check, GitBranch, Github, Globe, Loader2, Plus, Puzzle, Users, X } from "lucide-react";
-import { PaperMeshGradient } from "@openwork/ui/react";
+import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import {
   getGithubIntegrationSetupRoute,
   getMarketplacesRoute,
@@ -531,9 +531,7 @@ function MarketplacePluginCard({
     >
       <div className="flex items-stretch">
         <div className="relative w-[64px] shrink-0 overflow-hidden">
-          <div className="absolute inset-0">
-            <PaperMeshGradient seed={plugin.id} speed={0} />
-          </div>
+          <StaticSeededGradient seed={plugin.id} className="absolute inset-0" />
           <div className="relative flex h-full items-center justify-center">
             <div className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
               <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />

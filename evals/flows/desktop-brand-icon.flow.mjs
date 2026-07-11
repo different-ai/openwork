@@ -12,7 +12,7 @@ const ADMIN_EMAIL = "alex@acme.test";
 const ADMIN_PASSWORD = "OpenWorkDemo123!";
 const GENPACT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/5/50/Genpact_Logo_Black_%283%29.png";
 const TEST_ICON_URL = "https://upload.wikimedia.org/wikipedia/commons/6/6a/JavaScript-logo.png";
-const ORG_SETTINGS_PATH = "/dashboard/org-settings";
+const ORG_SETTINGS_PATH = "/dashboard/brand-appearance";
 const POLL_INTERVAL_MS = 500;
 
 let panelTargetId = null;

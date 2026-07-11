@@ -127,13 +127,13 @@ async function navigateBrandSettings(ctx) {
   await panelEval(ctx, `location.replace(${JSON.stringify(orgSettingsUrl(ctx))})`).catch(() => undefined);
   const ready = `(() => {
     const text = document.body.innerText;
-    return text.includes('Brand Appearance') && text.includes('Wordmark') && text.includes('Square app icon');
+    return text.includes('Brand appearance') && text.includes('Wordmark') && text.includes('Square app icon');
   })()`;
   try {
-    await waitForPanel(ctx, ready, { timeoutMs: 45_000, label: "managed Brand Appearance fields" });
+    await waitForPanel(ctx, ready, { timeoutMs: 45_000, label: "managed Brand appearance fields" });
   } catch {
     await panelEval(ctx, `location.replace(${JSON.stringify(orgSettingsUrl(ctx))})`).catch(() => undefined);
-    await waitForPanel(ctx, ready, { timeoutMs: 60_000, label: "managed Brand Appearance fields after reload" });
+    await waitForPanel(ctx, ready, { timeoutMs: 60_000, label: "managed Brand appearance fields after reload" });
   }
   await panelEval(ctx, `(() => {
     document.querySelector('[data-testid="brand-logo-asset-field"]')?.scrollIntoView({ block: 'center' });
@@ -262,7 +262,7 @@ export default {
             sandboxCapture: true,
             targetId: adminPanelTargetId,
             textTargetId: adminPanelTargetId,
-            requireText: ["Brand Appearance", "Ready to upload: example-corp-logo.png", "Ready to upload: example-corp-icon.png"],
+            requireText: ["Brand appearance", "Ready to upload: example-corp-logo.png", "Ready to upload: example-corp-icon.png"],
           },
         });
       },

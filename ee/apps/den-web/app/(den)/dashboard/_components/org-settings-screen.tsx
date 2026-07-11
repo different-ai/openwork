@@ -1,9 +1,9 @@
 "use client";
 
-import { Check, Copy, ImageUp, Pencil, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Check, Copy, Pencil, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
-import { getAllowedDesktopVersionsFromMetadata, getManagedBrandAssetFromMetadata, getRequireSsoFromMetadata, parseOrganizationMetadata, type DenManagedBrandAsset } from "../../_lib/den-org";
+import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getAllowedDesktopVersionsFromMetadata, getRequireSsoFromMetadata } from "../../_lib/den-org";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
@@ -108,140 +108,6 @@ function filterAllowedDesktopVersionsToVisibleOptions(
   return storedVersions.filter((version) => visibleOptionSet.has(version));
 }
 
-const BRAND_ASSET_MAX_BYTES = 2 * 1024 * 1024;
-
-type BrandAssetKind = "logo" | "icon";
-
-type BrandAssetDraft = {
-  file: File;
-  previewUrl: string;
-  width: number;
-  height: number;
-};
-
-async function createBrandAssetDraft(file: File, kind: BrandAssetKind): Promise<BrandAssetDraft> {
-  if (file.type !== "image/png" && file.type !== "image/jpeg") {
-    throw new Error("Use a PNG or JPEG image.");
-  }
-  if (file.size > BRAND_ASSET_MAX_BYTES) {
-    throw new Error("Use an image under 2 MB.");
-  }
-
-  let image: ImageBitmap;
-  try {
-    image = await createImageBitmap(file);
-  } catch {
-    throw new Error("OpenWork could not decode that image.");
-  }
-
-  const { width, height } = image;
-  image.close();
-  if (width > 4096 || height > 4096) {
-    throw new Error("Use an image no larger than 4096×4096 pixels.");
-  }
-  if (kind === "icon") {
-    if (width < 64 || height < 64) throw new Error("Use a square icon at least 64×64 pixels.");
-    if (width !== height) throw new Error("Use a square image for the app icon.");
-  } else {
-    const aspectRatio = width / height;
-    if (width < 128 || height < 32) throw new Error("Use a wordmark at least 128×32 pixels.");
-    if (aspectRatio < 1.5 || aspectRatio > 8) throw new Error("Use a horizontal wordmark between 1.5:1 and 8:1.");
-  }
-
-  return { file, previewUrl: URL.createObjectURL(file), width, height };
-}
-
-function BrandAssetUploadField({
-  kind,
-  title,
-  description,
-  currentUrl,
-  managedAsset,
-  draft,
-  clearPending,
-  disabled,
-  onSelect,
-  onClear,
-}: {
-  kind: BrandAssetKind;
-  title: string;
-  description: string;
-  currentUrl: string | null;
-  managedAsset: DenManagedBrandAsset | null;
-  draft: BrandAssetDraft | null;
-  clearPending: boolean;
-  disabled: boolean;
-  onSelect: (file: File | null) => void;
-  onClear: () => void;
-}) {
-  const inputId = `brand-${kind}-upload`;
-  const previewUrl = draft?.previewUrl ?? (clearPending ? null : currentUrl);
-  const dimensions = draft
-    ? `${draft.width}×${draft.height}`
-    : managedAsset
-      ? `${managedAsset.width}×${managedAsset.height}`
-      : null;
-
-  return (
-    <div className="grid min-w-0 gap-3 rounded-2xl border border-gray-200 bg-white p-4" data-testid={`brand-${kind}-asset-field`}>
-      <div className="grid gap-1">
-        <span className="text-[14px] font-medium text-gray-800">{title}</span>
-        <span className="text-[11px] leading-5 text-gray-400">{description}</span>
-      </div>
-      <div className="flex min-h-28 items-center justify-center overflow-hidden rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4">
-        {previewUrl ? (
-          <img
-            src={previewUrl}
-            alt={`${title} preview`}
-            className={kind === "icon" ? "size-20 rounded-2xl object-contain" : "max-h-20 max-w-full object-contain"}
-            data-testid={`brand-${kind}-preview`}
-          />
-        ) : (
-          <span className="text-center text-[12px] text-gray-400">Default OpenWork {kind}</span>
-        )}
-      </div>
-      <div className="min-h-9 min-w-0 break-words text-[11px] leading-5 text-gray-500" data-testid={`brand-${kind}-status`}>
-        {draft ? `Ready to upload: ${draft.file.name} · ${dimensions}` : null}
-        {!draft && clearPending ? "Will restore the default after saving." : null}
-        {!draft && !clearPending && managedAsset ? `Stored in this Den · ${dimensions} · version ${managedAsset.version.slice(0, 10)}` : null}
-        {!draft && !clearPending && !managedAsset && currentUrl ? "Current hosted image (legacy URL). Upload a file to move it into this Den." : null}
-        {!draft && !clearPending && !currentUrl ? "No custom image saved." : null}
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <label
-          htmlFor={inputId}
-          className={[
-            "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3.5 text-[12px] font-medium text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-50",
-            disabled ? "pointer-events-none opacity-60" : "",
-          ].join(" ")}
-        >
-          <ImageUp size={13} aria-hidden="true" />
-          {previewUrl ? "Replace image" : "Choose image"}
-        </label>
-        <input
-          id={inputId}
-          type="file"
-          accept="image/png,image/jpeg"
-          className="sr-only"
-          disabled={disabled}
-          onClick={(event) => { event.currentTarget.value = ""; }}
-          onChange={(event) => onSelect(event.target.files?.item(0) ?? null)}
-        />
-        <DenButton
-          type="button"
-          variant="secondary"
-          size="sm"
-          icon={Trash2}
-          disabled={disabled || (!previewUrl && !draft)}
-          onClick={onClear}
-        >
-          Clear
-        </DenButton>
-      </div>
-    </div>
-  );
-}
-
 function SettingsToggle({
   label,
   checked,
@@ -287,7 +153,6 @@ export function OrgSettingsScreen() {
     orgBusy,
     orgError,
     mutationBusy,
-    runReauthableAction,
     updateOrganizationSettings,
   } = useOrgDashboard();
   const [orgNameDraft, setOrgNameDraft] = useState("");
@@ -308,24 +173,11 @@ export function OrgSettingsScreen() {
   >(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageSuccess, setPageSuccess] = useState<string | null>(null);
-  const [brandAppNameDraft, setBrandAppNameDraft] = useState("");
-  const [brandLogoDraft, setBrandLogoDraft] = useState<BrandAssetDraft | null>(null);
-  const [brandIconDraft, setBrandIconDraft] = useState<BrandAssetDraft | null>(null);
-  const [brandLogoClearPending, setBrandLogoClearPending] = useState(false);
-  const [brandIconClearPending, setBrandIconClearPending] = useState(false);
-  const [brandAssetError, setBrandAssetError] = useState<string | null>(null);
-  const [brandAssetUploadBusy, setBrandAssetUploadBusy] = useState(false);
-  const [brandAccentColorDraft, setBrandAccentColorDraft] = useState("");
   const [copiedOrgId, setCopiedOrgId] = useState(false);
 
   const currentAllowedDomains =
     orgContext?.organization.allowedEmailDomains ?? null;
   const isOwner = orgContext?.currentMember.isOwner ?? false;
-  const brandingMetadata = parseOrganizationMetadata(orgContext?.organization.metadata ?? null);
-  const currentBrandLogoUrl = typeof brandingMetadata?.brandLogoUrl === "string" ? brandingMetadata.brandLogoUrl : null;
-  const currentBrandIconUrl = typeof brandingMetadata?.brandIconUrl === "string" ? brandingMetadata.brandIconUrl : null;
-  const currentBrandLogoAsset = getManagedBrandAssetFromMetadata(orgContext?.organization.metadata ?? null, "logo");
-  const currentBrandIconAsset = getManagedBrandAssetFromMetadata(orgContext?.organization.metadata ?? null, "icon");
   const draftAllowedDomains = useMemo(
     () => normalizeAllowedEmailDomainsInput(allowedDomainsDraft),
     [allowedDomainsDraft],
@@ -362,24 +214,8 @@ export function OrgSettingsScreen() {
       (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
     );
     setRequireSsoEnabled(getRequireSsoFromMetadata(orgContext.organization.metadata));
-    const meta = parseOrganizationMetadata(orgContext.organization.metadata);
-    setBrandAppNameDraft(typeof meta?.brandAppName === "string" ? meta.brandAppName : "");
-    setBrandLogoDraft(null);
-    setBrandIconDraft(null);
-    setBrandLogoClearPending(false);
-    setBrandIconClearPending(false);
-    setBrandAssetError(null);
-    setBrandAccentColorDraft(typeof meta?.brandAccentColor === "string" ? meta.brandAccentColor : "");
     setDomainEditModeEnabled(false);
   }, [orgContext]);
-
-  useEffect(() => () => {
-    if (brandLogoDraft) URL.revokeObjectURL(brandLogoDraft.previewUrl);
-  }, [brandLogoDraft]);
-
-  useEffect(() => () => {
-    if (brandIconDraft) URL.revokeObjectURL(brandIconDraft.previewUrl);
-  }, [brandIconDraft]);
 
   useEffect(() => {
     let cancelled = false;
@@ -531,74 +367,12 @@ export function OrgSettingsScreen() {
     setDomainEditModeEnabled(nextValue && !currentAllowedDomains?.length);
   }
 
-  async function handleBrandAssetSelection(kind: BrandAssetKind, file: File | null) {
-    setBrandAssetError(null);
-    if (!file) {
-      if (kind === "logo") setBrandLogoDraft(null);
-      else setBrandIconDraft(null);
-      return;
-    }
-
-    try {
-      const draft = await createBrandAssetDraft(file, kind);
-      if (kind === "logo") {
-        setBrandLogoDraft(draft);
-        setBrandLogoClearPending(false);
-      } else {
-        setBrandIconDraft(draft);
-        setBrandIconClearPending(false);
-      }
-    } catch (error) {
-      setBrandAssetError(error instanceof Error ? error.message : "Could not validate that image.");
-    }
-  }
-
-  function handleBrandAssetClear(kind: BrandAssetKind) {
-    setBrandAssetError(null);
-    if (kind === "logo") {
-      setBrandLogoDraft(null);
-      setBrandLogoClearPending(true);
-    } else {
-      setBrandIconDraft(null);
-      setBrandIconClearPending(true);
-    }
-  }
-
-  async function uploadBrandAssetDrafts() {
-    if (!brandLogoDraft && !brandIconDraft) return;
-
-    setBrandAssetUploadBusy(true);
-    try {
-      await runReauthableAction("upload-brand-assets", async () => {
-        const body = new FormData();
-        if (brandLogoDraft) body.set("logo", brandLogoDraft.file);
-        if (brandIconDraft) body.set("icon", brandIconDraft.file);
-
-        const { response, payload } = await requestJson(
-          "/v1/org/brand-assets",
-          { method: "POST", body },
-          30000,
-        );
-        if (!response.ok) {
-          throw getRequestError(
-            payload,
-            response,
-            `Could not upload brand images (${response.status}).`,
-          );
-        }
-      });
-    } finally {
-      setBrandAssetUploadBusy(false);
-    }
-  }
-
   async function handleSaveSettings(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPageError(null);
     setPageSuccess(null);
 
     try {
-      await uploadBrandAssetDrafts();
       await updateOrganizationSettings({
         name: orgNameDraft,
         allowedEmailDomains: domainRestrictionsEnabled
@@ -614,10 +388,6 @@ export function OrgSettingsScreen() {
             }
           : {}),
         requireSso: requireSsoEnabled,
-        brandAppName: brandAppNameDraft.trim() || null,
-        ...(brandLogoClearPending ? { brandLogoUrl: null } : {}),
-        ...(brandIconClearPending ? { brandIconUrl: null } : {}),
-        brandAccentColor: brandAccentColorDraft.trim() || null,
       });
       setDomainEditModeEnabled(false);
       setPageSuccess("Workspace settings updated.");
@@ -887,112 +657,6 @@ export function OrgSettingsScreen() {
           ) : null}
         </DenCard>
 
-        <DenCard size="spacious" className="grid gap-6">
-          <div className="grid gap-2">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              White-label
-            </p>
-            <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
-              Brand Appearance
-            </h2>
-            <p className="text-[14px] text-gray-500">
-              Customize the desktop app with your organization's branding. Changes apply to all members in real-time.
-            </p>
-          </div>
-
-          {orgContext && !orgContext.entitlements.desktopPolicies ? (
-            <EnterprisePlanNotice feature="White-label brand appearance" />
-          ) : (
-          <div className="grid gap-5">
-            <label className="grid max-w-xl gap-3">
-              <span className="text-[14px] font-medium text-gray-700">
-                Application name
-              </span>
-              <DenInput
-                type="text"
-                value={brandAppNameDraft}
-                onChange={(event) => setBrandAppNameDraft(event.target.value)}
-                placeholder="OpenWork"
-                maxLength={64}
-                disabled={!isOwner}
-              />
-              <span className="text-[11px] text-gray-400">
-                Displayed on download, setup, and desktop screens. The signed application identity stays OpenWork.
-              </span>
-            </label>
-
-            <div className="grid min-w-0 gap-5 lg:grid-cols-2">
-              <BrandAssetUploadField
-                kind="logo"
-                title="Wordmark"
-                description="Horizontal PNG or JPEG, 128×32 to 4096×4096, under 2 MB. Displayed in the sidebar."
-                currentUrl={currentBrandLogoUrl}
-                managedAsset={currentBrandLogoAsset}
-                draft={brandLogoDraft}
-                clearPending={brandLogoClearPending}
-                disabled={!isOwner || brandAssetUploadBusy}
-                onSelect={(file) => void handleBrandAssetSelection("logo", file)}
-                onClear={() => handleBrandAssetClear("logo")}
-              />
-              <BrandAssetUploadField
-                kind="icon"
-                title="Square app icon"
-                description="Square PNG or JPEG, 64×64 to 4096×4096, under 2 MB. Used by member desktops."
-                currentUrl={currentBrandIconUrl}
-                managedAsset={currentBrandIconAsset}
-                draft={brandIconDraft}
-                clearPending={brandIconClearPending}
-                disabled={!isOwner || brandAssetUploadBusy}
-                onSelect={(file) => void handleBrandAssetSelection("icon", file)}
-                onClear={() => handleBrandAssetClear("icon")}
-              />
-            </div>
-
-            {brandAssetError ? (
-              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700" data-testid="brand-asset-error">
-                {brandAssetError}
-              </div>
-            ) : null}
-
-            <label className="grid max-w-xl gap-3">
-              <span className="text-[14px] font-medium text-gray-700">
-                Accent color
-              </span>
-              <select
-                value={brandAccentColorDraft}
-                onChange={(event) => setBrandAccentColorDraft(event.target.value)}
-                disabled={!isOwner}
-                className="h-11 rounded-2xl border border-gray-200 bg-white px-4 text-[14px] text-gray-900 outline-none"
-              >
-                <option value="">Default (OpenWork)</option>
-                <option value="blue">Blue</option>
-                <option value="violet">Violet</option>
-                <option value="purple">Purple</option>
-                <option value="indigo">Indigo</option>
-                <option value="iris">Iris</option>
-                <option value="crimson">Crimson</option>
-                <option value="red">Red</option>
-                <option value="ruby">Ruby</option>
-                <option value="pink">Pink</option>
-                <option value="plum">Plum</option>
-                <option value="orange">Orange</option>
-                <option value="tomato">Tomato</option>
-                <option value="gold">Gold</option>
-                <option value="green">Green</option>
-                <option value="grass">Grass</option>
-                <option value="jade">Jade</option>
-                <option value="teal">Teal</option>
-                <option value="cyan">Cyan</option>
-                <option value="sky">Sky</option>
-              </select>
-              <span className="text-[11px] text-gray-400">
-                Overrides buttons and accent highlights across the desktop app.
-              </span>
-            </label>
-          </div>
-          )}
-        </DenCard>
-
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
           <p className="text-[13px] text-gray-500">
             {!isOwner && "Only workspace owners can change these settings."}
@@ -1000,7 +664,7 @@ export function OrgSettingsScreen() {
           {isOwner ? (
             <DenButton
               type="submit"
-              loading={brandAssetUploadBusy || mutationBusy === "update-organization-settings"}
+              loading={mutationBusy === "update-organization-settings"}
             >
               Save settings
             </DenButton>
