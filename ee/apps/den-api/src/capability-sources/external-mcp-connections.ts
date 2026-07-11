@@ -6,6 +6,7 @@ import {
   ExternalMcpConnectionTable,
   ExternalMcpOAuthPendingGrantTable,
   McpDiagnosticAttemptTable,
+  McpDiagnosticEventTable,
   OrgOAuthClientTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
@@ -239,22 +240,58 @@ export async function deleteExternalMcpConnection(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
 }): Promise<boolean> {
-  const existing = await getExternalMcpConnection(input)
-  if (!existing) return false
-  // No FK cascades on these tables — clean up everything that hangs off the
-  // connection: access grants, every member's connected account (per-member
-  // tokens), and the dynamically-registered OAuth client.
-  await db.delete(ExternalMcpOAuthPendingGrantTable).where(eq(ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId, existing.id))
-  await db.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, existing.id))
-  await db.delete(ConnectedAccountTable).where(and(
-    eq(ConnectedAccountTable.organizationId, input.organizationId),
-    eq(ConnectedAccountTable.providerId, existing.id),
-  ))
-  await db.delete(OrgOAuthClientTable).where(and(
-    eq(OrgOAuthClientTable.organizationId, input.organizationId),
-    eq(OrgOAuthClientTable.providerId, existing.id),
-  ))
-  await db.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
+  const removed = await db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: ExternalMcpConnectionTable.id })
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const existing = rows[0]
+    if (!existing) return false
+
+    // Connection removal is intentionally destructive for its 24-hour
+    // diagnostic detail. Audit rows remain in the organization log, while
+    // attempt/event rows are removed transactionally so no evidence record
+    // points at a connection that no longer exists.
+    const diagnosticAttempts = await tx
+      .select({ id: McpDiagnosticAttemptTable.id })
+      .from(McpDiagnosticAttemptTable)
+      .where(and(
+        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
+        eq(McpDiagnosticAttemptTable.externalMcpConnectionId, existing.id),
+      ))
+    const diagnosticAttemptIds = diagnosticAttempts.map((attempt) => attempt.id)
+    if (diagnosticAttemptIds.length > 0) {
+      await tx.delete(McpDiagnosticEventTable).where(inArray(McpDiagnosticEventTable.attemptId, diagnosticAttemptIds))
+      await tx.delete(McpDiagnosticAttemptTable).where(inArray(McpDiagnosticAttemptTable.id, diagnosticAttemptIds))
+    }
+
+    // No FK cascades on these tables — clean up everything that hangs off the
+    // connection: pending grants, access, every member credential, and the
+    // dynamically-registered OAuth client.
+    await tx.delete(ExternalMcpOAuthPendingGrantTable).where(eq(ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId, existing.id))
+    await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, existing.id))
+    await tx.delete(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.providerId, existing.id),
+    ))
+    await tx.delete(OrgOAuthClientTable).where(and(
+      eq(OrgOAuthClientTable.organizationId, input.organizationId),
+      eq(OrgOAuthClientTable.providerId, existing.id),
+    ))
+    await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
+    return true
+  })
+  if (!removed) return false
+
+  // The runner imports this store, so resolve its cancellation hook lazily
+  // after the transaction rather than introducing a static module cycle.
+  const { cancelExternalMcpDiagnosticExecutionsForConnection } = await import("./external-mcp-diagnostic-runner.js")
+  await cancelExternalMcpDiagnosticExecutionsForConnection(input.connectionId)
   return true
 }
 

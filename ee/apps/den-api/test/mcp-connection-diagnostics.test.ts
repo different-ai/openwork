@@ -313,6 +313,27 @@ test("persistent diagnostics allocate monotonic sequences, health, and immutable
   expect(snapshot?.attempt.firstFailureCategory).toBe("mcp_version")
 })
 
+test("event persistence treats a removed diagnostic attempt as gracefully closed", async () => {
+  const attempt = await diagnostics.createMcpDiagnosticAttempt({
+    organizationId,
+    connectionId: requireConnectionId(),
+    createdByOrgMembershipId: adminMemberId,
+  })
+  const attemptId = normalizeDenTypeId("mcpDiagnosticAttempt", attempt.id)
+  await db
+    .delete(schema.McpDiagnosticAttemptTable)
+    .where(drizzle.eq(schema.McpDiagnosticAttemptTable.id, attemptId))
+
+  await expect(diagnostics.appendMcpDiagnosticEvent({
+    organizationId,
+    attemptId,
+    phase: "HTTP_ROUTING",
+    outcome: "passed",
+    healthLevel: "reachable",
+    messageSafe: "This late event should close without an opaque persistence error.",
+  })).rejects.toMatchObject({ name: "McpDiagnosticAttemptClosedError" })
+})
+
 test("safe evidence strips query credentials and templates enterprise server identifiers", () => {
   const evidence = diagnostics.safeMcpDiagnosticEvidence({
     url: "https://example.service-now.com/sncapps/mcp-server/mcp/customer-production?code=secret&token=secret",
@@ -362,7 +383,7 @@ test("post-OAuth wrong-audience failures persist resource validation instead of 
   expect(snapshot?.attempt.status).toBe("failed")
   expect(snapshot?.attempt.firstFailedPhase).toBe("AUTH_RESOURCE_VALIDATION")
   expect(snapshot?.attempt.firstFailureCategory).toBe("oauth_invalid_token")
-  expect(snapshot?.attempt.firstFailureActionOwner).toBe("member")
+  expect(snapshot?.attempt.actionOwner).toBe("member")
   expect(JSON.stringify(snapshot)).not.toContain("must-not-appear")
 })
 
@@ -1021,6 +1042,86 @@ test("background diagnostic execution completes with no SSE subscriber", async (
   expect(snapshot?.events.map((event) => event.sequence)).toEqual([1, 2, 3])
 })
 
+test("connection deletion cancels a live runner and removes diagnostic detail transactionally", async () => {
+  const connection = await createExternalMcpConnection({
+    organizationId,
+    name: `Disposable live diagnostic ${crypto.randomUUID()}`,
+    url: `http://127.0.0.1:${fakeServer?.port}/mcp`,
+    authType: "none",
+    credentialMode: "shared",
+    createdByOrgMembershipId: adminMemberId,
+    access: { orgWide: true, memberIds: [], teamIds: [] },
+  })
+  const attempt = await diagnostics.createMcpDiagnosticAttempt({
+    organizationId,
+    connectionId: connection.id,
+    createdByOrgMembershipId: adminMemberId,
+  })
+  const attemptId = normalizeDenTypeId("mcpDiagnosticAttempt", attempt.id)
+  let releaseDiagnosis: (() => void) | undefined
+  let markDiagnosisStarted: (() => void) | undefined
+  const diagnosisStarted = new Promise<void>((resolve) => { markDiagnosisStarted = resolve })
+  const diagnosisBlocked = new Promise<void>((resolve) => { releaseDiagnosis = resolve })
+  const execution = externalMcpDiagnosticRunner.startExternalMcpDiagnosticExecution({
+    organizationId,
+    attemptId,
+    connection,
+    orgMembershipId: adminMemberId,
+    redirectUri: "https://den.example.test/v1/mcp/callback",
+    diagnose: async () => {
+      markDiagnosisStarted?.()
+      await diagnosisBlocked
+      return { status: "connected", protocolVersion: "2025-03-26", toolCount: 0, pageCount: 1 }
+    },
+  })
+  await diagnosisStarted
+
+  expect(await externalMcpConnections.deleteExternalMcpConnection({
+    organizationId,
+    connectionId: connection.id,
+  })).toBe(true)
+  await Promise.race([
+    execution.done,
+    Bun.sleep(1_000).then(() => { throw new Error("Deleted diagnostic runner did not cancel") }),
+  ])
+  expect(externalMcpDiagnosticRunner.getExternalMcpDiagnosticExecution(attemptId)).toBeNull()
+  expect(await diagnostics.getMcpDiagnosticSnapshot({ organizationId, attemptId })).toBeNull()
+  expect(await externalMcpConnections.getExternalMcpConnection({ organizationId, connectionId: connection.id })).toBeNull()
+  releaseDiagnosis?.()
+})
+
+test("diagnostic start and connection deletion cannot create an orphan attempt", async () => {
+  const connection = await createExternalMcpConnection({
+    organizationId,
+    name: `Diagnostic delete race ${crypto.randomUUID()}`,
+    url: `http://127.0.0.1:${fakeServer?.port}/mcp`,
+    authType: "none",
+    credentialMode: "shared",
+    createdByOrgMembershipId: adminMemberId,
+    access: { orgWide: true, memberIds: [], teamIds: [] },
+  })
+  const [started, removed] = await Promise.allSettled([
+    diagnostics.createMcpDiagnosticAttempt({
+      organizationId,
+      connectionId: connection.id,
+      createdByOrgMembershipId: adminMemberId,
+    }),
+    externalMcpConnections.deleteExternalMcpConnection({
+      organizationId,
+      connectionId: connection.id,
+    }),
+  ])
+
+  expect(removed).toEqual({ status: "fulfilled", value: true })
+  if (started.status === "rejected") expect(String(started.reason)).toContain("Unknown MCP connection")
+  const remainingAttempts = await db
+    .select({ id: schema.McpDiagnosticAttemptTable.id })
+    .from(schema.McpDiagnosticAttemptTable)
+    .where(drizzle.eq(schema.McpDiagnosticAttemptTable.externalMcpConnectionId, connection.id))
+  expect(remainingAttempts).toHaveLength(0)
+  expect(await externalMcpConnections.getExternalMcpConnection({ organizationId, connectionId: connection.id })).toBeNull()
+})
+
 test("authorization timeout runs without subscribers and removes its bound PKCE grant", async () => {
   const connection = await createOAuthDiagnosticConnection("No subscriber OAuth")
   const client = await oauthCredentials.upsertOrgOAuthClient({
@@ -1308,4 +1409,16 @@ test("an expired process lease becomes a clear retryable terminal result", async
   const snapshot = await diagnostics.getMcpDiagnosticSnapshot({ organizationId, attemptId })
   expect(snapshot?.attempt.status).toBe("failed")
   expect(snapshot?.attempt.actionOwner).toBe("openwork")
+  const attemptRows = await db
+    .select({ auditEventId: schema.McpDiagnosticAttemptTable.completionAuditEventId })
+    .from(schema.McpDiagnosticAttemptTable)
+    .where(drizzle.eq(schema.McpDiagnosticAttemptTable.id, attemptId))
+    .limit(1)
+  const auditEventId = attemptRows[0]?.auditEventId
+  if (!auditEventId) throw new Error("Recovered diagnostic did not retain its completion audit id")
+  const auditRows = await db
+    .select({ id: schema.AuditEventTable.id })
+    .from(schema.AuditEventTable)
+    .where(drizzle.eq(schema.AuditEventTable.id, auditEventId))
+  expect(auditRows).toHaveLength(1)
 })

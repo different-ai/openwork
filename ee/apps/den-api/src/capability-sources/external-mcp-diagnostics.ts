@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { and, asc, eq, gte, inArray, isNull, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js"
 import {
+  ExternalMcpConnectionTable,
   McpDiagnosticAttemptTable,
   McpDiagnosticEventTable,
   MemberTable,
@@ -681,7 +682,7 @@ export async function recoverAbandonedMcpDiagnosticAttempt(input: {
 }): Promise<McpDiagnosticEvent | null> {
   const now = input.now ?? new Date()
   const eventId = createDenTypeId("mcpDiagnosticEvent")
-  return db.transaction(async (tx) => {
+  const recovered = await db.transaction(async (tx) => {
     const rows = await tx
       .select()
       .from(McpDiagnosticAttemptTable)
@@ -741,6 +742,38 @@ export async function recoverAbandonedMcpDiagnosticAttempt(input: {
       .limit(1)
     return events[0] ? toEvent(events[0]) : null
   })
+  if (!recovered) return null
+
+  const [attempt, snapshot] = await Promise.all([
+    getMcpDiagnosticAttemptRow({ organizationId: input.organizationId, attemptId: input.attemptId }),
+    getMcpDiagnosticSnapshot({ organizationId: input.organizationId, attemptId: input.attemptId }),
+  ])
+  if (attempt && snapshot) {
+    try {
+      const actorUserId = await getMcpDiagnosticAdminActorUserId({
+        organizationId: input.organizationId,
+        memberId: attempt.createdByOrgMembershipId,
+      })
+      if (actorUserId) {
+        await recordMcpDiagnosticCompletionAuditOnce({
+          organizationId: input.organizationId,
+          actorUserId,
+          attemptId: input.attemptId,
+          connectionId: attempt.externalMcpConnectionId,
+          status: snapshot.attempt.status,
+          highestHealthLevel: snapshot.attempt.highestHealthLevel,
+          firstFailedPhase: snapshot.attempt.firstFailedPhase,
+        })
+      }
+    } catch (error) {
+      console.error("mcp_diagnostic_recovery_audit_write_failed", {
+        organizationId: input.organizationId,
+        attemptId: input.attemptId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      })
+    }
+  }
+  return recovered
 }
 
 async function recoverAbandonedMcpDiagnosticAttemptsForOrganization(input: {
@@ -784,6 +817,20 @@ export async function createMcpDiagnosticAttempt(input: {
       .limit(1)
       .for("update")
     if (!organizations[0]) throw new Error("Unknown organization for MCP diagnostic attempt.")
+
+    // Serialize start with connection deletion. If deletion wins, this row is
+    // absent and no orphan diagnostic can be created. If start wins, deletion
+    // waits and then removes the newly-created attempt in the same transaction.
+    const connections = await tx
+      .select({ id: ExternalMcpConnectionTable.id })
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    if (!connections[0]) throw new Error("Unknown MCP connection for diagnostic attempt.")
 
     const activeOrganizationRows = await tx
       .select({ count: sql<number>`count(*)` })
@@ -1220,8 +1267,7 @@ export async function appendMcpDiagnosticEvent(input: {
       ))
       .limit(1)
     const attempt = rows[0]
-    if (!attempt) throw new Error("Unknown MCP diagnostic attempt.")
-    if (attempt.status === "succeeded" || attempt.status === "failed" || attempt.status === "expired") {
+    if (!attempt || attempt.status === "succeeded" || attempt.status === "failed" || attempt.status === "expired") {
       throw new McpDiagnosticAttemptClosedError()
     }
 
