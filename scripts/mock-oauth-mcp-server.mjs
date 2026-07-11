@@ -32,13 +32,13 @@ Profiles:
 Representative faults:
   expired_session, cursor_loop, provider_denied, provider_throttled,
   missing_auth_challenge, bad_resource_metadata, issuer_mismatch, no_pkce,
-  dcr_unsupported, invalid_client, invalid_grant, wrong_audience,
+  dcr_unsupported, invalid_client, invalid_grant, wrong_audience, insufficient_scope,
   unsupported_version, malformed_initialize, notification_rejected,
   wrong_content_type, broken_sse, empty_tool_catalog
 
 The default listener is loopback-only and all records/tokens are synthetic.
-Non-loopback binding requires --unsafe-allow-non-loopback. Request-log access
-is disabled unless MCP_MOCK_DIAGNOSTICS_KEY is configured.`);
+Non-loopback binding requires --unsafe-allow-non-loopback. Request-log and
+runtime-control access require MCP_MOCK_DIAGNOSTICS_KEY.`);
   process.exit(0);
 }
 
@@ -57,6 +57,7 @@ const port = Number(
 const issuer = process.env.ISSUER || `http://${hostForUrl(host)}:${port}`;
 let autoApprove = process.env.AUTO_APPROVE !== "0";
 let selectedProtocolVersion = process.env.MOCK_MCP_PROTOCOL_VERSION || null;
+let operationFault = ["provider_denied", "provider_throttled"].includes(fault) ? fault : "none";
 const disableDcrRequested = process.env.DISABLE_DCR === "1" || fault === "dcr_unsupported";
 const enableDcrRequested = process.env.MCP_MOCK_ENABLE_DCR === "1";
 const mockClientId = process.env.MOCK_CLIENT_ID || "mock-preregistered-client";
@@ -119,6 +120,7 @@ const SUPPORTED_FAULTS = new Set([
   "invalid_client",
   "invalid_grant",
   "wrong_audience",
+  "insufficient_scope",
   "unsupported_version",
   "malformed_initialize",
   "expired_session",
@@ -156,6 +158,7 @@ const ADVERTISED_FAULTS = [
   "invalid_client",
   "invalid_grant",
   "wrong_audience",
+  "insufficient_scope",
   "unsupported_version",
   "malformed_initialize",
   "notification_rejected",
@@ -1039,10 +1042,10 @@ function callTool(message, correlationId) {
   const name = message.params?.name;
   const toolDefinition = profile.tools.find((entry) => entry.name === name);
   if (!toolDefinition) return { protocolError: protocolError(message.id, -32602, `Unknown tool: ${String(name)}`) };
-  if (fault === "provider_denied") {
+  if (operationFault === "provider_denied") {
     return { result: providerError("Synthetic provider denied the operation.", "provider_policy", 403, "insufficient_privilege", correlationId) };
   }
-  if (fault === "provider_throttled") {
+  if (operationFault === "provider_throttled") {
     return { result: providerError("Synthetic provider throttled the operation.", "provider_api", 429, "rate_limited", correlationId, 2) };
   }
   const toolArgs = message.params?.arguments || {};
@@ -1151,6 +1154,13 @@ async function handleMcp(req, res, correlationId) {
       ? {}
       : { "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource${profile.endpoint}", scope="${profile.scopes.join(" ")}"` };
     json(res, 401, { error: "missing_mcp_token" }, correlationId, headers);
+    return;
+  }
+
+  if (fault === "insufficient_scope") {
+    json(res, 403, { error: "insufficient_scope" }, correlationId, {
+      "www-authenticate": `Bearer error="insufficient_scope", scope="${profile.scopes.join(" ")}"`,
+    });
     return;
   }
 
@@ -1314,7 +1324,6 @@ const server = http.createServer(async (req, res) => {
   req.once("aborted", settleRequest);
   res.once("finish", settleRequest);
   res.once("close", settleRequest);
-  res.socket?.once("close", settleRequest);
   let correlationId = `mock-${profileName}-unassigned`;
   try {
     const url = new URL(req.url || "/", issuer);
@@ -1341,6 +1350,7 @@ const server = http.createServer(async (req, res) => {
         responseMode,
         authMode,
         fault,
+        operationFault,
         advertisedFaults: ADVERTISED_FAULTS,
         autoApprove,
         disableDcr,
@@ -1360,6 +1370,9 @@ const server = http.createServer(async (req, res) => {
           resource,
           audience,
           scopes: profile.scopes,
+          readOnlyTools: profile.tools
+            .filter((toolDefinition) => toolDefinition.annotations?.readOnlyHint === true)
+            .map((toolDefinition) => toolDefinition.name),
           documentation: profile.documentation,
           preview: profileName === "workiq" || profileName === "agent365-mail" || profileName === "microsoft-enterprise",
         },
@@ -1368,11 +1381,11 @@ const server = http.createServer(async (req, res) => {
       }, correlationId);
       return;
     }
+    if (url.pathname.startsWith("/__mock/") && !hasDiagnosticsAccess(req)) {
+      json(res, 404, { error: "not_found" }, correlationId);
+      return;
+    }
     if (url.pathname === "/__mock/protocol-version" && req.method === "POST") {
-      if (diagnosticsKey && !hasDiagnosticsAccess(req)) {
-        json(res, 404, { error: "not_found" }, correlationId);
-        return;
-      }
       const body = await readJson(req).catch(() => ({}));
       if (typeof body.protocolVersion !== "string" || body.protocolVersion.length > 32) {
         json(res, 400, { error: "invalid_protocol_version" }, correlationId);
@@ -1383,10 +1396,6 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (url.pathname === "/__mock/auto-approve" && req.method === "POST") {
-      if (diagnosticsKey && !hasDiagnosticsAccess(req)) {
-        json(res, 404, { error: "not_found" }, correlationId);
-        return;
-      }
       const body = await readJson(req).catch(() => ({}));
       if (typeof body.autoApprove !== "boolean") {
         json(res, 400, { error: "invalid_auto_approve" }, correlationId);
@@ -1394,6 +1403,36 @@ const server = http.createServer(async (req, res) => {
       }
       autoApprove = body.autoApprove;
       json(res, 200, { autoApprove }, correlationId);
+      return;
+    }
+    if (url.pathname === "/__mock/preregistered-client-redirect" && req.method === "POST") {
+      const body = await readJson(req).catch(() => ({}));
+      const redirectUri = typeof body.redirectUri === "string" ? body.redirectUri.trim() : "";
+      const client = getLive(clients, mockClientId);
+      if (!client || !redirectUri || !(await validRedirectUri(redirectUri))) {
+        json(res, 400, { error: "invalid_preregistered_redirect_uri" }, correlationId);
+        return;
+      }
+      // Keep configured fixture callbacks plus one runtime callback. Repeated
+      // rehearsal runs replace the prior generated connection id instead of
+      // exhausting the client's bounded redirect list.
+      const redirectUris = [...new Set([...preregisteredRedirectUris, redirectUri])];
+      if (redirectUris.length > 10) {
+        json(res, 400, { error: "too_many_preregistered_redirect_uris" }, correlationId);
+        return;
+      }
+      client.redirectUris = redirectUris;
+      json(res, 200, { clientId: mockClientId, redirectUriCount: redirectUris.length }, correlationId);
+      return;
+    }
+    if (url.pathname === "/__mock/operation-fault" && req.method === "POST") {
+      const body = await readJson(req).catch(() => ({}));
+      if (!["none", "provider_denied", "provider_throttled"].includes(body.fault)) {
+        json(res, 400, { error: "invalid_operation_fault" }, correlationId);
+        return;
+      }
+      operationFault = body.fault;
+      json(res, 200, { operationFault }, correlationId);
       return;
     }
     if (url.pathname === "/requests") {

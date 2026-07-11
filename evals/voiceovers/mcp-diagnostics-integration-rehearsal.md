@@ -11,8 +11,8 @@ release branch.
 
 2. He starts the deterministic ServiceNow-style server and connects through
    the realistic confidential-client OAuth path. The callback returns to Den
-   API, and the connection is stored only after token acquisition and MCP
-   initialization succeed.
+   API, and its credentials and Connected state are stored only after token
+   acquisition and MCP initialization succeed.
 
 3. He selects Test connection. OpenWork performs a read-only initialize,
    initialized notification, complete paginated tool listing, and session

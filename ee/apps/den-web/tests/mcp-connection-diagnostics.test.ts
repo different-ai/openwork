@@ -1,10 +1,19 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 import {
   consumeMcpDiagnosticStream,
   isMcpDiagnosticStreamMessage,
   isSafeMcpAuthorizationUrl,
+  MCP_DIAGNOSTIC_CATALOG_READY_SCOPE_BOUNDARY,
   selectMcpDiagnosticTimelineEvents,
+  shouldShowMcpDiagnosticScopeBoundary,
 } from "../app/(den)/dashboard/_components/mcp-connections-data";
+
+const diagnosticDialogSource = readFileSync(
+  fileURLToPath(new URL("../app/(den)/dashboard/_components/mcp-connection-diagnostics-dialog.tsx", import.meta.url)),
+  "utf8",
+);
 
 const event = {
   id: "mde_01h2xcejqtf2nbrexx3vqjhp41",
@@ -93,6 +102,38 @@ describe("MCP diagnostic stream contract", () => {
       initializeRunning,
       initializePassed,
     ]).map((entry) => entry.id)).toEqual(["mde_discovery_1", "mde_discovery_2", "mde_initialize_2"]);
+  });
+
+  test("shows the provider-operation scope boundary only for a successful catalog-ready result", () => {
+    expect(MCP_DIAGNOSTIC_CATALOG_READY_SCOPE_BOUNDARY).toBe(
+      "Catalog Ready proves the complete tool catalog. Provider operations and mutations were not tested.",
+    );
+    expect(shouldShowMcpDiagnosticScopeBoundary({
+      status: "succeeded",
+      highestHealthLevel: "catalog_ready",
+    })).toBe(true);
+    expect(shouldShowMcpDiagnosticScopeBoundary({
+      status: "running",
+      highestHealthLevel: "catalog_ready",
+    })).toBe(false);
+    expect(shouldShowMcpDiagnosticScopeBoundary({
+      status: "succeeded",
+      highestHealthLevel: "protocol_ready",
+    })).toBe(false);
+    expect(shouldShowMcpDiagnosticScopeBoundary(null)).toBe(false);
+  });
+
+  test("places the catalog-ready scope boundary directly after the health and failure summary", () => {
+    const healthIndex = diagnosticDialogSource.indexOf('data-testid="mcp-diagnostic-health"');
+    const failureIndex = diagnosticDialogSource.indexOf('data-testid="mcp-diagnostic-first-failure"');
+    const boundaryIndex = diagnosticDialogSource.indexOf('data-testid="mcp-diagnostic-scope-boundary"');
+    const remediationIndex = diagnosticDialogSource.indexOf('data-testid="mcp-diagnostic-remediation"');
+
+    expect(healthIndex).toBeGreaterThan(-1);
+    expect(failureIndex).toBeGreaterThan(healthIndex);
+    expect(boundaryIndex).toBeGreaterThan(failureIndex);
+    expect(remediationIndex).toBeGreaterThan(boundaryIndex);
+    expect(diagnosticDialogSource).toContain("shouldShowMcpDiagnosticScopeBoundary(attempt)");
   });
 
   test("tracks SSE ids for resume and cancels a malformed response body", async () => {

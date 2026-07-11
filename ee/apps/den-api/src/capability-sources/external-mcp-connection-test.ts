@@ -65,6 +65,7 @@ export const EXTERNAL_MCP_CONNECTION_TEST_FAILURE_CODES = [
   "mcp_test_timeout",
   "mcp_initialize_failed",
   "mcp_reauth_required",
+  "mcp_provider_permission_denied",
   "mcp_catalog_unavailable",
   "mcp_catalog_cursor_cycle",
   "mcp_catalog_duplicate_tool",
@@ -88,6 +89,7 @@ export const EXTERNAL_MCP_CONNECTION_TEST_FAILURE_MESSAGES = {
   mcp_test_timeout: "The MCP connection test timed out.",
   mcp_initialize_failed: "The MCP server did not complete protocol initialization.",
   mcp_reauth_required: "The existing MCP credential was rejected. Reconnect this account, then test again.",
+  mcp_provider_permission_denied: "The MCP provider denied access to this connection. Ask a provider administrator to review account assignments, roles, ACLs, and required scopes, then test again.",
   mcp_catalog_unavailable: "The MCP server did not return a valid tool catalog.",
   mcp_catalog_cursor_cycle: "The MCP server repeated a tool-catalog pagination cursor.",
   mcp_catalog_duplicate_tool: "The MCP server returned duplicate tool names.",
@@ -373,8 +375,11 @@ function sanitizeConnectionTestFailure(
 ): ExternalMcpConnectionTestFailure {
   if (error instanceof ExternalMcpConnectionTestFailure) return error
   if (isTimeoutFailure(error, deadline)) return connectionTestFailure(testId, "mcp_test_timeout")
-  if (error instanceof StreamableHTTPError && (error.code === 401 || error.code === 403)) {
+  if (error instanceof StreamableHTTPError && error.code === 401) {
     return connectionTestFailure(testId, "mcp_reauth_required")
+  }
+  if (error instanceof StreamableHTTPError && error.code === 403) {
+    return connectionTestFailure(testId, "mcp_provider_permission_denied")
   }
   return connectionTestFailure(
     testId,

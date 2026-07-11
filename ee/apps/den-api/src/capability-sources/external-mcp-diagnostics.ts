@@ -842,17 +842,47 @@ export class ExternalMcpDiagnosticTracker {
     }
   }
 
-  providerToolError(): ExternalMcpDiagnosticError {
-    const classification: Classification = {
-      phase: "PROVIDER_EXECUTION",
-      category: "provider_tool_error",
-      code: "MCP_PROVIDER_TOOL_ERROR",
-      retryable: false,
-      actionOwner: "provider_admin",
-      operatorAction: "Inspect the provider operation result and provider logs using the diagnostic reference.",
-    }
-    this.failed("PROVIDER_EXECUTION", classification)
-    return this.error(new Error("Provider returned an MCP tool error result."), "PROVIDER_EXECUTION")
+  providerToolError(result?: unknown): ExternalMcpDiagnosticError {
+    const structuredContent = isRecord(result) && isRecord(result.structuredContent)
+      ? result.structuredContent
+      : null
+    const providerStatus = structuredContent?.providerStatus
+    const providerCategory = structuredContent?.category
+    const requestId = safeNativeToken(
+      typeof structuredContent?.requestId === "string" ? structuredContent.requestId : undefined,
+      /^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/,
+      128,
+    )
+    if (requestId) this.providerRequestId = requestId
+
+    const classification: Classification = providerStatus === 403 && providerCategory === "provider_policy"
+      ? {
+          phase: "PROVIDER_AUTHORIZATION",
+          category: "provider_policy_denied",
+          code: "MCP_PROVIDER_HTTP_403",
+          retryable: false,
+          actionOwner: "provider_admin",
+          operatorAction: "Grant the provider role, ACL, or application permission required for this operation.",
+        }
+      : providerStatus === 429
+        ? {
+            phase: "PROVIDER_EXECUTION",
+            category: "provider_throttled",
+            code: "MCP_PROVIDER_HTTP_429",
+            retryable: true,
+            actionOwner: "provider_admin",
+            operatorAction: "Wait for the provider rate limit to reset, then retry with bounded backoff.",
+          }
+        : {
+            phase: "PROVIDER_EXECUTION",
+            category: "provider_tool_error",
+            code: "MCP_PROVIDER_TOOL_ERROR",
+            retryable: false,
+            actionOwner: "provider_admin",
+            operatorAction: "Inspect the provider operation result and provider logs using the diagnostic reference.",
+          }
+    this.failed(classification.phase, classification)
+    return this.error(new Error("Provider returned an MCP tool error result."), classification.phase)
   }
 
   error(error: unknown, fallbackPhase = this.lastFailedPhase ?? this.phase): ExternalMcpDiagnosticError {
@@ -1185,6 +1215,7 @@ export function lifecycleDeadlineDiagnosticError(input: {
 
 export function providerToolDiagnosticError(input: {
   tracker: ExternalMcpDiagnosticTracker
+  result?: unknown
 }): ExternalMcpDiagnosticError {
-  return input.tracker.providerToolError()
+  return input.tracker.providerToolError(input.result)
 }

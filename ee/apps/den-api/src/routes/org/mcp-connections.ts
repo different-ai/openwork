@@ -26,6 +26,7 @@ import {
   diagnoseExternalMcp,
   diagnosticEvidenceFromError,
   diagnosticPhaseFromError,
+  postAuthorizationResourceValidationError,
   type ExternalMcpDiagnosticObserver,
 } from "../../capability-sources/external-mcp-client.js"
 import {
@@ -1477,7 +1478,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             observe: observer,
           })
           if (diagnosticResult.status !== "connected") {
-            throw new Error("The MCP resource requested authorization again after token exchange.")
+            throw postAuthorizationResourceValidationError(connection.url)
           }
         }
       } catch (error) {

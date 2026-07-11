@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
+import { Agent, get as httpGet } from "node:http";
 import { resolve } from "node:path";
 
 const script = resolve(import.meta.dir, "mock-oauth-mcp-server.mjs");
@@ -75,12 +76,25 @@ async function startMock(options: {
       ...(options.disableDcr ? { DISABLE_DCR: "1" } : {}),
       ...options.extraEnv,
     },
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
   });
+  let stderr = "";
+  child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
   children.add(child);
   const baseUrl = `http://127.0.0.1:${port}`;
   const health = await waitForHealth(baseUrl);
-  return { child, baseUrl, health };
+  return { child, baseUrl, health, stderr: () => stderr };
+}
+
+async function getWithAgent(url: string, agent: Agent): Promise<void> {
+  await new Promise<void>((resolveRequest, rejectRequest) => {
+    const request = httpGet(url, { agent }, (response) => {
+      response.resume();
+      response.once("end", resolveRequest);
+      response.once("error", rejectRequest);
+    });
+    request.once("error", rejectRequest);
+  });
 }
 
 async function stopMock(child: ChildProcess) {
@@ -328,6 +342,14 @@ async function listEntireCatalog(baseUrl: string, endpoint: string, token: strin
 }
 
 describe("enterprise diagnostic OAuth MCP mock", () => {
+  test("documents the diagnostics key required by runtime controls", () => {
+    const help = Bun.spawnSync([process.execPath, script, "--help"]);
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout.toString()).toContain(
+      "Request-log and\nruntime-control access require MCP_MOCK_DIAGNOSTICS_KEY.",
+    );
+  });
+
   test("prefers the isolated hub extra port over the application PORT", async () => {
     const extraPort = await getFreePort();
     const applicationPort = await getFreePort();
@@ -343,6 +365,20 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
     const health = await waitForHealth(`http://127.0.0.1:${extraPort}`);
     expect(health.issuer).toBe(`http://127.0.0.1:${extraPort}`);
     await stopMock(child);
+  });
+
+  test("does not accumulate socket close listeners across keep-alive requests", async () => {
+    const mock = await startMock();
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      for (let request = 0; request < 20; request += 1) {
+        await getWithAgent(`${mock.baseUrl}/health`, agent);
+      }
+      await Bun.sleep(25);
+      expect(mock.stderr()).not.toContain("MaxListenersExceededWarning");
+    } finally {
+      agent.destroy();
+    }
   });
 
   test("refuses non-loopback binding and exposes no permissive CORS or open logs", async () => {
@@ -473,6 +509,106 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
     const exitCode = await new Promise<number | null>((resolveExit) => invalidManual.once("exit", resolveExit));
     children.delete(invalidManual);
     expect(exitCode).toBe(2);
+  });
+
+  test("registers an exact runtime callback for the synthetic pre-registered client", async () => {
+    const mock = await startMock({ profile: "servicenow", disableDcr: true });
+    const runtimeRedirect = "http://127.0.0.1:8790/v1/mcp-connections/emc_runtime/connect/callback";
+
+    const hidden = await fetch(`${mock.baseUrl}/__mock/preregistered-client-redirect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ redirectUri: runtimeRedirect }),
+    });
+    expect(hidden.status).toBe(404);
+
+    const configured = await fetch(`${mock.baseUrl}/__mock/preregistered-client-redirect`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...diagnosticsHeaders },
+      body: JSON.stringify({ redirectUri: runtimeRedirect }),
+    });
+    expect(configured.status).toBe(200);
+    expect(await configured.json()).toMatchObject({
+      clientId: PREREGISTERED_CLIENT.clientId,
+      redirectUriCount: 2,
+    });
+
+    const authorization = await fetch(buildAuthorizeUrl({
+      baseUrl: mock.baseUrl,
+      endpoint: "/sncapps/mcp-server/mcp/sn_mcp_server_default",
+      clientId: PREREGISTERED_CLIENT.clientId,
+      scopes: ["mcp_server"],
+      oauthPathKind: "provider",
+      overrides: { redirect_uri: runtimeRedirect },
+    }), { redirect: "manual" });
+    expect(authorization.status).toBe(302);
+
+    const unsafe = await fetch(`${mock.baseUrl}/__mock/preregistered-client-redirect`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...diagnosticsHeaders },
+      body: JSON.stringify({ redirectUri: "http://127.0.0.1.attacker.example/callback" }),
+    });
+    expect(unsafe.status).toBe(400);
+
+    const replacementRedirect = "http://127.0.0.1:8790/v1/mcp-connections/emc_replacement/connect/callback";
+    const replacement = await fetch(`${mock.baseUrl}/__mock/preregistered-client-redirect`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...diagnosticsHeaders },
+      body: JSON.stringify({ redirectUri: replacementRedirect }),
+    });
+    expect(replacement.status).toBe(200);
+    expect(await replacement.json()).toMatchObject({ redirectUriCount: 2 });
+    const oldAuthorization = await fetch(buildAuthorizeUrl({
+      baseUrl: mock.baseUrl,
+      endpoint: "/sncapps/mcp-server/mcp/sn_mcp_server_default",
+      clientId: PREREGISTERED_CLIENT.clientId,
+      scopes: ["mcp_server"],
+      oauthPathKind: "provider",
+      overrides: { redirect_uri: runtimeRedirect },
+    }), { redirect: "manual" });
+    expect(oldAuthorization.status).toBe(400);
+    const replacementAuthorization = await fetch(buildAuthorizeUrl({
+      baseUrl: mock.baseUrl,
+      endpoint: "/sncapps/mcp-server/mcp/sn_mcp_server_default",
+      clientId: PREREGISTERED_CLIENT.clientId,
+      scopes: ["mcp_server"],
+      oauthPathKind: "provider",
+      overrides: { redirect_uri: replacementRedirect },
+    }), { redirect: "manual" });
+    expect(replacementAuthorization.status).toBe(302);
+  });
+
+  test("keeps every runtime control hidden when the diagnostics key is unset", async () => {
+    const mock = await startMock({
+      profile: "servicenow",
+      disableDcr: true,
+      extraEnv: { MCP_MOCK_DIAGNOSTICS_KEY: "" },
+    });
+    expect(mock.health.requestLogEnabled).toBe(false);
+
+    for (const [pathname, body] of [
+      ["/__mock/protocol-version", { protocolVersion: "2099-01-01" }],
+      ["/__mock/auto-approve", { autoApprove: false }],
+      ["/__mock/preregistered-client-redirect", {
+        redirectUri: "http://127.0.0.1:8790/v1/mcp-connections/emc_hidden/connect/callback",
+      }],
+      ["/__mock/operation-fault", { fault: "provider_denied" }],
+    ] as const) {
+      for (const headers of [
+        { "content-type": "application/json" },
+        { "content-type": "application/json", ...diagnosticsHeaders },
+      ]) {
+        const response = await fetch(`${mock.baseUrl}${pathname}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        });
+        expect(response.status).toBe(404);
+      }
+    }
+
+    const health: unknown = await (await fetch(`${mock.baseUrl}/health`)).json();
+    expect(isRecord(health) && health.operationFault).toBe("none");
   });
 
   test("uses a one-time server-side approval transaction and one-time client-bound code", async () => {
@@ -998,6 +1134,7 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
       "invalid_client",
       "invalid_grant",
       "wrong_audience",
+      "insufficient_scope",
       "unsupported_version",
       "malformed_initialize",
       "notification_rejected",
@@ -1174,5 +1311,101 @@ describe("enterprise diagnostic OAuth MCP mock", () => {
     expect(body.result.isError).toBe(true);
     expect(body.result.structuredContent.category).toBe("provider_policy");
     expect(body.result.structuredContent.providerStatus).toBe(403);
+  });
+
+  test("injects operation-only provider faults after connection health succeeds", async () => {
+    const mock = await startMock({ profile: "microsoft-enterprise" });
+    expect(mock.health.operationFault).toBe("none");
+    if (!isRecord(mock.health.fixtureContract)) throw new Error("health omitted fixture contract");
+    expect(mock.health.fixtureContract.readOnlyTools).toEqual([
+      "microsoft_graph_suggest_queries",
+      "microsoft_graph_get",
+      "microsoft_graph_list_properties",
+    ]);
+
+    const initialized = await initialize(mock.baseUrl, "/enterprise", "mock-access-token");
+    const expectedCatalog = [
+      "microsoft_graph_suggest_queries",
+      "microsoft_graph_get",
+      "microsoft_graph_list_properties",
+    ];
+    expect(await listEntireCatalog(
+      mock.baseUrl,
+      "/enterprise",
+      "mock-access-token",
+      initialized.protocolVersion,
+      initialized.sessionId,
+    )).toEqual(expectedCatalog);
+
+    const call = async (id: string) => {
+      const response = await fetch(`${mock.baseUrl}/enterprise`, {
+        method: "POST",
+        headers: mcpHeaders("mock-access-token", initialized.protocolVersion, initialized.sessionId),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          method: "tools/call",
+          params: { name: "microsoft_graph_get", arguments: { path: "/users/mock" } },
+        }),
+      });
+      expect(response.status).toBe(200);
+      return readMcpBody(response);
+    };
+
+    const healthy = await call("operation-healthy");
+    expect(isRecord(healthy.result) && healthy.result.isError).not.toBe(true);
+
+    const hidden = await fetch(`${mock.baseUrl}/__mock/operation-fault`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ fault: "provider_denied" }),
+    });
+    expect(hidden.status).toBe(404);
+
+    const invalid = await fetch(`${mock.baseUrl}/__mock/operation-fault`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...diagnosticsHeaders },
+      body: JSON.stringify({ fault: "transport_failed" }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const injectFault = async (fault: "none" | "provider_denied" | "provider_throttled") => {
+      const response = await fetch(`${mock.baseUrl}/__mock/operation-fault`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...diagnosticsHeaders },
+        body: JSON.stringify({ fault }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ operationFault: fault });
+    };
+
+    await injectFault("provider_denied");
+    expect(await listEntireCatalog(
+      mock.baseUrl,
+      "/enterprise",
+      "mock-access-token",
+      initialized.protocolVersion,
+      initialized.sessionId,
+    )).toEqual(expectedCatalog);
+    const denied = await call("operation-denied");
+    if (!isRecord(denied.result) || !isRecord(denied.result.structuredContent)) {
+      throw new Error("operation denial omitted structured tool result");
+    }
+    expect(denied.result.isError).toBe(true);
+    expect(denied.result.structuredContent.category).toBe("provider_policy");
+    expect(denied.result.structuredContent.providerStatus).toBe(403);
+
+    await injectFault("provider_throttled");
+    const throttled = await call("operation-throttled");
+    if (!isRecord(throttled.result) || !isRecord(throttled.result.structuredContent)) {
+      throw new Error("operation throttle omitted structured tool result");
+    }
+    expect(throttled.result.isError).toBe(true);
+    expect(throttled.result.structuredContent.category).toBe("provider_api");
+    expect(throttled.result.structuredContent.providerStatus).toBe(429);
+
+    await injectFault("none");
+    const recovered = await call("operation-recovered");
+    expect(isRecord(recovered.result) && recovered.result.isError).not.toBe(true);
   });
 });

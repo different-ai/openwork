@@ -311,6 +311,73 @@ describe("external MCP diagnostics", () => {
     })
   })
 
+  test("classifies allowlisted provider tool results without exposing provider content", () => {
+    const makeToolError = (referenceId: string, structuredContent: Record<string, unknown>) => {
+      const tracker = new ExternalMcpDiagnosticTracker(referenceId)
+      tracker.passed("MCP_INITIALIZED", "protocol_ready")
+      return tracker.providerToolError({
+        isError: true,
+        content: [{ type: "text", text: "provider-secret-message" }],
+        structuredContent,
+      })
+    }
+
+    const denied = makeToolError("req_provider_denied", {
+      category: "provider_policy",
+      providerStatus: 403,
+      providerCode: "sensitive-provider-code",
+      requestId: "provider-request-403",
+    })
+    expect(denied.diagnostic).toMatchObject({
+      phase: "PROVIDER_AUTHORIZATION",
+      category: "provider_policy_denied",
+      code: "MCP_PROVIDER_HTTP_403",
+      highestPassed: "protocol_ready",
+      retryable: false,
+      actionOwner: "provider_admin",
+      providerRequestId: "provider-request-403",
+    })
+
+    const throttled = makeToolError("req_provider_throttled", {
+      category: "provider_api",
+      providerStatus: 429,
+      requestId: "provider-request-429",
+      retryAfterSeconds: "provider-secret-retry-value",
+    })
+    expect(throttled.diagnostic).toMatchObject({
+      phase: "PROVIDER_EXECUTION",
+      category: "provider_throttled",
+      code: "MCP_PROVIDER_HTTP_429",
+      highestPassed: "protocol_ready",
+      retryable: true,
+      actionOwner: "provider_admin",
+      providerRequestId: "provider-request-429",
+    })
+
+    const unknown = makeToolError("req_provider_unknown", {
+      category: "provider_api",
+      providerStatus: 403,
+      providerCode: "sensitive-unknown-code",
+      requestId: "invalid request id with spaces",
+    })
+    expect(unknown.diagnostic).toMatchObject({
+      phase: "PROVIDER_EXECUTION",
+      category: "provider_tool_error",
+      code: "MCP_PROVIDER_TOOL_ERROR",
+      highestPassed: "protocol_ready",
+      retryable: false,
+      actionOwner: "provider_admin",
+    })
+    expect(unknown.diagnostic.providerRequestId).toBeUndefined()
+
+    const serialized = JSON.stringify([denied, throttled, unknown])
+    expect(serialized).not.toContain("provider-secret-message")
+    expect(serialized).not.toContain("sensitive-provider-code")
+    expect(serialized).not.toContain("provider-secret-retry-value")
+    expect(serialized).not.toContain("sensitive-unknown-code")
+    expect(serialized).not.toContain("invalid request id with spaces")
+  })
+
   test("typed OAuth token errors override generic HTTP 400 classification", async () => {
     const tracker = new ExternalMcpDiagnosticTracker("req_invalid_grant")
     const diagnosticFetch = createExternalMcpDiagnosticFetch({

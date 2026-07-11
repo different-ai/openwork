@@ -1139,7 +1139,12 @@ function ConnectionRow({
   const testHasWarning = testResult?.status === "warning";
 
   return (
-    <div className="px-6 py-4">
+    <div
+      className="px-6 py-4"
+      data-testid="mcp-connection-row"
+      data-connection-id={connection.id}
+      data-connection-name={connection.name}
+    >
       <div className="flex items-center justify-between gap-4">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <IntegrationIcon name={connection.name} serviceUrl={connection.url} />

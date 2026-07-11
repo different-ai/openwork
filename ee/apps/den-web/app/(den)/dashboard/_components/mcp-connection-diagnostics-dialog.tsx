@@ -11,7 +11,9 @@ import { DenButton } from "../../_components/ui/button";
 import type { ExternalMcpConnection } from "./mcp-connections-data";
 import {
   isSafeMcpAuthorizationUrl,
+  MCP_DIAGNOSTIC_CATALOG_READY_SCOPE_BOUNDARY,
   selectMcpDiagnosticTimelineEvents,
+  shouldShowMcpDiagnosticScopeBoundary,
   useMcpConnectionDiagnosticStream,
 } from "./mcp-connections-data";
 
@@ -199,6 +201,17 @@ export function McpConnectionDiagnosticsDialog({
           </div>
         </div>
 
+        {shouldShowMcpDiagnosticScopeBoundary(attempt) ? (
+          <div
+            data-testid="mcp-diagnostic-scope-boundary"
+            role="status"
+            className="mt-3 flex items-start gap-2 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-[11px] leading-5 text-sky-900"
+          >
+            <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>{MCP_DIAGNOSTIC_CATALOG_READY_SCOPE_BOUNDARY}</span>
+          </div>
+        ) : null}
+
         {attempt?.firstFailureMessage ? (
           <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 p-4" data-testid="mcp-diagnostic-remediation">
             <p className="text-[13px] font-semibold text-red-900">{attempt.firstFailureMessage}</p>
@@ -249,7 +262,7 @@ export function McpConnectionDiagnosticsDialog({
 
         <div className="mt-4 flex items-start gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-[11px] leading-5 text-emerald-800">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          <span>Support evidence is strictly redacted and retained for 24 hours. A catalog-ready result does not claim that a provider operation or mutation was tested.</span>
+          <span>Support evidence is strictly redacted and retained for 24 hours.</span>
         </div>
 
         {error ? <p className="mt-3 text-[13px] text-red-600">{error}</p> : null}

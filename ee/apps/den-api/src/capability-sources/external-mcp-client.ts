@@ -1596,6 +1596,16 @@ export function diagnosticPhaseFromError(error: unknown): McpDiagnosticPhase {
   return "MCP_INITIALIZE"
 }
 
+export function postAuthorizationResourceValidationError(connectionUrl: string): ExternalMcpDiagnosticError {
+  const cause = new Error("The MCP resource requested authorization again after token exchange.")
+  cause.name = "InvalidTokenError"
+  return new ExternalMcpDiagnosticError(
+    "AUTH_RESOURCE_VALIDATION",
+    cause,
+    safeMcpDiagnosticEvidence({ url: connectionUrl }),
+  )
+}
+
 export function diagnosticEvidenceFromError(error: unknown, depth = 0): McpDiagnosticSafeEvidence | undefined {
   if (typeof error !== "object" || error === null || depth > 6) return undefined
   if (error instanceof ExternalMcpDiagnosticError && error.evidence) return error.evidence
@@ -1872,7 +1882,7 @@ export async function callExternalMcpTool(input: {
           phase: "MCP_TOOL_EXECUTION",
           operation: (options) => client.callTool({ name: input.toolName, arguments: input.args }, undefined, options),
         })
-        if (result.isError) throw providerToolDiagnosticError({ tracker: diagnostic })
+        if (result.isError) throw providerToolDiagnosticError({ tracker: diagnostic, result })
         diagnostic.passed("MCP_TOOL_EXECUTION", "operation_ready")
         return result
       },

@@ -275,7 +275,12 @@ function seededId(value: DenTypeId<"externalMcpConnection"> | undefined): DenTyp
   return value
 }
 
-async function seedSharedOauthConnection(name: string, url: string, scope: string) {
+async function seedSharedOauthConnection(
+  name: string,
+  url: string,
+  scope: string,
+  accessToken = FAULT_ACCESS_TOKEN,
+) {
   const connection = await connections.createExternalMcpConnection({
     organizationId,
     name,
@@ -287,7 +292,7 @@ async function seedSharedOauthConnection(name: string, url: string, scope: strin
   })
   await connections.saveExternalMcpTokens({
     connectionId: connection.id,
-    accessToken: FAULT_ACCESS_TOKEN,
+    accessToken,
     tokenType: "Bearer",
     scope,
     expiresAt: new Date(Date.now() + 60 * 60 * 1000),
@@ -429,6 +434,45 @@ test("OAuth connection tests are byte-stable reads and never start authorization
   expect(JSON.stringify(logAfter)).not.toContain(staleAccessToken)
   expect(JSON.stringify(logAfter)).not.toContain(staleRefreshToken)
   expect(JSON.stringify(logAfter)).not.toContain(pendingCodeVerifier)
+})
+
+test("HTTP 401 requires reauthorization while HTTP 403 identifies provider permissions and ACLs", async () => {
+  const cases = [
+    {
+      fault: "none",
+      accessToken: "mock-wrong-audience-token",
+      code: "mcp_reauth_required",
+      message: "The existing MCP credential was rejected. Reconnect this account, then test again.",
+    },
+    {
+      fault: "insufficient_scope",
+      accessToken: FAULT_ACCESS_TOKEN,
+      code: "mcp_provider_permission_denied",
+      message: "The MCP provider denied access to this connection. Ask a provider administrator to review account assignments, roles, ACLs, and required scopes, then test again.",
+    },
+  ] as const
+
+  for (const expected of cases) {
+    const mock = await startMock("workiq", expected.fault)
+    try {
+      const connection = await seedSharedOauthConnection(
+        `HTTP ${expected.fault}`,
+        `${mock.baseUrl}/mcp`,
+        "api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask",
+        expected.accessToken,
+      )
+      const response = await request(connection)
+      expect(response.status).toBe(502)
+      const body: unknown = await response.json()
+      expect(isRecord(body) && body.error).toBe("connection_test_failed")
+      expect(isRecord(body) && body.code).toBe(expected.code)
+      expect(isRecord(body) && body.message).toBe(expected.message)
+      expect(isRecord(body) && typeof body.testId === "string" && body.testId.startsWith("mcp-test-")).toBe(true)
+      expect(JSON.stringify(body)).not.toContain(expected.accessToken)
+    } finally {
+      stopMock(mock.child)
+    }
+  }
 })
 
 test("default enterprise confidential-client OAuth completes through the production Den MCP SDK in JSON and SSE modes", async () => {

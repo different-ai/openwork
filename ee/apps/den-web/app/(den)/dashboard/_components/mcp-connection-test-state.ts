@@ -24,6 +24,7 @@ export const MCP_CONNECTION_TEST_FAILURE_MESSAGES = {
   mcp_test_timeout: "The MCP connection test timed out.",
   mcp_initialize_failed: "The MCP server did not complete protocol initialization.",
   mcp_reauth_required: "The existing MCP credential was rejected. Reconnect this account, then test again.",
+  mcp_provider_permission_denied: "The MCP provider denied access to this connection. Ask a provider administrator to review account assignments, roles, ACLs, and required scopes, then test again.",
   mcp_catalog_unavailable: "The MCP server did not return a valid tool catalog.",
   mcp_catalog_cursor_cycle: "The MCP server repeated a tool-catalog pagination cursor.",
   mcp_catalog_duplicate_tool: "The MCP server returned duplicate tool names.",

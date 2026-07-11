@@ -34,14 +34,38 @@ const EXECUTION_RESULT_RETENTION_MS = 60_000
 
 export type ExternalMcpDiagnosticExecutionState = {
   attemptId: DenTypeId<"mcpDiagnosticAttempt">
+  connectionId: DenTypeId<"externalMcpConnection">
   authorizationUrl: string | null
   generation: number | null
+  cancel: () => void
   done: Promise<void>
 }
 
 type Diagnose = typeof diagnoseExternalMcp
 
 const executions = new Map<string, ExternalMcpDiagnosticExecutionState>()
+
+class ExternalMcpDiagnosticExecutionCancelledError extends Error {
+  constructor() {
+    super("The external MCP diagnostic execution was cancelled.")
+    this.name = "ExternalMcpDiagnosticExecutionCancelledError"
+  }
+}
+
+async function withExecutionCancellation<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw new ExternalMcpDiagnosticExecutionCancelledError()
+  let rejectCancellation: ((reason: ExternalMcpDiagnosticExecutionCancelledError) => void) | undefined
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject
+  })
+  const onAbort = () => rejectCancellation?.(new ExternalMcpDiagnosticExecutionCancelledError())
+  signal.addEventListener("abort", onAbort, { once: true })
+  try {
+    return await Promise.race([operation, cancelled])
+  } finally {
+    signal.removeEventListener("abort", onAbort)
+  }
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -56,22 +80,24 @@ function isTerminal(snapshot: McpDiagnosticSnapshot): boolean {
 function persistentObserver(input: {
   organizationId: DenTypeId<"organization">
   attemptId: DenTypeId<"mcpDiagnosticAttempt">
+  signal?: AbortSignal
 }): ExternalMcpDiagnosticObserver {
-  return async (signal) => {
+  return async (diagnosticSignal) => {
+    if (input.signal?.aborted) throw new ExternalMcpDiagnosticExecutionCancelledError()
     await appendMcpDiagnosticEvent({
       organizationId: input.organizationId,
       attemptId: input.attemptId,
-      phase: signal.phase,
-      outcome: signal.outcome,
-      healthLevel: signal.healthLevel,
-      messageSafe: signal.messageSafe,
-      phaseDurationMs: signal.phaseDurationMs,
-      category: signal.category,
-      retryable: signal.retryable,
-      actionOwner: signal.actionOwner,
-      operatorAction: signal.operatorAction,
-      evidence: signal.evidence,
-      attemptStatus: signal.attemptStatus,
+      phase: diagnosticSignal.phase,
+      outcome: diagnosticSignal.outcome,
+      healthLevel: diagnosticSignal.healthLevel,
+      messageSafe: diagnosticSignal.messageSafe,
+      phaseDurationMs: diagnosticSignal.phaseDurationMs,
+      category: diagnosticSignal.category,
+      retryable: diagnosticSignal.retryable,
+      actionOwner: diagnosticSignal.actionOwner,
+      operatorAction: diagnosticSignal.operatorAction,
+      evidence: diagnosticSignal.evidence,
+      attemptStatus: diagnosticSignal.attemptStatus,
     })
   }
 }
@@ -90,8 +116,9 @@ export async function runExternalMcpDiagnosticExecution(input: {
   executionHeartbeatMs?: number
   diagnose?: Diagnose
   onComplete?: (snapshot: McpDiagnosticSnapshot) => Promise<void>
+  signal?: AbortSignal
 }): Promise<void> {
-  const observer = persistentObserver({ organizationId: input.organizationId, attemptId: input.attemptId })
+  const observer = persistentObserver({ organizationId: input.organizationId, attemptId: input.attemptId, signal: input.signal })
   const diagnose = input.diagnose ?? diagnoseExternalMcp
   const pollMs = input.pollMs ?? DEFAULT_POLL_MS
   const member = input.connection.credentialMode === "per_member"
@@ -145,7 +172,7 @@ export async function runExternalMcpDiagnosticExecution(input: {
       })
     }
 
-    const result: ExternalMcpDiagnosticResult = await diagnose({
+    const diagnosis = diagnose({
       connection: input.connection,
       redirectUri: input.redirectUri,
       signedState,
@@ -155,6 +182,9 @@ export async function runExternalMcpDiagnosticExecution(input: {
         : { diagnosticAuthorization: { attemptId: input.attemptId, generation: input.state.generation } }),
       observe: observer,
     })
+    const result: ExternalMcpDiagnosticResult = input.signal
+      ? await withExecutionCancellation(diagnosis, input.signal)
+      : await diagnosis
     if (result.status === "needs_auth") {
       input.state.authorizationUrl = result.authorizeUrl
       const waitDeadline = Date.now() + (input.authWaitMs ?? DEFAULT_AUTH_WAIT_MS)
@@ -206,6 +236,7 @@ export async function runExternalMcpDiagnosticExecution(input: {
       }
     }
   } catch (error) {
+    if (input.signal?.aborted || error instanceof ExternalMcpDiagnosticExecutionCancelledError) return
     if (!isMcpDiagnosticAttemptClosedError(error)) {
       const phase = diagnosticPhaseFromError(error)
       try {
@@ -266,16 +297,19 @@ export function startExternalMcpDiagnosticExecution(input: Omit<
 >): ExternalMcpDiagnosticExecutionState {
   const existing = executions.get(input.attemptId)
   if (existing) return existing
+  const cancellation = new AbortController()
   const mutable = { authorizationUrl: null as string | null, generation: null as number | null }
   const state: ExternalMcpDiagnosticExecutionState = {
     attemptId: input.attemptId,
+    connectionId: input.connection.id,
     get authorizationUrl() { return mutable.authorizationUrl },
     set authorizationUrl(value: string | null) { mutable.authorizationUrl = value },
     get generation() { return mutable.generation },
     set generation(value: number | null) { mutable.generation = value },
+    cancel: () => cancellation.abort(new ExternalMcpDiagnosticExecutionCancelledError()),
     done: Promise.resolve(),
   }
-  state.done = runExternalMcpDiagnosticExecution({ ...input, state: mutable }).finally(() => {
+  state.done = runExternalMcpDiagnosticExecution({ ...input, state: mutable, signal: cancellation.signal }).finally(() => {
     const timer = setTimeout(() => executions.delete(input.attemptId), EXECUTION_RESULT_RETENTION_MS)
     timer.unref()
   })
@@ -293,4 +327,15 @@ export function startExternalMcpDiagnosticExecution(input: Omit<
 
 export function getExternalMcpDiagnosticExecution(attemptId: DenTypeId<"mcpDiagnosticAttempt">) {
   return executions.get(attemptId) ?? null
+}
+
+export async function cancelExternalMcpDiagnosticExecutionsForConnection(
+  connectionId: DenTypeId<"externalMcpConnection">,
+): Promise<void> {
+  const matching = [...executions.entries()].filter(([, execution]) => execution.connectionId === connectionId)
+  for (const [attemptId, execution] of matching) {
+    execution.cancel()
+    executions.delete(attemptId)
+  }
+  await Promise.allSettled(matching.map(([, execution]) => execution.done))
 }

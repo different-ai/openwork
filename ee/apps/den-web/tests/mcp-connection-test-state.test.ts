@@ -90,4 +90,27 @@ describe("MCP connection test presentation", () => {
     expect(error.message).not.toContain("fault-session-secret");
     expect(error.testId).toBe("mcp-test-safe-id");
   });
+
+  test("distinguishes credential rejection from provider permission and ACL denial", () => {
+    const reauthorization = parseMcpConnectionTestFailure({
+      error: "connection_test_failed",
+      code: "mcp_reauth_required",
+      testId: "mcp-test-401",
+      message: "raw provider credential detail",
+    });
+    expect(reauthorization?.message).toBe(
+      "The existing MCP credential was rejected. Reconnect this account, then test again.",
+    );
+
+    const permissionDenied = parseMcpConnectionTestFailure({
+      error: "connection_test_failed",
+      code: "mcp_provider_permission_denied",
+      testId: "mcp-test-403",
+      message: "raw provider ACL detail",
+    });
+    expect(permissionDenied?.message).toBe(
+      "The MCP provider denied access to this connection. Ask a provider administrator to review account assignments, roles, ACLs, and required scopes, then test again.",
+    );
+    expect(permissionDenied?.message).not.toContain("raw provider ACL detail");
+  });
 });
