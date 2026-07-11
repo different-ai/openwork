@@ -31,6 +31,7 @@ import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
+import { redactDenRequestLogLine } from "./request-log-redaction.js"
 
 type AppVariables = RequestIdVariables & AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> & Partial<MemberTeamsContext>
 
@@ -59,7 +60,7 @@ const openApiDocumentSchema = z.object({
 
 const app = new Hono<{ Variables: AppVariables }>()
 
-const requestLogger = logger()
+const requestLogger = logger((line, ...rest) => console.log(redactDenRequestLogLine(line), ...rest))
 
 app.use("*", async (c, next) => {
   if (c.req.path === "/health" || c.req.path === "/ready") {
@@ -86,7 +87,7 @@ if (env.corsOrigins.length > 0) {
         credentials: true,
         allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id"],
         allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        exposeHeaders: ["Content-Length", "X-Request-Id"],
+        exposeHeaders: ["Content-Length", "X-Request-Id", "X-OpenWork-MCP-Diagnostic-Attempt-Id"],
         maxAge: 600,
     }),
   )

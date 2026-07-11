@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
-import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { env } from "../env.js"
 import { publicRequestUrl } from "../request-url.js"
@@ -58,10 +58,12 @@ export function createPkcePair() {
   return { verifier, challenge }
 }
 
-type OAuthStatePayload = {
+export type OAuthStatePayload = {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
   providerId: string
+  diagnosticAttemptId?: DenTypeId<"mcpDiagnosticAttempt">
+  diagnosticAttemptGeneration?: number
   nonce: string
   exp: number
 }
@@ -70,6 +72,8 @@ export function createOAuthStateToken(input: {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
   providerId: string
+  diagnosticAttemptId?: DenTypeId<"mcpDiagnosticAttempt">
+  diagnosticAttemptGeneration?: number
   secret: string
   ttlSeconds?: number
   now?: number
@@ -79,6 +83,10 @@ export function createOAuthStateToken(input: {
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     providerId: input.providerId,
+    ...(input.diagnosticAttemptId ? { diagnosticAttemptId: input.diagnosticAttemptId } : {}),
+    ...(input.diagnosticAttemptGeneration !== undefined
+      ? { diagnosticAttemptGeneration: input.diagnosticAttemptGeneration }
+      : {}),
     nonce: randomUUID(),
     exp: Math.floor(nowMs / 1000) + (input.ttlSeconds ?? 10 * 60),
   }
@@ -106,6 +114,10 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
       typeof payload.organizationId !== "string"
       || typeof payload.orgMembershipId !== "string"
       || typeof payload.providerId !== "string"
+      || (payload.diagnosticAttemptId !== undefined && !isDenTypeId("mcpDiagnosticAttempt", payload.diagnosticAttemptId))
+      || (payload.diagnosticAttemptGeneration !== undefined
+        && (!Number.isInteger(payload.diagnosticAttemptGeneration) || payload.diagnosticAttemptGeneration < 1))
+      || ((payload.diagnosticAttemptId === undefined) !== (payload.diagnosticAttemptGeneration === undefined))
       || typeof payload.nonce !== "string"
       || typeof payload.exp !== "number"
       || payload.exp < nowSeconds

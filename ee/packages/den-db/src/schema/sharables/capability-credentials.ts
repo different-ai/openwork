@@ -2,15 +2,25 @@ import { relations, sql } from "drizzle-orm"
 import {
   boolean,
   index,
+  int,
   json,
   mysqlEnum,
   mysqlTable,
+  text,
   timestamp,
   uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, encryptedTextColumn } from "../../columns"
 import { MemberTable, OrganizationTable } from "../org"
+import {
+  MCP_DIAGNOSTIC_ATTEMPT_STATUSES,
+  MCP_DIAGNOSTIC_ACTION_OWNERS,
+  MCP_DIAGNOSTIC_EVENT_OUTCOMES,
+  MCP_DIAGNOSTIC_HEALTH_LEVELS,
+  MCP_DIAGNOSTIC_PHASES,
+  type McpDiagnosticSafeEvidence,
+} from "@openwork/types/den/mcp-diagnostics"
 
 /**
  * Generic credential layer for "bring your own OAuth client" integrations.
@@ -38,11 +48,10 @@ export const OrgOAuthClientTable = mysqlTable(
     clientSecret: encryptedTextColumn("client_secret"),
     /**
      * Free-form provider-specific extras: for MCP-SDK-driven external
-     * connections this holds the dynamically-registered client metadata
-     * (client_id_issued_at, registration_access_token, etc.) and cached
-     * discovery state (authorization server URLs) so the SDK's `auth()`
-     * doesn't have to re-discover on every call. For native providers this
-     * is typically empty.
+     * connections this holds a small allowlist of non-secret registration
+     * metadata. Registration access tokens and client secrets are never
+     * stored in this JSON column; client secrets use the encrypted column.
+     * For native providers this is typically empty.
      */
     extra: json("extra").$type<Record<string, unknown>>(),
     createdByOrgMembershipId: denTypeIdColumn(
@@ -53,6 +62,7 @@ export const OrgOAuthClientTable = mysqlTable(
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()
       .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+    revision: int("revision").notNull().default(1),
   },
   (table) => [
     index("org_oauth_client_organization_id").on(table.organizationId),
@@ -163,6 +173,9 @@ export const ExternalMcpConnectionTable = mysqlTable(
      * connect/callback. Cleared once tokens are saved.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
+    /** Serializes first-time dynamic client registration for this connection. */
+    oauthRegistrationLeaseHash: varchar("oauth_registration_lease_hash", { length: 64 }),
+    oauthRegistrationLeaseExpiresAt: timestamp("oauth_registration_lease_expires_at", { fsp: 3 }),
     connectedAt: timestamp("connected_at", { fsp: 3 }),
     createdByOrgMembershipId: denTypeIdColumn(
       "member",
@@ -224,6 +237,91 @@ export const ExternalMcpConnectionAccessGrantTable = mysqlTable(
   ],
 )
 
+/**
+ * One-time PKCE grants keyed by a SHA-256 digest of the signed OAuth state.
+ * A row belongs to one browser authorization attempt, so concurrent starts
+ * for the same shared connection or member cannot overwrite each other's
+ * verifier. The raw signed state is never persisted.
+ */
+export const ExternalMcpOAuthPendingGrantTable = mysqlTable(
+  "external_mcp_oauth_pending_grant",
+  {
+    stateHash: varchar("state_hash", { length: 64 }).notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    externalMcpConnectionId: denTypeIdColumn("externalMcpConnection", "external_mcp_connection_id").notNull(),
+    orgMembershipId: denTypeIdColumn("member", "org_membership_id"),
+    codeVerifier: encryptedTextColumn("code_verifier").notNull(),
+    orgOAuthClientId: denTypeIdColumn("orgOAuthClient", "org_oauth_client_id").notNull(),
+    clientRevision: int("client_revision").notNull(),
+    diagnosticAttemptId: denTypeIdColumn("mcpDiagnosticAttempt", "diagnostic_attempt_id"),
+    diagnosticGeneration: int("diagnostic_generation"),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("emopg_organization_id").on(table.organizationId),
+    index("emopg_connection_id").on(table.externalMcpConnectionId),
+    index("emopg_expires_at").on(table.expiresAt),
+  ],
+)
+
+export const McpDiagnosticAttemptTable = mysqlTable(
+  "mcp_diagnostic_attempt",
+  {
+    id: denTypeIdColumn("mcpDiagnosticAttempt", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    externalMcpConnectionId: denTypeIdColumn("externalMcpConnection", "external_mcp_connection_id").notNull(),
+    createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
+    status: mysqlEnum("status", MCP_DIAGNOSTIC_ATTEMPT_STATUSES).notNull().default("running"),
+    highestHealthLevel: mysqlEnum("highest_health_level", MCP_DIAGNOSTIC_HEALTH_LEVELS).notNull().default("configured"),
+    firstFailedPhase: mysqlEnum("first_failed_phase", MCP_DIAGNOSTIC_PHASES),
+    firstFailureCategory: varchar("first_failure_category", { length: 128 }),
+    firstFailureMessage: text("first_failure_message"),
+    actionOwner: mysqlEnum("action_owner", MCP_DIAGNOSTIC_ACTION_OWNERS),
+    operatorAction: varchar("operator_action", { length: 128 }),
+    authorizationGeneration: int("authorization_generation").notNull().default(0),
+    authorizationClaimId: varchar("authorization_claim_id", { length: 64 }),
+    authorizationLeaseExpiresAt: timestamp("authorization_lease_expires_at", { fsp: 3 }),
+    lastSequence: int("last_sequence").notNull().default(0),
+    startedAt: timestamp("started_at", { fsp: 3 }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { fsp: 3 }),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+  },
+  (table) => [
+    index("mcp_diagnostic_attempt_organization_id").on(table.organizationId),
+    index("mcp_diagnostic_attempt_connection_id").on(table.externalMcpConnectionId),
+    index("mcp_diagnostic_attempt_expires_at").on(table.expiresAt),
+  ],
+)
+
+export const McpDiagnosticEventTable = mysqlTable(
+  "mcp_diagnostic_event",
+  {
+    id: denTypeIdColumn("mcpDiagnosticEvent", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    attemptId: denTypeIdColumn("mcpDiagnosticAttempt", "attempt_id").notNull(),
+    sequence: int("sequence").notNull(),
+    phase: mysqlEnum("phase", MCP_DIAGNOSTIC_PHASES).notNull(),
+    outcome: mysqlEnum("outcome", MCP_DIAGNOSTIC_EVENT_OUTCOMES).notNull(),
+    elapsedMs: int("elapsed_ms").notNull(),
+    phaseDurationMs: int("phase_duration_ms"),
+    healthLevel: mysqlEnum("health_level", MCP_DIAGNOSTIC_HEALTH_LEVELS).notNull(),
+    messageSafe: varchar("message_safe", { length: 512 }).notNull(),
+    category: varchar("category", { length: 128 }),
+    retryable: boolean("retryable"),
+    actionOwner: mysqlEnum("action_owner", MCP_DIAGNOSTIC_ACTION_OWNERS),
+    operatorAction: varchar("operator_action", { length: 128 }),
+    evidence: json("evidence").$type<McpDiagnosticSafeEvidence>().notNull(),
+    occurredAt: timestamp("occurred_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("mcp_diagnostic_event_organization_id").on(table.organizationId),
+    index("mcp_diagnostic_event_attempt_id").on(table.attemptId),
+    index("mcp_diagnostic_event_attempt_time").on(table.attemptId, table.occurredAt, table.id),
+    uniqueIndex("mcp_diagnostic_event_attempt_sequence").on(table.attemptId, table.sequence),
+  ],
+)
+
 export const orgOAuthClientRelations = relations(OrgOAuthClientTable, ({ one }) => ({
   organization: one(OrganizationTable, {
     fields: [OrgOAuthClientTable.organizationId],
@@ -256,6 +354,50 @@ export const externalMcpConnectionRelations = relations(ExternalMcpConnectionTab
     references: [MemberTable.id],
   }),
   accessGrants: many(ExternalMcpConnectionAccessGrantTable),
+  pendingOAuthGrants: many(ExternalMcpOAuthPendingGrantTable),
+  diagnosticAttempts: many(McpDiagnosticAttemptTable),
+}))
+
+export const externalMcpOAuthPendingGrantRelations = relations(ExternalMcpOAuthPendingGrantTable, ({ one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [ExternalMcpOAuthPendingGrantTable.organizationId],
+    references: [OrganizationTable.id],
+  }),
+  connection: one(ExternalMcpConnectionTable, {
+    fields: [ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId],
+    references: [ExternalMcpConnectionTable.id],
+  }),
+  orgMembership: one(MemberTable, {
+    fields: [ExternalMcpOAuthPendingGrantTable.orgMembershipId],
+    references: [MemberTable.id],
+  }),
+}))
+
+export const mcpDiagnosticAttemptRelations = relations(McpDiagnosticAttemptTable, ({ one, many }) => ({
+  organization: one(OrganizationTable, {
+    fields: [McpDiagnosticAttemptTable.organizationId],
+    references: [OrganizationTable.id],
+  }),
+  connection: one(ExternalMcpConnectionTable, {
+    fields: [McpDiagnosticAttemptTable.externalMcpConnectionId],
+    references: [ExternalMcpConnectionTable.id],
+  }),
+  createdByOrgMembership: one(MemberTable, {
+    fields: [McpDiagnosticAttemptTable.createdByOrgMembershipId],
+    references: [MemberTable.id],
+  }),
+  events: many(McpDiagnosticEventTable),
+}))
+
+export const mcpDiagnosticEventRelations = relations(McpDiagnosticEventTable, ({ one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [McpDiagnosticEventTable.organizationId],
+    references: [OrganizationTable.id],
+  }),
+  attempt: one(McpDiagnosticAttemptTable, {
+    fields: [McpDiagnosticEventTable.attemptId],
+    references: [McpDiagnosticAttemptTable.id],
+  }),
 }))
 
 export const externalMcpConnectionAccessGrantRelations = relations(ExternalMcpConnectionAccessGrantTable, ({ one }) => ({

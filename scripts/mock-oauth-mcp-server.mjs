@@ -5,10 +5,11 @@ import { createHash, randomUUID } from "node:crypto";
 const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 3978);
 const issuer = process.env.ISSUER || `http://${host}:${port}`;
-const autoApprove = process.env.AUTO_APPROVE !== "0";
+let autoApprove = process.env.AUTO_APPROVE !== "0";
 const disableDcr = process.env.DISABLE_DCR === "1";
 const mockClientId = process.env.MOCK_CLIENT_ID || "mock-preregistered-client";
 const mockClientSecret = process.env.MOCK_CLIENT_SECRET || "mock-preregistered-secret";
+let selectedProtocolVersion = process.env.MOCK_MCP_PROTOCOL_VERSION || "2025-06-18";
 
 const clients = new Map();
 const codes = new Map();
@@ -267,7 +268,7 @@ function mcpResult(message) {
   switch (message.method) {
     case "initialize":
       return {
-        protocolVersion: "2025-06-18",
+        protocolVersion: selectedProtocolVersion,
         capabilities: { tools: {} },
         serverInfo: { name: "mock-oauth-mcp", version: "1.0.0" },
       };
@@ -340,7 +341,29 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/health") {
-      json(res, 200, { ok: true, issuer, autoApprove, disableDcr, requests: requests.length });
+      json(res, 200, { ok: true, issuer, autoApprove, disableDcr, protocolVersion: selectedProtocolVersion, requests: requests.length });
+      return;
+    }
+
+    if (url.pathname === "/__mock/protocol-version" && req.method === "POST") {
+      const body = await readJson(req).catch(() => ({}));
+      if (typeof body.protocolVersion !== "string" || body.protocolVersion.length > 32) {
+        json(res, 400, { error: "invalid_protocol_version" });
+        return;
+      }
+      selectedProtocolVersion = body.protocolVersion;
+      json(res, 200, { protocolVersion: selectedProtocolVersion });
+      return;
+    }
+
+    if (url.pathname === "/__mock/auto-approve" && req.method === "POST") {
+      const body = await readJson(req).catch(() => ({}));
+      if (typeof body.autoApprove !== "boolean") {
+        json(res, 400, { error: "invalid_auto_approve" });
+        return;
+      }
+      autoApprove = body.autoApprove;
+      json(res, 200, { autoApprove });
       return;
     }
 

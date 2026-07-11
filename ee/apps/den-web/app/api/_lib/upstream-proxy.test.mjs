@@ -30,6 +30,26 @@ describe("Den upstream proxy", () => {
           });
         }
 
+        if (url.pathname === "/v1/stream") {
+          const encoder = new TextEncoder();
+          const body = new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode("data: first\n\n"));
+              setTimeout(() => {
+                controller.enqueue(encoder.encode("data: second\n\n"));
+                controller.close();
+              }, 40);
+            },
+          });
+          return new Response(body, {
+            headers: {
+              "content-type": "text/event-stream",
+              "cache-control": "no-cache",
+              "x-accel-buffering": "no",
+            },
+          });
+        }
+
         return new Response("proxied", {
           status: 207,
           headers: {
@@ -89,5 +109,26 @@ describe("Den upstream proxy", () => {
 
     expect(response.headers.get("content-encoding")).toBeNull();
     expect(await response.json()).toEqual({ ok: true, source: "gzip" });
+  });
+
+  test("forwards server-sent events as a live body with streaming headers", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const request = new NextRequest("https://app.example.com/api/den/v1/stream", {
+      method: "POST",
+      headers: { "x-openwork-org-id": "org_test" },
+    });
+
+    const response = await proxyUpstream(request, [], { routePrefix: "/api/den" });
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(response.headers.get("cache-control")).toBe("no-cache");
+    expect(response.headers.get("x-accel-buffering")).toBe("no");
+    const reader = response.body?.getReader();
+    expect(reader).toBeDefined();
+    if (!reader) throw new Error("Proxy response did not expose a stream");
+    const decoder = new TextDecoder();
+    const first = await reader.read();
+    expect(decoder.decode(first.value)).toContain("data: first");
+    const second = await reader.read();
+    expect(decoder.decode(second.value)).toContain("data: second");
   });
 });

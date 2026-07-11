@@ -25,6 +25,12 @@ describe("isPrivateAddress", () => {
     ["fe80::1", true],
     ["::ffff:127.0.0.1", true], // mapped loopback
     ["::ffff:10.0.0.1", true], // mapped private
+    ["::ffff:7f00:1", true], // URL-canonical mapped loopback
+    ["::ffff:a9fe:a9fe", true], // URL-canonical mapped metadata/link-local
+    ["::7f00:1", true], // deprecated IPv4-compatible loopback
+    ["64:ff9b::7f00:1", true], // well-known NAT64 loopback
+    ["64:ff9b:1::7f00:1", true], // local-use NAT64 loopback, last-32 form
+    ["64:ff9b:1:7f00:0:100::", true], // local-use NAT64 RFC 6052 /48 form
     ["not-an-ip", true], // fail closed
   ])("blocks %s", (address, expected) => {
     expect(isPrivateAddress(address)).toBe(expected)
@@ -42,6 +48,10 @@ describe("isPrivateAddress", () => {
     ["198.17.0.1", false],
     ["2606:4700:4700::1111", false],
     ["::ffff:8.8.8.8", false], // mapped public
+    ["::ffff:808:808", false], // URL-canonical mapped public
+    ["64:ff9b::808:808", false], // well-known NAT64 public target
+    ["64:ff9b:1::808:808", false], // local-use NAT64 public target, last-32 form
+    ["64:ff9b:1:808:8:800::", false], // local-use NAT64 RFC 6052 /48 public target
   ])("allows %s", (address, expected) => {
     expect(isPrivateAddress(address)).toBe(expected)
   })
@@ -53,12 +63,28 @@ describe("assertPublicUrl", () => {
     await expect(assertPublicUrl("http://169.254.169.254/latest/meta-data/")).rejects.toBeInstanceOf(PrivateUrlError)
     await expect(assertPublicUrl("http://10.0.0.5/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
     await expect(assertPublicUrl("http://[::1]:8080/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
+    await expect(assertPublicUrl("https://[::ffff:7f00:1]/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
+    await expect(assertPublicUrl("https://[::ffff:127.0.0.1]/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
+    await expect(assertPublicUrl("https://[::7f00:1]/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
+    await expect(assertPublicUrl("https://[64:ff9b::7f00:1]/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
   })
 
   test("rejects hostnames that resolve to loopback (the DNS-rebinding case)", async () => {
     // "localhost" is the universally-resolvable stand-in for a public-looking
     // hostname whose DNS answer is a private address.
     await expect(assertPublicUrl("http://localhost:3978/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
+  })
+
+  test.each([
+    "::ffff:7f00:1",
+    "::ffff:127.0.0.1",
+    "::7f00:1",
+    "64:ff9b::7f00:1",
+  ])("rejects a hostname resolving to embedded private address %s", async (address) => {
+    await expect(assertPublicUrl(
+      "https://mcp.enterprise.example.test/mcp",
+      async () => [{ address }],
+    )).rejects.toBeInstanceOf(PrivateUrlError)
   })
 
   test("rejects non-http(s) protocols and garbage", async () => {
@@ -69,5 +95,7 @@ describe("assertPublicUrl", () => {
 
   test("allows public IP literals without any DNS lookup", async () => {
     await expect(assertPublicUrl("https://1.1.1.1/mcp")).resolves.toBeUndefined()
+    await expect(assertPublicUrl("https://[::ffff:808:808]/mcp")).resolves.toBeUndefined()
+    await expect(assertPublicUrl("https://[64:ff9b::808:808]/mcp")).resolves.toBeUndefined()
   })
 })

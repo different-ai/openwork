@@ -36,6 +36,7 @@ import {
 } from "./mcp-connections-data";
 import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
 import { TelegramDialog } from "./telegram-dialog";
+import { McpConnectionDiagnosticsDialog } from "./mcp-connection-diagnostics-dialog";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
@@ -205,6 +206,7 @@ export function McpConnectionsScreen() {
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
   const [microsoftDialogOpen, setMicrosoftDialogOpen] = useState(false);
   const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
+  const [diagnosticConnection, setDiagnosticConnection] = useState<ExternalMcpConnection | null>(null);
   const googleConfigured = usableConnections.some((connection) => connection.id === "google-workspace");
   const microsoftConfigured = usableConnections.some((connection) => connection.id === "microsoft-365");
   const telegramConnection = useTelegramConnection(true);
@@ -433,6 +435,7 @@ export function McpConnectionsScreen() {
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               onConnect={() => void handleConnectOAuth(connection.id)}
+              onDiagnose={() => setDiagnosticConnection(connection)}
               onRemove={() => deleteConnection.mutate(connection.id)}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
             />
@@ -481,6 +484,7 @@ export function McpConnectionsScreen() {
       />
 
       <TelegramDialog open={telegramDialogOpen} onClose={() => setTelegramDialogOpen(false)} />
+      <McpConnectionDiagnosticsDialog connection={diagnosticConnection} onClose={() => setDiagnosticConnection(null)} />
     </DashboardPageTemplate>
   );
 }
@@ -1050,6 +1054,7 @@ function ConnectionRow({
   polling,
   connecting,
   onConnect,
+  onDiagnose,
   onRemove,
   removing,
 }: {
@@ -1057,6 +1062,7 @@ function ConnectionRow({
   polling: boolean;
   connecting: boolean;
   onConnect: () => void;
+  onDiagnose: () => void;
   onRemove: () => void;
   removing: boolean;
 }) {
@@ -1103,6 +1109,9 @@ function ConnectionRow({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        <DenButton variant="secondary" size="sm" onClick={onDiagnose}>
+          Diagnose
+        </DenButton>
         {needsOAuthConnect ? (
           <DenButton variant="secondary" size="sm" loading={connecting || polling} onClick={onConnect}>
             Connect
