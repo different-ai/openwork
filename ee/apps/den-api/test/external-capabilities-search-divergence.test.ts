@@ -143,6 +143,20 @@ function startProviderErrorMcpServer(): FakeMcpServer {
         content: textContent("Provider ACL denied this operation; internal detail must not escape."),
       }),
     )
+    server.registerTool(
+      "read_denied_change",
+      { description: "Read a synthetic enterprise change", inputSchema: z.object({}) },
+      async () => ({
+        isError: true,
+        content: textContent("Sensitive provider policy detail must not escape."),
+        structuredContent: {
+          category: "provider_policy",
+          providerStatus: 403,
+          providerCode: "sensitive_acl_code",
+          requestId: "provider-operation-403",
+        },
+      }),
+    )
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     const response = await transport.handleRequest(c) ?? new Response(null, { status: 204 })
@@ -537,6 +551,43 @@ test("MCP tool isError is surfaced as a provider failure, not transport success"
     },
   })
   expect(result.message).not.toContain("internal detail")
+})
+
+test("structured provider denial keeps connection health separate and names the provider admin", async () => {
+  if (!providerErrorServer) throw new Error("Provider-error MCP server was not started")
+  const seed = await seedOrganization("provider-policy-denied")
+  const connection = await createGrantedConnection(seed, {
+    name: "ServiceNow",
+    authType: "none",
+    credentialMode: "shared",
+    url: providerErrorServer.url,
+  })
+  const result = await executeExternalCapability({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId: connection.id,
+    toolName: "read_denied_change",
+    args: {},
+    redirectUriBase,
+  })
+
+  expect(result.ok).toBe(false)
+  if (result.ok) throw new Error("Provider policy denial unexpectedly returned success")
+  expect(result).toMatchObject({
+    error: "provider_error",
+    actionOwner: "provider_admin",
+    diagnostic: {
+      phase: "PROVIDER_AUTHORIZATION",
+      category: "provider_policy_denied",
+      code: "MCP_PROVIDER_HTTP_403",
+      highestPassed: "protocol_ready",
+      actionOwner: "provider_admin",
+      providerRequestId: "provider-operation-403",
+    },
+  })
+  expect(result.message).toContain("Diagnostic reference")
+  expect(JSON.stringify(result)).not.toContain("Sensitive provider policy detail")
+  expect(JSON.stringify(result)).not.toContain("sensitive_acl_code")
 })
 
 test("stale-apikey-looks-connected: stored API key looks connected and search returns an error status", async () => {

@@ -937,7 +937,7 @@ export async function callExternalMcpTool(input: {
       operation: (options) => client.callTool({ name: input.toolName, arguments: input.args }, undefined, options),
     })
     if (result.isError) {
-      throw providerToolDiagnosticError({ tracker: diagnostic })
+      throw providerToolDiagnosticError({ tracker: diagnostic, result })
     }
     diagnostic.passed("PROVIDER_EXECUTION", "operation_ready")
     return result
