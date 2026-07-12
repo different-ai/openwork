@@ -34,21 +34,17 @@ import {
 } from "../../../../app/utils/providers";
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ensureProviderListQuery } from "../../../infra/provider-list-query";
-import type { OpenworkServerStoreSnapshot } from "../openwork-server-store";
+import {
+  canFallbackToDesktopEngineRestart,
+  type WorkspaceOpenworkServer,
+} from "../workspace-openwork-server";
 
 /**
- * The slice of the openwork-server store this store actually consumes.
- * The settings route passes the full store; the session route passes a
- * lightweight endpoint-backed adapter (previously forced through `as never`).
+ * The workspace-owned OpenWork connection consumed by provider actions.
+ * Both Settings and Session pass endpoint-backed adapters so a remote
+ * workspace can never inherit the local host client's authority.
  */
-export type ProviderAuthOpenworkServer = {
-  getSnapshot: () => Pick<
-    OpenworkServerStoreSnapshot,
-    "openworkServerStatus" | "openworkServerClient"
-  > & {
-    openworkServerCapabilities: { config?: { read?: boolean; write?: boolean } } | null;
-  };
-};
+export type ProviderAuthOpenworkServer = WorkspaceOpenworkServer;
 import {
   denSessionUpdatedEvent,
   type DenSessionUpdatedDetail,
@@ -1163,7 +1159,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             } catch (error) {
               const unreachable =
                 error instanceof OpenworkServerError && error.code === "opencode_engine_unreachable";
-              if (!unreachable || !isDesktopRuntime()) {
+              if (!canFallbackToDesktopEngineRestart({
+                engineUnreachable: unreachable,
+                desktopRuntime: isDesktopRuntime(),
+                remoteWorkspace: openworkSnapshot.openworkServerIsRemote,
+              })) {
                 throw error;
               }
               await engineRestart({});

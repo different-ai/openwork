@@ -11,6 +11,7 @@ import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-pr
 import { useReloadCoordinator } from "@/react-app/shell/reload-coordinator";
 import { type RouteWorkspace, workspaceLabel } from "@/react-app/shell/route-workspaces";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "./store";
+import { workspaceOpenworkServerSnapshot } from "../workspace-openwork-server";
 
 const emptyWorkspaceDisplay: WorkspaceDisplay = {
   id: "",
@@ -101,15 +102,9 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
         selectedWorkspaceRoot: () => stateRef.current.selectedWorkspaceRoot,
         runtimeWorkspaceId: () => stateRef.current.selectedWorkspaceEndpoint?.workspaceId ?? null,
         openworkServer: {
-          getSnapshot: () => ({
-            openworkServerStatus: stateRef.current.selectedWorkspaceEndpoint ? "connected" : "disconnected",
-            openworkServerClient: stateRef.current.selectedWorkspaceEndpoint?.client ?? null,
-            openworkServerCapabilities: stateRef.current.selectedWorkspaceEndpoint
-              ? {
-                  config: { read: true, write: true },
-                }
-              : null,
-          }),
+          getSnapshot: () => workspaceOpenworkServerSnapshot(
+            stateRef.current.selectedWorkspaceEndpoint,
+          ),
         },
         setProviders,
         setProviderDefaults,
