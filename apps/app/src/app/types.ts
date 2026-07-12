@@ -202,7 +202,7 @@ export type SettingsTab = (typeof SETTINGS_TAB_VALUES)[number];
 
 export type WorkspacePreset = "starter" | "automation" | "minimal";
 
-export type WorkspaceConnectionStatus = "idle" | "connecting" | "connected" | "error";
+export type WorkspaceConnectionStatus = "idle" | "connecting" | "reconnecting" | "connected" | "error";
 
 export type WorkspaceConnectionState = {
   status: WorkspaceConnectionStatus;

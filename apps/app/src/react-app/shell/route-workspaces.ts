@@ -7,7 +7,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkWorkspaceInfo } from "@/app/lib/openwork-server";
 import type { WorkspaceInfo } from "@/app/lib/desktop-types";
-import type { WorkspaceSessionGroup } from "@/app/types";
+import type { WorkspaceConnectionState, WorkspaceSessionGroup } from "@/app/types";
 import {
   normalizeDirectoryPath,
   normalizeSessionStatus,
@@ -30,6 +30,8 @@ export type RouteSession = Session & {
   runStatus?: unknown;
   slug?: string | null;
 };
+
+export const WORKSPACE_REFRESH_RETRY_INTERVAL_MS = 30_000;
 
 export function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
   return {
@@ -168,6 +170,43 @@ export function mergeRouteWorkspaces(
   });
 
   return [...mergedServer, ...missingDesktop];
+}
+
+/**
+ * A transport failure is not an authoritative empty workspace snapshot.
+ * Preserve the last successful server view while still applying fresher
+ * desktop-owned routing fields and newly-created desktop workspaces.
+ */
+export function retainRouteWorkspacesOnRefreshFailure(
+  lastKnownWorkspaces: RouteWorkspace[],
+  desktopWorkspaces: RouteWorkspace[],
+): RouteWorkspace[] {
+  return mergeRouteWorkspaces(lastKnownWorkspaces, desktopWorkspaces);
+}
+
+export function markRemoteWorkspacesReconnecting(
+  current: Record<string, WorkspaceConnectionState>,
+  workspaces: RouteWorkspace[],
+): Record<string, WorkspaceConnectionState> {
+  const next = { ...current };
+  for (const workspace of workspaces) {
+    if (workspace.workspaceType !== "remote") continue;
+    const existing = next[workspace.id];
+    if (existing?.status === "connecting" || existing?.status === "error") continue;
+    next[workspace.id] = {
+      status: "reconnecting",
+      message: null,
+      checkedAt: existing?.checkedAt ?? null,
+    };
+  }
+  return next;
+}
+
+export function shouldRetryFailedWorkspaceRefresh(input: {
+  refreshFailed: boolean;
+  online: boolean;
+}): boolean {
+  return input.refreshFailed && input.online;
 }
 
 export function orderRouteWorkspaces(workspaces: RouteWorkspace[], orderIds: string[]): RouteWorkspace[] {

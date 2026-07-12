@@ -46,7 +46,10 @@ import {
   mapDesktopWorkspace,
   mergeRouteWorkspaces,
   orderRouteWorkspaces,
+  retainRouteWorkspacesOnRefreshFailure,
+  shouldRetryFailedWorkspaceRefresh,
   toSessionGroups,
+  WORKSPACE_REFRESH_RETRY_INTERVAL_MS,
   workspaceExportFilename,
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
@@ -388,6 +391,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const workspacesRef = useRef<RouteWorkspace[]>([]);
   const refreshInFlightRef = useRef(false);
+  const refreshFailedRef = useRef(false);
   const reconnectAttemptedWorkspaceIdRef = useRef("");
   const refreshMcpServersRef = useRef<(() => void | Promise<void>) | null>(null);
   const notifyMcpReloadingRef = useRef<(() => void) | null>(null);
@@ -1112,11 +1116,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         setOpenworkClient(null);
         setBaseUrl("");
         setToken("");
-        setWorkspaces(desktopWorkspaces);
-        setSessionsByWorkspaceId({});
-        setErrorsByWorkspaceId({});
+        const retainedWorkspaces = retainRouteWorkspacesOnRefreshFailure(
+          workspacesRef.current,
+          desktopWorkspaces,
+        );
+        refreshFailedRef.current = retainedWorkspaces.length > 0;
+        setWorkspaces(retainedWorkspaces);
         setLegacySelectedWorkspaceId((current) => {
-          const next = current || readActiveWorkspaceId() || resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "";
+          const next = current || readActiveWorkspaceId() || resolveWorkspaceListSelectedId(desktopList) || retainedWorkspaces[0]?.id || "";
           writeActiveWorkspaceId(next || null);
           return next;
         });
@@ -1129,6 +1136,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         hostToken: resolvedHostToken || undefined,
       });
       const list = await client.listWorkspaces();
+      refreshFailedRef.current = false;
       const serverWorkspaceIds = new Set(list.items.map((workspace) => workspace.id));
       const nextWorkspaces = mergeRouteWorkspaces(list.items, desktopWorkspaces);
       const sessionEntries = await Promise.all(
@@ -1196,6 +1204,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return next;
       });
     } catch (error) {
+      refreshFailedRef.current = true;
       const message = describeRouteError(error);
       console.error("[settings-route] refreshRouteState failed", error);
       recordInspectorEvent("route.refresh.error", {
@@ -1210,10 +1219,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         body: message,
         dedupeKey: "settings-route-refresh",
       });
-      if (desktopWorkspaces.length > 0) {
-        setWorkspaces(desktopWorkspaces);
+      const retainedWorkspaces = retainRouteWorkspacesOnRefreshFailure(
+        workspacesRef.current,
+        desktopWorkspaces,
+      );
+      if (retainedWorkspaces.length > 0) {
+        setWorkspaces(retainedWorkspaces);
         setLegacySelectedWorkspaceId((current) => {
-          const next = current || readActiveWorkspaceId() || resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "";
+          const next = current || readActiveWorkspaceId() || resolveWorkspaceListSelectedId(desktopList) || retainedWorkspaces[0]?.id || "";
           writeActiveWorkspaceId(next || null);
           return next;
         });
@@ -1401,9 +1414,29 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const handleSettingsChange = () => {
       void refreshRouteState();
     };
+    const retryFailedRefresh = () => {
+      if (
+        !shouldRetryFailedWorkspaceRefresh({
+          refreshFailed: refreshFailedRef.current,
+          online: window.navigator.onLine !== false,
+        })
+      ) {
+        return;
+      }
+      void refreshRouteState();
+    };
     window.addEventListener("openwork-server-settings-changed", handleSettingsChange);
+    window.addEventListener("online", retryFailedRefresh);
+    window.addEventListener("focus", retryFailedRefresh);
+    const retryInterval = window.setInterval(
+      retryFailedRefresh,
+      WORKSPACE_REFRESH_RETRY_INTERVAL_MS,
+    );
     return () => {
       window.removeEventListener("openwork-server-settings-changed", handleSettingsChange);
+      window.removeEventListener("online", retryFailedRefresh);
+      window.removeEventListener("focus", retryFailedRefresh);
+      window.clearInterval(retryInterval);
     };
   }, [refreshRouteState]);
 
@@ -1833,6 +1866,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (isDesktopRuntime()) {
       await workspaceForget(workspaceId).catch(() => undefined);
     }
+    const retainedWorkspaces = workspacesRef.current.filter(
+      (workspace) => workspace.id !== workspaceId,
+    );
+    workspacesRef.current = retainedWorkspaces;
+    setWorkspaces(retainedWorkspaces);
     if (selectedWorkspaceId === workspaceId) {
       const nextWorkspace = workspaces.find((workspace) => workspace.id !== workspaceId);
       const nextId = nextWorkspace?.id ?? "";

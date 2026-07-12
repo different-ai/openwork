@@ -37,9 +37,13 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import {
   describeRouteError,
   isTransientStartupError,
+  markRemoteWorkspacesReconnecting,
   mapDesktopWorkspace,
   mergeRouteWorkspaces,
   orderRouteWorkspaces,
+  retainRouteWorkspacesOnRefreshFailure,
+  shouldRetryFailedWorkspaceRefresh,
+  WORKSPACE_REFRESH_RETRY_INTERVAL_MS,
   type RouteSession,
   type RouteWorkspace,
 } from "./route-workspaces";
@@ -110,6 +114,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     [],
   );
   const refreshInFlightRef = useRef(false);
+  const refreshFailedRef = useRef(false);
   const workspacesRef = useRef<RouteWorkspace[]>([]);
   const workspaceOrderIdsRef = useRef(workspaceOrderIds);
   const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
@@ -334,12 +339,26 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         setClient(null);
         setBaseUrl("");
         setToken("");
-        const orderedDesktopWorkspaces = orderRouteWorkspaces(desktopWorkspaces, workspaceOrderIdsRef.current);
-        setWorkspaces(orderedDesktopWorkspaces);
-        sessionsByWorkspaceIdRef.current = {};
-        setSessionsByWorkspaceId({});
-        setErrorsByWorkspaceId({});
-        setLegacySelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "");
+        const retainedWorkspaces = orderRouteWorkspaces(
+          retainRouteWorkspacesOnRefreshFailure(workspacesRef.current, desktopWorkspaces),
+          workspaceOrderIdsRef.current,
+        );
+        refreshFailedRef.current = retainedWorkspaces.length > 0;
+        setWorkspaces(retainedWorkspaces);
+        setWorkspaceConnectionOverrides((current) =>
+          markRemoteWorkspacesReconnecting(current, retainedWorkspaces),
+        );
+        setLegacySelectedWorkspaceId((current) =>
+          current && retainedWorkspaces.some((workspace) => workspace.id === current)
+            ? current
+            : resolveWorkspaceListSelectedId(desktopList) || retainedWorkspaces[0]?.id || "",
+        );
+        const retainedRemoteWorkspaces = retainedWorkspaces.filter(
+          (workspace) => workspace.workspaceType === "remote",
+        );
+        if (retainedRemoteWorkspaces.length > 0) {
+          void loadWorkspaceSessionsInBackground(retainedRemoteWorkspaces);
+        }
         return;
       }
 
@@ -359,6 +378,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         hostToken: resolvedHostToken || undefined,
       });
       const list = await openworkClient.listWorkspaces();
+      refreshFailedRef.current = false;
       const nextWorkspaces = orderRouteWorkspaces(
         mergeRouteWorkspaces(list.items, desktopWorkspaces),
         workspaceOrderIdsRef.current,
@@ -441,7 +461,10 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       // loading state per-workspace until the list arrives.
       const selectedWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId);
       const backgroundWorkspaces = nextWorkspaces.filter(
-        (workspace) => workspace.id === nextWorkspaceId || !alreadyLoadedWorkspaceIds.has(workspace.id),
+        (workspace) =>
+          workspace.workspaceType === "remote" ||
+          workspace.id === nextWorkspaceId ||
+          !alreadyLoadedWorkspaceIds.has(workspace.id),
       );
       if (backgroundWorkspaces.length > 0) {
         const orderedWorkspaces = selectedWorkspace
@@ -450,6 +473,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         void loadWorkspaceSessionsInBackground(orderedWorkspaces);
       }
     } catch (error) {
+      refreshFailedRef.current = true;
       const message = describeRouteError(error);
       console.error("[session-route] refreshRouteState failed", error);
       recordInspectorEvent("route.refresh.error", {
@@ -458,12 +482,24 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         preservedWorkspaceCount: desktopWorkspaces.length,
       });
       setRouteError(message);
-      if (desktopWorkspaces.length > 0) {
-        const orderedDesktopWorkspaces = orderRouteWorkspaces(desktopWorkspaces, workspaceOrderIdsRef.current);
-        setWorkspaces(orderedDesktopWorkspaces);
-        setLegacySelectedWorkspaceId((current) =>
-          current || resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "",
+      const retainedWorkspaces = orderRouteWorkspaces(
+        retainRouteWorkspacesOnRefreshFailure(workspacesRef.current, desktopWorkspaces),
+        workspaceOrderIdsRef.current,
+      );
+      if (retainedWorkspaces.length > 0) {
+        setWorkspaces(retainedWorkspaces);
+        setWorkspaceConnectionOverrides((current) =>
+          markRemoteWorkspacesReconnecting(current, retainedWorkspaces),
         );
+        setLegacySelectedWorkspaceId((current) =>
+          current || resolveWorkspaceListSelectedId(desktopList) || retainedWorkspaces[0]?.id || "",
+        );
+        const retainedRemoteWorkspaces = retainedWorkspaces.filter(
+          (workspace) => workspace.workspaceType === "remote",
+        );
+        if (retainedRemoteWorkspaces.length > 0) {
+          void loadWorkspaceSessionsInBackground(retainedRemoteWorkspaces);
+        }
       }
     } finally {
       setLoading(false);
@@ -557,6 +593,24 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     };
     window.addEventListener("openwork-server-settings-changed", handleSettingsChange);
 
+    const retryFailedRefresh = () => {
+      if (
+        !shouldRetryFailedWorkspaceRefresh({
+          refreshFailed: refreshFailedRef.current,
+          online: window.navigator.onLine !== false,
+        })
+      ) {
+        return;
+      }
+      void refreshRouteState();
+    };
+    window.addEventListener("online", retryFailedRefresh);
+    window.addEventListener("focus", retryFailedRefresh);
+    const retryInterval = window.setInterval(
+      retryFailedRefresh,
+      WORKSPACE_REFRESH_RETRY_INTERVAL_MS,
+    );
+
     // Also retry on visibility flip independently — even when nobody else
     // dispatches the settings event.
     const handleVisibility = () => {
@@ -576,6 +630,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         startupRetryTimerRef.current = null;
       }
       window.removeEventListener("openwork-server-settings-changed", handleSettingsChange);
+      window.removeEventListener("online", retryFailedRefresh);
+      window.removeEventListener("focus", retryFailedRefresh);
+      window.clearInterval(retryInterval);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", handleVisibility);
       }
@@ -604,6 +661,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         path: workspace.path,
         sessionCount: (sessionsByWorkspaceId[workspace.id] ?? []).length,
         loading: retryingWorkspaceIds.includes(workspace.id),
+        connectionStatus: workspaceConnectionOverrides[workspace.id]?.status ?? "idle",
         error: errorsByWorkspaceId[workspace.id] ?? null,
       })),
       sessionsByWorkspaceId: Object.fromEntries(
@@ -630,6 +688,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     sessionsByWorkspaceId,
     token,
     workspaces,
+    workspaceConnectionOverrides,
   ]);
 
   // Once workspaces + sessions are loaded and the URL has no sessionId, try to

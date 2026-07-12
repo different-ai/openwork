@@ -1185,6 +1185,11 @@ export function SessionRoute() {
       if (isDesktopRuntime()) {
         await workspaceForget(workspaceId).catch(() => undefined);
       }
+      const retainedWorkspaces = workspacesRef.current.filter(
+        (workspace) => workspace.id !== workspaceId,
+      );
+      workspacesRef.current = retainedWorkspaces;
+      setWorkspaces(retainedWorkspaces);
       if (selectedWorkspaceId === workspaceId) {
         setLegacySelectedWorkspaceId("");
         writeActiveWorkspaceId(null);
