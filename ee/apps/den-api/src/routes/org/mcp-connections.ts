@@ -17,7 +17,7 @@ import { createOAuthStateToken, resolvePublicOrigin, verifyOAuthStateToken } fro
 import {
   connectExternalMcp,
   completeExternalMcpAuth,
-} from "../../capability-sources/external-mcp-client.js"
+} from "../../capability-sources/external-mcp-client-runtime.js"
 import {
   createExternalMcpConnection,
   deleteExternalMcpConnection,

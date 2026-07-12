@@ -3,6 +3,7 @@ import path from "node:path"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { denApiAppVersion } from "./version.js"
+import { parseEnterpriseMcpClientEnabled } from "./enterprise-mcp-client-flag.js"
 import { z } from "zod"
 
 const EnvSchema = z.object({
@@ -44,6 +45,7 @@ const EnvSchema = z.object({
   LOOPS_MARKETING_ENABLED: z.string().optional(),
   OPENWORK_DEV_MODE: z.string().optional(),
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
+  DEN_ENABLE_ENTERPRISE_MCP_CLIENT: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_GOOGLE_OAUTH_TOKEN_URL: z.string().optional(),
   DEN_GOOGLE_API_BASE_URL: z.string().optional(),
@@ -288,6 +290,7 @@ const orgMode = parseDenOrgMode(parsed.DEN_ORG_MODE)
 // (OPENWORK_DEV_MODE=1) is exempt automatically so evals against a local
 // stand-in server keep working.
 const allowPrivateMcpUrls = devMode || (parsed.DEN_ALLOW_PRIVATE_MCP_URLS ?? "0").trim() === "1"
+const enterpriseMcpClientEnabled = parseEnterpriseMcpClientEnabled(parsed.DEN_ENABLE_ENTERPRISE_MCP_CLIENT)
 const requireEmailVerification = parsed.DEN_REQUIRE_EMAIL_VERIFICATION === undefined
   ? orgMode === "multi_org" && !devMode
   : parsed.DEN_REQUIRE_EMAIL_VERIFICATION.trim().toLowerCase() !== "false"
@@ -328,6 +331,7 @@ export const env = {
   webAppHosts: splitCsv(parsed.DEN_WEB_APP_HOSTS).map((host) => host.toLowerCase()),
   devMode,
   allowPrivateMcpUrls,
+  enterpriseMcpClientEnabled,
   planGatingEnabled,
   installLinksGatingEnabled,
   mcpConnectionsGatingEnabled,
