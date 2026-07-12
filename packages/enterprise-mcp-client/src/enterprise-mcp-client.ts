@@ -5,14 +5,17 @@ import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.j
 import { z } from "zod"
 import type {
   EnterpriseMcpAuthorization,
+  EnterpriseMcpAbandonAuthorizationInput,
   EnterpriseMcpCallToolInput,
   EnterpriseMcpClient,
   EnterpriseMcpClientOptions,
+  EnterpriseMcpClock,
   EnterpriseMcpCompleteAuthorizationInput,
   EnterpriseMcpConnectInput,
   EnterpriseMcpConnectResult,
   EnterpriseMcpConnection,
   EnterpriseMcpFetch,
+  EnterpriseMcpLifecycle,
   EnterpriseMcpListToolsInput,
   EnterpriseMcpOperationPhase,
 } from "./contracts.js"
@@ -20,6 +23,7 @@ import { EnterpriseMcpClientError, EnterpriseMcpToolResultError } from "./errors
 import { EnterpriseMcpOAuthProvider } from "./oauth-provider.js"
 import { createEnterpriseMcpRequestObserver, type EnterpriseMcpRequestObserver } from "./request-observer.js"
 import { collectEnterpriseMcpTools } from "./tool-catalog.js"
+import { assertEnterpriseMcpToolArguments } from "./tool-input.js"
 
 const connectionSchema = z.object({
   id: z.string().trim().min(1),
@@ -28,9 +32,22 @@ const connectionSchema = z.object({
 
 const redirectUriSchema = z.string().trim().url()
 const toolNameSchema = z.string().trim().min(1)
+const authorizationIdSchema = z.string().min(1).max(8 * 1024)
+const authorizationCodeSchema = z.string().min(1).max(8 * 1024)
 
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000
 const DEFAULT_CLOSE_TIMEOUT_MS = 5_000
+const DEFAULT_AUTHORIZATION_TRANSACTION_TTL_MS = 10 * 60_000
+const DEFAULT_EXPIRATION_SKEW_MS = 30_000
+
+const optionsSchema = z.object({
+  operationTimeoutMs: z.number().int().positive(),
+  closeTimeoutMs: z.number().int().positive(),
+  authorizationTransactionTtlMs: z.number().int().positive(),
+  expirationSkewMs: z.number().int().nonnegative(),
+  clientName: z.string().trim().min(1).max(255),
+  clientVersion: z.string().trim().min(1).max(255),
+})
 
 type Session = {
   client: Client
@@ -39,10 +56,7 @@ type Session = {
   observer: EnterpriseMcpRequestObserver
   controller: AbortController
   requestOptions: RequestOptions
-}
-
-function defaultFetch(url: string | URL, init?: RequestInit): Promise<Response> {
-  return fetch(url, init)
+  lifecycle: EnterpriseMcpLifecycle
 }
 
 function requestInit(authorization: EnterpriseMcpAuthorization): RequestInit | undefined {
@@ -55,11 +69,39 @@ function validateConnection(connection: EnterpriseMcpConnection): URL {
   if (connection.authorization.type === "api-key" && !connection.authorization.token.trim()) {
     throw new Error("An API key connection requires a non-empty token.")
   }
-  return new URL(parsed.serverUrl)
+  const url = new URL(parsed.serverUrl)
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("An enterprise MCP server URL must use HTTP or HTTPS.")
+  }
+  if (url.username || url.password) {
+    throw new Error("An enterprise MCP server URL cannot contain embedded credentials.")
+  }
+  if (url.hash) throw new Error("An enterprise MCP server URL cannot contain a fragment.")
+  return url
 }
 
 function validateRedirectUri(redirectUri: string): string {
-  return redirectUriSchema.parse(redirectUri)
+  const parsed = redirectUriSchema.parse(redirectUri)
+  const url = new URL(parsed)
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("An enterprise MCP OAuth redirect URI must use HTTP or HTTPS.")
+  }
+  if (url.username || url.password || url.hash) {
+    throw new Error("An enterprise MCP OAuth redirect URI cannot contain credentials or a fragment.")
+  }
+  return parsed
+}
+
+function configurationValue<T>(parse: () => T): T {
+  try {
+    return parse()
+  } catch (error) {
+    throw new EnterpriseMcpClientError({
+      operationPhase: "configuration",
+      requestPhase: null,
+      cause: error,
+    })
+  }
 }
 
 async function closeWithinDeadline(close: () => Promise<void>, timeoutMs: number): Promise<void> {
@@ -76,12 +118,25 @@ async function closeWithinDeadline(close: () => Promise<void>, timeoutMs: number
   }
 }
 
-export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = {}): EnterpriseMcpClient {
-  const operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS
-  const closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
-  const clientName = options.clientName ?? "OpenWork"
-  const clientVersion = options.clientVersion ?? "1.0.0"
-  const configuredFetch: EnterpriseMcpFetch = options.fetch ?? defaultFetch
+export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): EnterpriseMcpClient {
+  const parsedOptions = configurationValue(() => optionsSchema.parse({
+    operationTimeoutMs: options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS,
+    closeTimeoutMs: options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS,
+    authorizationTransactionTtlMs: options.authorizationTransactionTtlMs ?? DEFAULT_AUTHORIZATION_TRANSACTION_TTL_MS,
+    expirationSkewMs: options.expirationSkewMs ?? DEFAULT_EXPIRATION_SKEW_MS,
+    clientName: options.clientName ?? "OpenWork",
+    clientVersion: options.clientVersion ?? "1.0.0",
+  }))
+  const {
+    operationTimeoutMs,
+    closeTimeoutMs,
+    authorizationTransactionTtlMs,
+    expirationSkewMs,
+    clientName,
+    clientVersion,
+  } = parsedOptions
+  const clock: EnterpriseMcpClock = options.clock ?? { now: () => Date.now() }
+  const configuredFetch: EnterpriseMcpFetch = options.fetch
 
   function emitDiagnostic(event: Parameters<NonNullable<EnterpriseMcpClientOptions["diagnosticSink"]>>[0]): void {
     try {
@@ -94,14 +149,14 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
   function createSession(input: {
     connection: EnterpriseMcpConnection
     redirectUri: string
-    state?: string
+    flow: { kind: "connect"; authorizationId?: string } | { kind: "callback"; authorizationId: string } | { kind: "runtime" }
     operationPhase: EnterpriseMcpOperationPhase
   }): Session {
     const serverUrl = validateConnection(input.connection)
     const redirectUri = validateRedirectUri(input.redirectUri)
     const controller = new AbortController()
-    const configuredExpiresAt = options.lifecycle?.expiresAt ?? (Date.now() + operationTimeoutMs)
-    const remaining = Math.max(1, Math.min(operationTimeoutMs, configuredExpiresAt - Date.now()))
+    const configuredExpiresAt = options.lifecycle?.expiresAt ?? (clock.now() + operationTimeoutMs)
+    const remaining = Math.max(1, Math.min(operationTimeoutMs, configuredExpiresAt - clock.now()))
     const timeout = setTimeout(() => {
       controller.abort(new Error(`Enterprise MCP ${input.operationPhase} exceeded its lifecycle deadline.`))
     }, remaining)
@@ -115,13 +170,25 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
       signal: options.lifecycle
         ? AbortSignal.any([controller.signal, options.lifecycle.signal])
         : controller.signal,
+      clock,
     })
+    const requestSignal = options.lifecycle
+      ? AbortSignal.any([controller.signal, options.lifecycle.signal])
+      : controller.signal
     const oauthProvider = input.connection.authorization.type === "oauth"
       ? new EnterpriseMcpOAuthProvider({
           redirectUri,
-          store: input.connection.authorization.store,
-          state: input.state,
+          connectionId: input.connection.id,
+          persistence: input.connection.authorization.persistence,
+          flow: input.flow,
           clientName,
+          clock,
+          lifecycle: {
+            expiresAt: configuredExpiresAt,
+            signal: requestSignal,
+          },
+          authorizationTransactionTtlMs,
+          expirationSkewMs,
         })
       : undefined
     const transport = new StreamableHTTPClientTransport(serverUrl, {
@@ -130,22 +197,27 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
       requestInit: requestInit(input.connection.authorization),
     })
     const client = new Client({ name: clientName, version: clientVersion }, { capabilities: {} })
-    const requestSignal = options.lifecycle
-      ? AbortSignal.any([controller.signal, options.lifecycle.signal])
-      : controller.signal
     const requestOptions: RequestOptions = {
       signal: requestSignal,
       timeout: remaining,
       maxTotalTimeout: remaining,
       resetTimeoutOnProgress: false,
     }
-    return { client, transport, oauthProvider, observer, controller, requestOptions }
+    return {
+      client,
+      transport,
+      oauthProvider,
+      observer,
+      controller,
+      requestOptions,
+      lifecycle: { expiresAt: configuredExpiresAt, signal: requestSignal },
+    }
   }
 
   async function runOperation<T>(input: {
     connection: EnterpriseMcpConnection
     redirectUri: string
-    state?: string
+    flow: { kind: "connect"; authorizationId?: string } | { kind: "callback"; authorizationId: string } | { kind: "runtime" }
     operationPhase: EnterpriseMcpOperationPhase
     operation: (session: Session) => Promise<T>
   }): Promise<T> {
@@ -167,7 +239,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
       requestPhase: null,
       outcome: "started",
     })
-    const startedAt = Date.now()
+    const startedAt = clock.now()
     try {
       const result = await input.operation(session)
       emitDiagnostic({
@@ -176,7 +248,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
         operationPhase: input.operationPhase,
         requestPhase: session.observer.lastRequestPhase(),
         outcome: "succeeded",
-        durationMs: Date.now() - startedAt,
+        durationMs: clock.now() - startedAt,
       })
       return result
     } catch (error) {
@@ -193,7 +265,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
         operationPhase: input.operationPhase,
         requestPhase: session.observer.lastRequestPhase(),
         outcome: "failed",
-        durationMs: Date.now() - startedAt,
+        durationMs: clock.now() - startedAt,
       })
       throw wrapped
     } finally {
@@ -209,6 +281,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
   }): Promise<T> {
     return runOperation({
       ...input,
+      flow: { kind: "runtime" },
       operation: async (session) => {
         await session.client.connect(session.transport, session.requestOptions)
         emitDiagnostic({
@@ -243,10 +316,20 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
 
   return {
     async connect(input: EnterpriseMcpConnectInput): Promise<EnterpriseMcpConnectResult> {
+      const authorizationId = configurationValue(() => input.authorizationId === undefined
+        ? undefined
+        : authorizationIdSchema.parse(input.authorizationId))
+      if (input.connection.authorization.type === "oauth" && !authorizationId) {
+        throw new EnterpriseMcpClientError({
+          operationPhase: "configuration",
+          requestPhase: null,
+          cause: new Error("An OAuth connection requires a signed authorization transaction id."),
+        })
+      }
       return runOperation({
         connection: input.connection,
         redirectUri: input.redirectUri,
-        state: input.state,
+        flow: { kind: "connect", authorizationId },
         operationPhase: "connection-handshake",
         operation: async (session) => {
           try {
@@ -285,18 +368,21 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
     },
 
     async completeAuthorization(input: EnterpriseMcpCompleteAuthorizationInput): Promise<void> {
+      const authorizationId = configurationValue(() => authorizationIdSchema.parse(input.authorizationId))
+      const code = configurationValue(() => authorizationCodeSchema.parse(input.code))
       await runOperation({
         connection: input.connection,
         redirectUri: input.redirectUri,
+        flow: { kind: "callback", authorizationId },
         operationPhase: "authorization-callback",
         operation: async (session) => {
-          const store = input.connection.authorization.type === "oauth"
-            ? input.connection.authorization.store
+          const credentialPort = input.connection.authorization.type === "oauth"
+            ? input.connection.authorization.persistence.credentials
             : null
           let exchangedTokens = false
           let operationFailed = false
           try {
-            await session.transport.finishAuth(input.code)
+            await session.transport.finishAuth(code)
             exchangedTokens = true
             await session.client.connect(session.transport, session.requestOptions)
             emitDiagnostic({
@@ -308,9 +394,17 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
             })
           } catch (error) {
             operationFailed = true
-            if (exchangedTokens && store) {
+            if (exchangedTokens && credentialPort) {
               try {
-                await store.invalidateTokens()
+                const cleanupController = new AbortController()
+                await credentialPort.invalidate({
+                  context: {
+                    connectionId: input.connection.id,
+                    commitExpiresAt: clock.now() + closeTimeoutMs,
+                    signal: cleanupController.signal,
+                  },
+                  reason: "post-authorization-validation-failed",
+                })
               } catch {
                 // Credential cleanup must not replace the validation failure.
               }
@@ -333,6 +427,27 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
       })
     },
 
+    async abandonAuthorization(input: EnterpriseMcpAbandonAuthorizationInput): Promise<void> {
+      const authorizationId = configurationValue(() => authorizationIdSchema.parse(input.authorizationId))
+      if (input.connection.authorization.type !== "oauth") return
+      const controller = new AbortController()
+      const expiresAt = Math.min(
+        options.lifecycle?.expiresAt ?? (clock.now() + operationTimeoutMs),
+        clock.now() + operationTimeoutMs,
+      )
+      await input.connection.authorization.persistence.authorizations.invalidate({
+        context: {
+          connectionId: input.connection.id,
+          commitExpiresAt: expiresAt,
+          signal: options.lifecycle
+            ? AbortSignal.any([controller.signal, options.lifecycle.signal])
+            : controller.signal,
+        },
+        id: authorizationId,
+        reason: input.reason,
+      })
+    },
+
     async listTools(input: EnterpriseMcpListToolsInput) {
       return runConnectedOperation({
         connection: input.connection,
@@ -351,14 +466,15 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
     },
 
     async callTool(input: EnterpriseMcpCallToolInput) {
-      toolNameSchema.parse(input.toolName)
+      const toolName = configurationValue(() => toolNameSchema.parse(input.toolName))
+      configurationValue(() => assertEnterpriseMcpToolArguments(input.arguments))
       return runConnectedOperation({
         connection: input.connection,
         redirectUri: input.redirectUri,
         operationPhase: "tool-execution",
         operation: async (session) => {
           const result = await session.client.callTool({
-            name: input.toolName,
+            name: toolName,
             arguments: input.arguments,
           }, undefined, session.requestOptions)
           if ("isError" in result && result.isError) throw new EnterpriseMcpToolResultError(result)

@@ -184,22 +184,36 @@ export async function deleteExternalMcpConnection(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
 }): Promise<boolean> {
-  const existing = await getExternalMcpConnection(input)
-  if (!existing) return false
-  // No FK cascades on these tables — clean up everything that hangs off the
-  // connection: access grants, every member's connected account (per-member
-  // tokens), and the dynamically-registered OAuth client.
-  await db.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, existing.id))
-  await db.delete(ConnectedAccountTable).where(and(
-    eq(ConnectedAccountTable.organizationId, input.organizationId),
-    eq(ConnectedAccountTable.providerId, existing.id),
-  ))
-  await db.delete(OrgOAuthClientTable).where(and(
-    eq(OrgOAuthClientTable.organizationId, input.organizationId),
-    eq(OrgOAuthClientTable.providerId, existing.id),
-  ))
-  await db.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
-  return true
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: ExternalMcpConnectionTable.id })
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const existing = rows[0]
+    if (!existing) return false
+    // The enterprise adapter takes the same connection-row lock before any
+    // credential commit. Deletion and credential persistence therefore have
+    // one deterministic winner; a completed delete cannot be followed by a
+    // late token write or orphaned account/client row.
+    await tx.delete(ExternalMcpConnectionAccessGrantTable).where(
+      eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, existing.id),
+    )
+    await tx.delete(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.providerId, existing.id),
+    ))
+    await tx.delete(OrgOAuthClientTable).where(and(
+      eq(OrgOAuthClientTable.organizationId, input.organizationId),
+      eq(OrgOAuthClientTable.providerId, existing.id),
+    ))
+    await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
+    return true
+  })
 }
 
 export async function saveExternalMcpPendingCodeVerifier(input: {

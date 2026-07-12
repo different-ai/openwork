@@ -488,6 +488,91 @@ function httpClassification(input: {
 }
 
 function classifyByCode(code: string): Classification | null {
+  if (code === "MCP_OAUTH_AUTHORIZATION_ID_REQUIRED") {
+    return {
+      phase: "CONFIGURATION",
+      category: "oauth_authorization_transaction_invalid",
+      code,
+      retryable: false,
+      actionOwner: "openwork",
+      operatorAction: "Start OAuth through Den so the callback is bound to a signed, expiring authorization transaction.",
+    }
+  }
+  if (code === "MCP_OAUTH_AUTHORIZATION_MISSING" || code === "MCP_OAUTH_AUTHORIZATION_EXPIRED") {
+    return {
+      phase: "AUTH_TOKEN_ACQUISITION",
+      category: "oauth_authorization_transaction_expired",
+      code,
+      retryable: true,
+      actionOwner: "member",
+      operatorAction: "Start Connect again and complete provider authorization before the signed transaction expires.",
+    }
+  }
+  if (code === "MCP_OAUTH_AUTHORIZATION_CLIENT_CHANGED") {
+    return {
+      phase: "AUTH_CLIENT_REGISTRATION",
+      category: "oauth_client_registration_changed",
+      code,
+      retryable: true,
+      actionOwner: "organization_admin",
+      operatorAction: "Retry Connect using the OAuth client registration that won the concurrent update.",
+    }
+  }
+  if (code === "MCP_OAUTH_CLIENT_EXPIRED") {
+    return {
+      phase: "AUTH_CLIENT_REGISTRATION",
+      category: "oauth_client_registration_expired",
+      code,
+      retryable: true,
+      actionOwner: "organization_admin",
+      operatorAction: "Renew the provider client secret or client registration, then start Connect again.",
+    }
+  }
+  if (code === "MCP_OAUTH_CREDENTIAL_EXPIRED") {
+    return {
+      phase: "CONTINUITY_REFRESH",
+      category: "oauth_credential_expired",
+      code,
+      retryable: true,
+      actionOwner: "member",
+      operatorAction: "Reconnect the provider account because the access token expired without a usable refresh token.",
+    }
+  }
+  if (code === "MCP_OAUTH_PERSISTENCE_INVALID") {
+    return {
+      phase: "CONFIGURATION",
+      category: "oauth_persistence_invalid",
+      code,
+      retryable: false,
+      actionOwner: "openwork",
+      operatorAction: "Inspect the encrypted OAuth record and adapter validation using the diagnostic reference.",
+    }
+  }
+  if (code === "MCP_LIFECYCLE_DEADLINE") {
+    return {
+      phase: "CONTINUITY_REFRESH",
+      category: "lifecycle_deadline",
+      code,
+      retryable: true,
+      actionOwner: "provider_admin",
+      operatorAction: "Retry after provider latency allows the credential transaction to commit within its lifecycle deadline.",
+    }
+  }
+  if (
+    code === "MCP_TOOL_ARGUMENT_SIZE_LIMIT"
+    || code === "MCP_TOOL_ARGUMENT_DEPTH_LIMIT"
+    || code === "MCP_TOOL_ARGUMENT_CYCLE"
+    || code === "MCP_TOOL_ARGUMENT_INVALID_JSON"
+  ) {
+    return {
+      phase: "CONFIGURATION",
+      category: "mcp_tool_input_invalid",
+      code,
+      retryable: false,
+      actionOwner: "openwork",
+      operatorAction: "Correct and bound the tool arguments before attempting the provider operation again.",
+    }
+  }
   const normalizedCode = code === "ConnectionRefused"
     ? "ECONNREFUSED"
     : code === "ConnectionReset"

@@ -6,6 +6,7 @@ import {
   listExternalMcpTools as listWithCurrentClient,
 } from "./external-mcp-client.js"
 import {
+  abandonExternalMcpAuth as abandonWithEnterpriseClient,
   callExternalMcpTool as callWithEnterpriseClient,
   completeExternalMcpAuth as completeWithEnterpriseClient,
   connectExternalMcp as connectWithEnterpriseClient,
@@ -14,14 +15,20 @@ import {
 
 export type ExternalMcpClientRuntime = {
   connectExternalMcp: typeof connectWithCurrentClient
-  completeExternalMcpAuth: typeof completeWithCurrentClient
+  completeExternalMcpAuth: (
+    ...input: [...Parameters<typeof completeWithCurrentClient>, signedState?: string]
+  ) => ReturnType<typeof completeWithCurrentClient>
+  abandonExternalMcpAuth: typeof abandonWithEnterpriseClient
   listExternalMcpTools: typeof listWithCurrentClient
   callExternalMcpTool: typeof callWithCurrentClient
 }
 
 const currentDenMcpClient: ExternalMcpClientRuntime = {
   connectExternalMcp: connectWithCurrentClient,
-  completeExternalMcpAuth: completeWithCurrentClient,
+  completeExternalMcpAuth: (connection, code, redirectUri, member, diagnosticReferenceId) => (
+    completeWithCurrentClient(connection, code, redirectUri, member, diagnosticReferenceId)
+  ),
+  abandonExternalMcpAuth: async () => undefined,
   listExternalMcpTools: listWithCurrentClient,
   callExternalMcpTool: callWithCurrentClient,
 }
@@ -29,6 +36,7 @@ const currentDenMcpClient: ExternalMcpClientRuntime = {
 const enterpriseMcpClient: ExternalMcpClientRuntime = {
   connectExternalMcp: connectWithEnterpriseClient,
   completeExternalMcpAuth: completeWithEnterpriseClient,
+  abandonExternalMcpAuth: abandonWithEnterpriseClient,
   listExternalMcpTools: listWithEnterpriseClient,
   callExternalMcpTool: callWithEnterpriseClient,
 }
@@ -54,6 +62,7 @@ const selectedRuntime = selectExternalMcpClientRuntime({
 export const {
   connectExternalMcp,
   completeExternalMcpAuth,
+  abandonExternalMcpAuth,
   listExternalMcpTools,
   callExternalMcpTool,
 } = selectedRuntime

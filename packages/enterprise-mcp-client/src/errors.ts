@@ -61,6 +61,27 @@ export class EnterpriseMcpClientError extends Error {
   }
 }
 
+export type EnterpriseMcpOAuthContractErrorCode =
+  | "MCP_OAUTH_AUTHORIZATION_ID_REQUIRED"
+  | "MCP_OAUTH_AUTHORIZATION_MISSING"
+  | "MCP_OAUTH_AUTHORIZATION_EXPIRED"
+  | "MCP_OAUTH_AUTHORIZATION_CLIENT_CHANGED"
+  | "MCP_OAUTH_CLIENT_EXPIRED"
+  | "MCP_OAUTH_CREDENTIAL_EXPIRED"
+  | "MCP_OAUTH_PERSISTENCE_INVALID"
+  | "MCP_LIFECYCLE_DEADLINE"
+
+/** Safe, stable failures for application-owned OAuth persistence invariants. */
+export class EnterpriseMcpOAuthContractError extends Error {
+  readonly code: EnterpriseMcpOAuthContractErrorCode
+
+  constructor(code: EnterpriseMcpOAuthContractErrorCode, message: string) {
+    super(message)
+    this.name = "EnterpriseMcpOAuthContractError"
+    this.code = code
+  }
+}
+
 export class EnterpriseMcpToolResultError extends Error {
   readonly code = "MCP_TOOL_REPORTED_ERROR"
   readonly providerSignal: Record<string, unknown> | undefined
@@ -87,6 +108,22 @@ export class EnterpriseMcpToolResultError extends Error {
       ...(category !== undefined ? { category } : {}),
       ...(requestId !== undefined ? { requestId } : {}),
     }
+  }
+}
+
+export type EnterpriseMcpToolInputErrorCode =
+  | "MCP_TOOL_ARGUMENT_SIZE_LIMIT"
+  | "MCP_TOOL_ARGUMENT_DEPTH_LIMIT"
+  | "MCP_TOOL_ARGUMENT_CYCLE"
+  | "MCP_TOOL_ARGUMENT_INVALID_JSON"
+
+export class EnterpriseMcpToolInputError extends Error {
+  readonly code: EnterpriseMcpToolInputErrorCode
+
+  constructor(code: EnterpriseMcpToolInputErrorCode) {
+    super("The MCP tool arguments do not satisfy the bounded JSON input contract.")
+    this.name = "EnterpriseMcpToolInputError"
+    this.code = code
   }
 }
 

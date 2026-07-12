@@ -4,16 +4,21 @@ import { describe, it } from "node:test"
 import { z } from "zod"
 import {
   createEnterpriseMcpClient,
-  collectEnterpriseMcpTools,
   EnterpriseMcpCatalogError,
   EnterpriseMcpClientError,
-  EnterpriseMcpOAuthProvider,
   EnterpriseMcpToolResultError,
+  EnterpriseMcpToolInputError,
+  EnterpriseMcpOAuthContractError,
   type EnterpriseMcpDiagnosticEvent,
   type EnterpriseMcpConnection,
   type EnterpriseMcpFetch,
-  type EnterpriseMcpOAuthStore,
+  type EnterpriseMcpOAuthAuthorizationHandle,
+  type EnterpriseMcpOAuthClientRegistration,
+  type EnterpriseMcpOAuthCredential,
+  type EnterpriseMcpOAuthPersistence,
 } from "../src/index.js"
+import { EnterpriseMcpOAuthProvider } from "../src/oauth-provider.js"
+import { collectEnterpriseMcpTools } from "../src/tool-catalog.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
 
 const rpcRequestSchema = z.object({
@@ -356,63 +361,197 @@ describe("enterprise MCP client", () => {
       },
     )
   })
+
+  it("rejects oversized or cyclic tool arguments before opening a provider connection", async () => {
+    let fetchCount = 0
+    const client = createEnterpriseMcpClient({
+      fetch: async () => {
+        fetchCount += 1
+        return new Response(null, { status: 500 })
+      },
+    })
+    await assert.rejects(
+      client.callTool({
+        connection: noAuthConnection(),
+        redirectUri: "https://den.example.test/callback",
+        toolName: "lookup-record",
+        arguments: { payload: "x".repeat(1024 * 1024) },
+      }),
+      (error: unknown) => error instanceof EnterpriseMcpClientError
+        && error.cause instanceof EnterpriseMcpToolInputError
+        && error.cause.code === "MCP_TOOL_ARGUMENT_SIZE_LIMIT",
+    )
+    const cyclic: Record<string, unknown> = {}
+    cyclic.self = cyclic
+    await assert.rejects(
+      client.callTool({
+        connection: noAuthConnection(),
+        redirectUri: "https://den.example.test/callback",
+        toolName: "lookup-record",
+        arguments: cyclic,
+      }),
+      (error: unknown) => error instanceof EnterpriseMcpClientError
+        && error.cause instanceof EnterpriseMcpToolInputError
+        && error.cause.code === "MCP_TOOL_ARGUMENT_CYCLE",
+    )
+    assert.equal(fetchCount, 0)
+  })
 })
 
-class MemoryOAuthStore implements EnterpriseMcpOAuthStore {
-  clientInformation: OAuthClientInformationMixed | undefined
-  tokens: OAuthTokens | undefined
-  codeVerifier: string | undefined
+class MemoryOAuthPersistence implements EnterpriseMcpOAuthPersistence {
+  registration: EnterpriseMcpOAuthClientRegistration | undefined
+  credential: EnterpriseMcpOAuthCredential | undefined
+  authorizationRecords = new Map<string, { handle: EnterpriseMcpOAuthAuthorizationHandle; codeVerifier: string }>()
   invalidationCount = 0
+  revision = 0
 
-  async loadClientInformation() {
-    return this.clientInformation
+  private nextRevision(): string {
+    this.revision += 1
+    return `revision-${this.revision}`
   }
 
-  async saveClientInformation(clientInformation: OAuthClientInformationMixed) {
-    this.clientInformation = clientInformation
+  private assertActive(input: { commitExpiresAt: number; signal: AbortSignal }): void {
+    if (input.signal.aborted || input.commitExpiresAt <= Date.now()) throw new Error("persistence deadline expired")
   }
 
-  async loadTokens() {
-    return this.tokens
+  readonly clientRegistrations = {
+    load: async () => this.registration,
+    save: async (input: {
+      context: { commitExpiresAt: number; signal: AbortSignal }
+      clientInformation: OAuthClientInformationMixed
+      expiresAt?: number
+    }) => {
+      this.assertActive(input.context)
+      if (!this.registration) {
+        this.registration = {
+          clientInformation: input.clientInformation,
+          revision: this.nextRevision(),
+          expiresAt: input.expiresAt,
+          source: "dynamic" as const,
+        }
+      }
+      return this.registration
+    },
+    invalidate: async () => {
+      this.registration = undefined
+    },
   }
 
-  async saveTokens(tokens: OAuthTokens) {
-    this.tokens = tokens
+  readonly authorizations = {
+    begin: async (input: {
+      context: { commitExpiresAt: number; signal: AbortSignal }
+      id: string
+      codeVerifier: string
+      expiresAt: number
+      clientRegistrationRevision?: string
+    }) => {
+      this.assertActive(input.context)
+      this.authorizationRecords.set(input.id, {
+        handle: {
+          id: input.id,
+          revision: this.nextRevision(),
+          expiresAt: input.expiresAt,
+          clientRegistrationRevision: input.clientRegistrationRevision,
+        },
+        codeVerifier: input.codeVerifier,
+      })
+    },
+    load: async (input: { id: string }) => this.authorizationRecords.get(input.id),
+    invalidate: async (input: { id: string }) => {
+      this.authorizationRecords.delete(input.id)
+    },
   }
 
-  async invalidateTokens() {
-    this.tokens = undefined
-    this.invalidationCount += 1
+  readonly credentials = {
+    load: async () => this.credential,
+    save: async (input: {
+      context: { commitExpiresAt: number; signal: AbortSignal }
+      tokens: OAuthTokens
+      expiresAt?: number
+      source: "authorization-code" | "refresh"
+      authorization?: EnterpriseMcpOAuthAuthorizationHandle
+      clientRegistrationRevision?: string
+    }) => {
+      this.assertActive(input.context)
+      if (input.source === "authorization-code") {
+        const pending = input.authorization ? this.authorizationRecords.get(input.authorization.id) : undefined
+        if (!pending || pending.handle.revision !== input.authorization?.revision) throw new Error("authorization was not active")
+        if (pending.handle.clientRegistrationRevision !== input.clientRegistrationRevision) {
+          throw new Error("client registration changed")
+        }
+        this.authorizationRecords.delete(pending.handle.id)
+      }
+      this.credential = {
+        tokens: input.tokens,
+        expiresAt: input.expiresAt,
+        revision: this.nextRevision(),
+      }
+      this.assertActive(input.context)
+    },
+    invalidate: async () => {
+      this.credential = undefined
+      this.invalidationCount += 1
+    },
   }
 
-  async saveCodeVerifier(codeVerifier: string) {
-    this.codeVerifier = codeVerifier
+  seedRegistration(clientInformation: OAuthClientInformationMixed, expiresAt?: number): void {
+    this.registration = {
+      clientInformation,
+      revision: this.nextRevision(),
+      expiresAt,
+      source: "pre-registered",
+    }
   }
 
-  async loadCodeVerifier() {
-    if (!this.codeVerifier) throw new Error("No verifier")
-    return this.codeVerifier
+  seedCredential(tokens: OAuthTokens, expiresAt?: number): void {
+    this.credential = { tokens, expiresAt, revision: this.nextRevision() }
   }
+}
+
+function oauthProvider(input: {
+  persistence: EnterpriseMcpOAuthPersistence
+  flow: { kind: "connect"; authorizationId?: string } | { kind: "callback"; authorizationId: string } | { kind: "runtime" }
+  now?: () => number
+  authorizationTransactionTtlMs?: number
+  expirationSkewMs?: number
+}): EnterpriseMcpOAuthProvider {
+  const controller = new AbortController()
+  const now = input.now ?? (() => Date.now())
+  return new EnterpriseMcpOAuthProvider({
+    redirectUri: "https://den.example.test/callback",
+    connectionId: "connection-1",
+    persistence: input.persistence,
+    flow: input.flow,
+    clientName: "OpenWork",
+    clock: { now },
+    lifecycle: { expiresAt: now() + 30_000, signal: controller.signal },
+    authorizationTransactionTtlMs: input.authorizationTransactionTtlMs ?? 600_000,
+    expirationSkewMs: input.expirationSkewMs ?? 0,
+  })
 }
 
 describe("enterprise MCP OAuth persistence contract", () => {
   it("round-trips state, client registration, tokens, and PKCE through the injected store", async () => {
-    const store = new MemoryOAuthStore()
+    const persistence = new MemoryOAuthPersistence()
+    const controller = new AbortController()
     const provider = new EnterpriseMcpOAuthProvider({
       redirectUri: "https://den.example.test/callback",
-      store,
-      state: "signed-state",
+      connectionId: "connection-1",
+      persistence,
+      flow: { kind: "connect", authorizationId: "signed-state" },
       clientName: "OpenWork",
+      clock: { now: () => Date.now() },
+      lifecycle: { expiresAt: Date.now() + 30_000, signal: controller.signal },
+      authorizationTransactionTtlMs: 600_000,
+      expirationSkewMs: 0,
     })
 
     assert.equal(provider.state(), "signed-state")
     assert.equal(provider.redirectUrl, "https://den.example.test/callback")
     await provider.saveClientInformation({ client_id: "registered-client" })
     assert.equal((await provider.clientInformation())?.client_id, "registered-client")
-    await provider.saveTokens({ access_token: "access", token_type: "Bearer", refresh_token: "refresh" })
-    assert.equal((await provider.tokens())?.refresh_token, "refresh")
     await provider.saveCodeVerifier("pkce-verifier")
-    assert.equal(await provider.codeVerifier(), "pkce-verifier")
+    assert.equal(persistence.authorizationRecords.get("signed-state")?.codeVerifier, "pkce-verifier")
     provider.redirectToAuthorization(new URL("https://identity.example.test/authorize"))
     assert.equal(provider.authorizeUrl, "https://identity.example.test/authorize")
   })
@@ -420,30 +559,36 @@ describe("enterprise MCP OAuth persistence contract", () => {
   it("completes discovery, dynamic registration, PKCE exchange, and authenticated MCP initialization", async () => {
     const server = await startOAuthMcpServer()
     try {
-      const store = new MemoryOAuthStore()
+      const persistence = new MemoryOAuthPersistence()
       const events: EnterpriseMcpDiagnosticEvent[] = []
-      const client = createEnterpriseMcpClient({ diagnosticSink: (event) => events.push(event) })
+      const client = createEnterpriseMcpClient({ fetch, diagnosticSink: (event) => events.push(event) })
       const connection: EnterpriseMcpConnection = {
         id: "oauth-connection",
         serverUrl: `${server.origin}/mcp`,
-        authorization: { type: "oauth", store },
+        authorization: { type: "oauth", persistence },
       }
       const redirectUri = "https://den.example.test/v1/mcp-connections/oauth-connection/connect/callback"
-      const started = await client.connect({ connection, redirectUri, state: "signed-den-state" })
+      const started = await client.connect({ connection, redirectUri, authorizationId: "signed-den-state" })
       assert.equal(started.status, "needs_auth")
       if (started.status !== "needs_auth") throw new Error("Expected OAuth authorization to be required.")
       const authorizeUrl = new URL(started.authorizeUrl)
       assert.equal(authorizeUrl.searchParams.get("state"), "signed-den-state")
       assert.equal(authorizeUrl.searchParams.get("client_id"), "enterprise-test-client")
-      assert.ok(store.codeVerifier)
+      assert.ok(persistence.authorizationRecords.get("signed-den-state")?.codeVerifier)
 
       await client.completeAuthorization({
         connection,
         redirectUri,
         code: "approved-code",
+        authorizationId: "signed-den-state",
       })
-      assert.equal(store.tokens?.access_token, "enterprise-access-token")
-      assert.deepEqual(await client.connect({ connection, redirectUri }), { status: "connected" })
+      assert.equal(persistence.credential?.tokens.access_token, "enterprise-access-token")
+      assert.equal(persistence.authorizationRecords.size, 0)
+      assert.deepEqual(await client.connect({
+        connection,
+        redirectUri,
+        authorizationId: "signed-den-state-after-callback",
+      }), { status: "connected" })
       const tools = await client.listTools({ connection, redirectUri })
       assert.equal(tools[0]?.name, "oauth-tool")
       for (const phase of [
@@ -464,26 +609,28 @@ describe("enterprise MCP OAuth persistence contract", () => {
   it("refreshes an expired enterprise OAuth credential and persists the replacement", async () => {
     const server = await startOAuthMcpServer()
     try {
-      const store = new MemoryOAuthStore()
-      store.clientInformation = { client_id: "enterprise-test-client" }
-      store.tokens = {
+      const persistence = new MemoryOAuthPersistence()
+      persistence.seedRegistration({ client_id: "enterprise-test-client" })
+      persistence.seedCredential({
         access_token: "expired-access-token",
         refresh_token: "enterprise-refresh-token",
         token_type: "Bearer",
-      }
+      }, Date.now() - 1_000)
       const events: EnterpriseMcpDiagnosticEvent[] = []
-      const client = createEnterpriseMcpClient({ diagnosticSink: (event) => events.push(event) })
+      const client = createEnterpriseMcpClient({ fetch, diagnosticSink: (event) => events.push(event) })
       const connection: EnterpriseMcpConnection = {
         id: "oauth-refresh-connection",
         serverUrl: `${server.origin}/mcp`,
-        authorization: { type: "oauth", store },
+        authorization: { type: "oauth", persistence },
       }
 
       assert.deepEqual(await client.connect({
         connection,
         redirectUri: "https://den.example.test/oauth-refresh-callback",
+        authorizationId: "signed-refresh-state",
       }), { status: "connected" })
-      assert.equal(store.tokens.access_token, "enterprise-access-token")
+      assert.equal(persistence.credential?.tokens.access_token, "enterprise-access-token")
+      assert.equal(persistence.credential?.tokens.refresh_token, "enterprise-refresh-token")
       assert.ok(events.some((event) => event.requestPhase === "oauth-token-refresh"))
     } finally {
       await server.close()
@@ -493,27 +640,162 @@ describe("enterprise MCP OAuth persistence contract", () => {
   it("invalidates exchanged tokens when callback validation cannot initialize MCP", async () => {
     const server = await startOAuthMcpServer({ rejectAuthenticatedMcp: true })
     try {
-      const store = new MemoryOAuthStore()
-      const client = createEnterpriseMcpClient({ operationTimeoutMs: 5_000 })
+      const persistence = new MemoryOAuthPersistence()
+      const client = createEnterpriseMcpClient({ fetch, operationTimeoutMs: 5_000 })
       const connection: EnterpriseMcpConnection = {
         id: "oauth-validation-failure",
         serverUrl: `${server.origin}/mcp`,
-        authorization: { type: "oauth", store },
+        authorization: { type: "oauth", persistence },
       }
       const redirectUri = "https://den.example.test/oauth-validation-failure"
-      const started = await client.connect({ connection, redirectUri, state: "signed-state" })
+      const started = await client.connect({ connection, redirectUri, authorizationId: "signed-state" })
       assert.equal(started.status, "needs_auth")
 
       await assert.rejects(client.completeAuthorization({
         connection,
         redirectUri,
         code: "approved-code",
+        authorizationId: "signed-state",
       }))
-      assert.equal(store.tokens, undefined)
-      assert.equal(store.invalidationCount, 1)
+      assert.equal(persistence.credential, undefined)
+      assert.equal(persistence.invalidationCount, 1)
     } finally {
       await server.close()
     }
+  })
+
+  it("requires an explicit signed authorization id before OAuth performs network or persistence work", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    let fetchCount = 0
+    const client = createEnterpriseMcpClient({
+      fetch: async () => {
+        fetchCount += 1
+        return new Response(null, { status: 500 })
+      },
+    })
+    await assert.rejects(
+      client.connect({
+        connection: {
+          id: "oauth-missing-state",
+          serverUrl: "https://mcp.example.test/mcp",
+          authorization: { type: "oauth", persistence },
+        },
+        redirectUri: "https://den.example.test/callback",
+      }),
+      (error: unknown) => error instanceof EnterpriseMcpClientError
+        && error.code === "MCP_CONFIGURATION_FAILED",
+    )
+    assert.equal(fetchCount, 0)
+    assert.equal(persistence.authorizationRecords.size, 0)
+  })
+
+  it("keeps concurrent PKCE transactions isolated by signed state", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedRegistration({ client_id: "registered-client" })
+    const first = oauthProvider({
+      persistence,
+      flow: { kind: "connect", authorizationId: "signed-state-a" },
+    })
+    const second = oauthProvider({
+      persistence,
+      flow: { kind: "connect", authorizationId: "signed-state-b" },
+    })
+    await first.clientInformation()
+    await second.clientInformation()
+    await first.saveCodeVerifier("a".repeat(43))
+    await second.saveCodeVerifier("b".repeat(43))
+    assert.equal(persistence.authorizationRecords.size, 2)
+
+    const firstCallback = oauthProvider({
+      persistence,
+      flow: { kind: "callback", authorizationId: "signed-state-a" },
+    })
+    const secondCallback = oauthProvider({
+      persistence,
+      flow: { kind: "callback", authorizationId: "signed-state-b" },
+    })
+    await firstCallback.clientInformation()
+    await secondCallback.clientInformation()
+    assert.equal(await firstCallback.codeVerifier(), "a".repeat(43))
+    assert.equal(await secondCallback.codeVerifier(), "b".repeat(43))
+  })
+
+  it("rejects an expired authorization transaction with a stable source code", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedRegistration({ client_id: "registered-client" })
+    const base = Date.now()
+    let now = base
+    const start = oauthProvider({
+      persistence,
+      flow: { kind: "connect", authorizationId: "signed-expiring-state" },
+      now: () => now,
+      authorizationTransactionTtlMs: 100,
+    })
+    await start.clientInformation()
+    await start.saveCodeVerifier("v".repeat(43))
+    now = base + 101
+    const callback = oauthProvider({
+      persistence,
+      flow: { kind: "callback", authorizationId: "signed-expiring-state" },
+      now: () => now,
+    })
+    await callback.clientInformation()
+    await assert.rejects(
+      callback.codeVerifier(),
+      (error: unknown) => error instanceof EnterpriseMcpOAuthContractError
+        && error.code === "MCP_OAUTH_AUTHORIZATION_EXPIRED",
+    )
+    assert.equal(persistence.authorizationRecords.size, 0)
+  })
+
+  it("rejects callbacks when the OAuth client changed after authorization started", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedRegistration({ client_id: "client-a" })
+    const start = oauthProvider({
+      persistence,
+      flow: { kind: "connect", authorizationId: "signed-client-revision" },
+    })
+    await start.clientInformation()
+    await start.saveCodeVerifier("v".repeat(43))
+    persistence.seedRegistration({ client_id: "client-b" })
+    const callback = oauthProvider({
+      persistence,
+      flow: { kind: "callback", authorizationId: "signed-client-revision" },
+    })
+    await callback.clientInformation()
+    await assert.rejects(
+      callback.codeVerifier(),
+      (error: unknown) => error instanceof EnterpriseMcpOAuthContractError
+        && error.code === "MCP_OAUTH_AUTHORIZATION_CLIENT_CHANGED",
+    )
+  })
+
+  it("invalidates an expired access token when no refresh token exists", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedCredential({ access_token: "expired", token_type: "Bearer" }, 999)
+    const provider = oauthProvider({
+      persistence,
+      flow: { kind: "runtime" },
+      now: () => 1_000,
+    })
+    await assert.rejects(
+      provider.tokens(),
+      (error: unknown) => error instanceof EnterpriseMcpOAuthContractError
+        && error.code === "MCP_OAUTH_CREDENTIAL_EXPIRED",
+    )
+    assert.equal(persistence.credential, undefined)
+  })
+
+  it("fails a losing concurrent dynamic registration instead of using the wrong client", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    const winner = oauthProvider({ persistence, flow: { kind: "connect", authorizationId: "winner-state" } })
+    const loser = oauthProvider({ persistence, flow: { kind: "connect", authorizationId: "loser-state" } })
+    await winner.saveClientInformation({ client_id: "winner-client" })
+    await assert.rejects(
+      loser.saveClientInformation({ client_id: "loser-client" }),
+      (error: unknown) => error instanceof EnterpriseMcpOAuthContractError
+        && error.code === "MCP_OAUTH_AUTHORIZATION_CLIENT_CHANGED",
+    )
   })
 })
 

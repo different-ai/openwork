@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type {
   EnterpriseMcpDiagnosticSink,
+  EnterpriseMcpClock,
   EnterpriseMcpFetch,
   EnterpriseMcpOperationPhase,
   EnterpriseMcpRequestPhase,
@@ -71,6 +72,7 @@ export function createEnterpriseMcpRequestObserver(input: {
   fetch: EnterpriseMcpFetch
   diagnosticSink?: EnterpriseMcpDiagnosticSink
   signal: AbortSignal
+  clock: EnterpriseMcpClock
 }): EnterpriseMcpRequestObserver {
   let lastRequestPhase: EnterpriseMcpRequestPhase | null = null
 
@@ -80,7 +82,7 @@ export function createEnterpriseMcpRequestObserver(input: {
       const url = rawUrl instanceof URL ? rawUrl : new URL(rawUrl)
       const requestPhase = classifyEnterpriseMcpRequest(url, init)
       lastRequestPhase = requestPhase
-      const startedAt = Date.now()
+      const startedAt = input.clock.now()
       input.diagnosticSink?.({
         kind: "request",
         connectionId: input.connectionId,
@@ -100,7 +102,7 @@ export function createEnterpriseMcpRequestObserver(input: {
           operationPhase: input.operationPhase,
           requestPhase,
           outcome: response.ok ? "succeeded" : "failed",
-          durationMs: Date.now() - startedAt,
+          durationMs: input.clock.now() - startedAt,
           httpStatus: response.status,
         })
         return response
@@ -111,7 +113,7 @@ export function createEnterpriseMcpRequestObserver(input: {
           operationPhase: input.operationPhase,
           requestPhase,
           outcome: "failed",
-          durationMs: Date.now() - startedAt,
+          durationMs: input.clock.now() - startedAt,
         })
         throw error
       }
