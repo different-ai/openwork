@@ -14,6 +14,7 @@ import { SecurityService } from "../src/security.js"
 const ORIGIN = "http://127.0.0.1:8794"
 const ADMIN_SECRET = "local-admin-secret-with-more-than-32-characters"
 const CLIENT_SECRET = "synthetic-oauth-client-secret"
+const DEN_CALLBACK = "http://127.0.0.1:8790/v1/mcp-connections/connection-123/connect/callback"
 
 const profile: LabProfile = {
   description: "ServiceNow MCP inbound quickstart simulation",
@@ -71,6 +72,7 @@ function instance(overrides: Partial<LabInstanceView> = {}): LabInstanceView {
       authorizationServerUrl: null,
       clientId: "enterprise-mcp-test-client",
       protectedResourceMetadataUrl: null,
+      redirectUris: [DEN_CALLBACK],
       registration: "manual",
     },
     port: 21080,
@@ -92,7 +94,14 @@ class FakeControlPlane implements EnterpriseMockLabControlPlane {
 
   async create(input: CreateInstanceInput) {
     this.createdInput = input
-    this.current = instance({ displayName: input.displayName, port: input.port })
+    this.current = instance({
+      displayName: input.displayName,
+      oauth: {
+        ...this.current.oauth,
+        redirectUris: input.redirectUris ?? this.current.oauth.redirectUris,
+      },
+      port: input.port,
+    })
     return this.current
   }
 
@@ -224,7 +233,11 @@ describe("Enterprise Mock Lab control-plane HTTP boundary", () => {
   })
 
   test("renders a script-free accessible admin UI with provenance and write-only fields", async () => {
-    const { app } = createFixture()
+    const { app, controlPlane } = createFixture()
+    const hostileButSafeRedirect = "https://den.example.test/callback?connection=<script>alert(1)</script>&mode=test"
+    controlPlane.current = instance({
+      oauth: { ...controlPlane.current.oauth, redirectUris: [hostileButSafeRedirect] },
+    })
     const cookie = await login(app)
     const response = await app.request(`${ORIGIN}/`, { headers: { cookie } })
     const html = await response.text()
@@ -236,6 +249,10 @@ describe("Enterprise Mock Lab control-plane HTTP boundary", () => {
     expect(html).toContain("Synthetic Enterprise OAuth MCP")
     expect(html).toContain("Not a vendor product simulation")
     expect(html).toContain('value="servicenow-inbound-quickstart" selected')
+    expect(html).toContain('name="redirectUris"')
+    expect(html).toContain("Exact OAuth redirect URIs (1)")
+    expect(html).toContain("connection=&lt;script&gt;alert(1)&lt;/script&gt;&amp;mode=test")
+    expect(html).not.toContain(hostileButSafeRedirect)
     expect(html).toContain('type="password"')
     expect(html).toContain('name="csrfToken" value="csrf-token-value"')
     expect(html).not.toContain("<script")
@@ -343,6 +360,7 @@ describe("Enterprise Mock Lab control-plane HTTP boundary", () => {
         displayName: "ServiceNow local",
         port: 21081,
         profileId: profile.id,
+        redirectUris: [DEN_CALLBACK],
       }),
       headers: {
         "content-type": "application/json",
@@ -356,8 +374,88 @@ describe("Enterprise Mock Lab control-plane HTTP boundary", () => {
 
     expect(response.status).toBe(201)
     expect(controlPlane.createdInput?.clientSecret).toBe(CLIENT_SECRET)
+    expect(controlPlane.createdInput?.redirectUris).toEqual([DEN_CALLBACK])
     expect(serialized).not.toContain(CLIENT_SECRET)
     expect(serialized).toContain('"clientSecret":true')
+    expect(serialized).toContain(DEN_CALLBACK)
+  })
+
+  test("accepts newline-separated form redirects and preserves exact JSON arrays", async () => {
+    const formFixture = createFixture()
+    const formCookie = await login(formFixture.app)
+    const secondCallback = "https://den.example.test/v1/mcp-connections/connection-456/connect/callback"
+    const formResponse = await formFixture.app.request(`${ORIGIN}/api/v1/instances`, {
+      body: new URLSearchParams({
+        clientSecret: CLIENT_SECRET,
+        csrfToken: "csrf-token-value",
+        displayName: "ServiceNow form redirects",
+        port: "21082",
+        profileId: profile.id,
+        redirectUris: `${DEN_CALLBACK}\n\n  ${secondCallback}  `,
+      }),
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie: formCookie, origin: ORIGIN },
+      method: "POST",
+    })
+
+    expect(formResponse.status).toBe(303)
+    expect(formFixture.controlPlane.createdInput?.redirectUris).toEqual([DEN_CALLBACK, secondCallback])
+
+    const jsonFixture = createFixture()
+    const jsonCookie = await login(jsonFixture.app)
+    const jsonResponse = await jsonFixture.app.request(`${ORIGIN}/api/v1/instances`, {
+      body: JSON.stringify({
+        clientSecret: CLIENT_SECRET,
+        displayName: "ServiceNow JSON redirects",
+        port: 21083,
+        profileId: profile.id,
+        redirectUris: [secondCallback, DEN_CALLBACK],
+      }),
+      headers: {
+        "content-type": "application/json",
+        cookie: jsonCookie,
+        origin: ORIGIN,
+        "x-csrf-token": "csrf-token-value",
+      },
+      method: "POST",
+    })
+
+    expect(jsonResponse.status).toBe(201)
+    expect(jsonFixture.controlPlane.createdInput?.redirectUris).toEqual([secondCallback, DEN_CALLBACK])
+  })
+
+  test("rejects unsafe, empty, duplicate, and over-limit redirect lists without exposing secrets", async () => {
+    const cases: readonly unknown[] = [
+      ["http://den.example.test/v1/mcp-connections/id/connect/callback"],
+      [],
+      Array.from({ length: 11 }, (_, index) => `https://den-${index}.example.test/callback`),
+      [DEN_CALLBACK, DEN_CALLBACK],
+    ]
+
+    for (const redirectUris of cases) {
+      const { app, controlPlane } = createFixture()
+      const cookie = await login(app)
+      const response = await app.request(`${ORIGIN}/api/v1/instances`, {
+        body: JSON.stringify({
+          clientSecret: CLIENT_SECRET,
+          displayName: "Rejected redirects",
+          port: 21084,
+          profileId: profile.id,
+          redirectUris,
+        }),
+        headers: {
+          "content-type": "application/json",
+          cookie,
+          origin: ORIGIN,
+          "x-csrf-token": "csrf-token-value",
+        },
+        method: "POST",
+      })
+      const serialized = await response.text()
+
+      expect(response.status).toBe(400)
+      expect(controlPlane.createdInput).toBeUndefined()
+      expect(serialized).not.toContain(CLIENT_SECRET)
+    }
   })
 
   test("dispatches lifecycle actions and preserves revision conflicts", async () => {

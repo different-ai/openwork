@@ -34,11 +34,12 @@ Optional environment variables:
 
 1. Sign in with the local lab admin secret.
 2. Review the dated fidelity and known limitations of a provider profile.
-3. Create a stopped instance with a unique data-plane port. Supply a write-only synthetic OAuth secret only when the selected profile uses a confidential client.
-4. Start the instance and copy its MCP endpoint into the client under development.
-5. Select one declarative fault and apply a new scenario revision.
-6. Run the built-in fixture-conformance probe to compare expected and observed behavior. It verifies the exact pinned tool-name set and schema validity; it does not execute provider tools.
-7. Inspect the bounded safe-event timeline, then reset or stop the instance.
+3. In Den, begin a manual/pre-registered OAuth connection for the planned lab endpoint and copy the callback URI Den shows. Do not click **Connect** yet.
+4. Create a stopped lab instance with a unique data-plane port and paste that exact callback into **Exact OAuth redirect URIs**. Supply a write-only synthetic OAuth secret only when the selected profile uses a confidential client.
+5. Start the instance, confirm its registered redirect URI list, and then click **Connect** in Den.
+6. Select one declarative fault and apply a new scenario revision.
+7. Run the built-in fixture-conformance probe to compare expected and observed behavior. It verifies the exact pinned tool-name set and schema validity; it does not execute provider tools.
+8. Inspect the bounded safe-event timeline, then reset or stop the instance.
 
 Only one fault is active at a time. That keeps the first failing phase attributable. A scenario update uses optimistic revision checks, so stale browser tabs cannot silently overwrite a newer configuration.
 
@@ -68,3 +69,5 @@ Authenticated endpoints are versioned under `/api/v1`:
 - `POST /api/v1/instances/:id/actions/{start|stop|reset|probe|delete}`
 
 Browser forms send the CSRF token in the request body. JSON clients send it in `X-CSRF-Token`. Both must send the exact configured control-plane `Origin`.
+
+`POST /api/v1/instances` accepts `redirectUris` as a JSON array or, from the browser form, one URI per line. The list is validated by the package redirect-safety contract and bounded to 1–10 exact URIs. Omitting the JSON property uses the scenario's local callback default; sending an empty list is invalid.

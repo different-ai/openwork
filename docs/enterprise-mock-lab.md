@@ -203,13 +203,14 @@ Configuration errors, DNS, TCP, TLS, proxy/WAF behavior, and real browser consen
 Use this short review path first:
 
 1. Start the lab and sign in. Confirm the page says **Private loopback control plane** and shows no instances.
-2. Create an instance named `ServiceNow manager review` with profile `servicenow-inbound-quickstart`, a free data-plane port, and client secret `synthetic-client-secret-local`. Confirm it is **STOPPED** and the secret is shown only as configured.
-3. Click **Start**. Confirm the instance is **RUNNING** and its MCP URL ends in `/sncapps/mcp-server/mcp/sn_mcp_server_default`.
-4. Select `operation · PROVIDER_AUTHORIZATION · Provider ACL denied` and apply the revision. Confirm the revision increments and the explainer names the operation diagnostic level, `PROVIDER_AUTHORIZATION`, and `provider_authorization_denied`.
-5. Click **Run probe**. Confirm **Expectation matched** and that expected and observed both report failure at `PROVIDER_AUTHORIZATION` with category `provider_authorization_denied`.
-6. Click **Reset**. Confirm runtime evidence clears while the configured fault remains.
-7. Select **Healthy baseline**, apply the next revision, and run the probe. Confirm expected and observed both report success with no failed phase or category.
-8. Click **Delete**. Confirm the page returns to **No instances yet** and the data-plane port is no longer listening.
+2. In Den, begin a manual/pre-registered OAuth connection for the planned lab endpoint, copy the callback URI Den shows, and stop before **Connect**.
+3. Create an instance named `ServiceNow manager review` with profile `servicenow-inbound-quickstart`, that exact callback URI, a free data-plane port, and client secret `synthetic-client-secret-local`. Confirm it is **STOPPED**, the exact registered callback is visible, and the secret is shown only as configured.
+4. Click **Start**, then **Connect** in Den. Confirm the instance is **RUNNING** and its MCP URL ends in `/sncapps/mcp-server/mcp/sn_mcp_server_default`.
+5. Select `operation · PROVIDER_AUTHORIZATION · Provider ACL denied` and apply the revision. Confirm the revision increments and the explainer names the operation diagnostic level, `PROVIDER_AUTHORIZATION`, and `provider_authorization_denied`.
+6. Click **Run probe**. Confirm **Expectation matched** and that expected and observed both report failure at `PROVIDER_AUTHORIZATION` with category `provider_authorization_denied`.
+7. Click **Reset**. Confirm runtime evidence clears while the configured fault remains.
+8. Select **Healthy baseline**, apply the next revision, and run the probe. Confirm expected and observed both report success with no failed phase or category.
+9. Click **Delete**. Confirm the page returns to **No instances yet** and the data-plane port is no longer listening.
 
 At every step, inspect the safe event timeline. It may contain phase, event, correlation ID, and request method; it must not contain the admin secret, OAuth client secret, authorization code, bearer token, session ID, request body, or tool arguments.
 
@@ -237,12 +238,13 @@ Create and start a ServiceNow-style instance:
 
 ```bash
 export DATA_PORT=21080
+export DEN_REDIRECT_URI="http://127.0.0.1:8790/v1/mcp-connections/replace-with-den-connection-id/connect/callback"
 CREATE_RESPONSE="$(curl --silent --show-error \
   --cookie "$LAB_COOKIES" \
   --header "Origin: $LAB_ORIGIN" \
   --header "X-CSRF-Token: $LAB_CSRF" \
   --header "Content-Type: application/json" \
-  --data "$(jq -nc --argjson port "$DATA_PORT" '{displayName:"ServiceNow API review",profileId:"servicenow-inbound-quickstart",port:$port,clientId:"synthetic-client",clientSecret:"synthetic-client-secret-local"}')" \
+  --data "$(jq -nc --argjson port "$DATA_PORT" --arg redirectUri "$DEN_REDIRECT_URI" '{displayName:"ServiceNow API review",profileId:"servicenow-inbound-quickstart",port:$port,clientId:"synthetic-client",clientSecret:"synthetic-client-secret-local",redirectUris:[$redirectUri]}')" \
   "$LAB_ORIGIN/api/v1/instances")"
 
 export INSTANCE_ID="$(jq -r .id <<<"$CREATE_RESPONSE")"

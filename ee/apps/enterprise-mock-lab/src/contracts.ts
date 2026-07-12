@@ -1,4 +1,19 @@
 import { z } from "zod"
+import { oauthRedirectUriSchema } from "@openwork/enterprise-mcp-mock-server"
+
+const redirectUrisInputSchema = z.preprocess(
+  (value) => typeof value === "string"
+    ? value.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)
+    : value,
+  z.array(oauthRedirectUriSchema)
+    .min(1, "Provide at least one exact OAuth redirect URI.")
+    .max(10, "Provide no more than 10 OAuth redirect URIs.")
+    .superRefine((redirectUris, context) => {
+      if (new Set(redirectUris).size !== redirectUris.length) {
+        context.addIssue({ code: "custom", message: "OAuth redirect URIs must be unique exact values." })
+      }
+    }),
+).optional()
 
 export const createInstanceInputSchema = z.object({
   displayName: z.string().trim().min(1).max(80),
@@ -7,6 +22,7 @@ export const createInstanceInputSchema = z.object({
   faultId: z.string().trim().max(120).optional().transform((value) => value || undefined),
   clientId: z.string().trim().max(256).optional().transform((value) => value || undefined),
   clientSecret: z.string().max(4_096).optional().transform((value) => value ?? ""),
+  redirectUris: redirectUrisInputSchema,
 })
 
 export const updateScenarioInputSchema = z.object({
@@ -90,6 +106,7 @@ export interface LabInstanceView {
     authorizationServerUrl: string | null
     clientId: string
     protectedResourceMetadataUrl: string | null
+    redirectUris: readonly string[]
     registration: "dynamic" | "manual"
   }
   port: number

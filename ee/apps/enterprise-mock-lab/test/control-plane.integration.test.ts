@@ -4,6 +4,7 @@ import { PackageBackedEnterpriseMockLab } from "../src/control-plane.js"
 import { ControlPlaneError } from "../src/contracts.js"
 
 const CLIENT_SECRET = "service-now-synthetic-oauth-secret"
+const DEN_CALLBACK = "http://127.0.0.1:8790/v1/mcp-connections/connection-123/connect/callback"
 
 async function listenOnEphemeralPort(): Promise<{ port: number; server: Server }> {
   const server = createServer()
@@ -58,9 +59,11 @@ describe("package-backed Enterprise Mock Lab", () => {
       displayName: "ServiceNow contract rehearsal",
       port,
       profileId: "servicenow-inbound-quickstart",
+      redirectUris: [DEN_CALLBACK],
     })
 
     expect(created.state).toBe("stopped")
+    expect(created.oauth.redirectUris).toEqual([DEN_CALLBACK])
     expect(JSON.stringify(created)).not.toContain(CLIENT_SECRET)
 
     const running = await lab.start(created.id)
@@ -152,6 +155,7 @@ describe("package-backed Enterprise Mock Lab", () => {
       profileId: "microsoft-work-iq",
     })
     expect(workIq.secretsConfigured.clientSecret).toBe(false)
+    expect(workIq.oauth.redirectUris).toEqual(["http://127.0.0.1:19876/mcp/oauth/callback"])
     await lab.start(workIq.id)
     expect((await lab.probe(workIq.id)).lastProbe?.matchesExpectation).toBe(true)
     await lab.remove(workIq.id)

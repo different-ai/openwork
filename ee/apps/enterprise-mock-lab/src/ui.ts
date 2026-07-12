@@ -133,6 +133,7 @@ function renderInstance(instance: LabInstanceView, faults: readonly LabFault[], 
       <div><dt>Active fault</dt><dd>${escapeHtml(instance.activeFault?.name ?? "Healthy baseline")}</dd></div>
       <div><dt>OAuth client secret</dt><dd>${instance.secretsConfigured.clientSecret ? "Configured (write-only)" : "Not configured"}</dd></div>
     </dl>
+    <section class="endpoint"><h4>Exact OAuth redirect URIs (${instance.oauth.redirectUris.length})</h4><ul class="uri-list">${instance.oauth.redirectUris.map((uri) => `<li><code>${escapeHtml(uri)}</code></li>`).join("")}</ul><p class="fine-print">Authorization succeeds only when the client sends one of these exact registered values.</p></section>
     ${instance.endpoint ? `<section class="endpoint"><h4>Provider-facing connection information</h4><dl class="facts">
       <div><dt>MCP endpoint</dt><dd><code>${escapeHtml(instance.endpoint.mcpUrl)}</code></dd></div>
       <div><dt>OAuth registration</dt><dd>${escapeHtml(instance.oauth.registration)}</dd></div>
@@ -194,6 +195,7 @@ export function renderDashboard(input: DashboardInput): string {
           <label for="profile-id">Provider profile</label><select id="profile-id" name="profileId" required>${input.profiles.map((profile) => `<option value="${escapeHtml(profile.id)}"${profile.id === "servicenow-inbound-quickstart" ? " selected" : ""}>${escapeHtml(profile.name)} · ${escapeHtml(profile.provenance.fidelity)}</option>`).join("")}</select>
           <label for="port">Data-plane port</label><input id="port" name="port" type="number" min="1024" max="65535" value="${defaultPort}" required>
           <label for="initial-fault">Initial fault</label><select id="initial-fault" name="faultId"><option value="">Healthy baseline</option>${input.faults.map((fault) => `<option value="${escapeHtml(fault.id)}">${escapeHtml(fault.diagnosticLevel)} · ${escapeHtml(fault.phase)} · ${escapeHtml(fault.name)}</option>`).join("")}</select>
+          <label for="redirect-uris">Exact OAuth redirect URIs</label><div><textarea id="redirect-uris" name="redirectUris" rows="3" required spellcheck="false">http://127.0.0.1:19876/mcp/oauth/callback</textarea><p class="fine-print">One exact URI per line, up to 10. For a pre-registered Den client, replace the example with the callback shown by Den before you connect.</p></div>
           <fieldset class="secret-fields"><legend>Synthetic provider credentials (write-only)</legend>
             <label for="client-id">OAuth client ID</label><input id="client-id" name="clientId" autocomplete="off" spellcheck="false">
             <label for="client-secret">OAuth client secret (profile-dependent)</label><input id="client-secret" name="clientSecret" type="password" minlength="12" autocomplete="new-password">
@@ -220,12 +222,13 @@ export const applicationCss = `
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
 a { color: #075e54; }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button, .button { border: 0; border-radius: .55rem; padding: .68rem 1rem; background: #08766a; color: #fff; font-weight: 700; cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .45; }
 .button--secondary { color: #25303a; background: #e6ece9; }
-input, select { width: 100%; border: 1px solid #aebbb6; border-radius: .45rem; padding: .65rem .75rem; background: #fff; color: #182028; }
-input:focus, select:focus, button:focus, a:focus { outline: 3px solid #63c9bb; outline-offset: 2px; }
+input, select, textarea { width: 100%; border: 1px solid #aebbb6; border-radius: .45rem; padding: .65rem .75rem; background: #fff; color: #182028; }
+textarea { resize: vertical; }
+input:focus, select:focus, textarea:focus, button:focus, a:focus { outline: 3px solid #63c9bb; outline-offset: 2px; }
 .skip-link { position: fixed; left: 1rem; top: -6rem; z-index: 20; background: #fff; padding: .75rem; }
 .skip-link:focus { top: 1rem; }
 .site-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.1rem max(1rem, calc((100vw - 1180px) / 2)); color: #fff; background: #152e2b; }
@@ -275,7 +278,8 @@ input:focus, select:focus, button:focus, a:focus { outline: 3px solid #63c9bb; o
 table { width: 100%; border-collapse: collapse; font-size: .88rem; }
 th, td { padding: .6rem; border-bottom: 1px solid #dce4e1; text-align: left; vertical-align: top; }
 code { overflow-wrap: anywhere; }
+.uri-list { margin: .25rem 0 0; padding-left: 1.25rem; }
 @media (max-width: 680px) { .site-header, .instance-header { align-items: stretch; flex-direction: column; } .form-grid, .secret-fields, .comparison-grid { grid-template-columns: 1fr; } .form-grid > button, .form-grid > fieldset, .secret-fields .fine-print { grid-column: 1; } .actions { align-items: stretch; flex-direction: column; } .actions form, .actions button { width: 100%; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
-@media (prefers-color-scheme: dark) { :root { color: #e8efed; background: #101817; } .panel, .instance-card, .profile-card, .empty-state, .login-card { color: #e8efed; background: #172320; border-color: #354944; } input, select { color: #eef5f3; background: #101817; border-color: #4a625c; } .login-shell { background: #101817; } .button--secondary { color: #e8efed; background: #354944; } .endpoint, .fault-explainer, .comparison { background: #20332f; } .comparison--mismatch { background: #4a3024; } .muted, .fine-print, .facts dt { color: #aebdb9; } }
+@media (prefers-color-scheme: dark) { :root { color: #e8efed; background: #101817; } .panel, .instance-card, .profile-card, .empty-state, .login-card { color: #e8efed; background: #172320; border-color: #354944; } input, select, textarea { color: #eef5f3; background: #101817; border-color: #4a625c; } .login-shell { background: #101817; } .button--secondary { color: #e8efed; background: #354944; } .endpoint, .fault-explainer, .comparison { background: #20332f; } .comparison--mismatch { background: #4a3024; } .muted, .fine-print, .facts dt { color: #aebdb9; } }
 `

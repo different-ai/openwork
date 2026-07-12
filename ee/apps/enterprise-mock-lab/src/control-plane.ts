@@ -204,6 +204,7 @@ export class PackageBackedEnterpriseMockLab implements EnterpriseMockLabControlP
         oauth: {
           ...defaultScenario.oauth,
           ...(input.clientId ? { clientId: input.clientId } : {}),
+          ...(input.redirectUris ? { redirectUris: input.redirectUris } : {}),
         },
       }),
       selectedFault,
@@ -411,6 +412,7 @@ export class PackageBackedEnterpriseMockLab implements EnterpriseMockLabControlP
         authorizationServerUrl: snapshot.oauth.authorizationServerUrl,
         clientId: snapshot.oauth.clientId,
         protectedResourceMetadataUrl: snapshot.oauth.protectedResourceMetadataUrl,
+        redirectUris: record.scenario.oauth.redirectUris,
         registration: snapshot.oauth.registration,
       },
       port: record.port,
