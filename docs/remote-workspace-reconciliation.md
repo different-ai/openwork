@@ -36,6 +36,11 @@ The client now separates **absence** from **unknown availability**:
 | Explicit user removal | Remove immediately from both persistent stores and the retained in-memory snapshot. |
 | Connectivity returns | Retry, verify remote workers, and reconcile without duplicate rows or order churn. |
 
+Reconnect work is targeted. A normal successful route refresh reloads the
+selected workspace, newly discovered workspaces, and remote workspaces that
+were explicitly marked pending by a failed refresh. Healthy cached remote
+workspaces are not re-fetched on every unrelated route refresh.
+
 ## Why this is safe
 
 - The fallback is in memory only. It does not copy worker tokens or workspace

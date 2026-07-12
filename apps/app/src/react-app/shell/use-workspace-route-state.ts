@@ -42,6 +42,7 @@ import {
   mergeRouteWorkspaces,
   orderRouteWorkspaces,
   retainRouteWorkspacesOnRefreshFailure,
+  shouldLoadRouteWorkspaceSessions,
   shouldRetryFailedWorkspaceRefresh,
   WORKSPACE_REFRESH_RETRY_INTERVAL_MS,
   type RouteSession,
@@ -115,6 +116,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   );
   const refreshInFlightRef = useRef(false);
   const refreshFailedRef = useRef(false);
+  const remoteWorkspaceRefreshPendingRef = useRef(new Set<string>());
   const workspacesRef = useRef<RouteWorkspace[]>([]);
   const workspaceOrderIdsRef = useRef(workspaceOrderIds);
   const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
@@ -222,6 +224,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
             return next;
           });
           setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
+          remoteWorkspaceRefreshPendingRef.current.delete(workspace.id);
           setWorkspaceConnectionOverrides((current) => {
             if (isRemoteOpenworkWorkspace) {
               return {
@@ -357,6 +360,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           (workspace) => workspace.workspaceType === "remote",
         );
         if (retainedRemoteWorkspaces.length > 0) {
+          for (const workspace of retainedRemoteWorkspaces) {
+            remoteWorkspaceRefreshPendingRef.current.add(workspace.id);
+          }
           void loadWorkspaceSessionsInBackground(retainedRemoteWorkspaces);
         }
         return;
@@ -461,10 +467,12 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       // loading state per-workspace until the list arrives.
       const selectedWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId);
       const backgroundWorkspaces = nextWorkspaces.filter(
-        (workspace) =>
-          workspace.workspaceType === "remote" ||
-          workspace.id === nextWorkspaceId ||
-          !alreadyLoadedWorkspaceIds.has(workspace.id),
+        (workspace) => shouldLoadRouteWorkspaceSessions({
+          workspaceId: workspace.id,
+          selectedWorkspaceId: nextWorkspaceId,
+          alreadyLoaded: alreadyLoadedWorkspaceIds.has(workspace.id),
+          reconnectPending: remoteWorkspaceRefreshPendingRef.current.has(workspace.id),
+        }),
       );
       if (backgroundWorkspaces.length > 0) {
         const orderedWorkspaces = selectedWorkspace
@@ -498,6 +506,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           (workspace) => workspace.workspaceType === "remote",
         );
         if (retainedRemoteWorkspaces.length > 0) {
+          for (const workspace of retainedRemoteWorkspaces) {
+            remoteWorkspaceRefreshPendingRef.current.add(workspace.id);
+          }
           void loadWorkspaceSessionsInBackground(retainedRemoteWorkspaces);
         }
       }

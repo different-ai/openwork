@@ -4,6 +4,7 @@ import type { WorkspaceConnectionState } from "../src/app/types";
 import {
   markRemoteWorkspacesReconnecting,
   retainRouteWorkspacesOnRefreshFailure,
+  shouldLoadRouteWorkspaceSessions,
   shouldRetryFailedWorkspaceRefresh,
   type RouteWorkspace,
 } from "../src/react-app/shell/route-workspaces";
@@ -110,5 +111,20 @@ describe("remote workspace refresh resilience", () => {
     expect(shouldRetryFailedWorkspaceRefresh({ refreshFailed: true, online: true })).toBe(true);
     expect(shouldRetryFailedWorkspaceRefresh({ refreshFailed: true, online: false })).toBe(false);
     expect(shouldRetryFailedWorkspaceRefresh({ refreshFailed: false, online: true })).toBe(false);
+  });
+
+  test("does not refetch a healthy cached remote on every route refresh", () => {
+    expect(shouldLoadRouteWorkspaceSessions({
+      workspaceId: "remote_1",
+      selectedWorkspaceId: "local_1",
+      alreadyLoaded: true,
+      reconnectPending: false,
+    })).toBe(false);
+    expect(shouldLoadRouteWorkspaceSessions({
+      workspaceId: "remote_1",
+      selectedWorkspaceId: "local_1",
+      alreadyLoaded: true,
+      reconnectPending: true,
+    })).toBe(true);
   });
 });

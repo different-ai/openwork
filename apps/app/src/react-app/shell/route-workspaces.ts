@@ -209,6 +209,19 @@ export function shouldRetryFailedWorkspaceRefresh(input: {
   return input.refreshFailed && input.online;
 }
 
+export function shouldLoadRouteWorkspaceSessions(input: {
+  workspaceId: string;
+  selectedWorkspaceId: string;
+  alreadyLoaded: boolean;
+  reconnectPending: boolean;
+}): boolean {
+  return (
+    input.workspaceId === input.selectedWorkspaceId ||
+    !input.alreadyLoaded ||
+    input.reconnectPending
+  );
+}
+
 export function orderRouteWorkspaces(workspaces: RouteWorkspace[], orderIds: string[]): RouteWorkspace[] {
   if (orderIds.length === 0) return workspaces;
 
