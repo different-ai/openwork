@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  applyIdentityBoundSnapshot,
   derivePendingCloudPluginChanges,
+  isSameDesktopCloudSyncIdentity,
   readPendingCloudSyncChanges,
 } from "../src/app/cloud/desktop-cloud-sync";
+import type { DesktopCloudSyncIdentity } from "../src/app/cloud/desktop-cloud-sync";
 import type { OpenworkDesktopCloudSyncChange } from "../src/app/lib/openwork-server";
 
 function change(input: Partial<OpenworkDesktopCloudSyncChange> & Pick<OpenworkDesktopCloudSyncChange, "id" | "kind" | "resourceKind">): OpenworkDesktopCloudSyncChange {
@@ -27,6 +30,63 @@ const installedPlugins = {
     files: [],
   },
 };
+
+const organizationA: DesktopCloudSyncIdentity = {
+  baseUrl: "https://den.example.test",
+  authToken: "token-a",
+  activeOrgId: "org-a",
+};
+
+describe("desktop cloud sync identity", () => {
+  test("does not apply a snapshot after the active organization changes", async () => {
+    let currentIdentity = organizationA;
+    let resolveSnapshot: (snapshot: string) => void = () => undefined;
+    const snapshot = new Promise<string>((resolve) => {
+      resolveSnapshot = resolve;
+    });
+    const applied: string[] = [];
+
+    const result = applyIdentityBoundSnapshot({
+      identity: organizationA,
+      load: () => snapshot,
+      readCurrentIdentity: () => currentIdentity,
+      apply: async (value) => {
+        applied.push(value);
+        return value;
+      },
+    });
+
+    currentIdentity = { ...organizationA, activeOrgId: "org-b" };
+    resolveSnapshot("snapshot-a");
+
+    expect(await result).toBeNull();
+    expect(applied).toEqual([]);
+  });
+
+  test("applies a snapshot while the exact Den identity remains current", async () => {
+    const applied: string[] = [];
+    const result = await applyIdentityBoundSnapshot({
+      identity: organizationA,
+      load: async () => "snapshot-a",
+      readCurrentIdentity: () => organizationA,
+      apply: async (snapshot) => {
+        applied.push(snapshot);
+        return "synced";
+      },
+    });
+
+    expect(result).toBe("synced");
+    expect(applied).toEqual(["snapshot-a"]);
+  });
+
+  test("treats base URL, token, organization, and missing auth as identity changes", () => {
+    expect(isSameDesktopCloudSyncIdentity(organizationA, organizationA)).toBe(true);
+    expect(isSameDesktopCloudSyncIdentity(organizationA, { ...organizationA, baseUrl: "https://other.test" })).toBe(false);
+    expect(isSameDesktopCloudSyncIdentity(organizationA, { ...organizationA, authToken: "token-b" })).toBe(false);
+    expect(isSameDesktopCloudSyncIdentity(organizationA, { ...organizationA, activeOrgId: "org-b" })).toBe(false);
+    expect(isSameDesktopCloudSyncIdentity(organizationA, null)).toBe(false);
+  });
+});
 
 describe("derivePendingCloudPluginChanges", () => {
   test("maps modified plugin changes to update available", () => {

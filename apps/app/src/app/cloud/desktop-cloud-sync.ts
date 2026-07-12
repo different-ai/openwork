@@ -16,6 +16,46 @@ type InstalledCloudPluginLike = {
   files: Array<{ configObjectId: string; updatedAt: string | null }>;
 };
 
+export type DesktopCloudSyncIdentity = {
+  baseUrl: string;
+  authToken: string;
+  activeOrgId: string;
+};
+
+export function readDesktopCloudSyncIdentity(): DesktopCloudSyncIdentity | null {
+  const settings = readDenSettings();
+  const authToken = settings.authToken?.trim() ?? "";
+  const activeOrgId = settings.activeOrgId?.trim() ?? "";
+  if (!authToken || !activeOrgId) return null;
+  return {
+    baseUrl: settings.baseUrl,
+    authToken,
+    activeOrgId,
+  };
+}
+
+export function isSameDesktopCloudSyncIdentity(
+  left: DesktopCloudSyncIdentity | null,
+  right: DesktopCloudSyncIdentity | null,
+): boolean {
+  return left !== null &&
+    right !== null &&
+    left.baseUrl === right.baseUrl &&
+    left.authToken === right.authToken &&
+    left.activeOrgId === right.activeOrgId;
+}
+
+export async function applyIdentityBoundSnapshot<TSnapshot, TResult>(input: {
+  identity: DesktopCloudSyncIdentity;
+  load: () => Promise<TSnapshot>;
+  readCurrentIdentity: () => DesktopCloudSyncIdentity | null;
+  apply: (snapshot: TSnapshot) => Promise<TResult>;
+}): Promise<TResult | null> {
+  const snapshot = await input.load();
+  if (!isSameDesktopCloudSyncIdentity(input.identity, input.readCurrentIdentity())) return null;
+  return input.apply(snapshot);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -104,17 +144,18 @@ async function runDesktopCloudSync(input: {
   openworkClient: OpenworkServerClient;
   workspaceId: string;
 }): Promise<OpenworkDesktopCloudSyncResult | null> {
-  const settings = readDenSettings();
-  const token = settings.authToken?.trim() ?? "";
-  const activeOrgId = settings.activeOrgId?.trim() ?? "";
-  if (!token || !activeOrgId) return null;
+  const identity = readDesktopCloudSyncIdentity();
+  if (!identity) return null;
 
-  const snapshot = await createDenClient({
-    baseUrl: settings.baseUrl,
-    token,
-  }).getResourceSnapshot(activeOrgId);
-
-  return input.openworkClient.syncDesktopCloud(input.workspaceId, snapshot);
+  return applyIdentityBoundSnapshot({
+    identity,
+    load: () => createDenClient({
+      baseUrl: identity.baseUrl,
+      token: identity.authToken,
+    }).getResourceSnapshot(identity.activeOrgId),
+    readCurrentIdentity: readDesktopCloudSyncIdentity,
+    apply: (snapshot) => input.openworkClient.syncDesktopCloud(input.workspaceId, snapshot),
+  });
 }
 
 export function refreshDesktopCloudSync(input: {
