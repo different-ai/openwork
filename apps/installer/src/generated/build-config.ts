@@ -1,8 +1,7 @@
-// Placeholder build configuration. The per-client installer workflow
-// (.github/workflows/build-client-installer.yml) overwrites this file with the
-// client's deployment values before compiling. Empty values make the installer
-// refuse to run unless OPENWORK_INSTALLER_* env overrides are provided, so a
-// stray placeholder build can never point end users at the wrong deployment.
+// Legacy/dev placeholder. Production organization bundles keep the generic
+// signed installer unchanged and supply deployment values through the adjacent
+// openwork-installer.json file. Empty values prevent a generic build from ever
+// selecting a deployment implicitly.
 export const BUILD_APP_NAME = ""
 export const BUILD_CLIENT_NAME = ""
 export const BUILD_WEB_URL = ""

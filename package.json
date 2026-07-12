@@ -56,7 +56,8 @@
     "release:prepare": "node scripts/release/prepare.mjs",
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
-    "release:ship:watch": "node scripts/release/ship.mjs --watch"
+    "release:ship:watch": "node scripts/release/ship.mjs --watch",
+    "enterprise-installer:build": "pnpm --filter @openwork-ee/den-api enterprise-installer:build"
   },
   "devDependencies": {
     "turbo": "^2.5.5"

@@ -3,6 +3,13 @@ import { mkdir, readFile, rename, rm } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import path from "node:path"
 import { env } from "../env.js"
+import {
+  desktopReleaseAssetName,
+  genericInstallerAssetName,
+  installerReleaseArtifactUrl,
+} from "./installer-release.js"
+
+export { desktopReleaseAssetName, genericInstallerAssetName }
 
 /**
  * Resolves the standard signed desktop artifact so organization install-link
@@ -44,28 +51,7 @@ export function installerReleaseAssetUrl(
 ) {
   const releaseRepo = options.releaseRepo ?? env.installerReleaseRepo
   const releaseTag = options.releaseTag ?? env.installerReleaseTag
-  return `https://github.com/${releaseRepo}/releases/download/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`
-}
-
-export function desktopReleaseAssetName(platform: string, releaseTag: string) {
-  const version = releaseTag.startsWith("v") ? releaseTag.slice(1) : releaseTag
-  if (platform === "mac-arm64" || platform === "mac-x64") {
-    return `openwork-${platform}-${version}.dmg`
-  }
-  if (platform === "win-x64") {
-    return `openwork-${platform}-${version}.exe`
-  }
-  return null
-}
-
-export function genericInstallerAssetName(platform: string) {
-  if (platform === "mac-arm64" || platform === "mac-x64") {
-    return `openwork-installer-${platform}.zip`
-  }
-  if (platform === "win-x64") {
-    return "openwork-installer-win-x64.exe"
-  }
-  return null
+  return installerReleaseArtifactUrl(fileName, releaseRepo, releaseTag)
 }
 
 async function verifyDesktopFallbackUrl(input: {

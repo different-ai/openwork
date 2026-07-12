@@ -9,7 +9,9 @@
   ],
   "scripts": {
     "dev": "bun run src/index.ts",
+    "pretest": "pnpm --filter @openwork/install-config build",
     "test": "bun test",
+    "precompile": "pnpm --filter @openwork/install-config build",
     "compile": "bun build --compile --minify src/index.ts src/server-worker.ts --outfile dist/openwork-installer"
   },
   "dependencies": {

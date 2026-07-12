@@ -1,7 +1,4 @@
-import {
-  INSTALL_SIDECAR_FILENAME,
-  installConfigSchema,
-} from "@openwork/install-config"
+import { installConfigSchema } from "@openwork/install-config"
 import { and, eq, gt, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { InstallLinkTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
@@ -19,8 +16,9 @@ import { jsonValidator, orgRoleRoute, publicRoute, queryValidator } from "../../
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import { organizationCapabilityKeySchema } from "../../organization-capabilities.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
-import { desktopReleaseAssetName, genericInstallerAssetName, resolveInstallerArtifact, resolveInstallerFallbackUrl } from "../../utils/installer-artifacts.js"
-import { appendStoredEntriesToZipStream, createStoredZipStream } from "../../utils/zip-append.js"
+import { resolveInstallerArtifact, resolveInstallerFallbackUrl } from "../../utils/installer-artifacts.js"
+import { isOrganizationInstallerPlatform } from "../../utils/installer-release.js"
+import { buildOrganizationInstallerBundle, organizationInstallerArtifactNames } from "../../utils/organization-installer-bundle.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
 
@@ -169,10 +167,6 @@ function safeAttachmentSlug(value: string) {
 
 function contentDisposition(filename: string) {
   return `attachment; filename="${filename.replace(/["\\]/g, "-")}"`
-}
-
-function desktopArtifactFileName(platform: InstallPlatform) {
-  return desktopReleaseAssetName(platform, env.installerReleaseTag)
 }
 
 function shellQuote(value: string) {
@@ -385,11 +379,10 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         })
       }
 
-      const desktopFileName = desktopArtifactFileName(platform)
-      const genericFileName = genericInstallerAssetName(platform)
-      if (!desktopFileName || !genericFileName) {
+      if (!isOrganizationInstallerPlatform(platform)) {
         return c.json({ error: "invalid_request", details: [{ message: "Unsupported installer platform." }] }, 400)
       }
+      const { desktopFileName, genericFileName } = organizationInstallerArtifactNames(platform, env.installerReleaseTag)
 
       const [desktopArtifact, genericInstallerArtifact] = await Promise.all([
         installer.resolveArtifact(desktopFileName),
@@ -399,17 +392,13 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         return c.redirect(await installer.resolveFallbackUrl(platform), 302)
       }
 
-      const sidecar = Buffer.from(`${JSON.stringify(resolved.config, null, 2)}\n`, "utf8")
-      const bundle = platform.startsWith("mac-")
-        ? appendStoredEntriesToZipStream(genericInstallerArtifact, [
-            { name: INSTALL_SIDECAR_FILENAME, content: sidecar },
-            { name: desktopFileName, content: desktopArtifact },
-          ])
-        : createStoredZipStream([
-            { name: "OpenWork Installer.exe", content: genericInstallerArtifact },
-            { name: INSTALL_SIDECAR_FILENAME, content: sidecar },
-            { name: desktopFileName, content: desktopArtifact },
-          ])
+      const bundle = buildOrganizationInstallerBundle({
+        platform,
+        config: resolved.config,
+        desktopFileName,
+        desktopArtifact,
+        genericInstallerArtifact,
+      })
 
       return new Response(bundle.body, {
         headers: {

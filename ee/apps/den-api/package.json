@@ -9,6 +9,8 @@
     "build:email": "pnpm --filter @openwork/email build",
     "build:install-config": "pnpm --filter @openwork/install-config build",
     "build:den-db": "pnpm --filter @openwork-ee/den-db build",
+    "preenterprise-installer:build": "pnpm run build:install-config",
+    "enterprise-installer:build": "tsx scripts/build-organization-installer.ts",
     "backfill:desktop-policies": "pnpm run build:den-db && tsx scripts/backfill-desktop-policies.ts",
     "seed:demo-org": "pnpm run build:den-db && OPENWORK_DEV_MODE=${OPENWORK_DEV_MODE:-1} DATABASE_URL=${DATABASE_URL:-mysql://root:password@127.0.0.1:3306/openwork_den} DEN_DB_ENCRYPTION_KEY=${DEN_DB_ENCRYPTION_KEY:-local-dev-db-encryption-key-please-change-1234567890} BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-local-dev-secret-not-for-production-use!!} BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:${DEN_WEB_PORT:-3005}} tsx scripts/seed-demo-org.ts",
     "start": "node dist/server.js"

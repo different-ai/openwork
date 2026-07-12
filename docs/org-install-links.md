@@ -1,10 +1,30 @@
-# Organization install links
+# Deterministic enterprise installation
 
 Status: self-host operator guide
 
 Owner: platform/self-host
 
 Related: `ee/apps/den-api/src/routes/org/install-links.ts`, `apps/installer`, `packages/install-config`
+
+![Deterministic enterprise installer patterns](./images/deterministic-enterprise-installer.png)
+
+## Enterprise deployment pattern
+
+OpenWork uses the standard enterprise pattern of keeping vendor software and
+organization configuration separate. The signed installer and signed desktop
+application are the same for every organization. Company server addresses,
+sign-in policy, name, wordmark, and icon live in explicit configuration.
+
+There are two supported delivery lanes:
+
+| Environment | Recommended delivery |
+|---|---|
+| Self-service, internal portal, or air-gapped | Package the signed generic installer, exact signed desktop release, and `openwork-installer.json` into one organization ZIP. |
+| Intune, Jamf, or another managed fleet | Deploy the normal signed desktop application and place the canonical `desktop-bootstrap.json` through the device-management system in the user context. |
+
+Both lanes produce the same desktop bootstrap fields. They do not require a
+customer-specific OpenWork executable, and neither configuration file contains
+credentials or grants access to a workspace.
 
 ## What users download
 
@@ -76,6 +96,48 @@ The generic Windows EXE is the release installer launcher and is signed when
 Windows signing is enabled for that release. Den does not modify either
 executable or the standard app artifact; it only combines them with the
 organization JSON in the downloaded ZIP.
+
+## Build an organization bundle from the command line
+
+Use the repository command when an operator needs to prepare a deterministic
+bundle without first minting a Den download link. `appVersion` is required in
+the JSON because the command refuses to guess which desktop release to ship.
+
+Connected example:
+
+```bash
+pnpm enterprise-installer:build -- \
+  --config ./openwork-installer.json \
+  --platform mac-arm64 \
+  --output ./dist
+```
+
+The command downloads only the two exact assets for `appVersion` from the
+fixed `different-ai/openwork` release URL. It validates production HTTPS
+targets, preserves the signed binary bytes inside the output archive, writes
+the organization ZIP atomically, and emits a neighboring `.sha256` file for
+inventory and distribution auditing.
+
+Air-gapped example:
+
+```bash
+pnpm enterprise-installer:build -- \
+  --config ./openwork-installer.json \
+  --platform win-x64 \
+  --artifacts-dir /mnt/openwork-release-v0.18.0 \
+  --output ./dist
+```
+
+With `--artifacts-dir`, missing local inputs are fatal and the command never
+falls back to GitHub. Use `--dry-run` to validate the config, exact filenames,
+ZIP structure, and input hashes without writing an output file. Non-loopback
+HTTP is rejected unless an operator explicitly supplies
+`--allow-insecure-http` for controlled development.
+
+The **Build Organization Installer Bundle** GitHub workflow provides the same
+operation through a form and uploads private workflow artifacts. It calls this
+command and uses published signed release inputs; it does not rebuild or resign
+an executable for each company.
 
 ### Fully air-gapped / zero public egress
 
@@ -207,10 +269,33 @@ upgrading the app preserves the canonical deployment configuration.
 
 ## MDM deployment
 
-MDM can continue to deploy the standard public OpenWork installer and write
+MDM should deploy the standard signed OpenWork application and write
 `desktop-bootstrap.json` directly to the canonical path. This bypasses the
-interactive generic installer and is appropriate when endpoint management
-already provides deterministic per-user file placement.
+interactive generic installer and is the preferred lane when endpoint
+management already provides silent installation, per-user file placement,
+detection, upgrades, and removal.
+
+For Microsoft Intune, wrap the normal Windows release using the organization's
+standard Win32 application process and configure its install, uninstall, and
+detection rules. Deploy the bootstrap file in user context because the current
+configuration path is per-user. For Jamf or another macOS MDM, deploy the
+signed/notarized desktop artifact and place the bootstrap file for the target
+user with the organization's normal managed package or policy mechanism.
+
+The managed bootstrap uses the same mapping as the organization installer:
+
+| Installer JSON | Managed bootstrap | Result |
+|---|---|---|
+| `webUrl` | `baseUrl` | Company web/server destination |
+| `apiUrl` | `apiBaseUrl` | Company API destination |
+| `appName` | `brandAppName` | Product display name |
+| `logoUrl` | `brandLogoUrl` | In-product wordmark |
+| `iconUrl` | `brandIconUrl` | Native application icon |
+| `requireSignin` | `requireSignin` | Organization authentication gate |
+
+The interactive ZIP is therefore not an alternative MDM technology. It is the
+same deterministic configuration model packaged for machines where fleet
+management is unavailable or intentionally not used.
 
 ## Security properties
 
@@ -220,6 +305,9 @@ already provides deterministic per-user file placement.
 - The installer requires explicit confirmation before applying a deployment.
 - The standard app and generic installer signatures remain byte-identical to
   their release assets.
+- A failed install leaves the previous desktop bootstrap configuration intact.
+- Dry-run validates inputs without changing desktop configuration.
+- Successful bootstrap writes are atomic and use per-user file permissions.
 - The native app validates and bounds downloaded icon images before caching
   them.
 - Admins can rotate install links to revoke older links; existing downloaded

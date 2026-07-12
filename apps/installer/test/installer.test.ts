@@ -448,7 +448,8 @@ describe("writeBootstrapConfig", () => {
     try {
       const fileName = releaseAssetFor("9.9.9").fileName
       writeFileSync(path.join(dir, fileName), "signed standard app", "utf8")
-      process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = path.join(dir, "state", "desktop-bootstrap.json")
+      const bootstrapPath = path.join(dir, "state", "desktop-bootstrap.json")
+      process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = bootstrapPath
       const result = await runInstall({
         appName: "Acme Work",
         appVersion: "9.9.9",
@@ -461,6 +462,8 @@ describe("writeBootstrapConfig", () => {
       }, { dryRun: true, bundleDirectories: [dir] })
       expect(result.state).toBe("done")
       expect(result.message).toContain("bundled")
+      expect(result.message).toContain("no changes made")
+      expect(existsSync(bootstrapPath)).toBe(false)
     } finally {
       if (previousBootstrapPath === undefined) delete process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH
       else process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = previousBootstrapPath

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { randomUUID } from "node:crypto"
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
@@ -116,8 +117,15 @@ export function writeBootstrapConfig(
   if (!config.logoUrl) delete next.brandLogoUrl
   if (!config.iconUrl) delete next.brandIconUrl
   delete next.handoff
-  mkdirSync(path.dirname(target), { recursive: true })
-  writeFileSync(target, `${JSON.stringify(next, null, 2)}\n`, "utf8")
+  const targetDirectory = path.dirname(target)
+  const tempPath = path.join(targetDirectory, `.${path.basename(target)}.${process.pid}.${randomUUID()}.tmp`)
+  mkdirSync(targetDirectory, { recursive: true, mode: 0o700 })
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" })
+    renameSync(tempPath, target)
+  } finally {
+    rmSync(tempPath, { force: true })
+  }
   try {
     if (path.resolve(legacy) !== path.resolve(target) && existsSync(legacy)) rmSync(legacy, { force: true })
   } catch {
@@ -245,8 +253,8 @@ export async function runInstall(config: InstallerConfig, opts: InstallOptions =
   update(
     {
       state: "running",
-      step: "write-config",
-      message: "Writing deployment configuration...",
+      step: "check-version",
+      message: "Checking the supported app version...",
       version: null,
       downloadedBytes: 0,
       totalBytes: null,
@@ -257,8 +265,6 @@ export async function runInstall(config: InstallerConfig, opts: InstallOptions =
   )
 
   try {
-    const bootstrapPath = writeBootstrapConfig(config)
-    update({ step: "check-version", message: "Checking the supported app version..." }, opts.onStatus)
     const version = config.appVersion ?? await fetchLatestSupportedVersion(config.apiUrl)
     const asset = releaseAssetFor(version)
     const bundledArtifact = bundledReleaseAssetPath(asset.fileName, opts.bundleDirectories)
@@ -270,7 +276,7 @@ export async function runInstall(config: InstallerConfig, opts: InstallOptions =
         if (!head.ok) throw new Error(`Release asset missing (${head.status}): ${asset.url}`)
       }
       update(
-        { state: "done", step: null, message: `Dry run ok: ${asset.fileName} ${bundledArtifact ? "bundled" : "available"}; config written to ${bootstrapPath}.` },
+        { state: "done", step: null, message: `Dry run ok: ${asset.fileName} ${bundledArtifact ? "bundled" : "available"}; no changes made.` },
         opts.onStatus,
       )
       return installStatus()
@@ -296,8 +302,10 @@ export async function runInstall(config: InstallerConfig, opts: InstallOptions =
             ? await installExe(artifactPath)
             : installAppImage(artifactPath)
 
+      update({ step: "write-config", message: "Writing deployment configuration..." }, opts.onStatus)
+      const bootstrapPath = writeBootstrapConfig(config)
       update(
-        { state: "done", step: null, installedPath, message: `OpenWork ${version} installed successfully.` },
+        { state: "done", step: null, installedPath, message: `OpenWork ${version} installed successfully; configuration written to ${bootstrapPath}.` },
         opts.onStatus,
       )
     } finally {

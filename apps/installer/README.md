@@ -4,16 +4,17 @@ OpenWork desktop installer for custom deployments. Release builds are generic;
 deployment config is resolved from an install link stamp, sidecar file, filename tag,
 or local development env overrides. When an end user runs it, the installer:
 
-1. Writes `desktop-bootstrap.json` to the OS-correct config location (the same path
-   the desktop app and `openwork-bootstrap` CLI resolve), pointing the desktop app at
-   the client's deployment. Existing extra fields (handoff, claim links) are preserved.
-2. Uses the exact standard app version declared by the organization JSON. If a
+1. Uses the exact standard app version declared by the organization JSON. If a
    matching DMG/EXE/AppImage is beside this installer, it uses those local bytes
    without network access. Standalone/pasted-link installs fall back to the Den
    version endpoint and public release hosting.
-3. Installs the standard app (macOS: mounts the DMG and copies the `.app` into
+2. Installs the standard app (macOS: mounts the DMG and copies the `.app` into
    `~/Applications`; Windows: runs the NSIS installer silently; Linux: installs
    the AppImage under `~/.local/share/openwork` with a desktop entry).
+3. After installation succeeds, atomically writes `desktop-bootstrap.json` to
+   the OS-correct config location, pointing the desktop app at the client's
+   deployment. Existing prepared/claim-link fields are preserved. Failed
+   installs and dry runs leave the previous configuration unchanged.
 
 The UI is a small native webview window (webview-bun); if the platform webview library
 is unavailable, the same UI opens in the default browser.
@@ -38,7 +39,7 @@ cd apps/installer
 bun install
 bun test
 
-# Headless dry run (no download/install; verifies config write + version + asset):
+# Headless dry run (no install or config change; verifies version + asset):
 OPENWORK_INSTALLER_CLIENT_NAME="Acme" \
 OPENWORK_INSTALLER_WEB_URL="https://openwork.acme.com" \
 OPENWORK_INSTALLER_API_URL="https://openwork-api.acme.com" \
@@ -49,7 +50,18 @@ bun run dev
 
 # Single binary:
 bun run compile
+
+# Build a distributable organization ZIP from exact signed release artifacts:
+pnpm enterprise-installer:build -- \
+  --config ./openwork-installer.json \
+  --platform mac-arm64 \
+  --output ./dist
 ```
+
+The root `enterprise-installer:build` command also supports
+`--artifacts-dir <path>` for zero-egress packaging and `--dry-run` for
+non-mutating validation. See `docs/org-install-links.md` for the enterprise and
+MDM deployment patterns.
 
 `src/generated/build-config.ts` is a committed placeholder for legacy/dev builds.
 Empty placeholder values make headless mode require `--install-link`; UI mode prompts
