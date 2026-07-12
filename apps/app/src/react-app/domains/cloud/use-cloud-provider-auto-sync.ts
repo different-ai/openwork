@@ -5,8 +5,44 @@ import { CLOUD_SYNC_INTERVAL_MS } from "../../../app/cloud/sync/constants";
 import { denSettingsChangedEvent } from "../../../app/lib/den-session-events";
 import { useDenAuth } from "./den-auth-provider";
 
-type CloudProviderSyncReason = "sign_in" | "app_launch" | "interval" | "settings_cloud_opened";
+export type CloudProviderSyncReason = "sign_in" | "app_launch" | "interval" | "settings_cloud_opened";
 type SyncFn = (reason: CloudProviderSyncReason) => Promise<unknown>;
+
+export function createCloudProviderSyncRunner(sync: SyncFn) {
+  let cancelled = false;
+  let pendingReason: CloudProviderSyncReason | null = null;
+  let drainPromise: Promise<void> | null = null;
+
+  const drain = async () => {
+    while (!cancelled && pendingReason) {
+      const reason = pendingReason;
+      pendingReason = null;
+      try {
+        await sync(reason);
+      } catch {
+        // The owning store surfaces user-visible errors. A failed pass still
+        // releases the runner so a newer settings state can reconcile.
+      }
+    }
+  };
+
+  return {
+    request(reason: CloudProviderSyncReason = "interval"): Promise<void> {
+      if (cancelled) return Promise.resolve();
+      pendingReason = reason;
+      if (!drainPromise) {
+        drainPromise = drain().finally(() => {
+          drainPromise = null;
+        });
+      }
+      return drainPromise;
+    },
+    cancel() {
+      cancelled = true;
+      pendingReason = null;
+    },
+  };
+}
 
 /**
   * Periodic cloud-provider reconciliation, ported from dev #1509 "auto-sync
@@ -22,7 +58,6 @@ type SyncFn = (reason: CloudProviderSyncReason) => Promise<unknown>;
 export function useCloudProviderAutoSync(sync: SyncFn) {
   const denAuth = useDenAuth();
   const syncRef = useRef(sync);
-  const inFlightRef = useRef(false);
 
   // Keep the ref current so we always call the latest closure (store
   // identity can change between mounts and we don't want to restart the
@@ -34,36 +69,22 @@ export function useCloudProviderAutoSync(sync: SyncFn) {
   useEffect(() => {
     if (!denAuth.isSignedIn) return;
 
-    let cancelled = false;
-
-    const tick = async (reason: CloudProviderSyncReason = "interval") => {
-      if (inFlightRef.current || cancelled) return;
-      inFlightRef.current = true;
-      try {
-        await syncRef.current(reason);
-      } catch {
-        // Network errors, org misconfig, etc. are non-fatal — we'll try
-        // again on the next interval. The refresh function owns surfacing
-        // any user-visible error state.
-      } finally {
-        inFlightRef.current = false;
-      }
-    };
+    const runner = createCloudProviderSyncRunner((reason) => syncRef.current(reason));
 
     // Immediate pass so users see server state quickly after sign-in.
-    void tick("sign_in");
+    void runner.request("sign_in");
 
     const handleDenSettingsChanged = () => {
-      void tick("sign_in");
+      void runner.request("sign_in");
     };
     window.addEventListener(denSettingsChangedEvent, handleDenSettingsChanged);
 
     const interval = window.setInterval(() => {
-      void tick();
+      void runner.request();
     }, CLOUD_SYNC_INTERVAL_MS);
 
     return () => {
-      cancelled = true;
+      runner.cancel();
       window.removeEventListener(denSettingsChangedEvent, handleDenSettingsChanged);
       window.clearInterval(interval);
     };
