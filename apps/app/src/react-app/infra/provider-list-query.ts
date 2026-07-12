@@ -3,6 +3,7 @@ import { useQuery, type QueryClient } from "@tanstack/react-query";
 import type { Client, ModelRef, ProviderListItem } from "../../app/types";
 import { unwrap } from "../../app/lib/opencode";
 import { dispatchNewProviders } from "../../app/lib/provider-events";
+import { enrichProviderListWithLiveLMStudioModels } from "../domains/settings/lmstudio-models";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 export const PROVIDER_LIST_CACHE_MS = 5 * 60 * 1000;
@@ -50,8 +51,9 @@ export async function fetchProviderList(input: {
       directory: input.directory?.trim() || undefined,
     }),
   );
-  recordConnectedProviderSnapshot(input, value);
-  return value;
+  const enriched = await enrichProviderListWithLiveLMStudioModels(value);
+  recordConnectedProviderSnapshot(input, enriched);
+  return enriched;
 }
 
 export function getConnectedProviderItems(value: ProviderListResponse | null | undefined) {

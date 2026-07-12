@@ -60,6 +60,7 @@ import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 // Side-effect imports: register extension config components into the registry.
 import "@/react-app/domains/settings/openai-image-gen-config";
 import "@/react-app/domains/settings/ollama-config";
+import "@/react-app/domains/settings/lmstudio-config";
 import "@/react-app/domains/settings/computer-use-config";
 import "@/react-app/domains/settings/browser-extension-config";
 import "@/react-app/domains/settings/openwork-voice-config";
@@ -1023,6 +1024,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setLocalProviderStatus(null);
     setLocalProviderError(null);
     try {
+      const modelEntries = (input.allModelIds ?? [])
+        .map((id) => id.trim())
+        .filter(Boolean);
+      const models =
+        modelEntries.length > 0
+          ? Object.fromEntries(modelEntries.map((id) => [id, { name: id }]))
+          : { [modelId]: { name: input.modelName.trim() || modelId } };
+
       await client.patchConfig(workspaceId, {
         opencode: {
           provider: {
@@ -1030,7 +1039,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               npm: "@ai-sdk/openai-compatible",
               name: input.name,
               options: { baseURL: input.baseURL },
-              models: { [modelId]: { name: input.modelName.trim() || modelId } },
+              models,
             },
           },
         },
