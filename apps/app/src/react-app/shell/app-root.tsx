@@ -53,6 +53,54 @@ const subscribeToRequireSignin = (onStoreChange: () => void) => {
   };
 };
 
+type OnboardingRedirectIdentity = {
+  authToken: string;
+  activeOrgId: string;
+};
+
+export function createOnboardingRedirectScheduler(input: {
+  readIdentity: () => OnboardingRedirectIdentity;
+  navigate: () => void;
+  schedule: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  clear: (handle: ReturnType<typeof setTimeout>) => void;
+  maxAttempts?: number;
+  delayMs?: number;
+}) {
+  let generation = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const cancel = () => {
+    generation += 1;
+    if (timer) input.clear(timer);
+    timer = null;
+  };
+
+  const start = (expectedToken: string) => {
+    cancel();
+    const currentGeneration = generation;
+    const maxAttempts = input.maxAttempts ?? 10;
+    const delayMs = input.delayMs ?? 500;
+    let attempts = 0;
+
+    const check = () => {
+      timer = null;
+      if (currentGeneration !== generation) return;
+      attempts += 1;
+      const identity = input.readIdentity();
+      if (identity.authToken && identity.authToken === expectedToken && identity.activeOrgId) {
+        generation += 1;
+        input.navigate();
+        return;
+      }
+      if (attempts < maxAttempts) timer = input.schedule(check, delayMs);
+    };
+
+    timer = input.schedule(check, delayMs);
+  };
+
+  return { start, cancel };
+}
+
 /**
  * Forced-signin gate ported from the Solid shell.
  *
@@ -116,24 +164,29 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   // Poll for activeOrgId (set asynchronously by refreshOrgs) rather
   // than using a fixed delay — handles both fast and slow org lookups.
   useEffect(() => {
-    const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
-      if (event.detail?.status !== "success") return;
-      let attempts = 0;
-      const check = () => {
-        attempts++;
+    const scheduler = createOnboardingRedirectScheduler({
+      readIdentity: () => {
         const settings = readDenSettings();
-        if (settings.authToken?.trim() && settings.activeOrgId?.trim()) {
-          navigate("/onboarding", { replace: true });
-        } else if (attempts < 10) {
-          // Org not selected yet — retry (max ~5 seconds)
-          setTimeout(check, 500);
-        }
-      };
-      // First check after a short delay for the auth to settle
-      setTimeout(check, 500);
+        return {
+          authToken: settings.authToken?.trim() ?? "",
+          activeOrgId: settings.activeOrgId?.trim() ?? "",
+        };
+      },
+      navigate: () => navigate("/onboarding", { replace: true }),
+      schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+      clear: (handle) => clearTimeout(handle),
+    });
+    const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
+      scheduler.cancel();
+      if (event.detail?.status !== "success") return;
+      const expectedToken = event.detail.token?.trim() ?? "";
+      if (expectedToken) scheduler.start(expectedToken);
     };
     window.addEventListener(denSessionUpdatedEvent, handler);
-    return () => window.removeEventListener(denSessionUpdatedEvent, handler);
+    return () => {
+      scheduler.cancel();
+      window.removeEventListener(denSessionUpdatedEvent, handler);
+    };
   }, [navigate]);
 
   if (requireSignin && denAuth.status === "checking") {
