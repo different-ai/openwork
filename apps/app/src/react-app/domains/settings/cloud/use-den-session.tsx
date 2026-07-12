@@ -42,6 +42,22 @@ export type UseDenSessionProps = {
   openLink: (url: string) => void;
 };
 
+export function createLatestRequestGate() {
+  let latestRequest = 0;
+  return {
+    begin() {
+      latestRequest += 1;
+      return latestRequest;
+    },
+    isCurrent(request: number) {
+      return request === latestRequest;
+    },
+    invalidate() {
+      latestRequest += 1;
+    },
+  };
+}
+
 function parseManualAuthInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -87,6 +103,7 @@ export function useDenSession({
     user,
   } = useCloudSession();
   const initial = React.useMemo(() => readDenSettings(), []);
+  const orgRefreshGateRef = React.useRef(createLatestRequestGate());
 
   const [baseUrlDraft, setBaseUrlDraft] = React.useState(baseUrl);
   const [baseUrlBusy, setBaseUrlBusy] = React.useState(false);
@@ -107,6 +124,10 @@ export function useDenSession({
   );
 
   const isSignedIn = Boolean(authToken.trim()) && (Boolean(user) || denAuth.isSignedIn);
+
+  React.useEffect(() => {
+    orgRefreshGateRef.current.invalidate();
+  }, [authToken, baseUrl, client]);
 
   const summaryTone = React.useMemo<SettingsTone>(() => {
     if (authError || orgsError) {
@@ -359,6 +380,7 @@ export function useDenSession({
 
   const refreshOrgs = React.useCallback(
     async (quiet = false) => {
+      const request = orgRefreshGateRef.current.begin();
       if (!authToken.trim()) {
         setOrgs([]);
         setActiveOrgId("");
@@ -370,6 +392,7 @@ export function useDenSession({
 
       try {
         const response = await client.listOrgs();
+        if (!orgRefreshGateRef.current.isCurrent(request)) return;
         setOrgs(response.orgs);
         const current = activeOrgId.trim();
 
@@ -403,13 +426,15 @@ export function useDenSession({
         if (next) {
           await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
         }
+        if (!orgRefreshGateRef.current.isCurrent(request)) return;
         if (!quiet && response.orgs.length > 0) {
           toast.info(t("den.status_loaded_orgs", { count: response.orgs.length }));
         }
       } catch (error) {
+        if (!orgRefreshGateRef.current.isCurrent(request)) return;
         setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
       } finally {
-        setOrgsBusy(false);
+        if (orgRefreshGateRef.current.isCurrent(request)) setOrgsBusy(false);
       }
     },
     [activeOrgId, authToken, baseUrl, client, setActiveOrganization],
