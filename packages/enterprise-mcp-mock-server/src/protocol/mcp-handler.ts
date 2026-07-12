@@ -489,7 +489,7 @@ function handleToolsList(context: McpRequestContext, rpc: JsonRpcRequest, sessio
   }
   const invalidSchemaApplied = Boolean(page[0]) && faultApplies(context, "invalid-tool-schema")
   if (invalidSchemaApplied && page[0]) {
-    page[0] = { ...page[0], inputSchema: { type: "object", properties: {}, required: ["missing"], additionalProperties: false } }
+    page[0] = { ...page[0], inputSchema: { type: "object", properties: {}, required: "missing", additionalProperties: false } }
     emitFault(context, "Returned a tool with an invalid input schema")
   }
 

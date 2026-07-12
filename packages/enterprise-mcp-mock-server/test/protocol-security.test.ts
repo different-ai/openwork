@@ -7,6 +7,7 @@ import {
   createFaultScenario,
   getProviderProfile,
   scenarioSchema,
+  toolInputSchemaSchema,
 } from "../src/index.js"
 import { authorizeManual, callRpc, initializeSession, rpcHeaders, sessionHeaders } from "./wire-client.js"
 
@@ -271,6 +272,29 @@ test("tool results mirror structured content for legacy clients and keep the syn
     }).parse(call.envelope.result)
     assert.equal(result.structuredContent.provider, "synthetic")
     assert.deepEqual(JSON.parse(result.content[0]?.text ?? ""), result.structuredContent)
+  } finally {
+    await server.stop()
+  }
+})
+
+test("invalid tool-schema fault is genuinely invalid JSON Schema on the wire", async () => {
+  const scenario = createFaultScenario("servicenow-inbound-quickstart", "mcp-invalid-tool-schema")
+  const server = createEnterpriseMcpMockServer({ scenario, secrets: { oauthClientSecret } })
+  await server.start()
+  try {
+    const token = await authorizeManual(server.baseUrl, scenario, oauthClientSecret)
+    const session = await initializeSession(server.baseUrl, scenario, token)
+    const list = await callRpc(server.baseUrl, scenario, session, 29, "tools/list", {})
+    const result = z.object({
+      tools: z.array(z.object({ inputSchema: z.unknown() }).passthrough()).min(1),
+    }).parse(list.envelope.result)
+    const inputSchema = z.object({
+      type: z.literal("object"),
+      required: z.string(),
+    }).passthrough().parse(result.tools[0]?.inputSchema)
+
+    assert.equal(inputSchema.required, "missing")
+    assert.equal(toolInputSchemaSchema.safeParse(inputSchema).success, false)
   } finally {
     await server.stop()
   }

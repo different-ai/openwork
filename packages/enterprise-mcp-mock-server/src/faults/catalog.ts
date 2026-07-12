@@ -212,7 +212,7 @@ const faults = deepFreeze(faultDefinitionSchema.array().parse([
   {
     id: "mcp-invalid-tool-schema",
     displayName: "Invalid tool input schema",
-    description: "Returns one tool whose required property is absent from properties.",
+    description: "Returns one tool whose JSON Schema required keyword has the invalid string shape instead of an array.",
     phase: "MCP_TOOL_DISCOVERY",
     category: "mcp_invalid_tool_schema",
     retryable: false,
