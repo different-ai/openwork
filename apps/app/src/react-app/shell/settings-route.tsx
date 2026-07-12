@@ -15,7 +15,10 @@ import {
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
 } from "@/app/lib/openwork-server";
-import { resolveWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
+import {
+  resolveWorkspaceEndpoint,
+  type ResolvedWorkspaceEndpoint,
+} from "@/app/lib/workspace-endpoint";
 import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
 import {
   getInitialThemeMode,
@@ -65,6 +68,10 @@ import "@/react-app/domains/settings/browser-extension-config";
 import "@/react-app/domains/settings/openwork-voice-config";
 import "@/react-app/domains/settings/google-workspace-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
+import {
+  loadAutoCompactContext,
+  saveAutoCompactContext,
+} from "@/react-app/domains/settings/auto-compact-context";
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
 import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED, setOpenWorkExtensionEnabled } from "@/react-app/domains/settings/extension-state";
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
@@ -424,7 +431,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [exportWorkspaceBusy, setExportWorkspaceBusy] = useState(false);
   const [autoCompactContext, setAutoCompactContext] = useState(true);
   const [autoCompactContextBusy, setAutoCompactContextBusy] = useState(false);
-  const [autoCompactContextLoaded, setAutoCompactContextLoaded] = useState(false);
+  const [autoCompactContextLoadedEndpoint, setAutoCompactContextLoadedEndpoint] =
+    useState<ResolvedWorkspaceEndpoint | null>(null);
+  const autoCompactContextEndpointRef = useRef<ResolvedWorkspaceEndpoint | null>(null);
   const [localProviderBusy, setLocalProviderBusy] = useState(false);
   const [localProviderStatus, setLocalProviderStatus] = useState<string | null>(null);
   const [localProviderError, setLocalProviderError] = useState<string | null>(null);
@@ -801,6 +810,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     () => resolveWorkspaceEndpoint(selectedWorkspace, { baseUrl, token }),
     [baseUrl, selectedWorkspace, token],
   );
+  autoCompactContextEndpointRef.current = selectedWorkspaceEndpoint;
+  const autoCompactContextLoaded =
+    selectedWorkspaceEndpoint !== null &&
+    autoCompactContextLoadedEndpoint === selectedWorkspaceEndpoint;
   const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
   routeStateRef.current.runtimeWorkspaceId = runtimeWorkspaceId;
@@ -1409,48 +1422,44 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   // Load auto-compaction state from OpenCode config on workspace change.
   useEffect(() => {
-    if (!openworkClient || !selectedWorkspaceId) return;
-    const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
+    const endpoint = selectedWorkspaceEndpoint;
+    if (!endpoint) return;
     let cancelled = false;
     (async () => {
       try {
-        const config = await openworkClient.getConfig(workspaceId);
+        const auto = await loadAutoCompactContext(endpoint);
         if (cancelled) return;
-        const compaction = config.opencode?.compaction;
-        const auto = compaction && typeof compaction === "object" && "auto" in compaction
-          ? (compaction as { auto?: boolean }).auto
-          : undefined;
-        setAutoCompactContext(auto !== false);
-        setAutoCompactContextLoaded(true);
+        setAutoCompactContext(auto);
+        setAutoCompactContextLoadedEndpoint(endpoint);
       } catch {
-        if (!cancelled) setAutoCompactContextLoaded(true);
+        // Keep the control disabled until this exact endpoint can provide an
+        // authoritative value. Never fall back to another workspace/server.
       }
     })();
     return () => { cancelled = true; };
-  }, [openworkClient, selectedWorkspaceId]);
+  }, [selectedWorkspaceEndpoint]);
 
   const toggleAutoCompactContext = useCallback(async () => {
-    if (autoCompactContextBusy) return;
-    const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
-    if (!openworkClient || !workspaceId) return;
+    const endpoint = selectedWorkspaceEndpoint;
+    if (autoCompactContextBusy || !autoCompactContextLoaded || !endpoint) return;
     const next = !autoCompactContext;
     setAutoCompactContext(next);
     setAutoCompactContextBusy(true);
     try {
-      await openworkClient.patchConfig(workspaceId, {
-        opencode: { compaction: { auto: next } },
-      });
+      await saveAutoCompactContext(endpoint, next);
       reloadCoordinator.markReloadRequired("config", {
         type: "config",
         name: "opencode.json",
         action: "updated",
       });
     } catch {
-      setAutoCompactContext(!next);
+      if (autoCompactContextEndpointRef.current === endpoint) {
+        setAutoCompactContext(!next);
+      }
     } finally {
       setAutoCompactContextBusy(false);
     }
-  }, [autoCompactContext, autoCompactContextBusy, openworkClient, reloadCoordinator, selectedWorkspaceId]);
+  }, [autoCompactContext, autoCompactContextBusy, autoCompactContextLoaded, reloadCoordinator, selectedWorkspaceEndpoint]);
 
   useEffect(() => {
     openworkServerStore.start();
@@ -2022,6 +2031,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }}
             autoCompactContext={autoCompactContext}
             autoCompactContextBusy={autoCompactContextBusy}
+            autoCompactContextLoaded={autoCompactContextLoaded}
             onToggleAutoCompactContext={toggleAutoCompactContext}
             analyticsEnabled={local.prefs.analyticsEnabled}
             onToggleAnalytics={() => {

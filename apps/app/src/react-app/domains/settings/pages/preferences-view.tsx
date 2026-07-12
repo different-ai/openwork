@@ -34,6 +34,7 @@ export type PreferencesViewProps = {
   onToggleShowThinking: () => void;
   autoCompactContext: boolean;
   autoCompactContextBusy: boolean;
+  autoCompactContextLoaded: boolean;
   onToggleAutoCompactContext: () => void;
   analyticsEnabled: boolean;
   onToggleAnalytics: () => void;
@@ -93,7 +94,7 @@ export function PreferencesView(props: PreferencesViewProps) {
               <Switch
                 aria-label={t("settings.auto_compact")}
                 checked={props.autoCompactContext}
-                disabled={props.busy || props.autoCompactContextBusy}
+                disabled={props.busy || props.autoCompactContextBusy || !props.autoCompactContextLoaded}
                 onCheckedChange={props.onToggleAutoCompactContext}
               />
             </LayoutSectionItemHeaderActions>
