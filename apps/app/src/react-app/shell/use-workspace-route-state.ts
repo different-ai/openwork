@@ -36,6 +36,7 @@ import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import {
   describeRouteError,
+  filterSessionsForRouteWorkspace,
   isTransientStartupError,
   mapDesktopWorkspace,
   mergeRouteWorkspaces,
@@ -204,12 +205,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         try {
           const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
           const fetchedItems = response.items ?? [];
-          const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
-          const items = workspaceRoot && !isRemoteOpenworkWorkspace
-            ? fetchedItems.filter((session) =>
-                normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
-              )
-            : fetchedItems;
+          const items = filterSessionsForRouteWorkspace(workspace, fetchedItems);
           setSessionsByWorkspaceId((current) => {
             const nextItems = mergeFetchedSessionsWithPending(workspace.id, items, current[workspace.id] ?? []);
             const next = { ...current, [workspace.id]: nextItems };

@@ -31,6 +31,19 @@ export type RouteSession = Session & {
   slug?: string | null;
 };
 
+export function filterSessionsForRouteWorkspace(
+  workspace: RouteWorkspace,
+  sessions: RouteSession[],
+): RouteSession[] {
+  const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
+  const isRemoteOpenworkWorkspace =
+    workspace.workspaceType === "remote" && workspace.remoteType !== "opencode";
+  if (!workspaceRoot || isRemoteOpenworkWorkspace) return sessions;
+  return sessions.filter(
+    (session) => normalizeDirectoryPath(session.directory ?? "") === workspaceRoot,
+  );
+}
+
 export function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
   return {
     ...workspace,

@@ -40,6 +40,7 @@ import {
   describeRouteError,
   describeWorkspaceCreateError,
   downloadWorkspaceJson,
+  filterSessionsForRouteWorkspace,
   folderNameFromPath,
   getSessionStatus,
   isActiveSessionStatus,
@@ -1129,21 +1130,23 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         hostToken: resolvedHostToken || undefined,
       });
       const list = await client.listWorkspaces();
-      const serverWorkspaceIds = new Set(list.items.map((workspace) => workspace.id));
       const nextWorkspaces = mergeRouteWorkspaces(list.items, desktopWorkspaces);
       const sessionEntries = await Promise.all(
         nextWorkspaces.map(async (workspace) => {
-          if (!serverWorkspaceIds.has(workspace.id)) {
-            return { workspaceId: workspace.id, sessions: [], error: null as string | null };
-          }
           try {
-            const response = await client.listSessions(workspace.id, { limit: 200 });
-            const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
-            const items = workspaceRoot
-              ? (response.items ?? []).filter((session) =>
-                  normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
-                )
-              : (response.items ?? []);
+            const endpoint = resolveWorkspaceEndpoint(workspace, {
+              baseUrl: normalizedBaseUrl,
+              token: resolvedToken,
+            });
+            if (!endpoint) {
+              throw new Error(
+                workspace.workspaceType === "remote"
+                  ? "Remote worker URL is missing. Edit connection and add a server URL."
+                  : "OpenWork server is unavailable for this workspace.",
+              );
+            }
+            const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
+            const items = filterSessionsForRouteWorkspace(workspace, response.items ?? []);
             return {
               workspaceId: workspace.id,
               sessions: items,
