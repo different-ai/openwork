@@ -29,6 +29,7 @@ import { isIP } from "node:net"
 export class PrivateUrlError extends Error {
   constructor(url: string, detail: string) {
     super(`URL "${url}" is not allowed: ${detail}`)
+    this.name = "PrivateUrlError"
   }
 }
 
@@ -56,15 +57,87 @@ function isPrivateIpv4(address: string): boolean {
   return false
 }
 
+function parseIpv6Words(address: string): number[] | null {
+  let normalized = address.toLowerCase()
+  if (normalized.includes("%")) return null // scoped literals are never valid hosted targets
+
+  // Normalize an embedded dotted IPv4 tail into its two 16-bit words before
+  // expanding `::`. WHATWG URL parsing normally canonicalizes it already, but
+  // DNS APIs and direct unit callers may return either representation.
+  if (normalized.includes(".")) {
+    const lastColon = normalized.lastIndexOf(":")
+    if (lastColon < 0) return null
+    const octets = parseIpv4(normalized.slice(lastColon + 1))
+    if (!octets) return null
+    const high = ((octets[0] << 8) | octets[1]).toString(16)
+    const low = ((octets[2] << 8) | octets[3]).toString(16)
+    normalized = `${normalized.slice(0, lastColon + 1)}${high}:${low}`
+  }
+
+  const halves = normalized.split("::")
+  if (halves.length > 2) return null
+  const parseHalf = (value: string): number[] | null => {
+    if (!value) return []
+    const parts = value.split(":")
+    if (parts.some((part) => !/^[0-9a-f]{1,4}$/.test(part))) return null
+    return parts.map((part) => Number.parseInt(part, 16))
+  }
+  const head = parseHalf(halves[0])
+  const tail = parseHalf(halves[1] ?? "")
+  if (!head || !tail) return null
+  if (halves.length === 1) return head.length === 8 ? head : null
+  const omitted = 8 - head.length - tail.length
+  if (omitted < 1) return null
+  return [...head, ...Array.from({ length: omitted }, () => 0), ...tail]
+}
+
+function embeddedIpv4(words: number[], offset: number): string {
+  return [
+    words[offset] >> 8,
+    words[offset] & 0xff,
+    words[offset + 1] >> 8,
+    words[offset + 1] & 0xff,
+  ].join(".")
+}
+
 function isPrivateIpv6(address: string): boolean {
-  const normalized = address.toLowerCase()
-  // IPv4-mapped (::ffff:a.b.c.d) — judge by the embedded IPv4.
-  const mappedMatch = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
-  if (mappedMatch) return isPrivateIpv4(mappedMatch[1])
-  if (normalized === "::" || normalized === "::1") return true // unspecified / loopback
-  if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true // fc00::/7 unique-local
-  if (normalized.startsWith("fe8") || normalized.startsWith("fe9")
-    || normalized.startsWith("fea") || normalized.startsWith("feb")) return true // fe80::/10 link-local
+  const words = parseIpv6Words(address)
+  if (!words) return true // malformed/scoped: fail closed
+  const [first, second, third] = words
+  const fifth = words[4]
+  const sixth = words[5]
+
+  if (words.slice(0, 7).every((word) => word === 0) && (words[7] === 0 || words[7] === 1)) return true
+
+  // IPv4-mapped IPv6 is canonicalized by URL as hex (`::ffff:7f00:1`),
+  // never necessarily the dotted form. Judge the embedded address using the
+  // same IPv4 policy. Also cover RFC 8215's translated prefix.
+  if (words.slice(0, 5).every((word) => word === 0) && sixth === 0xffff) {
+    return isPrivateIpv4(embeddedIpv4(words, 6))
+  }
+  if (words.slice(0, 4).every((word) => word === 0) && fifth === 0xffff && sixth === 0) {
+    return isPrivateIpv4(embeddedIpv4(words, 6))
+  }
+  if (words.slice(0, 6).every((word) => word === 0)) return true // deprecated IPv4-compatible ::/96
+  if (
+    first === 0x0064
+    && second === 0xff9b
+    && words.slice(2, 6).every((word) => word === 0)
+    && isPrivateIpv4(embeddedIpv4(words, 6))
+  ) return true // well-known NAT64 prefix with a private embedded target
+
+  if ((first & 0xfe00) === 0xfc00) return true // fc00::/7 unique-local
+  if ((first & 0xffc0) === 0xfe80) return true // fe80::/10 link-local
+  if ((first & 0xffc0) === 0xfec0) return true // fec0::/10 deprecated site-local
+  if ((first & 0xff00) === 0xff00) return true // ff00::/8 multicast
+  if (first === 0x0100 && words.slice(1, 4).every((word) => word === 0)) return true // 100::/64 discard-only
+  if (first === 0x2001 && second === 0x0db8) return true // documentation
+  if (first === 0x2001 && second === 0x0002 && third === 0) return true // benchmarking
+  if (first === 0x2001 && ((second & 0xfff0) === 0x0010 || (second & 0xfff0) === 0x0020)) return true // ORCHID
+
+  // 6to4 embeds an IPv4 relay target in words 1-2. Prevent an apparently
+  // public IPv6 literal from tunneling to a private/reserved IPv4 address.
+  if (first === 0x2002 && isPrivateIpv4(embeddedIpv4(words, 1))) return true
   return false
 }
 
@@ -76,11 +149,7 @@ export function isPrivateAddress(address: string): boolean {
   return true // not an IP at all: fail closed
 }
 
-/**
- * Rejects (throws PrivateUrlError) unless the URL is http(s) and its host
- * resolves exclusively to public addresses.
- */
-export async function assertPublicUrl(rawUrl: string): Promise<void> {
+function parseHttpUrl(rawUrl: string): URL {
   let url: URL
   try {
     url = new URL(rawUrl)
@@ -89,6 +158,22 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new PrivateUrlError(rawUrl, `protocol "${url.protocol}" is not allowed`)
+  }
+  if (url.username || url.password) {
+    throw new PrivateUrlError(rawUrl, "embedded URL credentials are not allowed")
+  }
+  return url
+}
+
+/**
+ * Rejects (throws PrivateUrlError) unless the URL uses HTTPS and its host
+ * resolves exclusively to public addresses. Private/self-hosted deployments
+ * opt out of this guard as a whole; hosted egress must never use cleartext.
+ */
+export async function assertPublicUrl(rawUrl: string): Promise<void> {
+  const url = parseHttpUrl(rawUrl)
+  if (url.protocol !== "https:") {
+    throw new PrivateUrlError(rawUrl, "hosted MCP egress requires HTTPS")
   }
 
   // URL brackets IPv6 literals: strip them for isIP().
@@ -117,6 +202,8 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
 }
 
 type FetchLike = (url: string | URL, init?: RequestInit) => Promise<Response>
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+const MAX_GUARDED_REDIRECTS = 5
 
 function isCurrentResponseRealm(res: Response): boolean {
   return res instanceof globalThis.Response
@@ -133,8 +220,10 @@ function isCurrentResponseRealm(res: Response): boolean {
  */
 export async function normalizeResponseRealm(res: Response): Promise<Response> {
   if (res.ok || isCurrentResponseRealm(res)) return res
-  const buffered = await res.arrayBuffer()
-  return new globalThis.Response(buffered, {
+  // Keep the old-realm body as a stream. Eager arrayBuffer() normalization
+  // would consume an attacker-controlled OAuth/MCP error body before the
+  // outer diagnostic fetch can enforce its response-byte ceiling.
+  return new globalThis.Response(res.body, {
     status: res.status,
     statusText: res.statusText,
     headers: res.headers,
@@ -147,13 +236,88 @@ export async function normalizeResponseRealm(res: Response): Promise<Response> {
  * servers, token endpoints), and DNS answers can change after create-time
  * validation, so each request is checked at the moment it's made.
  */
-export function createGuardedFetch(): FetchLike {
+function redirectedRequestInit(init: RequestInit | undefined, status: number, from: URL, to: URL): RequestInit {
+  const headers = new Headers(init?.headers)
+  if (from.protocol === "https:" && to.protocol !== "https:") {
+    throw new PrivateUrlError(to.toString(), "an HTTPS request cannot redirect to a less secure protocol")
+  }
+
+  const method = (init?.method ?? "GET").toUpperCase()
+  if (from.origin !== to.origin) {
+    // A 307/308 preserves the method and body. Forwarding an OAuth token POST
+    // (code + verifier) or a tools/call body to another origin would disclose
+    // credentials or tool arguments even if Authorization is stripped. Block
+    // every cross-origin non-idempotent/body-bearing redirect instead.
+    if ((method !== "GET" && method !== "HEAD") || init?.body != null) {
+      throw new PrivateUrlError(to.toString(), "a request body cannot be redirected to another origin")
+    }
+    // Native fetch strips credentials on cross-origin redirects. Manual
+    // redirects must preserve that boundary explicitly.
+    for (const name of [
+      "authorization",
+      "cookie",
+      "proxy-authorization",
+      "mcp-session-id",
+      "last-event-id",
+      "x-api-key",
+      "x-auth-token",
+    ]) headers.delete(name)
+  }
+
+  const switchToGet = (status === 303 && method !== "HEAD")
+    || ((status === 301 || status === 302) && method === "POST")
+  if (switchToGet) {
+    headers.delete("content-length")
+    headers.delete("content-type")
+    return { ...init, method: "GET", body: undefined, headers, redirect: "manual" }
+  }
+  return { ...init, headers, redirect: "manual" }
+}
+
+function createRedirectSafeFetch(
+  fetchImpl: FetchLike,
+  validateUrl: (url: string) => Promise<void>,
+): FetchLike {
   return async (input, init) => {
-    await assertPublicUrl(String(input))
-    return normalizeResponseRealm(await fetch(input, init))
+    let current = new URL(String(input))
+    let currentInit: RequestInit = { ...init, redirect: "manual" }
+    for (let redirectCount = 0; ; redirectCount += 1) {
+      await validateUrl(current.toString())
+      const response = await fetchImpl(current, currentInit)
+      const location = response.headers.get("location")
+      if (!REDIRECT_STATUSES.has(response.status) || !location) {
+        return normalizeResponseRealm(response)
+      }
+      if (redirectCount >= MAX_GUARDED_REDIRECTS) {
+        await response.body?.cancel()
+        throw new Error("MCP outbound request exceeded the guarded redirect limit.")
+      }
+      const next = new URL(location, current)
+      // Validate before issuing the next request. This closes the public URL
+      // -> loopback/link-local redirect SSRF path.
+      await validateUrl(next.toString())
+      try {
+        currentInit = redirectedRequestInit(currentInit, response.status, current, next)
+      } catch (error) {
+        await response.body?.cancel()
+        throw error
+      }
+      current = next
+      await response.body?.cancel()
+    }
   }
 }
 
-export function createRealmSafeFetch(): FetchLike {
-  return async (input, init) => normalizeResponseRealm(await fetch(input, init))
+export function createGuardedFetch(fetchImpl: FetchLike = fetch): FetchLike {
+  return createRedirectSafeFetch(fetchImpl, assertPublicUrl)
+}
+
+export function createRealmSafeFetch(fetchImpl: FetchLike = fetch): FetchLike {
+  // Private/self-hosted mode intentionally skips DNS/address restrictions,
+  // but it must retain protocol, credential, downgrade, and cross-origin body
+  // redirect protections. Opting into private networks is not an opt-out from
+  // OAuth secret handling.
+  return createRedirectSafeFetch(fetchImpl, async (rawUrl) => {
+    parseHttpUrl(rawUrl)
+  })
 }

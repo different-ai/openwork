@@ -19,6 +19,7 @@ import type {
 import { EnterpriseMcpClientError, EnterpriseMcpToolResultError } from "./errors.js"
 import { EnterpriseMcpOAuthProvider } from "./oauth-provider.js"
 import { createEnterpriseMcpRequestObserver, type EnterpriseMcpRequestObserver } from "./request-observer.js"
+import { collectEnterpriseMcpTools } from "./tool-catalog.js"
 
 const connectionSchema = z.object({
   id: z.string().trim().min(1),
@@ -99,9 +100,11 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
     const serverUrl = validateConnection(input.connection)
     const redirectUri = validateRedirectUri(input.redirectUri)
     const controller = new AbortController()
+    const configuredExpiresAt = options.lifecycle?.expiresAt ?? (Date.now() + operationTimeoutMs)
+    const remaining = Math.max(1, Math.min(operationTimeoutMs, configuredExpiresAt - Date.now()))
     const timeout = setTimeout(() => {
-      controller.abort(new Error(`Enterprise MCP ${input.operationPhase} exceeded ${operationTimeoutMs}ms.`))
-    }, operationTimeoutMs)
+      controller.abort(new Error(`Enterprise MCP ${input.operationPhase} exceeded its lifecycle deadline.`))
+    }, remaining)
     controller.signal.addEventListener("abort", () => clearTimeout(timeout), { once: true })
 
     const observer = createEnterpriseMcpRequestObserver({
@@ -109,7 +112,9 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
       operationPhase: input.operationPhase,
       fetch: configuredFetch,
       diagnosticSink: options.diagnosticSink ? emitDiagnostic : undefined,
-      signal: controller.signal,
+      signal: options.lifecycle
+        ? AbortSignal.any([controller.signal, options.lifecycle.signal])
+        : controller.signal,
     })
     const oauthProvider = input.connection.authorization.type === "oauth"
       ? new EnterpriseMcpOAuthProvider({
@@ -125,10 +130,13 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
       requestInit: requestInit(input.connection.authorization),
     })
     const client = new Client({ name: clientName, version: clientVersion }, { capabilities: {} })
+    const requestSignal = options.lifecycle
+      ? AbortSignal.any([controller.signal, options.lifecycle.signal])
+      : controller.signal
     const requestOptions: RequestOptions = {
-      signal: controller.signal,
-      timeout: operationTimeoutMs,
-      maxTotalTimeout: operationTimeoutMs,
+      signal: requestSignal,
+      timeout: remaining,
+      maxTotalTimeout: remaining,
       resetTimeoutOnProgress: false,
     }
     return { client, transport, oauthProvider, observer, controller, requestOptions }
@@ -153,6 +161,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
     }
 
     emitDiagnostic({
+      kind: "operation",
       connectionId: input.connection.id,
       operationPhase: input.operationPhase,
       requestPhase: null,
@@ -162,6 +171,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
     try {
       const result = await input.operation(session)
       emitDiagnostic({
+        kind: "operation",
         connectionId: input.connection.id,
         operationPhase: input.operationPhase,
         requestPhase: session.observer.lastRequestPhase(),
@@ -178,6 +188,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
             cause: error,
           })
       emitDiagnostic({
+        kind: "operation",
         connectionId: input.connection.id,
         operationPhase: input.operationPhase,
         requestPhase: session.observer.lastRequestPhase(),
@@ -200,6 +211,13 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
       ...input,
       operation: async (session) => {
         await session.client.connect(session.transport, session.requestOptions)
+        emitDiagnostic({
+          kind: "operation",
+          connectionId: input.connection.id,
+          operationPhase: input.operationPhase,
+          requestPhase: "mcp-initialize",
+          outcome: "succeeded",
+        })
         let operationFailed = false
         try {
           return await input.operation(session)
@@ -233,6 +251,13 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
         operation: async (session) => {
           try {
             await session.client.connect(session.transport, session.requestOptions)
+            emitDiagnostic({
+              kind: "operation",
+              connectionId: input.connection.id,
+              operationPhase: "connection-handshake",
+              requestPhase: "mcp-initialize",
+              outcome: "succeeded",
+            })
             try {
               await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
             } catch (error) {
@@ -265,15 +290,35 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
         redirectUri: input.redirectUri,
         operationPhase: "authorization-callback",
         operation: async (session) => {
+          const store = input.connection.authorization.type === "oauth"
+            ? input.connection.authorization.store
+            : null
+          let exchangedTokens = false
           let operationFailed = false
           try {
             await session.transport.finishAuth(input.code)
+            exchangedTokens = true
+            await session.client.connect(session.transport, session.requestOptions)
+            emitDiagnostic({
+              kind: "operation",
+              connectionId: input.connection.id,
+              operationPhase: "authorization-callback",
+              requestPhase: "mcp-initialize",
+              outcome: "succeeded",
+            })
           } catch (error) {
             operationFailed = true
+            if (exchangedTokens && store) {
+              try {
+                await store.invalidateTokens()
+              } catch {
+                // Credential cleanup must not replace the validation failure.
+              }
+            }
             throw error
           } finally {
             try {
-              await closeWithinDeadline(() => session.transport.close(), closeTimeoutMs)
+              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
             } catch (error) {
               if (!operationFailed) {
                 throw new EnterpriseMcpClientError({
@@ -294,8 +339,13 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
         redirectUri: input.redirectUri,
         operationPhase: "tool-discovery",
         operation: async (session) => {
-          const result = await session.client.listTools(undefined, session.requestOptions)
-          return result.tools
+          return collectEnterpriseMcpTools({
+            requestOptions: session.requestOptions,
+            listPage: (cursor, options) => session.client.listTools(
+              cursor ? { cursor } : undefined,
+              options,
+            ),
+          })
         },
       })
     },
@@ -311,7 +361,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions = 
             name: input.toolName,
             arguments: input.arguments,
           }, undefined, session.requestOptions)
-          if ("isError" in result && result.isError) throw new EnterpriseMcpToolResultError()
+          if ("isError" in result && result.isError) throw new EnterpriseMcpToolResultError(result)
           return result
         },
       })

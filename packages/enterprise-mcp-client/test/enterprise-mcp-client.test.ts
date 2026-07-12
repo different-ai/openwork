@@ -4,6 +4,8 @@ import { describe, it } from "node:test"
 import { z } from "zod"
 import {
   createEnterpriseMcpClient,
+  collectEnterpriseMcpTools,
+  EnterpriseMcpCatalogError,
   EnterpriseMcpClientError,
   EnterpriseMcpOAuthProvider,
   EnterpriseMcpToolResultError,
@@ -130,7 +132,7 @@ async function sendMcpResponse(request: IncomingMessage, response: ServerRespons
   sendJson(response, 404, { error: "not_found" })
 }
 
-async function startOAuthMcpServer() {
+async function startOAuthMcpServer(options: { rejectAuthenticatedMcp?: boolean } = {}) {
   let origin = ""
   const server = createServer(async (request, response) => {
     try {
@@ -197,6 +199,10 @@ async function startOAuthMcpServer() {
             "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="tools.read"`,
           })
           response.end()
+          return
+        }
+        if (options.rejectAuthenticatedMcp) {
+          sendJson(response, 403, { error: "provider_policy_denied" })
           return
         }
         await sendMcpResponse(request, response)
@@ -307,6 +313,32 @@ describe("enterprise MCP client", () => {
     )
   })
 
+  it("honors an injected absolute lifecycle deadline", async () => {
+    const controller = new AbortController()
+    const expiresAt = Date.now() + 40
+    const timer = setTimeout(() => controller.abort(new Error("shared deadline reached")), 40)
+    const client = createEnterpriseMcpClient({
+      lifecycle: { expiresAt, signal: controller.signal },
+      fetch: async (_url, init) => new Promise<Response>((_resolve, reject) => {
+        if (init?.signal?.aborted) {
+          reject(init.signal.reason)
+          return
+        }
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true })
+      }),
+    })
+    const startedAt = Date.now()
+    try {
+      await assert.rejects(client.connect({
+        connection: noAuthConnection(),
+        redirectUri: "https://den.example.test/callback",
+      }))
+      assert.ok(Date.now() - startedAt < 500)
+    } finally {
+      clearTimeout(timer)
+    }
+  })
+
   it("treats an MCP isError tool result as a failed operation", async () => {
     const client = createEnterpriseMcpClient({ fetch: mockMcpFetch({ toolError: true }) })
     await assert.rejects(
@@ -330,6 +362,7 @@ class MemoryOAuthStore implements EnterpriseMcpOAuthStore {
   clientInformation: OAuthClientInformationMixed | undefined
   tokens: OAuthTokens | undefined
   codeVerifier: string | undefined
+  invalidationCount = 0
 
   async loadClientInformation() {
     return this.clientInformation
@@ -345,6 +378,11 @@ class MemoryOAuthStore implements EnterpriseMcpOAuthStore {
 
   async saveTokens(tokens: OAuthTokens) {
     this.tokens = tokens
+  }
+
+  async invalidateTokens() {
+    this.tokens = undefined
+    this.invalidationCount += 1
   }
 
   async saveCodeVerifier(codeVerifier: string) {
@@ -450,5 +488,123 @@ describe("enterprise MCP OAuth persistence contract", () => {
     } finally {
       await server.close()
     }
+  })
+
+  it("invalidates exchanged tokens when callback validation cannot initialize MCP", async () => {
+    const server = await startOAuthMcpServer({ rejectAuthenticatedMcp: true })
+    try {
+      const store = new MemoryOAuthStore()
+      const client = createEnterpriseMcpClient({ operationTimeoutMs: 5_000 })
+      const connection: EnterpriseMcpConnection = {
+        id: "oauth-validation-failure",
+        serverUrl: `${server.origin}/mcp`,
+        authorization: { type: "oauth", store },
+      }
+      const redirectUri = "https://den.example.test/oauth-validation-failure"
+      const started = await client.connect({ connection, redirectUri, state: "signed-state" })
+      assert.equal(started.status, "needs_auth")
+
+      await assert.rejects(client.completeAuthorization({
+        connection,
+        redirectUri,
+        code: "approved-code",
+      }))
+      assert.equal(store.tokens, undefined)
+      assert.equal(store.invalidationCount, 1)
+    } finally {
+      await server.close()
+    }
+  })
+})
+
+describe("enterprise MCP catalog contract", () => {
+  it("collects a bounded paginated tool catalog", async () => {
+    const tools = await collectEnterpriseMcpTools({
+      requestOptions: {},
+      listPage: async (cursor) => cursor
+        ? {
+            tools: [{ name: "second-tool", inputSchema: { type: "object" } }],
+          }
+        : {
+            tools: [{ name: "first-tool", inputSchema: { type: "object" } }],
+            nextCursor: "page-2",
+          },
+    })
+    assert.deepEqual(tools.map((tool) => tool.name), ["first-tool", "second-tool"])
+  })
+
+  it("rejects duplicate tools across catalog pages", async () => {
+    await assert.rejects(
+      collectEnterpriseMcpTools({
+        requestOptions: {},
+        listPage: async (cursor) => cursor
+          ? { tools: [{ name: "duplicate", inputSchema: { type: "object" } }] }
+          : {
+              tools: [{ name: "duplicate", inputSchema: { type: "object" } }],
+              nextCursor: "page-2",
+            },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof EnterpriseMcpCatalogError)
+        assert.equal(error.code, "MCP_CATALOG_DUPLICATE_TOOL")
+        return true
+      },
+    )
+  })
+
+  it("rejects a repeated pagination cursor", async () => {
+    await assert.rejects(
+      collectEnterpriseMcpTools({
+        requestOptions: {},
+        listPage: async () => ({ tools: [], nextCursor: "repeated-cursor" }),
+      }),
+      (error: unknown) => error instanceof EnterpriseMcpCatalogError
+        && error.code === "MCP_CATALOG_CURSOR_LOOP",
+    )
+  })
+
+  it("enforces the absolute catalog page limit", async () => {
+    let page = 0
+    await assert.rejects(
+      collectEnterpriseMcpTools({
+        requestOptions: {},
+        listPage: async () => {
+          page += 1
+          return { tools: [], nextCursor: `page-${page}` }
+        },
+      }),
+      (error: unknown) => error instanceof EnterpriseMcpCatalogError
+        && error.code === "MCP_CATALOG_PAGE_LIMIT",
+    )
+    assert.equal(page, 20)
+  })
+
+  it("rejects oversized tool names and deeply nested schemas", async () => {
+    await assert.rejects(
+      collectEnterpriseMcpTools({
+        requestOptions: {},
+        listPage: async () => ({
+          tools: [{ name: "x".repeat(513), inputSchema: { type: "object" } }],
+        }),
+      }),
+      (error: unknown) => error instanceof EnterpriseMcpCatalogError
+        && error.code === "MCP_CATALOG_TOOL_NAME_LIMIT",
+    )
+
+    let nested: Record<string, unknown> = { type: "string" }
+    for (let depth = 0; depth < 70; depth += 1) nested = { nested }
+    await assert.rejects(
+      collectEnterpriseMcpTools({
+        requestOptions: {},
+        listPage: async () => ({
+          tools: [{
+            name: "deep-schema",
+            inputSchema: { type: "object", properties: { value: nested } },
+          }],
+        }),
+      }),
+      (error: unknown) => error instanceof EnterpriseMcpCatalogError
+        && error.code === "MCP_CATALOG_SCHEMA_DEPTH_LIMIT",
+    )
   })
 })

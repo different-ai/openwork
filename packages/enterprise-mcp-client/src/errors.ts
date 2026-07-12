@@ -63,9 +63,53 @@ export class EnterpriseMcpClientError extends Error {
 
 export class EnterpriseMcpToolResultError extends Error {
   readonly code = "MCP_TOOL_REPORTED_ERROR"
+  readonly providerSignal: Record<string, unknown> | undefined
 
-  constructor() {
+  constructor(result?: unknown) {
     super("The MCP provider completed the request but reported that the tool operation failed.")
     this.name = "EnterpriseMcpToolResultError"
+    const structuredContent = typeof result === "object" && result !== null && "structuredContent" in result
+      && typeof result.structuredContent === "object" && result.structuredContent !== null
+      ? result.structuredContent
+      : null
+    if (!structuredContent) return
+    const providerStatus = "providerStatus" in structuredContent && typeof structuredContent.providerStatus === "number"
+      ? structuredContent.providerStatus
+      : undefined
+    const category = "category" in structuredContent && typeof structuredContent.category === "string"
+      ? structuredContent.category
+      : undefined
+    const requestId = "requestId" in structuredContent && typeof structuredContent.requestId === "string"
+      ? structuredContent.requestId
+      : undefined
+    this.providerSignal = {
+      ...(providerStatus !== undefined ? { providerStatus } : {}),
+      ...(category !== undefined ? { category } : {}),
+      ...(requestId !== undefined ? { requestId } : {}),
+    }
+  }
+}
+
+export type EnterpriseMcpCatalogErrorCode =
+  | "MCP_CATALOG_CURSOR_LOOP"
+  | "MCP_CATALOG_PAGE_LIMIT"
+  | "MCP_CATALOG_ITEM_LIMIT"
+  | "MCP_CATALOG_DUPLICATE_TOOL"
+  | "MCP_CATALOG_TOOL_NAME_LIMIT"
+  | "MCP_CATALOG_TOOL_DESCRIPTION_LIMIT"
+  | "MCP_CATALOG_TOOL_TITLE_LIMIT"
+  | "MCP_CATALOG_SCHEMA_SIZE_LIMIT"
+  | "MCP_CATALOG_SCHEMA_DEPTH_LIMIT"
+  | "MCP_CATALOG_SCHEMA_CYCLE"
+  | "MCP_CATALOG_CURSOR_SIZE_LIMIT"
+  | "MCP_CATALOG_BYTE_LIMIT"
+
+export class EnterpriseMcpCatalogError extends Error {
+  readonly code: EnterpriseMcpCatalogErrorCode
+
+  constructor(code: EnterpriseMcpCatalogErrorCode) {
+    super("The MCP tool catalog exceeded an enterprise client contract limit.")
+    this.name = "EnterpriseMcpCatalogError"
+    this.code = code
   }
 }

@@ -1,4 +1,5 @@
 import type { Hono } from "hono"
+import type { RequestIdVariables } from "hono/request-id"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
@@ -23,7 +24,6 @@ import {
   deleteExternalMcpConnection,
   disconnectExternalMcpConnection,
   getExternalMcpConnection,
-  getExternalMcpConnectionById,
   listExternalMcpConnectionAccess,
   listExternalMcpConnections,
   listUsableExternalMcpConnections,
@@ -38,6 +38,13 @@ import { getConnectedAccount, upsertOrgOAuthClient } from "../../capability-sour
 import { assertPublicUrl } from "../../capability-sources/url-guard.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import { EXTERNAL_MCP_PRESETS } from "../../capability-sources/external-mcp-presets.js"
+import {
+  EXTERNAL_MCP_DIAGNOSTIC_PHASES,
+  externalMcpDiagnosticForLog,
+  externalMcpDiagnosticForResponse,
+  externalMcpOAuthCallbackError,
+  safeExternalMcpEndpointForLog,
+} from "../../capability-sources/external-mcp-diagnostics.js"
 import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 
@@ -49,9 +56,46 @@ const accessInputSchema = z.object({
   teamIds: z.array(z.string().trim().min(1)).max(200).optional().default([]),
 }).meta({ ref: "ExternalMcpConnectionAccessInput" })
 
+const externalMcpUrlSchema = z.string().trim().url().max(2048).superRefine((value, context) => {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    // The preceding URL refinement owns the user-facing parse error. Zod 4
+    // still executes superRefine after that failure, so never throw here.
+    return
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    context.addIssue({ code: "custom", message: "MCP URLs must use HTTP or HTTPS." })
+  }
+  if (url.protocol === "http:" && !env.allowPrivateMcpUrls) {
+    context.addIssue({ code: "custom", message: "Hosted MCP connections must use HTTPS." })
+  }
+  if (url.hash) {
+    context.addIssue({ code: "custom", message: "MCP URLs must not contain a fragment." })
+  }
+  if (url.username || url.password) {
+    context.addIssue({ code: "custom", message: "MCP URLs must not contain embedded credentials." })
+  }
+  const sensitiveParameters = new Set([
+    "access_token",
+    "api_key",
+    "client_secret",
+    "token",
+    "refresh_token",
+    "id_token",
+    "code_verifier",
+  ])
+  for (const parameter of url.searchParams.keys()) {
+    if (sensitiveParameters.has(parameter.toLowerCase())) {
+      context.addIssue({ code: "custom", message: `MCP URL query parameter "${parameter}" must not contain credentials.` })
+    }
+  }
+})
+
 const createConnectionBodySchema = z.object({
   name: z.string().trim().min(1).max(255),
-  url: z.string().trim().url().max(2048),
+  url: externalMcpUrlSchema,
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]).optional().default("shared"),
   apiKey: z.string().trim().min(1).max(4096).optional(),
@@ -158,26 +202,37 @@ const connectStartResponseSchema = z.object({
   authorizeUrl: z.string().nullable(),
 }).meta({ ref: "ExternalMcpConnectStartResponse" })
 
+const externalMcpDiagnosticSchema = z.object({
+  referenceId: z.string(),
+  phase: z.enum(EXTERNAL_MCP_DIAGNOSTIC_PHASES),
+  category: z.string(),
+  code: z.string(),
+  highestPassed: z.enum(["configured", "reachable", "authorized", "protocol_ready", "catalog_ready", "operation_ready"]),
+  retryable: z.boolean(),
+  actionOwner: z.enum(["openwork", "network_admin", "provider_admin", "organization_admin", "member"]),
+  operatorAction: z.string(),
+  message: z.string(),
+  httpStatus: z.number().int().min(100).max(599).optional(),
+  operationPhase: z.enum(EXTERNAL_MCP_DIAGNOSTIC_PHASES).optional(),
+  outbound: z.object({
+    origin: z.string(),
+    pathHash: z.string(),
+  }).optional(),
+  providerRequestId: z.string().optional(),
+  jsonRpcCode: z.number().int().optional(),
+}).meta({ ref: "ExternalMcpDiagnostic" })
+
 const connectStartFailedSchema = z.object({
   error: z.literal("oauth_handshake_failed"),
   message: z.string(),
+  diagnostic: externalMcpDiagnosticSchema,
 }).meta({ ref: "ExternalMcpConnectStartFailedError" })
 
 const connectionValidationFailedSchema = z.object({
   error: z.literal("connection_validation_failed"),
   message: z.string(),
+  diagnostic: externalMcpDiagnosticSchema,
 }).meta({ ref: "ExternalMcpConnectionValidationFailedError" })
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function errorForLog(error: unknown) {
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message, stack: error.stack }
-  }
-  return { message: String(error) }
-}
 
 function isConnectionConnected(row: ExternalMcpConnectionRow): boolean {
   if (row.credentialMode === "per_member") {
@@ -248,7 +303,7 @@ function callbackRedirectUri(request: Request, connectionId: string) {
  * OAuth handshake for a connection itself. Read-only list/status/presets are
  * tagged Capability Sources so a harness can at least see what's connected.
  */
-export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVariables & RequestIdVariables }>(app: Hono<T>) {
   app.get(
     "/v1/mcp-connections/presets",
     describeRoute({
@@ -403,15 +458,20 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       if (body.authType !== "oauth") {
         // No OAuth dance needed — validate the server is real and reachable now.
         try {
-          await connectExternalMcp(created, callbackRedirectUri(c.req.raw, created.id))
+          await connectExternalMcp(created, callbackRedirectUri(c.req.raw, created.id), undefined, undefined, c.get("requestId"))
         } catch (error) {
+          const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "MCP_INITIALIZE")
           console.error("external_mcp_connection_validation_failed", {
             connectionId: created.id,
             organizationId: payload.organization.id,
-            connectionUrl: created.url,
-            error: errorForLog(error),
+            connectionEndpoint: safeExternalMcpEndpointForLog(created.url),
+            ...externalMcpDiagnosticForLog(error, c.get("requestId"), "MCP_INITIALIZE"),
           })
-          return c.json({ error: "connection_validation_failed", message: `Could not reach "${created.name}" at its MCP URL: ${errorMessage(error)}` }, 502)
+          return c.json({
+            error: "connection_validation_failed",
+            message: `Could not validate "${created.name}": ${diagnostic.message} Reference: ${diagnostic.referenceId}.`,
+            diagnostic,
+          }, 502)
         }
       }
 
@@ -588,19 +648,24 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         const member = connection.credentialMode === "per_member"
           ? { orgMembershipId: payload.currentMember.id }
           : undefined
-        const result = await connectExternalMcp(connection, redirectUri, signedState, member)
+        const result = await connectExternalMcp(connection, redirectUri, signedState, member, c.get("requestId"))
         if (result.status === "connected") {
           return c.json({ status: "connected" as const, authorizeUrl: null })
         }
         return c.json({ status: "needs_auth" as const, authorizeUrl: result.authorizeUrl })
       } catch (error) {
+        const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "AUTH_RESOURCE_DISCOVERY")
         console.error("external_mcp_connect_start_oauth_handshake_failed", {
           connectionId: connection.id,
           organizationId: payload.organization.id,
-          connectionUrl: connection.url,
-          error: errorForLog(error),
+          connectionEndpoint: safeExternalMcpEndpointForLog(connection.url),
+          ...externalMcpDiagnosticForLog(error, c.get("requestId"), "AUTH_RESOURCE_DISCOVERY"),
         })
-        return c.json({ error: "oauth_handshake_failed", message: `The OAuth handshake with "${connection.name}" failed: ${errorMessage(error)}` }, 502)
+        return c.json({
+          error: "oauth_handshake_failed",
+          message: `Could not connect "${connection.name}": ${diagnostic.message} Reference: ${diagnostic.referenceId}.`,
+          diagnostic,
+        }, 502)
       }
     },
   )
@@ -622,10 +687,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const { connectionId } = c.req.valid("param")
       const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
       const url = new URL(c.req.url)
-      const code = url.searchParams.get("code")
       const state = url.searchParams.get("state")
-      if (!code || !state) {
-        return c.json({ error: "invalid_request", message: "Missing code or state." }, 400)
+      if (!state) {
+        return c.json({ error: "invalid_request", message: "Missing state." }, 400)
       }
 
       const statePayload = verifyOAuthStateToken({ token: state, secret: env.betterAuthSecret })
@@ -633,9 +697,33 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ error: "invalid_request", message: "Invalid or expired state." }, 400)
       }
 
-      const connection = await getExternalMcpConnectionById(externalMcpConnectionId)
+      const connection = await getExternalMcpConnection({
+        organizationId: statePayload.organizationId,
+        connectionId: externalMcpConnectionId,
+      })
       if (!connection) {
         return c.json({ error: "invalid_request", message: "Unknown connection." }, 400)
+      }
+
+      const providerErrorCode = url.searchParams.get("error")
+      if (providerErrorCode) {
+        const callbackError = externalMcpOAuthCallbackError(c.get("requestId"), providerErrorCode)
+        console.error("external_mcp_connect_callback_authorization_denied", {
+          connectionId: connection.id,
+          organizationId: statePayload.organizationId,
+          ...externalMcpDiagnosticForLog(callbackError, c.get("requestId"), "AUTH_USER_OR_WORKLOAD"),
+        })
+        return c.html(connectCallbackPage({
+          ok: false,
+          name: connection.name,
+          message: callbackError.diagnostic.message,
+          referenceId: callbackError.diagnostic.referenceId,
+        }), 400)
+      }
+
+      const code = url.searchParams.get("code")
+      if (!code) {
+        return c.json({ error: "invalid_request", message: "Missing authorization code." }, 400)
       }
 
       try {
@@ -645,9 +733,20 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         const member = connection.credentialMode === "per_member"
           ? { orgMembershipId: statePayload.orgMembershipId }
           : undefined
-        await completeExternalMcpAuth(connection, code, callbackRedirectUri(c.req.raw, connectionId), member)
+        await completeExternalMcpAuth(connection, code, callbackRedirectUri(c.req.raw, connectionId), member, c.get("requestId"))
       } catch (error) {
-        return c.html(connectCallbackPage({ ok: false, name: connection.name, message: error instanceof Error ? error.message : String(error) }), 400)
+        const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "AUTH_TOKEN_ACQUISITION")
+        console.error("external_mcp_connect_callback_token_exchange_failed", {
+          connectionId: connection.id,
+          organizationId: statePayload.organizationId,
+          ...externalMcpDiagnosticForLog(error, c.get("requestId"), "AUTH_TOKEN_ACQUISITION"),
+        })
+        return c.html(connectCallbackPage({
+          ok: false,
+          name: connection.name,
+          message: diagnostic.message,
+          referenceId: diagnostic.referenceId,
+        }), 400)
       }
       return c.html(connectCallbackPage({ ok: true, name: connection.name }))
     },

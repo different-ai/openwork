@@ -1,4 +1,5 @@
 import type { Hono } from "hono"
+import type { RequestIdVariables } from "hono/request-id"
 import { delegatedRoute } from "../../middleware/index.js"
 import { registerOrgApiKeyRoutes } from "./api-keys.js"
 import { registerOrgBillingRoutes } from "./billing.js"
@@ -51,7 +52,7 @@ function extractLegacyOrgProxyTarget(pathname: string) {
   return { organizationId, targetPath }
 }
 
-export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & RequestIdVariables }>(app: Hono<T>) {
   registerOrgCoreRoutes(app)
   registerOrgApiKeyRoutes(app)
   registerOrgBillingRoutes(app)

@@ -26,6 +26,7 @@ export type EnterpriseMcpOperationPhase =
   | "shutdown"
 
 export type EnterpriseMcpDiagnosticEvent = {
+  kind: "request" | "operation"
   connectionId: string
   operationPhase: EnterpriseMcpOperationPhase
   requestPhase: EnterpriseMcpRequestPhase | null
@@ -41,6 +42,7 @@ export interface EnterpriseMcpOAuthStore {
   saveClientInformation(clientInformation: OAuthClientInformationMixed): Promise<void>
   loadTokens(): Promise<OAuthTokens | undefined>
   saveTokens(tokens: OAuthTokens): Promise<void>
+  invalidateTokens(): Promise<void>
   saveCodeVerifier(codeVerifier: string): Promise<void>
   loadCodeVerifier(): Promise<string>
 }
@@ -93,6 +95,10 @@ export type EnterpriseMcpClientOptions = {
   closeTimeoutMs?: number
   clientName?: string
   clientVersion?: string
+  lifecycle?: {
+    expiresAt: number
+    signal: AbortSignal
+  }
 }
 
 export interface EnterpriseMcpClient {

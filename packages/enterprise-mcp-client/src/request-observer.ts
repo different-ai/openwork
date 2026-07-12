@@ -82,6 +82,7 @@ export function createEnterpriseMcpRequestObserver(input: {
       lastRequestPhase = requestPhase
       const startedAt = Date.now()
       input.diagnosticSink?.({
+        kind: "request",
         connectionId: input.connectionId,
         operationPhase: input.operationPhase,
         requestPhase,
@@ -94,6 +95,7 @@ export function createEnterpriseMcpRequestObserver(input: {
           : input.signal
         const response = await input.fetch(rawUrl, { ...init, signal })
         input.diagnosticSink?.({
+          kind: "request",
           connectionId: input.connectionId,
           operationPhase: input.operationPhase,
           requestPhase,
@@ -104,6 +106,7 @@ export function createEnterpriseMcpRequestObserver(input: {
         return response
       } catch (error) {
         input.diagnosticSink?.({
+          kind: "request",
           connectionId: input.connectionId,
           operationPhase: input.operationPhase,
           requestPhase,

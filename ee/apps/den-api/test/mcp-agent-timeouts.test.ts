@@ -130,6 +130,49 @@ test("capability search results include structured output alongside text compati
   expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual({ matches })
 })
 
+test("capability search preserves the bounded-fanout coverage warning", () => {
+  const result = agentModule.capabilitySearchToolResult([], "External MCP search inspected 16 of 17 eligible connections. Results may be incomplete.")
+  const structured = result.structuredContent
+
+  expect(structured).toEqual({
+    matches: [],
+    hint: "No matches. Try broader or different keywords. External MCP search inspected 16 of 17 eligible connections. Results may be incomplete.",
+  })
+  expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual(structured)
+})
+
+test("external capability failures preserve the safe MCP diagnostic envelope", () => {
+  const result = agentModule.externalCapabilityErrorToolResult({
+    ok: false,
+    error: "connection_failed",
+    message: "Connection failed. Diagnostic reference: req_test.",
+    actionOwner: "network_admin",
+    operatorAction: "Repair the certificate chain.",
+    diagnostic: {
+      referenceId: "req_test",
+      phase: "NETWORK_TLS",
+      category: "tls_failure",
+      code: "MCP_CERT_HAS_EXPIRED",
+      highestPassed: "reachable",
+      retryable: false,
+      actionOwner: "network_admin",
+      operatorAction: "Repair the certificate chain.",
+      message: "TLS validation failed.",
+    },
+  })
+  expect(result.isError).toBe(true)
+  expect(JSON.parse(result.content[0]?.text ?? "{}")).toMatchObject({
+    error: "connection_failed",
+    actionOwner: "network_admin",
+    operatorAction: "Repair the certificate chain.",
+    diagnostic: {
+      referenceId: "req_test",
+      phase: "NETWORK_TLS",
+      actionOwner: "network_admin",
+    },
+  })
+})
+
 test("structured search output remains compatible with marketplace match kinds and statuses", () => {
   const result = agentModule.SEARCH_CAPABILITIES_OUTPUT_SCHEMA.safeParse({
     matches: [{
