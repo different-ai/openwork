@@ -35,14 +35,11 @@ INFRA_GLOBS=(
   # Deployment
   "apps/app/vercel.json"
   "ee/apps/den-web/vercel.json"
-  # Tauri
-  "apps/desktop/src-tauri/tauri.conf.json"
   # Monorepo orchestration
   "turbo.json"
   # Build configs
   "apps/app/vite.config.ts"
   "apps/app/tailwind.config.ts"
-  "apps/story-book/vite.config.ts"
   "apps/ui-demo/vite.config.ts"
   "ee/apps/den-web/next.config.js"
   "ee/apps/den-web/postcss.config.js"
@@ -138,7 +135,8 @@ search_infra() {
 search_sibling_ci() {
   local pattern="$1"
   local hits=""
-  for repo in "${SIBLING_REPOS[@]}"; do
+  # The + expansion keeps an empty indexed array empty under Bash 3.2 + nounset.
+  for repo in "${SIBLING_REPOS[@]+"${SIBLING_REPOS[@]}"}"; do
     for ci_dir in ".github/workflows" "packaging" "containers" "infra" ".circleci" "script" "scripts"; do
       [ -d "${repo}${ci_dir}" ] || continue
       local ci_hits
@@ -201,7 +199,16 @@ format_refs() {
 # ── Step 1: Run knip ───────────────────────────────────────────────────────
 cd "$OPENWORK_ROOT"
 echo -e "${BOLD}Running knip to detect unused files...${RESET}"
-KNIP_OUTPUT=$(DATABASE_URL=mysql://fake:fake@localhost/fake npx knip --include files --no-progress --no-config-hints 2>&1 || true)
+# Tests may inject captured output so classification can be verified offline.
+if [ -n "${FIND_UNUSED_KNIP_OUTPUT_FILE:-}" ]; then
+  if [ ! -f "$FIND_UNUSED_KNIP_OUTPUT_FILE" ]; then
+    echo "Knip output fixture not found: $FIND_UNUSED_KNIP_OUTPUT_FILE" >&2
+    exit 2
+  fi
+  KNIP_OUTPUT=$(<"$FIND_UNUSED_KNIP_OUTPUT_FILE")
+else
+  KNIP_OUTPUT=$(DATABASE_URL=mysql://fake:fake@localhost/fake npx knip --include files --no-progress --no-config-hints 2>&1 || true)
+fi
 
 UNUSED_FILES=()
 while IFS= read -r line; do
@@ -239,12 +246,15 @@ else
 fi
 
 # ── Step 3: Cross-reference each file ──────────────────────────────────────
-declare -A FILE_STATUS  # "safe" | "infra" | "convention" | "routing" | "sibling_ci"
-declare -A FILE_REFS
-declare -A FILE_DATES
+# Parallel indexed arrays keep the result model compatible with macOS Bash 3.2.
+# Each index corresponds to the same index in UNUSED_FILES.
+FILE_STATUSES=()  # "safe" | "infra" | "convention" | "routing" | "sibling_ci"
+FILE_REFS=()
+FILE_DATES=()
 
 total=${#UNUSED_FILES[@]}
 i=0
+file_index=0
 
 for filepath in "${UNUSED_FILES[@]}"; do
   i=$((i + 1))
@@ -317,9 +327,10 @@ for filepath in "${UNUSED_FILES[@]}"; do
   # Get last commit date
   last_date=$(git log -1 --format="%aI" -- "$filepath" 2>/dev/null || echo "unknown")
 
-  FILE_STATUS["$filepath"]="$status"
-  FILE_REFS["$filepath"]="$refs"
-  FILE_DATES["$filepath"]="$last_date"
+  FILE_STATUSES[$file_index]="$status"
+  FILE_REFS[$file_index]="$refs"
+  FILE_DATES[$file_index]="$last_date"
+  file_index=$((file_index + 1))
 done
 
 printf "\r%*s\r" 120 "" >&2
@@ -328,17 +339,29 @@ printf "\r%*s\r" 120 "" >&2
 safe_entries=()
 flagged_entries=()
 
+file_index=0
 for filepath in "${UNUSED_FILES[@]}"; do
-  entry="${FILE_DATES[$filepath]}|$filepath"
-  if [ "${FILE_STATUS[$filepath]}" = "safe" ]; then
+  # Keep date and path first so sorting remains oldest-first, then path.
+  entry="${FILE_DATES[$file_index]}|$filepath|$file_index"
+  if [ "${FILE_STATUSES[$file_index]}" = "safe" ]; then
     safe_entries+=("$entry")
   else
     flagged_entries+=("$entry")
   fi
+  file_index=$((file_index + 1))
 done
 
-IFS=$'\n' safe_sorted=($(printf '%s\n' "${safe_entries[@]}" 2>/dev/null | sort)); unset IFS
-IFS=$'\n' flagged_sorted=($(printf '%s\n' "${flagged_entries[@]}" 2>/dev/null | sort)); unset IFS
+safe_sorted=()
+if [ "${#safe_entries[@]}" -gt 0 ]; then
+  IFS=$'\n' safe_sorted=($(printf '%s\n' "${safe_entries[@]}" | sort))
+  unset IFS
+fi
+
+flagged_sorted=()
+if [ "${#flagged_entries[@]}" -gt 0 ]; then
+  IFS=$'\n' flagged_sorted=($(printf '%s\n' "${flagged_entries[@]}" | sort))
+  unset IFS
+fi
 
 safe_count=${#safe_sorted[@]}
 flagged_count=${#flagged_sorted[@]}
@@ -356,8 +379,10 @@ if [ "$safe_count" -eq 0 ]; then
   echo -e "  ${GREEN}None — all files have references somewhere.${RESET}"
 else
   for entry in "${safe_sorted[@]}"; do
-    date="${entry%%|*}"
-    filepath="${entry#*|}"
+    entry_index="${entry##*|}"
+    dated_path="${entry%|*}"
+    date="${dated_path%%|*}"
+    filepath="${dated_path#*|}"
     short_date="${date%%T*}"
     echo -e "  ${RED}✗${RESET} ${DIM}${short_date}${RESET}  ./$filepath:1"
   done
@@ -375,10 +400,12 @@ if [ "$flagged_count" -eq 0 ]; then
   echo -e "  ${GREEN}None.${RESET}"
 else
   for entry in "${flagged_sorted[@]}"; do
-    date="${entry%%|*}"
-    filepath="${entry#*|}"
-    status="${FILE_STATUS[$filepath]}"
-    refs="${FILE_REFS[$filepath]}"
+    entry_index="${entry##*|}"
+    dated_path="${entry%|*}"
+    date="${dated_path%%|*}"
+    filepath="${dated_path#*|}"
+    status="${FILE_STATUSES[$entry_index]}"
+    refs="${FILE_REFS[$entry_index]}"
     short_date="${date%%T*}"
     formatted_refs=$(format_refs "$refs")
 
