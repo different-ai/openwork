@@ -11,8 +11,6 @@ import {
   readDenBootstrapConfig,
   readDenSettings,
   resolveDenBaseUrls,
-  setDenBootstrapConfig,
-  writeDenSettings,
 } from "../../../app/lib/den";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
 import {
@@ -23,7 +21,10 @@ import { usePlatform } from "../../kernel/platform";
 import { useBootState } from "../../shell/boot-state";
 import { useDenAuth } from "./den-auth-provider";
 import { useDesktopConfig } from "./desktop-config-provider";
+import { applyBrandAppName, applyBrandIcon } from "../../../app/lib/desktop";
 import { DenSignInSurface } from "./den-signin-surface";
+import { tryOpenBrowserAuthUrl } from "./open-browser-auth";
+import { saveControlPlaneUrl } from "../settings/cloud/control-plane-url";
 
 export type ForcedSigninPageProps = {
   developerMode: boolean;
@@ -80,6 +81,9 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   const { markRouteReady } = useBootState();
 
   const initial = readDenSettings();
+  const bootstrap = readDenBootstrapConfig();
+  const appName = bootstrap.brandAppName?.trim() || "OpenWork";
+  const iconUrl = bootstrap.brandIconUrl?.trim() || null;
   const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
 
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
@@ -91,6 +95,14 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   const [manualAuthInput, setManualAuthInput] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [signinFallbackUrl, setSigninFallbackUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    document.title = appName;
+    void applyBrandAppName(appName)
+      .then(() => applyBrandIcon(iconUrl))
+      .catch(() => null);
+  }, [appName, iconUrl]);
 
   const openControlPlane = useCallback(() => {
     platform.openLink(resolveDenBaseUrls(baseUrl).baseUrl);
@@ -98,15 +110,22 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   const openBrowserAuth = useCallback(
     (mode: "sign-in" | "sign-up") => {
-      platform.openLink(buildDenAuthUrl(baseUrl, mode));
+      const url = buildDenAuthUrl(baseUrl, mode);
+      setSigninFallbackUrl(null);
       setStatusMessage(
         mode === "sign-up"
           ? t("den.status_browser_signup")
           : t("den.status_browser_signin"),
       );
       setAuthError(null);
+      void tryOpenBrowserAuthUrl(url).then((opened) => {
+        if (opened) return;
+        setStatusMessage(null);
+        setSigninFallbackUrl(url);
+        setManualAuthOpen(true);
+      });
     },
-    [baseUrl, platform],
+    [baseUrl],
   );
 
   const submitManualAuth = useCallback(async () => {
@@ -128,8 +147,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       const client = createDenClient({
         baseUrl: nextBaseUrl,
       });
-      // The helper exchanges, persists (incl. the working apiBaseUrl, #1808), and
-      // dispatches the success/error session events.
+      // The helper exchanges, persists, and dispatches the success/error session events.
       const result = await exchangeHandoffAndSignIn(parsed.grant, {
         baseUrl: nextBaseUrl,
         client,
@@ -144,6 +162,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
         setBaseUrlDraft(nextBaseUrl);
       }
 
+      setSigninFallbackUrl(null);
       setManualAuthInput("");
       setManualAuthOpen(false);
       return true;
@@ -152,51 +171,43 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
     }
   }, [authBusy, baseUrl, developerMode, manualAuthInput]);
 
-  const applyBaseUrl = useCallback(async () => {
-    const normalized = normalizeDenBaseUrl(baseUrlDraft);
+  const applyBaseUrl = useCallback(async (value?: string) => {
+    const normalized = normalizeDenBaseUrl(value ?? baseUrlDraft);
     if (!normalized) {
       setBaseUrlError(t("den.error_base_url"));
-      return;
+      return false;
     }
 
     const resolved = resolveDenBaseUrls(normalized);
     setBaseUrlBusy(true);
 
     try {
-      await setDenBootstrapConfig({
-        baseUrl: resolved.baseUrl,
-        apiBaseUrl: resolved.apiBaseUrl,
-        requireSignin: readDenBootstrapConfig().requireSignin,
-      });
+      const persisted = await saveControlPlaneUrl(resolved.baseUrl);
+      if (!persisted) {
+        setBaseUrlError(t("den.error_base_url"));
+        return false;
+      }
+
       setBaseUrlError(null);
-      setBaseUrl(resolved.baseUrl);
-      setBaseUrlDraft(resolved.baseUrl);
-      clearDenSession({ includeBaseUrls: !developerMode });
-      writeDenSettings(
-        {
-          baseUrl: resolved.baseUrl,
-          apiBaseUrl: resolved.apiBaseUrl,
-          authToken: null,
-          activeOrgId: null,
-          activeOrgSlug: null,
-          activeOrgName: null,
-        },
-        { persistBootstrap: false },
-      );
+      setBaseUrl(persisted.baseUrl);
+      setBaseUrlDraft(persisted.baseUrl);
+      clearDenSession({ includeBaseUrls: false });
       setAuthError(null);
       setStatusMessage(t("den.status_base_url_updated"));
       void desktopConfig.refresh();
       void denAuth.refresh();
+      return true;
     } catch (error) {
       setBaseUrlError(
         error instanceof Error
           ? error.message
           : t("den.error_base_url"),
       );
+      return false;
     } finally {
       setBaseUrlBusy(false);
     }
-  }, [baseUrlDraft, denAuth, desktopConfig, developerMode]);
+  }, [baseUrlDraft, denAuth, desktopConfig]);
 
   // Listen for Den session events broadcast from the Tauri deep-link handler,
   // a successful browser auth, or an org switch, and reflect the result in
@@ -220,6 +231,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
       if (customEvent.detail?.status === "success") {
         setAuthError(null);
+        setSigninFallbackUrl(null);
         const email = customEvent.detail.email?.trim();
         setStatusMessage(
           email
@@ -245,18 +257,25 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   return (
     <DenSignInSurface
       variant="fullscreen"
+      appName={appName}
+      logoUrl={bootstrap.brandLogoUrl ?? null}
       developerMode={developerMode}
       baseUrl={baseUrl}
       baseUrlDraft={baseUrlDraft}
       baseUrlError={baseUrlError}
       statusMessage={statusMessage}
+      signinFallbackUrl={signinFallbackUrl}
       authError={authError ?? denAuth.error}
       authBusy={authBusy}
       baseUrlBusy={baseUrlBusy}
       sessionBusy={denAuth.status === "checking"}
       manualAuthOpen={manualAuthOpen}
       manualAuthInput={manualAuthInput}
+      organizationServerBusy={baseUrlBusy}
+      organizationServerError={baseUrlError}
+      organizationServerUrl={baseUrl}
       onBaseUrlDraftInput={setBaseUrlDraft}
+      onOrganizationServerSave={applyBaseUrl}
       onResetBaseUrl={() => setBaseUrlDraft(baseUrl)}
       onApplyBaseUrl={() => {
         void applyBaseUrl();

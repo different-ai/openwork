@@ -45,7 +45,6 @@ function getResolvedIngestUrl(settings: DenSettings): string | null {
 
   const baseUrls = resolveDenBaseUrls({
     baseUrl: settings.baseUrl,
-    apiBaseUrl: settings.apiBaseUrl,
   });
 
   return `${baseUrls.apiBaseUrl}${INGEST_PATH}`;

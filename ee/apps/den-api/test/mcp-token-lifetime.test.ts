@@ -9,7 +9,10 @@ test("MCP OAuth access tokens use a short lifetime", () => {
   expect(DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS).toBe(15 * 60)
 })
 
-test("MCP refresh and first-party opaque tokens expire after seven days", () => {
-  expect(DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS).toBe(7 * 24 * 60 * 60)
-  expect(DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS).toBe(DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS * 1000)
+test("rotating MCP refresh grants use a thirty-day inactivity window", () => {
+  expect(DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS).toBe(30 * 24 * 60 * 60)
+})
+
+test("first-party MCP bearer tokens retain a bounded seven-day lifetime", () => {
+  expect(DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS).toBe(7 * 24 * 60 * 60 * 1000)
 })

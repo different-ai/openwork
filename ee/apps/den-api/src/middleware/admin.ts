@@ -1,5 +1,6 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { AdminAllowlistTable } from "@openwork-ee/den-db/schema"
+import { AdminAllowlistTable, AuthUserTable } from "@openwork-ee/den-db/schema"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
 import { ensureAdminAllowlistSeeded } from "../admin-allowlist.js"
 import { db } from "../db.js"
@@ -25,6 +26,24 @@ export async function isAdminEmailAllowed(email: string | null | undefined): Pro
     .limit(1)
 
   return allowed.length > 0
+}
+
+/** Whether a Den user id belongs to an allowlisted platform admin. */
+export async function isPlatformAdminUserId(value: string): Promise<boolean> {
+  let userId: ReturnType<typeof normalizeDenTypeId<"user">>
+  try {
+    userId = normalizeDenTypeId("user", value)
+  } catch {
+    return false
+  }
+
+  const user = (await db
+    .select({ email: AuthUserTable.email })
+    .from(AuthUserTable)
+    .where(eq(AuthUserTable.id, userId))
+    .limit(1))[0]
+
+  return isAdminEmailAllowed(user?.email)
 }
 
 export const requireAdminMiddleware: MiddlewareHandler<{ Variables: AuthContextVariables }> = async (c, next) => {

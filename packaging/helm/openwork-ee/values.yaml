@@ -10,6 +10,7 @@ imagePullSecrets: []
 config:
   databaseMode: mysql
   openworkDevMode: "0"
+  enterpriseMcpClientEnabled: "false"
   tenancy:
     mode: single_org
     singleOrgName: OpenWork
@@ -26,12 +27,14 @@ config:
     webOrigin: https://openwork.example.com
     apiOrigin: https://api.openwork.example.com
     mcpResourceUrl: https://api.openwork.example.com/mcp
+    mcpAdditionalResources: ""
     mcpClaimNamespace: ""
     desktopDenBaseUrl: https://openwork.example.com
     corsOrigins: https://openwork.example.com,https://api.openwork.example.com
     betterAuthTrustedOrigins: https://openwork.example.com
     webAppHosts: openwork.example.com
     bootstrapAdminEmails: ""
+    installLinksGatingEnabled: "false"
     openworkAppConnectUrl: ""
     installerReleaseTag: ""
     installerReleaseRepo: ""
@@ -87,6 +90,36 @@ config:
   web:
     posthogKey: ""
     posthogHost: ""
+
+observability:
+  backend: none
+  serviceNames:
+    denApi: den-api
+    denWeb: den-web
+  otel:
+    endpoint: ""
+    tracesEndpoint: ""
+    metricsEndpoint: ""
+    logsEndpoint: ""
+    protocol: http/protobuf
+    exporters:
+      traces: otlp
+      metrics: otlp
+      logs: otlp
+    tracesSampler: parentbased_always_on
+    tracesSamplerArg: ""
+    headers:
+      existingSecret: ""
+      key: OTEL_EXPORTER_OTLP_HEADERS
+  sentry:
+    dsn: ""
+    dsnSecret:
+      existingSecret: ""
+      key: SENTRY_DSN
+    tracesSampleRate: "1"
+    environment: ""
+    release: ""
+    dist: ""
 
 secret:
   create: true

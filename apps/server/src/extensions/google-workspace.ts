@@ -307,6 +307,10 @@ function googleWorkspaceCredentials() {
   return { clientId, clientSecret, tokenBrokerUrl, missing, customClient };
 }
 
+export function googleWorkspaceLegacyConfigured(): boolean {
+  return googleWorkspaceCredentials().missing.length === 0;
+}
+
 function googleWorkspaceDir(config: ServerConfig): string {
   return join(configDir(config), "extensions", GOOGLE_WORKSPACE_EXTENSION_ID);
 }
@@ -1174,13 +1178,13 @@ async function googleWorkspaceSendChatMessage(config: ServerConfig, args: Record
   });
 }
 
-export async function callGoogleWorkspaceExtensionAction(config: ServerConfig, action: string, args: Record<string, unknown>, context: Record<string, unknown>) {
+export async function callGoogleWorkspaceExtensionAction(config: ServerConfig, action: string, args: Record<string, unknown>, context: Record<string, unknown>, statusExtra: Record<string, unknown> = {}) {
   if (action === "status") {
     return {
       ok: true,
       extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
       action,
-      result: await googleWorkspaceStatus(config),
+      result: await googleWorkspaceStatus(config, statusExtra),
       context,
     };
   }
@@ -1200,12 +1204,12 @@ export async function callGoogleWorkspaceExtensionAction(config: ServerConfig, a
   return null;
 }
 
-export async function googleWorkspaceStatus(config: ServerConfig) {
+export async function googleWorkspaceStatus(config: ServerConfig, extra: Record<string, unknown> = {}) {
   try {
     const record = await readGoogleWorkspaceVault(config);
-    return googleWorkspaceStatusPayload(record);
+    return googleWorkspaceStatusPayload(record, extra);
   } catch (error) {
-    return googleWorkspaceStatusPayload(null, { error: error instanceof Error ? error.message : String(error) });
+    return googleWorkspaceStatusPayload(null, { ...extra, error: error instanceof Error ? error.message : String(error) });
   }
 }
 

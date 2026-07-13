@@ -12,6 +12,12 @@
  * with an active org and a workspace open — the state mcp-connections-
  * desktop-e2e.flow.mjs ends in. Fails fast with a clear message otherwise.
  */
+
+const revealHidden = async (ctx) => {
+  const showing = await ctx.eval("document.body.innerText.includes('Showing hidden')");
+  if (!showing) await ctx.clickText("Show hidden", { timeoutMs: 30_000 });
+};
+
 export default {
   id: "mcp-cloud-force-sync",
   title: "Refresh force-syncs the cloud MCP (marker bypassed, token re-minted)",
@@ -35,6 +41,7 @@ export default {
         const settingsPath = workspaceId ? `/workspace/${workspaceId}/settings/extensions/mcp` : "/settings/extensions/mcp";
         await ctx.navigateHash(settingsPath);
         await ctx.waitForText("Add Custom App", { timeoutMs: 30_000 });
+        await revealHidden(ctx);
         // Let the on-mount auto-sync fully settle first (it may legitimately
         // re-sync if the marker aged past the refresh margin). THEN take the
         // baseline: at this point the marker is maximally fresh, so without

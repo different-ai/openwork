@@ -157,3 +157,15 @@ test("single_org SSO-only guard recognizes email/password auth requests", () => 
     method: "GET",
   }))).toBe(false)
 })
+
+test("bearer-aware sign-out only recognizes the Better Auth POST route", () => {
+  expect(authRoutesModule.isBetterAuthSignOutRequest(new Request("http://den.local/api/auth/sign-out", {
+    method: "POST",
+  }))).toBe(true)
+  expect(authRoutesModule.isBetterAuthSignOutRequest(new Request("http://den.local/api/auth/sign-out", {
+    method: "GET",
+  }))).toBe(false)
+  expect(authRoutesModule.isBetterAuthSignOutRequest(new Request("http://den.local/api/auth/revoke-session", {
+    method: "POST",
+  }))).toBe(false)
+})

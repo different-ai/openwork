@@ -54,6 +54,11 @@ const state = {
   chatStartedAt: null,
 };
 
+const revealHidden = async (ctx) => {
+  const showing = await ctx.eval("document.body.innerText.includes('Showing hidden')");
+  if (!showing) await ctx.clickText("Show hidden", { timeoutMs: 30_000 });
+};
+
 async function denApiFetch(path, options = {}) {
   const response = await fetch(`${DEN_API_URL}${path}`, {
     ...options,
@@ -254,6 +259,8 @@ export default {
         const workspaceId = await ctx.eval("(window.location.hash.match(/\\/workspace\\/([^/]+)/) ?? [])[1] ?? null");
         ctx.assert(Boolean(workspaceId), "No workspace id in URL.");
         await ctx.navigateHash(`/workspace/${workspaceId}/settings/extensions/mcp`);
+        await ctx.waitForText("Add Custom App", { timeoutMs: 30_000 });
+        await revealHidden(ctx);
         await ctx.waitFor(
           "Boolean(localStorage.getItem('openwork.den.mcp.sync'))",
           { timeoutMs: 120_000, label: "openwork.den.mcp.sync marker" },

@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -9,9 +9,11 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const desktopRoot = path.join(repoRoot, "apps", "desktop");
 const desktopScriptsRoot = path.join(desktopRoot, "scripts");
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-const demoRoot =
-  process.env.OPENWORK_ELECTRON_DEMO_ROOT?.trim() ||
-  path.join(os.homedir(), ".openwork", "two-electron-demo");
+export function resolveDemoRoot(env = process.env) {
+  return env.OPENWORK_ELECTRON_DEMO_ROOT?.trim() || path.join(os.tmpdir(), "openwork-two-electron-demo");
+}
+
+const demoRoot = resolveDemoRoot();
 const appProfiles = {
   admin: {
     appIdentifier: "com.differentai.openwork.demo.admin",
@@ -23,7 +25,6 @@ const appProfiles = {
     portFlag: "--admin-port",
     port: "5273",
     requireSignin: false,
-    userDataName: "admin-userdata",
   },
   consumer: {
     appIdentifier: "com.differentai.openwork.demo.consumer",
@@ -35,9 +36,32 @@ const appProfiles = {
     portFlag: "--consumer-port",
     port: "5274",
     requireSignin: true,
-    userDataName: "consumer-userdata",
   },
 };
+
+function profilePaths(runRoot, profile) {
+  const root = path.join(runRoot, profile.label);
+  return {
+    bootstrapPath: path.join(root, profile.bootstrapName),
+    dataDir: path.join(root, "openwork-data"),
+    root,
+    userDataDir: path.join(root, "electron-userdata"),
+  };
+}
+
+export async function createDemoRun(root = demoRoot) {
+  await mkdir(root, { recursive: true });
+  const runRoot = await mkdtemp(path.join(root, "run-"));
+  const admin = profilePaths(runRoot, appProfiles.admin);
+  const consumer = profilePaths(runRoot, appProfiles.consumer);
+  await Promise.all([
+    mkdir(admin.userDataDir, { recursive: true }),
+    mkdir(admin.dataDir, { recursive: true }),
+    mkdir(consumer.userDataDir, { recursive: true }),
+    mkdir(consumer.dataDir, { recursive: true }),
+  ]);
+  return { admin, consumer, runRoot };
+}
 
 function argValue(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -231,22 +255,21 @@ async function writeBootstrap(filePath, requireSignin, baseUrl, apiBaseUrl) {
   );
 }
 
-async function resetDemoData() {
-  await rm(demoRoot, { recursive: true, force: true });
+export async function resetDemoData(root = demoRoot) {
+  await rm(root, { recursive: true, force: true });
 }
 
-function demoEnv(profile, bootstrapPath, port, cdpPort) {
-  const userDataDir = path.join(demoRoot, profile.userDataName);
+export function demoEnv(profile, paths, port, cdpPort) {
   return {
-    OPENWORK_DATA_DIR: path.join(userDataDir, "openwork-orchestrator-data"),
-    OPENWORK_DESKTOP_BOOTSTRAP_PATH: bootstrapPath,
+    OPENWORK_DATA_DIR: paths.dataDir,
+    OPENWORK_DESKTOP_BOOTSTRAP_PATH: paths.bootstrapPath,
     OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "1",
     VITE_DISABLE_OPENWORK_MODELS: "1",
     OPENWORK_ELECTRON_APP_IDENTIFIER: profile.appIdentifier,
     OPENWORK_ELECTRON_APP_NAME: profile.appName,
     OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort,
     OPENWORK_ELECTRON_SKIP_SHARED_PREPARE: "1",
-    OPENWORK_ELECTRON_USERDATA: userDataDir,
+    OPENWORK_ELECTRON_USERDATA: paths.userDataDir,
     PORT: port,
   };
 }
@@ -278,21 +301,20 @@ async function main() {
   }
   if (flag("--reset-only")) return;
 
-  const adminBootstrap = path.join(demoRoot, appProfiles.admin.bootstrapName);
-  const consumerBootstrap = path.join(demoRoot, appProfiles.consumer.bootstrapName);
-
   await assertDemoPortsAvailable(portEntries);
 
-  await writeBootstrap(adminBootstrap, appProfiles.admin.requireSignin, denWebUrl, denApiUrl);
-  await writeBootstrap(consumerBootstrap, appProfiles.consumer.requireSignin, denWebUrl, denApiUrl);
-  await mkdir(path.join(demoRoot, appProfiles.admin.userDataName), { recursive: true });
-  await mkdir(path.join(demoRoot, appProfiles.consumer.userDataName), { recursive: true });
+  const demoRun = await createDemoRun();
+  await writeBootstrap(demoRun.admin.bootstrapPath, appProfiles.admin.requireSignin, denWebUrl, denApiUrl);
+  await writeBootstrap(demoRun.consumer.bootstrapPath, appProfiles.consumer.requireSignin, denWebUrl, denApiUrl);
 
   prepareSharedElectronResources();
 
   children = [
-    startElectron(appProfiles.admin.label, demoEnv(appProfiles.admin, adminBootstrap, adminPort, adminCdp)),
-    startElectron(appProfiles.consumer.label, demoEnv(appProfiles.consumer, consumerBootstrap, consumerPort, consumerCdp)),
+    startElectron(appProfiles.admin.label, demoEnv(appProfiles.admin, demoRun.admin, adminPort, adminCdp)),
+    startElectron(
+      appProfiles.consumer.label,
+      demoEnv(appProfiles.consumer, demoRun.consumer, consumerPort, consumerCdp),
+    ),
   ];
 
   console.log("\nTwo Electron demo is starting.");
@@ -302,8 +324,12 @@ async function main() {
   console.log(`Demo B URL:    http://localhost:${consumerPort}`);
   console.log(`Demo A CDP:    http://127.0.0.1:${adminCdp}`);
   console.log(`Demo B CDP:    http://127.0.0.1:${consumerCdp}`);
-  console.log(`Demo A data:   ${path.join(demoRoot, appProfiles.admin.userDataName)}`);
-  console.log(`Demo B data:   ${path.join(demoRoot, appProfiles.consumer.userDataName)}`);
+  console.log(`Demo A folder: ${demoRun.admin.root}`);
+  console.log(`  Electron:    ${demoRun.admin.userDataDir}`);
+  console.log(`  OpenWork:    ${demoRun.admin.dataDir}`);
+  console.log(`Demo B folder: ${demoRun.consumer.root}`);
+  console.log(`  Electron:    ${demoRun.consumer.userDataDir}`);
+  console.log(`  OpenWork:    ${demoRun.consumer.dataDir}`);
   const denStartup =
     adminPort === appProfiles.admin.port && consumerPort === appProfiles.consumer.port
       ? "pnpm demo:den"
@@ -312,10 +338,12 @@ async function main() {
   console.log("Press Ctrl-C to stop both instances.\n");
 }
 
-process.once("SIGINT", () => void stopAll(130));
-process.once("SIGTERM", () => void stopAll(143));
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.once("SIGINT", () => void stopAll(130));
+  process.once("SIGTERM", () => void stopAll(143));
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  void stopAll(1);
-});
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    void stopAll(1);
+  });
+}

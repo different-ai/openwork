@@ -1,9 +1,16 @@
 /**
- * The MCP settings view renders: connected built-in apps, the custom-app
- * entry point, the My Extensions / Marketplace tabs, and — regression guard
- * for #2008 — the unconfigured quick-connect directory (Notion, OpenWork
- * Cloud Control, ...) so MCP discovery works without a cloud sign-in.
+ * The MCP settings view renders the custom-app entry point, the My Extensions /
+ * Marketplace tabs, and — regression guard
+ * for #2008 — the unconfigured quick-connect directory (Notion/Linear) so MCP
+ * discovery works without a cloud sign-in. Built-in OpenWork MCPs are hidden by
+ * default and revealed via Show hidden.
  */
+
+const revealHidden = async (ctx) => {
+  const showing = await ctx.eval("document.body.innerText.includes('Showing hidden')");
+  if (!showing) await ctx.clickText("Show hidden", { timeoutMs: 30_000 });
+};
+
 export default {
   id: "settings-extensions-mcp",
   title: "MCP settings view renders apps and entry points",
@@ -41,14 +48,32 @@ export default {
       },
     },
     {
-      name: "Unconfigured directory entries are discoverable",
+      name: "Default view keeps directory apps discoverable and hides built-in OpenWork MCPs",
       run: async (ctx) => {
-        await ctx.expectText("OpenWork Cloud Control", { timeoutMs: 15_000 });
-        const hasDirectoryEntry = (await ctx.hasText("Notion")) || (await ctx.hasText("Linear"));
+        const directoryEntry = await ctx.hasText("Notion") ? "Notion" : "Linear";
+        const hasDirectoryEntry = await ctx.hasText(directoryEntry);
         ctx.assert(hasDirectoryEntry, "Expected at least one MCP directory entry (Notion/Linear) in quick connect.");
-        await ctx.screenshot("mcp-view", {
-          claim: "MCP settings shows the built-in cloud control app and directory entries.",
-          requireText: ["OpenWork Cloud Control"],
+        await ctx.expectNoText("OpenWork Cloud Control");
+        await ctx.expectNoText("OpenWork UI Control");
+        await ctx.screenshot("mcp-view-default-hidden", {
+          claim: "MCP settings shows public directory apps while built-in OpenWork MCPs are hidden by default.",
+          voiceover: "Settings shows the extension directory with the public apps, while OpenWork's internal control entries stay out of the default list.",
+          requireText: [directoryEntry],
+          rejectText: ["OpenWork Cloud Control", "OpenWork UI Control", "Something went wrong"],
+          hashIncludes: "/settings/extensions/mcp",
+        });
+      },
+    },
+    {
+      name: "Show hidden reveals built-in OpenWork MCPs",
+      run: async (ctx) => {
+        await revealHidden(ctx);
+        await ctx.expectText("OpenWork Cloud Control", { timeoutMs: 15_000 });
+        await ctx.expectText("OpenWork UI Control", { timeoutMs: 15_000 });
+        await ctx.screenshot("mcp-view-built-ins-revealed", {
+          claim: "Show hidden reveals the built-in OpenWork MCP entries.",
+          voiceover: "Choosing Show hidden brings back OpenWork Cloud Control and OpenWork UI Control for anyone who wants to manage them.",
+          requireText: ["OpenWork Cloud Control", "OpenWork UI Control"],
           rejectText: ["Something went wrong"],
           hashIncludes: "/settings/extensions/mcp",
         });

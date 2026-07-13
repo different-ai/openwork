@@ -1,13 +1,21 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Loader2, Plug, Plus, Trash2, Users } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Check, Loader2, Plug, Puzzle, Server, Trash2, Users } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
+import { DenSelect } from "../../_components/ui/select";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { getPluginRoute } from "../../_lib/den-org";
+import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { IntegrationIcon } from "./integration-icon";
+import { Microsoft365Dialog } from "./microsoft-365-dialog";
+import { safeMcpAuthorizationUrl } from "./mcp-authorization-url";
 import { shouldShowMcpConnectionsStagingBanner } from "./mcp-connections-capability";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { marketplaceQueryKeys, useMarketplaces } from "./marketplace-data";
 import {
   type CreatedMcpConnection,
   type CreateMcpConnectionInput,
@@ -17,6 +25,7 @@ import {
   type ExternalMcpPreset,
   type McpConnectionAccessInput,
   formatMcpConnectedTimestamp,
+  mcpConnectionQueryKeys,
   useCreateMcpConnection,
   useDeleteMcpConnection,
   useMcpConnectionPresets,
@@ -24,7 +33,10 @@ import {
   useNativeProviderClient,
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
+  useTelegramConnection,
 } from "./mcp-connections-data";
+import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
+import { TelegramDialog } from "./telegram-dialog";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
@@ -92,6 +104,92 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 }
 
+type GithubPluginImportSkippedReason = "missing_url" | "local_unsupported" | "invalid_url" | "unsupported_auth";
+
+type GithubPluginImportServer = {
+  name: string;
+  serverKey: string;
+  url: string | null;
+  supported: boolean;
+  skippedReason: GithubPluginImportSkippedReason | null;
+};
+
+type GithubPluginImportSkill = {
+  description: string | null;
+  name: string;
+  skillKey: string;
+  sourcePath: string;
+  supported: boolean;
+};
+
+type GithubPluginImportPreview = {
+  repositoryFullName: string;
+  rootPath: string;
+  servers: GithubPluginImportServer[];
+  skills: GithubPluginImportSkill[];
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function parseSkippedReason(value: unknown): GithubPluginImportSkippedReason | null {
+  if (value === "missing_url" || value === "local_unsupported" || value === "invalid_url" || value === "unsupported_auth") {
+    return value;
+  }
+  return null;
+}
+
+function parseGithubPluginImportPreview(payload: unknown): GithubPluginImportPreview {
+  const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
+  if (!item) throw new Error("GitHub plugin preview response was incomplete.");
+
+  return {
+    repositoryFullName: asString(item.repositoryFullName) ?? "",
+    rootPath: asString(item.rootPath) ?? "",
+    servers: Array.isArray(item.servers)
+      ? item.servers.flatMap((entry) => {
+          if (!isRecord(entry)) return [];
+          const name = asString(entry.name);
+          const serverKey = asString(entry.serverKey);
+          if (!name || !serverKey) return [];
+          return [{
+            name,
+            serverKey,
+            url: asString(entry.url),
+            supported: entry.supported === true,
+            skippedReason: parseSkippedReason(entry.skippedReason),
+          }];
+        })
+      : [],
+    skills: Array.isArray(item.skills)
+      ? item.skills.flatMap((entry) => {
+          if (!isRecord(entry)) return [];
+          const name = asString(entry.name);
+          const skillKey = asString(entry.skillKey);
+          if (!name || !skillKey) return [];
+          return [{
+            description: asString(entry.description),
+            name,
+            skillKey,
+            sourcePath: asString(entry.sourcePath) ?? "SKILL.md",
+            supported: entry.supported === true,
+          }];
+        })
+      : [],
+  };
+}
+
+function importServerStatus(server: GithubPluginImportServer): string {
+  if (server.supported) return "ready";
+  if (server.skippedReason === "missing_url") return "missing URL";
+  return "unsupported";
+}
+
 export function McpConnectionsScreen() {
   const { orgContext } = useOrgDashboard();
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections();
@@ -104,10 +202,16 @@ export function McpConnectionsScreen() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [formPreset, setFormPreset] = useState<ExternalMcpPreset | null>(null);
+  const [pluginDialogOpen, setPluginDialogOpen] = useState(false);
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
+  const [microsoftDialogOpen, setMicrosoftDialogOpen] = useState(false);
+  const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
   const googleConfigured = usableConnections.some((connection) => connection.id === "google-workspace");
+  const microsoftConfigured = usableConnections.some((connection) => connection.id === "microsoft-365");
+  const telegramConnection = useTelegramConnection(true);
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
+  const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -137,14 +241,21 @@ export function McpConnectionsScreen() {
   }
 
   async function handleConnectOAuth(connectionId: string) {
-    const result = await startOAuth.mutateAsync(connectionId);
-    if (result.status === "connected") {
-      void refetch();
-      return;
-    }
-    if (result.authorizeUrl) {
-      window.open(result.authorizeUrl, "_blank", "noopener,noreferrer");
+    setConnectionActionError(null);
+    try {
+      const result = await startOAuth.mutateAsync(connectionId);
+      if (result.status === "connected") {
+        void refetch();
+        return;
+      }
+      if (!result.authorizeUrl) throw new Error("The MCP provider did not return an authorization URL.");
+      window.open(safeMcpAuthorizationUrl(result.authorizeUrl), "_blank", "noopener,noreferrer");
       pollUntilConnected(connectionId);
+    } catch (connectError) {
+      setConnectionActionError({
+        connectionId,
+        message: connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.",
+      });
     }
   }
 
@@ -168,15 +279,15 @@ export function McpConnectionsScreen() {
     <DashboardPageTemplate
       icon={Plug}
       title="Connections"
-      badgeLabel="Beta"
+      badgeLabel="Alpha"
       description="Connect any MCP server — Notion, Linear, Stripe, or a custom URL — once for the whole org. search_capabilities and execute_capability pick these up automatically."
       colors={["#E2E8F0", "#020617", "#0F172A", "#94A3B8"]}
     >
       {showStagingBanner ? (
         <div data-testid="mcp-connections-staging-banner" className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] leading-6 text-amber-800">
-          <p className="font-semibold text-amber-900">OpenWork Connect (beta) is staged for this org.</p>
+          <p className="font-semibold text-amber-900">OpenWork Connect (alpha) is staged for this org.</p>
           <p className="mt-1">
-            Connections and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (beta) for this org. Admin management remains fully usable.
+            Connections and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (alpha) for this org. Admin management remains fully usable.
           </p>
         </div>
       ) : null}
@@ -187,22 +298,50 @@ export function McpConnectionsScreen() {
         </div>
       ) : null}
 
-      <div className="mb-6 flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-6 py-5">
-        <div>
-          <h2 className="text-[15px] font-semibold text-gray-900">Add a custom MCP server</h2>
-          <p className="mt-1 text-[13px] text-gray-500">Connect any MCP server by URL, with OAuth, an API key, or no auth.</p>
+      {connectionActionError ? (
+        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700" role="alert">
+          {connectionActionError.message}
         </div>
-        <DenButton
-          variant="primary"
-          size="sm"
-          icon={Plus}
-          onClick={() => {
-            setFormPreset(null);
-            setFormOpen(true);
-          }}
-        >
-          Add Custom
-        </DenButton>
+      ) : null}
+
+      <div className="mb-6 rounded-2xl border border-gray-100 bg-white px-6 py-5">
+        <div>
+          <h2 className="text-[15px] font-semibold text-gray-900">Add a connection</h2>
+          <p className="mt-1 text-[13px] text-gray-500">
+            Add a single MCP server, or import a plugin bundle so its MCPs and skills become available through capabilities.
+          </p>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => {
+              setFormPreset(null);
+              setFormOpen(true);
+            }}
+            className="flex items-start gap-3 rounded-2xl border border-gray-100 px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-900 text-white">
+              <Server className="h-4 w-4" />
+            </span>
+            <span>
+              <span className="block text-[14px] font-semibold text-gray-900">MCP server</span>
+              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Connect one remote MCP server by URL.</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPluginDialogOpen(true)}
+            className="flex items-start gap-3 rounded-2xl border border-gray-100 px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-900 text-white">
+              <Puzzle className="h-4 w-4" />
+            </span>
+            <span>
+              <span className="block text-[14px] font-semibold text-gray-900">Plugin bundle</span>
+              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Import from GitHub or choose from your plugin library.</span>
+            </span>
+          </button>
+        </div>
       </div>
 
       <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Quick add</h3>
@@ -223,6 +362,44 @@ export function McpConnectionsScreen() {
           </div>
           <p className="mt-2 text-[12px] font-medium text-gray-900">
             {googleConfigured ? "Configured — tap to update" : "Tap to set up"}
+          </p>
+        </button>
+        <button
+          type="button"
+          data-testid="quick-add-microsoft-365"
+          onClick={() => setMicrosoftDialogOpen(true)}
+          className="rounded-2xl border border-gray-100 bg-white px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
+        >
+          <div className="flex items-start gap-3">
+            <IntegrationIcon name="Microsoft 365" simpleIconSlug="microsoft" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] font-semibold text-gray-900">Microsoft 365</p>
+              <p className="mt-1 text-[12px] leading-[1.5] text-gray-500">
+                Outlook mail, calendar, and OneDrive. Each teammate connects their own work account.
+              </p>
+            </div>
+          </div>
+          <p className="mt-2 text-[12px] font-medium text-gray-900">
+            {microsoftConfigured ? "Configured — tap to update" : "Tap to set up"}
+          </p>
+        </button>
+        <button
+          type="button"
+          data-testid="quick-add-telegram"
+          onClick={() => setTelegramDialogOpen(true)}
+          className="rounded-2xl border border-gray-100 bg-white px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
+        >
+          <div className="flex items-start gap-3">
+            <IntegrationIcon name="Telegram" simpleIconSlug="telegram" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] font-semibold text-gray-900">Telegram</p>
+              <p className="mt-1 text-[12px] leading-[1.5] text-gray-500">
+                Pair a private Telegram chat to a cloud worker for tasks and replies.
+              </p>
+            </div>
+          </div>
+          <p className="mt-2 text-[12px] font-medium text-gray-900">
+            {telegramConnection.data ? "Connected — tap to manage" : "Tap to set up"}
           </p>
         </button>
         {presets.map((preset) => {
@@ -270,6 +447,7 @@ export function McpConnectionsScreen() {
               connection={connection}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
+              errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
               onConnect={() => void handleConnectOAuth(connection.id)}
               onRemove={() => deleteConnection.mutate(connection.id)}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
@@ -290,6 +468,12 @@ export function McpConnectionsScreen() {
         onSubmit={handleCreate}
       />
 
+      <ImportPluginConnectionDialog
+        open={pluginDialogOpen}
+        onClose={() => setPluginDialogOpen(false)}
+        onImported={() => void refetch()}
+      />
+
       <GoogleWorkspaceDialog
         open={googleDialogOpen}
         submitting={saveNativeClient.isPending}
@@ -300,7 +484,350 @@ export function McpConnectionsScreen() {
           setGoogleDialogOpen(false);
         }}
       />
+
+      <Microsoft365Dialog
+        open={microsoftDialogOpen}
+        submitting={saveNativeClient.isPending}
+        error={saveNativeClient.error}
+        onClose={() => setMicrosoftDialogOpen(false)}
+        onSubmit={async (input) => {
+          await saveNativeClient.mutateAsync({ providerId: "microsoft-365", ...input });
+          setMicrosoftDialogOpen(false);
+        }}
+      />
+
+      <TelegramDialog open={telegramDialogOpen} onClose={() => setTelegramDialogOpen(false)} />
     </DashboardPageTemplate>
+  );
+}
+
+function ImportPluginConnectionDialog({
+  open,
+  onClose,
+  onImported,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const { orgSlug, runReauthableAction } = useOrgDashboard();
+  const { data: marketplaces = [] } = useMarketplaces();
+  const { data: plugins = [], isLoading: pluginsLoading } = usePlugins();
+  const [githubUrl, setGithubUrl] = useState("");
+  const [marketplaceId, setMarketplaceId] = useState("");
+  const [authType, setAuthType] = useState<"oauth" | "none">("oauth");
+  const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("per_member");
+  const [preview, setPreview] = useState<GithubPluginImportPreview | null>(null);
+  const [selectedServerKeys, setSelectedServerKeys] = useState<string[]>([]);
+  const [selectedSkillKeys, setSelectedSkillKeys] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!marketplaceId && marketplaces.length > 0) {
+      setMarketplaceId(marketplaces[0].id);
+    }
+  }, [marketplaceId, marketplaces, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setGithubUrl("");
+    setAuthType("oauth");
+    setCredentialMode("per_member");
+    setPreview(null);
+    setSelectedServerKeys([]);
+    setSelectedSkillKeys([]);
+    setError(null);
+  }, [open]);
+
+  const libraryPlugins = useMemo(
+    () => plugins.filter((plugin) => plugin.mcps.length > 0 || plugin.skills.length > 0),
+    [plugins],
+  );
+
+  async function previewGithubPlugin() {
+    if (!githubUrl.trim()) {
+      setError("Paste a GitHub plugin URL.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      let payload: unknown = null;
+      await runReauthableAction("preview-github-connection-plugin", async () => {
+        const result = await requestJson(
+          "/v1/plugins/import-mcps-from-github-url/preview",
+          { method: "POST", body: JSON.stringify({ githubUrl: githubUrl.trim() }) },
+          20000,
+        );
+        if (!result.response.ok) {
+          throw getRequestError(result.payload, result.response, "Failed to preview GitHub plugin.");
+        }
+        payload = result.payload;
+      });
+      const nextPreview = parseGithubPluginImportPreview(payload);
+      setPreview(nextPreview);
+      setSelectedServerKeys(nextPreview.servers.filter((server) => server.supported).map((server) => server.serverKey));
+      setSelectedSkillKeys(nextPreview.skills.filter((skill) => skill.supported).map((skill) => skill.skillKey));
+    } catch (previewError) {
+      setError(previewError instanceof Error ? previewError.message : "Failed to preview GitHub plugin.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importGithubPlugin() {
+    if (!preview) {
+      setError("Preview the GitHub plugin first.");
+      return;
+    }
+    if (!marketplaceId) {
+      setError("Choose a marketplace.");
+      return;
+    }
+    if (selectedServerKeys.length === 0 && selectedSkillKeys.length === 0) {
+      setError("Select at least one MCP or skill.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await runReauthableAction("import-github-connection-plugin", async () => {
+        const result = await requestJson(
+          "/v1/plugins/import-mcps-from-github-url",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              access: { orgWide: true, memberIds: [], teamIds: [] },
+              authType,
+              credentialMode: authType === "oauth" ? credentialMode : "shared",
+              githubUrl: githubUrl.trim(),
+              marketplaceId,
+              selectedServerKeys,
+              selectedSkillKeys,
+            }),
+          },
+          30000,
+        );
+        if (!result.response.ok) {
+          throw getRequestError(result.payload, result.response, "Failed to import GitHub plugin.");
+        }
+      });
+      await queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: pluginQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.all });
+      onImported();
+      onClose();
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "Failed to import GitHub plugin.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleServer(serverKey: string, checked: boolean) {
+    setSelectedServerKeys((current) =>
+      checked ? [...new Set([...current, serverKey])] : current.filter((key) => key !== serverKey),
+    );
+  }
+
+  function toggleSkill(skillKey: string, checked: boolean) {
+    setSelectedSkillKeys((current) =>
+      checked ? [...new Set([...current, skillKey])] : current.filter((key) => key !== skillKey),
+    );
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+      <div
+        className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Add plugin connection</h2>
+        <p className="mt-1 text-[13px] leading-6 text-gray-600">
+          Import a plugin from GitHub. Remote MCPs become Den-hosted org connections; imported skills are saved to Skill Hub storage and show up in capabilities.
+        </p>
+
+        <div className="mt-5 rounded-2xl border border-gray-100 bg-gray-50 p-4">
+          <label className="mb-1.5 block text-[12px] font-medium text-gray-700">GitHub plugin URL</label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <DenInput
+              value={githubUrl}
+              onChange={(event) => {
+                setGithubUrl(event.target.value);
+                setPreview(null);
+                setSelectedServerKeys([]);
+                setSelectedSkillKeys([]);
+                setError(null);
+              }}
+              placeholder="https://github.com/anthropics/knowledge-work-plugins/tree/main/sales"
+              disabled={busy}
+            />
+            <DenButton variant="secondary" onClick={() => void previewGithubPlugin()} disabled={busy || !githubUrl.trim()}>
+              {busy && !preview ? "Previewing..." : "Preview"}
+            </DenButton>
+          </div>
+        </div>
+
+        {preview ? (
+          <div className="mt-4 space-y-4">
+            <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 text-[13px] text-gray-600">
+              Found {preview.servers.filter((server) => server.supported).length} MCPs and {preview.skills.filter((skill) => skill.supported).length} skills in{" "}
+              <span className="font-medium text-gray-900">{preview.repositoryFullName}{preview.rootPath ? `/${preview.rootPath}` : ""}</span>.
+            </div>
+
+            {preview.servers.length > 0 ? (
+              <div className="overflow-hidden rounded-2xl border border-gray-100">
+                <table className="w-full text-left text-[13px]">
+                  <thead className="bg-gray-50 text-[11px] uppercase tracking-[0.12em] text-gray-400">
+                    <tr>
+                      <th className="w-12 px-4 py-3">Use</th>
+                      <th className="px-4 py-3">MCP</th>
+                      <th className="px-4 py-3">URL</th>
+                      <th className="px-4 py-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {preview.servers.map((server) => (
+                      <tr key={server.serverKey}>
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedServerKeys.includes(server.serverKey)}
+                            disabled={!server.supported || busy}
+                            onChange={(event) => toggleServer(server.serverKey, event.target.checked)}
+                          />
+                        </td>
+                        <td className="px-4 py-3 font-medium text-gray-900">{server.name}</td>
+                        <td className="max-w-[240px] truncate px-4 py-3 font-mono text-[12px] text-gray-500">{server.url ?? "—"}</td>
+                        <td className="px-4 py-3 text-gray-500">{importServerStatus(server)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            {preview.skills.length > 0 ? (
+              <div className="overflow-hidden rounded-2xl border border-gray-100">
+                <table className="w-full text-left text-[13px]">
+                  <thead className="bg-gray-50 text-[11px] uppercase tracking-[0.12em] text-gray-400">
+                    <tr>
+                      <th className="w-12 px-4 py-3">Use</th>
+                      <th className="px-4 py-3">Skill</th>
+                      <th className="px-4 py-3">Path</th>
+                      <th className="px-4 py-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {preview.skills.map((skill) => (
+                      <tr key={skill.skillKey}>
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedSkillKeys.includes(skill.skillKey)}
+                            disabled={!skill.supported || busy}
+                            onChange={(event) => toggleSkill(skill.skillKey, event.target.checked)}
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-900">{skill.name}</div>
+                          {skill.description ? <div className="mt-0.5 text-[12px] text-gray-500">{skill.description}</div> : null}
+                        </td>
+                        <td className="max-w-[240px] truncate px-4 py-3 font-mono text-[12px] text-gray-500">{skill.sourcePath}</td>
+                        <td className="px-4 py-3 text-gray-500">{skill.supported ? "ready" : "unsupported"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="block">
+                <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</span>
+                <DenSelect value={authType} onChange={(event) => setAuthType(event.target.value === "none" ? "none" : "oauth")} disabled={busy}>
+                  <option value="oauth">OAuth</option>
+                  <option value="none">No auth</option>
+                </DenSelect>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Account mode</span>
+                <DenSelect
+                  value={credentialMode}
+                  onChange={(event) => setCredentialMode(event.target.value === "shared" ? "shared" : "per_member")}
+                  disabled={busy || authType === "none"}
+                >
+                  <option value="per_member">Individual accounts</option>
+                  <option value="shared">Org account</option>
+                </DenSelect>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Marketplace</span>
+                <DenSelect value={marketplaceId} onChange={(event) => setMarketplaceId(event.target.value)} disabled={busy}>
+                  {marketplaces.map((marketplace) => (
+                    <option key={marketplace.id} value={marketplace.id}>
+                      {marketplace.name}
+                    </option>
+                  ))}
+                </DenSelect>
+              </label>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="mt-6">
+          <h3 className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">Plugin library</h3>
+          <div className="mt-3 rounded-2xl border border-gray-100 bg-white">
+            {pluginsLoading ? (
+              <div className="px-4 py-5 text-[13px] text-gray-500">Loading plugin library...</div>
+            ) : libraryPlugins.length === 0 ? (
+              <div className="px-4 py-5 text-[13px] text-gray-500">No imported plugins with MCPs or skills yet.</div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {libraryPlugins.slice(0, 6).map((plugin) => (
+                  <Link
+                    key={plugin.id}
+                    href={getPluginRoute(orgSlug, plugin.id)}
+                    className="flex items-center justify-between gap-3 px-4 py-3 transition hover:bg-gray-50"
+                    onClick={onClose}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13px] font-semibold text-gray-900">{plugin.name}</span>
+                      <span className="mt-0.5 block truncate text-[12px] text-gray-500">{getPluginPartsSummary(plugin)}</span>
+                    </span>
+                    <span className="text-[12px] font-medium text-gray-500">Open</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {error ? (
+          <p className="mt-3 text-[13px] text-red-600">{error}</p>
+        ) : null}
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <DenButton variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </DenButton>
+          <DenButton
+            variant="primary"
+            loading={busy && Boolean(preview)}
+            disabled={!preview || !marketplaceId || (selectedServerKeys.length === 0 && selectedSkillKeys.length === 0)}
+            onClick={() => void importGithubPlugin()}
+          >
+            Import selected
+          </DenButton>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -322,6 +849,7 @@ function GoogleWorkspaceDialog({
   const [clientSecret, setClientSecret] = useState("");
   const [features, setFeatures] = useState<string[]>([]);
   const [copiedRedirectUri, setCopiedRedirectUri] = useState(false);
+  const [replacingCredentials, setReplacingCredentials] = useState(false);
   const featuresPrefilled = useRef(false);
 
   useEffect(() => {
@@ -330,6 +858,7 @@ function GoogleWorkspaceDialog({
     setClientSecret("");
     setFeatures(GOOGLE_WORKSPACE_DEFAULT_FEATURES);
     setCopiedRedirectUri(false);
+    setReplacingCredentials(false);
     featuresPrefilled.current = false;
   }, [open]);
 
@@ -344,12 +873,14 @@ function GoogleWorkspaceDialog({
   }
 
   const configured = clientConfig.data?.configured ?? false;
+  const savedClientId = clientConfig.data?.clientId;
   const redirectUri = clientConfig.data?.redirectUri ?? "";
   const loadingConfig = clientConfig.isLoading;
   const formError = error ?? clientConfig.error;
   const trimmedClientId = clientId.trim();
   const trimmedClientSecret = clientSecret.trim();
-  const saveDisabled = loadingConfig || (!configured && (!trimmedClientId || !trimmedClientSecret));
+  const showCredentialFields = !loadingConfig && (!configured || replacingCredentials);
+  const saveDisabled = loadingConfig || (showCredentialFields && (!trimmedClientId || !trimmedClientSecret));
 
   function toggleFeature(feature: string) {
     setFeatures((current) => current.includes(feature) ? current.filter((entry) => entry !== feature) : [...current, feature]);
@@ -360,16 +891,23 @@ function GoogleWorkspaceDialog({
     if (await copyTextToClipboard(redirectUri)) setCopiedRedirectUri(true);
   }
 
+  function startReplacingCredentials() {
+    setClientId(savedClientId ?? "");
+    setClientSecret("");
+    setReplacingCredentials(true);
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
       <div
         className="max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Set up Google Workspace</h2>
+        <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+          {configured ? "Update Google Workspace" : "Set up Google Workspace"}
+        </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          Paste the OAuth client from your company&apos;s Google Cloud project. Members then connect their own
-          Google account from Your Connections — sign-ins stay in your org&apos;s cloud.
+          Use one Google OAuth web app for your org. Members then connect their own Google account from Your Connections — sign-ins stay in your org&apos;s cloud.
         </p>
 
         <div className="mt-5 space-y-4">
@@ -377,13 +915,13 @@ function GoogleWorkspaceDialog({
             <p className="text-[13px] font-semibold text-gray-900">How to set it up</p>
             <ol className="mt-2 list-decimal space-y-2 pl-4 text-[12px] leading-5 text-gray-600">
               <li>
-                Create an OAuth client in Google Cloud Console (APIs &amp; Services → Credentials → Create credentials → OAuth client ID → Web application).{" "}
+                In Google Cloud Console, create an OAuth client ID for a Web application.{" "}
                 <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" className="font-medium text-gray-900 underline decoration-gray-300 underline-offset-4">
                   Open Google Cloud Console
                 </a>
               </li>
               <li>
-                <p>Add this authorized redirect URI:</p>
+                <p>Add this exact authorized redirect URI:</p>
                 <div className="mt-1 flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-2">
                   <p data-google-redirect-uri className="min-w-0 flex-1 break-all font-mono text-[11px] leading-5 text-gray-800">
                     {redirectUri || "Loading redirect URI…"}
@@ -399,7 +937,7 @@ function GoogleWorkspaceDialog({
                   Open API library
                 </a>
               </li>
-              <li>Paste the client ID and secret below.</li>
+              <li>Paste the client ID and secret here for first-time setup, or only when you choose to replace saved credentials.</li>
             </ol>
           </div>
           <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
@@ -430,23 +968,62 @@ function GoogleWorkspaceDialog({
               ))}
             </div>
           </div>
-          <div>
-            <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
-            <DenInput
-              value={clientId}
-              onChange={(event) => setClientId(event.target.value)}
-              placeholder={configured ? "Saved client ID kept if left blank" : "1234567890-abc.apps.googleusercontent.com"}
-            />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret</label>
-            <DenInput
-              type="password"
-              value={clientSecret}
-              onChange={(event) => setClientSecret(event.target.value)}
-              placeholder={configured ? "Saved client secret kept if left blank" : "GOCSPX-…"}
-            />
-          </div>
+          {loadingConfig ? (
+            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 text-[13px] text-gray-500">
+              Checking saved credentials…
+            </div>
+          ) : null}
+          {configured && !replacingCredentials ? (
+            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+              <div className="flex items-center gap-2">
+                <Check className="h-4 w-4 text-emerald-600" />
+                <p className="text-[13px] font-semibold text-gray-900">Credentials saved</p>
+              </div>
+              <p className="mt-1 text-[12px] leading-5 text-gray-500">
+                OpenWork keeps the saved Google client ID and secret when you save permission changes. Replace them only if you are rotating credentials.
+              </p>
+              <div className="mt-3 rounded-xl border border-gray-100 bg-white px-3 py-2 text-[12px] text-gray-800">
+                Saved client ID: <span className="font-mono">{savedClientId ?? "stored in OpenWork"}</span>
+              </div>
+              <DenButton className="mt-3" variant="secondary" size="sm" onClick={startReplacingCredentials} disabled={submitting}>
+                Replace credentials
+              </DenButton>
+            </div>
+          ) : null}
+          {showCredentialFields ? (
+            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+              <p className="text-[13px] font-semibold text-gray-900">Google OAuth credentials</p>
+              <p className="mt-1 text-[12px] leading-5 text-gray-500">
+                {replacingCredentials
+                  ? "Paste the new client ID and client secret. Both are required to replace the saved credentials."
+                  : "Paste the client ID and client secret from the Google OAuth app. Both are required for first-time setup."}
+              </p>
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
+                  <DenInput
+                    value={clientId}
+                    onChange={(event) => setClientId(event.target.value)}
+                    placeholder="1234567890-abc.apps.googleusercontent.com"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret</label>
+                  <DenInput
+                    type="password"
+                    value={clientSecret}
+                    onChange={(event) => setClientSecret(event.target.value)}
+                    placeholder="GOCSPX-…"
+                  />
+                </div>
+              </div>
+              {replacingCredentials ? (
+                <DenButton className="mt-3" variant="secondary" size="sm" onClick={() => setReplacingCredentials(false)} disabled={submitting}>
+                  Keep saved credentials
+                </DenButton>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         {formError ? (
@@ -462,12 +1039,11 @@ function GoogleWorkspaceDialog({
             loading={submitting}
             disabled={saveDisabled}
             onClick={() => onSubmit({
-              ...(trimmedClientId ? { clientId: trimmedClientId } : {}),
-              ...(trimmedClientSecret ? { clientSecret: trimmedClientSecret } : {}),
+              ...(showCredentialFields ? { clientId: trimmedClientId, clientSecret: trimmedClientSecret } : {}),
               features,
             })}
           >
-            Save
+            {configured && !replacingCredentials ? "Save permissions" : replacingCredentials ? "Save new credentials" : "Save setup"}
           </DenButton>
         </div>
       </div>
@@ -489,6 +1065,7 @@ function ConnectionRow({
   connection,
   polling,
   connecting,
+  errorMessage,
   onConnect,
   onRemove,
   removing,
@@ -496,6 +1073,7 @@ function ConnectionRow({
   connection: ExternalMcpConnection;
   polling: boolean;
   connecting: boolean;
+  errorMessage: string | null;
   onConnect: () => void;
   onRemove: () => void;
   removing: boolean;
@@ -539,6 +1117,7 @@ function ConnectionRow({
           <p className="mt-0.5 truncate text-[12px] text-gray-500">
             {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
           </p>
+          {errorMessage ? <p className="mt-1 text-[12px] text-red-600">{errorMessage}</p> : null}
         </div>
       </div>
 
@@ -562,6 +1141,62 @@ function ConnectionRow({
     </div>
   );
 }
+
+type SegmentedControlOption<TValue extends string> = {
+  value: TValue;
+  label: string;
+};
+
+function SegmentedControl<TValue extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: SegmentedControlOption<TValue>[];
+  value: TValue;
+  onChange: (value: TValue) => void;
+}) {
+  const gridColumns = options.length === 2 ? "grid-cols-2" : "grid-cols-3";
+
+  return (
+    <div className={`grid ${gridColumns} gap-1 rounded-full border border-gray-200 bg-gray-50 p-1`} role="group">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={value === option.value}
+          onClick={() => onChange(option.value)}
+          className={`rounded-full px-3 py-1.5 text-[12px] font-medium transition ${
+            value === option.value
+              ? "bg-white text-gray-900 shadow-[0_1px_2px_rgba(15,23,42,0.08)]"
+              : "text-gray-500 hover:text-gray-900"
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+type AddConnectionAccessMode = "everyone" | "teams" | "people";
+
+const AUTH_TYPE_OPTIONS: SegmentedControlOption<ExternalMcpAuthType>[] = [
+  { value: "oauth", label: "OAuth" },
+  { value: "apikey", label: "API key" },
+  { value: "none", label: "None" },
+];
+
+const CREDENTIAL_MODE_OPTIONS: SegmentedControlOption<ExternalMcpCredentialMode>[] = [
+  { value: "per_member", label: "Individual accounts" },
+  { value: "shared", label: "One org account" },
+];
+
+const ACCESS_MODE_OPTIONS: SegmentedControlOption<AddConnectionAccessMode>[] = [
+  { value: "everyone", label: "Everyone" },
+  { value: "teams", label: "Specific teams" },
+  { value: "people", label: "Specific people" },
+];
 
 function AddConnectionDialog({
   open,
@@ -589,7 +1224,7 @@ function AddConnectionDialog({
   const [oauthClientSecret, setOAuthClientSecret] = useState("");
   const [oauthCallback, setOAuthCallback] = useState<string | null>(null);
   const [copiedCallback, setCopiedCallback] = useState(false);
-  const [accessMode, setAccessMode] = useState<"everyone" | "teams" | "people">("everyone");
+  const [accessMode, setAccessMode] = useState<AddConnectionAccessMode>("everyone");
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
 
@@ -622,6 +1257,7 @@ function AddConnectionDialog({
 
   const showOAuthClientFields = authType === "oauth" && (Boolean(preset?.requiresOAuthClient) || showOAuthClient);
   const oauthClientRequired = authType === "oauth" && Boolean(preset?.requiresOAuthClient);
+  const isSlackPreset = preset?.presetId === "slack";
   const access: McpConnectionAccessInput = accessMode === "everyone"
     ? { orgWide: true, memberIds: [], teamIds: [] }
     : { orgWide: false, memberIds: accessMode === "people" ? selectedMemberIds : [], teamIds: accessMode === "teams" ? selectedTeamIds : [] };
@@ -644,10 +1280,16 @@ function AddConnectionDialog({
         : undefined,
       access,
     };
-    const created = await onSubmit(input);
-    if (input.oauthClient && created.links?.oauthCallback) {
-      setOAuthCallback(created.links.oauthCallback);
-      setCopiedCallback(false);
+    try {
+      const created = await onSubmit(input);
+      if (input.oauthClient && created.links?.oauthCallback) {
+        setOAuthCallback(created.links.oauthCallback);
+        setCopiedCallback(false);
+      }
+    } catch {
+      // The mutation's typed error is rendered by the dialog's error prop.
+      // Consume the rejected promise so a clear validation failure does not
+      // also become an opaque browser-level unhandled rejection.
     }
   }
 
@@ -668,9 +1310,13 @@ function AddConnectionDialog({
       >
         {oauthCallback ? (
           <>
-            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Almost done — add this redirect URL to your app:</h2>
+            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+              {isSlackPreset ? "Almost done — add this redirect URL to your Slack app" : "Almost done — add this redirect URL to your app"}
+            </h2>
             <p className="mt-2 text-[13px] leading-6 text-gray-600">
-              Copy this into the OAuth redirect URLs for your pre-registered app before teammates connect.
+              {isSlackPreset
+                ? "Copy this exact URL into your Slack app's OAuth redirect URLs before teammates connect."
+                : "Copy this into the OAuth redirect URLs for your pre-registered app before teammates connect."}
             </p>
             <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
               <p className="break-all font-mono text-[12px] leading-5 text-gray-800">{oauthCallback}</p>
@@ -690,7 +1336,11 @@ function AddConnectionDialog({
           {preset ? `Add ${preset.displayName}` : "Add a custom MCP server"}
         </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          Connect an MCP server org-wide. If it requires OAuth, you&apos;ll authorize it in a new tab next.
+          {isSlackPreset ? (
+            <>
+              Slack MCP needs a pre-registered Slack app — Slack does not support automatic app registration. Paste your Slack app&apos;s OAuth client below.
+            </>
+          ) : "Connect an MCP server org-wide. If it requires OAuth, you'll authorize it in a new tab next."}
         </p>
 
         <div className="mt-5 space-y-4">
@@ -710,25 +1360,14 @@ function AddConnectionDialog({
           {!preset ? (
             <div>
               <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</label>
-              <div className="flex gap-2">
-                {(["oauth", "apikey", "none"] as const).map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => {
-                      setAuthType(option);
-                      if (option !== "oauth") setShowOAuthClient(false);
-                    }}
-                    className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
-                      authType === option
-                        ? "border-gray-900 bg-gray-900 text-white"
-                        : "border-gray-200 text-gray-600 hover:border-gray-300"
-                    }`}
-                  >
-                    {option === "oauth" ? "OAuth" : option === "apikey" ? "API key" : "None"}
-                  </button>
-                ))}
-              </div>
+              <SegmentedControl
+                options={AUTH_TYPE_OPTIONS}
+                value={authType}
+                onChange={(option) => {
+                  setAuthType(option);
+                  if (option !== "oauth") setShowOAuthClient(false);
+                }}
+              />
             </div>
           ) : null}
           {authType === "apikey" ? (
@@ -750,9 +1389,11 @@ function AddConnectionDialog({
 
           {showOAuthClientFields ? (
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
+              <p className="text-[13px] font-semibold text-gray-900">{isSlackPreset ? "Slack OAuth app" : "OAuth app"}</p>
               <p className="mt-1 text-[12px] leading-5 text-gray-500">
-                Create an app for your workspace, then paste its OAuth client here. Each person connects their own account with it — sign-ins stay in your org&apos;s cloud.
+                {isSlackPreset
+                  ? "Create or use an internal or directory-published Slack app, then paste its Client ID and Client secret. After you create the connection, OpenWork shows the exact redirect URL to add to that Slack app."
+                  : "Create an app for your workspace, then paste its OAuth client here. Each person connects their own account with it — sign-ins stay in your org's cloud."}
               </p>
               <div className="mt-3 space-y-3">
                 <div>
@@ -779,26 +1420,7 @@ function AddConnectionDialog({
           {authType === "oauth" ? (
             <div>
               <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Whose account does the AI use?</label>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCredentialMode("per_member")}
-                  className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
-                    credentialMode === "per_member" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-300"
-                  }`}
-                >
-                  Individual accounts
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCredentialMode("shared")}
-                  className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
-                    credentialMode === "shared" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-300"
-                  }`}
-                >
-                  One org account
-                </button>
-              </div>
+              <SegmentedControl options={CREDENTIAL_MODE_OPTIONS} value={credentialMode} onChange={setCredentialMode} />
               <p className="mt-1.5 text-[12px] leading-5 text-gray-500">
                 {credentialMode === "per_member"
                   ? "Each person signs in with their own account from Your Connections. Their AI acts as them, with their permissions."
@@ -809,20 +1431,7 @@ function AddConnectionDialog({
 
           <div>
             <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Who can use this?</label>
-            <div className="flex gap-2">
-              {(["everyone", "teams", "people"] as const).map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setAccessMode(option)}
-                  className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
-                    accessMode === option ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-300"
-                  }`}
-                >
-                  {option === "everyone" ? "Everyone in the org" : option === "teams" ? "Specific teams" : "Specific people"}
-                </button>
-              ))}
-            </div>
+            <SegmentedControl options={ACCESS_MODE_OPTIONS} value={accessMode} onChange={setAccessMode} />
             {accessMode === "teams" ? (
               <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-xl border border-gray-100 p-2">
                 {teams.length === 0 ? (
@@ -834,7 +1443,7 @@ function AddConnectionDialog({
                       type="button"
                       onClick={() => setSelectedTeamIds((current) => toggle(current, team.id))}
                       className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] transition ${
-                        selectedTeamIds.includes(team.id) ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-50"
+                        selectedTeamIds.includes(team.id) ? "bg-gray-100 text-gray-900" : "text-gray-700 hover:bg-gray-50"
                       }`}
                     >
                       <span className="truncate">{team.name}</span>
@@ -855,7 +1464,7 @@ function AddConnectionDialog({
                       type="button"
                       onClick={() => setSelectedMemberIds((current) => toggle(current, member.id))}
                       className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] transition ${
-                        selectedMemberIds.includes(member.id) ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-50"
+                        selectedMemberIds.includes(member.id) ? "bg-gray-100 text-gray-900" : "text-gray-700 hover:bg-gray-50"
                       }`}
                     >
                       <span className="truncate">{member.user.name || member.user.email}</span>
@@ -879,10 +1488,10 @@ function AddConnectionDialog({
           <DenButton
             variant="primary"
             loading={submitting}
-            disabled={!name.trim() || !url.trim() || (authType === "apikey" && !apiKey.trim()) || (oauthClientRequired && !oauthClientId.trim()) || accessIncomplete}
+            disabled={!name.trim() || !url.trim() || (authType === "apikey" && !apiKey.trim()) || (oauthClientRequired && (!oauthClientId.trim() || !oauthClientSecret.trim())) || accessIncomplete}
             onClick={() => void submit()}
           >
-            Add connection
+            {showOAuthClientFields ? "Create and show redirect URL" : "Add connection"}
           </DenButton>
         </div>
           </>

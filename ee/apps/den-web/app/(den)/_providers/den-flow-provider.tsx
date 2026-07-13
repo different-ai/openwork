@@ -76,6 +76,8 @@ type DenFlowContextValue = {
   setAuthMode: (mode: AuthMode) => void;
   email: string;
   setEmail: (value: string) => void;
+  authName: string;
+  setAuthName: (value: string) => void;
   password: string;
   setPassword: (value: string) => void;
   verificationCode: string;
@@ -97,6 +99,7 @@ type DenFlowContextValue = {
   cancelVerification: () => void;
   beginSocialAuth: (provider: SocialAuthProvider) => Promise<void>;
   signOut: () => Promise<void>;
+  updateUserProfile: (input: { firstName: string; lastName: string }) => Promise<AuthUser>;
   resolveUserLandingRoute: () => Promise<string | null>;
   billingSummary: BillingSummary | null;
   billingBusy: boolean;
@@ -191,6 +194,7 @@ function clearPendingAuthIntent() {
 export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [authMode, setAuthModeState] = useState<AuthMode>("sign-up");
   const [email, setEmail] = useState("");
+  const [authName, setAuthName] = useState("");
   const [password, setPassword] = useState("");
   const [verificationCode, setVerificationCode] = useState("");
   const [verificationRequired, setVerificationRequired] = useState(false);
@@ -1074,7 +1078,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       const body =
         authMode === "sign-up"
           ? {
-              name: DEFAULT_AUTH_NAME,
+              name: authName.trim() || DEFAULT_AUTH_NAME,
               email: trimmedEmail,
               password
             }
@@ -1273,6 +1277,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setDesktopRedirectAttempted(false);
     setAuthMode("sign-up");
     setEmail("");
+    setAuthName("");
     setPassword("");
     setAuthInfo(getAuthInfoForMode("sign-up"));
     setLaunchStatus("Choose a worker name and launch.");
@@ -1290,6 +1295,30 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       window.sessionStorage.removeItem(PENDING_ORG_INVITATION_STORAGE_KEY);
       window.sessionStorage.removeItem(PENDING_WORKSPACE_CLAIM_STORAGE_KEY);
     }
+  }
+
+  async function updateUserProfile(input: { firstName: string; lastName: string }) {
+    const { response, payload } = await requestJson(
+      "/v1/me/profile",
+      {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      },
+      12000,
+    );
+
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload, `Failed to update profile (${response.status}).`));
+    }
+
+    const nextUser = getUser(payload);
+    if (!nextUser) {
+      throw new Error("Profile update response did not include a user.");
+    }
+
+    setUser(nextUser);
+    identifyPosthogUser(nextUser);
+    return nextUser;
   }
 
   async function launchWorker(options: { source?: "manual" | "signup_auto"; workerNameOverride?: string } = {}) {
@@ -2062,6 +2091,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setAuthMode,
     email,
     setEmail,
+    authName,
+    setAuthName,
     password,
     setPassword,
     verificationCode,
@@ -2083,6 +2114,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     cancelVerification,
     beginSocialAuth,
     signOut,
+    updateUserProfile,
     resolveUserLandingRoute,
     billingSummary,
     billingBusy,

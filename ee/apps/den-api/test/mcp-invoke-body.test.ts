@@ -51,6 +51,14 @@ const listMembersOperation = {
   inputSchema: z.object({}),
 }
 
+const updateOrganizationOperation = {
+  name: "patchV1OrganizationsCurrent",
+  method: "PATCH",
+  path: "/v1/organizations/current",
+  operation: {},
+  inputSchema: z.object({}),
+}
+
 function createInviteApp() {
   const inviteMemberSchema = z.object({
     email: z.string().email(),
@@ -67,6 +75,14 @@ function createMembersApp() {
   const app = new Hono()
   app.get("/v1/members", (c) => {
     return c.json({ members: [{ id: "member_1", role: "member" }] }, 200)
+  })
+  return app
+}
+
+function createOrganizationApp() {
+  const app = new Hono()
+  app.patch("/v1/organizations/current", async (c) => {
+    return c.json({ organization: { brandAppName: (await c.req.json()).brandAppName } }, 200)
   })
   return app
 }
@@ -137,6 +153,22 @@ test("read-only MCP principals cannot invoke write operations", async () => {
   expect(result.isError).toBe(true)
   expect(result.content[0]?.text).toBe('{"error":"insufficient_mcp_scope","requiredScope":"mcp:write"}')
   expect(routeWasInvoked).toBe(false)
+})
+
+test("an MCP principal with write access can update an organization setting", async () => {
+  const result = await invokeModule.invokeMcpOperation({
+    app: createOrganizationApp(),
+    env: {},
+    operation: updateOrganizationOperation,
+    principal,
+    toolInput: { body: { brandAppName: "Acme Work" } },
+  })
+
+  expect(result.isError).toBe(false)
+  expect(result.content[0]?.text).not.toContain("insufficient_mcp_scope")
+  expect(JSON.parse(result.content[0]?.text ?? "")).toEqual({
+    organization: { brandAppName: "Acme Work" },
+  })
 })
 
 test("write-only MCP principals cannot invoke read operations", async () => {

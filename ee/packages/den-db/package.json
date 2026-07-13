@@ -41,6 +41,11 @@
       "development": "./src/schema/teams.ts",
       "default": "./dist/schema/teams.js"
     },
+    "./schema/telegram": {
+      "types": "./src/schema/telegram.ts",
+      "development": "./src/schema/telegram.ts",
+      "default": "./dist/schema/telegram.js"
+    },
     "./schema/sharables/skills": {
       "types": "./src/schema/sharables/skills.ts",
       "development": "./src/schema/sharables/skills.ts",

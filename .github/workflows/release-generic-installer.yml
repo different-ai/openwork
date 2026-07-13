@@ -1,6 +1,8 @@
 name: Release Generic Installer
 
-# Builds the GENERIC (unbranded) OpenWork installer — the committed
+# Builds the GENERIC (unbranded) OpenWork installer. Organization downloads
+# combine this unchanged signed installer with the unchanged standard desktop
+# artifact and an explicit openwork-installer.json sidecar. The committed
 # apps/installer build-config placeholder stays empty, so the binary carries
 # no deployment values and resolves its config at run time (sidecar stamped by
 # den-api, filename tag, or pasted install link; see #2480) — and publishes it
@@ -15,6 +17,27 @@ name: Release Generic Installer
 #   openwork-installer-win-x64.exe
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Existing release tag to attach the installer assets to"
+        required: true
+        type: string
+      publish_mode:
+        description: "Publish to a GitHub release or keep as workflow artifacts"
+        required: false
+        type: string
+        default: "release"
+      platforms:
+        description: "Comma-separated platforms to build and publish"
+        required: false
+        type: string
+        default: "mac-arm64,mac-x64,win-x64"
+      sign_windows:
+        description: "Sign the Windows installer via SignPath"
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       release_tag:
@@ -45,22 +68,21 @@ on:
         required: false
         type: boolean
         default: false
-  release:
-    types: [published]
-
 permissions:
   contents: write
 
 concurrency:
-  group: release-generic-installer-${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release_tag }}
+  group: release-generic-installer-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   resolve:
     name: Resolve release + platforms
     # Auto-attach only to published app releases (vX.Y.Z); skip prereleases
-    # and secondary releases like openwork-orchestrator-v*.
-    if: github.event_name == 'workflow_dispatch' || (github.event.release.prerelease == false && startsWith(github.event.release.tag_name, 'v'))
+    # and secondary releases like openwork-orchestrator-v*. Reusable workflows
+    # retain their caller's event name (normally "push" here), so every
+    # non-release invocation is an explicit dispatch/call and must run.
+    if: github.event_name != 'release' || (github.event.release.prerelease == false && startsWith(github.event.release.tag_name, 'v'))
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
@@ -74,10 +96,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
-          INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
-          INPUT_PUBLISH_MODE: ${{ github.event.inputs.publish_mode }}
-          INPUT_PLATFORMS: ${{ github.event.inputs.platforms }}
-          INPUT_SIGN_WINDOWS: ${{ github.event.inputs.sign_windows }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_PUBLISH_MODE: ${{ inputs.publish_mode }}
+          INPUT_PLATFORMS: ${{ inputs.platforms }}
+          INPUT_SIGN_WINDOWS: ${{ inputs.sign_windows }}
           RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail

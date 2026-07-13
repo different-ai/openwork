@@ -1,0 +1,103 @@
+name: Eval Generic Installer Release Contract
+
+# Push the exact commit under an installer-release-e2e/* branch to exercise
+# the reusable workflow with a real `push` caller event. The job creates a
+# collision-proof non-v prerelease, validates its public artifact anonymously,
+# and removes both the release and tag even when validation fails.
+on:
+  push:
+    branches:
+      - "installer-release-e2e/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: installer-release-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Create isolated prerelease
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Create release at the exact commit
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:8}"
+          tag="installer-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${short_sha}"
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Installer release E2E $short_sha" \
+            --notes "Ephemeral release-contract proof for $GITHUB_SHA." \
+            --prerelease
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  publish-generic-installer:
+    name: Call reusable installer publisher from push
+    needs: prepare
+    uses: ./.github/workflows/release-generic-installer.yml
+    with:
+      release_tag: ${{ needs.prepare.outputs.release_tag }}
+      publish_mode: release
+      platforms: mac-arm64
+      sign_windows: false
+    secrets: inherit
+
+  validate:
+    name: Download and validate public artifact
+    needs: [prepare, publish-generic-installer]
+    runs-on: macos-14
+    steps:
+      - name: Prove anonymous download, archive integrity, and macOS trust
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="openwork-installer-mac-arm64.zip"
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/$asset"
+
+          curl --fail --location --retry 5 --silent --show-error \
+            --output "$RUNNER_TEMP/$asset" "$url"
+          test "$(stat -f %z "$RUNNER_TEMP/$asset")" -gt 1000000
+          unzip -t "$RUNNER_TEMP/$asset"
+          unzip -q "$RUNNER_TEMP/$asset" -d "$RUNNER_TEMP/installer"
+
+          app="$RUNNER_TEMP/installer/OpenWork Installer.app"
+          test -d "$app"
+          test ! -e "$RUNNER_TEMP/installer/openwork-installer.json"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
+
+          {
+            echo "### Generic installer release contract passed"
+            echo
+            echo "- Caller event: \`$GITHUB_EVENT_NAME\`"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Ephemeral tag: \`$RELEASE_TAG\`"
+            echo "- Bytes: \`$(stat -f %z "$RUNNER_TEMP/$asset")\`"
+            echo "- SHA-256: \`$(shasum -a 256 "$RUNNER_TEMP/$asset" | awk '{print $1}')\`"
+            echo "- Anonymous full download, zip integrity, code signature, Gatekeeper, and notarization: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup:
+    name: Remove isolated release and tag
+    needs: [prepare, publish-generic-installer, validate]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+        shell: bash
+        run: gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes

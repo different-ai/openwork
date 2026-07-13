@@ -51,6 +51,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
 import { ClaudePluginImportModal } from "../../connections/modals/claude-plugin-import-modal";
+import { canDisconnectNativeProviderAccount } from "../../connections/native-provider-connections";
 import type { OpenworkClaudePluginPreview } from "../../../../app/lib/openwork-server";
 import {
   isOpenWorkExtensionEnabled,
@@ -126,6 +127,8 @@ export type McpViewProps = {
   installClaudePlugin?: (url: string) => Promise<{ ok: boolean; message: string }>;
   /** Connected org-level External MCP Connections rendered in My Extensions. */
   installedOrgMcpItems?: ExtensionItem[];
+  orgMcpDisconnectingId?: string | null;
+  disconnectOrgMcp?: (connectionId: string) => void;
 };
 
 const builtInExtensionDisabledReason = "Disabled by organization";
@@ -397,6 +400,15 @@ export function McpView(props: McpViewProps) {
       );
     });
 
+  // Auto-configured built-ins like openwork-cloud remain active but hidden from
+  // Your apps until Show hidden reveals the row for disable/remove.
+  const visibleMcpServers = showHidden
+    ? props.mcpServers
+    : props.mcpServers.filter((entry) => {
+        const match = resolveQuickConnectMatch(entry.name);
+        return !match || !isOpenWorkExtensionHidden(match);
+      });
+
   const displayName = (name: string) => resolveQuickConnectMatch(name)?.name ?? name;
 
   const quickConnectStatus = (entry: McpDirectoryInfo) =>
@@ -632,10 +644,12 @@ export function McpView(props: McpViewProps) {
         }}
         onPluginDetail={setDetailPlugin}
         onOrgMcpDetail={setDetailOrgMcpItem}
+        orgMcpDisconnectingId={props.orgMcpDisconnectingId ?? null}
+        disconnectOrgMcp={props.disconnectOrgMcp}
       />
 
       <McpConfiguredServersSection
-        servers={props.mcpServers}
+        servers={visibleMcpServers}
         statuses={props.mcpStatuses}
         lastUpdatedAt={props.mcpLastUpdatedAt}
         selectedMcp={props.selectedMcp}
@@ -830,6 +844,7 @@ export function McpView(props: McpViewProps) {
 
       {detailOrgMcpItem && isOrgMcpConnectionItem(detailOrgMcpItem) ? (() => {
         const connection = detailOrgMcpItem.orgMcpConnection;
+        const canDisconnect = canDisconnectNativeProviderAccount(connection);
         return (
           <ExtensionDetailModal
             open={true}
@@ -842,6 +857,8 @@ export function McpView(props: McpViewProps) {
             beta
             url={connection.url}
             oauth={connection.authType === "oauth"}
+            onUninstall={canDisconnect && props.disconnectOrgMcp ? () => props.disconnectOrgMcp?.(connection.id) : undefined}
+            uninstallLabel={t("mcp.org_connection_disconnect_action")}
             showEnablementCard={false}
             configSlot={(
               <div className="flex flex-wrap gap-2">
@@ -917,6 +934,8 @@ function McpQuickConnectSection(props: {
   onSkillDetail?: (skill: SkillItem) => void;
   onPluginDetail?: (plugin: CloudImportedPlugin) => void;
   onOrgMcpDetail?: (item: ExtensionItem) => void;
+  orgMcpDisconnectingId: string | null;
+  disconnectOrgMcp?: (connectionId: string) => void;
 }) {
   return (
     <div className="space-y-4">
@@ -995,19 +1014,33 @@ function McpQuickConnectSection(props: {
 
         {(props.installedOrgMcpItems ?? []).filter(isOrgMcpConnectionItem).map((item) => {
           const connection = item.orgMcpConnection;
+          const canDisconnect = canDisconnectNativeProviderAccount(connection);
+          const disconnecting = props.orgMcpDisconnectingId === connection.id;
           return (
-            <ExtensionCard
-              key={item.id}
-              name={item.name}
-              description={item.description ?? "Shared by your organization."}
-              kind="mcp"
-              url={connection.url}
-              connected={true}
-              connectedLabel={orgMcpConnectionActionLabel(connection)}
-              beta
-              actionLabel="View details"
-              onClick={() => props.onOrgMcpDetail?.(item)}
-            />
+            <div key={item.id} className="space-y-2">
+              <ExtensionCard
+                name={item.name}
+                description={item.description ?? "Shared by your organization."}
+                kind="mcp"
+                url={connection.url}
+                connected={true}
+                connectedLabel={orgMcpConnectionActionLabel(connection)}
+                beta
+                actionLabel={disconnecting ? t("mcp.org_connection_disconnecting_action") : "View details"}
+                onClick={() => props.onOrgMcpDetail?.(item)}
+              />
+              {canDisconnect ? (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="w-full"
+                  disabled={disconnecting}
+                  onClick={() => props.disconnectOrgMcp?.(connection.id)}
+                >
+                  {disconnecting ? t("mcp.org_connection_disconnecting_action") : t("mcp.org_connection_disconnect_action")}
+                </Button>
+              ) : null}
+            </div>
           );
         })}
 

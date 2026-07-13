@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "a565b456-3a04-4c0e-a42c-45ed20967e93",
+  "id": "d9e6b28d-96c0-4f54-bd66-2711e8c40b3e",
   "prevId": "5a458e2c-34f3-4b47-acab-835bd3dcf180",
   "tables": {
     "account": {
@@ -3392,6 +3392,91 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
+    "organization_brand_asset": {
+      "name": "organization_brand_asset",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "extension": {
+          "name": "extension",
+          "type": "varchar(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bytes": {
+          "name": "bytes",
+          "type": "mediumblob",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "organization_brand_asset_organization_id": {
+          "name": "organization_brand_asset_organization_id",
+          "columns": [
+            "organization_id"
+          ],
+          "isUnique": false
+        },
+        "organization_brand_asset_version": {
+          "name": "organization_brand_asset_version",
+          "columns": [
+            "organization_id",
+            "kind",
+            "version",
+            "extension"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "organization_brand_asset_id": {
+          "name": "organization_brand_asset_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
     "organization_role": {
       "name": "organization_role",
       "columns": {
@@ -4279,176 +4364,6 @@
       "compositePrimaryKeys": {
         "org_oauth_client_id": {
           "name": "org_oauth_client_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "external_mcp_tool_manifest": {
-      "name": "external_mcp_tool_manifest",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "external_mcp_connection_id": {
-          "name": "external_mcp_connection_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "principal": {
-          "name": "principal",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "config_hash": {
-          "name": "config_hash",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "enum('ok','error')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "tools": {
-          "name": "tools",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "tool_count": {
-          "name": "tool_count",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "tools_hash": {
-          "name": "tools_hash",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "tools_truncated": {
-          "name": "tools_truncated",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "last_error": {
-          "name": "last_error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "duration_ms": {
-          "name": "duration_ms",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "listed_at": {
-          "name": "listed_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "stale_at": {
-          "name": "stale_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "refresh_started_at": {
-          "name": "refresh_started_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
-        }
-      },
-      "indexes": {
-        "emtm_connection_principal": {
-          "name": "emtm_connection_principal",
-          "columns": [
-            "external_mcp_connection_id",
-            "principal"
-          ],
-          "isUnique": true
-        },
-        "emtm_organization_id": {
-          "name": "emtm_organization_id",
-          "columns": [
-            "organization_id"
-          ],
-          "isUnique": false
-        },
-        "emtm_listed_at": {
-          "name": "emtm_listed_at",
-          "columns": [
-            "listed_at"
-          ],
-          "isUnique": false
-        },
-        "emtm_refresh_started_at": {
-          "name": "emtm_refresh_started_at",
-          "columns": [
-            "refresh_started_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "external_mcp_tool_manifest_id": {
-          "name": "external_mcp_tool_manifest_id",
           "columns": [
             "id"
           ]

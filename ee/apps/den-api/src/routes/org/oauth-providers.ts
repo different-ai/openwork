@@ -15,10 +15,13 @@ import {
   createOAuthStateToken,
   createPkcePair,
   exchangeCodeForTokens,
+  OAuthClientConfigurationError,
+  OAuthTokenExchangeError,
   resolvePublicOrigin,
   verifyOAuthStateToken,
 } from "../../capability-sources/generic-oauth.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
+import { revokeAccountsBeforeOAuthClientIdentityChange } from "../../capability-sources/oauth-client-rotation.js"
 import {
   clientSelectedFeatures,
   getNativeOAuthProvider,
@@ -27,12 +30,15 @@ import {
   type NativeOAuthProviderConfig,
 } from "../../capability-sources/provider-registry.js"
 import {
+  completeConnectedAccountForActiveMember,
   disconnectAccount,
+  disconnectProviderAccountsForOrganization,
   getConnectedAccount,
   getOrgOAuthClient,
   upsertConnectedAccount,
   upsertOrgOAuthClient,
 } from "../../capability-sources/oauth-credentials.js"
+import { normalizeEntraTenantId, readProviderTenantId } from "../../capability-sources/oauth-tenant.js"
 import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 
@@ -44,6 +50,7 @@ const saveClientBodySchema = z.object({
   clientId: z.string().trim().min(1).max(512).optional(),
   clientSecret: z.string().trim().min(1).max(4096).optional(),
   features: z.array(z.string().trim().min(1).max(128)).optional(),
+  tenantId: z.string().trim().min(1).max(253).optional(),
 })
 
 const oauthNotFoundSchema = z.object({
@@ -56,6 +63,7 @@ const clientConfigResponseSchema = z.object({
   providerId: z.string(),
   clientId: z.string(),
   features: z.array(z.string()),
+  tenantId: z.string().nullable(),
 }).meta({ ref: "OAuthClientConfigResponse" })
 
 const clientConfigDetailResponseSchema = z.object({
@@ -65,6 +73,7 @@ const clientConfigDetailResponseSchema = z.object({
   features: z.array(z.string()),
   scopes: z.array(z.string()),
   redirectUri: z.string(),
+  tenantId: z.string().nullable(),
 }).meta({ ref: "OAuthClientConfigDetailResponse" })
 
 const connectStartResponseSchema = z.object({
@@ -98,7 +107,7 @@ type OrgIds = { organizationId: DenTypeId<"organization">; orgMembershipId: DenT
 async function beginNativeProviderConnect(input: OrgIds & {
   provider: NativeOAuthProviderConfig
   request: Request
-}): Promise<{ authorizeUrl: string } | { error: "client_not_configured" }> {
+}): Promise<{ authorizeUrl: string } | { error: "client_not_configured" | "client_configuration_invalid"; message?: string }> {
   const client = await getOrgOAuthClient(input.organizationId, input.provider.providerId)
   if (!client) {
     return { error: "client_not_configured" }
@@ -112,19 +121,27 @@ async function beginNativeProviderConnect(input: OrgIds & {
     secret: env.betterAuthSecret,
   })
 
+  let authorizeUrl: string
+  try {
+    authorizeUrl = buildAuthorizeUrl({
+      provider: input.provider,
+      client,
+      state,
+      redirectUri: callbackRedirectUri(input.request, input.provider.providerId),
+      codeChallenge: challenge,
+    })
+  } catch (error) {
+    if (error instanceof OAuthClientConfigurationError) {
+      return { error: "client_configuration_invalid", message: error.message }
+    }
+    throw error
+  }
+
   await upsertConnectedAccount({
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     providerId: input.provider.providerId,
     pendingCodeVerifier: verifier,
-  })
-
-  const authorizeUrl = buildAuthorizeUrl({
-    provider: input.provider,
-    client,
-    state,
-    redirectUri: callbackRedirectUri(input.request, input.provider.providerId),
-    codeChallenge: challenge,
   })
   return { authorizeUrl }
 }
@@ -183,21 +200,61 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         }
       }
 
+      if (body.tenantId !== undefined && !provider.tenantIdExtraKey) {
+        return c.json({ error: "invalid_request", message: `tenantId is not supported for "${providerId}".` }, 400)
+      }
+
+      const tenantId = provider.tenantIdExtraKey
+        ? body.tenantId !== undefined
+          ? normalizeEntraTenantId(body.tenantId)
+          : readProviderTenantId(existing?.extra ?? null, provider.tenantIdExtraKey)
+        : null
+      if (provider.tenantIdExtraKey && !tenantId) {
+        return c.json({ error: "invalid_request", message: "A valid Microsoft Entra tenant ID (GUID) or verified tenant domain is required." }, 400)
+      }
+
       const clientId = body.clientId ?? existing?.clientId
       if (!clientId) {
         return c.json({ error: "invalid_request", message: "clientId is required for first-time setup." }, 400)
       }
+
+      const extra = { ...(existing?.extra ?? {}) }
+      if (body.features !== undefined) extra.features = body.features
+      if (provider.tenantIdExtraKey && tenantId) extra[provider.tenantIdExtraKey] = tenantId
+
+      const previousTenantId = provider.tenantIdExtraKey
+        ? readProviderTenantId(existing?.extra ?? null, provider.tenantIdExtraKey)
+        : null
+      // Fail closed: old-tenant/client tokens are removed before the provider
+      // identity changes, so a failed revoke can never leave them usable under
+      // the new org configuration. A later save failure only requires reconnect.
+      await revokeAccountsBeforeOAuthClientIdentityChange({
+        hadExistingClient: Boolean(existing),
+        previousClientId: existing?.clientId ?? null,
+        nextClientId: clientId,
+        previousTenantId,
+        nextTenantId: tenantId,
+        organizationId: payload.organization.id,
+        providerId,
+        revoke: disconnectProviderAccountsForOrganization,
+      })
 
       const saved = await upsertOrgOAuthClient({
         organizationId: payload.organization.id,
         providerId,
         clientId,
         ...(body.clientSecret !== undefined ? { clientSecret: body.clientSecret } : {}),
-        ...(body.features !== undefined ? { extra: { ...(existing?.extra ?? {}), features: body.features } } : {}),
+        ...((body.features !== undefined || provider.tenantIdExtraKey) ? { extra } : {}),
         createdByOrgMembershipId: payload.currentMember.id,
       })
 
-      return c.json({ ok: true, providerId, clientId: saved.clientId, features: clientSelectedFeatures(provider, saved.extra) })
+      return c.json({
+        ok: true,
+        providerId,
+        clientId: saved.clientId,
+        features: clientSelectedFeatures(provider, saved.extra),
+        tenantId: provider.tenantIdExtraKey ? readProviderTenantId(saved.extra, provider.tenantIdExtraKey) : null,
+      })
     },
   )
 
@@ -236,6 +293,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         features,
         scopes: resolveProviderScopes(provider, features),
         redirectUri: callbackRedirectUri(c.req.raw, providerId),
+        tenantId: provider.tenantIdExtraKey ? readProviderTenantId(client?.extra ?? null, provider.tenantIdExtraKey) : null,
       })
     },
   )
@@ -270,6 +328,9 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         request: c.req.raw,
       })
       if ("error" in started) {
+        if (started.error === "client_configuration_invalid") {
+          return c.json({ error: "invalid_request", message: started.message ?? "OAuth client configuration is incomplete." }, 400)
+        }
         return c.json({ error: "client_not_configured", message: `Connect an OAuth client for "${providerId}" first.` }, 404)
       }
       return c.json({ authorizeUrl: started.authorizeUrl })
@@ -292,6 +353,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         description: "Native-provider twin of the external MCP connect/start route: returns an authorize URL for the browser, using the OAuth client the org saved for this provider.",
         responses: {
           200: jsonResponse("Authorize URL, or already connected.", nativeConnectStartResponseSchema),
+          400: jsonResponse("The OAuth client configuration is incomplete.", invalidRequestSchema),
           401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
           404: jsonResponse("The org has not configured an OAuth client for this provider yet.", clientNotConfiguredSchema),
         },
@@ -306,6 +368,9 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           request: c.req.raw,
         })
         if ("error" in started) {
+          if (started.error === "client_configuration_invalid") {
+            return c.json({ error: "invalid_request", message: started.message ?? "OAuth client configuration is incomplete." }, 400)
+          }
           return c.json({ error: "client_not_configured", message: `Connect an OAuth client for "${provider.providerId}" first.` }, 404)
         }
         return c.json({ status: "needs_auth" as const, authorizeUrl: started.authorizeUrl })
@@ -364,10 +429,12 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           codeVerifier: pending.pendingCodeVerifier,
         })
 
-        await upsertConnectedAccount({
+        const saved = await completeConnectedAccountForActiveMember({
           organizationId: statePayload.organizationId,
           orgMembershipId: statePayload.orgMembershipId,
           providerId,
+          expectedAccountId: pending.id,
+          expectedPendingCodeVerifier: pending.pendingCodeVerifier,
           accessToken: tokens.access_token,
           refreshToken: tokens.refresh_token ?? null,
           tokenType: tokens.token_type ?? null,
@@ -375,8 +442,46 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           scopes: tokens.scope ? tokens.scope.split(" ") : resolveProviderScopes(provider, clientSelectedFeatures(provider, client.extra)),
           pendingCodeVerifier: null,
         })
+        if (!saved) {
+          return c.html(connectCallbackPage({
+            ok: false,
+            name: provider.displayName,
+            message: "This OpenWork connection request is no longer active.",
+          }), 400)
+        }
       } catch (error) {
-        return c.html(connectCallbackPage({ ok: false, name: provider.displayName, message: error instanceof Error ? error.message : String(error) }), 400)
+        const requestId = c.get("requestId")
+        if (error instanceof OAuthTokenExchangeError) {
+          console.error("native_oauth_connect_callback_token_exchange_failed", {
+            requestId,
+            organizationId: statePayload.organizationId,
+            providerId,
+            phase: error.phase,
+            code: error.code,
+            ...error.details,
+          })
+          return c.html(connectCallbackPage({
+            ok: false,
+            name: provider.displayName,
+            message: error.message,
+            referenceId: requestId,
+          }), 400)
+        }
+
+        console.error("native_oauth_connect_callback_failed", {
+          requestId,
+          organizationId: statePayload.organizationId,
+          providerId,
+          phase: "AUTH_TOKEN_ACQUISITION",
+          code: "oauth_callback_failed",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        })
+        return c.html(connectCallbackPage({
+          ok: false,
+          name: provider.displayName,
+          message: "OpenWork could not finish the OAuth connection. Try Connect again; if it still fails, contact support with the diagnostic reference.",
+          referenceId: requestId,
+        }), 400)
       }
 
       return c.html(connectCallbackPage({ ok: true, name: provider.displayName }))

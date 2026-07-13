@@ -21,11 +21,13 @@ import {
   X,
 } from "lucide-react";
 import { useDenFlow } from "../../_providers/den-flow-provider";
+import { DEFAULT_AUTH_NAME } from "../../_lib/den-flow";
 import {
   formatRoleLabel,
   getAnalyticsRoute,
   getBackgroundAgentsRoute,
   getApiKeysRoute,
+  getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
   getDesktopPoliciesRoute,
@@ -33,6 +35,7 @@ import {
   getIntegrationsRoute,
   getInferenceRoute,
   getMcpConnectionsRoute,
+  getManagedBrandIconUrl,
   getMembersRoute,
   getYourConnectionsRoute,
   getOrgDashboardRoute,
@@ -46,6 +49,7 @@ import { useOrgListWindow } from "../../_lib/use-org-list-window";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgSelectionScreen } from "./org-selection-screen";
+import { UserProfileDialog } from "./user-profile-dialog";
 
 const OPENWORK_DOCS_URL = "/docs";
 
@@ -118,6 +122,51 @@ function OpenWorkMark({ className = "h-9 w-auto" }: { className?: string }) {
   );
 }
 
+export function SidebarBrandMark({
+  metadata,
+  organizationName,
+}: {
+  metadata: string | null | undefined;
+  organizationName: string;
+}) {
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+
+  if (metadata === undefined) {
+    return (
+      <div
+        className="h-10 w-10 rounded-xl bg-gray-100"
+        aria-label="Loading organization icon"
+        data-sidebar-brand-icon="loading"
+      />
+    );
+  }
+
+  const iconUrl = getManagedBrandIconUrl(metadata);
+  if (!iconUrl || failedUrl === iconUrl) {
+    return (
+      <div data-sidebar-brand-icon="fallback">
+        <OpenWorkMark />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="h-10 w-10 overflow-hidden rounded-xl bg-gray-100"
+      data-sidebar-brand-icon={loadedUrl === iconUrl ? "ready" : "loading"}
+    >
+      <img
+        src={iconUrl}
+        alt={`${organizationName} icon`}
+        className={`h-full w-full object-cover transition-opacity ${loadedUrl === iconUrl ? "opacity-100" : "opacity-0"}`}
+        onLoad={() => setLoadedUrl(iconUrl)}
+        onError={() => setFailedUrl(iconUrl)}
+      />
+    </div>
+  );
+}
+
 function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (!orgSlug) {
     return "Home";
@@ -171,7 +220,10 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Your Connections";
   }
   if (pathname.startsWith(getBillingRoute(orgSlug))) {
-    return "Billing";
+    return "Stripe";
+  }
+  if (pathname.startsWith(getBrandAppearanceRoute(orgSlug))) {
+    return "Brand appearance";
   }
   if (pathname.startsWith(getOrgSettingsRoute(orgSlug))) {
     return "Org Settings";
@@ -182,7 +234,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
 
 export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { user, signOut, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  const { user, signOut, updateUserProfile, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const {
     activeOrg,
     orgDirectory,
@@ -195,6 +247,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   } = useOrgDashboard();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [profilePromptDismissed, setProfilePromptDismissed] = useState(false);
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const {
     query: switcherQuery,
@@ -226,6 +279,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   );
 
   const pageTitle = getDashboardPageTitle(pathname, activeOrg?.slug ?? null);
+  const shouldShowProfilePrompt = Boolean(
+    user &&
+      !profilePromptDismissed &&
+      user.name?.trim() === DEFAULT_AUTH_NAME,
+  );
   const feedbackHref = buildDenFeedbackUrl({
     pathname,
     orgSlug: activeOrg?.slug,
@@ -235,7 +293,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   // Top-level rows: Dashboard, optional Your Connections, Extensions, Models,
   // Members, Analytics, Settings. Everything tool-shaped groups under
   // Extensions (in pipeline order: Sources feed Plugins, share via
-  // Marketplaces, beta Connections last); model config groups under
+  // Marketplaces, alpha Connections last); model config groups under
   // Models; set-once governance groups under Settings.
   const extensionsGroup: DashboardNavItem | null = access.isAdmin && activeOrg
     ? {
@@ -246,7 +304,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           { href: getIntegrationsRoute(activeOrg.slug), label: "Sources" },
           { href: getPluginsRoute(activeOrg.slug), label: "Plugins" },
           { href: getMarketplacesRoute(activeOrg.slug), label: "Marketplaces" },
-          { href: getMcpConnectionsRoute(activeOrg.slug), label: "Connections", badge: "Beta" },
+          { href: getMcpConnectionsRoute(activeOrg.slug), label: "Connections", badge: "Alpha" },
         ],
       }
     : null;
@@ -266,8 +324,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         ...(access.isAdmin
           ? [
               { href: getOrgSettingsRoute(activeOrg.slug), label: "General" },
+              { href: getBrandAppearanceRoute(activeOrg.slug), label: "Brand appearance" },
               { href: getDesktopPoliciesRoute(activeOrg.slug), label: "Desktop Policies" },
-              { href: getBillingRoute(activeOrg.slug), label: "Billing" },
+              { href: getBillingRoute(activeOrg.slug), label: "Stripe" },
             ]
           : []),
         ...(access.canManageApiKeys ? [{ href: getApiKeysRoute(activeOrg.slug), label: "API Keys" }] : []),
@@ -297,7 +356,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           href: activeOrg ? getYourConnectionsRoute(activeOrg.slug) : "#",
           label: "Your Connections",
           icon: Plug,
-          badge: "Beta",
+          badge: "Alpha",
         }]
       : []),
     ...(extensionsGroup ? [extensionsGroup] : []),
@@ -466,7 +525,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     <div className="flex flex-1 flex-col">
       <div className="border-b border-gray-100 px-4 pb-4 pt-5">
         <div className="flex items-center justify-between gap-3">
-          <OpenWorkMark />
+          <SidebarBrandMark
+            metadata={orgContext?.organization.metadata}
+            organizationName={activeOrg?.name ?? runtimeConfig.singleOrgName}
+          />
           <button
             type="button"
             className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 md:hidden"
@@ -568,7 +630,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#fafafa] md:flex-row">
+    <div className="flex min-h-screen flex-col bg-[#fafafa] md:h-screen md:flex-row">
       {/* Desktop sidebar — always visible at md+ */}
       <aside className="hidden shrink-0 border-r border-gray-100 bg-white md:flex md:min-h-screen md:w-[260px] md:flex-col">
         {sidebarContent}
@@ -624,6 +686,19 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
         <main className="flex-1 overflow-y-auto bg-[#fafafa]">{children}</main>
       </div>
+
+      {shouldShowProfilePrompt && user ? (
+        <UserProfileDialog
+          key={user.id}
+          user={user}
+          descriptor="Change how your name appears in the organization"
+          onCancel={() => setProfilePromptDismissed(true)}
+          onSave={async (input) => {
+            await updateUserProfile(input);
+            setProfilePromptDismissed(true);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

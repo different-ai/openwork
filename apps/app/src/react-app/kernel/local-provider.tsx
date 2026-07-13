@@ -13,6 +13,12 @@ import {
 import { THINKING_PREF_KEY } from "../../app/constants";
 import { coerceReleaseChannel } from "../../app/lib/release-channels";
 import type { ModelRef, ReleaseChannel, SettingsTab, View } from "../../app/types";
+import {
+  DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
+  isDesktopNotificationPreference,
+  type DesktopNotificationPreference,
+} from "./desktop-notification-preferences";
+import { LOCAL_PREFERENCES_KEY } from "./local-preferences-storage";
 import { readStoredDefaultModel } from "./model-config";
 
 export type LocalUIState = {
@@ -52,10 +58,20 @@ export type LocalPreferences = {
    */
   hasCompletedOnboarding: boolean;
   /**
+   * One-shot provider selection shown on the user's first send when no
+   * user-added provider is connected. True once completed or skipped.
+   */
+  providerStepCompleted: boolean;
+  /**
    * Anonymous product analytics (PostHog). On by default with a visible
    * opt-out in Settings -> Preferences. Never includes message content.
    */
   analyticsEnabled: boolean;
+  /**
+   * Native OS notifications from the desktop app. Off by default so upgrading
+   * users are not surprised by system popups.
+   */
+  desktopNotifications: DesktopNotificationPreference;
 };
 
 type LocalContextValue = {
@@ -69,7 +85,6 @@ type LocalContextValue = {
 const LocalContext = createContext<LocalContextValue | undefined>(undefined);
 
 const UI_STORAGE_KEY = "openwork.ui";
-const PREFS_STORAGE_KEY = "openwork.preferences";
 export const DEFAULT_SHOW_THINKING = true;
 
 const INITIAL_UI: LocalUIState = { view: "settings", tab: "general" };
@@ -81,7 +96,9 @@ const INITIAL_PREFS: LocalPreferences = {
   releaseChannel: "stable",
   featureFlags: { microsandboxCreateSandbox: true, memory: false },
   hasCompletedOnboarding: false,
+  providerStepCompleted: false,
   analyticsEnabled: true,
+  desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
 };
 
 function readPersisted<T>(key: string, fallback: T): T {
@@ -117,7 +134,21 @@ export function LocalProvider({ children }: LocalProviderProps) {
     readPersisted(UI_STORAGE_KEY, INITIAL_UI),
   );
   const [prefs, setPrefsRaw] = useState<LocalPreferences>(() => {
-    const persisted = readPersisted(PREFS_STORAGE_KEY, INITIAL_PREFS);
+    const persisted = readPersisted(LOCAL_PREFERENCES_KEY, INITIAL_PREFS);
+    persisted.desktopNotifications = isDesktopNotificationPreference(persisted.desktopNotifications)
+      ? persisted.desktopNotifications
+      : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE;
+    // Back-fill: users who onboarded before the agent-screen-first flow have
+    // already picked a provider path. Only fires while the new key is absent
+    // from storage (first write persists it).
+    try {
+      const raw = JSON.parse(window.localStorage.getItem(LOCAL_PREFERENCES_KEY) ?? "{}") as Record<string, unknown>;
+      if (raw.hasCompletedOnboarding === true && raw.providerStepCompleted === undefined) {
+        persisted.providerStepCompleted = true;
+      }
+    } catch {
+      // ignore parse failures; defaults apply
+    }
     if (persisted.defaultModel) {
       return persisted;
     }
@@ -134,7 +165,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
   }, [ui]);
 
   useEffect(() => {
-    writePersisted(PREFS_STORAGE_KEY, prefs);
+    writePersisted(LOCAL_PREFERENCES_KEY, prefs);
   }, [prefs]);
 
   useEffect(() => {

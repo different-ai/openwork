@@ -126,18 +126,26 @@ async function uiSignIn(ctx, email, password) {
 }
 
 async function uiSignOut(ctx) {
-  const opened = await ctx.eval(`(() => {
-    const trigger = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Acme Robotics') || el.textContent.includes('Owner') || el.textContent.includes('Member'));
-    trigger?.click();
-    return Boolean(trigger);
+  // Single-org shells render direct sign-out; multi-org shells keep it in the org switcher.
+  const clickedDirect = await ctx.eval(`(() => {
+    const button = document.querySelector('button[aria-label="Sign out"]');
+    button?.click();
+    return Boolean(button);
   })()`);
-  ctx.assert(opened, "Could not open the org switcher.");
-  await ctx.waitFor("[...document.querySelectorAll('button')].some((el) => el.textContent.trim() === 'Sign out')", { timeoutMs: 10_000, label: "sign out option" });
-  await ctx.eval(`(() => {
-    const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Sign out');
-    btn?.click();
-    return true;
-  })()`);
+  if (!clickedDirect) {
+    const opened = await ctx.eval(`(() => {
+      const trigger = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Acme Robotics') || el.textContent.includes('Owner') || el.textContent.includes('Member'));
+      trigger?.click();
+      return Boolean(trigger);
+    })()`);
+    ctx.assert(opened, "Could not open the org switcher.");
+    await ctx.waitFor("[...document.querySelectorAll('button')].some((el) => el.textContent.trim() === 'Sign out')", { timeoutMs: 10_000, label: "sign out option" });
+    await ctx.eval(`(() => {
+      const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Sign out');
+      btn?.click();
+      return true;
+    })()`);
+  }
   await ctx.waitFor("!location.pathname.startsWith('/dashboard') || document.body.innerText.includes('Sign in')", { timeoutMs: 30_000, label: "signed out" });
   await sleep(1_000);
 }
@@ -161,21 +169,21 @@ async function navChildLabels(ctx) {
 }
 
 function stripBetaLabel(label) {
-  return label.replace(/beta$/i, "").trim();
+  return label.replace(/alpha$/i, "").trim();
 }
 
 async function hasPageBetaBadge(ctx) {
   return ctx.eval(`(() => {
     return [...document.querySelectorAll('span')].some((span) => {
       const className = String(span.className ?? '');
-      return span.textContent.trim() === 'Beta' && className.includes('rounded-full') && !span.closest('nav');
+      return span.textContent.trim() === 'Alpha' && className.includes('rounded-full') && !span.closest('nav');
     });
   })()`);
 }
 
 export default {
   id: "connections-beta",
-  title: "Connections beta treatment: visible, black, and last",
+  title: "Connections alpha treatment: visible, black, and last",
   kind: "user-facing",
   spec: "evals/voiceovers/connections-beta.md",
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
@@ -183,7 +191,7 @@ export default {
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("Beta is visible before you ever click", {
+        await ctx.prove("Alpha is visible before you ever click", {
           voiceover: vo[0],
           action: async () => {
             await uiSignIn(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
@@ -191,12 +199,12 @@ export default {
           assert: async () => {
             await ctx.waitFor(`${NAV_TEXT}.includes('Dashboard')`, { timeoutMs: 15_000, label: "dashboard nav" });
             const nav = await ctx.eval(NAV_TEXT);
-            ctx.assert(/Your Connections\s*Beta/i.test(nav), `Your Connections must carry Beta in the resting nav: ${nav}`);
+            ctx.assert(/Your Connections\s*Alpha/i.test(nav), `Your Connections must carry Alpha in the resting nav: ${nav}`);
             ctx.assert(nav.includes("Extensions"), "Extensions group must be present for the admin.");
           },
           screenshot: {
             name: "connections-beta-resting-sidebar",
-            claim: "The resting admin sidebar shows Your Connections marked Beta before Alex opens anything.",
+            claim: "The resting admin sidebar shows Your Connections marked Alpha before Alex opens anything.",
             requireText: ["Your Connections", "Dashboard"],
             rejectText: ["Something went wrong"],
           },
@@ -206,7 +214,7 @@ export default {
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("Extensions no longer lands on the beta feature", {
+        await ctx.prove("Extensions no longer lands on the alpha feature", {
           voiceover: vo[1],
           action: async () => {
             await clickNav(ctx, "Extensions");
@@ -219,11 +227,11 @@ export default {
               JSON.stringify(children.map(stripBetaLabel)) === JSON.stringify(["Sources", "Plugins", "Marketplaces", "Connections"]),
               `Extensions children are out of order: ${JSON.stringify(children)}`,
             );
-            ctx.assert(/Connections\s*Beta/i.test(children[children.length - 1] ?? ""), `Connections child must be last with Beta: ${JSON.stringify(children)}`);
+            ctx.assert(/Connections\s*Alpha/i.test(children[children.length - 1] ?? ""), `Connections child must be last with Alpha: ${JSON.stringify(children)}`);
           },
           screenshot: {
             name: "connections-beta-extensions-default-sources",
-            claim: "Clicking Extensions lands Alex on Sources while Connections remains last and badged Beta.",
+            claim: "Clicking Extensions lands Alex on Sources while Connections remains last and badged Alpha.",
             requireText: ["Sources"],
             rejectText: ["Something went wrong"],
           },
@@ -233,7 +241,7 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        await ctx.prove("The Connections page says Beta and wears black, not purple", {
+        await ctx.prove("The Connections page says Alpha and wears black, not purple", {
           voiceover: vo[2],
           action: async () => {
             await clickNav(ctx, "Connections");
@@ -244,18 +252,18 @@ export default {
             const proof = await ctx.eval(`(() => {
               const addCustom = [...document.querySelectorAll('button')].find((button) => button.textContent.trim().includes('Add Custom'));
               return {
-                beta: [...document.querySelectorAll('span')].some((span) => span.textContent.trim() === 'Beta' && String(span.className ?? '').includes('rounded-full') && !span.closest('nav')),
+                beta: [...document.querySelectorAll('span')].some((span) => span.textContent.trim() === 'Alpha' && String(span.className ?? '').includes('rounded-full') && !span.closest('nav')),
                 purple: document.querySelector('[class*="violet"], [class*="purple"]') !== null,
                 addCustomBackground: addCustom ? getComputedStyle(addCustom).backgroundColor : null,
               };
             })()`);
-            ctx.assert(proof.beta, "Connections hero Beta pill was not visible.");
+            ctx.assert(proof.beta, "Connections hero Alpha pill was not visible.");
             ctx.assert(!proof.purple, "Connections page must not render violet or purple classes.");
             ctx.assert(proof.addCustomBackground === "rgb(15, 23, 42)", `Add Custom should be black slate, got ${proof.addCustomBackground}`);
           },
           screenshot: {
             name: "connections-beta-black-page",
-            claim: "The Connections page shows a Beta hero pill, black Add Custom button, and no purple styling.",
+            claim: "The Connections page shows an Alpha hero pill, black Add Custom button, and no purple styling.",
             requireText: ["Connections", "Add Custom", "Google Workspace"],
             rejectText: ["Something went wrong"],
           },
@@ -294,20 +302,20 @@ export default {
     {
       name: "Frame 5",
       run: async (ctx) => {
-        await ctx.prove("Your Connections is marked beta for members too", {
+        await ctx.prove("Your Connections is marked alpha for members too", {
           voiceover: vo[4],
           action: async () => {
             await goTo(ctx, "/dashboard/your-connections");
           },
           assert: async () => {
             await ctx.waitFor("location.pathname.includes('/your-connections')", { timeoutMs: 15_000, label: "your connections route" });
-            ctx.assert(await hasPageBetaBadge(ctx), "Your Connections hero Beta pill was not visible.");
+            ctx.assert(await hasPageBetaBadge(ctx), "Your Connections hero Alpha pill was not visible.");
             await ctx.expectText(CONNECTION_NAME, { timeoutMs: 20_000 });
             await ctx.expectText("Connect your account", { timeoutMs: 10_000 });
           },
           screenshot: {
             name: "connections-beta-your-connections",
-            claim: "The member-facing Your Connections page is also Beta and asks the user to connect their own account.",
+            claim: "The member-facing Your Connections page is also Alpha and asks the user to connect their own account.",
             requireText: ["Your Connections", CONNECTION_NAME, "Connect your account"],
             rejectText: ["Something went wrong"],
           },

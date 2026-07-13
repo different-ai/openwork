@@ -7,6 +7,8 @@ import type { WorkspaceWire } from "@openwork/types/workspace";
 
 export type {
   AppBuildInfo,
+  BrandIconApplyResult,
+  BrandIconState,
   CacheResetResult,
   DesktopBootstrapConfig,
   DesktopCommandArgs,
@@ -18,6 +20,7 @@ export type {
   DesktopFetchResult,
   EngineDoctorResult,
   EngineInfo,
+  EvalRelaunchResult,
   ExecResult,
   LocalSkillCard,
   LocalSkillContent,

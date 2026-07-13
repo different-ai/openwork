@@ -8,8 +8,11 @@ import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
-import { listExternalMcpToolsWithOptions } from "./external-mcp-client.js"
-import type { ExternalMcpMemberContext } from "./external-mcp-client.js"
+import {
+  createExternalMcpLifecycleDeadline,
+  type ExternalMcpMemberContext,
+} from "./external-mcp-client.js"
+import { listExternalMcpTools } from "./external-mcp-client-runtime.js"
 
 export type ManifestPrincipal = "shared" | DenTypeId<"member">
 export type ExternalMcpToolManifestRow = typeof ExternalMcpToolManifestTable.$inferSelect
@@ -418,9 +421,13 @@ export async function revalidateManifestWithClaim(input: RevalidationInput & {
   if (!claimed) return "lease_held"
   const startedAt = Date.now()
   try {
-    const tools = await listExternalMcpToolsWithOptions(input.connection, input.redirectUri, input.member, {
-      timeoutMs: env.mcpListToolsTimeoutMs,
-    })
+    const tools = await listExternalMcpTools(
+      input.connection,
+      input.redirectUri,
+      input.member,
+      undefined,
+      createExternalMcpLifecycleDeadline(env.mcpListToolsTimeoutMs),
+    )
     await saveManifestListing({
       connection: input.connection,
       principal: input.principal,

@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { createContext, use, type ReactNode } from "react";
 
-import { openDesktopUrl, relaunchDesktopApp } from "../../app/lib/desktop";
+import { desktopNotificationShow, openDesktopUrl, relaunchDesktopApp } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
 
 export type SyncStorage = {
@@ -89,6 +89,14 @@ export function createDefaultPlatform(): Platform {
       window.location.reload();
     },
     notify: async (title, description, href) => {
+      const inView = document.visibilityState === "visible" && document.hasFocus();
+      if (inView) return;
+
+      if (isDesktopRuntime()) {
+        await desktopNotificationShow({ title, body: description });
+        return;
+      }
+
       if (!("Notification" in window)) return;
 
       const permission =
@@ -97,9 +105,6 @@ export function createDefaultPlatform(): Platform {
           : Notification.permission;
 
       if (permission !== "granted") return;
-
-      const inView = document.visibilityState === "visible" && document.hasFocus();
-      if (inView) return;
 
       await Promise.resolve()
         .then(() => {

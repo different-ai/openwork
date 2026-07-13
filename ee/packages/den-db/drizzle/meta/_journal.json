@@ -222,8 +222,29 @@
     {
       "idx": 32,
       "version": "5",
-      "when": 1783487261976,
-      "tag": "0032_stale_lady_vermin",
+      "when": 1783659724738,
+      "tag": "0032_new_outlaw_kid",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "5",
+      "when": 1783661302153,
+      "tag": "0033_lethal_the_professor",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "5",
+      "when": 1783817428501,
+      "tag": "0034_wooden_nehzno",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "5",
+      "when": 1783967062642,
+      "tag": "0035_wealthy_ronan",
       "breakpoints": true
     }
   ]

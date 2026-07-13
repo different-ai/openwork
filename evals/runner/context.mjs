@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets } from "./cdp.mjs";
+import { promisify } from "node:util";
+import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, pickAppTarget } from "./cdp.mjs";
+import { captureDaytonaComputerUseScreenshot } from "./daytona-computer-use.mjs";
+
+const execFileAsync = promisify(execFile);
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const POLL_INTERVAL_MS = 250;
@@ -79,11 +84,60 @@ export class EvalContext {
   }
 
   /** Returns focus to whichever tab was active before the last switchToNewTab(). */
-  switchBack() {
+  async switchBack() {
     const previous = this.tabStack.pop();
     if (previous) {
+      try {
+        this.client?.close();
+      } catch {
+        // The popup may already have closed itself after OAuth completion.
+      }
       this.client = previous;
+      if (this.cdpBaseUrl && previous.targetId) {
+        const baseUrl = this.cdpBaseUrl.replace(/\/$/, "");
+        await fetch(`${baseUrl}/json/activate/${encodeURIComponent(previous.targetId)}`).catch(() => undefined);
+      }
+      await previous.send("Page.bringToFront").catch(() => undefined);
     }
+  }
+
+  async reconnect({ timeoutMs = 90_000 } = {}) {
+    if (!this.cdpBaseUrl) {
+      throw new EvalError("reconnect requires cdpBaseUrl on the context.");
+    }
+    try {
+      this.client?.close();
+    } catch {
+      // The app may already be gone during relaunch.
+    }
+    for (const tabClient of this.tabStack) {
+      try {
+        tabClient.close();
+      } catch {
+        // Ignore stale tab clients.
+      }
+    }
+    this.tabStack = [];
+
+    const startedAt = Date.now();
+    let lastError = null;
+    while (Date.now() - startedAt < timeoutMs) {
+      try {
+        const target = await pickAppTarget(this.cdpBaseUrl);
+        const nextClient = await connect(debuggerUrlFor(this.cdpBaseUrl, target));
+        await nextClient.send("Page.enable").catch(() => undefined);
+        this.client = nextClient;
+        this.log(`Reconnected to app target: ${target.title || target.url}`);
+        return target;
+      } catch (error) {
+        lastError = error;
+        await sleep(POLL_INTERVAL_MS);
+      }
+    }
+    throw new EvalError(
+      `Timed out after ${timeoutMs}ms reconnecting to Electron CDP` +
+        (lastError ? ` (last error: ${lastError.message})` : ""),
+    );
   }
 
   beginStep(name) {
@@ -342,49 +396,173 @@ export class EvalContext {
     return result.result;
   }
 
+  /**
+   * Connect to a specific CDP page target (by id or URL substring), verifying
+   * the connection is actually responsive with a real Page.captureScreenshot
+   * call before returning it — a fresh connection's first call can
+   * intermittently time out through the Daytona proxy even though the target
+   * is healthy. Retries with a brand-new connection up to 3x. Returns the
+   * client plus the screenshot buffer captured during the responsiveness
+   * check (reuse it instead of shooting twice).
+   */
+  async _connectVerifiedTarget(targetId, targetUrlIncludes) {
+    if (!this.cdpBaseUrl) {
+      throw new EvalError("Targeting a specific CDP target requires cdpBaseUrl on the context.");
+    }
+    const attempts = 3;
+    let lastError = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const targets = await listTargets(this.cdpBaseUrl);
+        const target = targets.find((entry) => (
+          entry.type === "page" &&
+          entry.webSocketDebuggerUrl &&
+          (!targetId || entry.id === targetId) &&
+          (!targetUrlIncludes || String(entry.url ?? "").includes(targetUrlIncludes))
+        ));
+        if (!target) {
+          throw new EvalError(`No CDP target found matching ${JSON.stringify({ targetId, targetUrlIncludes })}.`);
+        }
+        const client = await connect(debuggerUrlFor(this.cdpBaseUrl, target));
+        await client.send("Page.enable").catch(() => undefined);
+        const buffer = await captureScreenshot(client);
+        return { client, buffer };
+      } catch (error) {
+        lastError = error;
+        this.log(`CDP target connection attempt ${attempt + 1}/${attempts} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    throw lastError;
+  }
+
+  /**
+   * Real OS-level screen grab (X11, via ffmpeg x11grab) inside a Daytona
+   * sandbox. Needed for content that CDP's Page.captureScreenshot cannot see
+   * at all — an Electron BrowserView/WebContentsView embedded in another
+   * window (e.g. the built-in browser panel) is a separate compositor
+   * surface, invisible to both its own target's AND the parent window's
+   * Page.captureScreenshot. The sandbox's shell script does a true screen
+   * capture, so it sees everything actually composited on screen.
+   *
+   * The daytona CLI joins argv after `--` into one remote shell string, so
+   * nested quoting never survives — ship the whole capture+encode pipeline
+   * as base64 piped into bash (same trick used for other daytona exec calls
+   * in the flows).
+   */
+  async _captureSandboxScreenshot(sandbox) {
+    const remotePath = `/tmp/eval-screenshot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
+    const script = `bash .devcontainer/capture-daytona-screenshot.sh --output ${remotePath} >/tmp/eval-screenshot-capture.log 2>&1 && base64 ${remotePath}`;
+    const encoded = Buffer.from(script, "utf8").toString("base64");
+    const { stdout } = await execFileAsync("daytona", ["exec", sandbox, "--", "echo", encoded, "|", "base64", "-d", "|", "bash"], {
+      timeout: 30_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    const base64Png = stdout.trim();
+    if (!base64Png) {
+      throw new EvalError("Sandbox screenshot capture returned no data.");
+    }
+    return Buffer.from(base64Png, "base64");
+  }
+
+  async _captureComputerUseScreenshot(sandbox) {
+    const buffer = await captureDaytonaComputerUseScreenshot(sandbox);
+    if (buffer.length === 0) {
+      throw new EvalError("Daytona Computer Use screenshot capture returned no data.");
+    }
+    return buffer;
+  }
+
   async screenshot(name, options = {}) {
     this.screenshotIndex += 1;
     const fileName = `${this.flowId}-${String(this.screenshotIndex).padStart(2, "0")}-${slug(name)}.png`;
-    const buffer = await captureScreenshot(this.client);
-    await writeFile(join(this.outDir, fileName), buffer);
-    this.screenshots.push(fileName);
-    const bodyText = await this.eval("document.body.innerText").catch(() => "");
-    const url = await this.eval("location.href").catch(() => "");
-    const hash = createHash("sha256").update(buffer).digest("hex");
-    const dimensions = pngDimensions(buffer);
-    const validations = [
-      { label: "PNG exists and is non-empty", passed: buffer.length > 0, detail: `${buffer.length} bytes` },
-      { label: "PNG dimensions are sane", passed: Boolean(dimensions?.width && dimensions?.height), detail: dimensions ? `${dimensions.width}x${dimensions.height}` : "unknown" },
-      { label: "Frame is not a duplicate of the previous capture", passed: this.lastScreenshotHash !== hash, detail: hash.slice(0, 12) },
-    ];
-    for (const text of options.requireText ?? []) {
-      validations.push({ label: `Required visible text: ${text}`, passed: typeof bodyText === "string" && bodyText.includes(text) });
+    const sandbox = options.sandboxCapture === "computer-use"
+      ? (this.env.OPENWORK_EVAL_DAYTONA_SANDBOX_ID || this.env.OPENWORK_EVAL_DAYTONA_SANDBOX)?.trim()
+      : options.sandboxCapture
+        ? this.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim()
+        : null;
+    const targetSelector = !sandbox && (options.targetId || options.targetUrlIncludes);
+    const textTargetSelector = options.textTargetId || options.textTargetUrlIncludes;
+    let screenshotClient = this.client;
+    let closeClients = [];
+    let preCapturedBuffer = null;
+    if (sandbox) {
+      preCapturedBuffer = options.sandboxCapture === "computer-use"
+        ? await this._captureComputerUseScreenshot(sandbox)
+        : await this._captureSandboxScreenshot(sandbox);
+    } else if (targetSelector) {
+      // Some CDP page targets (e.g. an embedded browser-panel WebContentsView
+      // rather than a top-level BrowserWindow page) do not reliably answer
+      // Page.captureScreenshot at all — no amount of retrying fixes that.
+      // Callers who know their target renders visually within the PRIMARY
+      // window (e.g. a split-pane browser panel) should omit targetId/
+      // targetUrlIncludes for the capture and use textTargetId/
+      // textTargetUrlIncludes instead to validate text against the embedded
+      // view's own DOM.
+      const { client, buffer } = await this._connectVerifiedTarget(options.targetId, options.targetUrlIncludes);
+      screenshotClient = client;
+      preCapturedBuffer = buffer;
+      closeClients.push(client);
     }
-    for (const text of options.rejectText ?? []) {
-      validations.push({ label: `Rejected visible text: ${text}`, passed: !(typeof bodyText === "string" && bodyText.includes(text)) });
+    // Text/URL validation can target a DIFFERENT CDP target than the one
+    // that took the screenshot — needed when the visible pixels come from a
+    // parent window (primary target) but the relevant DOM text lives in an
+    // embedded, separately-targeted view (e.g. the built-in browser panel).
+    let textClient = screenshotClient;
+    if (textTargetSelector) {
+      const { client } = await this._connectVerifiedTarget(options.textTargetId, options.textTargetUrlIncludes);
+      textClient = client;
+      closeClients.push(client);
     }
-    if (options.hashIncludes) {
-      validations.push({ label: `URL hash includes ${options.hashIncludes}`, passed: typeof url === "string" && url.includes(options.hashIncludes), detail: url });
+    try {
+      const buffer = preCapturedBuffer ?? await captureScreenshot(screenshotClient);
+      await writeFile(join(this.outDir, fileName), buffer);
+      this.screenshots.push(fileName);
+      const bodyText = await evaluate(textClient, "document.body.innerText").catch(() => "");
+      const url = await evaluate(textClient, "location.href").catch(() => "");
+      const hash = createHash("sha256").update(buffer).digest("hex");
+      const dimensions = pngDimensions(buffer);
+      const validations = [
+        { label: "PNG exists and is non-empty", passed: buffer.length > 0, detail: `${buffer.length} bytes` },
+        { label: "PNG dimensions are sane", passed: Boolean(dimensions?.width && dimensions?.height), detail: dimensions ? `${dimensions.width}x${dimensions.height}` : "unknown" },
+        { label: "Frame is not a duplicate of the previous capture", passed: this.lastScreenshotHash !== hash, detail: hash.slice(0, 12) },
+      ];
+      for (const text of options.requireText ?? []) {
+        validations.push({ label: `Required visible text: ${text}`, passed: typeof bodyText === "string" && bodyText.includes(text) });
+      }
+      for (const text of options.rejectText ?? []) {
+        validations.push({ label: `Rejected visible text: ${text}`, passed: !(typeof bodyText === "string" && bodyText.includes(text)) });
+      }
+      if (options.hashIncludes) {
+        validations.push({ label: `URL hash includes ${options.hashIncludes}`, passed: typeof url === "string" && url.includes(options.hashIncludes), detail: url });
+      }
+      const passed = validations.every((item) => item.passed);
+      this.lastScreenshotHash = hash;
+      const frame = {
+        type: "frame",
+        status: passed ? "passed" : "failed",
+        file: fileName,
+        name,
+        claim: options.claim ?? null,
+        voiceover: typeof options.voiceover === "string" && options.voiceover.trim() ? options.voiceover.trim() : null,
+        url,
+        validations,
+      };
+      this.evidenceFrames.push(frame);
+      this.recordEvidence(frame);
+      this.log(`Screenshot: ${fileName}`);
+      if (!passed && options.allowInvalid !== true) {
+        const failed = validations.filter((item) => !item.passed).map((item) => item.label).join(", ");
+        throw new EvalError(`Screenshot evidence failed validation: ${failed}`);
+      }
+      return fileName;
+    } finally {
+      for (const client of closeClients) {
+        try {
+          client.close();
+        } catch {
+          // Ignore target cleanup errors.
+        }
+      }
     }
-    const passed = validations.every((item) => item.passed);
-    this.lastScreenshotHash = hash;
-    const frame = {
-      type: "frame",
-      status: passed ? "passed" : "failed",
-      file: fileName,
-      name,
-      claim: options.claim ?? null,
-      voiceover: typeof options.voiceover === "string" && options.voiceover.trim() ? options.voiceover.trim() : null,
-      url,
-      validations,
-    };
-    this.evidenceFrames.push(frame);
-    this.recordEvidence(frame);
-    this.log(`Screenshot: ${fileName}`);
-    if (!passed && options.allowInvalid !== true) {
-      const failed = validations.filter((item) => !item.passed).map((item) => item.label).join(", ");
-      throw new EvalError(`Screenshot evidence failed validation: ${failed}`);
-    }
-    return fileName;
   }
 }

@@ -15,7 +15,6 @@ import {
   createDenClient,
   DenApiError,
   ensureDenActiveOrganization,
-  denOriginComparisonKey,
   readDenBootstrapConfig,
   readDenSettings,
   setDenBootstrapConfig,
@@ -34,7 +33,37 @@ import {
 } from "../../../app/lib/deep-link-bridge";
 import { parseDenAuthDeepLink } from "../../../app/lib/openwork-links";
 
-export type DenAuthStatus = "checking" | "signed_in" | "signed_out";
+export type DenAuthStatus =
+  | "checking"
+  | "signed_in"
+  | "unavailable"
+  | "signed_out";
+
+export const DEN_AUTH_SIGNAL_RETRY_COOLDOWN_MS = 5_000;
+export const DEN_AUTH_UNAVAILABLE_RETRY_INTERVAL_MS = 30_000;
+
+export function resolveDenAuthFailureStatus(
+  error: unknown,
+): Extract<DenAuthStatus, "signed_out" | "unavailable"> {
+  return error instanceof DenApiError && error.status === 401
+    ? "signed_out"
+    : "unavailable";
+}
+
+export function hasRetainedDenSession(status: DenAuthStatus): boolean {
+  return status === "signed_in" || status === "unavailable";
+}
+
+export function shouldRetryDenAuthOnSignal(input: {
+  status: DenAuthStatus;
+  online: boolean;
+  now: number;
+  lastAttemptAt: number | null;
+}): boolean {
+  if (input.status !== "unavailable" || !input.online) return false;
+  if (input.lastAttemptAt === null || input.now < input.lastAttemptAt) return true;
+  return input.now - input.lastAttemptAt >= DEN_AUTH_SIGNAL_RETRY_COOLDOWN_MS;
+}
 
 export type DenAuthStore = {
   status: DenAuthStatus;
@@ -62,7 +91,15 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const [error, setError] = useState<string | null>(null);
   // Monotonic token so stale async refreshes can't clobber a newer result.
   const refreshTokenRef = useRef(0);
+  const statusRef = useRef<DenAuthStatus>("checking");
+  const lastSignalRetryAtRef = useRef<number | null>(null);
+  const signalRetryInFlightRef = useRef(false);
   const handledGrantsRef = useRef<Set<string>>(new Set());
+
+  const updateStatus = useCallback((nextStatus: DenAuthStatus) => {
+    statusRef.current = nextStatus;
+    setStatus(nextStatus);
+  }, []);
 
   const refresh = useCallback(async () => {
     const currentRun = ++refreshTokenRef.current;
@@ -72,16 +109,21 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     if (!token) {
       setUser(null);
       setError(null);
-      setStatus("signed_out");
+      lastSignalRetryAtRef.current = null;
+      updateStatus("signed_out");
       return;
     }
 
-    setStatus("checking");
+    // Keep a usable session visible during background checks. Only the first
+    // check (or a refresh from a confirmed signed-out state) should gate the
+    // app while the request is in flight.
+    if (statusRef.current === "signed_out") {
+      updateStatus("checking");
+    }
 
     try {
       const nextUser = await createDenClient({
         baseUrl: settings.baseUrl,
-        apiBaseUrl: settings.apiBaseUrl,
         token,
       }).getSession();
 
@@ -96,23 +138,26 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 
       setUser(nextUser);
       setError(null);
-      setStatus("signed_in");
+      lastSignalRetryAtRef.current = null;
+      updateStatus("signed_in");
     } catch (nextError) {
       if (currentRun !== refreshTokenRef.current) return;
 
-      if (nextError instanceof DenApiError && nextError.status === 401) {
+      const failureStatus = resolveDenAuthFailureStatus(nextError);
+      if (failureStatus === "signed_out") {
         clearDenSession();
+        setUser(null);
+        lastSignalRetryAtRef.current = null;
       }
 
-      setUser(null);
       setError(
         nextError instanceof Error
           ? nextError.message
           : "Failed to restore OpenWork Cloud session.",
       );
-      setStatus("signed_out");
+      updateStatus(failureStatus);
     }
-  }, []);
+  }, [updateStatus]);
 
   useEffect(() => {
     void refresh();
@@ -129,15 +174,54 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const retryUnavailableSession = () => {
+      const now = Date.now();
+      if (
+        signalRetryInFlightRef.current ||
+        !shouldRetryDenAuthOnSignal({
+          status: statusRef.current,
+          online: window.navigator.onLine !== false,
+          now,
+          lastAttemptAt: lastSignalRetryAtRef.current,
+        })
+      ) {
+        return;
+      }
+
+      lastSignalRetryAtRef.current = now;
+      signalRetryInFlightRef.current = true;
+      void refresh().finally(() => {
+        signalRetryInFlightRef.current = false;
+      });
+    };
+
+    window.addEventListener("online", retryUnavailableSession);
+    window.addEventListener("focus", retryUnavailableSession);
+    const retryInterval = window.setInterval(
+      retryUnavailableSession,
+      DEN_AUTH_UNAVAILABLE_RETRY_INTERVAL_MS,
+    );
+    return () => {
+      window.removeEventListener("online", retryUnavailableSession);
+      window.removeEventListener("focus", retryUnavailableSession);
+      window.clearInterval(retryInterval);
+    };
+  }, [refresh]);
+
   // Strip the consumed one-time grant from the persisted bootstrap so a
   // relaunch never re-exchanges it. Persisting is best-effort: a failure here
   // must NOT be reported as an auth failure, since the user is already signed
   // in at this point.
-  const clearConsumedBootstrapHandoff = useCallback((bootstrap: DenBootstrapConfig, denBaseUrl: string, apiBaseUrl: string) => {
+  const clearConsumedBootstrapHandoff = useCallback((bootstrap: DenBootstrapConfig, denBaseUrl: string) => {
     void setDenBootstrapConfig({
       baseUrl: denBaseUrl,
-      apiBaseUrl,
       requireSignin: bootstrap.requireSignin,
+      ...(bootstrap.brandAppName ? { brandAppName: bootstrap.brandAppName } : {}),
+      ...(bootstrap.brandLogoUrl ? { brandLogoUrl: bootstrap.brandLogoUrl } : {}),
+      ...(bootstrap.brandIconUrl ? { brandIconUrl: bootstrap.brandIconUrl } : {}),
       ...(bootstrap.claimLinks ? { claimLinks: bootstrap.claimLinks } : {}),
       handoff: null,
       ...(bootstrap.prepared ? { prepared: bootstrap.prepared } : {}),
@@ -154,14 +238,13 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     // Already signed in: just drop the now-unused grant from disk.
     if (readDenSettings().authToken?.trim()) {
       handledGrantsRef.current.add(handoff.grant);
-      clearConsumedBootstrapHandoff(bootstrap, bootstrap.baseUrl, bootstrap.apiBaseUrl);
+      clearConsumedBootstrapHandoff(bootstrap, bootstrap.baseUrl);
       return;
     }
 
     handledGrantsRef.current.add(handoff.grant);
     const client = createDenClient({
       baseUrl: handoff.denBaseUrl,
-      apiBaseUrl: bootstrap.apiBaseUrl,
     });
 
     void exchangeHandoffAndSignIn(handoff.grant, {
@@ -174,7 +257,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         return;
       }
       // Best-effort cleanup; not part of the auth success/failure path.
-      clearConsumedBootstrapHandoff(bootstrap, handoff.denBaseUrl, result.apiBaseUrl);
+      clearConsumedBootstrapHandoff(bootstrap, handoff.denBaseUrl);
     });
   }, [clearConsumedBootstrapHandoff]);
 
@@ -198,21 +281,9 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         if (!parsed || handledGrantsRef.current.has(parsed.grant)) continue;
         handledGrantsRef.current.add(parsed.grant);
 
-        // Keep the configured apiBaseUrl when the deep link targets the
-        // control plane we are already pointed at; deriving from the link's
-        // base URL alone breaks deployments where the advertised proxy path
-        // does not match how this app actually reaches the Den API.
-        const settings = readDenSettings();
-        const targetKey = denOriginComparisonKey(parsed.denBaseUrl);
-        const sameControlPlane =
-          denOriginComparisonKey(settings.baseUrl) === targetKey ||
-          denOriginComparisonKey(settings.apiBaseUrl ?? null) === targetKey;
         const client = createDenClient({
           baseUrl: parsed.denBaseUrl,
-          apiBaseUrl: sameControlPlane ? settings.apiBaseUrl ?? null : null,
         });
-        // Persist the API base URL the exchange actually succeeds against; the
-        // helper reads it from the client (#1808).
         void exchangeHandoffAndSignIn(parsed.grant, {
           baseUrl: parsed.denBaseUrl,
           client,
@@ -236,7 +307,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       status,
       user,
       error,
-      isSignedIn: status === "signed_in",
+      isSignedIn: hasRetainedDenSession(status),
       refresh,
     }),
     [error, refresh, status, user],

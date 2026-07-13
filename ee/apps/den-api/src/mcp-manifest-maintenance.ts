@@ -174,7 +174,7 @@ export async function runMcpManifestMaintenanceOnce() {
 }
 
 export function startMcpManifestMaintenanceLoop(intervalMs = env.mcpManifestRefreshIntervalMs) {
-  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+  if (!env.mcpManifestCacheEnabled || !Number.isFinite(intervalMs) || intervalMs <= 0) {
     return () => undefined
   }
 

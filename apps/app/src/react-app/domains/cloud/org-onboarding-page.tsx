@@ -75,10 +75,9 @@ function useDenClient() {
     () =>
       createDenClient({
         baseUrl: settings.baseUrl,
-        apiBaseUrl: settings.apiBaseUrl,
         token: settings.authToken,
       }),
-    [authToken, settings.apiBaseUrl, settings.baseUrl],
+    [authToken, settings.baseUrl],
   );
 
   return {
@@ -259,7 +258,7 @@ export function OrgOnboardingPage() {
   }, [authToken, navigate, prepared]);
 
   const { data, error, isPending } = useQuery({
-    queryKey: ["den-org-onboarding", settings.baseUrl, settings.apiBaseUrl, "orgs"],
+    queryKey: ["den-org-onboarding", settings.baseUrl, "orgs"],
     enabled: Boolean(authToken),
     queryFn: () => denClient.listOrgs(),
   });
@@ -358,12 +357,12 @@ export function ResourceSelectionPage() {
   const { providers, marketplaces, loading, error } = useQueries({
     queries: [
       {
-        queryKey: ["den-org-onboarding", settings.baseUrl, settings.apiBaseUrl, orgId, "providers"],
+        queryKey: ["den-org-onboarding", settings.baseUrl, orgId, "providers"],
         enabled: Boolean(authToken && orgId),
         queryFn: () => denClient.listOrgLlmProviders(orgId),
       },
       {
-        queryKey: ["den-org-onboarding", settings.baseUrl, settings.apiBaseUrl, orgId, "marketplaces"],
+        queryKey: ["den-org-onboarding", settings.baseUrl, orgId, "marketplaces"],
         enabled: Boolean(authToken && orgId),
         queryFn: () => denClient.listOrgMarketplaces(orgId),
       },

@@ -175,7 +175,7 @@ export default {
             rejectText: ["Connection failed"],
           },
         });
-        ctx.switchBack();
+        await ctx.switchBack();
       },
     },
     {

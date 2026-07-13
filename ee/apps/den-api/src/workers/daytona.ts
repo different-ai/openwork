@@ -4,6 +4,7 @@ import { DaytonaSandboxTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { appLogger } from "../observability/logger.js"
 
 type WorkerId = typeof DaytonaSandboxTable.$inferSelect.worker_id
 
@@ -30,6 +31,7 @@ type DaytonaSandboxListPage = {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const maxSignedPreviewExpirySeconds = 60 * 60 * 24
 const signedPreviewRefreshLeadMs = 5 * 60 * 1000
+const logger = appLogger.child({ component: "daytona_provisioner" })
 
 const slug = (value: string) =>
   value
@@ -297,8 +299,7 @@ async function cleanupWorkerDataOnDaytona(daytona: Daytona, workerId: WorkerId) 
       env.daytona.createTimeoutSeconds * 1000,
     )
   } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown_error"
-    console.warn(`[provisioner] failed to resolve shared Daytona volume for ${workerId}: ${message}`)
+    logger.warn("failed to resolve shared Daytona volume", { worker_id: workerId, error })
     return
   }
 
@@ -339,13 +340,11 @@ async function cleanupWorkerDataOnDaytona(daytona: Daytona, workerId: WorkerId) 
       throw new Error(result.result?.trim() || `cleanup command exited with ${result.exitCode}`)
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown_error"
-    console.warn(`[provisioner] failed to cleanup Daytona worker data for ${workerId}: ${message}`)
+    logger.warn("failed to cleanup Daytona worker data", { worker_id: workerId, error })
   } finally {
     if (cleanupSandbox) {
       await cleanupSandbox.delete(env.daytona.deleteTimeoutSeconds).catch((error) => {
-        const message = error instanceof Error ? error.message : "unknown_error"
-        console.warn(`[provisioner] failed to delete Daytona cleanup sandbox for ${workerId}: ${message}`)
+        logger.warn("failed to delete Daytona cleanup sandbox", { worker_id: workerId, error })
       })
     }
   }
@@ -607,8 +606,7 @@ export async function deprovisionWorkerOnDaytona(workerId: WorkerId) {
       const sandbox = await daytona.get(record.sandbox_id)
       await sandbox.delete(env.daytona.deleteTimeoutSeconds)
     } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown_error"
-      console.warn(`[provisioner] failed to delete Daytona sandbox ${record.sandbox_id}: ${message}`)
+      logger.warn("failed to delete Daytona sandbox", { worker_id: workerId, sandbox_id: record.sandbox_id, error })
     }
 
     await cleanupWorkerDataOnDaytona(daytona, workerId)
@@ -623,8 +621,7 @@ export async function deprovisionWorkerOnDaytona(workerId: WorkerId) {
       .get(sandboxId)
       .then((sandbox) => sandbox.delete(env.daytona.deleteTimeoutSeconds))
       .catch((error) => {
-        const message = error instanceof Error ? error.message : "unknown_error"
-        console.warn(`[provisioner] failed to delete Daytona sandbox ${sandboxId}: ${message}`)
+        logger.warn("failed to delete Daytona sandbox", { worker_id: workerId, sandbox_id: sandboxId, error })
       })
   }
 

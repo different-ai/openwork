@@ -1,0 +1,81 @@
+---
+title: "Diagnostic prompts"
+description: "Paste-able prompts that let your agent debug OpenWork issues on its own."
+---
+
+When something in OpenWork looks wrong, the fastest debugger is usually the agent itself: it can read its own configuration, probe servers, and verify fixes in-band. This page collects paste-able diagnostic prompts. Copy the whole block for your situation into a chat and let the agent work through it.
+
+Each prompt is safe by default: it gathers evidence first, redacts secrets, and asks before changing anything.
+
+## 1. Cloud search shows old or missing capabilities
+
+**Symptoms**
+
+- `search_capabilities` returns fewer tools than you expect (for example, only `postCapabilitiesGoogleWorkspaceGmailDrafts` when newer Google Workspace capabilities should exist).
+- `execute_capability` returns `unknown_capability` for a tool name that should exist.
+- The cloud dashboard says a connection is "Connected as you", but the agent reports `connected: false`.
+
+**What is usually wrong**
+
+Your agent's `openwork-cloud` MCP entry is a snapshot: it stores a server URL and token from the moment it was connected. If it was created against a local development server or an old deployment — including via a leftover `desktop-bootstrap.json` file that overrides server URLs beneath the Settings UI — the agent keeps querying that old world forever, while the dashboard shows the current one.
+
+**Paste this to your agent**
+
+````text
+Debug and fix my OpenWork Cloud MCP connection. It may be pointed at a stale or local server instead of my real OpenWork Cloud server. Work through ALL phases, show your findings after each, and ask before anything destructive. Never print bearer tokens or Authorization headers — redact them.
+
+My expected cloud web URL: https://app.openworklabs.com (replace with your self-hosted Den web URL if you run your own).
+
+## Phase 1 — Evidence: what am I actually connected to?
+
+1. Print the `openwork-cloud` MCP entry's `url` (redact headers) from every config you can find:
+   - `~/.config/opencode/opencode.json`
+   - any `.opencode/opencode.json` or `opencode.jsonc` in the current project
+   - your own runtime config if you have an export tool
+2. Print these files in full if they exist (they can silently override server URLs beneath the Settings UI):
+   - `~/.config/openwork/desktop-bootstrap.json`
+   - `~/Library/Application Support/com.differentai.openwork/desktop-bootstrap.json`
+3. If the url from step 1 is a localhost address, find what serves that port:
+   - `lsof -nP -iTCP:<port> -sTCP:LISTEN`
+   - for each PID: `ps -p <PID> -o pid=,command=` and `lsof -a -p <PID> -d cwd -Fn | tail -1`
+
+## Phase 2 — Probe both servers directly (no auth needed)
+
+4. The server from Phase 1, through the Den web proxy:
+   `curl -s -m 5 <that-origin>/api/den/openapi.json | python3 -c "import json,sys; d=json.load(sys.stdin); ps=[p for p in d.get('paths',{}) if 'google-workspace' in p]; print(len(ps)); [print(p) for p in ps]"`
+5. The expected cloud web URL, same command. Compare the two lists.
+
+## Phase 3 — Probe through your own MCP tools (in-band ground truth)
+
+6. Call search_capabilities with {"query":"google workspace","limit":10} and report the match names.
+7. Call execute_capability with {"name":"getCapabilitiesGoogleWorkspaceCalendarEvents"} and report the exact error or result shape.
+
+## Phase 4 — Diagnose
+
+State which world you are in:
+- openwork-cloud url is localhost/127.0.0.1, OR search returned only gmail-drafts, OR execute returned unknown_capability → you are bound to a STALE server, not the expected cloud.
+- a desktop-bootstrap.json contains localhost URLs → that file is the root cause (it is the desktop app's Cloud URL source of truth).
+
+## Phase 5 — Fix (confirm with me before each destructive step)
+
+8. If a desktop-bootstrap.json contains stale/localhost URLs: show it, then delete that file.
+9. If a stale local server process is still listening: show the process, then stop it, so nothing can silently serve old answers again.
+10. Tell me to do the two steps only a human can do, then wait:
+    - Restart the OpenWork app.
+    - Settings → Connections → OpenWork Cloud → Disconnect → Connect (rewrites the MCP url to the current server and mints a fresh token).
+    - Start a NEW chat session so the sidecar reloads MCP config.
+
+## Phase 6 — Verify (run in the NEW session)
+
+11. search_capabilities {"query":"google workspace","limit":10} → PASS = the full current capability set (calendar, drive, and gmail capabilities ranked on top), not just drafts.
+12. execute_capability {"name":"getCapabilitiesGoogleWorkspaceCalendarEvents","query":{"timeMin":"<today ISO>","timeMax":"<+3 days ISO>"}} → PASS = real events, or a clean needs_connection / missing-permission message — NOT unknown_capability.
+13. Print a final report: root cause, what changed, and the before/after of probes 6/7 vs 11/12.
+````
+
+**Expected passing state**
+
+- The `openwork-cloud` entry's `url` points at your real server's `/api/den/mcp/agent`.
+- `search_capabilities` reflects your server's current catalog.
+- `execute_capability` on a known capability returns data or an actionable connection message — never `unknown_capability`.
+
+If the agent completes all phases and verification still fails, [open an issue](https://github.com/different-ai/openwork/issues) and paste the agent's final report (it is already redacted).

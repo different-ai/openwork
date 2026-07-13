@@ -1,7 +1,8 @@
 /**
  * After cloud sign-in, the Den cloud MCP ("OpenWork Cloud Control") is
  * auto-configured with a first-party org-scoped token: no browser OAuth,
- * entry appears under YOUR APPS, sync marker persisted.
+ * entry is hidden by default until Show hidden reveals it, sync marker
+ * persisted.
  *
  * Requires the programmatic runner (evals/runner) and a reachable Den API:
  * - OPENWORK_EVAL_DEN_API_URL    Den API base, e.g. http://127.0.0.1:8790
@@ -11,6 +12,12 @@
  * plane (desktop-bootstrap.json) and signed out at start, or already signed
  * in to the same account.
  */
+
+const revealHidden = async (ctx) => {
+  const showing = await ctx.eval("document.body.innerText.includes('Showing hidden')");
+  if (!showing) await ctx.clickText("Show hidden", { timeoutMs: 30_000 });
+};
+
 export default {
   id: "cloud-mcp-auto-config",
   title: "Cloud MCP auto-configures with first-party token on sign-in",
@@ -54,6 +61,9 @@ export default {
           "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())",
           { timeoutMs: 30_000, label: "persisted den auth token" },
         );
+        // Post-sign-in org onboarding may appear; drive through it best-effort.
+        await ctx.clickText("Continue with organization", { timeoutMs: 10_000 }).catch(() => {});
+        await ctx.clickText("Continue to workspace", { timeoutMs: 10_000 }).catch(() => {});
       },
     },
     {
@@ -76,14 +86,18 @@ export default {
       },
     },
     {
-      name: "OpenWork Cloud Control appears as a configured app",
+      name: "OpenWork Cloud Control is hidden by default and revealed as a configured app",
       run: async (ctx) => {
         await ctx.navigateHash("/settings/extensions/mcp");
         await ctx.expectHashIncludes("/settings/extensions/mcp");
+        await ctx.waitForText("Add Custom App", { timeoutMs: 30_000 });
+        await ctx.expectNoText("OpenWork Cloud Control");
+        await revealHidden(ctx);
         await ctx.expectText("OpenWork Cloud Control", { timeoutMs: 30_000 });
         await ctx.screenshot("cloud-mcp-configured", {
-          claim: "OpenWork Cloud Control appears in MCP settings after cloud sign-in sync.",
-          requireText: ["OpenWork Cloud Control"],
+          claim: "OpenWork Cloud Control is auto-configured while hidden by default, then appears after Show hidden.",
+          voiceover: "After signing in to OpenWork Cloud the connection is already configured and enabled, and it only shows up once the user reveals hidden extensions.",
+          requireText: ["OpenWork Cloud Control", "Showing hidden"],
           rejectText: ["Something went wrong"],
           hashIncludes: "/settings/extensions/mcp",
         });

@@ -84,6 +84,28 @@ test("privileged actions require a fresh session", () => {
   expect(sharedModule.hasFreshPrivilegedSession({ session: null }, now)).toBe(false)
 })
 
+test("routine admin authorization checks the role without requiring session freshness", () => {
+  const message = "Only workspace owners and admins can configure this integration."
+
+  expect(sharedModule.ensureOrganizationAdminRole({
+    get: () => ({
+      currentMember: { isOwner: false, role: "member,admin" },
+    }),
+  }, message)).toEqual({ ok: true })
+
+  expect(sharedModule.ensureOrganizationAdminRole({
+    get: () => ({
+      currentMember: { isOwner: false, role: "member" },
+    }),
+  }, message)).toEqual({
+    ok: false,
+    response: {
+      error: "forbidden",
+      message,
+    },
+  })
+})
+
 test("reauth failures remain forbidden responses", () => {
   expect(sharedModule.orgAccessFailureStatus({ error: "reauth" })).toBe(403)
   expect(sharedModule.orgAccessFailureStatus({ error: "forbidden" })).toBe(403)

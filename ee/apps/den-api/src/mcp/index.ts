@@ -2,10 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
 import { z } from "zod"
+import { env } from "../env.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
-import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
+import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { buildMcpCatalog, getToolDescription, loadOpenApiDocument, type McpToolOperation } from "./catalog.js"
 import { invokeMcpOperation } from "./invoke.js"
+import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
+import { getDenAuthIssuer } from "./jwt-policy.js"
+import { DEN_MCP_REQUESTED_SCOPES } from "./scopes.js"
 import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities } from "./search.js"
 
 const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000
@@ -30,12 +34,23 @@ export async function getCatalog(app: Hono, env: unknown) {
   return catalog
 }
 
-export function protectedResourceMetadata(request: Request) {
-  const resource = getMcpResourceUrl(request)
+export function protectedResourceMetadata(request: Request, route: "mcp" | "agent" | "admin" = "mcp") {
+  const resource = getMcpResourceContext(request, route).resourceUrl
   return {
     resource,
-    authorization_servers: [resource.replace(/\/mcp$/, "/api/auth")],
-    scopes_supported: ["mcp:read", "mcp:write"],
+    // Better Auth 1.6 can safely advertise only one public OAuth audience for
+    // this deployment. /mcp/agent metadata is exact for public OAuth; /mcp and
+    // /mcp/admin retain their parent resource metadata for first-party desktop
+    // and legacy discovery, but public JWTs are accepted only on /mcp/agent.
+    // OAuth issuers are invariant; the resource may live on a separate API or
+    // reverse-proxy origin, but Better Auth completes the callback with this
+    // configured issuer.
+    authorization_servers: [getDenAuthIssuer(env.betterAuthUrl)],
+    // The MCP SDK uses protected-resource scopes for both dynamic client
+    // registration and the authorization request. Advertising offline access
+    // lets it explicitly request a rotating refresh grant (and prompt for
+    // consent) instead of falling back to browser auth every 15 minutes.
+    scopes_supported: [...DEN_MCP_REQUESTED_SCOPES],
     bearer_methods_supported: ["header"],
   }
 }
@@ -46,9 +61,19 @@ export function registerMcpRoutes<T extends { Variables: Record<string, unknown>
   app.get("/mcp/.well-known/oauth-protected-resource", publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
 
   app.all("/mcp", tokenRoute, async (c) => {
-    const principal = await verifyMcpRequest(c.req.raw.headers, getMcpResourceUrl(c.req.raw))
+    const requestIdValue = c.get("requestId")
+    const requestId = typeof requestIdValue === "string" ? requestIdValue : "unknown"
+    const principal = await verifyMcpRequest(
+      c.req.raw.headers,
+      getMcpResourceContext(c.req.raw, "mcp", requestId),
+    )
     if (principal instanceof Response) {
       return principal
+    }
+
+    const preflightResponse = await preflightMcpJsonRpcRequest(c.req.raw, requestId)
+    if (preflightResponse) {
+      return preflightResponse
     }
 
     const catalog = await getCatalog(app as unknown as Hono, c.env)

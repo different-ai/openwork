@@ -4,6 +4,7 @@ import { Copy, RefreshCw, Shield, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
+import { DenNotice } from "../../_components/ui/notice";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import {
   type DenOrgScimConnection,
@@ -284,9 +285,7 @@ export function ScimScreen() {
       ) : (
         <>
           {error ? (
-            <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
-              {error}
-            </div>
+            <DenNotice message={error} className="mb-6" />
           ) : null}
 
           {health.unresolvedFailureCount > 0 ? (

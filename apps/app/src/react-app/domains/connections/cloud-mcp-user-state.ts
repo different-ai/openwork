@@ -1,3 +1,5 @@
+import { CLOUD_MCP_SYNC_MARKER_STORAGE_KEY } from "../../../app/lib/den";
+
 /**
  * Durable record of the user's intent for the auto-configured OpenWork
  * Cloud Control MCP ("openwork-cloud").
@@ -18,6 +20,17 @@ const CLOUD_MCP_UNHEALTHY_REMINT_ATTEMPT_KEY = "openwork.den.mcp.unhealthyRemint
 
 export type CloudMcpUserState = "disabled" | "removed";
 export type CloudMcpUnhealthyRemintAttempt = { orgId: string };
+export type CloudMcpSyncMarker = {
+  denBaseUrl: string;
+  serverBaseUrl: string;
+  orgId: string;
+  workspaceId: string;
+  expiresAt: string;
+};
+export type CloudMcpSyncMarkerScope = Pick<
+  CloudMcpSyncMarker,
+  "denBaseUrl" | "serverBaseUrl" | "orgId" | "workspaceId"
+>;
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -111,10 +124,101 @@ export function clearCloudMcpUnhealthyRemintAttempt() {
   }
 }
 
+function normalizeMarkerBaseUrl(baseUrl: string): string {
+  return baseUrl.trim().replace(/\/+$/, "");
+}
+
+function parseCloudMcpSyncMarker(value: unknown): CloudMcpSyncMarker | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (
+    !("denBaseUrl" in value) ||
+    typeof value.denBaseUrl !== "string" ||
+    !("serverBaseUrl" in value) ||
+    typeof value.serverBaseUrl !== "string" ||
+    !("orgId" in value) ||
+    typeof value.orgId !== "string" ||
+    !("workspaceId" in value) ||
+    typeof value.workspaceId !== "string" ||
+    !("expiresAt" in value) ||
+    typeof value.expiresAt !== "string"
+  ) {
+    return null;
+  }
+  const denBaseUrl = normalizeMarkerBaseUrl(value.denBaseUrl);
+  const serverBaseUrl = normalizeMarkerBaseUrl(value.serverBaseUrl);
+  if (!denBaseUrl || !serverBaseUrl) return null;
+  return {
+    denBaseUrl,
+    serverBaseUrl,
+    orgId: value.orgId,
+    workspaceId: value.workspaceId,
+    expiresAt: value.expiresAt,
+  };
+}
+
+function readCloudMcpSyncMarkers(): CloudMcpSyncMarker[] {
+  try {
+    const raw = getStorage()?.getItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    const candidates = Array.isArray(parsed)
+      ? parsed
+      : parsed &&
+          typeof parsed === "object" &&
+          "markers" in parsed &&
+          Array.isArray(parsed.markers)
+        ? parsed.markers
+        : [parsed];
+    return candidates.flatMap((value) => {
+      const marker = parseCloudMcpSyncMarker(value);
+      return marker ? [marker] : [];
+    });
+  } catch {
+    // Corrupt or legacy marker — force one safe re-sync.
+  }
+  return [];
+}
+
+export function readCloudMcpSyncMarker(
+  scope: CloudMcpSyncMarkerScope,
+): CloudMcpSyncMarker | null {
+  const denBaseUrl = normalizeMarkerBaseUrl(scope.denBaseUrl);
+  const serverBaseUrl = normalizeMarkerBaseUrl(scope.serverBaseUrl);
+  return readCloudMcpSyncMarkers().find(
+    (marker) =>
+      marker.denBaseUrl === denBaseUrl &&
+      marker.serverBaseUrl === serverBaseUrl &&
+      marker.orgId === scope.orgId &&
+      marker.workspaceId === scope.workspaceId,
+  ) ?? null;
+}
+
+export function writeCloudMcpSyncMarker(marker: CloudMcpSyncMarker) {
+  try {
+    const denBaseUrl = normalizeMarkerBaseUrl(marker.denBaseUrl);
+    const serverBaseUrl = normalizeMarkerBaseUrl(marker.serverBaseUrl);
+    if (!denBaseUrl || !serverBaseUrl) return;
+    const normalizedMarker = { ...marker, denBaseUrl, serverBaseUrl };
+    const markers = readCloudMcpSyncMarkers().filter(
+      (entry) =>
+        entry.denBaseUrl !== denBaseUrl ||
+        entry.serverBaseUrl !== serverBaseUrl ||
+        entry.orgId !== marker.orgId ||
+        entry.workspaceId !== marker.workspaceId,
+    );
+    getStorage()?.setItem(
+      CLOUD_MCP_SYNC_MARKER_STORAGE_KEY,
+      JSON.stringify({ version: 1, markers: [...markers, normalizedMarker] }),
+    );
+  } catch {
+    // Storage unavailable — reconciliation will simply run again later.
+  }
+}
+
 /**
  * Pure marker-freshness check for the cloud MCP sync marker. Extracted so
  * the margin arithmetic is unit-testable: the previous inline check used a
- * refresh margin equal to the minted token's TTL (both 7 days), which made
+ * refresh margin equal to the minted token's TTL, which made
  * the marker stale the moment it was written and turned the reconciler into
  * an every-tick config rewrite.
  */

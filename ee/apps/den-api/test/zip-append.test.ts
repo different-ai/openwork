@@ -4,7 +4,7 @@ import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { appendStoredEntryToZip } from "../src/utils/zip-append.js"
+import { appendStoredEntriesToZipStream, appendStoredEntryToZip, createStoredZip, createStoredZipStream } from "../src/utils/zip-append.js"
 
 function run(command: string, args: string[], cwd: string) {
   const result = spawnSync(command, args, { cwd, encoding: "utf8" })
@@ -43,5 +43,80 @@ describe("appendStoredEntryToZip", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe("appendStoredEntriesToZipStream", () => {
+  test("streams a standard artifact and explicit config into the generic Mac installer zip", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-zip-append-stream-"))
+    try {
+      const inputDir = path.join(dir, "input")
+      const outputDir = path.join(dir, "output")
+      const zipPath = path.join(dir, "source.zip")
+      const bundlePath = path.join(dir, "bundle.zip")
+      mkdirSync(inputDir)
+      mkdirSync(outputDir)
+      mkdirSync(path.join(inputDir, "OpenWork Installer.app"))
+      const originalContent = Buffer.from("signed generic installer bytes", "utf8")
+      writeFileSync(path.join(inputDir, "OpenWork Installer.app", "binary"), originalContent)
+      run("zip", ["-qr", zipPath, "OpenWork Installer.app"], inputDir)
+
+      const standardArtifact = Buffer.alloc(2 * 1024 * 1024 + 9, 73)
+      const sidecar = Buffer.from('{"clientName":"Acme"}\n', "utf8")
+      const bundle = appendStoredEntriesToZipStream(readFileSync(zipPath), [
+        { name: "openwork-installer.json", content: sidecar },
+        { name: "openwork-mac-arm64-9.9.9.dmg", content: standardArtifact },
+      ])
+      const bytes = Buffer.from(await new Response(bundle.body).arrayBuffer())
+      expect(bundle.byteLength).toBe(bytes.length)
+      writeFileSync(bundlePath, bytes)
+      run("unzip", ["-q", bundlePath, "-d", outputDir], dir)
+
+      expect(sha256(readFileSync(path.join(outputDir, "OpenWork Installer.app", "binary")))).toBe(sha256(originalContent))
+      expect(readFileSync(path.join(outputDir, "openwork-installer.json"), "utf8")).toBe(sidecar.toString("utf8"))
+      expect(sha256(readFileSync(path.join(outputDir, "openwork-mac-arm64-9.9.9.dmg")))).toBe(sha256(standardArtifact))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("createStoredZip", () => {
+  test("packages the standard installer and desktop bootstrap without changing their bytes", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-zip-create-"))
+    try {
+      const outputDir = path.join(dir, "output")
+      const zipPath = path.join(dir, "organization-download.zip")
+      mkdirSync(outputDir)
+      const installer = Buffer.from("byte-identical signed desktop installer", "utf8")
+      const bootstrap = Buffer.from('{"baseUrl":"https://openwork.example.com"}\n', "utf8")
+      const bundle = createStoredZip([
+        { name: "openwork-mac-arm64-9.9.9.dmg", content: installer },
+        { name: "desktop-bootstrap.json", content: bootstrap },
+      ])
+      writeFileSync(zipPath, new Uint8Array(bundle))
+
+      run("unzip", ["-q", zipPath, "-d", outputDir], dir)
+
+      expect(sha256(readFileSync(path.join(outputDir, "openwork-mac-arm64-9.9.9.dmg")))).toBe(sha256(installer))
+      expect(readFileSync(path.join(outputDir, "desktop-bootstrap.json"), "utf8")).toBe(bootstrap.toString("utf8"))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("streams the same valid archive with a deterministic content length", async () => {
+    const installer = Buffer.alloc(3 * 1024 * 1024 + 17, 42)
+    const bootstrap = Buffer.from('{"baseUrl":"https://openwork.example.com"}\n', "utf8")
+    const entries = [
+      { name: "openwork-mac-arm64-9.9.9.dmg", content: installer },
+      { name: "desktop-bootstrap.json", content: bootstrap },
+    ]
+    const streamed = createStoredZipStream(entries)
+    const streamedBytes = Buffer.from(await new Response(streamed.body).arrayBuffer())
+    const bufferedBytes = Buffer.from(createStoredZip(entries))
+
+    expect(streamed.byteLength).toBe(streamedBytes.length)
+    expect(streamedBytes).toEqual(bufferedBytes)
   })
 })

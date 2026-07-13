@@ -4,7 +4,9 @@ import {
   __setCloudMcpUserStateStorageForTest,
   clearCloudMcpUserState,
   isCloudMcpSyncMarkerFresh,
+  readCloudMcpSyncMarker,
   readCloudMcpUserState,
+  writeCloudMcpSyncMarker,
   writeCloudMcpUserState,
 } from "../src/react-app/domains/connections/cloud-mcp-user-state";
 
@@ -50,6 +52,41 @@ describe("cloud MCP user state", () => {
     backing.set("openwork.den.mcp.cloudControlUserState", "banana");
     expect(readCloudMcpUserState()).toBeNull();
   });
+
+  test("rejects ambiguous legacy sync markers", () => {
+    const backing = installStorageStub();
+    const scope = {
+      denBaseUrl: "https://cloud.openwork.test",
+      serverBaseUrl: "https://worker.openwork.test",
+      orgId: "organization_1",
+      workspaceId: "workspace_1",
+    };
+
+    backing.set("openwork.den.mcp.sync", JSON.stringify({
+      orgId: scope.orgId,
+      expiresAt: "2026-07-20T00:00:00.000Z",
+    }));
+    expect(readCloudMcpSyncMarker(scope)).toBeNull();
+
+    backing.set("openwork.den.mcp.sync", JSON.stringify({
+      orgId: scope.orgId,
+      workspaceId: scope.workspaceId,
+      expiresAt: "2026-07-20T00:00:00.000Z",
+    }));
+    expect(readCloudMcpSyncMarker(scope)).toBeNull();
+  });
+
+  test("round-trips a fully scoped versioned sync marker", () => {
+    const marker = {
+      denBaseUrl: "https://cloud.openwork.test",
+      serverBaseUrl: "https://worker.openwork.test",
+      orgId: "organization_1",
+      workspaceId: "workspace_1",
+      expiresAt: "2026-07-20T00:00:00.000Z",
+    };
+    writeCloudMcpSyncMarker(marker);
+    expect(readCloudMcpSyncMarker(marker)).toEqual(marker);
+  });
 });
 
 describe("isCloudMcpSyncMarkerFresh", () => {
@@ -67,7 +104,7 @@ describe("isCloudMcpSyncMarkerFresh", () => {
 
   test("regression: margin equal to the token TTL makes the marker stale immediately", () => {
     // This was the bug that turned the reconciler into an every-tick config
-    // rewrite: refresh margin == token TTL (both 7 days).
+    // rewrite: refresh margin equal to the token TTL.
     expect(
       isCloudMcpSyncMarkerFresh({
         expiresAt: new Date(now + 7 * DAY_MS).toISOString(),

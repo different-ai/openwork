@@ -1,8 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   commandMatchesPackagedSidecar,
+  embeddedServerImportUrl,
   prioritizeWorkspacePaths,
   resolveOpenworkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
@@ -76,6 +81,49 @@ describe("commandMatchesPackagedSidecar", () => {
       ),
       false,
     );
+  });
+});
+
+describe("embeddedServerImportUrl", () => {
+  it("returns the same file URL for unchanged metadata", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "openwork-runtime-"));
+    try {
+      const embeddedPath = path.join(dir, "embedded.js");
+      await writeFile(embeddedPath, "export const value = 1;\n");
+
+      const first = embeddedServerImportUrl(embeddedPath);
+      const second = embeddedServerImportUrl(embeddedPath);
+      const url = new URL(first);
+
+      assert.equal(first, second);
+      assert.equal(url.protocol, "file:");
+      assert.equal(fileURLToPath(url), embeddedPath);
+      assert.ok(url.searchParams.get("mtimeMs"));
+      assert.equal(url.searchParams.get("size"), String("export const value = 1;\n".length));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("changes when the file metadata changes", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "openwork-runtime-"));
+    try {
+      const embeddedPath = path.join(dir, "embedded.js");
+      await writeFile(embeddedPath, "export const value = 1;\n");
+      const first = embeddedServerImportUrl(embeddedPath);
+
+      await writeFile(embeddedPath, "export const value = 12;\n");
+
+      assert.notEqual(embeddedServerImportUrl(embeddedPath), first);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the plain file URL if stat fails", () => {
+    const missingPath = path.join(os.tmpdir(), "openwork-missing-embedded.js");
+
+    assert.equal(embeddedServerImportUrl(missingPath), pathToFileURL(missingPath).href);
   });
 });
 

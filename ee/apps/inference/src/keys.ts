@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto"
-import { and, eq, isNull } from "drizzle-orm"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable } from "@openwork-ee/den-db"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"

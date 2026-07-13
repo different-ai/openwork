@@ -10,7 +10,10 @@ import {
   allDesktopPolicies,
   calculateEffectiveDesktopPolicy,
   desktopPolicyDefaults,
+  normalizeDesktopPolicyDocument,
   normalizeDesktopPolicyValue,
+  selectEffectiveOnboardingPrompts,
+  type DesktopConfig,
   type DesktopPolicyValue,
 } from "@openwork/types/den/desktop-policies"
 import { db } from "./db.js"
@@ -21,6 +24,7 @@ export type DesktopPolicyMemberRow = typeof DesktopPolicyMemberTable.$inferSelec
 export type OrgId = typeof DesktopPolicyTable.$inferSelect.organizationId
 export type OrgMemberId = typeof DesktopPolicyTable.$inferSelect.createdByOrgMemberId
 export type TeamId = typeof TeamTable.$inferSelect.id
+export type EffectiveDesktopPolicyConfig = Required<DesktopPolicyValue> & Pick<DesktopConfig, "onboardingPrompts">
 
 export const DEFAULT_DESKTOP_POLICY_NAME = "Default desktop policy"
 
@@ -75,13 +79,15 @@ export async function listTeamIdsForOrgMember(input: {
 export async function calculateDesktopPolicyForOrgMember(input: {
   organizationId: OrgId
   orgMemberId: OrgMemberId
-}): Promise<Required<DesktopPolicyValue>> {
+}): Promise<EffectiveDesktopPolicyConfig> {
   const orgPolicies = await db
     .select({
       id: DesktopPolicyTable.id,
       isDefault: DesktopPolicyTable.isDefault,
       isEnabled: DesktopPolicyTable.isEnabled,
+      priority: DesktopPolicyTable.priority,
       policy: DesktopPolicyTable.policy,
+      createdAt: DesktopPolicyTable.createdAt,
     })
     .from(DesktopPolicyTable)
     .where(and(
@@ -105,7 +111,12 @@ export async function calculateDesktopPolicyForOrgMember(input: {
 
   const assignedPolicies = assignedWhere
     ? await db
-        .select({ policy: DesktopPolicyTable.policy })
+        .select({
+          id: DesktopPolicyTable.id,
+          priority: DesktopPolicyTable.priority,
+          policy: DesktopPolicyTable.policy,
+          createdAt: DesktopPolicyTable.createdAt,
+        })
         .from(DesktopPolicyMemberTable)
         .innerJoin(DesktopPolicyTable, eq(DesktopPolicyMemberTable.desktopPolicyId, DesktopPolicyTable.id))
         .where(and(
@@ -115,10 +126,31 @@ export async function calculateDesktopPolicyForOrgMember(input: {
           assignedWhere,
         ))
     : []
+  const assignedPoliciesById = new Map<string, (typeof assignedPolicies)[number]>()
+  for (const policy of assignedPolicies) {
+    if (!assignedPoliciesById.has(policy.id)) {
+      assignedPoliciesById.set(policy.id, policy)
+    }
+  }
+  const uniqueAssignedPolicies = [...assignedPoliciesById.values()]
 
-  return calculateEffectiveDesktopPolicy({
+  const effectivePolicy = calculateEffectiveDesktopPolicy({
     orgPolicyCount: orgPolicies.length,
     defaultPolicy: defaultPolicy?.policy ?? {},
-    assignedPolicies: assignedPolicies.map((row) => normalizeDesktopPolicyValue(row.policy)),
+    assignedPolicies: uniqueAssignedPolicies.map((row) => normalizeDesktopPolicyValue(row.policy)),
   })
+  const onboardingPrompts = selectEffectiveOnboardingPrompts({
+    defaultPolicy: defaultPolicy?.policy ?? {},
+    assignedPolicies: uniqueAssignedPolicies.map((row) => ({
+      id: row.id,
+      priority: row.priority,
+      createdAt: row.createdAt,
+      policy: normalizeDesktopPolicyDocument(row.policy),
+    })),
+  })
+
+  return {
+    ...effectivePolicy,
+    ...(onboardingPrompts !== undefined ? { onboardingPrompts } : {}),
+  }
 }

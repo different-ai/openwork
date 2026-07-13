@@ -45,51 +45,21 @@ import {
   clearCloudMcpUnhealthyRemintAttempt,
   clearCloudMcpUserState,
   isCloudMcpSyncMarkerFresh,
+  readCloudMcpSyncMarker,
   readCloudMcpUnhealthyRemintAttempt,
   readCloudMcpUserState,
+  writeCloudMcpSyncMarker,
   writeCloudMcpUnhealthyRemintAttempt,
   writeCloudMcpUserState,
 } from "./cloud-mcp-user-state";
 
 type SetStateAction<T> = T | ((current: T) => T);
 
-const CLOUD_MCP_SYNC_MARKER_KEY = "openwork.den.mcp.sync";
 // Re-mint when less than a day of token validity remains. Must be well
 // below the minted token TTL (7 days, DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS in
 // den-api): when the two were equal, the marker was stale the instant it
 // was written and every sync tick re-wrote the MCP config.
 const CLOUD_MCP_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
-
-type CloudMcpSyncMarker = { orgId: string; expiresAt: string };
-
-function readCloudMcpSyncMarker(): CloudMcpSyncMarker | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(CLOUD_MCP_SYNC_MARKER_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof (parsed as { orgId?: unknown }).orgId === "string" &&
-      typeof (parsed as { expiresAt?: unknown }).expiresAt === "string"
-    ) {
-      return parsed as CloudMcpSyncMarker;
-    }
-  } catch {
-    // Corrupt marker — treat as absent.
-  }
-  return null;
-}
-
-function writeCloudMcpSyncMarker(marker: CloudMcpSyncMarker) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(CLOUD_MCP_SYNC_MARKER_KEY, JSON.stringify(marker));
-  } catch {
-    // Storage unavailable — sync will simply re-run next time.
-  }
-}
 
 export type ConnectionsStoreSnapshot = {
   mcpServers: McpServerEntry[];
@@ -680,24 +650,22 @@ export function createConnectionsStore(options: {
 
       // Signed-in cloud users connect the Den MCPs with a first-party token —
       // no browser OAuth round-trip. Signed-out users fall back to OAuth.
-      // The same minted token works for /mcp/agent (openwork-cloud), /mcp,
-      // and /mcp/admin (openwork-admin); den-api enforces the platform-admin
-      // allowlist on the admin endpoint server-side.
-      if (entry.serverName === "openwork-cloud" || entry.serverName === "openwork-admin") {
+      // Use the signed-in member's first-party token for OpenWork Cloud.
+      // Allowlisted platform-admin tools are discovered through this same
+      // search_capabilities / execute_capability connection.
+      if (entry.serverName === "openwork-cloud") {
         try {
           const minted = await mintCloudControlMcpToken();
           if (minted) {
-            if (entry.serverName === "openwork-cloud") {
-              // Never trust `minted.resource` verbatim: older den-api builds
-              // mint the bare web-app origin (https://app.openworklabs.com/mcp)
-              // where MCP 404s. Heal it to the canonical /mcp origin, then
-              // route the desktop app to the minimal, harness-facing
-              // /mcp/agent surface (search_capabilities + execute_capability
-              // only) rather than the full catalog — falling back to the
-              // entry's bootstrap-derived URL (which already targets /agent).
-              const healed = resolveCloudMcpResourceUrl(minted.resource);
-              resolvedUrl = healed ? `${healed}/agent` : resolvedUrl;
-            }
+            // Never trust `minted.resource` verbatim: older den-api builds
+            // mint the bare web-app origin (https://app.openworklabs.com/mcp)
+            // where MCP 404s. Heal it to the canonical /mcp origin, then
+            // route the desktop app to the minimal, harness-facing
+            // /mcp/agent surface (search_capabilities + execute_capability
+            // only) rather than the full catalog — falling back to the
+            // entry's bootstrap-derived URL (which already targets /agent).
+            const healed = resolveCloudMcpResourceUrl(minted.resource);
+            resolvedUrl = healed ? `${healed}/agent` : resolvedUrl;
             resolvedHeaders = { Authorization: `Bearer ${minted.token}` };
           }
         } catch {
@@ -909,6 +877,10 @@ export function createConnectionsStore(options: {
     const settings = readDenSettings();
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!orgId || !settings.authToken?.trim()) return "skipped";
+    const workspaceId = await resolveOpenworkWorkspaceId();
+    if (!workspaceId) return "skipped";
+    const serverBaseUrl = getOpenworkSnapshot().openworkServerClient?.baseUrl.trim() ?? "";
+    if (!serverBaseUrl) return "skipped";
 
     const entry = MCP_QUICK_CONNECT.find((candidate) => candidate.serverName === CLOUD_MCP_SERVER_NAME);
     if (!entry) return "skipped";
@@ -926,10 +898,16 @@ export function createConnectionsStore(options: {
       clearCloudMcpUnhealthyRemintAttempt();
     }
 
-    const marker = readCloudMcpSyncMarker();
+    const marker = readCloudMcpSyncMarker({
+      denBaseUrl: settings.baseUrl,
+      serverBaseUrl,
+      orgId,
+      workspaceId,
+    });
     const markerFresh =
       marker !== null &&
       marker.orgId === orgId &&
+      marker.workspaceId === workspaceId &&
       isCloudMcpSyncMarkerFresh({
         expiresAt: marker.expiresAt,
         now: Date.now(),
@@ -981,7 +959,13 @@ export function createConnectionsStore(options: {
     if (!connected) {
       return "skipped";
     }
-    writeCloudMcpSyncMarker({ orgId, expiresAt: minted.expiresAt });
+    writeCloudMcpSyncMarker({
+      denBaseUrl: settings.baseUrl,
+      serverBaseUrl,
+      orgId,
+      workspaceId,
+      expiresAt: minted.expiresAt,
+    });
     return "synced";
   }
 

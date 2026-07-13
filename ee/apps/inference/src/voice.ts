@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { eq, sql } from "drizzle-orm"
+import { eq, sql } from "@openwork-ee/den-db/drizzle"
 import type { Hono } from "hono"
 import {
   InferenceOrgUsageBucketTable,

@@ -83,6 +83,18 @@ export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
     /(?:^|[/\\])opencode[^/\\\s]*\s+serve\b/.test(value);
 }
 
+export function embeddedServerImportUrl(embeddedPath) {
+  const url = pathToFileURL(embeddedPath);
+  try {
+    const stats = statSync(embeddedPath);
+    url.searchParams.set("mtimeMs", String(stats.mtimeMs));
+    url.searchParams.set("size", String(stats.size));
+  } catch {
+    // Fall back to the deterministic file URL if stat fails; startup can continue.
+  }
+  return url.href;
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -1188,7 +1200,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     if (!embeddedPath) {
       throw new Error(`Cannot find OpenWork embedded server bundle. Checked: ${candidates.join(", ")}`);
     }
-    const { startEmbeddedServer } = await import(pathToFileURL(embeddedPath).href);
+    const { startEmbeddedServer } = await import(embeddedServerImportUrl(embeddedPath));
     // startEmbeddedServer falls back to an OS-assigned port if `port` races
     // into EADDRINUSE (see apps/server/src/serve-node.ts), so the bound port
     // below is authoritative.

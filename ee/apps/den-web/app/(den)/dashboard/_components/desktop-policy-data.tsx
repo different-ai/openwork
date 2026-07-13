@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import {
   desktopPolicyKeys,
-  normalizeDesktopPolicyValue,
+  normalizeDesktopPolicyDocument,
   type DesktopPolicyDefinition,
-  type DesktopPolicyValue,
+  type DesktopPolicyDocument,
+  type DesktopPolicyDocumentWrite,
 } from "@openwork/types/den/desktop-policies";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 
@@ -22,7 +23,8 @@ export type DenDesktopPolicy = {
   policyName: string;
   isDefault: boolean;
   isEnabled: boolean;
-  policy: DesktopPolicyValue;
+  priority: number;
+  policy: DesktopPolicyDocument;
   createdByOrgMemberId: string;
   createdAt: string | null;
   updatedAt: string | null;
@@ -31,7 +33,8 @@ export type DenDesktopPolicy = {
 
 export type DesktopPolicyPayload = {
   policyName: string;
-  policy: DesktopPolicyValue;
+  policy: DesktopPolicyDocumentWrite;
+  priority?: number;
   isEnabled?: boolean;
   memberIds?: string[];
   teamIds?: string[];
@@ -53,8 +56,8 @@ function isDesktopPolicyKey(value: string | null): value is DesktopPolicyDefinit
   return value !== null && desktopPolicyKeys.includes(value as DesktopPolicyDefinition["id"]);
 }
 
-function asPolicy(value: unknown): DesktopPolicyValue {
-  return normalizeDesktopPolicyValue(value);
+function asPolicy(value: unknown): DesktopPolicyDocument {
+  return normalizeDesktopPolicyDocument(value);
 }
 
 function asAssignment(value: unknown): DenDesktopPolicyAssignment | null {
@@ -100,6 +103,7 @@ function asDesktopPolicy(value: unknown): DenDesktopPolicy | null {
     policyName,
     isDefault: value.isDefault === true,
     isEnabled: value.isEnabled === true,
+    priority: typeof value.priority === "number" && Number.isInteger(value.priority) ? value.priority : 0,
     policy: asPolicy(value.policy),
     createdByOrgMemberId,
     createdAt: asIsoString(value.createdAt),

@@ -11,7 +11,10 @@ export type {
   OpencodeCommandDraft,
   WorkspaceOpenworkConfig,
   AppBuildInfo,
+  BrandIconApplyResult,
+  BrandIconState,
   DesktopBootstrapConfig,
+  EvalRelaunchResult,
   OrchestratorDetachedHost,
   SandboxDoctorResult,
   OpenworkDockerCleanupResult,
@@ -25,10 +28,13 @@ export type {
 } from "./desktop-types";
 
 import type {
+  BrandIconApplyResult,
+  BrandIconState,
   DesktopCommandArgs,
   DesktopCommandInvokers,
   DesktopCommandName,
   DesktopCommandResult,
+  EvalRelaunchResult,
   WorkspaceList,
 } from "./desktop-types";
 import type { BrowserPanelTab } from "./desktop-types";
@@ -54,7 +60,7 @@ declare global {
         ...args: DesktopCommandArgs<C>
       ) => Promise<DesktopCommandResult<C>>;
       shell?: {
-        openExternal?: (url: string) => Promise<void>;
+        openExternal?: (url: string) => Promise<{ ok: boolean; error?: string } | void>;
         relaunch?: () => Promise<void>;
       };
       system?: {
@@ -84,6 +90,13 @@ declare global {
       migration?: {
         readSnapshot?: () => Promise<unknown>;
         ackSnapshot?: () => Promise<{ ok: boolean; moved: boolean }>;
+      };
+      brandIcon?: {
+        apply?: (url: string | null) => Promise<BrandIconApplyResult>;
+        getState?: () => Promise<BrandIconState>;
+      };
+      dev?: {
+        evalRelaunch?: () => Promise<EvalRelaunchResult>;
       };
       updater?: {
         getChannel?: () => Promise<{
@@ -151,6 +164,7 @@ declare global {
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
         version?: string;
+        disableWorkspaceRecovery?: boolean;
       };
     };
   }
@@ -337,7 +351,10 @@ export async function desktopFetchViaMain(input: RequestInfo | URL, init?: Reque
 export async function openDesktopUrl(url: string): Promise<void> {
   const openExternal = window.__OPENWORK_ELECTRON__?.shell?.openExternal;
   if (openExternal) {
-    await openExternal(url);
+    const result = await openExternal(url);
+    if (result && result.ok === false) {
+      throw new Error(result.error ?? "Failed to open browser");
+    }
     return;
   }
   if (typeof window !== "undefined") {
@@ -361,6 +378,30 @@ export async function revealDesktopItemInDir(target: string): Promise<void> {
 
 export async function getDesktopFileIcon(target: string, size?: "small" | "normal" | "large"): Promise<string | null> {
   return invokeElectronHelper("__getFileIcon", target, size);
+}
+
+export async function applyBrandAppName(appName: string | null): Promise<string> {
+  const result = await invokeElectronHelper("__applyBrandAppName", appName);
+  return result.appName;
+}
+
+export async function applyBrandIcon(url: string | null): Promise<BrandIconApplyResult> {
+  const apply = typeof window !== "undefined" ? window.__OPENWORK_ELECTRON__?.brandIcon?.apply : undefined;
+  if (!apply) return { ok: false, reason: "bridge-unavailable" };
+  return apply(url);
+}
+
+export async function getBrandIconState(): Promise<BrandIconState | null> {
+  const getState = typeof window !== "undefined" ? window.__OPENWORK_ELECTRON__?.brandIcon?.getState : undefined;
+  return getState ? getState() : null;
+}
+
+export async function evalRelaunchDesktopApp(): Promise<EvalRelaunchResult> {
+  const relaunch = typeof window !== "undefined" ? window.__OPENWORK_ELECTRON__?.dev?.evalRelaunch : undefined;
+  if (!relaunch) {
+    throw new Error("Electron eval relaunch helper is unavailable.");
+  }
+  return relaunch();
 }
 
 export type DesktopApplication = {
@@ -459,6 +500,7 @@ const {
   pickFile,
   saveFile,
   engineInstall,
+  desktopNotificationShow,
   importSkill,
   installSkillTemplate,
   listLocalSkills,
@@ -514,6 +556,7 @@ export {
   pickFile,
   saveFile,
   engineInstall,
+  desktopNotificationShow,
   importSkill,
   installSkillTemplate,
   listLocalSkills,

@@ -16,6 +16,10 @@ describe("resolveConnectViewState", () => {
     expect(resolveConnectViewState({ authStatus: "signed_out", connectionsCount: 0 })).toBe("signin");
   });
 
+  test("a temporary Cloud outage does not replace Connect with sign-in", () => {
+    expect(resolveConnectViewState({ authStatus: "unavailable", connectionsCount: 1 })).toBe("active");
+  });
+
   test("signed-in users with the org Connect flag see active", () => {
     expect(resolveConnectViewState({ authStatus: "signed_in", connectEnabled: true, connectionsCount: 0 })).toBe("active");
   });

@@ -1,7 +1,12 @@
 import { env } from "./env.js"
+import { appLogger } from "./observability/logger.js"
+import { captureException } from "./observability/runtime.js"
+import { SCIM_MAINTENANCE_FAILED_OPERATIONAL_MARKER } from "./operational-log-markers.js"
 import { listScimProviders, reconcileOrganizationScimDrift, retryPendingScimSyncEvents } from "./scim.js"
 
 let scimMaintenanceRunning = false
+let scimMaintenancePromise: Promise<void> | null = null
+const logger = appLogger.child({ component: "scim_maintenance" })
 
 export async function runScimMaintenanceOnce() {
   const retryResult = await retryPendingScimSyncEvents()
@@ -39,18 +44,27 @@ export function startScimMaintenanceLoop(intervalMs = env.scimMaintenanceInterva
     }
 
     scimMaintenanceRunning = true
-    void runScimMaintenanceOnce()
+    scimMaintenancePromise = runScimMaintenanceOnce()
+      .then(() => undefined)
       .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error)
-        console.error(`[scim][maintenance_failed] reason=${message}`)
+        logger.error(`${SCIM_MAINTENANCE_FAILED_OPERATIONAL_MARKER} scim maintenance failed`, {
+          operational_marker: SCIM_MAINTENANCE_FAILED_OPERATIONAL_MARKER,
+          error,
+        })
+        captureException(error, { component: "scim_maintenance" })
       })
       .finally(() => {
         scimMaintenanceRunning = false
+        scimMaintenancePromise = null
       })
+    void scimMaintenancePromise
   }
 
   const timer = setInterval(run, intervalMs)
   timer.unref()
   run()
-  return () => clearInterval(timer)
+  return async () => {
+    clearInterval(timer)
+    await scimMaintenancePromise
+  }
 }

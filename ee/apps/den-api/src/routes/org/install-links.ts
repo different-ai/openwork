@@ -1,31 +1,37 @@
-import { installConfigSchema, INSTALL_SIDECAR_FILENAME } from "@openwork/install-config"
+import {
+  INSTALL_SIDECAR_FILENAME,
+  installConfigSchema,
+} from "@openwork/install-config"
 import { and, eq, gt, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { InstallLinkTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { createHash, randomBytes } from "node:crypto"
 import type { MiddlewareHandler } from "hono"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { OPENWORK_DOWNLOAD_URL } from "../../CONSTS.js"
 import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
+import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
+import { hashInstallLinkToken, mintOrganizationInstallLink } from "../../install-links.js"
 import { jsonValidator, orgRoleRoute, publicRoute, queryValidator } from "../../middleware/index.js"
-import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
-import { organizationCapabilityKeySchema, organizationHasCapability } from "../../organization-capabilities.js"
-import { resolveInstallerArtifact } from "../../utils/installer-artifacts.js"
-import { appendStoredEntryToZip } from "../../utils/zip-append.js"
+import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
+import { organizationCapabilityKeySchema } from "../../organization-capabilities.js"
+import { normalizeOrganizationMetadata } from "../../organization-limits.js"
+import { desktopReleaseAssetName, genericInstallerAssetName, resolveInstallerArtifact, resolveInstallerFallbackUrl } from "../../utils/installer-artifacts.js"
+import { appendStoredEntriesToZipStream, createStoredZipStream } from "../../utils/zip-append.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureInviteManager, getInvitationOrigin, orgAccessFailureStatus } from "./shared.js"
+import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
 
 const INSTALL_LINK_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 60
+const INSTALL_LINK_MINT_RATE_LIMIT_MAX = 30
 const INSTALL_CONFIG_RATE_LIMIT_MAX = 60
 const INSTALL_ARTIFACT_RATE_LIMIT_MAX = 20
 const INSTALL_LINK_TOKEN_PATTERN = /^[A-Za-z0-9_-]{8,}$/
 
 const createInstallLinkBodySchema = z.object({
-  rotate: z.boolean().optional(),
+  rotate: z.boolean().optional().default(false),
 }).meta({ ref: "CreateInstallLinkRequest" })
 
 const createInstallLinkResponseSchema = z.object({
@@ -52,11 +58,6 @@ const capabilityDisabledSchema = z.object({
   capability: organizationCapabilityKeySchema,
 }).meta({ ref: "CapabilityDisabledError" })
 
-const installerArtifactsUnavailableSchema = z.object({
-  error: z.literal("installer_artifacts_unavailable"),
-  message: z.string(),
-}).meta({ ref: "InstallerArtifactsUnavailableError" })
-
 const rateLimitedSchema = z.object({
   error: z.literal("rate_limited"),
   message: z.string(),
@@ -64,8 +65,14 @@ const rateLimitedSchema = z.object({
 
 type InstallPlatform = z.infer<typeof installPlatformSchema>
 
-function sha256(value: string) {
-  return createHash("sha256").update(value).digest("hex")
+type InstallerDependencies = {
+  resolveArtifact: typeof resolveInstallerArtifact
+  resolveFallbackUrl: (platform: string) => Promise<string>
+}
+
+const defaultInstallerDependencies: InstallerDependencies = {
+  resolveArtifact: resolveInstallerArtifact,
+  resolveFallbackUrl: (platform) => resolveInstallerFallbackUrl(platform, OPENWORK_DOWNLOAD_URL),
 }
 
 function requestAddress(headers: Headers) {
@@ -105,22 +112,29 @@ async function enforceRateLimit(headers: Headers, scope: string, maxRequests: nu
   return checkRateLimit(`install:${scope}:${requestAddress(headers)}`, maxRequests, Date.now())
 }
 
-function installPageUrl(token: string) {
-  return new URL(`/install?token=${encodeURIComponent(token)}`, getInvitationOrigin()).toString()
+function organizationMetadataInput(value: unknown): Record<string, unknown> | string | null {
+  if (typeof value === "string" || value === null) {
+    return value
+  }
+  return typeof value === "object" && !Array.isArray(value) ? { ...value } : null
 }
 
-function buildInstallConfig(input: { organization: { name: string; logo: string | null }; request: Request }) {
+function buildInstallConfig(input: { organization: { name: string; logo: string | null; metadata: unknown }; request: Request }) {
+  const metadata = normalizeOrganizationMetadata(organizationMetadataInput(input.organization.metadata)).metadata
   return installConfigSchema.parse({
+    appName: typeof metadata.brandAppName === "string" ? metadata.brandAppName : "OpenWork",
+    appVersion: env.installerReleaseTag.replace(/^v/i, ""),
     clientName: input.organization.name,
-    webUrl: getInvitationOrigin(),
+    webUrl: env.betterAuthUrl,
     apiUrl: resolvePublicOrigin(input.request, env.apiPublicUrl),
     requireSignin: true,
-    logoUrl: input.organization.logo ?? null,
+    logoUrl: typeof metadata.brandLogoUrl === "string" ? metadata.brandLogoUrl : input.organization.logo ?? null,
+    iconUrl: typeof metadata.brandIconUrl === "string" ? metadata.brandIconUrl : null,
   })
 }
 
 async function resolveInstallConfigForToken(token: string, request: Request) {
-  const tokenHash = sha256(token)
+  const tokenHash = hashInstallLinkToken(token)
   const now = new Date()
   const [row] = await db
     .select({ installLink: InstallLinkTable, organization: OrganizationTable })
@@ -157,29 +171,8 @@ function contentDisposition(filename: string) {
   return `attachment; filename="${filename.replace(/["\\]/g, "-")}"`
 }
 
-function artifactFileName(platform: InstallPlatform) {
-  return platform.startsWith("mac-")
-    ? `openwork-installer-${platform}.zip`
-    : platform === "win-x64"
-      ? `openwork-installer-${platform}.exe`
-      : null
-}
-
-function installerArtifactsUnavailable() {
-  return {
-    error: "installer_artifacts_unavailable",
-    message: `Installer artifacts are unavailable in this environment (tried release ${env.installerReleaseTag}). They ship with the OpenWork release pipeline.`,
-  }
-}
-
-function encodeHostForFilename(apiUrl: string) {
-  return new URL(apiUrl).host.replace(/:/g, "_")
-}
-
-function responseBodyFromBuffer(buffer: Buffer) {
-  const bytes = new Uint8Array(buffer.byteLength)
-  bytes.set(buffer)
-  return bytes.buffer
+function desktopArtifactFileName(platform: InstallPlatform) {
+  return desktopReleaseAssetName(platform, env.installerReleaseTag)
 }
 
 function shellQuote(value: string) {
@@ -251,64 +244,67 @@ const setActiveOrganizationFromParam: MiddlewareHandler<{ Variables: OrgRouteVar
   await next()
 }
 
-export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVariables }>(
+  app: Hono<T>,
+  installer: InstallerDependencies = defaultInstallerDependencies,
+) {
   app.post(
     "/v1/orgs/:organizationId/install-links",
     describeRoute({
       tags: ["Organizations"],
       summary: "Create organization install link",
-      description: "Mints a shareable OpenWork desktop install link for this organization. By default, older active install links for the organization are revoked.",
+      description: "Mints a shareable OpenWork desktop install link for a signed-in organization member. Older active links remain valid unless an owner or admin explicitly requests rotation.",
       responses: {
         200: jsonResponse("Install link created successfully.", createInstallLinkResponseSchema),
         400: jsonResponse("The install-link request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create install links.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can create install links, and the organization needs the installLinks capability enabled.", forbiddenSchema.or(capabilityDisabledSchema)),
+        403: jsonResponse("The organization needs the installLinks capability enabled, and only workspace owners and admins can rotate existing links.", forbiddenSchema.or(capabilityDisabledSchema)),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
+        429: jsonResponse("The member has created too many install links.", rateLimitedSchema),
       },
     }),
     setActiveOrganizationFromParam,
-    orgRoleRoute(["admin"]),
+    orgRoleRoute(["member"]),
     jsonValidator(createInstallLinkBodySchema),
     async (c) => {
-      const permission = ensureInviteManager(c)
-      if (!permission.ok) {
-        return c.json(permission.response, orgAccessFailureStatus(permission.response))
-      }
-
       const input = c.req.valid("json")
       const payload = c.get("organizationContext")
 
-      // Org capability gate: install links ship dark and are enabled
-      // org-by-org from the platform /admin backoffice.
-      if (!organizationHasCapability(payload.organization.metadata, "installLinks")) {
+      if (!organizationInstallLinksEnabled(payload.organization.metadata, {
+        gatingEnabled: env.installLinksGatingEnabled,
+      })) {
         return c.json({ error: "capability_disabled", capability: "installLinks" }, 403)
       }
-      const now = new Date()
-      const token = randomBytes(32).toString("base64url")
 
-      if (input.rotate !== false) {
-        await db
-          .update(InstallLinkTable)
-          .set({ revokedAt: now })
-          .where(
-            and(
-              eq(InstallLinkTable.organizationId, payload.organization.id),
-              isNull(InstallLinkTable.revokedAt),
-              or(isNull(InstallLinkTable.expiresAt), gt(InstallLinkTable.expiresAt, now)),
-            ),
-          )
+      if (input.rotate) {
+        const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can rotate install links.")
+        if (!permission.ok) {
+          return c.json(permission.response, orgAccessFailureStatus(permission.response))
+        }
       }
 
-      await db.insert(InstallLinkTable).values({
-        id: createDenTypeId("installLink"),
+      const retryAfter = await checkRateLimit(
+        `install:mint:user:${payload.currentMember.userId}`,
+        INSTALL_LINK_MINT_RATE_LIMIT_MAX,
+        Date.now(),
+      )
+      if (retryAfter !== null) {
+        c.header("Retry-After", String(retryAfter))
+        return c.json({ error: "rate_limited", message: "Too many install links created. Try again later." }, 429)
+      }
+
+      const installLink = await mintOrganizationInstallLink({
         organizationId: payload.organization.id,
-        tokenHash: sha256(token),
         createdByUserId: payload.currentMember.userId,
-        expiresAt: null,
-        revokedAt: null,
+        metadata: payload.organization.metadata,
+        rotate: input.rotate,
       })
 
-      return c.json({ token, installPageUrl: installPageUrl(token) })
+      if (!installLink) {
+        return c.json({ error: "capability_disabled", capability: "installLinks" }, 403)
+      }
+
+      return c.json(installLink)
     },
   )
 
@@ -349,13 +345,13 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["Organizations"],
       summary: "Download stamped installer",
-      description: "Serves the generic OpenWork installer artifact stamped at download time for this organization.",
+      description: "Packages the generic signed OpenWork installer, the unchanged standard desktop artifact, and this organization's explicit installer configuration, or redirects to the verified standard download when Den cannot prepare the bundle.",
       responses: {
         200: textResponse("Installer artifact returned successfully."),
+        302: emptyResponse("Den redirected the browser to a verified normal desktop download."),
         400: jsonResponse("The install-link token or platform was invalid.", invalidRequestSchema),
         404: jsonResponse("The install link was missing, expired, or revoked.", installLinkNotFoundSchema),
         429: jsonResponse("Too many installer download attempts.", rateLimitedSchema),
-        503: jsonResponse("Installer artifacts are unavailable in this environment.", installerArtifactsUnavailableSchema),
       },
     }),
     publicRoute,
@@ -389,33 +385,37 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         })
       }
 
-      const fileName = artifactFileName(platform)
-      if (!fileName) {
-        return c.json(installerArtifactsUnavailable(), 503)
+      const desktopFileName = desktopArtifactFileName(platform)
+      const genericFileName = genericInstallerAssetName(platform)
+      if (!desktopFileName || !genericFileName) {
+        return c.json({ error: "invalid_request", details: [{ message: "Unsupported installer platform." }] }, 400)
       }
 
-      const artifact = await resolveInstallerArtifact(fileName)
-      if (!artifact) {
-        return c.json(installerArtifactsUnavailable(), 503)
+      const [desktopArtifact, genericInstallerArtifact] = await Promise.all([
+        installer.resolveArtifact(desktopFileName),
+        installer.resolveArtifact(genericFileName),
+      ])
+      if (!desktopArtifact || !genericInstallerArtifact) {
+        return c.redirect(await installer.resolveFallbackUrl(platform), 302)
       }
 
-      if (platform.startsWith("mac-")) {
-        const sidecar = Buffer.from(JSON.stringify(resolved.config), "utf8")
-        const stampedZip = appendStoredEntryToZip(artifact, INSTALL_SIDECAR_FILENAME, sidecar)
-        return new Response(stampedZip, {
-          headers: {
-            "content-type": "application/zip",
-            "content-disposition": contentDisposition(`OpenWork-Installer-${safeAttachmentSlug(resolved.organizationSlug)}.zip`),
-            "cache-control": "no-store",
-          },
-        })
-      }
+      const sidecar = Buffer.from(`${JSON.stringify(resolved.config, null, 2)}\n`, "utf8")
+      const bundle = platform.startsWith("mac-")
+        ? appendStoredEntriesToZipStream(genericInstallerArtifact, [
+            { name: INSTALL_SIDECAR_FILENAME, content: sidecar },
+            { name: desktopFileName, content: desktopArtifact },
+          ])
+        : createStoredZipStream([
+            { name: "OpenWork Installer.exe", content: genericInstallerArtifact },
+            { name: INSTALL_SIDECAR_FILENAME, content: sidecar },
+            { name: desktopFileName, content: desktopArtifact },
+          ])
 
-      const stampedHost = encodeHostForFilename(resolved.config.apiUrl)
-      return new Response(responseBodyFromBuffer(artifact), {
+      return new Response(bundle.body, {
         headers: {
-          "content-type": "application/vnd.microsoft.portable-executable",
-          "content-disposition": contentDisposition(`OpenWork-Installer--${stampedHost}--${input.token}.exe`),
+          "content-type": "application/zip",
+          "content-length": String(bundle.byteLength),
+          "content-disposition": contentDisposition(`OpenWork-Installer-${safeAttachmentSlug(resolved.organizationSlug)}-${platform}.zip`),
           "cache-control": "no-store",
         },
       })

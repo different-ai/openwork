@@ -213,7 +213,7 @@ async function runFlow(flow, { cdpBaseUrl, outDir, env }) {
     result.screenshots = ctx.screenshots;
     result.evidenceFrames = ctx.evidenceFrames;
     result.logs = ctx.logs;
-    client?.close();
+    ctx.client?.close();
   }
 
   return result;
@@ -474,7 +474,7 @@ async function main() {
 
   // App-less flows (requiresApp: false) don't need a CDP endpoint; only probe
   // for one when at least one selected flow drives the app.
-  const needsApp = selected.some((flow) => flow.requiresApp !== false);
+  const needsApp = selected.some((flow) => missingEnv(flow, process.env).length === 0 && flow.requiresApp !== false);
   const envCdp = process.env.OPENWORK_EVAL_CDP_URL?.trim();
   const cdpBaseUrl = args.cdpUrl
     ?? (envCdp || (needsApp ? await resolveCdpBaseUrl(DEFAULT_CDP_CANDIDATES) : null));

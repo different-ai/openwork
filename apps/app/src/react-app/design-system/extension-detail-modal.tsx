@@ -45,7 +45,7 @@ export type ExtensionDetailModalProps = {
   hidden?: boolean;
   /** Whether this extension is still in preview. */
   preview?: boolean;
-  /** Whether this extension is beta / untested. */
+  /** Whether this extension is alpha / untested. */
   beta?: boolean;
   /** Reason this item is visible but unavailable. */
   disabledReason?: string | null;
@@ -271,7 +271,7 @@ export function ExtensionDetailModal({
                 ) : null}
                 {beta ? (
                   <span className="rounded-md bg-amber-3 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
-                    Beta
+                    Alpha
                   </span>
                 ) : null}
               </DialogDescription>
@@ -409,7 +409,7 @@ export function ExtensionDetailModal({
                   {beta ? (
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Release stage</span>
-                      <span className="font-medium text-amber-11">Beta</span>
+                      <span className="font-medium text-amber-11">Alpha</span>
                     </div>
                   ) : null}
 

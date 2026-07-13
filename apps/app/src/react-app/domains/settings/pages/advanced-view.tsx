@@ -44,6 +44,7 @@ export type AdvancedViewProps = {
   migrateRuntimeConfig: () => Promise<{ migrated: boolean; keys: string[] }>;
   getRuntimeConfigStatus: () => Promise<OpenworkRuntimeConfigStatus>;
   organizationServer: AdvancedOrganizationServerSession;
+  cloudMcpUrl: string | null;
 };
 
 type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
@@ -188,6 +189,7 @@ export function AdvancedView(props: AdvancedViewProps) {
         onClearServerConfiguration={props.organizationServer.onClearServerConfiguration}
         onResetBaseUrlToDefault={props.organizationServer.onResetBaseUrlToDefault}
         sessionBusy={props.organizationServer.sessionBusy}
+        cloudMcpUrl={props.cloudMcpUrl}
       />
 
       <AdvancedRuntimeSection

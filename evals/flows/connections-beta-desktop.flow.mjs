@@ -224,7 +224,7 @@ async function clickExtensionCard(ctx, name) {
 
 export default {
   id: "connections-beta-desktop",
-  title: "Desktop Marketplace: beta org connections are labeled and last",
+  title: "Desktop Marketplace: alpha org connections are labeled and last",
   kind: "user-facing",
   spec: "evals/voiceovers/connections-beta-desktop.md",
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
@@ -262,7 +262,7 @@ export default {
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("The org tool appears in the Marketplace, last and wearing Beta", {
+        await ctx.prove("The org tool appears in the Marketplace, last and wearing Alpha", {
           voiceover: vo[1],
           action: async () => {
             await navigateToExtensionsMarketplace(ctx);
@@ -294,14 +294,14 @@ export default {
               };
             })()`);
             ctx.assert(proof.cardText.includes(CONNECTION_NAME), `Marketplace card not found: ${JSON.stringify(proof)}`);
-            ctx.assert(proof.cardText.includes("Beta"), `Marketplace card must include the Beta pill: ${proof.cardText}`);
+            ctx.assert(proof.cardText.includes("Alpha"), `Marketplace card must include the Alpha pill: ${proof.cardText}`);
             ctx.assert(proof.lastCardText.includes(CONNECTION_NAME), `Org connection must be the last marketplace card: ${proof.lastCardText}`);
             ctx.assert(proof.filterOptions[proof.filterOptions.length - 1] === "Organization MCP Connections", `Marketplace filter order was wrong: ${JSON.stringify(proof.filterOptions)}`);
           },
           screenshot: {
             name: "connections-beta-desktop-marketplace-last",
-            claim: "The Marketplace shows the beta org MCP connection as the last card and the last marketplace filter option.",
-            requireText: [CONNECTION_NAME, "Beta"],
+            claim: "The Marketplace shows the alpha org MCP connection as the last card and the last marketplace filter option.",
+            requireText: [CONNECTION_NAME, "Alpha"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -310,7 +310,7 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        await ctx.prove("The detail modal says Beta before anyone connects", {
+        await ctx.prove("The detail modal says Alpha before anyone connects", {
           voiceover: vo[2],
           action: async () => {
             await clickExtensionCard(ctx, CONNECTION_NAME);
@@ -322,18 +322,18 @@ export default {
               const root = roots.find((entry) => entry.textContent.includes(${JSON.stringify(CONNECTION_NAME)}))
                 ?? [...document.querySelectorAll('div')].find((entry) => entry.textContent.includes(${JSON.stringify(CONNECTION_NAME)}) && entry.textContent.includes('Release stage'));
               const text = (root?.textContent ?? '').replace(/\\s+/g, ' ').trim();
-              const betaPill = root ? [...root.querySelectorAll('span')].some((span) => span.textContent.trim() === 'Beta') : false;
+              const betaPill = root ? [...root.querySelectorAll('span')].some((span) => span.textContent.trim() === 'Alpha') : false;
               return { text, betaPill };
             })()`);
             ctx.assert(modal.text.includes(CONNECTION_NAME), `Detail modal missing connection name: ${modal.text}`);
-            ctx.assert(modal.betaPill, "Detail modal missing Beta pill.");
-            ctx.assert(/Release stage\s*Beta/.test(modal.text), `Detail modal missing Release stage Beta row: ${modal.text}`);
+            ctx.assert(modal.betaPill, "Detail modal missing Alpha pill.");
+            ctx.assert(/Release stage\s*Alpha/.test(modal.text), `Detail modal missing Release stage Alpha row: ${modal.text}`);
             ctx.assert(modal.text.includes("Connect your account"), `Detail modal missing connect label: ${modal.text}`);
           },
           screenshot: {
             name: "connections-beta-desktop-detail-modal",
-            claim: "The org MCP connection detail modal shows Beta, Release stage, and Connect your account before authorization.",
-            requireText: [CONNECTION_NAME, "Release stage", "Beta"],
+            claim: "The org MCP connection detail modal shows Alpha, Release stage, and Connect your account before authorization.",
+            requireText: [CONNECTION_NAME, "Release stage", "Alpha"],
             rejectText: ["Something went wrong"],
           },
         });

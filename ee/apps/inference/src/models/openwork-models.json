@@ -1,33 +1,4 @@
 {
-  "openrouter/fusion": {
-    "id": "openrouter/fusion",
-    "name": "Fusion",
-    "family": "fusion",
-    "attachment": false,
-    "reasoning": false,
-    "tool_call": false,
-    "structured_output": false,
-    "temperature": false,
-    "release_date": "2026-06-13",
-    "last_updated": "2026-06-13",
-    "modalities": {
-      "input": [
-        "text"
-      ],
-      "output": [
-        "text"
-      ]
-    },
-    "open_weights": false,
-    "limit": {
-      "context": 1000000,
-      "output": 128000
-    },
-    "cost": {
-      "input": 0,
-      "output": 0
-    }
-  },
   "z-ai/glm-5.2": {
     "id": "z-ai/glm-5.2",
     "name": "GLM-5.2",
