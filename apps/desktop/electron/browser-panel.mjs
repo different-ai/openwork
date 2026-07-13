@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 import { app, WebContentsView, clipboard, session, shell } from "electron";
 
+import { defineIpcContribution, ipcHandle, ipcListener } from "./ipc-composition.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
 const BROWSER_DEFAULT_URL = "about:blank";
@@ -742,68 +744,73 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     sendBrowserState();
   }
 
-  function registerIpc(ipcMain) {
-    ipcMain.handle("openwork:browser:show", (_event, bounds) => attachBrowserView(bounds));
-    ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
-    ipcMain.handle("openwork:browser:openUrl", (_event, url, provider) => openBrowserUrlForAutomation(url, provider));
-    ipcMain.handle("openwork:browser:navigate", (_event, url) => {
-      const view = getActiveBrowserView() ?? createBrowserTab("about:blank", { select: true }).view;
-      view.webContents.loadURL(normalizeBrowserUrl(url));
-    });
-    ipcMain.handle("openwork:browser:back", () => {
-      const webContents = getActiveWebContents();
-      if (webContents?.canGoBack()) webContents.goBack();
-    });
-    ipcMain.handle("openwork:browser:forward", () => {
-      const webContents = getActiveWebContents();
-      if (webContents?.canGoForward()) webContents.goForward();
-    });
-    ipcMain.handle("openwork:browser:reload", () => getActiveWebContents()?.reload());
-    ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
-      lastBrowserBounds = bounds;
-      const view = getActiveBrowserView();
-      if (view && browserViewVisible && bounds.width > 0 && bounds.height > 0) {
-        view.setBounds(scaleRendererBounds(bounds));
-      }
-    });
-    ipcMain.handle("openwork:browser:state", () => browserStatePayload());
-    ipcMain.handle("openwork:browser:createTab", (_event, url) => {
-      const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
-      const tab = createBrowserTab(target, { select: true });
-      return { tabId: tab.tabId };
-    });
-    ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId)));
-    ipcMain.handle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs());
-    ipcMain.handle("openwork:browser:selectTab", (_event, tabId) => selectBrowserTab(String(tabId ?? "")).tabId);
-    ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
-    ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
-    ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
-    ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
-    ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
-    ipcMain.handle("openwork:browser:destroy", () => destroyBrowserView());
-    ipcMain.on("openwork:menu-overlay:ready", (event) => {
-      if (event.sender !== menuOverlayView?.webContents) return;
-      markMenuOverlayReady(menuOverlayView);
-    });
-    ipcMain.on("openwork:menu-overlay:choose", (event, payload) => {
-      if (event.sender !== menuOverlayView?.webContents) return;
-      handleMenuOverlayChoice(payload);
-    });
-    ipcMain.on("openwork:menu-overlay:close", (event, payload) => {
-      if (event.sender !== menuOverlayView?.webContents) return;
-      if (payload?.requestId && payload.requestId !== menuOverlayRequest?.id) return;
-      hideMenuOverlay();
-    });
-    ipcMain.on("openwork:menu-overlay:dismiss", (event) => {
-      if (event.sender === menuOverlayView?.webContents) return;
-      hideMenuOverlay();
+  function createIpcContribution() {
+    return defineIpcContribution({
+      id: "openwork.browser-panel.v1",
+      registrations: [
+        ipcHandle("openwork:browser:show", (_event, bounds) => attachBrowserView(bounds)),
+        ipcHandle("openwork:browser:hide", () => hideBrowserView()),
+        ipcHandle("openwork:browser:openUrl", (_event, url, provider) => openBrowserUrlForAutomation(url, provider)),
+        ipcHandle("openwork:browser:navigate", (_event, url) => {
+          const view = getActiveBrowserView() ?? createBrowserTab("about:blank", { select: true }).view;
+          view.webContents.loadURL(normalizeBrowserUrl(url));
+        }),
+        ipcHandle("openwork:browser:back", () => {
+          const webContents = getActiveWebContents();
+          if (webContents?.canGoBack()) webContents.goBack();
+        }),
+        ipcHandle("openwork:browser:forward", () => {
+          const webContents = getActiveWebContents();
+          if (webContents?.canGoForward()) webContents.goForward();
+        }),
+        ipcHandle("openwork:browser:reload", () => getActiveWebContents()?.reload()),
+        ipcHandle("openwork:browser:bounds", (_event, bounds) => {
+          lastBrowserBounds = bounds;
+          const view = getActiveBrowserView();
+          if (view && browserViewVisible && bounds.width > 0 && bounds.height > 0) {
+            view.setBounds(scaleRendererBounds(bounds));
+          }
+        }),
+        ipcHandle("openwork:browser:state", () => browserStatePayload()),
+        ipcHandle("openwork:browser:createTab", (_event, url) => {
+          const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
+          const tab = createBrowserTab(target, { select: true });
+          return { tabId: tab.tabId };
+        }),
+        ipcHandle("openwork:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId))),
+        ipcHandle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs()),
+        ipcHandle("openwork:browser:selectTab", (_event, tabId) => selectBrowserTab(String(tabId ?? "")).tabId),
+        ipcHandle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds)),
+        ipcHandle("openwork:browser:listTabs", () => listBrowserTabs()),
+        ipcHandle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy)),
+        ipcHandle("openwork:browser:getProxy", () => browserProxyState()),
+        ipcHandle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point)),
+        ipcHandle("openwork:browser:destroy", () => destroyBrowserView()),
+        ipcListener("openwork:menu-overlay:ready", (event) => {
+          if (event.sender !== menuOverlayView?.webContents) return;
+          markMenuOverlayReady(menuOverlayView);
+        }),
+        ipcListener("openwork:menu-overlay:choose", (event, payload) => {
+          if (event.sender !== menuOverlayView?.webContents) return;
+          handleMenuOverlayChoice(payload);
+        }),
+        ipcListener("openwork:menu-overlay:close", (event, payload) => {
+          if (event.sender !== menuOverlayView?.webContents) return;
+          if (payload?.requestId && payload.requestId !== menuOverlayRequest?.id) return;
+          hideMenuOverlay();
+        }),
+        ipcListener("openwork:menu-overlay:dismiss", (event) => {
+          if (event.sender === menuOverlayView?.webContents) return;
+          hideMenuOverlay();
+        }),
+      ],
     });
   }
 
   return {
     destroy: destroyBrowserView,
+    createIpcContribution,
     isMainWindowAllowedNavigation,
-    registerIpc,
     routeBlockedMainWindowNavigation,
   };
 }

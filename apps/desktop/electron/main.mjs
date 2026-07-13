@@ -19,9 +19,15 @@ import { fileURLToPath } from "node:url";
 
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, net as electronNet, Notification as ElectronNotification, session, shell, systemPreferences } from "electron";
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
-import { registerMigrationIpc } from "./migration.mjs";
+import {
+  composeElectronIpc,
+  defineIpcContribution,
+  ELECTRON_IPC_INVENTORY_V1,
+  ipcHandle,
+} from "./ipc-composition.mjs";
+import { createMigrationIpcContribution } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
-import { registerUpdaterIpc } from "./updater.mjs";
+import { createUpdaterIpcContribution } from "./updater.mjs";
 import {
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
@@ -2153,84 +2159,120 @@ async function createMainWindow() {
   return mainWindow;
 }
 
-ipcMain.handle("openwork:desktop", handleDesktopInvoke);
-ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
-  if (typeof url !== "string" || url.trim().length === 0) {
-    return { ok: false, error: "empty url" };
-  }
-  return openExternalUrl(url.trim());
-});
-ipcMain.handle("openwork:shell:relaunch", async () => {
-  app.relaunch();
-  app.exit(0);
-});
-ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
-ipcMain.handle("openwork:system:microphoneStatus", async () => {
-  if (process.platform !== "darwin") return { platform: process.platform, status: "not-mac" };
-  return { platform: process.platform, status: systemPreferences.getMediaAccessStatus("microphone") };
-});
-ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
-  if (process.platform !== "darwin") return { platform: process.platform, granted: true, status: "not-mac" };
-  const before = systemPreferences.getMediaAccessStatus("microphone");
-  const granted = await systemPreferences.askForMediaAccess("microphone");
-  const after = systemPreferences.getMediaAccessStatus("microphone");
-  return { platform: process.platform, before, after, granted };
+const desktopCommandBridgeIpc = defineIpcContribution({
+  id: "openwork.desktop-command-bridge.v1",
+  registrations: [ipcHandle("openwork:desktop", handleDesktopInvoke)],
 });
 
-// ── Terminal IPC ────────────────────────────────────────────────────────
-ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
-  const cwd = await resolveTerminalCwd(options?.cwd);
-  const cols = Number.isFinite(options?.cols) ? Math.max(20, Math.floor(options.cols)) : 80;
-  const rows = Number.isFinite(options?.rows) ? Math.max(5, Math.floor(options.rows)) : 24;
-  const terminalId = `term_${nextTerminalId++}`;
-  const shellPath = defaultTerminalShell();
-  const child = pty.spawn(shellPath, [], {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd,
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-      OPENWORK_TERMINAL: "1",
-    },
-  });
-
-  terminalProcesses.set(terminalId, { process: child, webContentsId: event.sender.id });
-  event.sender.once("destroyed", () => killTerminalsForWebContents(event.sender.id));
-  child.onData((data) => {
-    if (event.sender.isDestroyed()) return;
-    event.sender.send("openwork:terminal:data", { terminalId, data });
-  });
-  child.onExit(({ exitCode, signal }) => {
-    terminalProcesses.delete(terminalId);
-    if (event.sender.isDestroyed()) return;
-    event.sender.send("openwork:terminal:exit", { terminalId, exitCode, signal });
-  });
-
-  return { terminalId };
-});
-ipcMain.handle("openwork:terminal:write", (event, terminalId, data) => {
-  const terminal = terminalForSender(event, terminalId);
-  if (!terminal || typeof data !== "string") return;
-  terminal.process.write(data);
-});
-ipcMain.handle("openwork:terminal:resize", (event, terminalId, cols, rows) => {
-  const terminal = terminalForSender(event, terminalId);
-  if (!terminal || !Number.isFinite(cols) || !Number.isFinite(rows)) return;
-  terminal.process.resize(Math.max(20, Math.floor(cols)), Math.max(5, Math.floor(rows)));
-});
-ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
-  const terminal = terminalForSender(event, terminalId);
-  if (!terminal) return;
-  killTerminal(String(terminalId));
+const shellIpc = defineIpcContribution({
+  id: "openwork.shell.v1",
+  registrations: [
+    ipcHandle("openwork:shell:openExternal", async (_event, url) => {
+      if (typeof url !== "string" || url.trim().length === 0) {
+        return { ok: false, error: "empty url" };
+      }
+      return openExternalUrl(url.trim());
+    }),
+    ipcHandle("openwork:shell:relaunch", async () => {
+      app.relaunch();
+      app.exit(0);
+    }),
+  ],
 });
 
-browserPanel.registerIpc(ipcMain);
+const systemIpc = defineIpcContribution({
+  id: "openwork.system.v1",
+  registrations: [
+    ipcHandle("openwork:system:architecture", async () => resolveArchitectureInfo()),
+    ipcHandle("openwork:system:microphoneStatus", async () => {
+      if (process.platform !== "darwin") return { platform: process.platform, status: "not-mac" };
+      return { platform: process.platform, status: systemPreferences.getMediaAccessStatus("microphone") };
+    }),
+    ipcHandle("openwork:system:askMicrophoneAccess", async () => {
+      if (process.platform !== "darwin") return { platform: process.platform, granted: true, status: "not-mac" };
+      const before = systemPreferences.getMediaAccessStatus("microphone");
+      const granted = await systemPreferences.askForMediaAccess("microphone");
+      const after = systemPreferences.getMediaAccessStatus("microphone");
+      return { platform: process.platform, before, after, granted };
+    }),
+  ],
+});
 
-registerMigrationIpc({ app, ipcMain });
-const { ensureAutoUpdater } = registerUpdaterIpc({ app, ipcMain, getMainWindow: () => mainWindow });
+const terminalIpc = defineIpcContribution({
+  id: "openwork.terminal.v1",
+  registrations: [
+    ipcHandle("openwork:terminal:create", async (event, options = {}) => {
+      const cwd = await resolveTerminalCwd(options?.cwd);
+      const cols = Number.isFinite(options?.cols) ? Math.max(20, Math.floor(options.cols)) : 80;
+      const rows = Number.isFinite(options?.rows) ? Math.max(5, Math.floor(options.rows)) : 24;
+      const terminalId = `term_${nextTerminalId++}`;
+      const shellPath = defaultTerminalShell();
+      const child = pty.spawn(shellPath, [], {
+        name: "xterm-256color",
+        cols,
+        rows,
+        cwd,
+        env: {
+          ...process.env,
+          TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+          OPENWORK_TERMINAL: "1",
+        },
+      });
+
+      terminalProcesses.set(terminalId, { process: child, webContentsId: event.sender.id });
+      event.sender.once("destroyed", () => killTerminalsForWebContents(event.sender.id));
+      child.onData((data) => {
+        if (event.sender.isDestroyed()) return;
+        event.sender.send("openwork:terminal:data", { terminalId, data });
+      });
+      child.onExit(({ exitCode, signal }) => {
+        terminalProcesses.delete(terminalId);
+        if (event.sender.isDestroyed()) return;
+        event.sender.send("openwork:terminal:exit", { terminalId, exitCode, signal });
+      });
+
+      return { terminalId };
+    }),
+    ipcHandle("openwork:terminal:write", (event, terminalId, data) => {
+      const terminal = terminalForSender(event, terminalId);
+      if (!terminal || typeof data !== "string") return;
+      terminal.process.write(data);
+    }),
+    ipcHandle("openwork:terminal:resize", (event, terminalId, cols, rows) => {
+      const terminal = terminalForSender(event, terminalId);
+      if (!terminal || !Number.isFinite(cols) || !Number.isFinite(rows)) return;
+      terminal.process.resize(Math.max(20, Math.floor(cols)), Math.max(5, Math.floor(rows)));
+    }),
+    ipcHandle("openwork:terminal:kill", (event, terminalId) => {
+      const terminal = terminalForSender(event, terminalId);
+      if (!terminal) return;
+      killTerminal(String(terminalId));
+    }),
+  ],
+});
+
+const { contribution: updaterIpc, ensureAutoUpdater } = createUpdaterIpcContribution({
+  app,
+  getMainWindow: () => mainWindow,
+});
+
+// Electron realm composition root. Every inbound IPC channel is contributed
+// here once and checked against the compatibility manifest. Binding starts only
+// after duplicate and inventory validation succeeds.
+composeElectronIpc({
+  ipcMain,
+  contributions: [
+    desktopCommandBridgeIpc,
+    shellIpc,
+    systemIpc,
+    terminalIpc,
+    browserPanel.createIpcContribution(),
+    createMigrationIpcContribution({ app }),
+    updaterIpc,
+  ],
+  expectedInventory: ELECTRON_IPC_INVENTORY_V1,
+});
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();

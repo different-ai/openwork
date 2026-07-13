@@ -4,6 +4,8 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { defineIpcContribution, ipcHandle } from "./ipc-composition.mjs";
+
 const ELECTRON_UPDATER_CHANNEL_FILENAME = "electron-updater-channel.v1.json";
 
 // In dev mode, app.getVersion() returns the Electron framework version
@@ -215,7 +217,7 @@ async function cleanStaleUpdaterState(app) {
 
 // electron-updater wiring. Packaged-only; dev builds skip this so the
 // updater doesn't try to probe a non-existent release channel.
-export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
+export function createUpdaterIpcContribution({ app, getMainWindow }) {
   let autoUpdaterInstance = null;
   let autoUpdaterLoaded = false;
   let checkedUpdateVersion = null;
@@ -273,89 +275,90 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     return autoUpdaterInstance;
   }
 
-  ipcMain.handle("openwork:updater:getChannel", async () => {
-    const channel = await readElectronUpdaterChannel(app);
-    return updaterChannelState(app, channel);
+  const contribution = defineIpcContribution({
+    id: "openwork.updater.v1",
+    registrations: [
+      ipcHandle("openwork:updater:getChannel", async () => {
+        const channel = await readElectronUpdaterChannel(app);
+        return updaterChannelState(app, channel);
+      }),
+      ipcHandle("openwork:updater:setChannel", async (_event, rawChannel) => {
+        const channel = await writeElectronUpdaterChannel(app, rawChannel);
+        checkedUpdateVersion = null;
+        const updater = await ensureAutoUpdater();
+        if (updater) {
+          return applyElectronUpdaterFeed(app, updater);
+        }
+        return updaterChannelState(app, channel);
+      }),
+      ipcHandle("openwork:updater:check", async (_event, rawChannel) => {
+        if (rawChannel !== undefined) {
+          await writeElectronUpdaterChannel(app, rawChannel);
+        }
+        const updater = await ensureAutoUpdater();
+        const channelState = updater
+          ? await applyElectronUpdaterFeed(app, updater)
+          : updaterChannelState(app, await readElectronUpdaterChannel(app));
+        if (!updater) return { available: false, reason: "unavailable", ...channelState };
+        try {
+          const result = await updater.checkForUpdates();
+          const info = result?.updateInfo ?? null;
+          const currentVersion = resolveAppVersion(app);
+          const available = Boolean(info?.version && isVersionNewer(info.version, currentVersion));
+          checkedUpdateVersion = available ? info.version : null;
+          return {
+            available,
+            currentVersion,
+            latestVersion: info?.version ?? null,
+            releaseDate: info?.releaseDate ?? null,
+            releaseNotes: info?.releaseNotes ?? null,
+            ...channelState,
+          };
+        } catch (error) {
+          checkedUpdateVersion = null;
+          return { available: false, reason: String(error?.message ?? error), ...channelState };
+        }
+      }),
+      ipcHandle("openwork:updater:download", async () => {
+        const updater = await ensureAutoUpdater();
+        if (!updater) return { ok: false, reason: "unavailable" };
+        try {
+          await applyElectronUpdaterFeed(app, updater);
+          const currentVersion = resolveAppVersion(app);
+          if (!checkedUpdateVersion || !isVersionNewer(checkedUpdateVersion, currentVersion)) {
+            const result = await updater.checkForUpdates();
+            const info = result?.updateInfo ?? null;
+            checkedUpdateVersion = info?.version && isVersionNewer(info.version, currentVersion)
+              ? info.version
+              : null;
+          }
+          if (!checkedUpdateVersion) {
+            return { ok: false, reason: "No update available." };
+          }
+          // Clear any stuck ShipIt state from a prior aborted install so this
+          // download applies cleanly on quit.
+          await cleanStaleUpdaterState(app);
+          await updater.downloadUpdate();
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, reason: String(error?.message ?? error) };
+        }
+      }),
+      ipcHandle("openwork:updater:installAndRestart", async () => {
+        const updater = await ensureAutoUpdater();
+        if (!updater) return { ok: false, reason: "unavailable" };
+        try {
+          // Re-assert the in-place-write default right before the swap; the ShipIt
+          // defaults domain may have been wiped when stale state was cleaned.
+          await enableSquirrelDirectContentsWrite();
+          updater.quitAndInstall(false, true);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, reason: String(error?.message ?? error) };
+        }
+      }),
+    ],
   });
 
-  ipcMain.handle("openwork:updater:setChannel", async (_event, rawChannel) => {
-    const channel = await writeElectronUpdaterChannel(app, rawChannel);
-    checkedUpdateVersion = null;
-    const updater = await ensureAutoUpdater();
-    if (updater) {
-      return applyElectronUpdaterFeed(app, updater);
-    }
-    return updaterChannelState(app, channel);
-  });
-
-  ipcMain.handle("openwork:updater:check", async (_event, rawChannel) => {
-    if (rawChannel !== undefined) {
-      await writeElectronUpdaterChannel(app, rawChannel);
-    }
-    const updater = await ensureAutoUpdater();
-    const channelState = updater
-      ? await applyElectronUpdaterFeed(app, updater)
-      : updaterChannelState(app, await readElectronUpdaterChannel(app));
-    if (!updater) return { available: false, reason: "unavailable", ...channelState };
-    try {
-      const result = await updater.checkForUpdates();
-      const info = result?.updateInfo ?? null;
-      const currentVersion = resolveAppVersion(app);
-      const available = Boolean(info?.version && isVersionNewer(info.version, currentVersion));
-      checkedUpdateVersion = available ? info.version : null;
-      return {
-        available,
-        currentVersion,
-        latestVersion: info?.version ?? null,
-        releaseDate: info?.releaseDate ?? null,
-        releaseNotes: info?.releaseNotes ?? null,
-        ...channelState,
-      };
-    } catch (error) {
-      checkedUpdateVersion = null;
-      return { available: false, reason: String(error?.message ?? error), ...channelState };
-    }
-  });
-
-  ipcMain.handle("openwork:updater:download", async () => {
-    const updater = await ensureAutoUpdater();
-    if (!updater) return { ok: false, reason: "unavailable" };
-    try {
-      await applyElectronUpdaterFeed(app, updater);
-      const currentVersion = resolveAppVersion(app);
-      if (!checkedUpdateVersion || !isVersionNewer(checkedUpdateVersion, currentVersion)) {
-        const result = await updater.checkForUpdates();
-        const info = result?.updateInfo ?? null;
-        checkedUpdateVersion = info?.version && isVersionNewer(info.version, currentVersion)
-          ? info.version
-          : null;
-      }
-      if (!checkedUpdateVersion) {
-        return { ok: false, reason: "No update available." };
-      }
-      // Clear any stuck ShipIt state from a prior aborted install so this
-      // download applies cleanly on quit.
-      await cleanStaleUpdaterState(app);
-      await updater.downloadUpdate();
-      return { ok: true };
-    } catch (error) {
-      return { ok: false, reason: String(error?.message ?? error) };
-    }
-  });
-
-  ipcMain.handle("openwork:updater:installAndRestart", async () => {
-    const updater = await ensureAutoUpdater();
-    if (!updater) return { ok: false, reason: "unavailable" };
-    try {
-      // Re-assert the in-place-write default right before the swap; the ShipIt
-      // defaults domain may have been wiped when stale state was cleaned.
-      await enableSquirrelDirectContentsWrite();
-      updater.quitAndInstall(false, true);
-      return { ok: true };
-    } catch (error) {
-      return { ok: false, reason: String(error?.message ?? error) };
-    }
-  });
-
-  return { ensureAutoUpdater };
+  return { contribution, ensureAutoUpdater };
 }
