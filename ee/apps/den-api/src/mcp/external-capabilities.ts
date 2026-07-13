@@ -9,10 +9,9 @@ import {
   memberCanUseExternalMcpConnection,
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
+import { callExternalMcpTool, listExternalMcpTools } from "../capability-sources/external-mcp-client-runtime.js"
 import {
-  callExternalMcpTool,
   createExternalMcpLifecycleDeadline,
-  listExternalMcpTools,
   type ExternalMcpLifecycleDeadline,
 } from "../capability-sources/external-mcp-client.js"
 import {
@@ -199,39 +198,59 @@ function parsedErrorMessage(value: unknown): string | null {
   return null
 }
 
-export function upstreamErrorMessage(error: unknown): string {
-  if (error instanceof ExternalMcpDiagnosticError) return error.diagnostic.message
-  const message = error instanceof Error ? error.message : String(error)
-  const jsonStart = message.indexOf("{")
-  if (jsonStart >= 0) {
-    try {
-      const parsed: unknown = JSON.parse(message.slice(jsonStart))
-      const parsedMessage = parsedErrorMessage(parsed)
-      if (parsedMessage) return parsedMessage
-    } catch {
-      // Fall through to the capped raw message when the SDK wrapper contains partial or invalid JSON.
-    }
+function errorCauseChain(error: unknown): unknown[] {
+  const chain: unknown[] = []
+  let current: unknown = error
+  for (let depth = 0; depth < 6; depth += 1) {
+    chain.push(current)
+    if (!isRecord(current) || !("cause" in current) || current.cause === undefined) break
+    current = current.cause
   }
-  return cappedErrorMessage(message)
+  return chain
+}
+
+export function upstreamErrorMessage(error: unknown): string {
+  const chain = errorCauseChain(error)
+  const diagnosticError = chain.find((current) => current instanceof ExternalMcpDiagnosticError)
+  if (diagnosticError instanceof ExternalMcpDiagnosticError) return diagnosticError.diagnostic.message
+  for (const current of [...chain].reverse()) {
+    const message = current instanceof Error ? current.message : String(current)
+    const jsonStart = message.indexOf("{")
+    if (jsonStart >= 0) {
+      try {
+        const parsed: unknown = JSON.parse(message.slice(jsonStart))
+        const parsedMessage = parsedErrorMessage(parsed)
+        if (parsedMessage) return parsedMessage
+      } catch {
+        // Try the next cause when the SDK wrapper contains partial or invalid JSON.
+      }
+    }
+    if (message.trim()) return cappedErrorMessage(message)
+  }
+  return "Unknown MCP provider error."
 }
 
 export function externalMcpAuthErrorCode(
   error: unknown,
   message = upstreamErrorMessage(error),
 ): ExternalConnectionStatus["errorCode"] | null {
-  if (error instanceof ExternalMcpDiagnosticError) {
-    if (error.diagnostic.code === "MCP_OAUTH_INVALID_GRANT") return "invalid_grant"
+  const diagnosticError = errorCauseChain(error)
+    .find((current) => current instanceof ExternalMcpDiagnosticError)
+  if (diagnosticError instanceof ExternalMcpDiagnosticError) {
+    if (diagnosticError.diagnostic.code === "MCP_OAUTH_INVALID_GRANT") return "invalid_grant"
     if (
-      error.diagnostic.phase === "AUTH_TOKEN_ACQUISITION"
-      || error.diagnostic.phase === "AUTH_RESOURCE_VALIDATION"
-      || error.diagnostic.phase === "CONTINUITY_REFRESH"
+      diagnosticError.diagnostic.phase === "AUTH_TOKEN_ACQUISITION"
+      || diagnosticError.diagnostic.phase === "AUTH_RESOURCE_VALIDATION"
+      || diagnosticError.diagnostic.phase === "CONTINUITY_REFRESH"
     ) return "unauthorized"
   }
   if (INVALID_REFRESH_TOKEN_PATTERN.test(message)) return "invalid_refresh_token"
   if (INVALID_GRANT_PATTERN.test(message)) return "invalid_grant"
   if (
-    error instanceof UnauthorizedError
-    || (error instanceof StreamableHTTPError && (error.code === 401 || error.code === 403))
+    errorCauseChain(error).some((current) => (
+      current instanceof UnauthorizedError
+      || (current instanceof StreamableHTTPError && (current.code === 401 || current.code === 403))
+    ))
     || UNAUTHORIZED_PATTERN.test(message)
   ) return "unauthorized"
   return null

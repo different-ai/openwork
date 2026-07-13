@@ -16,9 +16,10 @@ import {
 import { emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { createOAuthStateToken, resolvePublicOrigin, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
 import {
+  abandonExternalMcpAuth,
   connectExternalMcp,
   completeExternalMcpAuth,
-} from "../../capability-sources/external-mcp-client.js"
+} from "../../capability-sources/external-mcp-client-runtime.js"
 import {
   createExternalMcpConnection,
   deleteExternalMcpConnection,
@@ -708,6 +709,18 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const providerErrorCode = url.searchParams.get("error")
       if (providerErrorCode) {
         const callbackError = externalMcpOAuthCallbackError(c.get("requestId"), providerErrorCode)
+        const member = connection.credentialMode === "per_member"
+          ? { orgMembershipId: statePayload.orgMembershipId }
+          : undefined
+        try {
+          await abandonExternalMcpAuth(connection, state, member, c.get("requestId"))
+        } catch (error) {
+          console.error("external_mcp_connect_callback_authorization_cleanup_failed", {
+            connectionId: connection.id,
+            organizationId: statePayload.organizationId,
+            ...externalMcpDiagnosticForLog(error, c.get("requestId"), "AUTH_USER_OR_WORKLOAD"),
+          })
+        }
         console.error("external_mcp_connect_callback_authorization_denied", {
           connectionId: connection.id,
           organizationId: statePayload.organizationId,
@@ -733,7 +746,14 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         const member = connection.credentialMode === "per_member"
           ? { orgMembershipId: statePayload.orgMembershipId }
           : undefined
-        await completeExternalMcpAuth(connection, code, callbackRedirectUri(c.req.raw, connectionId), member, c.get("requestId"))
+        await completeExternalMcpAuth(
+          connection,
+          code,
+          callbackRedirectUri(c.req.raw, connectionId),
+          member,
+          c.get("requestId"),
+          state,
+        )
       } catch (error) {
         const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "AUTH_TOKEN_ACQUISITION")
         console.error("external_mcp_connect_callback_token_exchange_failed", {

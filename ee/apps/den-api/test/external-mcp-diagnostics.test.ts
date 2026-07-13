@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
+import { EnterpriseMcpOAuthContractError } from "@openwork/enterprise-mcp-client"
 import {
   ExternalMcpDiagnosticTracker,
   catalogDiagnosticError,
@@ -91,6 +92,35 @@ class RecordingOAuthProvider implements OAuthClientProvider {
 }
 
 describe("external MCP diagnostics", () => {
+  test("maps enterprise OAuth contract expirations to specific owners and actions", () => {
+    const cases = [
+      {
+        code: "MCP_OAUTH_AUTHORIZATION_EXPIRED" as const,
+        phase: "AUTH_TOKEN_ACQUISITION",
+        owner: "member",
+      },
+      {
+        code: "MCP_OAUTH_CLIENT_EXPIRED" as const,
+        phase: "AUTH_CLIENT_REGISTRATION",
+        owner: "organization_admin",
+      },
+      {
+        code: "MCP_OAUTH_CREDENTIAL_EXPIRED" as const,
+        phase: "CONTINUITY_REFRESH",
+        owner: "member",
+      },
+    ]
+    for (const entry of cases) {
+      const diagnostic = new ExternalMcpDiagnosticTracker(`req_${entry.code}`).error(
+        new EnterpriseMcpOAuthContractError(entry.code, "safe contract failure"),
+        "AUTH_TOKEN_ACQUISITION",
+      ).diagnostic
+      expect(diagnostic.code).toBe(entry.code)
+      expect(diagnostic.phase).toBe(entry.phase)
+      expect(diagnostic.actionOwner).toBe(entry.owner)
+      expect(diagnostic.operatorAction.length).toBeGreaterThan(0)
+    }
+  })
   test("Turbo propagates the configured public Den API URL into local runtime tasks", async () => {
     const turboConfig: unknown = await Bun.file(new URL("../../../../turbo.json", import.meta.url)).json()
     expect(turboConfig).toHaveProperty("globalEnv")

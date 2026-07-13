@@ -428,6 +428,9 @@ importers:
       '@openwork/email':
         specifier: workspace:*
         version: link:../../../packages/email
+      '@openwork/enterprise-mcp-client':
+        specifier: workspace:*
+        version: link:../../../packages/enterprise-mcp-client
       '@openwork/install-config':
         specifier: workspace:*
         version: link:../../../packages/install-config
@@ -803,6 +806,28 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/enterprise-mcp-client:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      tsx:
+        specifier: ^4.15.7
+        version: 4.21.0
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
@@ -12533,7 +12558,7 @@ snapshots:
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 25.6.0
+      '@types/node': 20.12.12
       '@types/responselike': 1.0.3
 
   '@types/cors@2.8.19':
@@ -12734,7 +12759,7 @@ snapshots:
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 25.6.0
+      '@types/node': 20.12.12
 
   '@types/set-cookie-parser@2.4.10':
     dependencies:
@@ -12757,7 +12782,7 @@ snapshots:
 
   '@types/yauzl@2.10.3':
     dependencies:
-      '@types/node': 25.6.0
+      '@types/node': 20.12.12
     optional: true
 
   '@ungap/structured-clone@1.3.1': {}
@@ -13908,7 +13933,7 @@ snapshots:
   engine.io@6.6.7:
     dependencies:
       '@types/cors': 2.8.19
-      '@types/node': 25.6.0
+      '@types/node': 20.12.12
       '@types/ws': 8.18.1
       accepts: 1.3.8
       base64id: 2.0.0

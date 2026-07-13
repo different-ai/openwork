@@ -10,6 +10,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /app/
 COPY patches /app/patches
 COPY packages/types/package.json /app/packages/types/package.json
 COPY packages/email/package.json /app/packages/email/package.json
+COPY packages/enterprise-mcp-client/package.json /app/packages/enterprise-mcp-client/package.json
 COPY packages/install-config/package.json /app/packages/install-config/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
 COPY ee/packages/den-db/package.json /app/ee/packages/den-db/package.json
@@ -19,6 +20,7 @@ RUN pnpm install --frozen-lockfile --trust-lockfile
 
 COPY packages/types /app/packages/types
 COPY packages/email /app/packages/email
+COPY packages/enterprise-mcp-client /app/packages/enterprise-mcp-client
 COPY packages/install-config /app/packages/install-config
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/den-db /app/ee/packages/den-db
@@ -26,6 +28,7 @@ COPY ee/apps/den-api /app/ee/apps/den-api
 COPY apps/desktop/package.json /app/apps/desktop/package.json
 
 RUN pnpm --dir /app/packages/email run build
+RUN pnpm --dir /app/packages/enterprise-mcp-client run build
 RUN pnpm --dir /app/packages/install-config run build
 RUN pnpm --dir /app/ee/packages/utils run build
 RUN pnpm --dir /app/ee/packages/den-db run build

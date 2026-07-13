@@ -57,5 +57,6 @@ writeGeneratedVersionFile(process.env.DEN_API_LATEST_APP_VERSION)
 
 run(pnpmCommand, ["run", "build:email"])
 run(pnpmCommand, ["run", "build:install-config"])
+run(pnpmCommand, ["run", "build:enterprise-mcp-client"])
 run(pnpmCommand, ["run", "build:den-db"])
 run(pnpmCommand, ["exec", "tsc", "-p", "tsconfig.json"])
