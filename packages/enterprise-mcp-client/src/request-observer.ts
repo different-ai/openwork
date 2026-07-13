@@ -64,6 +64,7 @@ export function classifyEnterpriseMcpRequest(url: URL, init?: RequestInit): Ente
 export type EnterpriseMcpRequestObserver = {
   fetch: EnterpriseMcpFetch
   lastRequestPhase(): EnterpriseMcpRequestPhase | null
+  lastFailedRequestPhase(): EnterpriseMcpRequestPhase | null
 }
 
 export function createEnterpriseMcpRequestObserver(input: {
@@ -75,9 +76,11 @@ export function createEnterpriseMcpRequestObserver(input: {
   clock: EnterpriseMcpClock
 }): EnterpriseMcpRequestObserver {
   let lastRequestPhase: EnterpriseMcpRequestPhase | null = null
+  let lastFailedRequestPhase: EnterpriseMcpRequestPhase | null = null
 
   return {
     lastRequestPhase: () => lastRequestPhase,
+    lastFailedRequestPhase: () => lastFailedRequestPhase,
     fetch: async (rawUrl, init) => {
       const url = rawUrl instanceof URL ? rawUrl : new URL(rawUrl)
       const requestPhase = classifyEnterpriseMcpRequest(url, init)
@@ -96,6 +99,7 @@ export function createEnterpriseMcpRequestObserver(input: {
           ? AbortSignal.any([init.signal, input.signal])
           : input.signal
         const response = await input.fetch(rawUrl, { ...init, signal })
+        if (!response.ok) lastFailedRequestPhase = requestPhase
         input.diagnosticSink?.({
           kind: "request",
           connectionId: input.connectionId,
@@ -107,6 +111,7 @@ export function createEnterpriseMcpRequestObserver(input: {
         })
         return response
       } catch (error) {
+        lastFailedRequestPhase = requestPhase
         input.diagnosticSink?.({
           kind: "request",
           connectionId: input.connectionId,

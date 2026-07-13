@@ -146,6 +146,10 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     }
   }
 
+  function failureRequestPhase(observer: EnterpriseMcpRequestObserver) {
+    return observer.lastFailedRequestPhase() ?? observer.lastRequestPhase()
+  }
+
   function createSession(input: {
     connection: EnterpriseMcpConnection
     redirectUri: string
@@ -256,14 +260,14 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
         ? error
         : new EnterpriseMcpClientError({
             operationPhase: input.operationPhase,
-            requestPhase: session.observer.lastRequestPhase(),
+            requestPhase: failureRequestPhase(session.observer),
             cause: error,
           })
       emitDiagnostic({
         kind: "operation",
         connectionId: input.connection.id,
         operationPhase: input.operationPhase,
-        requestPhase: session.observer.lastRequestPhase(),
+        requestPhase: failureRequestPhase(session.observer),
         outcome: "failed",
         durationMs: clock.now() - startedAt,
       })
