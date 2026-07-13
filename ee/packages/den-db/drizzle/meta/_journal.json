@@ -239,6 +239,20 @@
       "when": 1783817428501,
       "tag": "0034_wooden_nehzno",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "5",
+      "when": 1783958023511,
+      "tag": "0035_even_scarlet_spider",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "5",
+      "when": 1783966457549,
+      "tag": "0036_petite_fallen_one",
+      "breakpoints": true
     }
   ]
 }

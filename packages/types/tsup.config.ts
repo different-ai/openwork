@@ -5,6 +5,7 @@ export default defineConfig({
     index: "src/index.ts",
     "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
+    "den/egress-diagnostics": "src/den/egress-diagnostics.ts",
     "den/inference": "src/den/inference.ts",
     "den/microsoft-365": "src/den/microsoft-365.ts",
   },
