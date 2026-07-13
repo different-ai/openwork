@@ -265,7 +265,7 @@ async function verifyInvalidClientProfile(profileId: "servicenow-inbound-quickst
   }
 }
 
-describe("package-first enterprise MCP client against provider-shaped mock servers", () => {
+describe("enterprise mock lab verifies the package-first client against provider-shaped servers", () => {
   const verificationProfiles: readonly ("servicenow-inbound-quickstart" | "microsoft-enterprise")[] = [
     "servicenow-inbound-quickstart",
     "microsoft-enterprise",

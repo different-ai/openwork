@@ -19,7 +19,6 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "pretest": "pnpm --filter @openwork/enterprise-mcp-client build",
     "test": "tsx --test test/*.test.ts",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build"
   },
@@ -27,7 +26,6 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@openwork/enterprise-mcp-client": "workspace:*",
     "@types/node": "^20.11.30",
     "tsup": "^8.5.0",
     "tsx": "^4.15.7",
