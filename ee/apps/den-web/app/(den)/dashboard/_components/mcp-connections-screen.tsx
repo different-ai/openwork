@@ -34,9 +34,11 @@ import {
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
   useTelegramConnection,
+  useTagConnection,
 } from "./mcp-connections-data";
 import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
 import { TelegramDialog } from "./telegram-dialog";
+import { TagDialog } from "./tag-dialog";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
@@ -206,9 +208,11 @@ export function McpConnectionsScreen() {
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
   const [microsoftDialogOpen, setMicrosoftDialogOpen] = useState(false);
   const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
+  const [tagDialogOpen, setTagDialogOpen] = useState(false);
   const googleConfigured = usableConnections.some((connection) => connection.id === "google-workspace");
   const microsoftConfigured = usableConnections.some((connection) => connection.id === "microsoft-365");
   const telegramConnection = useTelegramConnection(true);
+  const tagConnection = useTagConnection(true);
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
   const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
@@ -385,6 +389,25 @@ export function McpConnectionsScreen() {
         </button>
         <button
           type="button"
+          data-testid="quick-add-openwork-tag"
+          onClick={() => setTagDialogOpen(true)}
+          className="rounded-2xl border border-violet-100 bg-gradient-to-br from-white to-violet-50 px-4 py-4 text-left transition hover:border-violet-300 hover:shadow-sm"
+        >
+          <div className="flex items-start gap-3">
+            <IntegrationIcon name="Slack" simpleIconSlug="slack" />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2"><p className="text-[14px] font-semibold text-gray-900">OpenWork Tag</p><span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-violet-700">New</span></div>
+              <p className="mt-1 text-[12px] leading-[1.5] text-gray-500">
+                Turn Slack threads into durable, shared OpenCode work sessions with live progress.
+              </p>
+            </div>
+          </div>
+          <p className="mt-2 text-[12px] font-medium text-gray-900">
+            {tagConnection.data ? "Connected — tap to manage" : "Tap to set up"}
+          </p>
+        </button>
+        <button
+          type="button"
           data-testid="quick-add-telegram"
           onClick={() => setTelegramDialogOpen(true)}
           className="rounded-2xl border border-gray-100 bg-white px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
@@ -497,6 +520,7 @@ export function McpConnectionsScreen() {
       />
 
       <TelegramDialog open={telegramDialogOpen} onClose={() => setTelegramDialogOpen(false)} />
+      <TagDialog open={tagDialogOpen} onClose={() => setTagDialogOpen(false)} />
     </DashboardPageTemplate>
   );
 }

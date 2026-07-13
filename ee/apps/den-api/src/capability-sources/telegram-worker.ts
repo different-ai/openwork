@@ -33,6 +33,11 @@ type AssistantReply = {
   text: string
 }
 
+export type WorkerPromptProgress = {
+  status: "busy" | "idle" | "retry" | "unknown"
+  todos: Array<{ content: string; status: string }>
+}
+
 export class TelegramWorkerRequestError extends Error {
   readonly status: number
 
@@ -45,8 +50,15 @@ export class TelegramWorkerRequestError extends Error {
 
 export class TelegramWorkerTimeoutError extends Error {
   constructor() {
-    super("The worker did not finish before the Telegram response deadline.")
+    super("The worker did not finish before OpenWork's channel response deadline.")
     this.name = "TelegramWorkerTimeoutError"
+  }
+}
+
+export class TelegramWorkerCancelledError extends Error {
+  constructor() {
+    super("The OpenWork session was cancelled.")
+    this.name = "TelegramWorkerCancelledError"
   }
 }
 
@@ -254,6 +266,21 @@ function snapshotIsIdle(payload: unknown): boolean {
   return Boolean(item && isRecord(item.status) && item.status.type === "idle")
 }
 
+export function workerProgressFromSnapshot(payload: unknown): WorkerPromptProgress {
+  const item = snapshotItem(payload)
+  const status = item && isRecord(item.status) && typeof item.status.type === "string"
+    && ["busy", "idle", "retry"].includes(item.status.type)
+    ? item.status.type as WorkerPromptProgress["status"]
+    : "unknown"
+  const todos = item && Array.isArray(item.todos)
+    ? item.todos.flatMap((todo) => {
+        if (!isRecord(todo) || typeof todo.content !== "string" || typeof todo.status !== "string") return []
+        return [{ content: todo.content, status: todo.status }]
+      })
+    : []
+  return { status, todos }
+}
+
 function snapshotHasMessage(payload: unknown, messageId: string): boolean {
   const item = snapshotItem(payload)
   if (!item || !Array.isArray(item.messages)) return false
@@ -292,11 +319,12 @@ async function createSession(input: {
   fetchImpl: typeof fetch
   requestTimeoutMs: number
   target: WorkerTarget
+  title: string
 }): Promise<string> {
   const payload = await fetchWorkerJson({
     access: input.target.access,
     baseUrl: input.target.baseUrl,
-    body: { title: "Telegram chat" },
+    body: { title: input.title },
     fetchImpl: input.fetchImpl,
     method: "POST",
     path: `/workspace/${encodeURIComponent(input.target.workspaceId)}/opencode/session`,
@@ -330,11 +358,14 @@ export async function runTelegramWorkerPrompt(input: {
   pollIntervalMs?: number
   preferredWorkspaceId?: string
   messageId?: string
+  onProgress?: (progress: WorkerPromptProgress) => Promise<void>
   onSessionReady?: (session: { sessionId: string; workspaceId: string }) => Promise<void>
   promptTimeoutMs?: number
   requestTimeoutMs?: number
   sessionId?: string
+  shouldStop?: () => Promise<boolean>
   text: string
+  title?: string
 }): Promise<{ sessionId: string; text: string; workspaceId: string }> {
   const fetchImpl = input.fetchImpl ?? fetch
   const pollIntervalMs = input.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
@@ -360,7 +391,12 @@ export async function runTelegramWorkerPrompt(input: {
   }
 
   if (!sessionId) {
-    sessionId = await createSession({ fetchImpl, requestTimeoutMs, target })
+    sessionId = await createSession({
+      fetchImpl,
+      requestTimeoutMs,
+      target,
+      title: input.title?.trim() || "Telegram chat",
+    })
     baselineSnapshot = await readSnapshot({ fetchImpl, requestTimeoutMs, sessionId, target })
   }
 
@@ -384,8 +420,18 @@ export async function runTelegramWorkerPrompt(input: {
   }
 
   const deadline = Date.now() + promptTimeoutMs
+  let lastProgress = ""
   while (Date.now() < deadline) {
+    if (await input.shouldStop?.()) throw new TelegramWorkerCancelledError()
     const snapshot = await readSnapshot({ fetchImpl, requestTimeoutMs, sessionId, target })
+    if (input.onProgress) {
+      const progress = workerProgressFromSnapshot(snapshot)
+      const serialized = JSON.stringify(progress)
+      if (serialized !== lastProgress) {
+        lastProgress = serialized
+        await input.onProgress(progress)
+      }
+    }
     const newReplies = assistantRepliesFromSnapshot(snapshot).filter(
       (reply) => reply.parentId === messageId,
     )
@@ -399,4 +445,31 @@ export async function runTelegramWorkerPrompt(input: {
   }
 
   throw new TelegramWorkerTimeoutError()
+}
+
+export async function abortTelegramWorkerSession(input: {
+  access: TelegramWorkerAccess
+  fetchImpl?: typeof fetch
+  preferredWorkspaceId?: string
+  requestTimeoutMs?: number
+  sessionId: string
+}): Promise<boolean> {
+  const fetchImpl = input.fetchImpl ?? fetch
+  const requestTimeoutMs = input.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+  const target = await resolveWorkerTarget({
+    access: input.access,
+    fetchImpl,
+    preferredWorkspaceId: input.preferredWorkspaceId,
+    requestTimeoutMs,
+  })
+  const result = await fetchWorkerJson({
+    access: target.access,
+    baseUrl: target.baseUrl,
+    body: {},
+    fetchImpl,
+    method: "POST",
+    path: `/workspace/${encodeURIComponent(target.workspaceId)}/opencode/session/${encodeURIComponent(input.sessionId)}/abort`,
+    requestTimeoutMs,
+  })
+  return result === true
 }

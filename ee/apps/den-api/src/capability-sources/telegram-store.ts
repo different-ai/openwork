@@ -10,28 +10,14 @@ import {
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { loadTelegramWorkerAccess } from "./telegram-worker.js"
+import { isDuplicateDatabaseEntry } from "./database-errors.js"
+
+export { isDuplicateDatabaseEntry }
 
 export type TelegramConnectionRow = typeof TelegramConnectionTable.$inferSelect
 export type TelegramChatBindingRow = typeof TelegramChatBindingTable.$inferSelect
 export type TelegramUpdateRow = typeof TelegramUpdateTable.$inferSelect
 export type TelegramUpdateStatus = NonNullable<typeof TelegramUpdateTable.$inferInsert.status>
-
-export function isDuplicateDatabaseEntry(error: unknown): boolean {
-  const visited = new Set<object>()
-  let current = error
-  while (typeof current === "object" && current !== null && !visited.has(current)) {
-    visited.add(current)
-    if ("code" in current && current.code === "ER_DUP_ENTRY") return true
-    if ("errno" in current && current.errno === 1062) return true
-    if (
-      "message" in current
-      && typeof current.message === "string"
-      && /duplicate entry|unique constraint/i.test(current.message)
-    ) return true
-    current = "cause" in current ? current.cause : null
-  }
-  return false
-}
 
 export async function getTelegramConnectionByOrganization(
   organizationId: DenTypeId<"organization">,

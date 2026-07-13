@@ -239,6 +239,20 @@
       "when": 1783817428501,
       "tag": "0034_wooden_nehzno",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "5",
+      "when": 1783930942506,
+      "tag": "0035_graceful_medusa",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "5",
+      "when": 1783945624764,
+      "tag": "0036_parched_virginia_dare",
+      "breakpoints": true
     }
   ]
 }

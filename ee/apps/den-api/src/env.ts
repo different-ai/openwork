@@ -94,6 +94,12 @@ const EnvSchema = z.object({
   DEN_PLAN_GATING_ENABLED: z.string().optional(),
   DEN_INSTALL_LINKS_GATING_ENABLED: z.string().optional(),
   DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
+  DEN_TAG_SLACK_ENABLED: z.string().optional(),
+  DEN_TAG_SLACK_CLIENT_ID: z.string().optional(),
+  DEN_TAG_SLACK_CLIENT_SECRET: z.string().optional(),
+  DEN_TAG_SLACK_SIGNING_SECRET: z.string().optional(),
+  DEN_TAG_SLACK_OAUTH_AUTHORIZE_URL: z.string().url().optional(),
+  DEN_TAG_SLACK_OAUTH_ACCESS_URL: z.string().url().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
   POLAR_API_BASE: z.string().optional(),
@@ -275,6 +281,7 @@ const mcpConnectionsGatingEnabled =
   (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
+const tagSlackEnabled = (parsed.DEN_TAG_SLACK_ENABLED ?? "true").trim().toLowerCase() !== "false"
 const apiPublicUrl = normalizeConfiguredPublicApiBaseUrl(parsed.DEN_API_PUBLIC_URL, {
   allowInsecureHttp: devMode,
 })
@@ -335,6 +342,14 @@ export const env = {
   planGatingEnabled,
   installLinksGatingEnabled,
   mcpConnectionsGatingEnabled,
+  tagSlackEnabled,
+  tagSlackOAuth: {
+    clientId: optionalString(parsed.DEN_TAG_SLACK_CLIENT_ID),
+    clientSecret: optionalString(parsed.DEN_TAG_SLACK_CLIENT_SECRET),
+    signingSecret: optionalString(parsed.DEN_TAG_SLACK_SIGNING_SECRET),
+    authorizeUrl: optionalString(parsed.DEN_TAG_SLACK_OAUTH_AUTHORIZE_URL) ?? "https://slack.com/oauth/v2/authorize",
+    accessUrl: optionalString(parsed.DEN_TAG_SLACK_OAUTH_ACCESS_URL) ?? "https://slack.com/api/oauth.v2.access",
+  },
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   requireEmailVerification,
   passwordBreachScreeningEnabled,

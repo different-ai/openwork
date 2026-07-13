@@ -4,11 +4,13 @@ import { env } from "./env.js"
 import { startScimMaintenanceLoop } from "./scim-maintenance.js"
 import { startWorkerProvisioningReconcileLoop } from "./workers/reconciler.js"
 import { startTelegramUpdateDispatcher } from "./capability-sources/telegram-dispatcher.js"
+import { startTagEventDispatcher } from "./capability-sources/tag-dispatcher.js"
 import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-client-runtime.js"
 
 startScimMaintenanceLoop()
 startWorkerProvisioningReconcileLoop()
 startTelegramUpdateDispatcher()
+startTagEventDispatcher()
 
 console.log(`[den-api] External MCP implementation: ${externalMcpClientRuntimeName}`)
 

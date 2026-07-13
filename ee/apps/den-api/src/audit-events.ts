@@ -19,6 +19,9 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   scimReconciliationRun: "organization.scim.reconciliation_run",
   ssoConnectionRegistered: "organization.sso.connection_registered",
   ssoConnectionDeleted: "organization.sso.connection_deleted",
+  tagSlackConnected: "organization.tag.slack_connected",
+  tagSlackUpdated: "organization.tag.slack_updated",
+  tagSlackDisconnected: "organization.tag.slack_disconnected",
 }
 
 type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
@@ -58,6 +61,9 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.scimConnectionDeleted:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted:
+    case ORGANIZATION_AUDIT_ACTIONS.tagSlackConnected:
+    case ORGANIZATION_AUDIT_ACTIONS.tagSlackUpdated:
+    case ORGANIZATION_AUDIT_ACTIONS.tagSlackDisconnected:
       return true
     case ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun:
       return false

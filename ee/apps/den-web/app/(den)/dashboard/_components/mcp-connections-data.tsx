@@ -76,6 +76,9 @@ export const mcpConnectionQueryKeys = {
   nativeProviderClient: (orgId?: string | null, providerId?: string | null) =>
     [...mcpConnectionQueryKeys.all, "native-provider-client", orgId ?? "none", providerId ?? "none"],
   telegram: (orgId?: string | null) => [...mcpConnectionQueryKeys.all, "telegram", orgId ?? "none"] as const,
+  tag: (orgId?: string | null) => [...mcpConnectionQueryKeys.all, "tag", orgId ?? "none"] as const,
+  tagOAuth: (orgId?: string | null) => [...mcpConnectionQueryKeys.all, "tag-oauth", orgId ?? "none"] as const,
+  tagRuns: (orgId?: string | null) => [...mcpConnectionQueryKeys.all, "tag-runs", orgId ?? "none"] as const,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -536,6 +539,240 @@ export function useDeleteTelegramConnection() {
       });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.telegram(orgId) }),
+  });
+}
+
+export type TagConnection = {
+  id: string;
+  status: "active" | "error";
+  connected: boolean;
+  eventsUrl: string;
+  slack: { teamId: string; teamName: string; botUserId: string; botName: string };
+  installation: {
+    source: "manual" | "oauth";
+    appId: string | null;
+    enterpriseId: string | null;
+    enterpriseInstall: boolean;
+    scopes: string[];
+    tokenExpiresAt: string | null;
+    tokenRefreshedAt: string | null;
+    revokedAt: string | null;
+  };
+  worker: { id: string; name: string; status: string };
+  policy: {
+    serviceName: string;
+    defaultInstructions: string;
+    allowedUserIds: string[];
+    allowGuests: boolean;
+    allowSharedChannels: boolean;
+    channels: Array<{ id: string; name: string | null; instructions: string | null }>;
+  };
+  webhook: { lastReceivedAt: string | null; lastError: string | null };
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TagRun = {
+  id: string;
+  status: "accepted" | "running" | "completed" | "failed" | "cancelled";
+  slackUserId: string;
+  prompt: string;
+  response: string | null;
+  error: string | null;
+  channelId: string;
+  threadTs: string;
+  sessionId: string | null;
+  workspaceId: string | null;
+  snapshotHash: string;
+  createdAt: string;
+  completedAt: string | null;
+};
+
+export type TagPolicyInput = {
+  workerId: string;
+  serviceName: string;
+  defaultInstructions: string;
+  allowedUserIds: string[];
+  allowGuests: boolean;
+  allowSharedChannels: boolean;
+  channels: Array<{ id: string; instructions?: string | null }>;
+};
+
+export type SaveTagConnectionInput = TagPolicyInput & {
+  botToken: string;
+  signingSecret: string;
+};
+
+export type TagOAuthConfig = {
+  configured: boolean;
+  eventsUrl: string;
+  redirectUri: string;
+  scopes: string[];
+};
+
+export type TagOAuthStart = {
+  authorizeUrl: string;
+  callbackOrigin: string;
+};
+
+function parseTagConnectionPayload(payload: unknown): TagConnection | null {
+  if (!isRecord(payload) || !("connection" in payload)) throw new Error("OpenWork Tag response was incomplete.");
+  if (payload.connection === null) return null;
+  const value = payload.connection;
+  if (
+    !isRecord(value) || !isRecord(value.slack) || !isRecord(value.installation) || !isRecord(value.worker)
+    || !isRecord(value.policy) || !isRecord(value.webhook) || !Array.isArray(value.policy.channels)
+  ) throw new Error("OpenWork Tag response was incomplete.");
+  return value as TagConnection;
+}
+
+export function useTagOAuthConfig(enabled: boolean) {
+  const { orgId } = useOrgDashboard();
+  return useQuery({
+    enabled: enabled && Boolean(orgId),
+    queryKey: mcpConnectionQueryKeys.tagOAuth(orgId),
+    queryFn: async (): Promise<TagOAuthConfig> => {
+      const { response, payload } = await requestJson(
+        "/v1/tag/slack/oauth/config",
+        { headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+        15000,
+      );
+      if (!response.ok) throw getRequestError(payload, response, `Failed to load Slack installation options (${response.status}).`);
+      if (!isRecord(payload) || typeof payload.configured !== "boolean" || typeof payload.eventsUrl !== "string" || typeof payload.redirectUri !== "string" || !isStringArray(payload.scopes)) {
+        throw new Error("Slack installation configuration was incomplete.");
+      }
+      return { configured: payload.configured, eventsUrl: payload.eventsUrl, redirectUri: payload.redirectUri, scopes: payload.scopes };
+    },
+  });
+}
+
+export function useStartTagOAuth() {
+  const { orgId, runReauthableAction } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (input: TagPolicyInput): Promise<TagOAuthStart> => {
+      let result: TagOAuthStart | null = null;
+      await runReauthableAction("start-tag-slack-oauth", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/tag/slack/oauth/start",
+          { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)), body: JSON.stringify(input) },
+          20000,
+        );
+        if (!response.ok) throw getRequestError(payload, response, `Failed to start Slack installation (${response.status}).`);
+        if (!isRecord(payload) || typeof payload.authorizeUrl !== "string" || typeof payload.callbackOrigin !== "string") {
+          throw new Error("Slack installation response was incomplete.");
+        }
+        result = { authorizeUrl: payload.authorizeUrl, callbackOrigin: payload.callbackOrigin };
+      });
+      if (!result) throw new Error("Slack installation response was incomplete.");
+      return result;
+    },
+  });
+}
+
+export function useTagConnection(enabled: boolean) {
+  const { orgId } = useOrgDashboard();
+  return useQuery({
+    enabled: enabled && Boolean(orgId),
+    queryKey: mcpConnectionQueryKeys.tag(orgId),
+    queryFn: async (): Promise<TagConnection | null> => {
+      const { response, payload } = await requestJson(
+        "/v1/tag/slack/connection",
+        { headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+        15000,
+      );
+      if (!response.ok) throw getRequestError(payload, response, `Failed to load OpenWork Tag (${response.status}).`);
+      return parseTagConnectionPayload(payload);
+    },
+  });
+}
+
+export function useSaveTagConnection() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (input: SaveTagConnectionInput): Promise<TagConnection> => {
+      let connection: TagConnection | null = null;
+      await runReauthableAction("save-tag-connection", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/tag/slack/connection",
+          { method: "PUT", headers: getOrgScopeHeaders(requireOrgId(orgId)), body: JSON.stringify(input) },
+          30000,
+        );
+        if (!response.ok) throw getRequestError(payload, response, `Failed to connect OpenWork Tag (${response.status}).`);
+        connection = parseTagConnectionPayload(payload);
+      });
+      if (!connection) throw new Error("OpenWork Tag response was incomplete.");
+      return connection;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.tag(orgId) });
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.tagRuns(orgId) });
+    },
+  });
+}
+
+export function useUpdateTagConnection() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (input: TagPolicyInput): Promise<TagConnection> => {
+      let connection: TagConnection | null = null;
+      await runReauthableAction("update-tag-connection", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/tag/slack/connection",
+          { method: "PATCH", headers: getOrgScopeHeaders(requireOrgId(orgId)), body: JSON.stringify(input) },
+          30000,
+        );
+        if (!response.ok) throw getRequestError(payload, response, `Failed to update OpenWork Tag (${response.status}).`);
+        connection = parseTagConnectionPayload(payload);
+      });
+      if (!connection) throw new Error("OpenWork Tag response was incomplete.");
+      return connection;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.tag(orgId) });
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.tagRuns(orgId) });
+    },
+  });
+}
+
+export function useDeleteTagConnection() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      await runReauthableAction("delete-tag-connection", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/tag/slack/connection",
+          { method: "DELETE", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+          20000,
+        );
+        if (!response.ok) throw getRequestError(payload, response, `Failed to disconnect OpenWork Tag (${response.status}).`);
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.tag(orgId) });
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.tagRuns(orgId) });
+    },
+  });
+}
+
+export function useTagRuns(enabled: boolean) {
+  const { orgId } = useOrgDashboard();
+  return useQuery({
+    enabled: enabled && Boolean(orgId),
+    queryKey: mcpConnectionQueryKeys.tagRuns(orgId),
+    queryFn: async (): Promise<TagRun[]> => {
+      const { response, payload } = await requestJson(
+        "/v1/tag/slack/runs",
+        { headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+        15000,
+      );
+      if (!response.ok) throw getRequestError(payload, response, `Failed to load OpenWork Tag runs (${response.status}).`);
+      if (!isRecord(payload) || !Array.isArray(payload.items)) throw new Error("OpenWork Tag run response was incomplete.");
+      return payload.items as TagRun[];
+    },
+    refetchInterval: enabled ? 5000 : false,
   });
 }
 
