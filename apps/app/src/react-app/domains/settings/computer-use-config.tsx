@@ -17,7 +17,12 @@ import {
 } from "@/components/ui/card";
 import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { registerExtensionConfig } from "./extension-registry";
+import type {
+  ExtensionConfigFactory,
+  SettingsExtensionDescriptor,
+  SettingsExtensionReadyBinding,
+  SettingsExtensionRegistration,
+} from "./extension-registry";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,10 +44,10 @@ type ComputerUseConfigProps = {
 };
 
 // ---------------------------------------------------------------------------
-// Registration
+// Settings binding
 // ---------------------------------------------------------------------------
 
-registerExtensionConfig("computer-use", (ctx) => (
+export const computerUseConfigFactory: ExtensionConfigFactory = (ctx) => (
   <ComputerUseConfig
     connected={ctx.computerUse?.connected ?? false}
     connecting={ctx.computerUse?.connecting ?? false}
@@ -50,7 +55,27 @@ registerExtensionConfig("computer-use", (ctx) => (
     onRefresh={ctx.computerUse?.onRefresh}
     onPermissionsChange={ctx.computerUse?.onPermissionsChange}
   />
-));
+);
+
+export const computerUseSettingsDescriptor = {
+  id: "computer-use",
+  kind: "app.settings-extension",
+  contractVersion: 1,
+  provenance: { packageName: "@openwork/app", source: "builtin" },
+  order: 300,
+  settingsPanelRefs: ["computer-use"],
+  connectionRefs: [],
+} as const satisfies SettingsExtensionDescriptor;
+
+export const computerUseSettingsBinding = {
+  status: "ready",
+  create: () => ({ settingsPanel: computerUseConfigFactory }),
+} as const satisfies SettingsExtensionReadyBinding;
+
+export const computerUseSettingsContribution = {
+  descriptor: computerUseSettingsDescriptor,
+  binding: computerUseSettingsBinding,
+} as const satisfies SettingsExtensionRegistration;
 
 // ---------------------------------------------------------------------------
 // Helpers

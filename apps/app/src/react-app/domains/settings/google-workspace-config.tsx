@@ -17,8 +17,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import type { GoogleWorkspaceAuthStatus, OpenworkServerClient } from "../../../app/lib/openwork-server";
 import { usePlatform } from "../../kernel/platform";
-import type { ExtensionConfigContext } from "./extension-registry";
-import { registerExtensionRuntime } from "./extension-registry";
+import type {
+  ExtensionConfigContext,
+  ExtensionConfigFactory,
+  ExtensionRuntimeConnection,
+  SettingsExtensionDescriptor,
+  SettingsExtensionReadyBinding,
+  SettingsExtensionRegistration,
+} from "./extension-registry";
 
 type BusyAction = "status" | "connect" | "disconnect" | "set-active" | "test" | "smoke-test" | "save-secret";
 type OptionalFeature = "gmailRead" | "driveFull" | "calendarWrite" | "chat";
@@ -462,9 +468,33 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
   );
 }
 
-registerExtensionRuntime({
+export const googleWorkspaceConfigFactory: ExtensionConfigFactory = (ctx) => (
+  <GoogleWorkspaceConfig {...ctx} />
+);
+
+export const googleWorkspaceConnection: ExtensionRuntimeConnection = (_entry, ctx) => (
+  ctx.extensionConnections?.["google-workspace"] === true
+);
+
+export const googleWorkspaceSettingsDescriptor = {
   id: "google-workspace",
-  settingsPanelRefs: ["openwork.googleWorkspace.settings"],
-  settingsPanel: (ctx) => <GoogleWorkspaceConfig {...ctx} />,
-  isConnected: (_entry, ctx) => ctx.extensionConnections?.["google-workspace"] === true,
-});
+  kind: "app.settings-extension",
+  contractVersion: 1,
+  provenance: { packageName: "@openwork/app", source: "builtin" },
+  order: 600,
+  settingsPanelRefs: ["google-workspace", "openwork.googleWorkspace.settings"],
+  connectionRefs: ["google-workspace"],
+} as const satisfies SettingsExtensionDescriptor;
+
+export const googleWorkspaceSettingsBinding = {
+  status: "ready",
+  create: () => ({
+    settingsPanel: googleWorkspaceConfigFactory,
+    isConnected: googleWorkspaceConnection,
+  }),
+} as const satisfies SettingsExtensionReadyBinding;
+
+export const googleWorkspaceSettingsContribution = {
+  descriptor: googleWorkspaceSettingsDescriptor,
+  binding: googleWorkspaceSettingsBinding,
+} as const satisfies SettingsExtensionRegistration;

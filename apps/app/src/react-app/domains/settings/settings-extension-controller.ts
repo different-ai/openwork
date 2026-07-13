@@ -5,7 +5,12 @@ import type { McpDirectoryInfo } from "../../../app/constants";
 import { evaluateEnablement, type EnablementContext } from "../../../app/enablement";
 import type { OpenworkServerClient } from "../../../app/lib/openwork-server";
 import type { McpServerEntry } from "../../../app/types";
-import { getExtensionConfigSlot, getExtensionConnected, type ExtensionConfigContext } from "./extension-registry";
+import {
+  getExtensionConfigSlot,
+  getExtensionConnected,
+  type ExtensionConfigContext,
+  type SettingsExtensionComposition,
+} from "./extension-registry";
 import type { LocalProviderInstallInput } from "./openai-image-extension";
 
 type ProviderLike = {
@@ -14,6 +19,7 @@ type ProviderLike = {
 };
 
 type SettingsExtensionControllerInput = {
+  extensions: SettingsExtensionComposition;
   openworkServerClient: OpenworkServerClient | null;
   hostOpenworkServerClient: OpenworkServerClient | null;
   enablementContext: EnablementContext;
@@ -88,15 +94,15 @@ export function useSettingsExtensionController(input: SettingsExtensionControlle
   }), [input]);
 
   const configSlotForEntry = useCallback(
-    (entry: McpDirectoryInfo) => getExtensionConfigSlot(entry, configContextForEntry(entry)),
-    [configContextForEntry],
+    (entry: McpDirectoryInfo) => getExtensionConfigSlot(input.extensions, entry, configContextForEntry(entry)),
+    [configContextForEntry, input.extensions],
   );
 
   const isConnected = useCallback((entry: McpDirectoryInfo) => {
     if (entry.extensionManifest?.enablement) {
       return evaluateEnablement(entry.extensionManifest.enablement, input.enablementContext).active;
     }
-    const runtimeConnected = getExtensionConnected(entry, {
+    const runtimeConnected = getExtensionConnected(input.extensions, entry, {
       openworkServerClient: input.openworkServerClient,
       extensionConnections: {
         "google-workspace": input.googleWorkspaceConnected,

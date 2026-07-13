@@ -19,7 +19,13 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { registerExtensionConfig, type ExtensionConfigContext } from "./extension-registry";
+import type {
+  ExtensionConfigContext,
+  ExtensionConfigFactory,
+  SettingsExtensionDescriptor,
+  SettingsExtensionReadyBinding,
+  SettingsExtensionRegistration,
+} from "./extension-registry";
 
 export type OpenAiImageGenConfigProps = {
   busy: boolean;
@@ -30,7 +36,7 @@ export type OpenAiImageGenConfigProps = {
   onTestGenerate: (input: { apiKey: string; prompt: string }) => void | Promise<void>;
 };
 
-const openAiImageGenConfigFactory = (ctx: ExtensionConfigContext) => (
+export const openAiImageGenConfigFactory: ExtensionConfigFactory = (ctx: ExtensionConfigContext) => (
   <OpenAiImageGenConfig
     busy={ctx.imageExtension.busy}
     status={ctx.imageExtension.status}
@@ -41,8 +47,25 @@ const openAiImageGenConfigFactory = (ctx: ExtensionConfigContext) => (
   />
 );
 
-registerExtensionConfig("openwork.imageGen.settings", openAiImageGenConfigFactory);
-registerExtensionConfig("openai-image-gen", openAiImageGenConfigFactory);
+export const openAiImageGenSettingsDescriptor = {
+  id: "openai-image-gen",
+  kind: "app.settings-extension",
+  contractVersion: 1,
+  provenance: { packageName: "@openwork/app", source: "builtin" },
+  order: 100,
+  settingsPanelRefs: ["openwork.imageGen.settings", "openai-image-gen"],
+  connectionRefs: [],
+} as const satisfies SettingsExtensionDescriptor;
+
+export const openAiImageGenSettingsBinding = {
+  status: "ready",
+  create: () => ({ settingsPanel: openAiImageGenConfigFactory }),
+} as const satisfies SettingsExtensionReadyBinding;
+
+export const openAiImageGenSettingsContribution = {
+  descriptor: openAiImageGenSettingsDescriptor,
+  binding: openAiImageGenSettingsBinding,
+} as const satisfies SettingsExtensionRegistration;
 
 const DEFAULT_PROMPT =
   "A friendly robot owl holding a paintbrush, teal neon UI frame, high contrast";

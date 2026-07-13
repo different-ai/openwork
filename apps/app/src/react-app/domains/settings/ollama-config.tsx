@@ -46,9 +46,15 @@ import { formatFileSize } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { OLLAMA_PROVIDER_CONFIG } from "./openai-image-extension";
-import { registerExtensionConfig, type ExtensionConfigContext } from "./extension-registry";
+import type {
+  ExtensionConfigContext,
+  ExtensionConfigFactory,
+  SettingsExtensionDescriptor,
+  SettingsExtensionReadyBinding,
+  SettingsExtensionRegistration,
+} from "./extension-registry";
 
-const ollamaConfigFactory = (ctx: ExtensionConfigContext) => (
+export const ollamaConfigFactory: ExtensionConfigFactory = (ctx: ExtensionConfigContext) => (
   <OllamaConfig
     busy={ctx.localProvider.busy}
     status={ctx.localProvider.status}
@@ -57,8 +63,25 @@ const ollamaConfigFactory = (ctx: ExtensionConfigContext) => (
   />
 );
 
-registerExtensionConfig("openwork.ollama.settings", ollamaConfigFactory);
-registerExtensionConfig("ollama", ollamaConfigFactory);
+export const ollamaSettingsDescriptor = {
+  id: "ollama",
+  kind: "app.settings-extension",
+  contractVersion: 1,
+  provenance: { packageName: "@openwork/app", source: "builtin" },
+  order: 200,
+  settingsPanelRefs: ["openwork.ollama.settings", "ollama"],
+  connectionRefs: [],
+} as const satisfies SettingsExtensionDescriptor;
+
+export const ollamaSettingsBinding = {
+  status: "ready",
+  create: () => ({ settingsPanel: ollamaConfigFactory }),
+} as const satisfies SettingsExtensionReadyBinding;
+
+export const ollamaSettingsContribution = {
+  descriptor: ollamaSettingsDescriptor,
+  binding: ollamaSettingsBinding,
+} as const satisfies SettingsExtensionRegistration;
 
 type OllamaModel = {
   name: string;

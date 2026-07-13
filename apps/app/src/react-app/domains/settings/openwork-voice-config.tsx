@@ -19,7 +19,13 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { registerExtensionConfig, type ExtensionConfigContext } from "./extension-registry";
+import type {
+  ExtensionConfigContext,
+  ExtensionConfigFactory,
+  SettingsExtensionDescriptor,
+  SettingsExtensionReadyBinding,
+  SettingsExtensionRegistration,
+} from "./extension-registry";
 
 export type OpenWorkVoiceConfigProps = {
   busy: boolean;
@@ -30,7 +36,7 @@ export type OpenWorkVoiceConfigProps = {
   onTestSession: () => void | Promise<void>;
 };
 
-const openWorkVoiceConfigFactory = (ctx: ExtensionConfigContext) => (
+export const openWorkVoiceConfigFactory: ExtensionConfigFactory = (ctx: ExtensionConfigContext) => (
   <OpenWorkVoiceConfig
     busy={ctx.voiceExtension.busy}
     status={ctx.voiceExtension.status}
@@ -41,8 +47,25 @@ const openWorkVoiceConfigFactory = (ctx: ExtensionConfigContext) => (
   />
 );
 
-registerExtensionConfig("openwork.voice.settings", openWorkVoiceConfigFactory);
-registerExtensionConfig("openwork-voice", openWorkVoiceConfigFactory);
+export const openWorkVoiceSettingsDescriptor = {
+  id: "openwork-voice",
+  kind: "app.settings-extension",
+  contractVersion: 1,
+  provenance: { packageName: "@openwork/app", source: "builtin" },
+  order: 500,
+  settingsPanelRefs: ["openwork.voice.settings", "openwork-voice"],
+  connectionRefs: [],
+} as const satisfies SettingsExtensionDescriptor;
+
+export const openWorkVoiceSettingsBinding = {
+  status: "ready",
+  create: () => ({ settingsPanel: openWorkVoiceConfigFactory }),
+} as const satisfies SettingsExtensionReadyBinding;
+
+export const openWorkVoiceSettingsContribution = {
+  descriptor: openWorkVoiceSettingsDescriptor,
+  binding: openWorkVoiceSettingsBinding,
+} as const satisfies SettingsExtensionRegistration;
 
 export function OpenWorkVoiceConfig(props: OpenWorkVoiceConfigProps) {
   const [apiKey, setApiKey] = useState("");

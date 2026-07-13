@@ -57,13 +57,7 @@ import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-a
 import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
-// Side-effect imports: register extension config components into the registry.
-import "@/react-app/domains/settings/openai-image-gen-config";
-import "@/react-app/domains/settings/ollama-config";
-import "@/react-app/domains/settings/computer-use-config";
-import "@/react-app/domains/settings/browser-extension-config";
-import "@/react-app/domains/settings/openwork-voice-config";
-import "@/react-app/domains/settings/google-workspace-config";
+import { appSettingsExtensionComposition } from "@/react-app/domains/settings/settings-extension-composition";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
 import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED, setOpenWorkExtensionEnabled } from "@/react-app/domains/settings/extension-state";
@@ -1617,6 +1611,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   }, [openworkServerStore, refreshRouteState]);
   const extensionController = useSettingsExtensionController({
+    extensions: appSettingsExtensionComposition,
     openworkServerClient: selectedWorkspaceEndpoint?.client ?? openworkClient,
     hostOpenworkServerClient: openworkClient,
     enablementContext,

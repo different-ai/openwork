@@ -1,5 +1,12 @@
 /** @jsxImportSource react */
+import type {
+  ContributionBinding,
+  ContributionDescriptor,
+  ContributionRegistration,
+  ReadyContributionBinding,
+} from "@openwork/contribution-registry";
 import type { ReactNode } from "react";
+
 import type { McpDirectoryInfo } from "../../../app/constants";
 import { extensionContribution } from "../../../app/extensions";
 import type { OpenworkServerClient } from "../../../app/lib/openwork-server";
@@ -59,29 +66,69 @@ export type ExtensionRuntimeContext = Pick<
   "openworkServerClient" | "extensionConnections" | "onExtensionConnectionChange"
 >;
 
-export type OpenWorkExtensionRuntime = {
-  id: string;
-  settingsPanel?: ExtensionConfigFactory;
-  settingsPanelRefs?: string[];
-  isConnected?: (entry: McpDirectoryInfo, ctx: ExtensionRuntimeContext) => boolean;
+export type ExtensionRuntimeConnection = (
+  entry: McpDirectoryInfo,
+  ctx: ExtensionRuntimeContext,
+) => boolean;
+
+export type SettingsExtensionDescriptor = ContributionDescriptor & {
+  readonly kind: "app.settings-extension";
+  readonly contractVersion: 1;
+  /** All legacy manifest refs and fallback ids that select this settings panel. */
+  readonly settingsPanelRefs: readonly string[];
+  /** Extension ids that can use the optional runtime connection binding. */
+  readonly connectionRefs: readonly string[];
 };
 
-const registry = new Map<string, ExtensionConfigFactory>();
-const runtimeRegistry = new Map<string, OpenWorkExtensionRuntime>();
+export type SettingsExtensionRuntime = {
+  readonly settingsPanel: ExtensionConfigFactory;
+  readonly isConnected?: ExtensionRuntimeConnection;
+};
 
-export function registerExtensionConfig(id: string, factory: ExtensionConfigFactory) {
-  registry.set(id, factory);
-}
+export type SettingsExtensionHost = {
+  readonly realm: "app-settings";
+};
 
-export function registerExtensionRuntime(runtime: OpenWorkExtensionRuntime) {
-  runtimeRegistry.set(runtime.id, runtime);
-  if (runtime.settingsPanel) {
-    registerExtensionConfig(runtime.id, runtime.settingsPanel);
-    for (const ref of runtime.settingsPanelRefs ?? []) {
-      registerExtensionConfig(ref, runtime.settingsPanel);
+export type SettingsExtensionReadyBinding = ReadyContributionBinding<
+  SettingsExtensionHost,
+  SettingsExtensionRuntime
+>;
+
+export type SettingsExtensionBinding = ContributionBinding<
+  SettingsExtensionHost,
+  SettingsExtensionRuntime
+>;
+
+export type SettingsExtensionRegistration = ContributionRegistration<
+  SettingsExtensionDescriptor,
+  SettingsExtensionHost,
+  SettingsExtensionRuntime
+>;
+
+export type SettingsExtensionLookup =
+  | {
+      readonly status: "found";
+      readonly ref: string;
+      readonly descriptor: SettingsExtensionDescriptor;
+      readonly runtime: SettingsExtensionRuntime;
     }
-  }
-}
+  | {
+      readonly status: "unknown";
+      readonly ref: string;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly ref: string;
+      readonly descriptor: SettingsExtensionDescriptor;
+      readonly reason: string;
+    };
+
+/** Immutable renderer-realm view assembled by the app settings composition root. */
+export type SettingsExtensionComposition = {
+  readonly descriptors: readonly SettingsExtensionDescriptor[];
+  readonly lookupSettingsPanel: (ref: string) => SettingsExtensionLookup;
+  readonly lookupConnection: (ref: string) => SettingsExtensionLookup;
+};
 
 function extensionRuntimeId(entry: McpDirectoryInfo) {
   return entry.extensionManifest?.id ?? entry.serverName ?? entry.name;
@@ -92,18 +139,21 @@ function configRegistryId(entry: McpDirectoryInfo) {
 }
 
 export function getExtensionConfigSlot(
+  composition: SettingsExtensionComposition,
   entry: McpDirectoryInfo,
   ctx: ExtensionConfigContext,
 ): ReactNode | null {
-  const id = configRegistryId(entry);
-  const factory = registry.get(id);
-  return factory ? factory(ctx) : null;
+  const result = composition.lookupSettingsPanel(configRegistryId(entry));
+  return result.status === "found" ? result.runtime.settingsPanel(ctx) : null;
 }
 
 export function getExtensionConnected(
+  composition: SettingsExtensionComposition,
   entry: McpDirectoryInfo,
   ctx: ExtensionRuntimeContext,
 ): boolean | null {
-  const runtime = runtimeRegistry.get(extensionRuntimeId(entry));
-  return runtime?.isConnected ? runtime.isConnected(entry, ctx) : null;
+  const result = composition.lookupConnection(extensionRuntimeId(entry));
+  return result.status === "found" && result.runtime.isConnected
+    ? result.runtime.isConnected(entry, ctx)
+    : null;
 }
