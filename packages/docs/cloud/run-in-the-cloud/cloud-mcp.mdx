@@ -11,6 +11,11 @@ OpenWork Connect lets an external MCP client use the OpenWork capabilities your 
 https://api.openworklabs.com/mcp/agent
 ```
 
+This guide is for connecting an external MCP client to OpenWork. To connect
+Gmail, calendar, Drive, Slack, Notion, Linear, or another service inside the
+OpenWork desktop app, use
+[Connect your services](/start-here/connect-your-stack/connect-services).
+
 Your client opens a browser, you sign in to OpenWork, choose the organization to authorize, and the client stores the OAuth token for that organization.
 
 `app.openworklabs.com/api/den` is an internal same-origin desktop proxy used by OpenWork first-party flows. Do not paste it into external MCP clients.
@@ -19,7 +24,10 @@ Your client opens a browser, you sign in to OpenWork, choose the organization to
 
 ## In the OpenWork desktop app
 
-If you use the OpenWork desktop app, there is nothing to configure. When you sign in, the app injects OpenWork Connect with access scoped to your active organization and refreshes that first-party access automatically.
+If you use the OpenWork desktop app, there is no MCP endpoint to configure.
+When you sign in, the app injects OpenWork Connect with access scoped to your
+active organization and refreshes that first-party access automatically. Use
+`Settings` > `Connect` to sign in to the services available to you.
 
 ## Client support status
 
