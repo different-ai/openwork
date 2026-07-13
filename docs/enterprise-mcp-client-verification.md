@@ -78,6 +78,8 @@ In another terminal, start the protected mock lab with a development-only secret
 7. Reset OAuth state, change Den to an intentionally wrong synthetic secret, and Connect again. Confirm the first failed phase is token acquisition/exchange, not issuer discovery or generic connection failure.
 8. Restore the matching synthetic secret, reconnect, run one safe read, and clean up the instance.
 
+The local URLs have two separate responsibilities. Open the protected lab UI on the literal origin it prints, such as `http://127.0.0.1:8794`. Register the OAuth callback exactly as Den prints it. For the Microsoft development path that callback is normally `http://localhost:<Den API port>/...`; do not rewrite it to `127.0.0.1`. The mock accepts both safe loopback forms while preserving exact redirect matching.
+
 ## Evidence boundaries
 
 This rehearsal proves the package/client/mock contract. It does not prove:
