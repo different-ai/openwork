@@ -174,6 +174,7 @@ it permits an internal extraction with public-quality discipline.
 
 | Candidate | Cohesion | Demand | Contract | Portability | Authority | Proof | Dependencies | Removal | Total |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `@openwork/session-groups` | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 2 | 23 |
 | `@openwork/workspace-portability` | 3 | 3 | 3 | 3 | 3 | 2 | 3 | 2 | 22 |
 | `@openwork/markdown` | 3 | 2 | 3 | 2 | 3 | 3 | 3 | 3 | 22 |
 
@@ -426,7 +427,7 @@ the application working; no stage authorizes a wholesale rewrite.
 | Stage | Focus | Candidate outcomes | Exit condition |
 | --- | --- | --- | --- |
 | A. Govern | Make package intent measurable | Manifest schema/checker, dependency rules, scorecards, package template, tarball consumer harness | New governed packages cannot bypass constitution gates |
-| B. Prove two different values | Extract one backend/domain policy and one presentation capability | `@openwork/workspace-portability`, `@openwork/markdown` | App and server consume packages; old implementations and direct dependencies are removed; packed and Fraimz proof pass |
+| B. Prove different product values | Extract a cross-host user domain, backend/domain policy, and presentation capability | `@openwork/session-groups`, `@openwork/workspace-portability`, `@openwork/markdown` | App and server consume packages; old implementations and direct dependencies are removed; packed and Fraimz proof pass |
 | C. Untangle cross-realm contracts | Replace type grab bags with owned contracts | `@openwork/workspace-contracts`, `@openwork/desktop-contracts`, focused Den contracts; temporary `@openwork/types` facade | App/server/desktop/Den consume purpose-named entrypoints; facade usage reaches zero |
 | D. Package server capabilities | Separate portable behavior from HTTP/Bun host policy | workspace import/export policy, route schemas and typed client, install/config policy, session adapters | Server routes are thin auth/transport composition; app client uses owned schemas; filesystem/process authority stays server-side |
 | E. Package presentation value | Make UI behavior and styling independently consumable | Markdown first; design tokens/primitives, artifact viewers, settings surfaces, diagnostics views, headless controllers where they earn admission | Each package has CSS/assets/a11y/demo contracts and no app router/store/server-client imports |
@@ -442,6 +443,7 @@ the application working; no stage authorizes a wholesale rewrite.
 | Extension and session wire values | Existing purpose-named `contract` packages | App/server/Den adapters | Contracts remain data; they do not execute features |
 | Contribution invariants | Existing `kernel` package | Realm-local registries | No service locator or universal contribution interface |
 | Enterprise remote MCP lifecycle | Existing domain/adapter package boundary | Den composition adapter | No local/direct MCP or tenant/credential authority migration |
+| Session-group state and transitions | `@openwork/session-groups` (`domain`, `neutral`) | Server persistence/routes, app client, optimistic UI adapter | Hosts retain IDs, persistence, HTTP, event retention, storage, and React state |
 | Workspace export warning/stripping policy | `@openwork/workspace-portability` (`domain`, `neutral`) | Server export flow; app client contract | No filesystem, route, auth, archive, or secret-store ownership |
 | Portable path policy | A focused subpath or later domain package if it passes admission | Server filesystem adapter and import preview | `ApiError` and filesystem calls remain host-side |
 | Workspace and desktop IPC wire types | Purpose-named `contract` packages | Server, app, Electron main/preload | `@openwork/types` remains only as a temporary facade |
@@ -452,7 +454,31 @@ the application working; no stage authorizes a wholesale rewrite.
 | Desktop process/sidecar behavior | Deferred kernel/domain plus OS adapters | Desktop/orchestrator composition | No extraction until health, log, restart, cancellation, and disposal semantics are characterized |
 | Den persistence and cloud routes | Den adapters and focused domain packages | Den composition roots | Tenant, role, credential, SSRF, audit, and transaction authority remain in Den |
 
-## First slice: `@openwork/workspace-portability`
+## Completed proof slice: `@openwork/session-groups`
+
+The first governed functionality package owns the session-group state model,
+normalization limits, deterministic create/rename/remove/reorder/assign/import
+transitions, transition results, and event wire vocabulary. It has no runtime
+dependency and no ambient authority.
+
+The package is consumed through three different connection points:
+
+- the server SQLite/event adapter imports normalization and event contracts;
+- the server HTTP route adapter applies the same deterministic transitions while
+  retaining authentication, writable checks, random ID generation, persistence,
+  and HTTP error behavior;
+- the app client aliases its wire types to the package and the Zustand adapter
+  uses the same transitions while retaining local storage, optimistic ordering,
+  collapsed UI state, and React selectors.
+
+The package has nine focused domain tests and is included in the multi-tarball
+installed-consumer proof. The unchanged server session-group API test covers
+persistence, concurrent updates, event ordering, and bounded per-workspace
+events. The complete app suite, app/server typechecks, and production builds
+remain the host parity gate. This slice removes duplicate state/event types and
+transition implementations without moving host authority into the package.
+
+## Next slice: `@openwork/workspace-portability`
 
 ### Value and boundary
 
@@ -499,7 +525,7 @@ not a claim that heuristics can guarantee an export contains no secret.
    dependencies/exports and record any compatibility facade with a zero-usage
    deletion condition.
 
-## First slice: `@openwork/markdown`
+## Next slice: `@openwork/markdown`
 
 ### Value and boundary
 

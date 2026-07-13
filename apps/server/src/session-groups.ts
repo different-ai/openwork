@@ -1,32 +1,15 @@
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import {
+  normalizeSessionGroupState,
+  type SessionGroupEvent,
+  type SessionGroupEventAction,
+  type SessionGroupState,
+} from "@openwork/session-groups";
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { ServerConfig } from "./types.js";
 import { ensureDir, shortId } from "./utils.js";
-
-export type SessionGroupDefinition = {
-  id: string;
-  label: string;
-};
-
-export type SessionGroupState = {
-  groups: SessionGroupDefinition[];
-  assignments: Record<string, string>;
-};
-
-export type SessionGroupEventAction = "created" | "updated" | "deleted" | "assigned" | "reordered" | "imported";
-
-export type SessionGroupEvent = {
-  id: string;
-  seq: number;
-  workspaceId: string;
-  type: "session_groups.updated";
-  action: SessionGroupEventAction;
-  groupId?: string;
-  sessionId?: string;
-  timestamp: number;
-};
 
 const EMPTY_SESSION_GROUP_STATE: SessionGroupState = { groups: [], assignments: {} };
 
@@ -51,49 +34,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeGroupId(value: unknown): string {
-  if (typeof value !== "string") return "";
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  return trimmed.slice(0, 128);
-}
-
-function normalizeLabel(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return value.trim().slice(0, 120);
-}
-
 export function createSessionGroupId(): string {
   return `grp_${Date.now().toString(36)}_${shortId()}`;
-}
-
-export function normalizeSessionGroupState(value: unknown): SessionGroupState {
-  if (!isRecord(value)) return EMPTY_SESSION_GROUP_STATE;
-
-  const groups: SessionGroupDefinition[] = [];
-  const seenGroupIds = new Set<string>();
-  if (Array.isArray(value.groups)) {
-    for (const item of value.groups) {
-      if (!isRecord(item)) continue;
-      const id = normalizeGroupId(item.id);
-      const label = normalizeLabel(item.label);
-      if (!id || !label || seenGroupIds.has(id)) continue;
-      groups.push({ id, label });
-      seenGroupIds.add(id);
-    }
-  }
-
-  const assignments: Record<string, string> = {};
-  if (isRecord(value.assignments)) {
-    for (const [sessionId, rawGroupId] of Object.entries(value.assignments)) {
-      const normalizedSessionId = sessionId.trim().slice(0, 256);
-      const groupId = normalizeGroupId(rawGroupId);
-      if (!normalizedSessionId || !groupId || !seenGroupIds.has(groupId)) continue;
-      assignments[normalizedSessionId] = groupId;
-    }
-  }
-
-  return { groups, assignments };
 }
 
 function runtimeDbPath(config: ServerConfig): string {

@@ -8,24 +8,21 @@
  * collapsed state. Components import it directly with selectors, avoiding
  * context/prop drilling.
  */
+import {
+  applySessionGroupCommand,
+  type SessionGroupDefinition,
+  type SessionGroupState,
+} from "@openwork/session-groups";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-export type SessionGroupDefinition = {
-  id: string;
-  label: string;
-};
+export type { SessionGroupDefinition } from "@openwork/session-groups";
 
-export type WorkspaceGroupState = {
-  groups: SessionGroupDefinition[];
-  assignments: Record<string, string>;
+export type WorkspaceGroupState = SessionGroupState & {
   collapsedGroupIds?: string[];
 };
 
-export type SessionGroupServerState = {
-  groups: SessionGroupDefinition[];
-  assignments: Record<string, string>;
-};
+export type SessionGroupServerState = SessionGroupState;
 
 type SessionGroupSyncHandler = {
   createGroup: (workspaceId: string, group: SessionGroupDefinition) => Promise<SessionGroupServerState | null>;
@@ -188,16 +185,11 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
       assignGroup: (workspaceId, sessionId, groupId) => {
         set((state) => {
           const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
-          const assignments = { ...ws.assignments };
-          if (groupId && ws.groups.some((g) => g.id === groupId)) {
-            assignments[sessionId] = groupId;
-          } else {
-            delete assignments[sessionId];
-          }
+          const next = applySessionGroupCommand(ws, { type: "assign", sessionId, groupId }).state;
           return {
             groupsByWorkspace: {
               ...state.groupsByWorkspace,
-              [workspaceId]: { ...ws, assignments },
+              [workspaceId]: { ...next, collapsedGroupIds: ws.collapsedGroupIds },
             },
           };
         });
@@ -212,10 +204,11 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
         const group = { id, label };
         set((state) => {
           const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
+          const next = applySessionGroupCommand(ws, { type: "create", ...group }).state;
           return {
             groupsByWorkspace: {
               ...state.groupsByWorkspace,
-              [workspaceId]: { ...ws, groups: [...ws.groups, group] },
+              [workspaceId]: { ...next, collapsedGroupIds: ws.collapsedGroupIds },
             },
           };
         });
@@ -225,22 +218,11 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
       reorderGroups: (workspaceId, groupIds) => {
         set((state) => {
           const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
-          const byId = new Map(ws.groups.map((group) => [group.id, group]));
-          const used = new Set<string>();
-          const groups: SessionGroupDefinition[] = [];
-          for (const id of groupIds) {
-            const group = byId.get(id);
-            if (!group || used.has(id)) continue;
-            groups.push(group);
-            used.add(id);
-          }
-          for (const group of ws.groups) {
-            if (!used.has(group.id)) groups.push(group);
-          }
+          const next = applySessionGroupCommand(ws, { type: "reorder", groupIds }).state;
           return {
             groupsByWorkspace: {
               ...state.groupsByWorkspace,
-              [workspaceId]: { ...ws, groups },
+              [workspaceId]: { ...next, collapsedGroupIds: ws.collapsedGroupIds },
             },
           };
         });
@@ -286,17 +268,12 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
       removeGroup: (workspaceId, groupId) => {
         set((state) => {
           const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
-          const groups = ws.groups.filter((g) => g.id !== groupId);
-          // Unassign sessions that belonged to the removed group.
-          const assignments: Record<string, string> = {};
-          for (const [sid, gid] of Object.entries(ws.assignments)) {
-            if (gid !== groupId) assignments[sid] = gid;
-          }
+          const next = applySessionGroupCommand(ws, { type: "remove", groupId }).state;
           const collapsedGroupIds = (ws.collapsedGroupIds ?? []).filter((id) => id !== groupId);
           return {
             groupsByWorkspace: {
               ...state.groupsByWorkspace,
-              [workspaceId]: { groups, assignments, collapsedGroupIds },
+              [workspaceId]: { ...next, collapsedGroupIds },
             },
           };
         });

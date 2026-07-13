@@ -79,6 +79,9 @@ importers:
       '@openwork/session-contracts':
         specifier: workspace:*
         version: link:../../packages/session-contracts
+      '@openwork/session-groups':
+        specifier: workspace:*
+        version: link:../../packages/session-groups
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -316,6 +319,9 @@ importers:
       '@openwork/session-contracts':
         specifier: workspace:*
         version: link:../../packages/session-contracts
+      '@openwork/session-groups':
+        specifier: workspace:*
+        version: link:../../packages/session-groups
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
@@ -939,6 +945,21 @@ importers:
       zod:
         specifier: 4.3.6
         version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      tsx:
+        specifier: ^4.15.7
+        version: 4.21.0
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/session-groups:
     devDependencies:
       '@types/node':
         specifier: ^20.11.30

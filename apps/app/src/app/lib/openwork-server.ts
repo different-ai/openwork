@@ -6,6 +6,11 @@ import {
   type OpenWorkSessionMessage,
   type OpenWorkSessionSnapshot,
 } from "@openwork/session-contracts";
+import type {
+  SessionGroupDefinition,
+  SessionGroupEvent,
+  SessionGroupState,
+} from "@openwork/session-groups";
 import { desktopFetch } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
@@ -516,26 +521,9 @@ export type OpenworkReloadEvent = {
   timestamp: number;
 };
 
-export type OpenworkSessionGroupDefinition = {
-  id: string;
-  label: string;
-};
-
-export type OpenworkSessionGroupState = {
-  groups: OpenworkSessionGroupDefinition[];
-  assignments: Record<string, string>;
-};
-
-export type OpenworkSessionGroupEvent = {
-  id: string;
-  seq: number;
-  workspaceId: string;
-  type: "session_groups.updated";
-  action: "created" | "updated" | "deleted" | "assigned" | "reordered" | "imported";
-  groupId?: string;
-  sessionId?: string;
-  timestamp: number;
-};
+export type OpenworkSessionGroupDefinition = SessionGroupDefinition;
+export type OpenworkSessionGroupState = SessionGroupState;
+export type OpenworkSessionGroupEvent = SessionGroupEvent;
 
 // Fallback for explicit server-mode URL derivation. Desktop local workers replace this
 // with the persisted runtime-discovered port once the host reports it.

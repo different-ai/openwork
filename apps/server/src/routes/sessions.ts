@@ -1,15 +1,17 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import {
+  applySessionGroupCommand,
+  normalizeSessionGroupState,
+  type SessionGroupState,
+} from "@openwork/session-groups";
 import { ApiError } from "../errors.js";
 import { createOpenCodeSessionEventStreamResponse } from "../opencode-session-event-adapter.js";
 import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot } from "../session-read-model.js";
 import {
   createSessionGroupId,
-  normalizeSessionGroupState,
   readSessionGroupState,
   SessionGroupEventStore,
   updateSessionGroupState,
-  type SessionGroupDefinition,
-  type SessionGroupState,
 } from "../session-groups.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
@@ -218,7 +220,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const result = await updateWorkspaceSessionGroups(workspace.id, (current) => {
       const existingIds = new Set(current.groups.map((group) => group.id));
       const id = requestedId && !existingIds.has(requestedId) ? requestedId : createSessionGroupId();
-      return { ...current, groups: [...current.groups, { id, label }] };
+      return applySessionGroupCommand(current, { type: "create", id, label }).state;
     });
     const groupId = result.state.groups[result.state.groups.length - 1]?.id;
     sessionGroupEvents.record(workspace.id, "created", groupId ? { groupId } : undefined);
@@ -233,21 +235,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const requestedIds = Array.isArray(body.groupIds)
       ? body.groupIds.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean)
       : [];
-    const result = await updateWorkspaceSessionGroups(workspace.id, (current) => {
-      const byId = new Map(current.groups.map((group) => [group.id, group]));
-      const used = new Set<string>();
-      const groups: SessionGroupDefinition[] = [];
-      for (const id of requestedIds) {
-        const group = byId.get(id);
-        if (!group || used.has(id)) continue;
-        groups.push(group);
-        used.add(id);
-      }
-      for (const group of current.groups) {
-        if (!used.has(group.id)) groups.push(group);
-      }
-      return { ...current, groups };
-    });
+    const result = await updateWorkspaceSessionGroups(
+      workspace.id,
+      (current) => applySessionGroupCommand(current, { type: "reorder", groupIds: requestedIds }).state,
+    );
     sessionGroupEvents.record(workspace.id, "reordered");
     return jsonResponse({ state: result.state, updatedAt: result.updatedAt });
   });
@@ -260,15 +251,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     if (!sessionId) throw new ApiError(400, "invalid_payload", "sessionId is required");
     const body = await readJsonBody(ctx.request);
     const groupId = typeof body.groupId === "string" && body.groupId.trim() ? body.groupId.trim() : null;
-    const result = await updateWorkspaceSessionGroups(workspace.id, (current) => {
-      const assignments = { ...current.assignments };
-      if (groupId && current.groups.some((group) => group.id === groupId)) {
-        assignments[sessionId] = groupId;
-      } else {
-        delete assignments[sessionId];
-      }
-      return { ...current, assignments };
-    });
+    const result = await updateWorkspaceSessionGroups(
+      workspace.id,
+      (current) => applySessionGroupCommand(current, { type: "assign", sessionId, groupId }).state,
+    );
     sessionGroupEvents.record(workspace.id, "assigned", { sessionId, ...(groupId ? { groupId } : {}) });
     return jsonResponse({ state: result.state, updatedAt: result.updatedAt });
   });
@@ -281,10 +267,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     if (!groupId) throw new ApiError(400, "invalid_payload", "groupId is required");
     const body = await readJsonBody(ctx.request);
     const label = requireStringField(body, "label").slice(0, 120);
-    const result = await updateWorkspaceSessionGroups(workspace.id, (current) => ({
-      ...current,
-      groups: current.groups.map((group) => group.id === groupId ? { ...group, label } : group),
-    }));
+    const result = await updateWorkspaceSessionGroups(
+      workspace.id,
+      (current) => applySessionGroupCommand(current, { type: "rename", groupId, label }).state,
+    );
     sessionGroupEvents.record(workspace.id, "updated", { groupId });
     return jsonResponse({ state: result.state, updatedAt: result.updatedAt });
   });
@@ -295,16 +281,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const groupId = (ctx.params.groupId ?? "").trim();
     if (!groupId) throw new ApiError(400, "invalid_payload", "groupId is required");
-    const result = await updateWorkspaceSessionGroups(workspace.id, (current) => {
-      const assignments: Record<string, string> = {};
-      for (const [sessionId, assignedGroupId] of Object.entries(current.assignments)) {
-        if (assignedGroupId !== groupId) assignments[sessionId] = assignedGroupId;
-      }
-      return {
-        groups: current.groups.filter((group) => group.id !== groupId),
-        assignments,
-      };
-    });
+    const result = await updateWorkspaceSessionGroups(
+      workspace.id,
+      (current) => applySessionGroupCommand(current, { type: "remove", groupId }).state,
+    );
     sessionGroupEvents.record(workspace.id, "deleted", { groupId });
     return jsonResponse({ state: result.state, updatedAt: result.updatedAt });
   });
