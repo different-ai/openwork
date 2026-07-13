@@ -889,7 +889,7 @@ export default {
             recordAssertion(
               ctx,
               "MCP access tied to that session is rejected as session-revoked",
-              mcpResponse.ok === false && mcpResponse.status === 403 && mcpResponse.text.includes("mcp_session_revoked"),
+              mcpResponse.ok === false && mcpResponse.status === 401 && mcpResponse.text.includes("mcp_session_revoked"),
               mcpResponse,
             );
           },

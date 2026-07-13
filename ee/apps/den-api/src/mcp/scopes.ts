@@ -13,13 +13,14 @@ export const DEN_MCP_SCOPES = [
   DEN_MCP_WRITE_SCOPE,
 ]
 
-export const DEN_MCP_DEFAULT_CLIENT_SCOPES = [
-  "openid",
-  "profile",
-  "email",
+export const DEN_MCP_REQUESTED_SCOPES = [
   DEN_MCP_READ_SCOPE,
   DEN_MCP_WRITE_SCOPE,
+  DEN_MCP_OFFLINE_SCOPE,
 ]
+export const DEN_MCP_REQUESTED_SCOPE = DEN_MCP_REQUESTED_SCOPES.join(" ")
+
+export const DEN_MCP_DEFAULT_CLIENT_SCOPES = [...DEN_MCP_REQUESTED_SCOPES]
 
 export const DEN_MCP_DEFAULT_TOKEN_SCOPES: readonly DenMcpTokenScope[] = [DEN_MCP_READ_SCOPE]
 

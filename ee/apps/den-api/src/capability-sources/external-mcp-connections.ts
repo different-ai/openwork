@@ -257,7 +257,6 @@ export async function deleteExternalMcpConnection(input: {
       .for("update")
     const existing = rows[0]
     if (!existing) return false
-
     // Connection removal is intentionally destructive for its 24-hour
     // diagnostic detail. Audit rows remain in the organization log, while
     // attempt/event rows are removed transactionally so no evidence record
@@ -275,9 +274,9 @@ export async function deleteExternalMcpConnection(input: {
       await tx.delete(McpDiagnosticAttemptTable).where(inArray(McpDiagnosticAttemptTable.id, diagnosticAttemptIds))
     }
 
-    // No FK cascades on these tables — clean up everything that hangs off the
-    // connection: pending grants, access, every member credential, and the
-    // dynamically-registered OAuth client.
+    // The package adapter takes this same row lock before committing a
+    // credential. Deletion therefore wins deterministically over a late OAuth
+    // callback while also removing the diagnostic evidence owned by the row.
     await tx.delete(ExternalMcpOAuthPendingGrantTable).where(eq(ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId, existing.id))
     await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, existing.id))
     await tx.delete(ConnectedAccountTable).where(and(

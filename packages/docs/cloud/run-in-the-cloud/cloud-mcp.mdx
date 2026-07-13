@@ -1,25 +1,111 @@
 ---
 title: "OpenWork Connect MCP"
-description: "Use your OpenWork organization, skills, and connected tools from Codex, ChatGPT Desktop, OpenCode, Cursor, Claude Code, VS Code, or any MCP client"
+description: "Use your OpenWork organization, skills, and connected tools from OpenCode, Codex, ChatGPT Desktop, Cursor Web/Agents, Claude Code, VS Code, or any MCP client"
 ---
 
 import { OpenWorkConnectInstaller } from "/snippets/openwork-connect-installer.jsx";
 
-OpenWork Connect lets your own agent use everything available to your OpenWork organization. Sign in once to use your shared skills and connected tools, including Gmail, Slack, Notion, and other services your organization has configured.
+OpenWork Connect lets an external MCP client use the OpenWork capabilities your organization has made available to you. The public hosted endpoint is:
 
-The server uses OAuth. Your MCP client opens a browser, you sign in to OpenWork, choose the organization to authorize, and the client stores the returned token.
+```text
+https://api.openworklabs.com/mcp/agent
+```
+
+Your client opens a browser, you sign in to OpenWork, choose the organization to authorize, and the client stores the OAuth token for that organization.
+
+`app.openworklabs.com/api/den` is an internal same-origin desktop proxy used by OpenWork first-party flows. Do not paste it into external MCP clients.
 
 <OpenWorkConnectInstaller />
 
 ## In the OpenWork desktop app
 
-If you use the OpenWork desktop app, there is nothing to configure. When you sign in, the app injects OpenWork Connect by default with access scoped to your active organization. Switching organizations refreshes that access automatically.
+If you use the OpenWork desktop app, there is nothing to configure. When you sign in, the app injects OpenWork Connect with access scoped to your active organization and refreshes that first-party access automatically.
+
+## Client support status
+
+| Client | Status | Notes |
+| --- | --- | --- |
+| OpenCode | Verified | Native remote MCP OAuth passed end-to-end implementation testing. |
+| Codex | Setup only | Add/login/reconnect steps are below; native remote MCP OAuth must be rerun on this exact branch before Codex is marked verified. |
+| Cursor | Setup only | Cursor Web/Agents can use an HTTPS OAuth callback. Cursor Desktop OAuth requires `cursor://anysphere.cursor-mcp/oauth/callback`, which OpenWork's MCP profile intentionally rejects, so Cursor Desktop OAuth is not currently supported. |
+| ChatGPT Desktop | Setup only | Setup guide only; use ChatGPT `Settings > MCP servers`. Native proof is not complete. |
+| Claude Code | Setup only | Setup guide only; native proof is not complete. |
+| VS Code | Setup only | Setup guide only; native proof is not complete. |
+| Any client | Setup only | Use only with clients that support remote Streamable HTTP MCP servers and OAuth. |
+
+## OpenCode setup
+
+Add this MCP entry to your OpenCode config:
+
+```json
+{
+  "mcp": {
+    "openwork": {
+      "type": "remote",
+      "enabled": true,
+      "url": "https://api.openworklabs.com/mcp/agent",
+      "oauth": {}
+    }
+  }
+}
+```
+
+Then authenticate:
+
+```sh
+opencode mcp auth openwork
+```
+
+To reconnect or switch organizations, remove the old token and authenticate again:
+
+```sh
+opencode mcp logout openwork
+opencode mcp auth openwork
+```
+
+## Codex setup
+
+Codex is setup-only for this PR until its native OAuth flow is rerun on this exact branch.
+
+Add OpenWork, then log in:
+
+```sh
+codex mcp add openwork --url https://api.openworklabs.com/mcp/agent
+codex mcp login openwork
+```
+
+To reconnect or switch organizations, log out and log in again:
+
+```sh
+codex mcp logout openwork
+codex mcp login openwork
+```
+
+## Cursor Web/Agents setup-only guide
+
+Use this guide only for Cursor Web/Agents flows that provide an HTTPS OAuth callback. Paste the OpenWork Connect endpoint where Cursor Web/Agents asks for the remote MCP server URL:
+
+```text
+https://api.openworklabs.com/mcp/agent
+```
+
+Cursor Desktop OAuth is not currently supported. The official desktop OAuth callback is `cursor://anysphere.cursor-mcp/oauth/callback`, and OpenWork's MCP profile intentionally rejects private-use callback schemes for public OAuth clients.
+
+## ChatGPT setup-only guide
+
+Open ChatGPT `Settings > MCP servers` ([open settings](https://chatgpt.com/#settings/Connectors)), paste the OpenWork Connect endpoint, and start OAuth from ChatGPT's connection prompt:
+
+```text
+https://api.openworklabs.com/mcp/agent
+```
+
+## Organization selection
+
+The organization you choose in the browser is pinned into the token. Changing the active organization in OpenWork later does not change an external client's existing token. Use the logout/auth or logout/login reconnect commands above when you need a different organization.
 
 ## What you can ask the agent
 
-Once connected, your agent manages the organization from plain English in the
-composer. These flows are exercised end to end against a live OpenWork Cloud
-deployment (see `evals/cloud-mcp-agent-flows.md` in the repository):
+Once connected, your agent can use OpenWork capabilities from plain English in the composer. These flows are exercised end to end against a live OpenWork Cloud deployment (see `evals/cloud-mcp-agent-flows.md` in the repository):
 
 - **Check your cloud identity** — "Which OpenWork Cloud organization am I
   connected to?" The agent reports the organization, your account, and your
@@ -35,48 +121,48 @@ deployment (see `evals/cloud-mcp-agent-flows.md` in the repository):
   to your marketplace, and grants org-wide access — teammates see it in their
   marketplace and install it with one click.
 
-Org policy still applies: invitations respect seat limits and domain rules,
-and resource creation follows your organization's roles.
+Org policy still applies: invitations respect seat limits and domain rules, and resource access follows organization membership, roles, policies, and exposure allowlists.
 
-## Authorize access
+## OAuth and protocol details
 
-1. Save the MCP config in your client.
-2. Start the client's MCP auth flow for `openwork`.
-3. Sign in at `app.openworklabs.com` when the browser opens.
-4. Choose the OpenWork Cloud organization that should receive MCP access.
-5. Return to your MCP client after authorization completes.
+OpenWork Connect is a remote Streamable HTTP MCP server with OAuth:
 
-The token is scoped to the organization you select during OAuth. If you need to switch organizations, remove the stored MCP auth token in your client and run the auth flow again.
+- The protected resource is exactly `https://api.openworklabs.com/mcp/agent`.
+- Clients discover OAuth metadata with RFC9728 protected-resource discovery.
+- The authorization server and browser sign-in origin is `https://app.openworklabs.com/api/auth`.
+- OAuth authorize and token requests must include exactly one `resource` value: `https://api.openworklabs.com/mcp/agent`.
+- Clients that need registration use dynamic client registration as a fallback during discovery.
+- PKCE is required for public/dynamic clients, and only the `S256` code challenge method is supported.
+- Redirect URIs must be HTTPS callbacks or HTTP loopback callbacks such as `http://127.0.0.1:<port>/callback`. Private-use callback schemes are not accepted for public OAuth clients.
 
-## OAuth security controls
+## Token lifetime and refresh
 
-OpenWork Cloud's MCP OAuth flow is hardened for public MCP clients:
+Clients normally refresh automatically. The values matter when diagnosing reconnects:
 
-- PKCE is required for dynamically registered/public clients. Only the `S256`
-  code challenge method is supported.
-- Redirect URIs are restricted to loopback HTTP(S) callbacks, such as
-  `http://127.0.0.1:<port>/callback`, or private-use custom schemes. Public web
-  redirects and dangerous schemes such as `javascript:`, `file:`, and `data:`
-  are rejected.
-- MCP OAuth access tokens expire after 15 minutes.
-- JWT access tokens are signed with EdDSA only. The MCP verifier pins that
-  signing algorithm, validates the issuer as the OpenWork Cloud auth server,
-  and validates the audience against the MCP resource URLs advertised by the
-  protected-resource metadata.
-- JWKS signing keys rotate every 24 hours. Previous public keys remain in the
-  JWKS for a 1-hour overlap, which is longer than the MCP access-token
-  lifetime, so in-flight tokens can expire naturally during rotation.
-- MCP OAuth refresh tokens expire after 7 days, rotate on refresh, and are
-  revocable. Reusing a revoked refresh token invalidates the token family.
-- Access is rechecked against the user's active OpenWork Cloud session and
-  organization membership, so removing a member or revoking their session also
-  cuts off MCP access.
+- Public OAuth access tokens are JWTs signed and validated with EdDSA. The issuer is exactly `https://app.openworklabs.com/api/auth`, the audience is exactly `https://api.openworklabs.com/mcp/agent`, and access tokens expire after 15 minutes.
+- Refresh tokens are opaque rotating grants with a 30-day inactivity window.
+- Each refresh revokes the previous refresh grant.
+- If an old refresh grant is replayed, used concurrently, expired, or revoked, the client may receive `invalid_grant`. Reconnect by logging out of the MCP entry and authenticating again.
+- Access is rechecked against the active OpenWork session and organization membership, so removing a member or revoking the session cuts off MCP access.
 
 ## What the server exposes
 
-The hosted MCP server exposes OpenWork Cloud API tools for normal product resources, including config objects, connectors, plugins, marketplaces, skills, workers, members, roles, teams, and LLM providers.
+`/mcp/agent` exposes two MCP tools:
 
-It intentionally does not expose authentication internals, admin-only system routes, webhooks, API-key creation or deletion, or credential-returning endpoints.
+- `search_capabilities` searches the capabilities available to the signed-in member.
+- `execute_capability` runs an exact capability name returned by `search_capabilities`.
+
+Search can include OpenWork Cloud resources such as config objects, connectors, plugins, marketplaces, skills, workers, members, roles, teams, model providers, and org-connected external MCP tools when those capabilities are enabled and shared with the member.
+
+Availability is governed by organization membership, role, policy, and exposure allowlists. It intentionally does not expose authentication internals, admin-only system routes, webhooks, API-key creation or deletion, or credential-returning endpoints.
+
+## Troubleshooting
+
+- **401 missing or invalid token**: run the client's auth/login command again. Confirm the client points to `https://api.openworklabs.com/mcp/agent`.
+- **403 membership or scope error**: confirm you selected the right organization and still have membership and required permissions there.
+- **`invalid_grant`**: the refresh grant was expired, revoked, replayed, or used concurrently. Run logout, then auth/login again.
+- **429 rate limit**: wait for the response's `Retry-After` value before retrying.
+- **Support requests**: include the response `X-Request-Id` header plus any JSON body MCP `referenceId` or OAuth `reference_id` field so OpenWork support can find the server-side trace.
 
 ## Requirements
 

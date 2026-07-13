@@ -14,8 +14,6 @@ const HOP_BY_HOP_HEADERS = new Set([
 const REQUEST_ONLY_HEADERS = new Set(["host", "content-length"]);
 const RESPONSE_ONLY_HEADERS = new Set(["content-length", "content-encoding"]);
 
-const apiBase = readBaseUrlEnv("DEN_API_BASE");
-
 type ProxyOptions = {
   routePrefix: string;
   upstreamPathPrefix?: string;
@@ -90,9 +88,7 @@ function copySetCookieHeaders(upstreamHeaders: Headers, responseHeaders: Headers
   }
 }
 
-function rewriteLocationHeader(location: string, request: NextRequest): string {
-  if (!apiBase) return location;
-
+function rewriteLocationHeader(location: string, request: NextRequest, apiBase: string): string {
   let parsedLocation: URL;
   try {
     parsedLocation = new URL(location);
@@ -115,12 +111,12 @@ function rewriteLocationHeader(location: string, request: NextRequest): string {
   return `${requestOrigin}${parsedLocation.pathname}${parsedLocation.search}${parsedLocation.hash}`;
 }
 
-function cloneResponseHeaders(request: NextRequest, upstream: Response, options: ProxyOptions): Headers {
+function cloneResponseHeaders(request: NextRequest, upstream: Response, options: ProxyOptions, apiBase: string): Headers {
   const headers = new Headers();
   upstream.headers.forEach((value, name) => {
     if (shouldSkipResponseHeader(name)) return;
     if (name.toLowerCase() === "location" && options.rewriteAuthLocationsToRequestOrigin) {
-      headers.append(name, rewriteLocationHeader(value, request));
+      headers.append(name, rewriteLocationHeader(value, request, apiBase));
       return;
     }
     headers.append(name, value);
@@ -148,6 +144,7 @@ export async function proxyUpstream(
   segments: string[] = [],
   options: ProxyOptions,
 ): Promise<Response> {
+  const apiBase = readBaseUrlEnv("DEN_API_BASE");
   if (!apiBase) {
     return buildUpstreamErrorResponse(503, "DEN_API_BASE must be configured.");
   }
@@ -164,6 +161,6 @@ export async function proxyUpstream(
 
   return new Response(shouldDropBody ? null : upstream.body, {
     status: upstream.status,
-    headers: cloneResponseHeaders(request, upstream, options),
+    headers: cloneResponseHeaders(request, upstream, options, apiBase),
   });
 }

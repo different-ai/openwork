@@ -10,6 +10,7 @@ imagePullSecrets: []
 config:
   databaseMode: mysql
   openworkDevMode: "0"
+  enterpriseMcpClientEnabled: "false"
   tenancy:
     mode: single_org
     singleOrgName: OpenWork

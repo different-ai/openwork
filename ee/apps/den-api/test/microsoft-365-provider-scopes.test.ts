@@ -1,5 +1,5 @@
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { beforeAll, describe, expect, test } from "bun:test"
+import { afterEach, beforeAll, describe, expect, test } from "bun:test"
 import type { OrgOAuthClientRow } from "../src/capability-sources/oauth-credentials.js"
 
 function seedRequiredEnv() {
@@ -12,11 +12,16 @@ function seedRequiredEnv() {
 
 let registry: typeof import("../src/capability-sources/provider-registry.js")
 let oauth: typeof import("../src/capability-sources/generic-oauth.js")
+const originalFetch = globalThis.fetch
 
 beforeAll(async () => {
   seedRequiredEnv()
   registry = await import("../src/capability-sources/provider-registry.js")
   oauth = await import("../src/capability-sources/generic-oauth.js")
+})
+
+afterEach(() => {
+  globalThis.fetch = originalFetch
 })
 
 function microsoft365Provider() {
@@ -120,5 +125,57 @@ describe("Microsoft 365 native provider", () => {
       redirectUri: "https://cloud.openwork.so/v1/oauth-providers/microsoft-365/connect/callback",
       codeChallenge: "pkce-challenge",
     })).toThrow("requires a valid tenant ID")
+  })
+
+  test("preserves Microsoft's safe invalid-secret evidence through the real token request", async () => {
+    const client: OrgOAuthClientRow = {
+      id: createDenTypeId("orgOAuthClient"),
+      organizationId: createDenTypeId("organization"),
+      providerId: "microsoft-365",
+      clientId: "microsoft-client-id",
+      clientSecret: "microsoft-client-secret-value",
+      extra: { tenantId: "12345678-1234-1234-1234-123456789abc" },
+      createdByOrgMembershipId: createDenTypeId("member"),
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    }
+    let postedBody = ""
+    globalThis.fetch = async (_request, init) => {
+      if (init?.body instanceof URLSearchParams) postedBody = init.body.toString()
+      return new Response(JSON.stringify({
+        error: "invalid_client",
+        error_description: "AADSTS7000215: client_secret=microsoft-client-secret-value",
+        error_codes: [7_000_215],
+        trace_id: "00000000-0000-4000-8000-000000000001",
+        correlation_id: "00000000-0000-4000-8000-000000000002",
+        timestamp: "2030-01-02 03:04:05Z",
+      }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      })
+    }
+
+    try {
+      await oauth.exchangeCodeForTokens({
+        provider: microsoft365Provider(),
+        client,
+        code: "authorization-code",
+        redirectUri: "http://localhost:31585/v1/oauth-providers/microsoft-365/connect/callback",
+        codeVerifier: "pkce-verifier",
+      })
+      throw new Error("Expected token exchange to fail")
+    } catch (error) {
+      expect(error).toBeInstanceOf(oauth.OAuthTokenExchangeError)
+      if (!(error instanceof oauth.OAuthTokenExchangeError)) throw error
+      expect(error.code).toBe("oauth_invalid_client_secret")
+      expect(error.details.providerTraceId).toBe("00000000-0000-4000-8000-000000000001")
+      expect(error.message).toContain("AADSTS7000215")
+      expect(error.message).not.toContain("microsoft-client-secret-value")
+    }
+
+    const posted = new URLSearchParams(postedBody)
+    expect(posted.get("client_secret")).toBe("microsoft-client-secret-value")
+    expect(posted.get("code_verifier")).toBe("pkce-verifier")
+    expect(posted.get("redirect_uri")).toBe("http://localhost:31585/v1/oauth-providers/microsoft-365/connect/callback")
   })
 })

@@ -5,6 +5,8 @@ import { serializeSignedCookie } from "better-call"
 
 const API_ORIGIN = "http://127.0.0.1:8790"
 const REDIRECT_URI = "http://127.0.0.1:49152/oauth/callback"
+const AGENT_RESOURCE = `${API_ORIGIN}/mcp/agent`
+const LEGACY_PARENT_RESOURCE = `${API_ORIGIN}/mcp`
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
 
 function seedRequiredEnv() {
@@ -113,13 +115,14 @@ afterAll(async () => {
 })
 
 test("legacy MCP registration gains offline access and rotates a thirty-day refresh grant", async () => {
-  const metadataResponse = await app.fetch(new Request(`${API_ORIGIN}/mcp/.well-known/oauth-protected-resource`))
+  const metadataResponse = await app.fetch(new Request(`${API_ORIGIN}/mcp/agent/.well-known/oauth-protected-resource`))
   expect(metadataResponse.status).toBe(200)
   const metadata: unknown = await metadataResponse.json()
   expect(isRecord(metadata) && Array.isArray(metadata.scopes_supported)).toBe(true)
   if (!isRecord(metadata) || !Array.isArray(metadata.scopes_supported)) {
     throw new Error("MCP protected-resource metadata did not include scopes_supported")
   }
+  expect(metadata.resource).toBe(AGENT_RESOURCE)
   const scopes = metadata.scopes_supported.filter((scope): scope is string => typeof scope === "string")
   expect(scopes).toContain("offline_access")
   const scope = scopes.join(" ")
@@ -151,7 +154,7 @@ test("legacy MCP registration gains offline access and rotates a thirty-day refr
   authorizeUrl.searchParams.set("response_type", "code")
   authorizeUrl.searchParams.set("redirect_uri", REDIRECT_URI)
   authorizeUrl.searchParams.set("scope", scope)
-  authorizeUrl.searchParams.set("resource", `${API_ORIGIN}/mcp`)
+  authorizeUrl.searchParams.set("resource", LEGACY_PARENT_RESOURCE)
   authorizeUrl.searchParams.set("code_challenge", codeChallenge(verifier))
   authorizeUrl.searchParams.set("code_challenge_method", "S256")
   authorizeUrl.searchParams.set("prompt", "consent")
@@ -193,7 +196,7 @@ test("legacy MCP registration gains offline access and rotates a thirty-day refr
       code,
       code_verifier: verifier,
       redirect_uri: REDIRECT_URI,
-      resource: `${API_ORIGIN}/mcp`,
+      resource: LEGACY_PARENT_RESOURCE,
     }),
   }))
   const tokens: unknown = await tokenResponse.json()
@@ -233,7 +236,7 @@ test("legacy MCP registration gains offline access and rotates a thirty-day refr
       grant_type: "refresh_token",
       client_id: oauthClientId,
       refresh_token: firstRefreshToken,
-      resource: `${API_ORIGIN}/mcp`,
+      resource: LEGACY_PARENT_RESOURCE,
     }),
   }))
   expect(refreshResponse.status).toBe(200)
@@ -258,7 +261,7 @@ test("legacy MCP registration gains offline access and rotates a thirty-day refr
   if (!activeGrant) throw new Error("Refresh rotation did not store a replacement grant")
   expect(activeGrant.expiresAt.getTime() - activeGrant.createdAt.getTime()).toBe(THIRTY_DAYS_MS)
 
-  const replayResponse = await app.fetch(new Request(`${API_ORIGIN}/api/auth/oauth2/token`, {
+  const concurrentRefreshRequest = () => app.fetch(new Request(`${API_ORIGIN}/api/auth/oauth2/token`, {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
@@ -267,19 +270,28 @@ test("legacy MCP registration gains offline access and rotates a thirty-day refr
     body: new URLSearchParams({
       grant_type: "refresh_token",
       client_id: oauthClientId,
-      refresh_token: firstRefreshToken,
-      resource: `${API_ORIGIN}/mcp`,
+      refresh_token: nextRefreshToken,
+      resource: LEGACY_PARENT_RESOURCE,
     }),
   }))
-  expect(replayResponse.status).toBe(400)
-  const replay: unknown = await replayResponse.json()
-  expect(isRecord(replay) && replay.error).toBe("invalid_grant")
+  const concurrentResponses = await Promise.all([concurrentRefreshRequest(), concurrentRefreshRequest()])
+  const concurrentStatuses = concurrentResponses.map((response) => response.status).sort()
+  expect(concurrentStatuses).toEqual([200, 400])
+  expect(concurrentStatuses).not.toContain(500)
+  const concurrentErrors = await Promise.all(concurrentResponses
+    .filter((response) => response.status !== 200)
+    .map((response) => response.json()))
+  expect(concurrentErrors).toHaveLength(1)
+  expect(isRecord(concurrentErrors[0]) && concurrentErrors[0].error).toBe("invalid_grant")
 
-  const grantsAfterReplay = await db
-    .select({ id: schema.OAuthRefreshTokenTable.id })
+  const grantsAfterConcurrentReplay = await db
+    .select({
+      id: schema.OAuthRefreshTokenTable.id,
+      revoked: schema.OAuthRefreshTokenTable.revoked,
+    })
     .from(schema.OAuthRefreshTokenTable)
     .where(drizzle.eq(schema.OAuthRefreshTokenTable.clientId, oauthClientId))
-  expect(grantsAfterReplay).toEqual([])
+  expect(grantsAfterConcurrentReplay.filter((grant) => grant.revoked === null)).toEqual([])
 
   const overbroadAuthorizeUrl = new URL(authorizeUrl)
   overbroadAuthorizeUrl.searchParams.set("scope", `${scope} email`)

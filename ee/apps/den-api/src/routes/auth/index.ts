@@ -1,10 +1,10 @@
 import { oauthProviderAuthServerMetadata, oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider"
 import { eq, sql } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, AuthUserTable } from "@openwork-ee/den-db/schema"
+import { AuthAccountTable, AuthUserTable, OAuthClientTable } from "@openwork-ee/den-db/schema"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { auth } from "../../auth.js"
+import { auth, normalizeMcpOAuthResource } from "../../auth.js"
 import { normalizeLoginEmail, resolveLoginOptionKind } from "../../auth-login-options.js"
 import {
   getBreachedPasswordResponse,
@@ -16,7 +16,7 @@ import {
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { findEnterpriseAuthRequirementForEmail } from "../../enterprise-auth-requirement.js"
-import { getInvalidMcpOAuthRedirectUris } from "../../mcp/oauth-client-policy.js"
+import { getInvalidMcpOAuthRedirectUris, isAllowedMcpOAuthRedirectUri, MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION } from "../../mcp/oauth-client-policy.js"
 import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, queryValidator, tokenRoute } from "../../middleware/index.js"
 import { emptyResponse, jsonResponse } from "../../openapi.js"
@@ -35,6 +35,162 @@ function rewriteAuthRequest(request: Request, path: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
+}
+
+type McpOAuthResourceNormalization =
+  | { ok: true; changed: boolean }
+  | { ok: false; response: Response }
+
+function oauthInvalidTargetResponse(errorDescription: string, tokenEndpoint: boolean) {
+  const headers = new Headers({ "content-type": "application/json" })
+  if (tokenEndpoint) {
+    headers.set("Cache-Control", "no-store")
+    headers.set("Pragma", "no-cache")
+  }
+  return new Response(JSON.stringify({ error: "invalid_target", error_description: errorDescription }), {
+    status: 400,
+    headers,
+  })
+}
+
+function readOAuthScopeList(scope: string | null) {
+  return (normalizeMcpOAuthClientScope(scope) ?? "").split(" ").filter(Boolean)
+}
+
+function hasMcpOAuthScope(scopes: readonly string[]) {
+  return scopes.some((scope) => scope === "mcp:read" || scope === "mcp:write")
+}
+
+function readStoredOAuthClientScopes(scopes: string | null) {
+  if (!scopes) return []
+  try {
+    const parsed: unknown = JSON.parse(scopes)
+    if (Array.isArray(parsed)) {
+      return parsed.filter((entry): entry is string => typeof entry === "string")
+    }
+  } catch {
+    // Better Auth has used both JSON arrays and space-delimited strings for scopes.
+  }
+  return readOAuthScopeList(scopes)
+}
+
+function readBasicAuthClientId(headers: Headers) {
+  const authorization = headers.get("authorization")?.trim() ?? ""
+  const match = authorization.match(/^Basic\s+(.+)$/i)
+  if (!match?.[1]) return null
+
+  try {
+    const decoded = atob(match[1])
+    const separator = decoded.indexOf(":")
+    return separator > 0 ? decoded.slice(0, separator) : null
+  } catch {
+    return null
+  }
+}
+
+async function registeredClientHasMcpScope(clientId: string) {
+  const [client] = await db
+    .select({ scopes: OAuthClientTable.scopes })
+    .from(OAuthClientTable)
+    .where(eq(OAuthClientTable.clientId, clientId))
+    .limit(1)
+
+  return client ? hasMcpOAuthScope(readStoredOAuthClientScopes(client.scopes)) : false
+}
+
+function normalizeMcpOAuthResourceParams(searchParams: URLSearchParams, tokenEndpoint: boolean, resourceRequired: boolean): McpOAuthResourceNormalization {
+  const resources = searchParams.getAll("resource")
+  if (resources.length === 0) {
+    if (!resourceRequired) {
+      return { ok: true, changed: false }
+    }
+    return {
+      ok: false,
+      response: oauthInvalidTargetResponse("MCP OAuth requests must include the protected resource.", tokenEndpoint),
+    }
+  }
+  if (resources.length > 1) {
+    return {
+      ok: false,
+      response: oauthInvalidTargetResponse("MCP OAuth requests must include exactly one protected resource.", tokenEndpoint),
+    }
+  }
+
+  const normalized = normalizeMcpOAuthResource(resources[0] ?? "")
+  if (!normalized) {
+    return {
+      ok: false,
+      response: oauthInvalidTargetResponse("The requested MCP OAuth resource is not recognized by this deployment.", tokenEndpoint),
+    }
+  }
+
+  const changed = normalized !== resources[0]
+  if (!changed) {
+    return { ok: true, changed: false }
+  }
+
+  searchParams.delete("resource")
+  searchParams.append("resource", normalized)
+  return { ok: true, changed: true }
+}
+
+async function normalizeMcpOAuthUrl(request: Request) {
+  const url = new URL(request.url)
+  const clientId = url.searchParams.get("client_id")
+  const requestHasMcpScope = hasMcpOAuthScope(readOAuthScopeList(url.searchParams.get("scope")))
+  const registeredClientHasMcp = clientId ? await registeredClientHasMcpScope(clientId) : false
+  if (!requestHasMcpScope && !registeredClientHasMcp) {
+    return request
+  }
+
+  const redirectUri = url.searchParams.get("redirect_uri")
+  if (redirectUri && !isAllowedMcpOAuthRedirectUri(redirectUri)) {
+    return oauthRegistrationError(400, "invalid_redirect_uri", MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION)
+  }
+
+  const result = normalizeMcpOAuthResourceParams(url.searchParams, false, true)
+  if (!result.ok) return result.response
+  return result.changed ? new Request(url, request) : request
+}
+
+export async function normalizeMcpOAuthRequest(request: Request) {
+  const url = new URL(request.url)
+  const path = getBetterAuthProxyPath(url.pathname)
+  if (path === "/oauth2/authorize") {
+    return normalizeMcpOAuthUrl(request)
+  }
+  if (path !== "/oauth2/token") {
+    return request
+  }
+
+  if (request.method.toUpperCase() !== "POST") {
+    return request
+  }
+
+  const headers = new Headers(request.headers)
+  const contentType = headers.get("content-type")?.toLowerCase() ?? ""
+  if (!contentType.includes("application/x-www-form-urlencoded")) {
+    return request
+  }
+
+  const body = new URLSearchParams(await request.clone().text())
+
+  const clientId = body.get("client_id") ?? readBasicAuthClientId(headers)
+  const resourceRequired = clientId ? await registeredClientHasMcpScope(clientId) : false
+  const result = normalizeMcpOAuthResourceParams(body, true, resourceRequired)
+  if (!result.ok) {
+    return result.response
+  }
+  if (!result.changed) {
+    return request
+  }
+
+  headers.delete("content-length")
+  return new Request(request.url, {
+    method: request.method,
+    headers,
+    body,
+  })
 }
 
 function singleOrgModeResponse() {
@@ -195,7 +351,7 @@ async function rewriteMcpClientRegistrationRequest(request: Request, path: strin
     return oauthRegistrationError(
       400,
       "invalid_redirect_uri",
-      "MCP OAuth redirect URIs must use HTTPS, loopback HTTP, or a custom app scheme.",
+      MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION,
     )
   }
 
@@ -292,12 +448,16 @@ async function getLoginOptionAccounts(email: string) {
 }
 
 async function handleAuthRequest(request: Request) {
-  const singleOrgAuthGuardResponse = await getSingleOrgAuthGuardResponse(request)
+  const authRequest = await normalizeMcpOAuthRequest(request)
+  if (authRequest instanceof Response) {
+    return authRequest
+  }
+  const singleOrgAuthGuardResponse = await getSingleOrgAuthGuardResponse(authRequest)
   if (singleOrgAuthGuardResponse) {
     return singleOrgAuthGuardResponse
   }
 
-  const emailPasswordAttempt = await readEmailPasswordSignInAttempt(request)
+  const emailPasswordAttempt = await readEmailPasswordSignInAttempt(authRequest)
   if (emailPasswordAttempt) {
     const lockoutResponse = await getEmailPasswordLockoutResponse(emailPasswordAttempt)
     if (lockoutResponse) {
@@ -305,12 +465,12 @@ async function handleAuthRequest(request: Request) {
     }
   }
 
-  const shortPasswordResponse = await getShortPasswordResponse(request)
+  const shortPasswordResponse = await getShortPasswordResponse(authRequest)
   if (shortPasswordResponse) {
     return shortPasswordResponse
   }
 
-  const breachedPasswordResponse = await getBreachedPasswordResponse(request)
+  const breachedPasswordResponse = await getBreachedPasswordResponse(authRequest)
   if (breachedPasswordResponse) {
     return breachedPasswordResponse
   }
@@ -320,11 +480,11 @@ async function handleAuthRequest(request: Request) {
   // session, so explicitly revoke the bearer row first; auth.handler still
   // runs to preserve its normal idempotent response and cookie cleanup for
   // browser callers.
-  if (isBetterAuthSignOutRequest(request)) {
-    await revokeBearerSession(request.headers)
+  if (isBetterAuthSignOutRequest(authRequest)) {
+    await revokeBearerSession(authRequest.headers)
   }
 
-  const response = await auth.handler(request)
+  const response = await auth.handler(authRequest)
   if (emailPasswordAttempt) {
     await recordEmailPasswordSignInResult(emailPasswordAttempt, response)
   }
@@ -347,7 +507,11 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
   app.post("/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
   app.post("/api/auth/oauth2/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
   app.get("/api/auth/oauth2/authorize", tokenRoute, async (c) => {
-    const response = await auth.handler(c.req.raw)
+    const authRequest = await normalizeMcpOAuthRequest(c.req.raw)
+    if (authRequest instanceof Response) {
+      return authRequest
+    }
+    const response = await auth.handler(authRequest)
     return normalizeOAuthAuthorizeRedirect(response)
   })
 

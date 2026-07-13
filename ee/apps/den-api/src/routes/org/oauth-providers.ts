@@ -16,6 +16,7 @@ import {
   createPkcePair,
   exchangeCodeForTokens,
   OAuthClientConfigurationError,
+  OAuthTokenExchangeError,
   resolvePublicOrigin,
   verifyOAuthStateToken,
 } from "../../capability-sources/generic-oauth.js"
@@ -449,7 +450,38 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           }), 400)
         }
       } catch (error) {
-        return c.html(connectCallbackPage({ ok: false, name: provider.displayName, message: error instanceof Error ? error.message : String(error) }), 400)
+        const requestId = c.get("requestId")
+        if (error instanceof OAuthTokenExchangeError) {
+          console.error("native_oauth_connect_callback_token_exchange_failed", {
+            requestId,
+            organizationId: statePayload.organizationId,
+            providerId,
+            phase: error.phase,
+            code: error.code,
+            ...error.details,
+          })
+          return c.html(connectCallbackPage({
+            ok: false,
+            name: provider.displayName,
+            message: error.message,
+            referenceId: requestId,
+          }), 400)
+        }
+
+        console.error("native_oauth_connect_callback_failed", {
+          requestId,
+          organizationId: statePayload.organizationId,
+          providerId,
+          phase: "AUTH_TOKEN_ACQUISITION",
+          code: "oauth_callback_failed",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        })
+        return c.html(connectCallbackPage({
+          ok: false,
+          name: provider.displayName,
+          message: "OpenWork could not finish the OAuth connection. Try Connect again; if it still fails, contact support with the diagnostic reference.",
+          referenceId: requestId,
+        }), 400)
       }
 
       return c.html(connectCallbackPage({ ok: true, name: provider.displayName }))
