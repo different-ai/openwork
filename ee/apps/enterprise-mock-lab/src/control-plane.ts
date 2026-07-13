@@ -359,7 +359,9 @@ export class PackageBackedEnterpriseMockLab implements EnterpriseMockLabControlP
       }
       const next = scenarioForFault(record.scenario, fault, record.scenario.revision + 1)
       try {
-        await record.controller.updateScenario(next, input.expectedRevision)
+        await record.controller.updateScenario(next, input.expectedRevision, {
+          credentialContinuity: input.credentialContinuity ?? "reset",
+        })
         record.scenario = next
         record.lastError = null
         record.lastProbe = null

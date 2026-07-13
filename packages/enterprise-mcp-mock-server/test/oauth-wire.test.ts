@@ -7,9 +7,54 @@ import {
   createEnterpriseMcpMockServer,
   getProviderProfile,
 } from "../src/index.js"
+import type { ProviderProfileId } from "../src/index.js"
 import { authorizeClient, authorizeManual, callRpc, initializeSession, rpcHeaders } from "./wire-client.js"
 
 const oauthClientSecret = "synthetic-test-client-secret-32-bytes"
+
+async function invalidClientTokenResponse(profileId: ProviderProfileId): Promise<Response> {
+  const scenario = createDefaultScenario(profileId)
+  const profile = getProviderProfile(profileId)
+  const server = createEnterpriseMcpMockServer({ scenario, secrets: { oauthClientSecret } })
+  await server.start()
+  try {
+    const verifier = "wire-test-pkce-verifier-with-more-than-43-characters-1234567890"
+    const challenge = createHash("sha256").update(verifier).digest("base64url")
+    const redirectUri = scenario.oauth.redirectUris[0]
+    assert.ok(redirectUri)
+    const authorize = new URL(profile.oauth.authorizationPath, server.baseUrl)
+    authorize.searchParams.set("response_type", "code")
+    authorize.searchParams.set("client_id", scenario.oauth.clientId)
+    authorize.searchParams.set("redirect_uri", redirectUri)
+    authorize.searchParams.set("scope", scenario.oauth.authorizationScopes.join(" "))
+    authorize.searchParams.set("resource", server.mcpUrl)
+    authorize.searchParams.set("state", "invalid-client-state")
+    authorize.searchParams.set("code_challenge", challenge)
+    authorize.searchParams.set("code_challenge_method", "S256")
+    const authorizeResponse = await fetch(authorize, { redirect: "manual" })
+    assert.equal(authorizeResponse.status, 302)
+    const location = authorizeResponse.headers.get("location")
+    assert.ok(location)
+    const code = new URL(location).searchParams.get("code")
+    assert.ok(code)
+
+    return await fetch(new URL(profile.oauth.tokenPath, server.baseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: scenario.oauth.clientId,
+        client_secret: "wrong-secret-must-not-be-echoed",
+        redirect_uri: redirectUri,
+        code,
+        code_verifier: verifier,
+        resource: server.mcpUrl,
+      }),
+    })
+  } finally {
+    await server.stop()
+  }
+}
 
 test("ServiceNow profile exposes exact manual OAuth topology and enforces exact redirects", async () => {
   const scenario = createDefaultScenario("servicenow-inbound-quickstart")
@@ -48,6 +93,35 @@ test("ServiceNow profile exposes exact manual OAuth topology and enforces exact 
   } finally {
     await server.stop()
   }
+})
+
+test("Microsoft and ServiceNow retain distinct safe invalid-client evidence", async () => {
+  const microsoftResponse = await invalidClientTokenResponse("microsoft-enterprise")
+  assert.equal(microsoftResponse.status, 401)
+  const microsoftValue: unknown = JSON.parse(await microsoftResponse.text())
+  const microsoftError = z.object({
+    error: z.literal("invalid_client"),
+    error_description: z.string(),
+    error_codes: z.tuple([z.literal(7_000_215)]),
+    timestamp: z.string(),
+    trace_id: z.string().uuid(),
+    correlation_id: z.string().uuid(),
+  }).parse(microsoftValue)
+  assert.match(microsoftError.error_description, /AADSTS7000215/)
+  assert.match(microsoftError.error_description, /client secret value, not the client secret ID/)
+  assert.doesNotMatch(microsoftError.error_description, /wrong-secret-must-not-be-echoed/)
+
+  const serviceNowResponse = await invalidClientTokenResponse("servicenow-inbound-quickstart")
+  assert.equal(serviceNowResponse.status, 401)
+  const serviceNowValue: unknown = JSON.parse(await serviceNowResponse.text())
+  const serviceNowError = z.object({
+    error: z.literal("invalid_client"),
+    error_description: z.string(),
+  }).strict().parse(serviceNowValue)
+  assert.match(serviceNowError.error_description, /ServiceNow OAuth application/)
+  assert.match(serviceNowError.error_description, /client ID and client secret/)
+  assert.doesNotMatch(serviceNowError.error_description, /wrong-secret-must-not-be-echoed/)
+  assert.doesNotMatch(serviceNowError.error_description, /AADSTS/)
 })
 
 test("dynamic registration retains none and client_secret_post authentication methods", async () => {

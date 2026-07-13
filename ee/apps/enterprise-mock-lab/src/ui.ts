@@ -150,7 +150,7 @@ function renderInstance(instance: LabInstanceView, faults: readonly LabFault[], 
     </div>
     <section class="subsection" aria-labelledby="fault-${escapeHtml(instance.id)}">
       <h4 id="fault-${escapeHtml(instance.id)}">Configure the next scenario revision</h4>
-      <p class="muted">One fault at a time keeps the first failure unambiguous. Existing requests finish on the revision they started with.</p>
+      <p class="muted">One fault at a time keeps the first failure unambiguous. Existing requests finish before the new revision activates.</p>
       <form method="post" action="/api/v1/instances/${encodeURIComponent(instance.id)}/scenario" class="form-grid">
         <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
         <input type="hidden" name="expectedRevision" value="${instance.scenarioRevision}">
@@ -159,6 +159,12 @@ function renderInstance(instance: LabInstanceView, faults: readonly LabFault[], 
           <option value="">Healthy baseline</option>
           ${applicableFaults.map((fault) => `<option value="${escapeHtml(fault.id)}"${fault.id === instance.activeFault?.id ? " selected" : ""}>${escapeHtml(fault.diagnosticLevel)} · ${escapeHtml(fault.phase)} · ${escapeHtml(fault.name)}</option>`).join("")}
         </select>
+        <label for="continuity-${escapeHtml(instance.id)}-select">Connection state across this revision</label>
+        <select id="continuity-${escapeHtml(instance.id)}-select" name="credentialContinuity">
+          <option value="preserve-compatible-oauth" selected>Preserve compatible OAuth credential; start a new MCP session</option>
+          <option value="reset">Reset all OAuth and MCP connection state</option>
+        </select>
+        <p class="fine-print continuity-help">Use preserve mode to iterate catalog and provider-operation scenarios with the same connected Den credential. OAuth-layer faults require reset mode followed by a new Connect.</p>
         <button type="submit">Apply new revision</button>
       </form>
       ${instance.activeFault ? `<div class="fault-explainer"><strong>Diagnostic level:</strong> ${escapeHtml(instance.activeFault.diagnosticLevel)}<br><strong>Expected first failure:</strong> ${escapeHtml(instance.activeFault.expectedFirstFailedPhase)} · ${escapeHtml(instance.activeFault.expectedCategory)}<br>${escapeHtml(instance.activeFault.description)}</div>` : ""}
@@ -244,6 +250,7 @@ input:focus, select:focus, textarea:focus, button:focus, a:focus { outline: 3px 
 .stack { display: grid; gap: .65rem; }
 .form-grid { display: grid; grid-template-columns: minmax(10rem, .45fr) minmax(14rem, 1fr); gap: .85rem 1.2rem; align-items: center; }
 .form-grid > button, .form-grid > fieldset { grid-column: 2; }
+.form-grid > .continuity-help { grid-column: 2; margin: 0; }
 .secret-fields { display: grid; grid-template-columns: minmax(10rem, .45fr) minmax(12rem, 1fr); gap: .75rem; margin: .5rem 0; padding: 1rem; border: 1px solid #d7dfdc; border-radius: .6rem; }
 .secret-fields legend { font-weight: 700; }
 .secret-fields .fine-print { grid-column: 1 / -1; }
@@ -279,7 +286,7 @@ table { width: 100%; border-collapse: collapse; font-size: .88rem; }
 th, td { padding: .6rem; border-bottom: 1px solid #dce4e1; text-align: left; vertical-align: top; }
 code { overflow-wrap: anywhere; }
 .uri-list { margin: .25rem 0 0; padding-left: 1.25rem; }
-@media (max-width: 680px) { .site-header, .instance-header { align-items: stretch; flex-direction: column; } .form-grid, .secret-fields, .comparison-grid { grid-template-columns: 1fr; } .form-grid > button, .form-grid > fieldset, .secret-fields .fine-print { grid-column: 1; } .actions { align-items: stretch; flex-direction: column; } .actions form, .actions button { width: 100%; } }
+@media (max-width: 680px) { .site-header, .instance-header { align-items: stretch; flex-direction: column; } .form-grid, .secret-fields, .comparison-grid { grid-template-columns: 1fr; } .form-grid > button, .form-grid > fieldset, .form-grid > .continuity-help, .secret-fields .fine-print { grid-column: 1; } .actions { align-items: stretch; flex-direction: column; } .actions form, .actions button { width: 100%; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 @media (prefers-color-scheme: dark) { :root { color: #e8efed; background: #101817; } .panel, .instance-card, .profile-card, .empty-state, .login-card { color: #e8efed; background: #172320; border-color: #354944; } input, select, textarea { color: #eef5f3; background: #101817; border-color: #4a625c; } .login-shell { background: #101817; } .button--secondary { color: #e8efed; background: #354944; } .endpoint, .fault-explainer, .comparison { background: #20332f; } .comparison--mismatch { background: #4a3024; } .muted, .fine-print, .facts dt { color: #aebdb9; } }
 `

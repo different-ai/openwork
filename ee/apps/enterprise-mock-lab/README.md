@@ -43,6 +43,8 @@ Optional environment variables:
 
 Only one fault is active at a time. That keeps the first failing phase attributable. A scenario update uses optimistic revision checks, so stale browser tabs cannot silently overwrite a newer configuration.
 
+The scenario form explicitly defaults to **Preserve compatible OAuth credential; start a new MCP session**. This mode is limited to revisions whose provider fixture, endpoint/resource, client registration, exact redirects, and scopes are unchanged. It retains only unexpired OAuth client/access/refresh authority; authorization codes, MCP sessions, operation records, fault counters, and earlier events are cleared. Select **Reset all OAuth and MCP connection state** for a fully isolated run. OAuth discovery, registration, consent, token, audience, and scope faults require reset mode and a new **Connect**, because an already-issued credential has legitimately passed those phases.
+
 ## Security properties
 
 - Control and data planes use different listeners.
@@ -71,3 +73,5 @@ Authenticated endpoints are versioned under `/api/v1`:
 Browser forms send the CSRF token in the request body. JSON clients send it in `X-CSRF-Token`. Both must send the exact configured control-plane `Origin`.
 
 `POST /api/v1/instances` accepts `redirectUris` as a JSON array or, from the browser form, one URI per line. The list is validated by the package redirect-safety contract and bounded to 1–10 exact URIs. Omitting the JSON property uses the scenario's local callback default; sending an empty list is invalid.
+
+`POST /api/v1/instances/:id/scenario` accepts `credentialContinuity` as `reset` or `preserve-compatible-oauth`. API callers that omit it retain the backward-compatible `reset` behavior; the manager-facing HTML form sends the preserve-compatible mode explicitly.

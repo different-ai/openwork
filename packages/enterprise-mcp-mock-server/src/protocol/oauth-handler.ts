@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto"
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { z } from "zod"
 import type { EnterpriseMcpScenario } from "../contracts/scenario.js"
@@ -60,6 +60,35 @@ function emitFault(context: OAuthRequestContext, summary: string): void {
     summary,
     details: { faultId: fault.id, category: fault.category },
   })
+}
+
+function sendInvalidClient(context: OAuthRequestContext): void {
+  const { response, profile, scenario, state, correlationId } = context
+  if (profile.provider === "microsoft") {
+    const traceId = randomUUID()
+    const timestamp = new Date(state.now()).toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z")
+    sendJson(response, 401, {
+      error: "invalid_client",
+      error_description: `AADSTS7000215: Invalid client secret provided. Ensure the secret being sent in the request is the client secret value, not the client secret ID, for a secret added to app '${scenario.oauth.clientId}'. Trace ID: ${traceId} Correlation ID: ${correlationId} Timestamp: ${timestamp}`,
+      error_codes: [7_000_215],
+      timestamp,
+      trace_id: traceId,
+      correlation_id: correlationId,
+    })
+    return
+  }
+
+  if (profile.provider === "servicenow") {
+    sendOAuthError(
+      response,
+      401,
+      "invalid_client",
+      "Client authentication failed. Verify the client ID and client secret configured for this ServiceNow OAuth application.",
+    )
+    return
+  }
+
+  sendOAuthError(response, 401, "invalid_client", "The synthetic OAuth client was rejected")
 }
 
 export async function handleOAuthRequest(context: OAuthRequestContext): Promise<boolean> {
@@ -273,7 +302,7 @@ export async function handleOAuthRequest(context: OAuthRequestContext): Promise<
         : client?.tokenEndpointAuthMethod === "client_secret_post" && safeEqual(client.clientSecret, clientSecret)
     if (faultApplies(context, "reject-client") || !client || !clientAuthenticationValid) {
       if (context.activeFault?.effect === "reject-client") emitFault(context, "Rejected the OAuth client during token exchange")
-      sendOAuthError(response, 401, "invalid_client", "The synthetic OAuth client was rejected")
+      sendInvalidClient(context)
       return true
     }
 
@@ -331,7 +360,7 @@ export async function handleOAuthRequest(context: OAuthRequestContext): Promise<
         ? clientSecret.length === 0
         : client?.tokenEndpointAuthMethod === "client_secret_post" && safeEqual(client.clientSecret, clientSecret)
     if (!client || !clientAuthenticationValid || (targetClientId !== undefined && targetClientId !== clientId)) {
-      sendOAuthError(response, 401, "invalid_client", "The synthetic OAuth client was rejected")
+      sendInvalidClient(context)
       return true
     }
     const familyId = accessToken?.familyId ?? refreshToken?.familyId

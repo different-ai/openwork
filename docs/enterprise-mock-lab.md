@@ -159,6 +159,8 @@ A scenario is data, not a web of ad hoc conditionals. Its essential shape is:
 
 The lab allows one active fault by default. Applying a change creates a new positive integer revision. The caller must send `expectedRevision`; a stale write receives a conflict instead of silently overwriting another developer's scenario. A request uses the scenario revision it started with, so a mid-request admin change cannot make its evidence internally inconsistent.
 
+Scenario activation has an explicit credential-continuity choice. The manager-facing form selects `preserve-compatible-oauth` for catalog and provider-operation iteration: after draining active requests, the lab keeps only compatible, unexpired OAuth client/access/refresh authority and requires the client to create a new MCP session. Pending authorization codes, prior MCP sessions, operation records, fault counters, and prior events never cross the revision boundary. Preservation is rejected if the fixed endpoint/resource, provider fixture, client registration, exact redirects, or scopes changed. API callers can send `reset` for the original full reset behavior, and omission still means `reset` for backward compatibility. OAuth-layer faults require full reset and a fresh **Connect**; an already-issued credential cannot honestly exercise discovery, registration, consent, or token acquisition again.
+
 `Reset` clears runtime state and safe events but intentionally keeps the active scenario. To recover to the healthy baseline, reset the instance, apply a new revision with no fault, and probe again.
 
 ## Fault-to-first-failure matrix
@@ -174,7 +176,7 @@ Each fault also has a machine-readable diagnostic level. `connection` means OAut
 | `oauth-issuer-mismatch` | `AUTH_ISSUER_DISCOVERY` | `oauth_discovery_issuer` | Authorization-server metadata issuer |
 | `oauth-pkce-s256-unsupported` | `AUTH_ISSUER_DISCOVERY` | `oauth_pkce_unsupported` | Authorization server's PKCE capabilities |
 | `oauth-dynamic-registration-unsupported` | `AUTH_CLIENT_REGISTRATION` | `oauth_client_registration` | OAuth dynamic client registration endpoint |
-| `oauth-invalid-client` | `AUTH_TOKEN_ACQUISITION` | `oauth_client_registration` | Token endpoint client authentication |
+| `oauth-invalid-client` | `AUTH_TOKEN_ACQUISITION` | `oauth_client_registration` | Token endpoint client authentication; Microsoft fixtures emit safe `AADSTS7000215` trace/correlation evidence, while ServiceNow fixtures emit provider-specific credential remediation. Both remain synthetic fixtures, not captured customer responses. |
 | `oauth-invalid-grant` | `AUTH_TOKEN_ACQUISITION` | `oauth_token` | Token endpoint authorization grant validation |
 | `oauth-wrong-resource-audience` | `AUTH_RESOURCE_VALIDATION` | `oauth_wrong_audience` | MCP resource server's token audience/resource validation |
 | `oauth-insufficient-scope` | `AUTH_RESOURCE_VALIDATION` | `oauth_insufficient_scope` | MCP resource server's required scope validation |
@@ -195,6 +197,12 @@ Each fault also has a machine-readable diagnostic level. `connection` means OAut
 | `mutation-timeout-after-commit` | `PROVIDER_EXECUTION` | `mutation_indeterminate` | Provider mutation outcome after a disconnect; reconcile before any replay |
 
 Fault applicability is all profiles except for two deliberate boundaries: `oauth-dynamic-registration-unsupported` applies only to `synthetic-enterprise-oauth-mcp`, because the documented enterprise profiles use manual registration; `mutation-timeout-after-commit` applies only to profiles with mutation tools and therefore excludes the read-only `microsoft-enterprise` profile.
+
+### Live Microsoft 365 lesson represented by the fixture
+
+On 2026-07-13, a development Microsoft 365 connection completed provider sign-in and returned to the Den API callback, then failed at token acquisition with HTTP 401, OAuth `invalid_client`, and Entra code `AADSTS7000215`. The saved tenant and client IDs matched the active app registration, but Den held a different client-secret value. Replacing the secret value and starting a fresh authorization completed the connection.
+
+That incident proves why the lab separates authorization from token acquisition and why a plain `Token request failed with status 401` is insufficient. The Microsoft `oauth-invalid-client` fixture reproduces the safe error code and correlation shape. It does not contain the development tenant, application ID, secret, authorization code, token, or customer content, and it remains a synthetic Entra response rather than a claim of live-provider conformance.
 
 Configuration errors, DNS, TCP, TLS, proxy/WAF behavior, and real browser consent are intentionally outside the in-process fault catalog. Test them with a bad hostname, a reserved closed port, a self-signed TLS harness, or the target enterprise network. Do not fake those failures as an HTTP response from an already-reached server; that would assign the wrong first failed phase.
 

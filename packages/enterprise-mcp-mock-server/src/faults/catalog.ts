@@ -69,7 +69,7 @@ const faults = deepFreeze(faultDefinitionSchema.array().parse([
   {
     id: "oauth-invalid-client",
     displayName: "OAuth client rejected",
-    description: "Token exchange returns invalid_client for a syntactically valid client request.",
+    description: "Token exchange returns a provider-shaped invalid_client response for a syntactically valid request: Microsoft profiles include safe AADSTS7000215 correlation evidence, while ServiceNow retains its own remediation wording.",
     phase: "AUTH_TOKEN_ACQUISITION",
     category: "oauth_client_registration",
     retryable: false,

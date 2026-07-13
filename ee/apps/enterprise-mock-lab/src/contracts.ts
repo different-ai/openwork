@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { oauthRedirectUriSchema } from "@openwork/enterprise-mcp-mock-server"
+import { oauthRedirectUriSchema, scenarioCredentialContinuitySchema } from "@openwork/enterprise-mcp-mock-server"
 
 const redirectUrisInputSchema = z.preprocess(
   (value) => typeof value === "string"
@@ -26,6 +26,7 @@ export const createInstanceInputSchema = z.object({
 })
 
 export const updateScenarioInputSchema = z.object({
+  credentialContinuity: scenarioCredentialContinuitySchema.optional(),
   faultId: z.string().trim().max(120).nullable().optional(),
   expectedRevision: z.coerce.number().int().nonnegative(),
 })

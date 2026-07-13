@@ -81,6 +81,7 @@ describe("package-backed Enterprise Mock Lab", () => {
     })
 
     const faulted = await lab.updateScenario(created.id, {
+      credentialContinuity: "preserve-compatible-oauth",
       expectedRevision: 1,
       faultId: "mcp-version-unsupported",
     })
@@ -99,7 +100,11 @@ describe("package-backed Enterprise Mock Lab", () => {
     expect(failedAsDesigned.events.some((event) => event.category === "fault" && event.phase === "MCP_VERSION")).toBe(true)
     expect(JSON.stringify(failedAsDesigned)).not.toContain(CLIENT_SECRET)
 
-    await lab.updateScenario(created.id, { expectedRevision: 2, faultId: null })
+    await lab.updateScenario(created.id, {
+      credentialContinuity: "preserve-compatible-oauth",
+      expectedRevision: 2,
+      faultId: null,
+    })
     await lab.reset(created.id)
     const recovered = await lab.probe(created.id)
     expect(recovered.lastProbe?.matchesExpectation).toBe(true)

@@ -72,15 +72,36 @@ export interface CreateEnterpriseMcpMockServerOptions {
   readonly environment?: EnterpriseMcpMockEnvironment
 }
 
+export const scenarioCredentialContinuitySchema = z.enum(["reset", "preserve-compatible-oauth"])
+export type ScenarioCredentialContinuity = z.infer<typeof scenarioCredentialContinuitySchema>
+
+export interface UpdateScenarioOptions {
+  readonly credentialContinuity?: ScenarioCredentialContinuity
+}
+
 export interface EnterpriseMcpMockServer {
   readonly baseUrl: string
   readonly mcpUrl: string
   start(): Promise<RuntimeSnapshot>
   stop(): Promise<RuntimeSnapshot>
   reset(): Promise<RuntimeSnapshot>
-  updateScenario(next: EnterpriseMcpScenario, expectedRevision: number): Promise<RuntimeSnapshot>
+  updateScenario(
+    next: EnterpriseMcpScenario,
+    expectedRevision: number,
+    options?: UpdateScenarioOptions,
+  ): Promise<RuntimeSnapshot>
   snapshot(): RuntimeSnapshot
   events(): readonly SafeTraceEvent[]
+}
+
+export class ScenarioCredentialContinuityError extends Error {
+  constructor(
+    readonly code: "fixed_port_required" | "incompatible_oauth_authority" | "unsupported_mode",
+    message: string,
+  ) {
+    super(message)
+    this.name = "ScenarioCredentialContinuityError"
+  }
 }
 
 export class ScenarioRevisionConflictError extends Error {

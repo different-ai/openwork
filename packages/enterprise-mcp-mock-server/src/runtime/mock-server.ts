@@ -2,13 +2,19 @@ import { randomBytes, randomUUID } from "node:crypto"
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import type { Socket } from "node:net"
 import { ZodError } from "zod"
-import { enterpriseMcpMockSecretsSchema, ScenarioRevisionConflictError } from "../contracts/runtime.js"
+import {
+  enterpriseMcpMockSecretsSchema,
+  scenarioCredentialContinuitySchema,
+  ScenarioCredentialContinuityError,
+  ScenarioRevisionConflictError,
+} from "../contracts/runtime.js"
 import type {
   CreateEnterpriseMcpMockServerOptions,
   EnterpriseMcpMockServer,
   RuntimeSnapshot,
   SafeTraceEvent,
   EnterpriseMcpMockEnvironment,
+  UpdateScenarioOptions,
 } from "../contracts/runtime.js"
 import { scenarioSchema, type EnterpriseMcpScenario } from "../contracts/scenario.js"
 import { getProviderProfile } from "../profiles/profiles.js"
@@ -20,6 +26,10 @@ import { HttpInputError, requestUrl, sendJson } from "../protocol/http-utils.js"
 
 const defaultHost = "127.0.0.1"
 const shutdownGraceMs = 500
+
+function sameExactStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
 
 function validateHost(host: string): void {
   if (host !== "127.0.0.1" && host !== "::1") {
@@ -132,7 +142,11 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
     })
   }
 
-  async updateScenario(nextValue: EnterpriseMcpScenario, expectedRevision: number): Promise<RuntimeSnapshot> {
+  async updateScenario(
+    nextValue: EnterpriseMcpScenario,
+    expectedRevision: number,
+    options: UpdateScenarioOptions = {},
+  ): Promise<RuntimeSnapshot> {
     return this.serializeLifecycle(async () => {
       const currentRevision = this.state.scenario.revision
       if (currentRevision !== expectedRevision) throw new ScenarioRevisionConflictError(expectedRevision, currentRevision)
@@ -140,11 +154,21 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
       if (next.revision !== expectedRevision + 1) {
         throw new Error(`Next scenario revision must be ${expectedRevision + 1}`)
       }
+      const parsedContinuity = scenarioCredentialContinuitySchema.safeParse(options.credentialContinuity ?? "reset")
+      if (!parsedContinuity.success) {
+        throw new ScenarioCredentialContinuityError("unsupported_mode", "Unsupported scenario credential-continuity mode.")
+      }
+      const credentialContinuity = parsedContinuity.data
+      if (credentialContinuity === "preserve-compatible-oauth") this.assertCompatibleOAuthContinuity(next)
       const wasRunning = this.server !== null
       const previousState = this.state
+      const previousBaseUrl = this.resolvedBaseUrl
       await this.stopListener()
       this.resolvedBaseUrl = null
       const nextState = this.createState(next, previousState.instanceId)
+      if (credentialContinuity === "preserve-compatible-oauth") {
+        nextState.inheritEstablishedOAuthAuthority(previousState)
+      }
       this.state = nextState
       nextState.setRuntime(wasRunning ? "idle" : "stopped", null)
       this.state.emit({
@@ -155,12 +179,29 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
         kind: "lifecycle",
         outcome: "completed",
         summary: "Activated a new immutable mock scenario revision",
-        details: { revision: next.revision, profileId: next.profileId, faultId: next.activeFault?.id ?? null },
+        details: {
+          revision: next.revision,
+          profileId: next.profileId,
+          faultId: next.activeFault?.id ?? null,
+          credentialContinuity,
+        },
       })
       if (!wasRunning) return this.snapshot()
       try {
-        return await this.startUnsafe()
+        const activated = await this.startUnsafe()
+        if (credentialContinuity === "preserve-compatible-oauth" && activated.baseUrl !== previousBaseUrl) {
+          throw new ScenarioCredentialContinuityError(
+            "incompatible_oauth_authority",
+            "The restarted data plane did not retain its exact OAuth resource URL.",
+          )
+        }
+        return activated
       } catch (activationError) {
+        try {
+          await this.stopListener()
+        } catch {
+          // The rollback attempt below is the authoritative recovery result.
+        }
         this.state = previousState
         previousState.setRuntime("idle", null)
         try {
@@ -240,6 +281,38 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
     return new InstanceState(scenario, getProviderProfile(scenario.profileId), knownSecrets, this.environment, instanceId)
   }
 
+  private assertCompatibleOAuthContinuity(next: EnterpriseMcpScenario): void {
+    if (this.configuredPort === 0) {
+      throw new ScenarioCredentialContinuityError(
+        "fixed_port_required",
+        "Preserving OAuth authority requires a fixed mock-server port so the protected resource URL cannot change.",
+      )
+    }
+    const current = this.state.scenario
+    const currentProfile = this.state.profile
+    const nextProfile = getProviderProfile(next.profileId)
+    const formattedHost = this.host === "::1" ? "[::1]" : this.host
+    const baseUrl = `http://${formattedHost}:${this.configuredPort}`
+    const currentEndpoint = new URL(currentProfile.endpointPath, baseUrl).href
+    const nextEndpoint = new URL(nextProfile.endpointPath, baseUrl).href
+    const compatible =
+      current.profileId === next.profileId &&
+      current.profileFixtureVersion === next.profileFixtureVersion &&
+      currentProfile.endpointPath === nextProfile.endpointPath &&
+      currentEndpoint === nextEndpoint &&
+      current.oauth.registration === next.oauth.registration &&
+      current.oauth.clientId === next.oauth.clientId &&
+      sameExactStrings(current.oauth.redirectUris, next.oauth.redirectUris) &&
+      sameExactStrings(current.oauth.authorizationScopes, next.oauth.authorizationScopes) &&
+      sameExactStrings(current.oauth.requiredResourceScopes, next.oauth.requiredResourceScopes)
+    if (!compatible) {
+      throw new ScenarioCredentialContinuityError(
+        "incompatible_oauth_authority",
+        "Cannot preserve OAuth authority because the provider, endpoint, resource, client registration, redirects, or scopes changed.",
+      )
+    }
+  }
+
   private seedManualClient(): void {
     const { scenario, profile } = this.state
     if (scenario.oauth.registration !== "manual" || this.state.clients.has(scenario.oauth.clientId)) return
@@ -310,7 +383,10 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
     const server = this.server
     if (!server) return
     this.server = null
-    const closing = close(server)
+    let closedGracefully = false
+    const closing = close(server).then(() => {
+      closedGracefully = true
+    })
     let timeout: ReturnType<typeof setTimeout> | undefined
     const deadline = new Promise<void>((resolve) => {
       timeout = setTimeout(resolve, shutdownGraceMs)
@@ -318,12 +394,12 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
     })
     await Promise.race([closing, deadline])
     if (timeout) clearTimeout(timeout)
-    if (this.activeRequestCount > 0 || this.sockets.size > 0) {
+    if (!closedGracefully && (this.activeRequestCount > 0 || this.sockets.size > 0)) {
       for (const socket of this.sockets) socket.destroy()
-      this.sockets.clear()
-      this.activeRequestCount = 0
     }
     await closing
+    this.sockets.clear()
+    this.activeRequestCount = 0
     this.resolvedBaseUrl = null
   }
 

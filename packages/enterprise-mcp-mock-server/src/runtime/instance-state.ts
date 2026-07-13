@@ -183,6 +183,20 @@ export class InstanceState {
     this.sessions.clear()
   }
 
+  inheritEstablishedOAuthAuthority(source: InstanceState): void {
+    this.clearEphemeralState()
+    this.clearEvents()
+    source.maintainBounds(this.environment.now())
+    for (const [clientId, client] of source.clients) this.clients.set(clientId, client)
+    for (const [accessToken, token] of source.tokens) {
+      if (this.clients.has(token.clientId)) this.tokens.set(accessToken, token)
+    }
+    for (const [refreshToken, token] of source.refreshTokens) {
+      if (this.clients.has(token.clientId)) this.refreshTokens.set(refreshToken, token)
+    }
+    this.maintainBounds(this.environment.now())
+  }
+
   maintainBounds(now = this.environment.now()): void {
     for (const [key, client] of this.clients) {
       if (client.expiresAt !== null && client.expiresAt < now) this.clients.delete(key)

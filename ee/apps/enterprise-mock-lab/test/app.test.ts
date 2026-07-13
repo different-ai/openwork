@@ -86,6 +86,7 @@ function instance(overrides: Partial<LabInstanceView> = {}): LabInstanceView {
 
 class FakeControlPlane implements EnterpriseMockLabControlPlane {
   createdInput: CreateInstanceInput | undefined
+  lastUpdateInput: UpdateScenarioInput | undefined
   current = instance()
 
   catalog() {
@@ -156,6 +157,7 @@ class FakeControlPlane implements EnterpriseMockLabControlPlane {
 
   async updateScenario(id: string, input: UpdateScenarioInput) {
     this.#require(id)
+    this.lastUpdateInput = input
     if (input.expectedRevision !== this.current.scenarioRevision) throw new ControlPlaneError("conflict", "stale")
     this.current = instance({
       activeFault: input.faultId ? fault : null,
@@ -251,6 +253,9 @@ describe("Enterprise Mock Lab control-plane HTTP boundary", () => {
     expect(html).toContain('value="servicenow-inbound-quickstart" selected')
     expect(html).toContain('name="redirectUris"')
     expect(html).toContain("Exact OAuth redirect URIs (1)")
+    expect(html).toContain("Connection state across this revision")
+    expect(html).toContain('value="preserve-compatible-oauth" selected')
+    expect(html).toContain("OAuth-layer faults require reset mode followed by a new Connect")
     expect(html).toContain("connection=&lt;script&gt;alert(1)&lt;/script&gt;&amp;mode=test")
     expect(html).not.toContain(hostileButSafeRedirect)
     expect(html).toContain('type="password"')
@@ -483,5 +488,48 @@ describe("Enterprise Mock Lab control-plane HTTP boundary", () => {
     })
     expect(stale.status).toBe(409)
     expect(await stale.json()).toMatchObject({ error: "conflict" })
+  })
+
+  test("sends explicit preserve/reset continuity choices through form and JSON scenario updates", async () => {
+    const { app, controlPlane } = createFixture()
+    const cookie = await login(app)
+    const formResponse = await app.request(`${ORIGIN}/api/v1/instances/instance-1/scenario`, {
+      body: new URLSearchParams({
+        credentialContinuity: "preserve-compatible-oauth",
+        csrfToken: "csrf-token-value",
+        expectedRevision: "1",
+        faultId: fault.id,
+      }),
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie, origin: ORIGIN },
+      method: "POST",
+    })
+    expect(formResponse.status).toBe(303)
+    expect(controlPlane.lastUpdateInput?.credentialContinuity).toBe("preserve-compatible-oauth")
+
+    const jsonResponse = await app.request(`${ORIGIN}/api/v1/instances/instance-1/scenario`, {
+      body: JSON.stringify({ credentialContinuity: "reset", expectedRevision: 2, faultId: null }),
+      headers: {
+        "content-type": "application/json",
+        cookie,
+        origin: ORIGIN,
+        "x-csrf-token": "csrf-token-value",
+      },
+      method: "POST",
+    })
+    expect(jsonResponse.status).toBe(200)
+    expect(controlPlane.lastUpdateInput?.credentialContinuity).toBe("reset")
+
+    const invalid = await app.request(`${ORIGIN}/api/v1/instances/instance-1/scenario`, {
+      body: JSON.stringify({ credentialContinuity: "silently-keep-everything", expectedRevision: 3, faultId: null }),
+      headers: {
+        "content-type": "application/json",
+        cookie,
+        origin: ORIGIN,
+        "x-csrf-token": "csrf-token-value",
+      },
+      method: "POST",
+    })
+    expect(invalid.status).toBe(400)
+    expect(controlPlane.lastUpdateInput?.credentialContinuity).toBe("reset")
   })
 })

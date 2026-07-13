@@ -199,11 +199,17 @@ export function createEnterpriseMockLabApp(options: EnterpriseMockLabAppOptions)
     const body = await requestBody(context.req.raw)
     security.requireMutation(context.req.raw, body.csrfToken)
     const input = updateScenarioInputSchema.parse({
+      credentialContinuity: body.credentialContinuity,
       expectedRevision: body.expectedRevision,
       faultId: body.faultId === "" ? null : body.faultId,
     })
     const instance = await controlPlane.updateScenario(context.req.param("id"), input)
-    if (wantsHtml(context.req.raw)) return redirectToDashboard("A new immutable scenario revision is active.", "success", `instance-${instance.id}`)
+    if (wantsHtml(context.req.raw)) {
+      const message = input.credentialContinuity === "preserve-compatible-oauth"
+        ? "A new immutable scenario revision is active. Compatible OAuth authority was retained; prior MCP sessions were cleared."
+        : "A new immutable scenario revision is active. OAuth and MCP connection state was reset."
+      return redirectToDashboard(message, "success", `instance-${instance.id}`)
+    }
     return context.json(instance)
   })
 

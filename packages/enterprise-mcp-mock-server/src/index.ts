@@ -42,6 +42,8 @@ export {
 } from "./contracts/tool.js"
 export {
   enterpriseMcpMockSecretsSchema,
+  scenarioCredentialContinuitySchema,
+  ScenarioCredentialContinuityError,
   ScenarioRevisionConflictError,
   type CreateEnterpriseMcpMockServerOptions,
   type EnterpriseMcpMockSecrets,
@@ -51,6 +53,8 @@ export {
   type RuntimeSnapshot,
   type SafeTraceDetail,
   type SafeTraceEvent,
+  type ScenarioCredentialContinuity,
+  type UpdateScenarioOptions,
 } from "./contracts/runtime.js"
 export type { EnterpriseMcpMockServer as EnterpriseMcpMockController } from "./contracts/runtime.js"
 export { listProviderProfiles, getProviderProfile } from "./profiles/profiles.js"

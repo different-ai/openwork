@@ -13,10 +13,10 @@ This package owns the mock **data plane**. It deliberately does not import Den, 
 - Synthetic data only; no network calls leave the local mock/probe origin.
 - Tokens, codes, sessions, request bodies, client secrets, and tool arguments are not retained in trace events.
 - Bounded clients, codes, tokens, sessions, operations, counters, bodies, pages, and events.
-- Runtime lifecycle operations are serialized; reset/update stop active work before replacing state.
+- Runtime lifecycle operations are serialized; reset/update drain active work before replacing state.
 - Mutations require explicit mock approval and idempotency keys. A lost response after commit remains `indeterminate` and cannot be replayed as success.
 
-Mutation keys are scoped to the synthetic OAuth client/subject rather than globally across clients. `stop()` preserves the mutation ledger across a listener restart; `reset()`, scenario replacement, and instance deletion are explicit state-discard boundaries. Only completed `responded` entries are eligible for 24-hour expiry or bounded eviction. If 1,000 unresolved entries fill the ledger, new mutations fail closed with `MUTATION_LEDGER_CAPACITY` until the operator reconciles or resets; unresolved outcomes are never forgotten to make room.
+Mutation keys are scoped to the synthetic OAuth client/subject rather than globally across clients. `stop()` preserves the mutation ledger across a listener restart; `reset()`, scenario replacement, and instance deletion discard operations. The opt-in compatible-OAuth scenario mode still clears every operation, MCP session, authorization code, fault counter, and earlier event. Only completed `responded` entries are eligible for 24-hour expiry or bounded eviction. If 1,000 unresolved entries fill the ledger, new mutations fail closed with `MUTATION_LEDGER_CAPACITY` until the operator reconciles or resets; unresolved outcomes are never forgotten to make room.
 
 ## Public API
 
@@ -53,14 +53,18 @@ await server.stop()
 The controller exposes:
 
 - `start()` / `stop()` / `reset()`
-- `updateScenario(next, expectedRevision)` with optimistic revision checking
+- `updateScenario(next, expectedRevision, options?)` with optimistic revision checking
 - `snapshot()` with secret-free bounded state
 - `events()` with redacted phase-specific trace events
 - `baseUrl` and `mcpUrl` after startup
 
 An optional `EnterpriseMcpMockEnvironment` injects time and ID generation for deterministic tests. Secure random defaults are used otherwise.
 
+Scenario updates default to `credentialContinuity: "reset"`. A caller may explicitly request `preserve-compatible-oauth` when iterating post-authentication catalog or provider-operation faults on a fixed-port server. Preservation is rejected unless the provider fixture, endpoint/resource, OAuth registration/client, exact redirects, authorization scopes, and required resource scopes are unchanged. It copies only unexpired client registrations and their access/refresh tokens into the new state. Authorization codes, MCP sessions, operations, counters, and events are always discarded, so the client must initialize a new MCP session. OAuth-layer faults require reset mode and a new authorization flow.
+
 `oauthClientSecret` is required only when a manual profile uses `client_secret_post` (for example ServiceNow or Microsoft Enterprise). It may be empty for public-client profiles and for dynamic registration, where the mock registration endpoint issues its own synthetic credential.
+
+The `oauth-invalid-client` fault is profile-aware. Microsoft profiles return an Entra-shaped `invalid_client` response with safe `AADSTS7000215`, trace, correlation, and timestamp fields matching the failure class verified against a development tenant. ServiceNow returns an OAuth `invalid_client` response with ServiceNow-specific client-ID/client-secret remediation grounded in its setup and troubleshooting documentation. Neither fixture echoes the submitted secret, and the ServiceNow response wording remains explicitly synthetic until it is captured from an approved test instance. See the [Microsoft identity error reference](https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes) and ServiceNow's [OAuth endpoint setup](https://www.servicenow.com/docs/r/platform-security/authentication/t_CreateEndpointforExternalClients.html) and [invalid-secret troubleshooting guidance](https://www.servicenow.com/docs/r/platform-security/identity/scim-troubleshooting.html).
 
 ## Profiles
 
