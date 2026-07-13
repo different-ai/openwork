@@ -45,6 +45,13 @@ function publicOrigin(value: string | undefined, hosted: boolean): string {
   }
 }
 
+function configuredPublicOrigin(hosted: boolean): string | undefined {
+  if (hosted && process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`
+  }
+  return process.env.NEXT_PUBLIC_DIAGNOSTICS_ORIGIN
+}
+
 export function diagnosticsConfig() {
   const hosted = Boolean(process.env.VERCEL)
   return {
@@ -52,7 +59,7 @@ export function diagnosticsConfig() {
     adminUsername: process.env.DIAGNOSTICS_ADMIN_USERNAME ?? "diagnostics-admin",
     bearerToken: process.env.DIAGNOSTICS_MCP_BEARER_TOKEN ?? (hosted ? "" : "OpenWorkDiagnosticsToken!"),
     profile: profile(process.env.DIAGNOSTICS_PROFILE),
-    publicOrigin: publicOrigin(process.env.NEXT_PUBLIC_DIAGNOSTICS_ORIGIN, hosted),
+    publicOrigin: publicOrigin(configuredPublicOrigin(hosted), hosted),
     signingSecret: process.env.DIAGNOSTICS_SIGNING_SECRET ?? (hosted ? "" : "local-diagnostics-signing-secret-change-me"),
   }
 }
@@ -68,7 +75,9 @@ export function validateProductionConfig(): readonly string[] {
   if (config.signingSecret.length < 32) missing.push("DIAGNOSTICS_SIGNING_SECRET")
   if (config.bearerToken.length < 24) missing.push("DIAGNOSTICS_MCP_BEARER_TOKEN")
   if (!isDiagnosticsProfile(configuredProfile)) missing.push("DIAGNOSTICS_PROFILE")
-  if (!config.publicOrigin.startsWith("https://")) missing.push("NEXT_PUBLIC_DIAGNOSTICS_ORIGIN")
+  if (!config.publicOrigin.startsWith("https://")) {
+    missing.push(process.env.VERCEL_ENV === "preview" ? "VERCEL_URL" : "NEXT_PUBLIC_DIAGNOSTICS_ORIGIN")
+  }
   if (!redis) {
     missing.push("UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN")
   } else if (!secureRootUrl(redis.url)) {

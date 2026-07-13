@@ -9,6 +9,8 @@ afterEach(() => {
 
 function configureHostedEnvironment(): void {
   process.env.VERCEL = "1"
+  process.env.VERCEL_ENV = "production"
+  delete process.env.VERCEL_URL
   process.env.DIAGNOSTICS_ADMIN_USERNAME = "diagnostics-admin"
   process.env.DIAGNOSTICS_ADMIN_PASSWORD = "diagnostics-admin-password-unique"
   process.env.DIAGNOSTICS_SIGNING_SECRET = "diagnostics-signing-secret-that-is-unique"
@@ -35,6 +37,23 @@ describe("Diagnostics deployment configuration", () => {
     configureHostedEnvironment()
     expect(validateProductionConfig()).toEqual([])
     expect(diagnosticsRedisConfig()).toMatchObject({ source: "upstash" })
+  })
+
+  test("uses the deployment-specific Vercel URL for previews", () => {
+    configureHostedEnvironment()
+    process.env.VERCEL_ENV = "preview"
+    process.env.VERCEL_URL = "openwork-diagnostics-git-feature.vercel.app"
+
+    expect(validateProductionConfig()).toEqual([])
+    expect(diagnosticsConfig().publicOrigin).toBe("https://openwork-diagnostics-git-feature.vercel.app")
+  })
+
+  test("fails closed when a preview deployment URL is malformed", () => {
+    configureHostedEnvironment()
+    process.env.VERCEL_ENV = "preview"
+    process.env.VERCEL_URL = "openwork-diagnostics.vercel.app/not-a-root"
+
+    expect(validateProductionConfig()).toContain("VERCEL_URL")
   })
 
   test("rejects an unknown profile, insecure Redis URL, and reused secrets", () => {

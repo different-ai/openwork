@@ -59,7 +59,12 @@ Set these production environment variables:
 | `DIAGNOSTICS_SIGNING_SECRET` | Signs short-lived synthetic OAuth access tokens and stateless MCP session IDs, at least 32 characters. |
 | `DIAGNOSTICS_MCP_BEARER_TOKEN` | Synthetic diagnostic token shared with the test Den or client, at least 24 characters. Never use a provider/customer credential. |
 | `DIAGNOSTICS_PROFILE` | `generic`, `microsoft`, or `servicenow`. |
-| `NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` | `https://diagnostic.openwork.software`. |
+| `NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` | Fixed production origin, normally `https://diagnostic.openwork.software`. Preview deployments use Vercel's deployment-specific `VERCEL_URL` instead. |
+
+Keep Vercel's **Automatically expose System Environment Variables** setting
+enabled. Preview deployments derive their OAuth and MCP resource URLs from the
+deployment-specific `VERCEL_URL`; production continues to require the fixed
+`NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` allowlist hostname.
 
 Attach `diagnostic.openwork.software` in the project's Vercel **Domains**
 settings, then create the CNAME value Vercel provides at the DNS provider. The
