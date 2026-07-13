@@ -3,6 +3,25 @@
 This is the ambitious target for the experimental branch. Stages remain
 independently revertible and are promoted only when their proof gate passes.
 
+Execution is complete for the experiment. Some stages intentionally stop at a
+working vertical slice instead of claiming repository-wide convergence. Exact
+proof, metrics, and exceptions are in [RESULTS.md](./RESULTS.md).
+
+| Stage | Experiment verdict |
+| --- | --- |
+| 0. Evidence and guardrails | complete |
+| 1. Cleanup reliability | complete |
+| 2. Canonical extension contracts | complete |
+| 3. Registration kernel and test kit | complete |
+| 4. Server extension actions | complete |
+| 5. App settings composition | complete assembly slice; per-feature host-port narrowing deferred |
+| 6. Manifest ownership convergence | complete for built-in metadata and app/Den projections |
+| 7. Engine event and error boundary | partial: working read/event vertical slice; replay and remaining raw consumers deferred |
+| 8. Server and client capability packages | partial: route-family composition and owned session client schemas; broad client generation deferred |
+| 9. Desktop and host-runtime composition | partial: IPC bundles and packaged embedded-server lifecycle proven; process package deferred pending characterization |
+| 10. Den capability and cloud domains | partial: native/external MCP sources composed; unrelated cloud-domain extraction deferred |
+| 11. Presentation convergence and final prune | complete for selected Markdown and stale-code paths |
+
 ## Stage 0 — Evidence and guardrails
 
 Deliverables:

@@ -1,6 +1,6 @@
 # Composable OpenWork experiment
 
-Status: active experiment
+Status: end-to-end experiment complete; architecture proposed, not adopted
 Branch: `experiment/composable-openwork`
 Base: `different-ai/openwork@316b996ca45de0bc03f2c4880417f195eb71be7d`
 Started: 2026-07-13
@@ -103,6 +103,7 @@ pull request description is the live stage report. Runtime changes do not share
 a commit with unrelated stale-code deletion, package moves, protocol changes,
 or UI redesign.
 
-See [BASELINE.md](./BASELINE.md) for the live evidence,
-[PLAN.md](./PLAN.md) for the staged redesign, and
-[STALE-CODE-LEDGER.md](./STALE-CODE-LEDGER.md) for deletion candidates.
+See [RESULTS.md](./RESULTS.md) for the verdict, measurements, proofs, and known
+exceptions; [BASELINE.md](./BASELINE.md) for the pinned starting evidence;
+[PLAN.md](./PLAN.md) for the staged redesign; and
+[STALE-CODE-LEDGER.md](./STALE-CODE-LEDGER.md) for deletion evidence.

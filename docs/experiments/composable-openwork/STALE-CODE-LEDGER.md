@@ -13,9 +13,13 @@ deletion condition passes in the same commit.
 | `scripts/dev-web-local.sh` and `scripts/dev-den-local.sh` | high | No package/workflow/container invokes either script; the wrapper only calls the former, which `cd`s into the non-workspace controller and starts missing `src/index.ts`; current root aliases use `scripts/dev-local.mjs` | Both scripts removed; the one stale packaging paragraph now points to the live composition root; `dev:den` package-script graph verified | removed |
 | Removed Tauri/story-book paths in `scripts/find-unused.sh` | high | Those paths are absent from the live repository and no longer indexed by the audit; the live `apps/ui-demo/vite.config.ts` remains covered | Portable macOS-Bash-compatible fixture passes and audit README uses advisory bucket terminology | repaired |
 | Unreferenced AI Elements Markdown/CodeBlock pair | high | `components/ui/markdown.tsx` had no static, dynamic, barrel, convention, test, story, demo, packaging, or documentation consumer; its sole local edge was to the equally unreferenced `components/ui/code-block.tsx` | Remove the pair and its exclusive direct dependencies; app tests, typecheck, both production builds, and the unused-audit fixture pass | removed |
-| Duplicate active Markdown renderer pipeline | medium | Two reachable implementations still repeat parsing, link, and rendering behavior; removing the unrelated orphan pair does not consolidate them | Characterization fixtures prove exact output/security parity before consolidation | candidate |
-| Duplicate extension translators in app/server | medium | Same resource/config projection concepts have separate implementations | Canonical schema fixtures cover old and current payloads; all consumers migrated | candidate |
+| Duplicate active Markdown renderer pipeline | high | Both reachable renderers were characterized, then changed to delegate parsing, sanitization, highlighting, link, and text-highlight behavior to one kernel | Kernel fixtures, app tests, typecheck, both builds, and the artifact Markdown Fraimz flow pass | repaired / converged |
+| Duplicate extension manifest projections across app/Den | medium | Canonical schemas and the built-in catalog now own the shared vocabulary and app/Den projections; third-party compatibility translations remain at realm adapters | Retain adapters until every old payload fixture and consumer is inventoried; do not replace them with cross-realm executable code | partially repaired |
 | Declared but unproduced enterprise MCP contract variants | medium | `protocol-initialize` / `unknown-request` have no observed producer | Package owner decides to wire or remove; package tests and downstream typechecks pass | candidate |
+| Session `actions-provider.tsx` and `actions-store.ts` | high | No active provider, route, test, barrel, dynamic import, or packaging entry reached this 955-line state island; current session actions use the control/composer paths | Remove in an isolated commit; full app tests, typecheck, both builds, and core persistence flow pass | removed |
+| Detached settings config view | high | The three-file, 619-line view/state/section graph had no route, settings contribution, barrel, dynamic import, test, story, or packaging consumer | Remove in an isolated commit; full app tests, typecheck, both builds, and settings Fraimz proof pass | removed |
+| Legacy desktop `startOrchestratorRuntime` / `startDirectRuntime` launchers | high | Definition-only after the active desktop path moved to `engineStart -> embedded server -> createManagedOpencodeServer`; no IPC, packaging, or runtime consumer remained | Delete only the superseded functions; desktop tests, Electron typecheck, bridge snapshot, package, and packaged embedded-server lifecycle proof pass | removed |
+| Seven unused app direct dependencies | high | No app source, test, build config, script, or package entry consumed `@ai-sdk/react`, app-level `@paper-design/shaders-react`, `@radix-ui/colors`, `@radix-ui/react-use-controllable-state`, `@tanstack/react-virtual`, `cmdk`, or `streamdown` | Remove declarations, regenerate lock, and pass full app tests/typecheck/builds plus workspace install | removed |
 
 ## Required evidence for every removal
 
@@ -67,7 +71,8 @@ review. Neither bucket authorizes deletion without the evidence above.
 
 Validation was run through the isolated hub wrapper:
 
-- `bash scripts/find-unused.test.sh` — passed under Bash 3.2.57.
+- `bash scripts/find-unused.test.sh` — passed under macOS Bash 3.2.57 and
+  Linux/musl Bash 5.3.9 (aarch64, read-only container checkout).
 - `pnpm --filter openwork-orchestrator typecheck` — passed.
 - `pnpm --filter openwork-orchestrator build` — passed.
 - `node --check scripts/dev-local.mjs` — passed.
@@ -134,3 +139,67 @@ Validation:
 No cleanup-specific fraimz flow is required: the removed modules were absent
 from every runtime entry graph, and the production builds plus the existing app
 suite prove the reachable application still compiles and behaves as before.
+
+## Cleanup round 4 evidence
+
+- **Orphan session action state:** active session control, composer, routing, and
+  sync imports were traced before deleting `actions-provider.tsx` and
+  `actions-store.ts`. Repository-wide searches also covered exported symbols,
+  barrels, dynamic imports, tests, Fraimz, docs, Vite, Electron, Docker, and
+  release inputs. The two files formed an unreachable 955-line state island.
+- **Detached settings view:** `config-view.tsx`, `config-view-state.ts`, and
+  `config-view-sections.tsx` referenced each other but had no incoming edge from
+  the settings route or explicit settings contribution assembly. Their 619
+  lines were removed separately from settings composition so rollback does not
+  change the new contract.
+- **Superseded desktop launchers:** the active process path was traced from the
+  typed `engineStart` command into the embedded server and its managed OpenCode
+  child. The old direct and orchestrator launch functions were definition-only
+  after that migration. The deletion removes 196 lines while retaining the
+  detached orchestrator compatibility shutdown path that still has a consumer.
+- **Rollback:** each island is its own commit (`36e93d49`, `351f2635`, and
+  `72964fd0`). Revert only the matching commit if a hidden consumer is found.
+
+Final validation after all three removals:
+
+- App full tests: 196 passed, 0 failed; 527 assertions across 42 files.
+- App typecheck, desktop renderer build, and web build passed.
+- Desktop tests: 56 passed, 1 skipped; Electron typecheck passed; all 53
+  renderer bridge methods were present.
+- The unsigned macOS arm64 directory package succeeded. Its actual Electron
+  binary imported the embedded server from `app.asar`, started it with isolated
+  state, returned health and an authenticated workspace response, stopped, restarted
+  on the same port, returned health again, and stopped cleanly. This proof used
+  `manageOpencode: false`; it did not exercise the packaged managed sidecar.
+- The canonical core, bare settings, share diagnostics, and artifact Markdown
+  Fraimz flows passed.
+
+## Cleanup round 5 evidence
+
+- **Dependency reachability:** app source, tests, Vite and TypeScript config,
+  package scripts, dynamic loading, workspace manifests, and packaging inputs
+  contained no consumer for the seven removed declarations. The similarly named
+  shader package remains correctly owned by `@openwork/ui` and therefore stays
+  transitively installed.
+- **Lock convergence:** workspace installation removed 217 packages from the
+  dependency graph. The manifest deletion and regenerated lock are one commit
+  (`d9232260`) and contain no source behavior change.
+- **Validation:** the app's 196 tests, typecheck, desktop renderer build, and web
+  build passed after installation; both builds transformed 4,106 modules.
+- **Rollback:** restore the seven declarations from the parent commit and
+  regenerate the lock. Do not restore the old lock without its manifest owners.
+
+## Active Markdown convergence evidence
+
+- The live message/reasoning renderer and the session/artifact renderer were
+  characterized before extraction. Both now depend on the shared
+  `components/markdown/rendering-kernel.ts`; browser DOM behavior stays in a
+  small browser adapter.
+- The pure kernel owns common parsing, link policy, render sequencing, and
+  text-highlight behavior without forcing the two React surfaces into one
+  component. Its required sanitizer/highlighter ports are implemented by the
+  browser kernel with DOMPurify and Shiki.
+- Dedicated kernel fixtures, the full app suite, typecheck, both production
+  builds, and the artifact Markdown Fraimz flow passed.
+- This is convergence, not stale deletion. Revert `60fb45c0` to restore the two
+  characterized implementations together.
