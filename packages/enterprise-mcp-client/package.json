@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "pretest": "pnpm --filter @openwork/enterprise-mcp-mock-server build",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
+    "@openwork/enterprise-mcp-mock-server": "workspace:*",
     "tsx": "^4.15.7",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3"
