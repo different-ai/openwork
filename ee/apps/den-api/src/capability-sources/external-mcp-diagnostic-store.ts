@@ -655,8 +655,8 @@ export async function cleanupExpiredMcpDiagnostics(now = new Date()): Promise<nu
   }
 }
 
-export function startMcpDiagnosticCleanupLoop(): void {
-  if (cleanupTimer) return
+export function startMcpDiagnosticCleanupLoop(): () => void {
+  if (cleanupTimer) return () => undefined
   const run = () => {
     void cleanupExpiredMcpDiagnostics().catch((error) => {
       console.error("mcp_diagnostic_cleanup_failed", {
@@ -667,6 +667,11 @@ export function startMcpDiagnosticCleanupLoop(): void {
   run()
   cleanupTimer = setInterval(run, MCP_DIAGNOSTIC_CLEANUP_INTERVAL_MS)
   cleanupTimer.unref()
+  const timer = cleanupTimer
+  return () => {
+    clearInterval(timer)
+    if (cleanupTimer === timer) cleanupTimer = null
+  }
 }
 
 function isTerminalAttemptStatus(status: McpDiagnosticAttemptStatus): boolean {

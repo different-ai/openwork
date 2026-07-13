@@ -316,8 +316,8 @@ export async function cleanupExpiredExternalMcpOAuthPendingGrants(now = new Date
   }
 }
 
-export function startExternalMcpOAuthPendingGrantCleanupLoop(): void {
-  if (pendingGrantCleanupTimer) return
+export function startExternalMcpOAuthPendingGrantCleanupLoop(): () => void {
+  if (pendingGrantCleanupTimer) return () => undefined
   const run = () => {
     void cleanupExpiredExternalMcpOAuthPendingGrants().catch((error) => {
       console.error("external_mcp_pending_oauth_grant_cleanup_failed", {
@@ -328,6 +328,11 @@ export function startExternalMcpOAuthPendingGrantCleanupLoop(): void {
   run()
   pendingGrantCleanupTimer = setInterval(run, EXTERNAL_MCP_PENDING_GRANT_CLEANUP_INTERVAL_MS)
   pendingGrantCleanupTimer.unref()
+  const timer = pendingGrantCleanupTimer
+  return () => {
+    clearInterval(timer)
+    if (pendingGrantCleanupTimer === timer) pendingGrantCleanupTimer = null
+  }
 }
 
 export async function saveExternalMcpOAuthPendingGrant(input: {

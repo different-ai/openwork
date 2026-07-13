@@ -1,6 +1,8 @@
 import { AuditEventTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { appLogger } from "./observability/logger.js"
+import { AUDIT_ALERT_OPERATIONAL_MARKER } from "./operational-log-markers.js"
 
 export const ORGANIZATION_AUDIT_ACTIONS = {
   apiKeyCreated: "organization.api_key.created",
@@ -25,6 +27,7 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
 
 type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
 type OrganizationAuditPayload = Record<string, string | number | boolean | null>
+const logger = appLogger.child({ component: "audit_events" })
 
 export function buildOrganizationAuditEvent(input: {
   eventId?: DenTypeId<"auditEvent">
@@ -70,7 +73,7 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
 }
 
 export function buildOrganizationAuditAlertLogLine(event: OrganizationAuditEvent) {
-  return `[audit-alert] ${JSON.stringify({
+  return `${AUDIT_ALERT_OPERATIONAL_MARKER} ${JSON.stringify({
     auditEventId: event.id,
     organizationId: event.org_id,
     actorUserId: event.actor_user_id,
@@ -91,6 +94,13 @@ export async function recordOrganizationAuditEvent(input: Parameters<typeof buil
     await insert
   }
   if (isOrganizationAuditAlertAction(event.action)) {
-    console.warn(buildOrganizationAuditAlertLogLine(event))
+    logger.warn(`${AUDIT_ALERT_OPERATIONAL_MARKER} organization audit alert`, {
+      operational_marker: AUDIT_ALERT_OPERATIONAL_MARKER,
+      audit_event_id: event.id,
+      organization_id: event.org_id,
+      actor_user_id: event.actor_user_id,
+      action: event.action,
+      payload: event.payload,
+    })
   }
 }

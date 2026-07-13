@@ -1,6 +1,5 @@
 import React, { type CSSProperties } from "react"
-import { Body, Button, Container, Head, Heading, Hr, Html, Preview, Section, Text } from "@react-email/components"
-import { DEFAULT_OPENWORK_DOWNLOAD_URL, desktopCapabilities } from "./desktop-capabilities.js"
+import { Body, Button, Container, Head, Heading, Hr, Html, Preview, Text } from "@react-email/components"
 
 export type OrganizationInviteEmailProps = {
   inviteLink: string
@@ -8,7 +7,6 @@ export type OrganizationInviteEmailProps = {
   invitedByEmail: string
   organizationName: string
   role: string
-  downloadUrl?: string
 }
 
 export function OrganizationInviteEmail({
@@ -17,7 +15,6 @@ export function OrganizationInviteEmail({
   invitedByEmail,
   organizationName,
   role,
-  downloadUrl = DEFAULT_OPENWORK_DOWNLOAD_URL,
 }: OrganizationInviteEmailProps) {
   const inviter = invitedByEmail ? `${invitedByName} (${invitedByEmail})` : invitedByName
 
@@ -31,15 +28,6 @@ export function OrganizationInviteEmail({
           <Heading style={styles.heading}>Join {organizationName}</Heading>
           <Text style={styles.text}>{inviter} invited you to join {organizationName} as {articleFor(role)} {role}.</Text>
           <Button href={inviteLink} style={styles.button}>Accept invite</Button>
-          <Section style={styles.desktopSection}>
-            <Text style={styles.sectionHeading}>What you&apos;ll get in the OpenWork desktop app</Text>
-            {desktopCapabilities.map((capability) => (
-              <Text key={capability.title} style={styles.capability}>
-                <strong>{capability.title}</strong> — {capability.description}
-              </Text>
-            ))}
-            <Button href={downloadUrl} style={styles.secondaryButton}>Download the desktop app</Button>
-          </Section>
           <Hr style={styles.hr} />
           <Text style={styles.footer}>If the button does not work, paste this link into your browser:</Text>
           <Text style={styles.link}>{inviteLink}</Text>
@@ -96,38 +84,6 @@ const styles = {
     fontSize: "15px",
     fontWeight: 700,
     padding: "13px 22px",
-    textDecoration: "none",
-  },
-  desktopSection: {
-    backgroundColor: "#f8f1e6",
-    border: "1px solid #eadcc8",
-    borderRadius: "16px",
-    margin: "26px 0 0",
-    padding: "20px",
-  },
-  sectionHeading: {
-    color: "#171412",
-    fontSize: "16px",
-    fontWeight: 700,
-    lineHeight: "22px",
-    margin: "0 0 12px",
-  },
-  capability: {
-    color: "#4d4640",
-    fontSize: "14px",
-    lineHeight: "21px",
-    margin: "0 0 8px",
-  },
-  secondaryButton: {
-    backgroundColor: "#fffdf8",
-    border: "1px solid #d9c8af",
-    borderRadius: "999px",
-    color: "#5b3a18",
-    display: "inline-block",
-    fontSize: "14px",
-    fontWeight: 700,
-    marginTop: "8px",
-    padding: "11px 18px",
     textDecoration: "none",
   },
   hr: {

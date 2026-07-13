@@ -1,0 +1,23 @@
+{
+  "name": "@openwork-ee/diagnostics",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0 --port ${DIAGNOSTICS_PORT:-3010}",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0 --port ${DIAGNOSTICS_PORT:-3010}",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@openwork/types": "workspace:*",
+    "next": "16.2.1",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "20.12.12",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "typescript": "5.4.5"
+  }
+}

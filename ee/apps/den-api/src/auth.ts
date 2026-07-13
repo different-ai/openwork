@@ -1,6 +1,7 @@
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { env } from "./env.js";
+import { appLogger } from "./observability/logger.js";
 import { deriveDenMcpAgentResource, deriveDenMcpResource, mcpEndpointResource } from "./mcp/resource.js";
 import { getDenAuthIssuer, getDenJwtOptions } from "./mcp/jwt-policy.js";
 import {
@@ -20,7 +21,6 @@ import { DEN_ACCOUNT_CONFIG } from "./account-linking-policy.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
-import { resolveInvitationDownloadUrl } from "./install-links.js";
 import {
   DEN_API_KEY_DEFAULT_PREFIX,
   DEN_API_KEY_EXPIRES_IN_DAYS,
@@ -67,6 +67,8 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { deleteSessionCookie } from "better-auth/cookies";
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle";
 import { emailOTP, jwt, organization } from "better-auth/plugins";
+
+const logger = appLogger.child({ component: "auth" });
 
 function localMcpResourceAliases(resource: string) {
   if (!env.devMode) {
@@ -346,7 +348,7 @@ export const auth = betterAuth({
             // chokepoint can merge any matching pending invitation without blocking sign-in.
             await reconcilePendingInvitationsForUser(userId);
           } catch (error) {
-            console.error("[auth][invitation_reconcile_failed]", { userId, error });
+            logger.error("invitation reconcile failed", { user_id: userId, error });
           }
 
           return {
@@ -534,7 +536,7 @@ export const auth = betterAuth({
   },
   emailAndPassword: {
     enabled: true,
-    autoSignIn: false,
+    autoSignIn: true,
     requireEmailVerification: env.requireEmailVerification,
     revokeSessionsOnPasswordReset: true,
     async sendResetPassword({ user, url }) {
@@ -575,12 +577,6 @@ export const auth = betterAuth({
         },
       },
       async sendInvitationEmail(data) {
-        const downloadUrl = await resolveInvitationDownloadUrl({
-          organizationId: data.organization.id,
-          createdByUserId: data.inviter.user.id,
-          metadata: data.organization.metadata,
-        });
-
         await sendEmail({
           to: data.email,
           template: "organizationInvite",
@@ -590,7 +586,6 @@ export const auth = betterAuth({
             invitedByEmail: data.inviter.user.email,
             organizationName: data.organization.name,
             role: data.role,
-            downloadUrl,
           },
         });
       },

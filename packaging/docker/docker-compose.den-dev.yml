@@ -28,9 +28,45 @@
 #   POLAR_FEATURE_GATE_ENABLED / POLAR_API_BASE / POLAR_ACCESS_TOKEN
 #   POLAR_PRODUCT_ID / POLAR_BENEFIT_ID / POLAR_SUCCESS_URL / POLAR_RETURN_URL
 #                           — optional Polar passthrough vars for billing/paywall testing
+#   DEN_OBSERVABILITY_BACKEND — none, otel, or sentry (default: none)
+#   OTEL_EXPORTER_OTLP_ENDPOINT — OTLP/HTTP base endpoint for den + web, e.g. http://otel-lgtm:4318
+#   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT / OTEL_EXPORTER_OTLP_METRICS_ENDPOINT / OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+#                           — optional per-signal OTLP/HTTP endpoint overrides
+#   OTEL_EXPORTER_OTLP_HEADERS — optional OTLP header string, e.g. Authorization=Bearer token
+#   OTEL_EXPORTER_OTLP_PROTOCOL — only http/protobuf is supported (default: http/protobuf)
+#   OTEL_EXPORTER_OTLP_TRACES_PROTOCOL / OTEL_EXPORTER_OTLP_METRICS_PROTOCOL / OTEL_EXPORTER_OTLP_LOGS_PROTOCOL
+#                           — optional per-signal protocol overrides, only http/protobuf is supported
+#   OTEL_TRACES_EXPORTER / OTEL_METRICS_EXPORTER / OTEL_LOGS_EXPORTER
+#                           — otlp or none per signal (default: otlp)
+#   OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG
+#                           — standard OpenTelemetry sampler controls
+#   SENTRY_DSN / SENTRY_TRACES_SAMPLE_RATE / SENTRY_ENVIRONMENT / SENTRY_RELEASE / SENTRY_DIST
+#                           — optional Sentry runtime settings (source-map upload is build-time only)
 
 x-shared: &shared
   restart: unless-stopped
+
+x-observability-env: &observability-env
+  DEN_OBSERVABILITY_BACKEND: ${DEN_OBSERVABILITY_BACKEND:-none}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: ${OTEL_EXPORTER_OTLP_METRICS_ENDPOINT:-}
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: ${OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:-}
+  OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+  OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+  OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: ${OTEL_EXPORTER_OTLP_TRACES_PROTOCOL:-}
+  OTEL_EXPORTER_OTLP_METRICS_PROTOCOL: ${OTEL_EXPORTER_OTLP_METRICS_PROTOCOL:-}
+  OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: ${OTEL_EXPORTER_OTLP_LOGS_PROTOCOL:-}
+  OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
+  OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-otlp}
+  OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-otlp}
+  OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-1}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
+  SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+  SENTRY_DIST: ${SENTRY_DIST:-}
 
 services:
   mysql:
@@ -60,7 +96,7 @@ services:
     build:
       context: ../../
       dockerfile: packaging/docker/Dockerfile.den
-    command: ["sh", "-lc", "cd /app/ee/packages/den-db && yes | node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node /app/ee/apps/den-api/dist/server.js"]
+    command: ["sh", "-lc", "cd /app/ee/packages/den-db && yes | node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node /app/ee/apps/den-api/dist/main.js"]
     depends_on:
       mysql:
         condition: service_healthy
@@ -73,8 +109,10 @@ services:
       retries: 30
       start_period: 120s
     environment:
+      <<: *observability-env
       CI: "true"
       OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-1}
+      OTEL_SERVICE_NAME: ${DEN_API_OTEL_SERVICE_NAME:-den-api}
       DATABASE_URL: mysql://root:password@mysql:3306/openwork_den
       BETTER_AUTH_SECRET: ${DEN_BETTER_AUTH_SECRET:-dev-den-local-auth-secret-please-override-1234567890}
       DEN_DB_ENCRYPTION_KEY: ${DEN_DB_ENCRYPTION_KEY:-dev-den-db-encryption-key-please-change-1234567890}
@@ -124,8 +162,10 @@ services:
       retries: 30
       start_period: 180s
     environment:
+      <<: *observability-env
       CI: "true"
       OPENWORK_DEV_MODE: "1"
+      OTEL_SERVICE_NAME: ${DEN_WEB_OTEL_SERVICE_NAME:-den-web}
       DEN_API_BASE: http://den:8788
       DEN_AUTH_FALLBACK_BASE: http://den:8788
       DEN_AUTH_ORIGIN: ${DEN_BETTER_AUTH_URL:-http://localhost:3005}

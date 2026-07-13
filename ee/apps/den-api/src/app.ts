@@ -4,7 +4,6 @@ import { swaggerUI } from "@hono/swagger-ui"
 import { sql } from "@openwork-ee/den-db/drizzle"
 import { cors } from "hono/cors"
 import { Hono } from "hono"
-import { logger } from "hono/logger"
 import type { RequestIdVariables } from "hono/request-id"
 import { requestId } from "hono/request-id"
 import { describeRoute, openAPIRouteHandler, resolver } from "hono-openapi"
@@ -17,6 +16,8 @@ import { registerAgentMcpRoutes } from "./mcp/agent.js"
 import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, emptyResponse, htmlResponse, jsonResponse } from "./openapi.js"
+import { appLogger } from "./observability/logger.js"
+import { createRequestAccessLogMiddleware, createTelemetryErrorSanitizerMiddleware, registerAppErrorHandler, registerObservabilityMiddleware } from "./observability/hono.js"
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
 import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
@@ -31,8 +32,7 @@ import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
-import { redactRequestLogLine } from "./request-log-redaction.js"
-import { normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
+import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 
 type AppVariables = RequestIdVariables & AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> & Partial<MemberTeamsContext>
 
@@ -61,16 +61,7 @@ const openApiDocumentSchema = z.object({
 
 const app = new Hono<{ Variables: AppVariables }>()
 
-const requestLogger = logger((line) => console.log(redactRequestLogLine(line)))
-
-app.use("*", async (c, next) => {
-  if (c.req.path === "/health" || c.req.path === "/ready") {
-    await next()
-    return
-  }
-
-  return requestLogger(c, next)
-})
+registerObservabilityMiddleware(app)
 app.use("*", requestId({
   headerName: "",
   generator: () => createDenTypeId("request"),
@@ -79,9 +70,17 @@ app.use("*", async (c, next) => {
   await next()
   c.header("X-Request-Id", c.get("requestId"))
 })
+app.use("*", createTelemetryErrorSanitizerMiddleware())
 app.use("*", async (c, next) => {
   await next()
   c.res = await normalizeOperationalErrorResponse(c.req.path, c.res, c.get("requestId"))
+})
+app.use("*", createRequestAccessLogMiddleware())
+registerAppErrorHandler(app, (error, c, requestId) => {
+  if (!isOperationalErrorPath(c.req.path)) {
+    return undefined
+  }
+  return operationalErrorResponse(error, c, requestId)
 })
 
 if (env.corsOrigins.length > 0) {
@@ -161,7 +160,7 @@ app.get(
       await db.execute(sql`select 1`)
       return c.json({ ok: true, service: "den-api", checks: { database: "ok" } })
     } catch (error) {
-      console.error("[readiness] den-api database check failed", error)
+      appLogger.error("readiness database check failed", { component: "readiness", error })
       return c.json({ ok: false, service: "den-api", checks: { database: "error" } }, 503)
     }
   },
@@ -284,7 +283,5 @@ app.get(
 app.notFound((c) => {
   return c.json({ error: "not_found" }, 404)
 })
-
-app.onError((error, c) => operationalErrorResponse(error, c, c.get("requestId")))
 
 export default app

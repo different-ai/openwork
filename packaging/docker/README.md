@@ -84,6 +84,171 @@ Optional env vars (via `.env` or `export`):
 - `DEN_PROVISIONER_MODE` — `stub` or `render` (defaults to `stub`)
 - `DEN_WORKER_URL_TEMPLATE` — stub worker URL template with `{workerId}` placeholder
 
+### Live OpenTelemetry Docker validation
+
+`docker-compose.otel-lgtm.yml` adds Grafana's all-in-one development backend
+(Grafana, Tempo, Loki, Prometheus, Pyroscope, and an OTLP receiver) to the Den
+Docker stack. The image is pinned to `0.11.16` and its multi-arch digest.
+
+Start only the collector/UI stack:
+
+```bash
+docker compose -f packaging/docker/docker-compose.otel-lgtm.yml up -d --wait
+docker compose -f packaging/docker/docker-compose.otel-lgtm.yml ps
+curl -fsS http://127.0.0.1:3000/api/health
+```
+
+Run the reproducible live E2E validator (the script resolves paths relative to
+itself, so absolute-path invocations work from any working directory):
+
+```bash
+bash packaging/docker/otel-hono-live-validate.sh
+```
+
+The validator merges `docker-compose.den-dev.yml` and
+`docker-compose.otel-lgtm.yml`, configures both Den services for OTLP/HTTP,
+builds and starts the stack, waits for health, and makes a real request to
+`/api/den/openapi.json?token=super-secret`. It then polls Grafana's Tempo,
+Loki, and Prometheus datasource proxy APIs with a bounded timeout. The JSON
+report proves the connected `den-web` → `den-api` trace, normalized Hono route
+and request ID, secret redaction, correlated Den Web and Den API OTLP request
+logs, Hono duration and active-request metric series, and absence of unhandled
+runtime errors.
+
+After the OTEL phase passes, the same validator recreates only `den` and `web`
+with `DEN_OBSERVABILITY_BACKEND=none` while keeping MySQL and LGTM running. It
+makes the same proxy request and records proof that the app still returns HTTP
+200, request logs are structured JSON stdout for both services, and no exporter
+connection/error attempt appears in the none-backend runtime logs.
+
+Defaults use a unique Compose project and process-derived high host ports, so
+parallel runs do not share state. Useful controls:
+
+```bash
+KEEP_STACK=1 bash packaging/docker/otel-hono-live-validate.sh  # keep containers (left in none mode after the final phase)
+OTEL_HONO_PROJECT=<previous-project> SKIP_BUILD=1 bash packaging/docker/otel-hono-live-validate.sh
+OTEL_HONO_PORT_BASE=42000 bash packaging/docker/otel-hono-live-validate.sh
+OTEL_HONO_REPORT_JSON=/tmp/otel-proof.json bash packaging/docker/otel-hono-live-validate.sh
+```
+
+Individual host ports remain overridable with `DEN_WEB_PORT`, `DEN_API_PORT`,
+`DEN_MYSQL_PORT`, `OTEL_LGTM_GRAFANA_PORT`,
+`OTEL_LGTM_OTLP_GRPC_PORT`, and `OTEL_LGTM_OTLP_HTTP_PORT`. Override
+`OTEL_HONO_PROJECT`, `OTEL_HONO_POLL_SECONDS`, or
+`OTEL_HONO_COMPOSE_WAIT_SECONDS` when a stable project or different bounded
+timeouts are needed. The default report is
+`tmp/otel-hono-live-<project>/report.json`.
+
+Open Grafana at `http://127.0.0.1:3000` and log in with `admin` / `admin`. Use Explore with the pre-provisioned Tempo, Loki, and Prometheus data sources for traces, logs, and metrics.
+
+To start the same merged stack manually:
+
+```bash
+DEN_OBSERVABILITY_BACKEND=otel \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318 \
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-lgtm:4318/v1/traces \
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://otel-lgtm:4318/v1/metrics \
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://otel-lgtm:4318/v1/logs \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+OTEL_TRACES_EXPORTER=otlp \
+OTEL_METRICS_EXPORTER=otlp \
+OTEL_LOGS_EXPORTER=otlp \
+OTEL_TRACES_SAMPLER=parentbased_always_on \
+docker compose -p openwork-den-otel \
+  -f packaging/docker/docker-compose.den-dev.yml \
+  -f packaging/docker/docker-compose.otel-lgtm.yml \
+  up --build --wait
+```
+
+Run the services outside Docker against the same local receiver:
+
+```bash
+docker compose -f packaging/docker/docker-compose.otel-lgtm.yml up -d --wait
+
+DEN_OBSERVABILITY_BACKEND=otel \
+OTEL_SERVICE_NAME=den-api \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+pnpm dev:den:api
+
+DEN_OBSERVABILITY_BACKEND=otel \
+OTEL_SERVICE_NAME=den-web \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+pnpm dev:den:web
+```
+
+Useful signal controls:
+
+```bash
+OTEL_TRACES_EXPORTER=none    # disable traces
+OTEL_METRICS_EXPORTER=none   # disable metrics
+OTEL_LOGS_EXPORTER=none      # disable logs
+OTEL_TRACES_SAMPLER=parentbased_traceidratio OTEL_TRACES_SAMPLER_ARG=0.25
+```
+
+`docker-compose.den-dev.yml` forwards the full OTLP runtime surface to both Den
+services: base and per-signal endpoints, base and per-signal protocol values,
+headers, per-signal exporters, and sampler settings. It also forwards runtime
+Sentry settings (`SENTRY_DSN`, `SENTRY_TRACES_SAMPLE_RATE`,
+`SENTRY_ENVIRONMENT`, `SENTRY_RELEASE`, and `SENTRY_DIST`) while keeping
+distinct `OTEL_SERVICE_NAME` defaults for Den API and Den Web.
+
+Sentry source-map upload is build-time only. Runtime Compose and Helm settings
+cannot upload maps after the image is built. The Dockerfiles default their
+upload flags to `0`, so normal builds and PR builds skip Sentry secret reads
+cleanly. To opt in for a trusted build, pass only non-secret upload flags as
+build args and pass credentials as BuildKit secrets; never pass Sentry
+credentials through `ARG`, `ENV`, or Compose runtime env.
+
+For custom Den API images, `DEN_UPLOAD_SENTRY_SOURCEMAPS=1` requires
+`sentry_auth_token`, `sentry_org`, `sentry_project`, and `sentry_release`.
+`sentry_url` and `sentry_dist` are optional:
+
+```bash
+SENTRY_AUTH_TOKEN=... SENTRY_ORG=... SENTRY_PROJECT=... \
+SENTRY_RELEASE=2026.07.11 SENTRY_DIST=den-api \
+docker buildx build \
+  -f packaging/docker/Dockerfile.den \
+  --build-arg DEN_UPLOAD_SENTRY_SOURCEMAPS=1 \
+  --secret id=sentry_auth_token,env=SENTRY_AUTH_TOKEN \
+  --secret id=sentry_org,env=SENTRY_ORG \
+  --secret id=sentry_project,env=SENTRY_PROJECT \
+  --secret id=sentry_release,env=SENTRY_RELEASE \
+  --secret id=sentry_dist,env=SENTRY_DIST \
+  -t openwork-den-api:sentry .
+```
+
+For custom Den Web images, `DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=1` requires
+`sentry_auth_token`, `sentry_org`, and `sentry_project`. `sentry_url`,
+`sentry_release`, and `sentry_dist` are optional. The Dockerfile exports the
+upload flag and secrets only inside the build step; runtime Sentry still
+requires its own runtime environment configuration:
+
+```bash
+SENTRY_AUTH_TOKEN=... SENTRY_ORG=... SENTRY_PROJECT=... \
+SENTRY_RELEASE=2026.07.11 SENTRY_DIST=den-web SENTRY_URL=... \
+docker buildx build \
+  -f packaging/docker/Dockerfile.den-web \
+  --build-arg DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=1 \
+  --secret id=sentry_auth_token,env=SENTRY_AUTH_TOKEN \
+  --secret id=sentry_org,env=SENTRY_ORG \
+  --secret id=sentry_project,env=SENTRY_PROJECT \
+  --secret id=sentry_url,env=SENTRY_URL \
+  --secret id=sentry_release,env=SENTRY_RELEASE \
+  --secret id=sentry_dist,env=SENTRY_DIST \
+  -t openwork-den-web:sentry .
+```
+
+The EE image publish workflow never passes repository Sentry secrets to
+`pull_request` builds. On trusted publish events, it checks for the complete
+configuration for each image and uses the Sentry upload build only for that
+configured image; otherwise it publishes the normal image without failing the
+release. Generic prebuilt images cannot perform source-map uploads for a
+deployment-specific Sentry project after publication.
+
+Caveats: `grafana/otel-lgtm` is intended for development, demos, and tests, not production retention or security. The default Grafana credentials are public, and the digest should be refreshed deliberately when updating the image tag. Upstream images are signed with cosign; see the `grafana/docker-otel-lgtm` README if you need signature verification in CI.
+
 ### Install links (self-host)
 
 Run the install-link migration once against the Den database:

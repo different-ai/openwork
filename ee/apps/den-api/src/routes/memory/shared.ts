@@ -4,6 +4,7 @@ import { type DenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { denTypeIdSchema } from "../../openapi.js"
+import { appLogger } from "../../observability/logger.js"
 
 // Input bounds — a cheap abuse guard (§8); full per-user quota/rate-limiting is deferred.
 export const MAX_CONTENT_LENGTH = 8_000
@@ -16,6 +17,7 @@ export const MAX_QUERY_LENGTH = 512
 export const DEFAULT_LIMIT = 20
 export const MAX_SEARCH_LIMIT = 50
 export const MAX_LIST_LIMIT = 100
+const logger = appLogger.child({ component: "memory" })
 
 // The save body shape is intentionally flat and mostly-optional so the agent — which only
 // sees `hasBody:true`, not the schema — can construct it; the shape is also spelled out in
@@ -176,5 +178,5 @@ export function parseMemoryIdParam(raw: string): DenTypeId<"memory"> | null {
 
 /** Structured, server-observable event (TR-10) — distinguishes "never saved" from "save failed". */
 export function logMemoryEvent(event: "save" | "search" | "delete", fields: Record<string, unknown>): void {
-  console.log(JSON.stringify({ event: `memory.${event}`, ...fields }))
+  logger.info(`memory.${event}`, fields)
 }

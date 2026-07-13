@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import path from "node:path"
 import { env } from "../env.js"
+import { appLogger } from "../observability/logger.js"
 
 /**
  * Resolves the standard signed desktop artifact so organization install-link
@@ -37,6 +38,7 @@ const FALLBACK_CACHE_TTL_MS = 5 * 60_000
 
 const inFlightDownloads = new Map<string, Promise<Buffer | null>>()
 const fallbackDownloadUrls = new Map<string, { expiresAt: number; value: Promise<string> }>()
+const logger = appLogger.child({ component: "installer_artifacts" })
 
 export function installerReleaseAssetUrl(
   fileName: string,
@@ -153,7 +155,7 @@ async function downloadReleaseAsset(input: {
     releaseRepo: input.releaseRepo,
     releaseTag: input.releaseTag,
   })
-  console.info(`[installer-artifacts] downloading ${input.fileName} from ${input.releaseTag}`)
+  logger.info("downloading installer artifact", { file_name: input.fileName, release_tag: input.releaseTag })
 
   const tempPath = `${input.cachePath}.download-${process.pid}-${randomUUID()}`
   try {
@@ -162,7 +164,11 @@ async function downloadReleaseAsset(input: {
       signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
     })
     if (!response.ok) {
-      console.warn(`[installer-artifacts] ${input.fileName} unavailable at ${input.releaseTag} (${response.status})`)
+      logger.warn("installer artifact unavailable", {
+        file_name: input.fileName,
+        release_tag: input.releaseTag,
+        http_status_code: response.status,
+      })
       return null
     }
     await mkdir(path.dirname(input.cachePath), { recursive: true })
@@ -170,7 +176,7 @@ async function downloadReleaseAsset(input: {
     await rename(tempPath, input.cachePath)
     return await readFileOrNull(input.cachePath)
   } catch (error) {
-    console.warn(`[installer-artifacts] download of ${input.fileName} failed: ${error instanceof Error ? error.message : String(error)}`)
+    logger.warn("installer artifact download failed", { file_name: input.fileName, release_tag: input.releaseTag, error })
     return null
   } finally {
     await rm(tempPath, { force: true }).catch(() => undefined)
@@ -194,7 +200,7 @@ export async function resolveInstallerArtifact(fileName: string, options: Instal
 
   const cached = await readFileOrNull(cachePath)
   if (cached) {
-    console.info(`[installer-artifacts] cache hit ${fileName}`)
+    logger.info("installer artifact cache hit", { file_name: fileName })
     return cached
   }
 

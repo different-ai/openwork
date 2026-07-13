@@ -1,11 +1,15 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { context, trace, TraceFlags } from "@opentelemetry/api";
 import { NextRequest } from "next/server";
+
+import { setStructuredLogSink, useJsonStdoutStructuredLogSink } from "../../../observability/runtime-logger.ts";
 
 const previousDenApiBase = process.env.DEN_API_BASE;
 
 describe("Den upstream proxy", () => {
   let server;
   let observed = null;
+  let logs = [];
 
   beforeAll(() => {
     server = Bun.serve({
@@ -20,6 +24,8 @@ describe("Den upstream proxy", () => {
           authorization: request.headers.get("authorization"),
           custom: request.headers.get("x-custom-proxy-test"),
           lastEventId: request.headers.get("last-event-id"),
+          traceparent: request.headers.get("traceparent"),
+          tracestate: request.headers.get("tracestate"),
         };
 
         if (url.pathname === "/v1/compressed") {
@@ -51,6 +57,10 @@ describe("Den upstream proxy", () => {
           });
         }
 
+        if (url.pathname === "/v1/error") {
+          return new Response("upstream unavailable", { status: 502 });
+        }
+
         return new Response("proxied", {
           status: 207,
           headers: {
@@ -64,7 +74,17 @@ describe("Den upstream proxy", () => {
     process.env.DEN_API_BASE = `http://127.0.0.1:${server.port}`;
   });
 
+  beforeEach(() => {
+    logs = [];
+    setStructuredLogSink({
+      log(level, message, fields) {
+        logs.push({ level, message, fields });
+      },
+    });
+  });
+
   afterAll(() => {
+    useJsonStdoutStructuredLogSink();
     server.stop(true);
     if (previousDenApiBase === undefined) {
       delete process.env.DEN_API_BASE;
@@ -96,11 +116,30 @@ describe("Den upstream proxy", () => {
       authorization: "Bearer tok_test",
       custom: "kept",
       lastEventId: null,
+      traceparent: null,
+      tracestate: null,
     });
     expect(response.status).toBe(207);
     expect(response.headers.get("x-upstream-result")).toBe("ok");
     expect(response.headers.get("set-cookie")).toContain("sid=abc");
     expect(await response.text()).toBe("proxied");
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      level: "info",
+      message: "den-web upstream proxy completed",
+      fields: {
+        route_prefix: "/api/den",
+        method: "POST",
+        upstream_path: "/v1/me",
+        status: 207,
+      },
+    });
+    expect(typeof logs[0].fields.duration_ms).toBe("number");
+    const serializedLog = JSON.stringify(logs[0]);
+    expect(serializedLog).not.toContain("include=org");
+    expect(serializedLog).not.toContain("tok_test");
+    expect(serializedLog).not.toContain("sess_test");
+    expect(serializedLog).not.toContain(JSON.stringify({ ok: true }));
   });
 
   test("drops content-encoding after upstream fetch decompresses the body", async () => {
@@ -133,5 +172,75 @@ describe("Den upstream proxy", () => {
     expect(decoder.decode(first.value)).toContain("data: first");
     const second = await reader.read();
     expect(decoder.decode(second.value)).toContain("data: second");
+  });
+
+  test("logs non-ok upstream completions without credentials or query strings", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const request = new NextRequest("https://app.example.com/api/den/v1/error?token=secret", {
+      headers: {
+        authorization: "Bearer should-not-log",
+        cookie: "ow_session=should-not-log",
+      },
+    });
+
+    const response = await proxyUpstream(request, [], { routePrefix: "/api/den" });
+
+    expect(response.status).toBe(502);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      level: "warn",
+      message: "den-web upstream proxy completed",
+      fields: {
+        route_prefix: "/api/den",
+        method: "GET",
+        upstream_path: "/v1/error",
+        status: 502,
+      },
+    });
+    const serializedLog = JSON.stringify(logs[0]);
+    expect(serializedLog).not.toContain("token=secret");
+    expect(serializedLog).not.toContain("should-not-log");
+  });
+
+  test("continues W3C trace context into upstream requests", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const traceparent = "00-0af7651916cd43dd8448eb211c80319c-b9c7c989f97918e1-01";
+    const tracestate = "vendor=value";
+    const request = new NextRequest("https://app.example.com/api/den/v1/me", {
+      headers: { traceparent, tracestate },
+    });
+
+    await proxyUpstream(request, [], { routePrefix: "/api/den" });
+
+    expect(observed.traceparent).toBe(traceparent);
+    expect(observed.tracestate).toBe(tracestate);
+  });
+
+  test("injects the active W3C trace context into upstream requests", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const request = new NextRequest("https://app.example.com/api/den/v1/me");
+    const spanContext = {
+      traceId: "0af7651916cd43dd8448eb211c80319c",
+      spanId: "b9c7c989f97918e1",
+      traceFlags: TraceFlags.SAMPLED,
+    };
+
+    const activeContext = trace.setSpanContext(context.active(), spanContext);
+    const contextManager = {
+      active: () => activeContext,
+      with: (nextContext, callback, thisArg, ...args) => callback.apply(thisArg, args),
+      bind: (nextContext, target) => target,
+      enable: () => contextManager,
+      disable: () => contextManager,
+    };
+
+    context.setGlobalContextManager(contextManager);
+    try {
+      await proxyUpstream(request, [], { routePrefix: "/api/den" });
+    } finally {
+      context.disable();
+    }
+
+    expect(observed.traceparent).toBe("00-0af7651916cd43dd8448eb211c80319c-b9c7c989f97918e1-01");
   });
 });

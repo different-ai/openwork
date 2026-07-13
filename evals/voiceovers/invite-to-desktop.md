@@ -1,15 +1,14 @@
 # invite-to-desktop — An invited teammate lands in a signed-in desktop app
 
-PR-1 of the invite-to-desktop experience: an enriched invite email that sells
-the desktop app, a post-accept "get the app" step with mobile-aware handling,
-a "send me the download link" email, and a "Joining a team? Sign in"
-affordance on the desktop welcome screen. Organization invitation CTAs use the
-same org-specific installer flow as the dashboard; the standalone "email me"
-download message remains a general OpenWork download link.
+PR-1 of the invite-to-desktop experience: a focused workspace invite email, a
+post-accept "get the app" step with mobile-aware handling, a "send me the
+download link" email, and a "Joining a team? Sign in" affordance on the desktop
+welcome screen. The standalone "email me" download message remains a general
+OpenWork download link.
 
 1. Alex runs Acme Robotics on OpenWork, and inviting Maya is one line on the team page — type her email, pick a role, send.
 
-2. Maya's invite is more than a join button — the email shows what she's actually getting: an AI coworker that edits spreadsheets, controls her browser, organizes files, and automates her team's workflows, with a link to download the desktop app.
+2. Maya's invite email stays focused on joining Acme Robotics — it names the workspace, shows who invited her, includes Accept invite, and leaves out desktop download or install prompts.
 
 3. On her laptop, the invite link opens Acme's join page — her team is already set up and waiting, and joining is just picking a password.
 

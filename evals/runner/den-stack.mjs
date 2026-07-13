@@ -190,7 +190,7 @@ async function ensureDenApi(log) {
   }
 
   log(`Starting den-api on internal :${DEN_API_INTERNAL_PORT} (proxied on :${DEN_API_PORT})...`);
-  const pid = spawnDetached("npx", ["tsx", "src/server.ts"], {
+  const pid = spawnDetached("npx", ["tsx", "src/main.ts"], {
     logName: "den-api",
     cwd: join(REPO_ROOT, "ee", "apps", "den-api"),
     env: DEN_ENV,

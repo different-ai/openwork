@@ -54,12 +54,6 @@ export const INFERENCE_WINDOW_DURATIONS_MS: Record<
 // For upstreamModel values, please get from models.dev/api.json provider = openrouter.models.id
 
 export const INFERENCE_MODEL_ALIASES = {
-  "openrouter/fusion": {
-    upstreamModel: "openrouter/fusion",
-    displayName: "OpenWork: Fusion",
-    enabled: true,
-    usageFactor: 1,
-  },
   "z-ai/glm-5.2": {
     upstreamModel: "z-ai/glm-5.2",
     displayName: "OpenWork: GLM-5.2",
