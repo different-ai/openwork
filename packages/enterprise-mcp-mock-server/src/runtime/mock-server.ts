@@ -234,6 +234,10 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
     if (this.server) return this.snapshot()
     this.seedManualClient()
     const server = createServer((request, response) => {
+      // The development server can be restarted in place when a fault scenario
+      // changes. Make that boundary explicit to Node and Bun clients instead
+      // of leaving a reusable socket pointed at a retired listener generation.
+      response.setHeader("connection", "close")
       this.activeRequestCount += 1
       let finalized = false
       const finalize = (): void => {
@@ -245,10 +249,6 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
       response.once("close", finalize)
       void this.route(request, response)
     })
-    // Scenario activation deliberately restarts the listener on the same fixed
-    // port so OAuth resource authority remains exact. Avoid leaving a pooled
-    // client with a stale keep-alive socket across that lifecycle boundary.
-    server.maxRequestsPerSocket = 1
     server.on("connection", (socket) => {
       this.sockets.add(socket)
       socket.once("close", () => this.sockets.delete(socket))
@@ -402,6 +402,10 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
       for (const socket of this.sockets) socket.destroy()
     }
     await closing
+    // Let in-process HTTP clients observe the listener's FIN before a scenario
+    // restart reuses the same fixed OAuth resource port. This keeps normal
+    // keep-alive behavior while preventing one stale pooled request.
+    await new Promise<void>((resolve) => setImmediate(resolve))
     this.sockets.clear()
     this.activeRequestCount = 0
     this.resolvedBaseUrl = null
