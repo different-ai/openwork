@@ -441,6 +441,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@openwork/contribution-registry':
+        specifier: workspace:*
+        version: link:../../../packages/contribution-registry
       '@openwork/email':
         specifier: workspace:*
         version: link:../../../packages/email

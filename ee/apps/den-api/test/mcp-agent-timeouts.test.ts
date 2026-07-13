@@ -141,6 +141,13 @@ test("capability search preserves the bounded-fanout coverage warning", () => {
   expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual(structured)
 })
 
+test("unknown capability dispatch preserves the exact search-again error body", () => {
+  expect(agentModule.unknownCapabilityText("not-real")).toBe(JSON.stringify({
+    error: "unknown_capability",
+    message: "No capability named \"not-real\". Call search_capabilities to find a valid name.",
+  }))
+})
+
 test("external capability failures preserve the safe MCP diagnostic envelope", () => {
   const result = agentModule.externalCapabilityErrorToolResult({
     ok: false,

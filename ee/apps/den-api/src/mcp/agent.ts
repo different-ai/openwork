@@ -14,7 +14,7 @@ import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
-import { compareCapabilityMatches, SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter, type CapabilityMatch } from "./search.js"
+import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, type CapabilityMatch } from "./search.js"
 import { executeExternalCapability, externalMcpSearchCoverageHint, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities, type ExternalCapabilityExecuteResult } from "./external-capabilities.js"
 import { executeMarketplaceCapability, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType } from "./marketplace-capabilities.js"
 import { executeSkillCapability, parseSkillCapabilityName, searchSkillCapabilities } from "./skill-capabilities.js"
@@ -22,6 +22,10 @@ import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { env } from "../env.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { executeAvailableAdminCapability, parseAdminCapabilityName, searchAvailableAdminCapabilities } from "./admin-capabilities.js"
+import {
+  BUNDLED_DEN_CAPABILITY_SOURCE_DESCRIPTORS,
+  composeDenCapabilitySources,
+} from "./capability-source-composition.js"
 
 export const EXECUTE_CAPABILITY_TOOL_NAME = "execute_capability"
 const searchCapabilityTypeSchema = z.enum(["all", "api", "admin", "mcp", "marketplace", "skills"])
@@ -133,7 +137,7 @@ export function externalCapabilityErrorToolResult(
   }
 }
 
-export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T[], coverageHint?: string) {
+export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: readonly T[], coverageHint?: string) {
   const hint = [
     ...(matches.length === 0 ? ["No matches. Try broader or different keywords."] : []),
     ...(coverageHint ? [coverageHint] : []),
@@ -145,7 +149,7 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
   }
 }
 
-function unknownCapabilityText(name: string): string {
+export function unknownCapabilityText(name: string): string {
   return JSON.stringify({
     error: "unknown_capability",
     message: `No capability named "${name}". Call search_capabilities to find a valid name.`,
@@ -295,6 +299,230 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
     const externalMcpConnectionsEnabled = memberFacingMcpConnectionsEnabled(organizationRows[0]?.metadata, {
       gatingEnabled: env.mcpConnectionsGatingEnabled,
     })
+    const capabilitySources = composeDenCapabilitySources<ExecuteCapabilityToolResult>([
+      {
+        descriptor: BUNDLED_DEN_CAPABILITY_SOURCE_DESCRIPTORS.api,
+        binding: {
+          status: "ready",
+          create: () => ({
+            search: async ({ query, limit }) => ({
+              matches: searchCapabilities(catalog, query, limit),
+            }),
+            execute: async ({ name, path, query, body }) => {
+              const operation = catalog.find((candidate) => candidate.name === name)
+              if (!operation) return { status: "unhandled" }
+
+              const result = await invokeMcpOperation({
+                app: app as unknown as Hono,
+                env: c.env,
+                operation,
+                principal,
+                toolInput: {
+                  path: normalizeToolRecord(path),
+                  query: normalizeToolRecord(query),
+                  body: normalizeToolBody(body),
+                },
+              })
+              return { status: "handled", result }
+            },
+          }),
+        },
+      },
+      {
+        descriptor: BUNDLED_DEN_CAPABILITY_SOURCE_DESCRIPTORS.admin,
+        binding: {
+          status: "ready",
+          create: () => ({
+            search: async ({ query, limit }) => ({
+              matches: await searchAvailableAdminCapabilities(
+                await resolvePlatformAdmin(),
+                query,
+                limit,
+              ),
+            }),
+            execute: async ({ name, body }) => {
+              if (!parseAdminCapabilityName(name)) return { status: "unhandled" }
+              const result = await executeAvailableAdminCapability(
+                await resolvePlatformAdmin(),
+                name,
+                body,
+              )
+              return result
+                ? { status: "handled", result }
+                : { status: "unhandled" }
+            },
+          }),
+        },
+      },
+      {
+        descriptor: BUNDLED_DEN_CAPABILITY_SOURCE_DESCRIPTORS.externalMcp,
+        binding: {
+          status: "ready",
+          create: () => ({
+            search: async ({ query, limit }) => {
+              if (!externalMcpConnectionsEnabled) return { matches: [] }
+              let coverageHint: string | undefined
+              const matches = await searchExternalCapabilities({
+                organizationId: principal.organizationId,
+                member: memberIdentity,
+                query,
+                redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
+                limit,
+                reportCoverage: (coverage) => {
+                  coverageHint = externalMcpSearchCoverageHint(coverage)
+                },
+              })
+              return {
+                matches,
+                ...(coverageHint ? { coverageHint } : {}),
+              }
+            },
+            execute: async ({ name, body }) => {
+              const external = parseExternalCapabilityName(name)
+              if (!external) return { status: "unhandled" }
+              if (!externalMcpConnectionsEnabled) {
+                return {
+                  status: "handled",
+                  result: {
+                    isError: true,
+                    content: textContent(JSON.stringify({
+                      error: "unknown_capability",
+                      message: "No external MCP connection capabilities are available for this organization.",
+                    })),
+                  },
+                }
+              }
+
+              const result = await executeExternalCapability({
+                organizationId: principal.organizationId,
+                member: memberIdentity,
+                connectionId: external.connectionId,
+                toolName: external.toolName,
+                args: normalizedExternalArgs(body),
+                redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
+              })
+              if (!result.ok) {
+                return {
+                  status: "handled",
+                  result: externalCapabilityErrorToolResult(result),
+                }
+              }
+              // The SDK's callTool() can return either the standard {content:[...]}
+              // shape or a legacy-compatibility {toolResult} shape; normalize to
+              // what McpServer's own tool callback contract requires.
+              return {
+                status: "handled",
+                result: { content: externalToolContent(result.result) },
+              }
+            },
+          }),
+        },
+      },
+      {
+        descriptor: BUNDLED_DEN_CAPABILITY_SOURCE_DESCRIPTORS.marketplace,
+        binding: {
+          status: "ready",
+          create: () => ({
+            search: async ({ query, limit, type }) => ({
+              matches: externalMcpConnectionsEnabled
+                ? await searchMarketplaceCapabilities({
+                    organizationId: principal.organizationId,
+                    member: memberIdentity,
+                    objectTypes: type === "skills" ? skillMarketplaceObjectTypes : undefined,
+                    query,
+                    limit,
+                    enabled: externalMcpConnectionsEnabled,
+                  })
+                : [],
+            }),
+            execute: async ({ name, body }) => {
+              const marketplace = parseMarketplaceCapabilityName(name)
+              if (!marketplace) return { status: "unhandled" }
+              const result = await executeMarketplaceCapability({
+                organizationId: principal.organizationId,
+                member: memberIdentity,
+                pluginId: marketplace.pluginId,
+                configObjectId: marketplace.configObjectId,
+                body,
+                enabled: externalMcpConnectionsEnabled,
+              })
+              if (!result.ok) {
+                return {
+                  status: "handled",
+                  result: {
+                    isError: true,
+                    content: textContent(result.error === "unknown_capability"
+                      ? unknownCapabilityText(name)
+                      : JSON.stringify({ error: result.error, message: result.message })),
+                  },
+                }
+              }
+              return {
+                status: "handled",
+                result: { content: textContent(JSON.stringify(result.result, null, 2)) },
+              }
+            },
+          }),
+        },
+      },
+      {
+        descriptor: BUNDLED_DEN_CAPABILITY_SOURCE_DESCRIPTORS.skills,
+        binding: {
+          status: "ready",
+          create: () => ({
+            search: async ({ query, limit }) => ({
+              matches: await searchSkillCapabilities({
+                organizationId: principal.organizationId,
+                member: memberIdentity,
+                query,
+                limit,
+              }),
+            }),
+            execute: async ({ name }) => {
+              const skillId = parseSkillCapabilityName(name)
+              if (!skillId) return { status: "unhandled" }
+              const result = await executeSkillCapability({
+                organizationId: principal.organizationId,
+                member: memberIdentity,
+                skillId,
+              })
+              if (!result.ok) {
+                return {
+                  status: "handled",
+                  result: {
+                    isError: true,
+                    content: textContent(JSON.stringify({
+                      error: result.error,
+                      message: result.message,
+                    })),
+                  },
+                }
+              }
+              return {
+                status: "handled",
+                result: {
+                  content: textContent(JSON.stringify({
+                    skill: {
+                      id: result.skill.id,
+                      title: result.skill.title,
+                      description: result.skill.description,
+                      skillText: result.skill.skillText,
+                      updatedAt: result.skill.updatedAt,
+                    },
+                  }, null, 2)),
+                },
+              }
+            },
+          }),
+        },
+      },
+    ])
+    if (capabilitySources.status === "invalid") {
+      const detail = capabilitySources.diagnostics
+        .map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`)
+        .join("; ")
+      throw new Error(`Invalid Den capability-source composition: ${detail}`)
+    }
     const server = createAgentMcpServer()
 
     server.registerTool(
@@ -319,51 +547,8 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
       },
       async ({ query, limit, type }) => {
         const boundedLimit = limit ?? 5
-        const sourceFilter = searchCapabilitySourceFilter(type)
-        const marketplaceObjectTypes = type === "skills" ? skillMarketplaceObjectTypes : undefined
-        const restMatches = sourceFilter.api ? searchCapabilities(catalog, query, boundedLimit) : []
-        const adminMatches = sourceFilter.admin
-          ? await searchAvailableAdminCapabilities(await resolvePlatformAdmin(), query, boundedLimit)
-          : []
-        // Merged in from each connected External MCP Connection's live
-        // tools/list (capability-sources/external-mcp-client.ts) — a
-        // Notion/Linear/Stripe/... connection an admin added in Den shows
-        // up here exactly like any native capability, ranked together.
-        let externalCoverageHint: string | undefined
-        const externalMatches = sourceFilter.mcp && externalMcpConnectionsEnabled
-          ? await searchExternalCapabilities({
-            organizationId: principal.organizationId,
-            member: memberIdentity,
-            query,
-            redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
-            limit: boundedLimit,
-            reportCoverage: (coverage) => {
-              externalCoverageHint = externalMcpSearchCoverageHint(coverage)
-            },
-          })
-          : []
-        const marketplaceMatches = sourceFilter.marketplace && externalMcpConnectionsEnabled
-          ? await searchMarketplaceCapabilities({
-            organizationId: principal.organizationId,
-            member: memberIdentity,
-            objectTypes: marketplaceObjectTypes,
-            query,
-            limit: boundedLimit,
-            enabled: externalMcpConnectionsEnabled,
-          })
-          : []
-        const skillMatches = sourceFilter.skills
-          ? await searchSkillCapabilities({
-            organizationId: principal.organizationId,
-            member: memberIdentity,
-            query,
-            limit: boundedLimit,
-          })
-          : []
-        const matches = [...restMatches, ...adminMatches, ...externalMatches, ...marketplaceMatches, ...skillMatches]
-          .sort(compareCapabilityMatches)
-          .slice(0, boundedLimit)
-        return capabilitySearchToolResult(matches, externalCoverageHint)
+        const result = await capabilitySources.search({ query, limit: boundedLimit, type })
+        return capabilitySearchToolResult(result.matches, result.coverageHint)
       },
     )
 
@@ -389,105 +574,13 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         return executeCapabilityWithBudget({
           capability: name,
           invoke: async (): Promise<ExecuteCapabilityToolResult> => {
-            const adminResult = parseAdminCapabilityName(name)
-              ? await executeAvailableAdminCapability(await resolvePlatformAdmin(), name, body)
-              : null
-            if (adminResult) return adminResult
-
-            const external = parseExternalCapabilityName(name)
-            if (external) {
-              if (!externalMcpConnectionsEnabled) {
-                return {
+            const execution = await capabilitySources.execute({ name, path, query, body })
+            return execution.status === "handled"
+              ? execution.result
+              : {
                   isError: true,
-                  content: textContent(JSON.stringify({
-                    error: "unknown_capability",
-                    message: "No external MCP connection capabilities are available for this organization.",
-                  })),
+                  content: textContent(unknownCapabilityText(name)),
                 }
-              }
-              const result = await executeExternalCapability({
-                organizationId: principal.organizationId,
-                member: memberIdentity,
-                connectionId: external.connectionId,
-                toolName: external.toolName,
-                args: normalizedExternalArgs(body),
-                redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
-              })
-              if (!result.ok) {
-                return externalCapabilityErrorToolResult(result)
-              }
-              // The SDK's callTool() can return either the standard {content:[...]}
-              // shape or a legacy-compatibility {toolResult} shape; normalize to
-              // what McpServer's own tool callback contract requires.
-              return { content: externalToolContent(result.result) }
-            }
-
-            const marketplace = parseMarketplaceCapabilityName(name)
-            if (marketplace) {
-              const result = await executeMarketplaceCapability({
-                organizationId: principal.organizationId,
-                member: memberIdentity,
-                pluginId: marketplace.pluginId,
-                configObjectId: marketplace.configObjectId,
-                body,
-                enabled: externalMcpConnectionsEnabled,
-              })
-              if (!result.ok) {
-                return {
-                  isError: true,
-                  content: textContent(result.error === "unknown_capability"
-                    ? unknownCapabilityText(name)
-                    : JSON.stringify({ error: result.error, message: result.message })),
-                }
-              }
-              return { content: textContent(JSON.stringify(result.result, null, 2)) }
-            }
-
-            const skillId = parseSkillCapabilityName(name)
-            if (skillId) {
-              const result = await executeSkillCapability({
-                organizationId: principal.organizationId,
-                member: memberIdentity,
-                skillId,
-              })
-              if (!result.ok) {
-                return {
-                  isError: true,
-                  content: textContent(JSON.stringify({ error: result.error, message: result.message })),
-                }
-              }
-              return {
-                content: textContent(JSON.stringify({
-                  skill: {
-                    id: result.skill.id,
-                    title: result.skill.title,
-                    description: result.skill.description,
-                    skillText: result.skill.skillText,
-                    updatedAt: result.skill.updatedAt,
-                  },
-                }, null, 2)),
-              }
-            }
-
-            const operation = catalog.find((candidate) => candidate.name === name)
-            if (!operation) {
-              return {
-                isError: true,
-                content: textContent(unknownCapabilityText(name)),
-              }
-            }
-
-            return invokeMcpOperation({
-              app: app as unknown as Hono,
-              env: c.env,
-              operation,
-              principal,
-              toolInput: {
-                path: normalizeToolRecord(path),
-                query: normalizeToolRecord(query),
-                body: normalizeToolBody(body),
-              },
-            })
           },
         })
       },

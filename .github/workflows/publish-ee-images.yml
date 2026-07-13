@@ -28,6 +28,7 @@ on:
       - "ee/apps/inference/**"
       - "ee/packages/**"
       - "packages/email/**"
+      - "packages/contribution-registry/**"
       - "packages/extension-catalog/**"
       - "packages/extension-contracts/**"
       - "packages/types/**"

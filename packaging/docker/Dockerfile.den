@@ -11,6 +11,7 @@ COPY patches /app/patches
 COPY packages/types/package.json /app/packages/types/package.json
 COPY packages/email/package.json /app/packages/email/package.json
 COPY packages/enterprise-mcp-client/package.json /app/packages/enterprise-mcp-client/package.json
+COPY packages/contribution-registry/package.json /app/packages/contribution-registry/package.json
 COPY packages/extension-contracts/package.json /app/packages/extension-contracts/package.json
 COPY packages/extension-catalog/package.json /app/packages/extension-catalog/package.json
 COPY packages/install-config/package.json /app/packages/install-config/package.json
@@ -23,6 +24,7 @@ RUN pnpm install --frozen-lockfile --trust-lockfile
 COPY packages/types /app/packages/types
 COPY packages/email /app/packages/email
 COPY packages/enterprise-mcp-client /app/packages/enterprise-mcp-client
+COPY packages/contribution-registry /app/packages/contribution-registry
 COPY packages/extension-contracts /app/packages/extension-contracts
 COPY packages/extension-catalog /app/packages/extension-catalog
 COPY packages/install-config /app/packages/install-config
@@ -33,6 +35,7 @@ COPY apps/desktop/package.json /tmp/openwork-desktop-package.json
 
 RUN pnpm --dir /app/packages/email run build
 RUN pnpm --dir /app/packages/enterprise-mcp-client run build
+RUN pnpm --dir /app/packages/contribution-registry run build
 RUN pnpm --dir /app/packages/extension-contracts run build
 RUN pnpm --dir /app/packages/extension-catalog run build
 RUN pnpm --dir /app/packages/install-config run build
