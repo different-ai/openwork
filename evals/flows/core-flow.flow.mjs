@@ -88,17 +88,26 @@ export default {
     {
       name: "User creates a fresh task in the active workspace",
       run: async (ctx) => {
+        let previousSessionId = null;
         await ctx.prove("A new session is created and becomes active", {
           action: async () => {
+            previousSessionId = await ctx.eval(`(() => {
+              const route = window.__openworkControl.snapshot().route || "";
+              const match = route.match(/ses_[A-Za-z0-9]+/);
+              return match ? match[0] : null;
+            })()`);
             await ctx.control("session.create_task");
           },
           assert: async () => {
-            // The newly created session id should be reflected in the route.
+            // The newly created session id should replace the previously
+            // active route. Merely waiting for any session id can pass on the
+            // old route before asynchronous navigation settles.
             const sessionId = await ctx.waitFor(
               `(() => {
                 const route = window.__openworkControl.snapshot().route || "";
                 const m = route.match(/ses_[A-Za-z0-9]+/);
-                return m ? m[0] : null;
+                const sessionId = m ? m[0] : null;
+                return sessionId && sessionId !== ${JSON.stringify(previousSessionId)} ? sessionId : null;
               })()`,
               { timeoutMs: 30_000, label: "active session id in route" },
             );
@@ -170,7 +179,18 @@ export default {
               "window.__openworkControl.listActions().some((a) => a.id === 'session.list_sessions')",
               { timeoutMs: 45_000, label: "session.list_sessions available" },
             );
-            const sessions = await ctx.control("session.list_sessions");
+            // The control action is registered before the post-reload session
+            // query necessarily settles. Poll the user-facing action instead
+            // of interpreting that normal loading window as lost persistence.
+            // This still proves the same boundary: the exact session must
+            // arrive through the freshly booted app's persisted session list.
+            let sessions = [];
+            const sessionListDeadline = Date.now() + 45_000;
+            while (Date.now() < sessionListDeadline) {
+              sessions = await ctx.control("session.list_sessions");
+              if (Array.isArray(sessions) && sessions.some((s) => s.sessionId === before)) break;
+              await new Promise((resolve) => setTimeout(resolve, 250));
+            }
             const listed = Array.isArray(sessions) && sessions.some((s) => s.sessionId === before);
             ctx.assert(listed, `Session ${before} was not listed after reopen (not persisted).`);
             // Open it explicitly and confirm its message history is retrievable.
