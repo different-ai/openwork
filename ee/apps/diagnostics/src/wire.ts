@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
+import { EGRESS_DIAGNOSTIC_RUN_HEADER, EGRESS_DIAGNOSTIC_STEP_HEADER } from "@openwork/types/den/egress-diagnostics"
 import type { DiagnosticsProfile, WireBody, WireExchange } from "./contracts"
 
 const visibleHeaders = new Set([
@@ -18,6 +19,8 @@ const sensitiveBodyKeyPattern = /(authorization|cookie|token|secret|password|cod
 const visibleStringKeys = new Set(["error", "grant_type", "jsonrpc", "method", "protocolVersion", "response_type", "token_type"])
 const maximumPreviewCharacters = 8_000
 const maximumCollectionItems = 30
+const diagnosticRunPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+const diagnosticStepPattern = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u
 
 function hash(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`
@@ -108,12 +111,16 @@ export function createWireExchange(input: {
   const completedAt = Date.now()
   const url = new URL(input.request.url)
   const forwarded = input.request.headers.get("x-forwarded-for") ?? input.request.headers.get("x-real-ip") ?? "vercel-gateway-received"
+  const suppliedRunId = input.request.headers.get(EGRESS_DIAGNOSTIC_RUN_HEADER) ?? ""
+  const suppliedStep = input.request.headers.get(EGRESS_DIAGNOSTIC_STEP_HEADER) ?? ""
   return {
     completedAt: new Date(completedAt).toISOString(),
     correlationId: input.correlationId ?? randomUUID(),
     durationMs: Math.max(0, completedAt - input.startedAt),
     id: randomUUID(),
     profile: input.profile,
+    runId: diagnosticRunPattern.test(suppliedRunId) ? suppliedRunId : null,
+    step: diagnosticStepPattern.test(suppliedStep) ? suppliedStep : null,
     receivedAt: new Date(input.startedAt).toISOString(),
     request: {
       body: safeBody(input.requestBody, input.request.headers.get("content-type") ?? ""),

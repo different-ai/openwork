@@ -46,6 +46,8 @@ const EnvSchema = z.object({
   OPENWORK_DEV_MODE: z.string().optional(),
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
   DEN_ENABLE_ENTERPRISE_MCP_CLIENT: z.string().optional(),
+  DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
+  DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_GOOGLE_OAUTH_TOKEN_URL: z.string().optional(),
   DEN_GOOGLE_API_BASE_URL: z.string().optional(),
@@ -225,6 +227,29 @@ function normalizeOrigin(origin: string) {
   return value.replace(/\/+$/, "")
 }
 
+function normalizeDiagnosticsOrigin(value: string | undefined, allowInsecureHttp: boolean) {
+  const configured = optionalString(value)
+  if (!configured) return undefined
+
+  let url: URL
+  try {
+    url = new URL(configured)
+  } catch {
+    throw new Error("DEN_DIAGNOSTICS_ORIGIN must be an absolute http or https origin.")
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("DEN_DIAGNOSTICS_ORIGIN must be an absolute http or https origin.")
+  }
+  if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) {
+    throw new Error("DEN_DIAGNOSTICS_ORIGIN cannot contain credentials, a path, a query string, or a fragment.")
+  }
+  if (url.protocol !== "https:" && !allowInsecureHttp) {
+    throw new Error("DEN_DIAGNOSTICS_ORIGIN must use HTTPS outside development.")
+  }
+  return url.origin
+}
+
 function normalizeAbsoluteUrlCsv(envName: string, value: string | undefined) {
   const entries = splitCsv(value)
   const invalidEntries: string[] = []
@@ -275,6 +300,11 @@ const mcpConnectionsGatingEnabled =
   (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
+const diagnosticsOrigin = normalizeDiagnosticsOrigin(parsed.DEN_DIAGNOSTICS_ORIGIN, devMode)
+const diagnosticsBearerToken = optionalString(parsed.DEN_DIAGNOSTICS_BEARER_TOKEN)
+if (diagnosticsBearerToken && diagnosticsBearerToken.length < 24) {
+  throw new Error("DEN_DIAGNOSTICS_BEARER_TOKEN must contain at least 24 characters.")
+}
 const apiPublicUrl = normalizeConfiguredPublicApiBaseUrl(parsed.DEN_API_PUBLIC_URL, {
   allowInsecureHttp: devMode,
 })
@@ -332,6 +362,10 @@ export const env = {
   devMode,
   allowPrivateMcpUrls,
   enterpriseMcpClientEnabled,
+  diagnostics: {
+    origin: diagnosticsOrigin,
+    bearerToken: diagnosticsBearerToken,
+  },
   planGatingEnabled,
   installLinksGatingEnabled,
   mcpConnectionsGatingEnabled,

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -93,6 +93,12 @@ async function startDiagnostics(ctx) {
   ctx.assert(ready?.ok === true, `Diagnostics did not become ready.\n${state.output}`);
 
   await ctx.client.send("Network.enable");
+  await ctx.client.send("Emulation.setDeviceMetricsOverride", {
+    deviceScaleFactor: 1,
+    height: 900,
+    mobile: false,
+    width: 1200,
+  });
   await ctx.client.send("Network.setExtraHTTPHeaders", {
     headers: { Authorization: `Basic ${Buffer.from(`${ADMIN_USERNAME}:${ADMIN_PASSWORD}`).toString("base64")}` },
   });
@@ -108,17 +114,55 @@ async function stopDiagnostics() {
   stopChild("SIGKILL");
 }
 
-async function navigate(ctx) {
-  await ctx.client.send("Page.navigate", { url: state.origin });
+async function navigate(ctx, runId = null) {
+  const url = runId ? `${state.origin}/?runId=${encodeURIComponent(runId)}` : state.origin;
+  await ctx.client.send("Page.navigate", { url });
   await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 20_000, label: "Diagnostics dashboard" });
 }
 
-async function handshake() {
+async function diagnosticRequest(pathname, runId, step, init = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("x-openwork-diagnostic-run-id", runId);
+  headers.set("x-openwork-diagnostic-step", step);
+  return fetch(`${state.origin}${pathname}`, { ...init, headers });
+}
+
+async function runControlledDiagnostic() {
+  const runId = randomUUID();
+  const statuses = [];
+  statuses.push((await diagnosticRequest("/diagnostics/egress", runId, "reachability-get")).status);
+  statuses.push((await diagnosticRequest("/diagnostics/egress", runId, "http-head", { method: "HEAD" })).status);
+  statuses.push((await diagnosticRequest("/diagnostics/egress", runId, "http-options", { method: "OPTIONS" })).status);
+  statuses.push((await diagnosticRequest("/diagnostics/egress", runId, "http-post", {
+    body: JSON.stringify({ probe: "openwork-egress-diagnostic" }),
+    headers: { authorization: `Bearer ${BEARER_TOKEN}`, "content-type": "application/json" },
+    method: "POST",
+  })).status);
+  const redirect = await diagnosticRequest("/diagnostics/redirect", runId, "redirect-start", { redirect: "manual" });
+  statuses.push(redirect.status);
+  const redirectUrl = new URL(redirect.headers.get("location"), state.origin);
+  statuses.push((await diagnosticRequest(`${redirectUrl.pathname}${redirectUrl.search}`, runId, "redirect-complete")).status);
+  statuses.push((await diagnosticRequest("/.well-known/oauth-protected-resource/mcp", runId, "oauth-protected-resource")).status);
+  statuses.push((await diagnosticRequest("/.well-known/oauth-authorization-server", runId, "oauth-authorization-server")).status);
+  const tokenResponse = await diagnosticRequest("/oauth/token", runId, "oauth-token", {
+    body: new URLSearchParams({ grant_type: "client_credentials", resource: `${state.origin}/mcp`, scope: "diagnostics:connectivity" }),
+    headers: {
+      authorization: `Basic ${Buffer.from(`openwork-diagnostics:${BEARER_TOKEN}`).toString("base64")}`,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    method: "POST",
+  });
+  statuses.push(tokenResponse.status);
+  const tokenBody = await tokenResponse.json();
+  const accessToken = tokenBody.access_token;
+
   const endpoint = `${state.origin}/mcp`;
   const baseHeaders = {
     accept: "application/json, text/event-stream",
-    authorization: `Bearer ${BEARER_TOKEN}`,
+    authorization: `Bearer ${accessToken}`,
     "content-type": "application/json",
+    "x-openwork-diagnostic-run-id": runId,
+    "x-openwork-diagnostic-step": "mcp-initialize",
   };
   const initialize = await fetch(endpoint, {
     body: JSON.stringify({
@@ -139,12 +183,17 @@ async function handshake() {
     { id: 2, jsonrpc: "2.0", method: "tools/list", params: {} },
     { id: 3, jsonrpc: "2.0", method: "tools/call", params: { arguments: { query: PRIVATE_ARGUMENT }, name: "search_microsoft_365" } },
   ];
-  const statuses = [initialize.status];
-  for (const body of messages) {
-    const response = await fetch(endpoint, { body: JSON.stringify(body), headers, method: "POST" });
+  statuses.push(initialize.status);
+  const steps = ["mcp-initialized", "mcp-tools-list", "mcp-tools-call"];
+  for (const [index, body] of messages.entries()) {
+    const response = await fetch(endpoint, {
+      body: JSON.stringify(body),
+      headers: { ...headers, "x-openwork-diagnostic-step": steps[index] },
+      method: "POST",
+    });
     statuses.push(response.status);
   }
-  return statuses;
+  return { accessToken, runId, statuses };
 }
 
 function record(ctx, assertion, passed, actual) {
@@ -154,7 +203,7 @@ function record(ctx, assertion, passed, actual) {
 
 export default {
   id: FLOW_ID,
-  title: "A fixed enterprise MCP endpoint produces safe, specific wire history",
+  title: "A private-cloud Den run produces a correlated HTTP, OAuth, and MCP support story",
   kind: "user-facing",
   preserveTheme: true,
   precondition: async (ctx) => {
@@ -163,68 +212,98 @@ export default {
   },
   steps: [
     {
-      name: "Successful MCP handshake",
+      name: "One private-cloud run",
       run: async (ctx) => {
-        await ctx.prove("The complete synthetic MCP handshake is visible as four correlated exchanges", {
+        await ctx.prove("One run ID groups every request that reached the public Diagnostics service", {
           voiceover: vo[0],
           action: async () => {
-            ctx.handshakeStatuses = await handshake();
-            await navigate(ctx);
+            ctx.diagnostic = await runControlledDiagnostic();
+            await navigate(ctx, ctx.diagnostic.runId);
+            await ctx.eval(`(() => { document.querySelector('.run-filter')?.scrollIntoView({ block: 'center' }); return true; })()`);
           },
           assert: async () => {
             const view = await ctx.eval(`(() => ({
               count: document.querySelectorAll('article.exchange').length,
-              endpoint: document.querySelector('.endpoint')?.textContent ?? '',
-              statuses: [...document.querySelectorAll('.status')].map((item) => item.textContent?.trim()),
+              run: document.querySelector('.run-filter')?.textContent ?? '',
             }))()`);
-            record(ctx, "The MCP client completed initialize, ready, catalog, and tool call", JSON.stringify(ctx.handshakeStatuses) === "[200,202,200,200]", ctx.handshakeStatuses);
-            record(ctx, "The dashboard shows exactly four recent exchanges", view.count === 4, view);
-            record(ctx, "The dashboard identifies the Microsoft-shaped fixed endpoint", view.endpoint.includes("microsoft") && view.endpoint.includes("/mcp"), view.endpoint);
+            record(ctx, "All thirteen staged HTTP, redirect, OAuth, and MCP requests completed", JSON.stringify(ctx.diagnostic.statuses) === "[200,204,204,200,302,200,200,200,200,200,202,200,200]", ctx.diagnostic.statuses);
+            record(ctx, "The support dashboard shows exactly thirteen exchanges for the run", view.count === 13, view);
+            record(ctx, "The dashboard is filtered to the customer-provided run ID", view.run.includes(ctx.diagnostic.runId), view.run);
           },
-          screenshot: { name: "successful-handshake", requireText: ["Diagnostics", "4 recent exchanges", "HTTP 202"] },
+          screenshot: { name: "correlated-run", requireText: ["Support trace", "13 recent exchanges"] },
         });
       },
     },
     {
-      name: "Redacted request evidence",
+      name: "OAuth boundary",
       run: async (ctx) => {
-        await ctx.prove("Protocol structure remains useful while private values are absent", {
+        await ctx.prove("OAuth discovery and token exchange are independently visible without exposing either secret", {
           voiceover: vo[1],
           action: async () => {
-            await ctx.eval(`(() => { const details = document.querySelector('details'); if (details) details.open = true; return Boolean(details); })()`);
+            await ctx.eval(`(() => {
+              const article = [...document.querySelectorAll('article.exchange')].find((item) => item.textContent?.includes('oauth-token'));
+              const details = article?.querySelector('details');
+              if (details) details.open = true;
+              article?.scrollIntoView({ block: 'center' });
+              return Boolean(article);
+            })()`);
           },
           assert: async () => {
             const html = await ctx.eval("document.documentElement.innerHTML");
-            record(ctx, "The synthetic Bearer token is absent from rendered evidence", !html.includes(BEARER_TOKEN), "token absent");
-            record(ctx, "The tool argument value is absent from rendered evidence", !html.includes(PRIVATE_ARGUMENT), "argument absent");
-            record(ctx, "Session header values are represented only by a hash", !html.includes("mcp-session-id: ey") && html.includes("sha256:"), "session value absent; hash present");
+            const text = await ctx.eval("document.body.innerText");
+            record(ctx, "The OAuth token request is a separately attributed step", text.includes("POST /oauth/token") && text.includes("oauth-token"), "OAuth token step visible");
+            record(ctx, "The shared diagnostic secret is absent from rendered evidence", !html.includes(BEARER_TOKEN), "secret absent");
+            record(ctx, "The issued access token is absent from rendered evidence", !html.includes(ctx.diagnostic.accessToken), "access token value absent");
           },
-          screenshot: { name: "redacted-exchange", requireText: ["Request headers", "Request body", "VALUE REDACTED"] },
+          screenshot: { name: "oauth-boundary", requireText: ["POST /oauth/token", "oauth-token", "Request headers"] },
         });
       },
     },
     {
-      name: "Specific incompatible-client failure",
+      name: "MCP boundary",
+      run: async (ctx) => {
+        await ctx.prove("MCP initialize, session continuity, catalog, and tool call remain separate diagnostic steps", {
+          voiceover: vo[2],
+          action: async () => {
+            await ctx.eval(`(() => {
+              const article = [...document.querySelectorAll('article.exchange')].find((item) => item.textContent?.includes('mcp-tools-call'));
+              article?.scrollIntoView({ block: 'center' });
+              return Boolean(article);
+            })()`);
+          },
+          assert: async () => {
+            const text = await ctx.eval("document.body.innerText");
+            record(ctx, "The final MCP tool call is visible and successful", text.includes("mcp-tools-call") && text.includes("HTTP 200"), "MCP tool call visible");
+            record(ctx, "The private synthetic tool argument is absent", !text.includes(PRIVATE_ARGUMENT), "tool argument absent");
+          },
+          screenshot: { name: "mcp-boundary", requireText: ["mcp-tools-call", "POST /mcp", "HTTP 200"] },
+        });
+      },
+    },
+    {
+      name: "Specific proxy-style failure",
       run: async (ctx) => {
         try {
-          await ctx.prove("An invalid Streamable HTTP contract is identified as HTTP 406 not_acceptable", {
-            voiceover: vo[2],
+          await ctx.prove("A stripped authorization header is attributed to the authenticated POST step as HTTP 401", {
+            voiceover: vo[3],
             action: async () => {
-              const response = await fetch(`${state.origin}/mcp`, {
-                body: JSON.stringify({ id: 9, jsonrpc: "2.0", method: "initialize", params: {} }),
-                headers: { accept: "application/json", authorization: `Bearer ${BEARER_TOKEN}`, "content-type": "application/json" },
+              ctx.failureRunId = randomUUID();
+              const response = await diagnosticRequest("/diagnostics/egress", ctx.failureRunId, "http-post", {
+                body: JSON.stringify({ probe: "openwork-egress-diagnostic" }),
+                headers: { "content-type": "application/json" },
                 method: "POST",
               });
               ctx.failureStatus = response.status;
-              await navigate(ctx);
-              await ctx.eval(`(() => { const details = document.querySelector('details'); if (details) details.open = true; return Boolean(details); })()`);
+              await navigate(ctx, ctx.failureRunId);
+              await ctx.eval(`(() => { const article = document.querySelector('article.exchange'); article?.scrollIntoView({ block: 'center' }); return Boolean(article); })()`);
             },
             assert: async () => {
-              const text = await ctx.eval("document.body.innerText");
-              record(ctx, "The incompatible request returns HTTP 406", ctx.failureStatus === 406 && text.includes("HTTP 406"), ctx.failureStatus);
-              record(ctx, "The safe response preview names not_acceptable", text.includes("not_acceptable"), "not_acceptable visible");
+              const text = await ctx.eval("document.body.textContent");
+              record(ctx, "The rejected authenticated POST returns HTTP 401", ctx.failureStatus === 401 && text.includes("HTTP 401"), ctx.failureStatus);
+              record(ctx, "The support trace identifies the exact http-post stage", text.includes("http-post"), "http-post visible");
+              record(ctx, "The safe response names unauthorized", text.includes("unauthorized"), "unauthorized visible");
             },
-            screenshot: { name: "specific-accept-failure", requireText: ["HTTP 406", "not_acceptable"] },
+            screenshot: { name: "specific-auth-failure", requireText: ["HTTP 401", "http-post"] },
           });
         } finally {
           await stopDiagnostics();

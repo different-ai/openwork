@@ -588,6 +588,9 @@ importers:
 
   ee/apps/diagnostics:
     dependencies:
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../../packages/types
       next:
         specifier: 16.2.1
         version: 16.2.1(@opentelemetry/api@1.9.0)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)

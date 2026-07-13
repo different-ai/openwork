@@ -1,6 +1,7 @@
 import { diagnosticsConfig, validateProductionConfig } from "../src/config"
 import { listWireHistory } from "../src/history-store"
 import type { WireBody, WireExchange } from "../src/contracts"
+import { egressDiagnosticRunSchema } from "@openwork/types/den/egress-diagnostics"
 
 export const dynamic = "force-dynamic"
 
@@ -24,6 +25,8 @@ function Exchange({ exchange }: { exchange: WireExchange }) {
       <span className={success ? "status success" : "status failure"}>HTTP {exchange.response.status}</span>
     </header>
     <div className="proof-grid">
+      <div><span>Diagnostic run</span><code>{exchange.runId ?? "Standalone request"}</code></div>
+      <div><span>Diagnostic step</span><strong>{exchange.step ?? "Unspecified"}</strong></div>
       <div><span>Allowlist proof</span><code>{exchange.sourceProof}</code></div>
       <div><span>Diagnostic reference</span><code>{exchange.correlationId}</code></div>
       <div><span>Duration</span><strong>{exchange.durationMs} ms</strong></div>
@@ -39,11 +42,16 @@ function Exchange({ exchange }: { exchange: WireExchange }) {
   </article>
 }
 
-export default async function DiagnosticsPage() {
-  const history = await listWireHistory()
+export default async function DiagnosticsPage({ searchParams }: { searchParams: Promise<{ runId?: string | string[] }> }) {
+  const allHistory = await listWireHistory()
+  const params = await searchParams
+  const suppliedRunId = typeof params.runId === "string" ? params.runId : ""
+  const parsedRunId = egressDiagnosticRunSchema.shape.runId.safeParse(suppliedRunId)
+  const runId = parsedRunId.success ? parsedRunId.data : null
+  const history = runId ? allHistory.filter((exchange) => exchange.runId === runId) : allHistory
   const config = diagnosticsConfig()
   const missing = validateProductionConfig()
-  const origin = process.env.NEXT_PUBLIC_DIAGNOSTICS_ORIGIN ?? "http://localhost:3010"
+  const origin = config.publicOrigin
   return <main>
     <meta httpEquiv="refresh" content="5" />
     <header className="hero">
@@ -54,6 +62,7 @@ export default async function DiagnosticsPage() {
       <strong>Safe by default.</strong> Every exchange is retained for at most 24 hours. Credentials, OAuth codes, tokens, cookies, session IDs, unknown headers, and tool argument values are redacted before storage.
     </section>
     {missing.length > 0 ? <section className="warning"><strong>Deployment configuration required:</strong> {missing.join(", ")}</section> : null}
+    {runId ? <section className="run-filter"><strong>Support trace:</strong> <code>{runId}</code><a href="/">Show all requests</a></section> : null}
     <section className="summary"><h2>{history.length} recent exchange{history.length === 1 ? "" : "s"}</h2><p>The page refreshes every five seconds. A new row proves the request reached this deployment.</p></section>
     {history.length === 0
       ? <section className="empty"><h2>Waiting for a client</h2><p>Point the client to <code>{origin}/mcp</code> with the configured synthetic Bearer token.</p></section>

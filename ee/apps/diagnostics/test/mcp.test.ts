@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { clearWireHistory, listWireHistory, recordWireExchange } from "../src/history-store"
 import { handleMcpRequest } from "../src/mcp"
 import { createWireExchange } from "../src/wire"
+import { createAccessToken, createSessionToken, verifyAccessToken, verifySessionToken } from "../src/session"
 
 const originalEnvironment = { ...process.env }
 const originalFetch = globalThis.fetch
@@ -30,6 +31,19 @@ function mcpRequest(body: unknown, headers: Readonly<Record<string, string>> = {
 }
 
 describe("OpenWork Diagnostics MCP endpoint", () => {
+  test("keeps short-lived OAuth access tokens distinct from MCP session tokens", () => {
+    const secret = "a-test-signing-secret-with-more-than-32-characters"
+    const now = Date.now()
+    const access = createAccessToken(secret, now)
+    const session = createSessionToken(secret, now)
+
+    expect(verifyAccessToken(access, secret, now)).toBe(true)
+    expect(verifySessionToken(access, secret, now)).toBe(false)
+    expect(verifySessionToken(session, secret, now)).toBe(true)
+    expect(verifyAccessToken(session, secret, now)).toBe(false)
+    expect(verifyAccessToken(access, secret, now + 5 * 60 * 1000 + 1)).toBe(false)
+  })
+
   test("completes initialize, session continuity, catalog, and a synthetic tool call", async () => {
     const initialized = await handleMcpRequest(mcpRequest({
       id: 1,

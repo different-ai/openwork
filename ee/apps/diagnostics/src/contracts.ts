@@ -19,6 +19,8 @@ export interface WireExchange {
   durationMs: number
   id: string
   profile: DiagnosticsProfile
+  runId: string | null
+  step: string | null
   receivedAt: string
   request: WireMessage & {
     method: string

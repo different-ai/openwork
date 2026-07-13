@@ -8,6 +8,7 @@ import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgCoreRoutes } from "./core.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
+import { registerOrgEgressDiagnosticRoutes } from "./egress-diagnostics.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
 import { registerGoogleWorkspaceRoutes } from "./google-workspace.js"
 import { registerOrgInstallLinkRoutes } from "./install-links.js"
@@ -58,6 +59,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgBillingRoutes(app)
   registerOrgBrandAssetRoutes(app)
   registerOrgDesktopPolicyRoutes(app)
+  registerOrgEgressDiagnosticRoutes(app)
   registerOrgInferenceRoutes(app)
   registerOrgScimRoutes(app)
   registerOrgSsoRoutes(app)

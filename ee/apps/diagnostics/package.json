@@ -9,6 +9,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@openwork/types": "workspace:*",
     "next": "16.2.1",
     "react": "catalog:",
     "react-dom": "catalog:"

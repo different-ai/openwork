@@ -1,29 +1,13 @@
-import { timingSafeEqual } from "node:crypto"
 import { diagnosticsConfig, validateProductionConfig } from "./config"
+import { mcpBearerAuthorized } from "./auth"
+import { emptyResponse as empty, jsonResponse as json, type HandledResponse } from "./recorded-route"
 import { createSessionToken, verifySessionToken } from "./session"
 
 const supportedVersions = ["2025-11-25", "2025-06-18", "2025-03-26"] as const
 export const maximumRequestBytes = 64 * 1024
 
-type HandledResponse = { body: string; response: Response }
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function json(status: number, value: unknown, headers: Readonly<Record<string, string>> = {}): HandledResponse {
-  const body = JSON.stringify(value)
-  return {
-    body,
-    response: new Response(body, {
-      headers: { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", ...headers },
-      status,
-    }),
-  }
-}
-
-function empty(status: number, headers: Readonly<Record<string, string>> = {}): HandledResponse {
-  return { body: "", response: new Response(null, { headers: { "cache-control": "no-store", ...headers }, status }) }
 }
 
 function rpcResult(id: string | number, result: unknown): unknown {
@@ -32,16 +16,6 @@ function rpcResult(id: string | number, result: unknown): unknown {
 
 function rpcError(id: string | number | null, code: number, message: string, data?: unknown): unknown {
   return { error: { code, message, ...(data === undefined ? {} : { data }) }, id, jsonrpc: "2.0" }
-}
-
-function authorized(request: Request, expectedToken: string): boolean {
-  if (!expectedToken) return true
-  const authorization = request.headers.get("authorization") ?? ""
-  const prefix = "Bearer "
-  if (!authorization.startsWith(prefix)) return false
-  const supplied = Buffer.from(authorization.slice(prefix.length))
-  const expected = Buffer.from(expectedToken)
-  return supplied.length === expected.length && timingSafeEqual(supplied, expected)
 }
 
 function acceptsMcp(request: Request): boolean {
@@ -93,8 +67,10 @@ export async function handleMcpRequest(request: Request, rawBody: string): Promi
       : json(404, { error: "mcp_session_not_found" })
   }
   if (request.method !== "POST") return empty(405, { allow: "POST, DELETE" })
-  if (!authorized(request, config.bearerToken)) {
-    return json(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" })
+  if (!mcpBearerAuthorized(request, config.bearerToken, config.signingSecret)) {
+    return json(401, { error: "unauthorized" }, {
+      "www-authenticate": `Bearer resource_metadata="${config.publicOrigin}/.well-known/oauth-protected-resource/mcp", scope="diagnostics:connectivity"`,
+    })
   }
   if (!acceptsMcp(request)) {
     return json(406, { error: "not_acceptable", message: "Accept must include application/json and text/event-stream" })
