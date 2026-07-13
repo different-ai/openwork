@@ -26,14 +26,19 @@ describe("Den egress diagnostic settings flow", () => {
     expect(card).toContain('requestJson("/v1/diagnostics/egress", { method: "POST" }');
   });
 
-  test("keeps the destination and synthetic token under Den operator control", () => {
+  test("keeps the destination fixed while storing the synthetic token in Den", () => {
     const card = readFileSync(cardPath, "utf8");
     const route = readFileSync(routePath, "utf8");
 
-    expect(card).not.toContain("<DenInput");
+    expect(card).toContain("<DenInput");
+    expect(card).toContain('type="password"');
+    expect(card).toContain('requestJson("/v1/diagnostics/egress/token"');
+    expect(card).toContain("Den encrypts the token for this organization");
+    expect(card).toContain("Change token");
     expect(route).toContain("env.diagnostics.origin");
     expect(route).toContain("env.diagnostics.bearerToken");
-    expect(route).not.toContain('c.req.json');
+    expect(route).toContain("OrganizationDiagnosticCredentialTable");
+    expect(route).toContain('c.req.json');
     expect(route).toContain('orgRoleRoute(["admin"])');
   });
 });

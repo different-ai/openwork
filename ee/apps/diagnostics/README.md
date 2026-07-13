@@ -132,9 +132,12 @@ HTTP reached OpenWork. If a row exists, its response status and next missing
 step narrow the issue to proxy authentication, header stripping, redirects,
 OAuth, or MCP.
 
-For a customer-hosted Den, the operator sets the same synthetic secret. Den
-uses `https://diagnostic.openworklabs.com` by default; set
-`DEN_DIAGNOSTICS_ORIGIN` only to override that fixed destination:
+For a customer-hosted Den, an organization admin enters the same synthetic
+secret in **Org settings → Den egress diagnostic**. Den encrypts it and never
+returns it to the browser. Den uses `https://diagnostic.openworklabs.com` by
+default; set `DEN_DIAGNOSTICS_ORIGIN` only to override that fixed destination.
+`DEN_DIAGNOSTICS_BEARER_TOKEN` remains an optional deployment bootstrap
+fallback:
 
 ```dotenv
 DEN_DIAGNOSTICS_ORIGIN=https://diagnostic.openworklabs.com

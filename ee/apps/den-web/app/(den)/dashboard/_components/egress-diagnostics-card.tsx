@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
+import { DenInput } from "../../_components/ui/input";
 
 function statusStyles(status: EgressDiagnosticStep["status"]) {
   if (status === "passed") return "border-emerald-200 bg-emerald-50 text-emerald-800";
@@ -86,6 +87,9 @@ export function EgressDiagnosticsCard({ canRun }: { canRun: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<EgressDiagnosticRun | null>(null);
   const [copied, setCopied] = useState(false);
+  const [bearerTokenDraft, setBearerTokenDraft] = useState("");
+  const [savingBearerToken, setSavingBearerToken] = useState(false);
+  const [editingBearerToken, setEditingBearerToken] = useState(false);
 
   useEffect(() => {
     if (!canRun) {
@@ -142,6 +146,31 @@ export function EgressDiagnosticsCard({ canRun }: { canRun: boolean }) {
     }
   }
 
+  async function saveBearerToken() {
+    const bearerToken = bearerTokenDraft.trim();
+    if (bearerToken.length < 24) {
+      setError("Enter a diagnostic token with at least 24 characters.");
+      return;
+    }
+    setSavingBearerToken(true);
+    setError(null);
+    try {
+      const { response, payload } = await requestJson("/v1/diagnostics/egress/token", {
+        method: "PUT",
+        body: JSON.stringify({ bearerToken }),
+      }, 12_000);
+      if (!response.ok) throw new Error(getErrorMessage(payload, `Could not save the diagnostic token (${response.status}).`));
+      setBearerTokenDraft("");
+      setAvailable(true);
+      setMissingConfiguration([]);
+      setEditingBearerToken(false);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save the diagnostic token.");
+    } finally {
+      setSavingBearerToken(false);
+    }
+  }
+
   async function copyRunId() {
     if (!result) return;
     await navigator.clipboard.writeText(result.runId);
@@ -176,9 +205,39 @@ export function EgressDiagnosticsCard({ canRun }: { canRun: boolean }) {
 
       {!canRun ? <p className="text-[13px] text-gray-500">Only workspace owners and admins can run this diagnostic.</p> : null}
       {loading ? <p className="text-[13px] text-gray-500" role="status">Loading diagnostic configuration...</p> : null}
-      {!loading && canRun && !available ? (
+      {!loading && canRun && available && !editingBearerToken ? (
+        <div className="flex items-center justify-between gap-3 rounded-[22px] border border-gray-200 bg-gray-50 px-4 py-3 text-[13px] text-gray-600">
+          <p>Diagnostic token configured in Den.</p>
+          <DenButton type="button" size="sm" variant="secondary" onClick={() => setEditingBearerToken(true)}>
+            Change token
+          </DenButton>
+        </div>
+      ) : null}
+      {!loading && canRun && (!available || editingBearerToken) ? (
         <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-4 text-[13px] text-amber-800" role="status">
-          The Den operator must configure {missingConfiguration.map((name) => <code className="ml-1" key={name}>{name}</code>)} before this test can run.
+          <p className="font-medium">{available ? "Replace the diagnostic token." : "Add a diagnostic token to run this test."}</p>
+          <p className="mt-1">Den encrypts the token for this organization and never shows it again.</p>
+          <div className="mt-3 flex flex-wrap items-end gap-2">
+            <label className="grid min-w-[280px] flex-1 gap-1">
+              <span className="text-[12px] font-medium">Diagnostic bearer token</span>
+              <DenInput
+                autoComplete="new-password"
+                minLength={24}
+                onChange={(event) => setBearerTokenDraft(event.target.value)}
+                placeholder="Paste the synthetic diagnostic token"
+                type="password"
+                value={bearerTokenDraft}
+              />
+            </label>
+            <DenButton type="button" loading={savingBearerToken} onClick={() => void saveBearerToken()}>
+              Save token
+            </DenButton>
+            {available ? (
+              <DenButton type="button" size="sm" variant="secondary" onClick={() => setEditingBearerToken(false)}>
+                Cancel
+              </DenButton>
+            ) : null}
+          </div>
         </div>
       ) : null}
       {error ? <div className="rounded-[22px] border border-red-200 bg-red-50 px-4 py-4 text-[13px] text-red-800" role="alert">{error}</div> : null}
