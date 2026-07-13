@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import {
   EGRESS_DIAGNOSTIC_ID_HEADER,
   EGRESS_DIAGNOSTIC_RUN_HEADER,
+  EGRESS_DIAGNOSTIC_SIGNATURE_HEADER,
   egressDiagnosticRunSchema,
 } from "@openwork/types/den/egress-diagnostics"
 import { runEgressDiagnostic } from "../src/egress-diagnostics"
@@ -75,6 +76,7 @@ describe("Den private-cloud egress diagnostic", () => {
     expect(result.steps.every((step) => step.status === "passed")).toBe(true)
     expect(seen).toHaveLength(13)
     expect(seen.every((request) => request.headers.get(EGRESS_DIAGNOSTIC_RUN_HEADER) === result.runId)).toBe(true)
+    expect(seen.every((request) => /^[0-9a-f]{64}$/u.test(request.headers.get(EGRESS_DIAGNOSTIC_SIGNATURE_HEADER) ?? ""))).toBe(true)
     const seenBodies = await Promise.all(seen.map((request) => request.text()))
     const toolCallBody = seenBodies.find((body) => body.includes("tools/call"))
     expect(toolCallBody).toContain("profile_specific_tool")

@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import {
+  EGRESS_DIAGNOSTIC_RUN_HEADER,
+  EGRESS_DIAGNOSTIC_SIGNATURE_HEADER,
+  EGRESS_DIAGNOSTIC_STEP_HEADER,
+} from "@openwork/types/den/egress-diagnostics"
+import { randomUUID } from "node:crypto"
 import { clearWireHistory, listWireHistory, recordWireExchange } from "../src/history-store"
 import { handleMcpRequest } from "../src/mcp"
+import { createDiagnosticRunSignature } from "../src/run-correlation"
 import { createWireExchange } from "../src/wire"
 import { createAccessToken, createSessionToken, verifyAccessToken, verifySessionToken } from "../src/session"
 
@@ -128,7 +135,7 @@ describe("redacted wire history", () => {
     expect(exchange.request.headers.authorization).toBe("[REDACTED; PRESENT]")
     expect(exchange.request.headers["x-customer-private-header"]).toBe("[VALUE REDACTED]")
     expect(exchange.response.status).toBe(200)
-    expect(exchange.sourceProof).toStartWith("sha256:")
+    expect(exchange.sourceProof).toStartWith("hmac-sha256:")
   })
 
   test("bounds local history to the newest 200 exchanges", async () => {
@@ -161,5 +168,38 @@ describe("redacted wire history", () => {
     expect(requestUrl).toBe("https://synthetic-redis.example/pipeline")
     expect(Array.isArray(commands)).toBe(true)
     expect(commands).toHaveLength(3)
+  })
+
+  test("keeps an authenticated support run in its own hosted history bucket", async () => {
+    process.env.UPSTASH_REDIS_REST_URL = "https://synthetic-redis.example"
+    process.env.UPSTASH_REDIS_REST_TOKEN = "synthetic-test-token"
+    const runId = randomUUID()
+    const step = "mcp-initialize"
+    const request = new Request("http://localhost:3010/mcp", {
+      headers: {
+        [EGRESS_DIAGNOSTIC_RUN_HEADER]: runId,
+        [EGRESS_DIAGNOSTIC_SIGNATURE_HEADER]: createDiagnosticRunSignature("OpenWorkDiagnosticsToken!", runId, step),
+        [EGRESS_DIAGNOSTIC_STEP_HEADER]: step,
+      },
+    })
+    const response = new Response(null, { status: 204 })
+    const exchange = createWireExchange({ profile: "generic", request, requestBody: "", response, responseBody: "", startedAt: Date.now() })
+    let pipelineCommands: unknown = null
+    globalThis.fetch = async (input, init) => {
+      const url = String(input)
+      if (url.endsWith("/pipeline")) {
+        pipelineCommands = JSON.parse(String(init?.body ?? "[]"))
+        const commands = Array.isArray(pipelineCommands) ? pipelineCommands : []
+        return Response.json(commands.map(() => ({ result: 1 })))
+      }
+      return Response.json({ result: [JSON.stringify(exchange)] })
+    }
+
+    await recordWireExchange(exchange)
+    expect(exchange.runId).toBe(runId)
+    expect(Array.isArray(pipelineCommands)).toBe(true)
+    expect(pipelineCommands).toHaveLength(8)
+    expect(JSON.stringify(pipelineCommands)).toContain(`:run:${runId}`)
+    expect(await listWireHistory(runId)).toEqual([exchange])
   })
 })

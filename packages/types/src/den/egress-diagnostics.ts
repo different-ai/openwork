@@ -2,6 +2,7 @@ import { z } from "zod"
 
 export const EGRESS_DIAGNOSTIC_RUN_HEADER = "x-openwork-diagnostic-run-id"
 export const EGRESS_DIAGNOSTIC_STEP_HEADER = "x-openwork-diagnostic-step"
+export const EGRESS_DIAGNOSTIC_SIGNATURE_HEADER = "x-openwork-diagnostic-signature"
 export const EGRESS_DIAGNOSTIC_ID_HEADER = "x-openwork-diagnostic-id"
 
 export const EGRESS_DIAGNOSTIC_STEP_IDS = [

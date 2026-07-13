@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto"
+import { createHmac, randomUUID } from "node:crypto"
 import {
   EGRESS_DIAGNOSTIC_ID_HEADER,
   EGRESS_DIAGNOSTIC_RUN_HEADER,
+  EGRESS_DIAGNOSTIC_SIGNATURE_HEADER,
   EGRESS_DIAGNOSTIC_STEP_HEADER,
   EGRESS_DIAGNOSTIC_STEP_IDS,
   type EgressDiagnosticCategory,
@@ -258,6 +259,12 @@ function requestHeaders(runId: string, step: string, additional: HeadersInit = {
   return headers
 }
 
+function diagnosticRunSignature(secret: string, runId: string, step: string): string {
+  return createHmac("sha256", secret)
+    .update(`openwork-diagnostics-v1\n${runId}\n${step}`)
+    .digest("hex")
+}
+
 async function sendRequest(input: {
   category: EgressDiagnosticCategory
   evidence: StepEvidence
@@ -313,7 +320,19 @@ export async function runEgressDiagnostic(input: {
   requestTimeoutMs?: number
   runId?: string
 }): Promise<EgressDiagnosticRun> {
-  const fetchImpl = input.fetchImpl ?? fetch
+  const baseFetch = input.fetchImpl ?? fetch
+  const fetchImpl: DiagnosticFetch = (url, init) => {
+    const headers = new Headers(init?.headers)
+    const runId = headers.get(EGRESS_DIAGNOSTIC_RUN_HEADER) ?? ""
+    const step = headers.get(EGRESS_DIAGNOSTIC_STEP_HEADER) ?? ""
+    if (runId && step) {
+      headers.set(
+        EGRESS_DIAGNOSTIC_SIGNATURE_HEADER,
+        diagnosticRunSignature(input.bearerToken, runId, step),
+      )
+    }
+    return baseFetch(url, { ...init, headers })
+  }
   const now = input.now ?? Date.now
   const timeoutMs = input.requestTimeoutMs ?? 5_000
   const origin = input.origin.replace(/\/+$/u, "")

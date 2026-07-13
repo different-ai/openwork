@@ -43,9 +43,12 @@ never submits the target or token; both are owned by the Den operator.
 ## Vercel deployment
 
 Create a Vercel project from this repository with **Root Directory** set to
-`ee/apps/diagnostics`. Link an Upstash Redis database from the Vercel
-Marketplace. Vercel injects the Redis REST URL/token; the app accepts either
-the `UPSTASH_REDIS_REST_*` or `KV_REST_API_*` names.
+`ee/apps/diagnostics`. Keep **Include source files outside of the Root
+Directory** enabled so Vercel can install the root pnpm workspace and the
+shared `@openwork/types` package. Link an Upstash Redis database from the
+Vercel Marketplace. Vercel injects the Redis REST URL/token; the app accepts
+either a complete `UPSTASH_REDIS_REST_*` pair or a complete `KV_REST_API_*`
+pair, but never mixes values between the two integrations.
 
 Set these production environment variables:
 
@@ -70,17 +73,35 @@ Before enabling public DNS, add Vercel Firewall rate-limit rules for `/mcp`,
 `/diagnostics/*`, `/oauth/token`, and `/.well-known/*` (for example, 120
 requests per minute per source). This preserves enough room for a complete run
 while preventing a broken or hostile client from continuously replacing the
-bounded evidence history.
+bounded rolling history. Treat this as a production gate, not an optional
+follow-up: publish the rules and verify an excess request receives HTTP 429
+before attaching the public hostname.
 
 The app fails closed in Vercel when a required credential or Redis setting is
-missing. `/health` reports only missing variable names, never values.
+missing, the profile is invalid, Redis is not HTTPS, or application secrets are
+reused. `/health` reports only configuration names, never values.
+
+After the production deployment is promoted, verify all of the following
+before sharing the allowlist hostname:
+
+1. `GET https://diagnostic.openwork.software/health` returns HTTP 200 and
+   `{"service":"openwork-diagnostics","status":"ok"}`.
+2. The dashboard returns HTTP 401 without Basic authentication and HTTP 200
+   with the configured administrator credentials.
+3. The Firewall rule returns HTTP 429 when its threshold is exceeded.
+4. A Den run completes all six steps, and its **Open support trace** link still
+   shows 13 exchanges after unrelated requests reach the deployment.
 
 ## What is retained
 
-At most 200 exchanges are retained for 24 hours. Each includes:
+The unfiltered dashboard retains the newest 200 exchanges for 24 hours. A
+cryptographically authenticated Den run also gets an isolated 50-exchange
+bucket for 24 hours, so unrelated public traffic cannot evict its support
+trace. The run signature is verified before a request can enter that bucket;
+the signature itself is never displayed. Each exchange includes:
 
 - receipt/completion time, duration, status, and diagnostic reference;
-- method, path, query **names**, and a hash of the gateway-observed source;
+- method, path, query **names**, and a keyed hash of the gateway-observed source;
 - protocol-relevant header values;
 - names of all other headers with their values withheld;
 - structural JSON-RPC previews with credentials, codes, tokens, cookies,
@@ -113,6 +134,14 @@ stable public origin:
 DEN_DIAGNOSTICS_ORIGIN=https://diagnostic.openwork.software
 DEN_DIAGNOSTICS_BEARER_TOKEN=<same synthetic diagnostic token>
 ```
+
+On Node.js 24.5 or newer, an installation that requires an outbound proxy must
+also start Den with `NODE_USE_ENV_PROXY=1` and the appropriate `HTTPS_PROXY`
+and `NO_PROXY` values. Use `NODE_EXTRA_CA_CERTS` (or the platform system CA
+configuration) when TLS inspection requires a private trust root. These are
+process-start settings, so configure them on the Den container rather than in
+the browser. The diagnostic and enterprise MCP requests both use Den's native
+fetch path and therefore share those process-level settings.
 
 No organization ID, customer data, OAuth grant, Microsoft/ServiceNow secret,
 or arbitrary destination is sent by this flow.

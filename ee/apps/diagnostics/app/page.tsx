@@ -43,12 +43,11 @@ function Exchange({ exchange }: { exchange: WireExchange }) {
 }
 
 export default async function DiagnosticsPage({ searchParams }: { searchParams: Promise<{ runId?: string | string[] }> }) {
-  const allHistory = await listWireHistory()
   const params = await searchParams
   const suppliedRunId = typeof params.runId === "string" ? params.runId : ""
   const parsedRunId = egressDiagnosticRunSchema.shape.runId.safeParse(suppliedRunId)
   const runId = parsedRunId.success ? parsedRunId.data : null
-  const history = runId ? allHistory.filter((exchange) => exchange.runId === runId) : allHistory
+  const history = await listWireHistory(runId ?? undefined)
   const config = diagnosticsConfig()
   const missing = validateProductionConfig()
   const origin = config.publicOrigin

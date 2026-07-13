@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import {
   EGRESS_DIAGNOSTIC_ID_HEADER,
   EGRESS_DIAGNOSTIC_RUN_HEADER,
+  EGRESS_DIAGNOSTIC_SIGNATURE_HEADER,
   EGRESS_DIAGNOSTIC_STEP_HEADER,
 } from "@openwork/types/den/egress-diagnostics"
 import {
@@ -17,6 +18,8 @@ import { GET as protectedMetadataGet } from "../app/.well-known/oauth-protected-
 import { POST as tokenPost } from "../app/oauth/token/route"
 import { POST as mcpPost } from "../app/mcp/route"
 import { clearWireHistory, listWireHistory } from "../src/history-store"
+import { createDiagnosticRunSignature } from "../src/run-correlation"
+import { runEgressDiagnostic } from "../../den-api/src/egress-diagnostics"
 
 const originalEnvironment = { ...process.env }
 const originalFetch = globalThis.fetch
@@ -33,10 +36,43 @@ function request(path: string, runId: string, step: string, init: RequestInit = 
   const headers = new Headers(init.headers)
   headers.set(EGRESS_DIAGNOSTIC_RUN_HEADER, runId)
   headers.set(EGRESS_DIAGNOSTIC_STEP_HEADER, step)
+  headers.set(EGRESS_DIAGNOSTIC_SIGNATURE_HEADER, createDiagnosticRunSignature("OpenWorkDiagnosticsToken!", runId, step))
   return new Request(`http://localhost:3010${path}`, { ...init, headers })
 }
 
+const diagnosticsRouteFetch: typeof fetch = async (input, init) => {
+  const routedRequest = new Request(input, init)
+  const pathname = new URL(routedRequest.url).pathname
+  if (pathname === "/diagnostics/egress") {
+    if (routedRequest.method === "HEAD") return egressHead(routedRequest)
+    if (routedRequest.method === "OPTIONS") return egressOptions(routedRequest)
+    if (routedRequest.method === "POST") return egressPost(routedRequest)
+    return egressGet(routedRequest)
+  }
+  if (pathname === "/diagnostics/redirect") return redirectGet(routedRequest)
+  if (pathname === "/.well-known/oauth-protected-resource/mcp") return protectedMetadataGet(routedRequest)
+  if (pathname === "/.well-known/oauth-authorization-server") return authorizationMetadataGet(routedRequest)
+  if (pathname === "/oauth/token") return tokenPost(routedRequest)
+  if (pathname === "/mcp") return mcpPost(routedRequest)
+  return Response.json({ error: "not_found" }, { status: 404 })
+}
+
 describe("private-cloud egress diagnostic endpoints", () => {
+  test("runs the real Den probe through the real Diagnostics routes", async () => {
+    const result = await runEgressDiagnostic({
+      bearerToken: "OpenWorkDiagnosticsToken!",
+      fetchImpl: diagnosticsRouteFetch,
+      origin: "http://localhost:3010",
+    })
+
+    expect(result.overallStatus).toBe("passed")
+    expect(result.highestPassingStep).toBe("mcp-handshake")
+    expect(result.steps.every((step) => step.status === "passed")).toBe(true)
+    const runHistory = await listWireHistory(result.runId)
+    expect(runHistory).toHaveLength(13)
+    expect(runHistory.every((exchange) => exchange.runId === result.runId)).toBe(true)
+  })
+
   test("records correlated HTTP methods, redirect, OAuth discovery, token issuance, and MCP initialize", async () => {
     const runId = randomUUID()
     const get = await egressGet(request("/diagnostics/egress", runId, "reachability-get"))
@@ -98,6 +134,7 @@ describe("private-cloud egress diagnostic endpoints", () => {
     const history = await listWireHistory()
     expect(history).toHaveLength(9)
     expect(history.every((exchange) => exchange.runId === runId)).toBe(true)
+    expect(await listWireHistory(runId)).toHaveLength(9)
     expect(history.map((exchange) => exchange.step)).toContain("oauth-token")
     expect(JSON.stringify(history)).not.toContain(accessToken)
     expect(JSON.stringify(history)).not.toContain("OpenWorkDiagnosticsToken!")
@@ -113,6 +150,19 @@ describe("private-cloud egress diagnostic endpoints", () => {
     expect(response.status).toBe(401)
     expect(response.headers.get("www-authenticate")).toBe("Bearer")
     expect((await listWireHistory())[0]).toMatchObject({ runId, step: "http-post" })
+  })
+
+  test("does not let an unsigned public request impersonate a support run", async () => {
+    const runId = randomUUID()
+    const unsigned = new Request("http://localhost:3010/diagnostics/egress", {
+      headers: {
+        [EGRESS_DIAGNOSTIC_RUN_HEADER]: runId,
+        [EGRESS_DIAGNOSTIC_STEP_HEADER]: "reachability-get",
+      },
+    })
+    expect((await egressGet(unsigned)).status).toBe(200)
+    expect((await listWireHistory())[0]).toMatchObject({ runId: null, step: null })
+    expect(await listWireHistory(runId)).toEqual([])
   })
 
   test("fails explicitly instead of claiming success when hosted evidence cannot be retained", async () => {

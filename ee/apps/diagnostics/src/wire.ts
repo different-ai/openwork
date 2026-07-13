@@ -1,6 +1,12 @@
-import { createHash, randomUUID } from "node:crypto"
-import { EGRESS_DIAGNOSTIC_RUN_HEADER, EGRESS_DIAGNOSTIC_STEP_HEADER } from "@openwork/types/den/egress-diagnostics"
+import { createHash, createHmac, randomUUID } from "node:crypto"
+import {
+  EGRESS_DIAGNOSTIC_RUN_HEADER,
+  EGRESS_DIAGNOSTIC_SIGNATURE_HEADER,
+  EGRESS_DIAGNOSTIC_STEP_HEADER,
+} from "@openwork/types/den/egress-diagnostics"
 import type { DiagnosticsProfile, WireBody, WireExchange } from "./contracts"
+import { diagnosticsConfig } from "./config"
+import { verifyDiagnosticRunSignature } from "./run-correlation"
 
 const visibleHeaders = new Set([
   "accept",
@@ -24,6 +30,10 @@ const diagnosticStepPattern = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u
 
 function hash(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`
+}
+
+function keyedSourceProof(value: string, secret: string): string {
+  return `hmac-sha256:${createHmac("sha256", secret).update(value).digest("hex")}`
 }
 
 function sanitizeHeaders(headers: Headers): Readonly<Record<string, string>> {
@@ -110,17 +120,30 @@ export function createWireExchange(input: {
 }): WireExchange {
   const completedAt = Date.now()
   const url = new URL(input.request.url)
-  const forwarded = input.request.headers.get("x-forwarded-for") ?? input.request.headers.get("x-real-ip") ?? "vercel-gateway-received"
+  const forwarded = input.request.headers.get("x-vercel-forwarded-for")
+    ?? input.request.headers.get("x-forwarded-for")
+    ?? input.request.headers.get("x-real-ip")
+    ?? "vercel-gateway-received"
   const suppliedRunId = input.request.headers.get(EGRESS_DIAGNOSTIC_RUN_HEADER) ?? ""
   const suppliedStep = input.request.headers.get(EGRESS_DIAGNOSTIC_STEP_HEADER) ?? ""
+  const suppliedSignature = input.request.headers.get(EGRESS_DIAGNOSTIC_SIGNATURE_HEADER) ?? ""
+  const config = diagnosticsConfig()
+  const hasValidCorrelation = diagnosticRunPattern.test(suppliedRunId)
+    && diagnosticStepPattern.test(suppliedStep)
+    && verifyDiagnosticRunSignature({
+      runId: suppliedRunId,
+      secret: config.bearerToken,
+      signature: suppliedSignature,
+      step: suppliedStep,
+    })
   return {
     completedAt: new Date(completedAt).toISOString(),
     correlationId: input.correlationId ?? randomUUID(),
     durationMs: Math.max(0, completedAt - input.startedAt),
     id: randomUUID(),
     profile: input.profile,
-    runId: diagnosticRunPattern.test(suppliedRunId) ? suppliedRunId : null,
-    step: diagnosticStepPattern.test(suppliedStep) ? suppliedStep : null,
+    runId: hasValidCorrelation ? suppliedRunId : null,
+    step: hasValidCorrelation ? suppliedStep : null,
     receivedAt: new Date(input.startedAt).toISOString(),
     request: {
       body: safeBody(input.requestBody, input.request.headers.get("content-type") ?? ""),
@@ -134,6 +157,6 @@ export function createWireExchange(input: {
       headers: sanitizeHeaders(input.response.headers),
       status: input.response.status,
     },
-    sourceProof: hash(forwarded),
+    sourceProof: keyedSourceProof(forwarded, config.signingSecret),
   }
 }

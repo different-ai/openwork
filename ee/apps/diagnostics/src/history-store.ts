@@ -1,25 +1,28 @@
 import type { WireExchange } from "./contracts"
+import { diagnosticsRedisConfig } from "./config"
 
 const historyKey = "openwork:diagnostics:wire-history:v1"
+const historyRunsKey = "openwork:diagnostics:wire-history-runs:v1"
 const maximumHistory = 200
+const maximumRunHistory = 50
 const retentionSeconds = 86_400
 
 declare global {
   var __openworkDiagnosticsLocalHistory: WireExchange[] | undefined
+  var __openworkDiagnosticsLocalRunHistory: Map<string, WireExchange[]> | undefined
 }
 
 const localHistory = globalThis.__openworkDiagnosticsLocalHistory ??= []
+const localRunHistory = globalThis.__openworkDiagnosticsLocalRunHistory ??= new Map()
+
+function runHistoryKey(runId: string): string {
+  return `${historyKey}:run:${runId}`
+}
 
 type RedisReply = { result?: unknown; error?: string }
 
-function redisConfig(): { token: string; url: string } | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN
-  return url && token ? { token, url: url.replace(/\/$/u, "") } : null
-}
-
 async function redisCommand(command: readonly (string | number)[]): Promise<unknown> {
-  const config = redisConfig()
+  const config = diagnosticsRedisConfig()
   if (!config) return null
   const response = await fetch(config.url, {
     body: JSON.stringify(command),
@@ -35,7 +38,7 @@ async function redisCommand(command: readonly (string | number)[]): Promise<unkn
 }
 
 async function redisPipeline(commands: readonly (readonly (string | number)[])[]): Promise<void> {
-  const config = redisConfig()
+  const config = diagnosticsRedisConfig()
   if (!config) return
   const response = await fetch(`${config.url}/pipeline`, {
     body: JSON.stringify(commands),
@@ -62,21 +65,38 @@ function isWireExchange(value: unknown): value is WireExchange {
 }
 
 export async function recordWireExchange(exchange: WireExchange): Promise<void> {
-  if (!redisConfig()) {
+  if (!diagnosticsRedisConfig()) {
     localHistory.unshift(exchange)
     localHistory.splice(maximumHistory)
+    if (exchange.runId) {
+      const runHistory = localRunHistory.get(exchange.runId) ?? []
+      runHistory.unshift(exchange)
+      runHistory.splice(maximumRunHistory)
+      localRunHistory.set(exchange.runId, runHistory)
+    }
     return
   }
-  await redisPipeline([
+  const commands: (readonly (string | number)[])[] = [
     ["LPUSH", historyKey, JSON.stringify(exchange)],
     ["LTRIM", historyKey, 0, maximumHistory - 1],
     ["EXPIRE", historyKey, retentionSeconds],
-  ])
+  ]
+  if (exchange.runId) {
+    const key = runHistoryKey(exchange.runId)
+    commands.push(
+      ["LPUSH", key, JSON.stringify(exchange)],
+      ["LTRIM", key, 0, maximumRunHistory - 1],
+      ["EXPIRE", key, retentionSeconds],
+      ["SADD", historyRunsKey, exchange.runId],
+      ["EXPIRE", historyRunsKey, retentionSeconds],
+    )
+  }
+  await redisPipeline(commands)
 }
 
-export async function listWireHistory(): Promise<readonly WireExchange[]> {
-  if (!redisConfig()) return [...localHistory]
-  const result = await redisCommand(["LRANGE", historyKey, 0, maximumHistory - 1])
+export async function listWireHistory(runId?: string): Promise<readonly WireExchange[]> {
+  if (!diagnosticsRedisConfig()) return runId ? [...(localRunHistory.get(runId) ?? [])] : [...localHistory]
+  const result = await redisCommand(["LRANGE", runId ? runHistoryKey(runId) : historyKey, 0, runId ? maximumRunHistory - 1 : maximumHistory - 1])
   if (!Array.isArray(result)) return []
   const history: WireExchange[] = []
   for (const item of result) {
@@ -93,5 +113,14 @@ export async function listWireHistory(): Promise<readonly WireExchange[]> {
 
 export async function clearWireHistory(): Promise<void> {
   localHistory.splice(0, localHistory.length)
-  if (redisConfig()) await redisCommand(["DEL", historyKey])
+  localRunHistory.clear()
+  if (!diagnosticsRedisConfig()) return
+  const runIds = await redisCommand(["SMEMBERS", historyRunsKey])
+  const keys = [historyKey, historyRunsKey]
+  if (Array.isArray(runIds)) {
+    for (const runId of runIds) {
+      if (typeof runId === "string") keys.push(runHistoryKey(runId))
+    }
+  }
+  await redisCommand(["DEL", ...keys])
 }

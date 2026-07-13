@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,6 +124,10 @@ async function diagnosticRequest(pathname, runId, step, init = {}) {
   const headers = new Headers(init.headers);
   headers.set("x-openwork-diagnostic-run-id", runId);
   headers.set("x-openwork-diagnostic-step", step);
+  headers.set(
+    "x-openwork-diagnostic-signature",
+    createHmac("sha256", BEARER_TOKEN).update(`openwork-diagnostics-v1\n${runId}\n${step}`).digest("hex"),
+  );
   return fetch(`${state.origin}${pathname}`, { ...init, headers });
 }
 
@@ -163,6 +167,9 @@ async function runControlledDiagnostic() {
     "content-type": "application/json",
     "x-openwork-diagnostic-run-id": runId,
     "x-openwork-diagnostic-step": "mcp-initialize",
+    "x-openwork-diagnostic-signature": createHmac("sha256", BEARER_TOKEN)
+      .update(`openwork-diagnostics-v1\n${runId}\nmcp-initialize`)
+      .digest("hex"),
   };
   const initialize = await fetch(endpoint, {
     body: JSON.stringify({
@@ -186,9 +193,16 @@ async function runControlledDiagnostic() {
   statuses.push(initialize.status);
   const steps = ["mcp-initialized", "mcp-tools-list", "mcp-tools-call"];
   for (const [index, body] of messages.entries()) {
+    const step = steps[index];
     const response = await fetch(endpoint, {
       body: JSON.stringify(body),
-      headers: { ...headers, "x-openwork-diagnostic-step": steps[index] },
+      headers: {
+        ...headers,
+        "x-openwork-diagnostic-step": step,
+        "x-openwork-diagnostic-signature": createHmac("sha256", BEARER_TOKEN)
+          .update(`openwork-diagnostics-v1\n${runId}\n${step}`)
+          .digest("hex"),
+      },
       method: "POST",
     });
     statuses.push(response.status);

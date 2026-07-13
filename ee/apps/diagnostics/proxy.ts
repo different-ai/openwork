@@ -36,7 +36,9 @@ export function proxy(request: NextRequest): NextResponse {
       status: 401,
     })
   }
-  return NextResponse.next()
+  const response = NextResponse.next()
+  response.headers.set("cache-control", "private, no-store")
+  return response
 }
 
 export const config = { matcher: ["/", "/api/history/:path*"] }
