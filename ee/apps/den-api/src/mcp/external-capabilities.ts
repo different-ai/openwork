@@ -23,6 +23,7 @@ import {
 import { getConnectedAccount } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
 import { listTeamsForMember } from "../orgs.js"
+import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import { compareCapabilityMatches, tokenize } from "./search.js"
 import type { CapabilityMatch } from "./search.js"
 
@@ -166,6 +167,7 @@ export type ExternalConnectionStatus = {
     label: string
     surface: "openwork_your_connections" | "openwork_organization_connections" | "provider_admin_console" | "network_infrastructure" | "openwork_support"
     retry: "search_capabilities"
+    url?: string
   }
   diagnostic?: ExternalMcpDiagnostic
 }
@@ -318,6 +320,23 @@ function diagnosticConnectionAction(input: {
   }
 }
 
+function actionNavigationUrl(input: {
+  connectionId: string
+  surface: ExternalConnectionStatus["action"]["surface"]
+}) {
+  if (input.surface === "openwork_your_connections") return openworkYourConnectionsUrl(input.connectionId)
+  if (input.surface === "openwork_organization_connections") return openworkOrganizationConnectionsUrl()
+  return undefined
+}
+
+function addConnectionActionUrl(input: {
+  action: ExternalConnectionStatus["action"]
+  connectionId: string
+}): ExternalConnectionStatus["action"] {
+  const url = actionNavigationUrl({ connectionId: input.connectionId, surface: input.action.surface })
+  return url ? { ...input.action, url } : input.action
+}
+
 export function buildExternalConnectionStatus(input: {
   connection: Pick<ExternalMcpConnectionRow, "id" | "name" | "authType" | "credentialMode">
   state: ExternalConnectionStatus["state"]
@@ -341,14 +360,19 @@ export function buildExternalConnectionStatus(input: {
       errorCode: input.errorCode,
       message: input.message,
       actor: diagnosticAction?.actor ?? (providerAdminAction ? "provider_admin" : "organization_admin"),
-      action: diagnosticAction?.action ?? {
-        type: providerAdminAction ? "fix_provider" : "inspect_connection",
-        label: providerAdminAction
-          ? `Fix ${connectionName} in the provider admin console`
-          : `Inspect the ${connectionName} connection`,
-        surface: providerAdminAction ? "provider_admin_console" : "openwork_organization_connections",
-        retry: "search_capabilities",
-      },
+      action: diagnosticAction
+        ? addConnectionActionUrl({ action: diagnosticAction.action, connectionId: input.connection.id })
+        : addConnectionActionUrl({
+          connectionId: input.connection.id,
+          action: {
+            type: providerAdminAction ? "fix_provider" : "inspect_connection",
+            label: providerAdminAction
+              ? `Fix ${connectionName} in the provider admin console`
+              : `Inspect the ${connectionName} connection`,
+            surface: providerAdminAction ? "provider_admin_console" : "openwork_organization_connections",
+            retry: "search_capabilities",
+          },
+        }),
       ...(input.diagnostic ? { diagnostic: input.diagnostic } : {}),
     }
   }
@@ -381,12 +405,17 @@ export function buildExternalConnectionStatus(input: {
     errorCode: input.errorCode,
     message: input.message,
     actor: diagnosticAction?.actor ?? actor,
-    action: diagnosticAction?.action ?? {
-      type: actionType,
-      label: `${actionVerb} ${connectionName}`,
-      surface,
-      retry: "search_capabilities",
-    },
+    action: diagnosticAction
+      ? addConnectionActionUrl({ action: diagnosticAction.action, connectionId: input.connection.id })
+      : addConnectionActionUrl({
+        connectionId: input.connection.id,
+        action: {
+          type: actionType,
+          label: `${actionVerb} ${connectionName}`,
+          surface,
+          retry: "search_capabilities",
+        },
+      }),
     ...(input.diagnostic ? { diagnostic: input.diagnostic } : {}),
   }
 }
@@ -671,6 +700,7 @@ export type ExternalCapabilityExecuteResult =
       diagnostic?: ExternalMcpDiagnostic
       actionOwner?: ExternalMcpDiagnostic["actionOwner"]
       operatorAction?: string
+      connectionStatus?: ExternalConnectionStatus
     }
 
 /**
@@ -720,10 +750,12 @@ export async function executeExternalCapability(input: {
   }
 
   if (input.toolName === "*") {
+    const message = `"${connection.name}" was surfaced as a connection status entry, not a callable tool. Fix the connection first (see the search hint), then search again for its real tools.`
     return {
       ok: false,
       error: "needs_connection",
-      message: `"${connection.name}" was surfaced as a connection status entry, not a callable tool. Fix the connection first (see the search hint), then search again for its real tools.`,
+      message,
+      connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
     }
   }
 
@@ -739,11 +771,23 @@ export async function executeExternalCapability(input: {
         ok: false,
         error: "needs_connection",
         message: `You haven't connected your ${connection.name} account yet. Open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}".`,
+        connectionStatus: buildExternalConnectionStatus({
+          connection,
+          state: "needs_connection",
+          errorCode: "not_connected",
+          message: `You haven't connected your ${connection.name} account yet.`,
+        }),
       }
     }
     member = { orgMembershipId: input.member.orgMembershipId }
   } else if (!hasSharedCredential(connection)) {
-    return { ok: false, error: "connection_not_connected", message: `"${connection.name}" is not connected yet.` }
+    const message = `"${connection.name}" is not connected yet.`
+    return {
+      ok: false,
+      error: "connection_not_connected",
+      message,
+      connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
+    }
   }
 
   try {

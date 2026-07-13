@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { mcpConnectionQueryKeys, type ExternalMcpAuthType, type ExternalMcpCredentialMode } from "./mcp-connections-data";
 
 export type DenMarketplace = {
   id: string;
@@ -49,6 +50,25 @@ export type MarketplacePluginSummary = {
   memberCount: number;
   componentCounts: Record<string, number>;
   sourceFormat: string | null;
+  cloudReadiness?: MarketplacePluginCloudReadiness;
+};
+
+export type MarketplacePluginCloudReadinessState = "ready" | "needs_signin" | "needs_admin_setup" | "desktop_only" | "not_synced";
+
+export type MarketplacePluginCloudReadinessConnection = {
+  configObjectId: string;
+  id: string | null;
+  name: string;
+  serverName: string;
+  url: string;
+  credentialMode?: "shared" | "per_member";
+  connectedForMe?: boolean;
+};
+
+export type MarketplacePluginCloudReadiness = {
+  state: MarketplacePluginCloudReadinessState;
+  hasInstructional: boolean;
+  connections: MarketplacePluginCloudReadinessConnection[];
 };
 
 export type MarketplaceResolved = {
@@ -83,6 +103,98 @@ function parseMarketplace(entry: unknown): DenMarketplace | null {
   };
 }
 
+function parseCloudReadinessState(value: unknown): MarketplacePluginCloudReadinessState | null {
+  if (value === "ready" || value === "needs_signin" || value === "needs_admin_setup" || value === "desktop_only" || value === "not_synced") {
+    return value;
+  }
+  return null;
+}
+
+function parseCredentialMode(value: unknown): "shared" | "per_member" | null {
+  if (value === "shared" || value === "per_member") return value;
+  return null;
+}
+
+function parseCloudReadinessConnection(entry: unknown): MarketplacePluginCloudReadinessConnection | null {
+  if (!isRecord(entry)) return null;
+  const configObjectId = asString(entry.configObjectId);
+  const name = asString(entry.name);
+  const serverName = asString(entry.serverName);
+  const url = asString(entry.url);
+  if (!configObjectId || !name || !serverName || !url) return null;
+  const credentialMode = parseCredentialMode(entry.credentialMode);
+  return {
+    configObjectId,
+    id: typeof entry.id === "string" ? entry.id : null,
+    name,
+    serverName,
+    url,
+    ...(credentialMode ? { credentialMode } : {}),
+    ...(typeof entry.connectedForMe === "boolean" ? { connectedForMe: entry.connectedForMe } : {}),
+  };
+}
+
+function parseCloudReadiness(value: unknown): MarketplacePluginCloudReadiness | null {
+  if (!isRecord(value)) return null;
+  const state = parseCloudReadinessState(value.state);
+  if (!state || typeof value.hasInstructional !== "boolean") return null;
+  return {
+    state,
+    hasInstructional: value.hasInstructional,
+    connections: Array.isArray(value.connections)
+      ? value.connections.map(parseCloudReadinessConnection).filter((connection): connection is MarketplacePluginCloudReadinessConnection => Boolean(connection))
+      : [],
+  };
+}
+
+export function parseMarketplaceResolvedPayload(payload: unknown): MarketplaceResolved {
+  const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
+  const marketplace = item && isRecord(item.marketplace) ? parseMarketplace(item.marketplace) : null;
+  if (!item || !marketplace) {
+    throw new Error("Marketplace resolved response was incomplete.");
+  }
+
+  const plugins = Array.isArray(item.plugins)
+    ? item.plugins.flatMap((entry) => {
+        if (!isRecord(entry)) return [];
+        const id = asString(entry.id);
+        const name = asString(entry.name);
+        if (!id || !name) return [];
+        const componentCounts: Record<string, number> = {};
+        if (isRecord(entry.componentCounts)) {
+          for (const [key, value] of Object.entries(entry.componentCounts)) {
+            if (typeof value === "number" && value > 0) {
+              componentCounts[key] = value;
+            }
+          }
+        }
+        const cloudReadiness = parseCloudReadiness(entry.cloudReadiness);
+        return [{
+          id,
+          name,
+          description: asString(entry.description),
+          memberCount: typeof entry.memberCount === "number" ? entry.memberCount : 0,
+          componentCounts,
+          sourceFormat: isRecord(entry.extension) ? asString(entry.extension.sourceFormat) : null,
+          ...(cloudReadiness ? { cloudReadiness } : {}),
+        } satisfies MarketplacePluginSummary];
+      })
+    : [];
+
+  const sourceRecord = isRecord(item.source) ? item.source : null;
+  const source: MarketplaceResolvedSource | null = sourceRecord
+    ? {
+        connectorAccountId: asString(sourceRecord.connectorAccountId) ?? "",
+        connectorInstanceId: asString(sourceRecord.connectorInstanceId) ?? "",
+        accountLogin: asString(sourceRecord.accountLogin),
+        repositoryFullName: asString(sourceRecord.repositoryFullName) ?? "",
+        branch: asString(sourceRecord.branch),
+      }
+    : null;
+
+  return { marketplace, plugins, source };
+}
+
 export function useMarketplace(marketplaceId: string | null) {
   return useQuery({
     enabled: Boolean(marketplaceId),
@@ -97,49 +209,7 @@ export function useMarketplace(marketplaceId: string | null) {
         throw new Error(getErrorMessage(payload, `Failed to load marketplace (${response.status}).`));
       }
 
-      const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
-      const marketplace = item && isRecord(item.marketplace) ? parseMarketplace(item.marketplace) : null;
-      if (!item || !marketplace) {
-        throw new Error("Marketplace resolved response was incomplete.");
-      }
-
-      const plugins = Array.isArray(item.plugins)
-        ? item.plugins.flatMap((entry) => {
-            if (!isRecord(entry)) return [];
-            const id = asString(entry.id);
-            const name = asString(entry.name);
-            if (!id || !name) return [];
-            const componentCounts: Record<string, number> = {};
-            if (isRecord(entry.componentCounts)) {
-              for (const [key, value] of Object.entries(entry.componentCounts)) {
-                if (typeof value === "number" && value > 0) {
-                  componentCounts[key] = value;
-                }
-              }
-            }
-            return [{
-              id,
-              name,
-              description: asString(entry.description),
-              memberCount: typeof entry.memberCount === "number" ? entry.memberCount : 0,
-              componentCounts,
-              sourceFormat: isRecord(entry.extension) ? asString(entry.extension.sourceFormat) : null,
-            } satisfies MarketplacePluginSummary];
-          })
-        : [];
-
-      const sourceRecord = isRecord(item.source) ? item.source : null;
-      const source: MarketplaceResolvedSource | null = sourceRecord
-        ? {
-            connectorAccountId: asString(sourceRecord.connectorAccountId) ?? "",
-            connectorInstanceId: asString(sourceRecord.connectorInstanceId) ?? "",
-            accountLogin: asString(sourceRecord.accountLogin),
-            repositoryFullName: asString(sourceRecord.repositoryFullName) ?? "",
-            branch: asString(sourceRecord.branch),
-          }
-        : null;
-
-      return { marketplace, plugins, source };
+      return parseMarketplaceResolvedPayload(payload);
     },
   });
 }
@@ -215,6 +285,7 @@ export function useGrantMarketplaceAccess() {
     },
     onSuccess: (marketplaceId) => {
       queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.access(marketplaceId) });
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.resolved(marketplaceId) });
     },
   });
 }
@@ -239,6 +310,77 @@ export function useRevokeMarketplaceAccess() {
     },
     onSuccess: (marketplaceId) => {
       queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.access(marketplaceId) });
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.resolved(marketplaceId) });
+    },
+  });
+}
+
+export type ConfigurePluginMcpConnectionInput = {
+  pluginId: string;
+  configObjectId: string;
+  serverName: string;
+  authType: ExternalMcpAuthType;
+  credentialMode: ExternalMcpCredentialMode;
+  apiKey?: string;
+  oauthClient?: {
+    clientId: string;
+    clientSecret?: string;
+  };
+};
+
+export type ConfiguredPluginMcpConnection = {
+  connectionId: string;
+  yourConnectionsUrl: string | null;
+};
+
+function parseConfiguredPluginMcpConnection(payload: unknown): ConfiguredPluginMcpConnection {
+  const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
+  const connection = item && isRecord(item.connection) ? item.connection : null;
+  const links = item && isRecord(item.links) ? item.links : null;
+  const connectionId = connection ? asString(connection.id) : null;
+  if (!connectionId) {
+    throw new Error("Plugin MCP setup response was incomplete.");
+  }
+  return {
+    connectionId,
+    yourConnectionsUrl: links ? asString(links.yourConnections) : null,
+  };
+}
+
+export function useConfigurePluginMcpConnection() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: ConfigurePluginMcpConnectionInput): Promise<ConfiguredPluginMcpConnection> => {
+      let configured: ConfiguredPluginMcpConnection | null = null;
+      await runReauthableAction("configure-plugin-mcp-connection", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/plugins/${encodeURIComponent(input.pluginId)}/mcp-connections`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              configObjectId: input.configObjectId,
+              serverName: input.serverName,
+              authType: input.authType,
+              credentialMode: input.credentialMode,
+              ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+              ...(input.oauthClient ? { oauthClient: input.oauthClient } : {}),
+            }),
+          },
+          20000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to configure plugin connection (${response.status}).`);
+        }
+        configured = parseConfiguredPluginMcpConnection(payload);
+      });
+      if (!configured) throw new Error("Plugin MCP setup response was incomplete.");
+      return configured;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.all });
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
     },
   });
 }

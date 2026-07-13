@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Check, Loader2, Plug } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IntegrationIcon } from "./integration-icon";
+import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "./mcp-connection-display";
 import { safeMcpAuthorizationUrl } from "./mcp-authorization-url";
 import { MICROSOFT_365_DISPLAY_SCOPES } from "./microsoft-365-permissions";
 import {
@@ -32,6 +34,7 @@ const OAUTH_POLL_TIMEOUT_MS = 90_000;
 export function YourConnectionsScreen() {
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections("usable");
   const { orgContext } = useOrgDashboard();
+  const searchParams = useSearchParams();
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
@@ -42,12 +45,24 @@ export function YourConnectionsScreen() {
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ connectionId: string; message: string } | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const focusedRowRef = useRef<HTMLDivElement | null>(null);
+  const focusConnectionId = trustedConnectionFocusId(connections, searchParams.get("connectionId"));
+  const visibleConnections = useMemo(
+    () => sortConnectionsForFocus(connections, focusConnectionId),
+    [connections, focusConnectionId],
+  );
 
   useEffect(() => {
     return () => {
       if (pollTimer.current) clearInterval(pollTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!focusConnectionId || !focusedRowRef.current) return;
+    focusedRowRef.current.scrollIntoView({ block: "center" });
+    focusedRowRef.current.focus({ preventScroll: true });
+  }, [focusConnectionId, visibleConnections.length]);
 
   function stopPolling() {
     if (pollTimer.current) {
@@ -125,11 +140,13 @@ export function YourConnectionsScreen() {
         </div>
       ) : (
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-          {connections.map((connection) => (
+          {visibleConnections.map((connection) => (
             <YourConnectionRow
               key={connection.id}
               connection={connection}
               isAdmin={access.isAdmin}
+              highlighted={focusConnectionId === connection.id}
+              rowRef={focusConnectionId === connection.id ? focusedRowRef : undefined}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               disconnecting={disconnectProvider.isPending && disconnectProvider.variables === connection.id}
@@ -151,11 +168,15 @@ function YourConnectionRow({
   connecting,
   disconnecting,
   errorMessage,
+  highlighted,
+  rowRef,
   onConnect,
   onDisconnect,
 }: {
   connection: ExternalMcpConnection;
   isAdmin: boolean;
+  highlighted: boolean;
+  rowRef?: React.Ref<HTMLDivElement>;
   polling: boolean;
   connecting: boolean;
   disconnecting: boolean;
@@ -171,9 +192,14 @@ function YourConnectionRow({
   const microsoftScopes = connection.id === "microsoft-365"
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
     : [];
+  const requiredByLabel = formatRequiredBy(connection.requiredBy);
 
   return (
-    <div className="flex items-center justify-between gap-4 px-6 py-4">
+    <div
+      ref={rowRef}
+      tabIndex={highlighted ? -1 : undefined}
+      className={`flex items-center justify-between gap-4 px-6 py-4 outline-none transition ${highlighted ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`}
+    >
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
         <div className="min-w-0 flex-1">
@@ -209,6 +235,9 @@ function YourConnectionRow({
             )}
           </div>
           <p className="mt-0.5 truncate text-[12px] text-gray-500">{connection.url}</p>
+          {requiredByLabel ? (
+            <p className="mt-1 text-[12px] font-medium text-gray-700">{requiredByLabel}</p>
+          ) : null}
           {connection.id === "microsoft-365" && connection.tenantId ? (
             <p className="mt-1 text-[11px] text-gray-500">
               Tenant <span className="font-mono text-gray-700">{connection.tenantId}</span>

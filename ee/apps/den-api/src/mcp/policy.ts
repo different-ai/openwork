@@ -67,6 +67,10 @@ export function isMcpOperationAllowed(input: {
     return false
   }
 
+  if (input.method.toUpperCase() === "POST" && /^\/v1\/plugins\/[^/]+\/mcp-connections$/.test(input.path)) {
+    return false
+  }
+
   const tags = input.operation.tags ?? []
   if (tags.some((tag) => BLOCKED_TAGS.has(tag))) {
     return false

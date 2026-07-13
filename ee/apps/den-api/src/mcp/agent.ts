@@ -72,6 +72,7 @@ const connectionStatusOutputSchema = z.object({
     label: z.string(),
     surface: z.enum(["openwork_your_connections", "openwork_organization_connections", "provider_admin_console", "network_infrastructure", "openwork_support"]),
     retry: z.literal("search_capabilities"),
+    url: z.string().url().optional(),
   }),
   diagnostic: externalMcpDiagnosticOutputSchema.optional(),
 })
@@ -129,6 +130,7 @@ export function externalCapabilityErrorToolResult(
       ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
       ...(result.actionOwner ? { actionOwner: result.actionOwner } : {}),
       ...(result.operatorAction ? { operatorAction: result.operatorAction } : {}),
+      ...(result.connectionStatus ? { connectionStatus: result.connectionStatus } : {}),
     })),
   }
 }

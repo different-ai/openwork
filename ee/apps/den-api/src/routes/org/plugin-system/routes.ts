@@ -1,6 +1,7 @@
 import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import type { z } from "zod"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { queryValidator, jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../../openapi.js"
 import type { OrgRouteVariables } from "../shared.js"
@@ -96,6 +97,8 @@ import {
   pluginDetailResponseSchema,
   pluginListQuerySchema,
   pluginListResponseSchema,
+  pluginMcpRequirementConfigureResponseSchema,
+  pluginMcpRequirementConfigureSchema,
   pluginMembershipListResponseSchema,
   pluginMembershipMutationResponseSchema,
   pluginMembershipWriteSchema,
@@ -106,6 +109,8 @@ import {
 } from "./schemas.js"
 import { requirePluginArchCapability, type PluginArchActorContext, PluginArchAuthorizationError } from "./access.js"
 import { pluginArchRoutePaths } from "./contracts.js"
+import { ensureOrganizationAdmin, orgAccessFailureStatus } from "../shared.js"
+import { isAgentOAuthClientConnection } from "../mcp-connections.js"
 import {
   PluginArchRouteFailure,
   addPluginMembership,
@@ -118,6 +123,7 @@ import {
   createGithubConnectorAccount,
   createMarketplace,
   createPluginBundle,
+  configureMarketplacePluginMcpRequirement,
   createResourceAccessGrant,
   createConnectorTarget,
   deleteConnectorMapping,
@@ -218,6 +224,38 @@ function routeErrorResponse(c: OrgContext, error: unknown) {
     return c.json({ error: failure.error, message: failure.message }, failure.status)
   }
   throw error
+}
+
+async function configurePluginMcpConnectionResponse(c: OrgContext) {
+  try {
+    const params = validParam<z.infer<typeof pluginParamsSchema>>(c)
+    const body = validJson<z.infer<typeof pluginMcpRequirementConfigureSchema>>(c)
+    if (isAgentPluginMcpSecretSetup({ apiKey: body.apiKey, oauthClient: body.oauthClient, sessionId: c.get("session")?.id })) {
+      return c.json({ error: "invalid_request", message: "Plugin MCP credentials cannot be set from the agent. Add them in the OpenWork Cloud dashboard under Connections." }, 400)
+    }
+    const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can configure plugin MCP requirements.")
+    if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+    return c.json({ ok: true, item: await configureMarketplacePluginMcpRequirement({
+      authType: body.authType,
+      apiKey: body.apiKey,
+      configObjectId: body.configObjectId,
+      context: actorContext(c),
+      credentialMode: body.credentialMode ?? (body.authType === "oauth" ? "per_member" : "shared"),
+      oauthClient: body.oauthClient,
+      pluginId: normalizeDenTypeId("plugin", params.pluginId),
+      serverName: body.serverName,
+    }) })
+  } catch (error) {
+    return routeErrorResponse(c, error)
+  }
+}
+
+export function isAgentPluginMcpSecretSetup(input: { apiKey?: string | null; oauthClient?: unknown; sessionId?: string | null }) {
+  return isAgentOAuthClientConnection(input) || (input.sessionId === "mcp_internal" && Boolean(input.apiKey?.trim()))
+}
+
+export function isAgentPluginMcpOAuthClientSetup(input: { apiKey?: string | null; oauthClient?: unknown; sessionId?: string | null }) {
+  return isAgentPluginMcpSecretSetup(input)
 }
 
 function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "patch" | "post", path: string, ...handlers: unknown[]) {
@@ -853,6 +891,23 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         return routeErrorResponse(c, error)
       }
     })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginMcpConnections,
+    paramValidator(pluginParamsSchema),
+    jsonValidator(pluginMcpRequirementConfigureSchema),
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "Configure plugin MCP requirement",
+      description: "Admin-only privileged setup for one declared remote MCP server. The server name and URL are derived from the active plugin config object; the request never supplies a URL and does not start OAuth.",
+      responses: {
+        200: jsonResponse("Plugin MCP requirement configured successfully.", pluginMcpRequirementConfigureResponseSchema),
+        400: jsonResponse("The plugin MCP requirement request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to configure plugin MCP requirements.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can configure plugin MCP requirements.", forbiddenSchema),
+        404: jsonResponse("The plugin MCP requirement could not be found.", notFoundSchema),
+      },
+    }),
+    configurePluginMcpConnectionResponse)
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginGithubMcpImportPreview,
     jsonValidator(githubPluginMcpImportPreviewSchema),

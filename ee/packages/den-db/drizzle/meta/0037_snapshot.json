@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "7193a3f7-2e93-48bc-a3ab-8eab620ed0dd",
-  "prevId": "e9890eff-a6ab-400b-8b52-9dce53f3bb59",
+  "id": "59eb21b4-fa5f-4eb1-8fab-e0f66d878b23",
+  "prevId": "b418f1f4-242c-4a59-8ec0-bb5da1911c2d",
   "tables": {
     "account": {
       "name": "account",
@@ -2172,8 +2172,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "onUpdate": true,
-          "default": "(now())"
+          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
         }
       },
       "indexes": {},
@@ -4086,6 +4085,21 @@
           "notNull": true,
           "autoincrement": false
         },
+        "plugin_mcp_requirement_binding_id": {
+          "name": "plugin_mcp_requirement_binding_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_key": {
+          "name": "source_key",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'direct'"
+        },
         "org_membership_id": {
           "name": "org_membership_id",
           "type": "varchar(64)",
@@ -4139,6 +4153,13 @@
           ],
           "isUnique": false
         },
+        "emc_access_grant_plugin_mcp_binding_id": {
+          "name": "emc_access_grant_plugin_mcp_binding_id",
+          "columns": [
+            "plugin_mcp_requirement_binding_id"
+          ],
+          "isUnique": false
+        },
         "emc_access_grant_org_membership_id": {
           "name": "emc_access_grant_org_membership_id",
           "columns": [
@@ -4157,7 +4178,8 @@
           "name": "emc_access_grant_connection_member",
           "columns": [
             "external_mcp_connection_id",
-            "org_membership_id"
+            "org_membership_id",
+            "source_key"
           ],
           "isUnique": true
         },
@@ -4165,7 +4187,8 @@
           "name": "emc_access_grant_connection_team",
           "columns": [
             "external_mcp_connection_id",
-            "team_id"
+            "team_id",
+            "source_key"
           ],
           "isUnique": true
         }
@@ -4419,6 +4442,127 @@
       "compositePrimaryKeys": {
         "org_oauth_client_id": {
           "name": "org_oauth_client_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "plugin_mcp_requirement_binding": {
+      "name": "plugin_mcp_requirement_binding",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "plugin_id": {
+          "name": "plugin_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "config_object_id": {
+          "name": "config_object_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "server_name": {
+          "name": "server_name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "external_mcp_connection_id": {
+          "name": "external_mcp_connection_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by_org_membership_id": {
+          "name": "created_by_org_membership_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
+        }
+      },
+      "indexes": {
+        "plugin_mcp_req_binding_organization_id": {
+          "name": "plugin_mcp_req_binding_organization_id",
+          "columns": [
+            "organization_id"
+          ],
+          "isUnique": false
+        },
+        "plugin_mcp_req_binding_plugin_id": {
+          "name": "plugin_mcp_req_binding_plugin_id",
+          "columns": [
+            "plugin_id"
+          ],
+          "isUnique": false
+        },
+        "plugin_mcp_req_binding_config_object_id": {
+          "name": "plugin_mcp_req_binding_config_object_id",
+          "columns": [
+            "config_object_id"
+          ],
+          "isUnique": false
+        },
+        "plugin_mcp_req_binding_connection_id": {
+          "name": "plugin_mcp_req_binding_connection_id",
+          "columns": [
+            "external_mcp_connection_id"
+          ],
+          "isUnique": false
+        },
+        "plugin_mcp_req_binding_org_plugin_object_server": {
+          "name": "plugin_mcp_req_binding_org_plugin_object_server",
+          "columns": [
+            "organization_id",
+            "plugin_id",
+            "config_object_id",
+            "server_name"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "plugin_mcp_requirement_binding_id": {
+          "name": "plugin_mcp_requirement_binding_id",
           "columns": [
             "id"
           ]

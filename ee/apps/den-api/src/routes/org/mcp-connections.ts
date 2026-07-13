@@ -2,7 +2,16 @@ import type { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { and, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import {
+  ConfigObjectTable,
+  ConfigObjectVersionTable,
+  PluginConfigObjectTable,
+  PluginMcpRequirementBindingTable,
+  PluginTable,
+} from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { appLogger } from "../../observability/logger.js"
 import {
@@ -47,6 +56,7 @@ import {
   externalMcpOAuthCallbackError,
   safeExternalMcpEndpointForLog,
 } from "../../capability-sources/external-mcp-diagnostics.js"
+import { resolvePluginArchResourceRole, type PluginArchActorContext } from "./plugin-system/access.js"
 import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 
@@ -125,6 +135,11 @@ const accessSummarySchema = z.object({
   teamIds: z.array(z.string()),
 }).meta({ ref: "ExternalMcpConnectionAccessSummary" })
 
+const requiredBySchema = z.object({
+  pluginId: z.string(),
+  name: z.string(),
+}).meta({ ref: "ExternalMcpConnectionRequiredBy" })
+
 const connectionResponseSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -145,6 +160,8 @@ const connectionResponseSchema = z.object({
   grantedScopes: z.array(z.string()).optional(),
   /** Tenant selected by the admin for tenant-scoped native providers. */
   tenantId: z.string().nullable().optional(),
+  /** Marketplace plugins whose declared MCP requirement is bound to this connection. Filtered to the caller's visible plugin names for scope=usable. */
+  requiredBy: z.array(requiredBySchema),
   /** Present only for scope=manageable (admin) listings. */
   access: accessSummarySchema.nullable(),
 }).meta({ ref: "ExternalMcpConnectionResponse" })
@@ -168,8 +185,10 @@ const connectionCreatedResponseSchema = connectionResponseSchema.extend({
  * betterAuthUrl is the den-web public origin in every deployment layout.
  */
 function memberConnectLinks(request: Request, connectionId: string) {
+  const yourConnections = new URL("/dashboard/your-connections", env.betterAuthUrl)
+  yourConnections.searchParams.set("connectionId", connectionId)
   return {
-    yourConnections: `${env.betterAuthUrl}/dashboard/your-connections`,
+    yourConnections: yourConnections.toString(),
     oauthCallback: callbackRedirectUri(request, connectionId),
   }
 }
@@ -246,11 +265,186 @@ function isConnectionConnected(row: ExternalMcpConnectionRow): boolean {
   return Boolean(row.accessToken || row.apiKey || (row.authType === "none" && row.connectedAt))
 }
 
+type ConnectionRequiredBy = {
+  pluginId: string
+  name: string
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function parseJsonObject(value: string | null): Record<string, unknown> | null {
+  if (!value) return null
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return isRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function legacyExternalMcpConnectionIdsFromPayload(payload: Record<string, unknown> | null): string[] {
+  const ids = new Set<string>()
+  const collect = (value: unknown) => {
+    if (!isRecord(value)) return
+    if (value.openworkManaged !== "den_external_mcp") return
+    if (typeof value.externalMcpConnectionId === "string" && value.externalMcpConnectionId.trim()) {
+      ids.add(value.externalMcpConnectionId.trim())
+    }
+  }
+
+  collect(payload)
+  if (payload) {
+    for (const key of ["mcpServers", "mcp"]) {
+      const container = payload[key]
+      if (!isRecord(container)) continue
+      for (const value of Object.values(container)) collect(value)
+    }
+  }
+  return [...ids]
+}
+
+async function latestMcpVersions(input: {
+  configObjectIds: Array<DenTypeId<"configObject">>
+  organizationId: DenTypeId<"organization">
+}) {
+  if (input.configObjectIds.length === 0) return new Map<string, typeof ConfigObjectVersionTable.$inferSelect>()
+  const rows = await db
+    .select()
+    .from(ConfigObjectVersionTable)
+    .where(and(
+      eq(ConfigObjectVersionTable.organizationId, input.organizationId),
+      inArray(ConfigObjectVersionTable.configObjectId, input.configObjectIds),
+    ))
+    .orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id))
+  const versions = new Map<string, typeof ConfigObjectVersionTable.$inferSelect>()
+  for (const row of rows) {
+    if (!versions.has(row.configObjectId)) versions.set(row.configObjectId, row)
+  }
+  return versions
+}
+
+async function legacyRequiredByForConnections(input: {
+  connectionIds: string[]
+  organizationId: DenTypeId<"organization">
+}) {
+  if (input.connectionIds.length === 0) return []
+  const connectionIdSet = new Set(input.connectionIds)
+  const rows = await db
+    .select({
+      configObjectId: ConfigObjectTable.id,
+      pluginId: PluginTable.id,
+      pluginName: PluginTable.name,
+    })
+    .from(PluginConfigObjectTable)
+    .innerJoin(ConfigObjectTable, eq(PluginConfigObjectTable.configObjectId, ConfigObjectTable.id))
+    .innerJoin(PluginTable, eq(PluginConfigObjectTable.pluginId, PluginTable.id))
+    .where(and(
+      eq(PluginConfigObjectTable.organizationId, input.organizationId),
+      isNull(PluginConfigObjectTable.removedAt),
+      eq(ConfigObjectTable.organizationId, input.organizationId),
+      eq(ConfigObjectTable.objectType, "mcp"),
+      eq(ConfigObjectTable.status, "active"),
+      isNull(ConfigObjectTable.deletedAt),
+      eq(PluginTable.organizationId, input.organizationId),
+      eq(PluginTable.status, "active"),
+      isNull(PluginTable.deletedAt),
+    ))
+  const versions = await latestMcpVersions({
+    configObjectIds: rows.map((row) => row.configObjectId),
+    organizationId: input.organizationId,
+  })
+  const requiredBy: Array<{ connectionId: string; pluginId: DenTypeId<"plugin">; pluginName: string }> = []
+  for (const row of rows) {
+    const version = versions.get(row.configObjectId)
+    const payload = version?.normalizedPayloadJson ?? parseJsonObject(version?.rawSourceText ?? null)
+    for (const connectionId of legacyExternalMcpConnectionIdsFromPayload(payload)) {
+      if (connectionIdSet.has(connectionId)) {
+        requiredBy.push({ connectionId, pluginId: row.pluginId, pluginName: row.pluginName })
+      }
+    }
+  }
+  return requiredBy
+}
+
+async function requiredByForConnections(input: {
+  context: PluginArchActorContext
+  includeAllPluginNames: boolean
+  rows: ExternalMcpConnectionRow[]
+}): Promise<Map<string, ConnectionRequiredBy[]>> {
+  const connectionIds = input.rows.map((row) => row.id)
+  if (connectionIds.length === 0) return new Map()
+
+  const organizationId = input.context.organizationContext.organization.id
+  const bindingRows = await db
+    .select({
+      connectionId: PluginMcpRequirementBindingTable.externalMcpConnectionId,
+      pluginId: PluginTable.id,
+      pluginName: PluginTable.name,
+    })
+    .from(PluginMcpRequirementBindingTable)
+    .innerJoin(PluginTable, eq(PluginMcpRequirementBindingTable.pluginId, PluginTable.id))
+    .where(and(
+      eq(PluginMcpRequirementBindingTable.organizationId, organizationId),
+      inArray(PluginMcpRequirementBindingTable.externalMcpConnectionId, connectionIds),
+      eq(PluginTable.organizationId, organizationId),
+      eq(PluginTable.status, "active"),
+      isNull(PluginTable.deletedAt),
+    ))
+  const legacyRows = await legacyRequiredByForConnections({ connectionIds, organizationId })
+  const candidatePluginIds = new Set<DenTypeId<"plugin">>([
+    ...bindingRows.map((row) => row.pluginId),
+    ...legacyRows.map((row) => row.pluginId),
+  ])
+
+  const visiblePluginIds = new Set<string>()
+  if (input.includeAllPluginNames) {
+    for (const pluginId of candidatePluginIds) visiblePluginIds.add(pluginId)
+  } else {
+    for (const pluginId of candidatePluginIds) {
+      const role = await resolvePluginArchResourceRole({
+        context: input.context,
+        resourceId: pluginId,
+        resourceKind: "plugin",
+      })
+      if (role) visiblePluginIds.add(pluginId)
+    }
+  }
+
+  const grouped = new Map<string, Map<string, string>>()
+  for (const row of bindingRows) {
+    if (!visiblePluginIds.has(row.pluginId)) continue
+    let plugins = grouped.get(row.connectionId)
+    if (!plugins) {
+      plugins = new Map()
+      grouped.set(row.connectionId, plugins)
+    }
+    plugins.set(row.pluginId, row.pluginName)
+  }
+  for (const row of legacyRows) {
+    if (!visiblePluginIds.has(row.pluginId)) continue
+    let plugins = grouped.get(row.connectionId)
+    if (!plugins) {
+      plugins = new Map()
+      grouped.set(row.connectionId, plugins)
+    }
+    plugins.set(row.pluginId, row.pluginName)
+  }
+
+  const result = new Map<string, ConnectionRequiredBy[]>()
+  for (const [connectionId, plugins] of grouped) {
+    result.set(connectionId, [...plugins].map(([pluginId, name]) => ({ pluginId, name })).sort((left, right) => left.name.localeCompare(right.name)))
+  }
+  return result
+}
+
 async function toConnectionResponse(
   row: ExternalMcpConnectionRow,
   options: {
     callerOrgMembershipId: DenTypeId<"member">
     includeAccess: boolean
+    requiredBy: ConnectionRequiredBy[]
   },
 ) {
   let connectedForMe = isConnectionConnected(row) && row.credentialMode === "shared"
@@ -282,6 +476,7 @@ async function toConnectionResponse(
     connected: isConnectionConnected(row),
     connectedAt: row.connectedAt ? row.connectedAt.toISOString() : null,
     connectedForMe,
+    requiredBy: options.requiredBy,
     access,
   }
 }
@@ -342,14 +537,17 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     async (c) => {
       const payload = c.get("organizationContext")
       const { scope } = c.req.valid("query")
+      const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
+      const context = { memberTeams, organizationContext: payload, session: c.get("session") } satisfies PluginArchActorContext
 
       if (scope === "manageable") {
         if (!verifyOrgRole({ roles: ["admin"], userContext: payload.currentMember })) {
           return c.json({ error: "forbidden", message: "Only workspace owners and admins can list all MCP connections." }, 403)
         }
         const rows = await listExternalMcpConnections(payload.organization.id)
+        const requiredBy = await requiredByForConnections({ context, includeAllPluginNames: true, rows })
         const connections = await Promise.all(rows.map((row) =>
-          toConnectionResponse(row, { callerOrgMembershipId: payload.currentMember.id, includeAccess: true })))
+          toConnectionResponse(row, { callerOrgMembershipId: payload.currentMember.id, includeAccess: true, requiredBy: requiredBy.get(row.id) ?? [] })))
         return c.json({ connections })
       }
 
@@ -360,14 +558,14 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ connections: [] })
       }
 
-      const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
       const rows = await listUsableExternalMcpConnections({
         organizationId: payload.organization.id,
         orgMembershipId: payload.currentMember.id,
         teamIds: memberTeams.map((team) => team.id),
       })
+      const requiredBy = await requiredByForConnections({ context, includeAllPluginNames: false, rows })
       const connections = await Promise.all(rows.map((row) =>
-        toConnectionResponse(row, { callerOrgMembershipId: payload.currentMember.id, includeAccess: false })))
+        toConnectionResponse(row, { callerOrgMembershipId: payload.currentMember.id, includeAccess: false, requiredBy: requiredBy.get(row.id) ?? [] })))
       // Native providers (e.g. google-workspace) join the same list once the
       // org saved an OAuth client for them — same card, same connect flow,
       // same rollout gate (this sits after the gate check on purpose).
@@ -479,7 +677,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       }
 
       const refreshed = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id })
-      const response = await toConnectionResponse(refreshed ?? created, { callerOrgMembershipId: payload.currentMember.id, includeAccess: true })
+      const response = await toConnectionResponse(refreshed ?? created, { callerOrgMembershipId: payload.currentMember.id, includeAccess: true, requiredBy: [] })
       // The classical handoff: whoever created this (human or agent) gets
       // the link where members connect their own account, ready to share.
       return c.json({ ...response, links: memberConnectLinks(c.req.raw, created.id) })
@@ -528,7 +726,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         },
         createdByOrgMembershipId: payload.currentMember.id,
       })
-      return c.json(await toConnectionResponse(connection, { callerOrgMembershipId: payload.currentMember.id, includeAccess: true }))
+      return c.json(await toConnectionResponse(connection, { callerOrgMembershipId: payload.currentMember.id, includeAccess: true, requiredBy: [] }))
     },
   )
 

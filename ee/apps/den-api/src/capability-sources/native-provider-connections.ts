@@ -34,6 +34,7 @@ export type NativeProviderConnectionEntry = {
   externalAccountId?: string | null
   grantedScopes?: string[]
   tenantId?: string | null
+  requiredBy: []
   access: null
 }
 
@@ -90,6 +91,7 @@ export function buildNativeProviderEntry(
     ...(state.externalAccountId !== undefined ? { externalAccountId: state.externalAccountId } : {}),
     ...(state.grantedScopes ? { grantedScopes: state.grantedScopes } : {}),
     ...(state.tenantId !== undefined ? { tenantId: state.tenantId } : {}),
+    requiredBy: [],
     access: null,
   }
 }

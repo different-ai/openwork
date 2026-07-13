@@ -27,6 +27,11 @@ export type ExternalMcpAccessSummary = {
   teamIds: string[];
 };
 
+export type ExternalMcpRequiredBy = {
+  pluginId: string;
+  name: string;
+};
+
 export type ExternalMcpConnection = {
   id: string;
   name: string;
@@ -41,6 +46,7 @@ export type ExternalMcpConnection = {
   externalAccountId?: string | null;
   grantedScopes?: string[];
   tenantId?: string | null;
+  requiredBy: ExternalMcpRequiredBy[];
   access: ExternalMcpAccessSummary | null;
 };
 
@@ -86,6 +92,14 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+function parseRequiredBy(value: unknown): ExternalMcpRequiredBy[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.pluginId !== "string" || typeof entry.name !== "string") return [];
+    return [{ pluginId: entry.pluginId, name: entry.name }];
+  });
+}
+
 async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string): Promise<ExternalMcpConnection[]> {
   const { response, payload } = await requestJson(
     `/v1/mcp-connections?scope=${scope}`,
@@ -98,6 +112,7 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
   const record = payload as { connections?: ExternalMcpConnection[] };
   return (record.connections ?? []).map((connection) => ({
     ...connection,
+    requiredBy: parseRequiredBy(connection.requiredBy),
     ...(typeof connection.needsReconnect === "boolean" ? { needsReconnect: connection.needsReconnect } : {}),
     ...(isStringArray(connection.missingFeatures) ? { missingFeatures: connection.missingFeatures } : {}),
     ...(typeof connection.externalAccountId === "string" || connection.externalAccountId === null

@@ -15,6 +15,7 @@ type OpenApiDocument = {
 let isMcpOperationAllowed: typeof import("../src/mcp/policy.js")["isMcpOperationAllowed"]
 let isAgentApiKeyConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentApiKeyConnection"]
 let isAgentOAuthClientConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentOAuthClientConnection"]
+let isAgentPluginMcpSecretSetup: typeof import("../src/routes/org/plugin-system/routes.js")["isAgentPluginMcpSecretSetup"]
 let buildMcpCatalog: typeof import("../src/mcp/catalog.js")["buildMcpCatalog"]
 let searchCapabilities: typeof import("../src/mcp/search.js")["searchCapabilities"]
 let searchCapabilitySourceFilter: typeof import("../src/mcp/search.js")["searchCapabilitySourceFilter"]
@@ -45,6 +46,7 @@ beforeAll(async () => {
   const mcpConnections = await import("../src/routes/org/mcp-connections.js")
   isAgentApiKeyConnection = mcpConnections.isAgentApiKeyConnection
   isAgentOAuthClientConnection = mcpConnections.isAgentOAuthClientConnection
+  isAgentPluginMcpSecretSetup = (await import("../src/routes/org/plugin-system/routes.js")).isAgentPluginMcpSecretSetup
   const app = (await import("../src/app.js")).default
   const response = await app.request("http://127.0.0.1:8790/openapi.json")
   document = await response.json()
@@ -88,6 +90,14 @@ describe("agent-configurable org connections policy", () => {
     }))
   })
 
+  test("plugin MCP setup that can carry secrets is excluded from the agent catalog", () => {
+    expect(allowed("postV1PluginsByPluginIdMcpConnections")).toBe(false)
+    expect(document.paths["/v1/plugins/{pluginId}/mcp-requirements/configure"]).toBeUndefined()
+    const catalog = buildMcpCatalog(document)
+    expect(catalog.some((operation) => operation.path === "/v1/plugins/{pluginId}/mcp-connections")).toBe(false)
+    expect(searchCapabilities(catalog, "configure plugin mcp connection oauth client", 20).some((match) => match.path.includes("/plugins/") && match.path.includes("/mcp-connections"))).toBe(false)
+  })
+
   test("agent capability search source filter can restrict searches to skills", () => {
     expect(searchCapabilitySourceFilter()).toEqual({
       api: true,
@@ -125,5 +135,14 @@ describe("agent-configurable org connections policy", () => {
     expect(isAgentOAuthClientConnection({ oauthClient: { clientId: "client" }, sessionId: "normal_session" })).toBe(false)
     expect(isAgentOAuthClientConnection({ sessionId: "mcp_internal" })).toBe(false)
     expect(isAgentOAuthClientConnection({ oauthClient: null, sessionId: "mcp_internal" })).toBe(false)
+  })
+
+  test("plugin MCP secret setup is blocked for the internal agent principal", () => {
+    expect(isAgentPluginMcpSecretSetup({ oauthClient: { clientId: "client" }, sessionId: "mcp_internal" })).toBe(true)
+    expect(isAgentPluginMcpSecretSetup({ apiKey: "exa-key", sessionId: "mcp_internal" })).toBe(true)
+    expect(isAgentPluginMcpSecretSetup({ apiKey: "exa-key", sessionId: "normal_session" })).toBe(false)
+    expect(isAgentPluginMcpSecretSetup({ oauthClient: { clientId: "client" }, sessionId: "normal_session" })).toBe(false)
+    expect(isAgentPluginMcpSecretSetup({ apiKey: " ", sessionId: "mcp_internal" })).toBe(false)
+    expect(isAgentPluginMcpSecretSetup({ sessionId: "mcp_internal" })).toBe(false)
   })
 })

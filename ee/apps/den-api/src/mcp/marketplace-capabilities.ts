@@ -12,10 +12,16 @@ import {
   PluginTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
-import { listUsableExternalMcpConnections } from "../capability-sources/external-mcp-connections.js"
+import {
+  listExternalMcpConnections,
+  listUsableExternalMcpConnections,
+  type ExternalMcpConnectionRow,
+} from "../capability-sources/external-mcp-connections.js"
 import { getConnectedAccount } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
 import { resolvePluginArchGrantRole } from "../routes/org/plugin-system/access.js"
+import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
+import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow } from "./plugin-mcp-requirement-bindings.js"
 import { scoreText, tokenize } from "./search.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
 import type { CapabilityMatch } from "./search.js"
@@ -50,11 +56,37 @@ export type MarketplaceCapabilityMatch = CapabilityMatch & {
   kind: ConfigObjectType
   plugin: string
   marketplace?: string
-  status?: "needs_install" | "content_not_synced"
+  status?: MarketplaceCapabilityStatus
   hint?: string
+  action?: MarketplaceMcpRequirementAction
+  mcpRequirements?: MarketplaceMcpRequirementStatus[]
 }
 
-type MarketplaceCapabilityStatus = "connection_available" | "content_not_synced" | "needs_connection" | "needs_install" | "unsupported"
+export type MarketplaceCapabilityStatus = "connection_available" | "content_not_synced" | "needs_admin_setup" | "needs_connection" | "needs_install" | "ready" | "reconnect" | "unsupported"
+
+export type MarketplaceMcpRequirementState = "needs_admin_setup" | "needs_connection" | "ready" | "reconnect"
+
+export type MarketplaceMcpRequirementAction = {
+  type: "connect" | "none" | "reconnect" | "setup_connection"
+  label: string
+  surface: "none" | "openwork_organization_connections" | "openwork_your_connections"
+  retry: "execute_capability" | "search_capabilities"
+  url?: string
+}
+
+export type MarketplaceMcpRequirementStatus = {
+  configObjectId: string
+  pluginId: string
+  pluginName: string
+  serverName: string
+  name: string
+  state: MarketplaceMcpRequirementState
+  action: MarketplaceMcpRequirementAction
+  connectionId?: string
+  connectionName?: string
+  credentialMode?: "shared" | "per_member"
+  connectedForMe?: boolean
+}
 
 export type MarketplaceCapabilityExecutePayload = {
   kind: ConfigObjectType
@@ -69,6 +101,8 @@ export type MarketplaceCapabilityExecutePayload = {
   source?: string | null
   status?: MarketplaceCapabilityStatus
   hint?: string
+  action?: MarketplaceMcpRequirementAction
+  mcpRequirements?: MarketplaceMcpRequirementStatus[]
 }
 
 export type MarketplaceCapabilityExecuteResult =
@@ -80,8 +114,10 @@ export type MarketplaceConfigObjectExecutionMode = "desktop_only" | "instruction
 export type MarketplaceCloudReadinessState = "ready" | "needs_signin" | "needs_admin_setup" | "desktop_only" | "not_synced"
 
 export type MarketplaceCloudReadinessConnection = {
+  configObjectId: string
   id: string | null
   name: string
+  serverName: string
   url: string
   credentialMode?: "shared" | "per_member"
   connectedForMe?: boolean
@@ -101,7 +137,21 @@ type MarketplaceReadinessConfigObject = {
 }
 
 type MarketplaceMcpDependency = {
+  configObjectId: ConfigObjectId
+  externalMcpConnectionId: string | null
   name: string
+  pluginId: PluginId
+  serverName: string
+  url: string
+}
+
+type MarketplacePluginMcpRequirement = {
+  configObjectId: ConfigObjectId
+  externalMcpConnectionId: string | null
+  name: string
+  pluginId: PluginId
+  pluginName: string
+  serverName: string
   url: string
 }
 
@@ -446,6 +496,10 @@ function readString(value: unknown): string | null {
   return typeof value === "string" ? value.trim() || null : null
 }
 
+function readExternalMcpConnectionId(input: { config: Record<string, unknown>; spec: Record<string, unknown> }): string | null {
+  return readString(input.config.externalMcpConnectionId) ?? readString(input.spec.externalMcpConnectionId)
+}
+
 function versionServerSpec(version: ConfigObjectVersionRow): Record<string, unknown> {
   return version.normalizedPayloadJson ?? parseJsonRecord(version.rawSourceText) ?? {}
 }
@@ -485,24 +539,41 @@ export function comparableMarketplaceMcpUrl(value: string): string {
   return value.trim().replace(/\/+$/, "")
 }
 
+export function comparablePluginMcpRequirementUrl(value: string): string {
+  try {
+    const url = new URL(value.trim())
+    url.hash = ""
+    const pathname = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname
+    return `${url.protocol}//${url.host}${pathname}${url.search}`
+  } catch {
+    return value.trim().replace(/\/+$/, "")
+  }
+}
+
 function mcpDependenciesForObject(input: {
   object: MarketplaceReadinessConfigObject
   version: ConfigObjectVersionRow
 }): MarketplaceMcpDependency[] {
   const spec = versionServerSpec(input.version)
   const dependencies = marketplaceMcpServerEntries(spec, input.object.title).map((entry) => ({
+    configObjectId: input.object.id,
+    externalMcpConnectionId: readExternalMcpConnectionId({ config: entry.config, spec }),
     name: entry.name,
+    pluginId: input.object.pluginId,
+    serverName: entry.name,
     url: readString(entry.config.url) ?? "",
   }))
-  return dependencies.length > 0 ? dependencies : [{ name: input.object.title, url: "" }]
+  return dependencies.length > 0
+    ? dependencies
+    : [{ configObjectId: input.object.id, externalMcpConnectionId: null, name: input.object.title, pluginId: input.object.pluginId, serverName: input.object.title, url: "" }]
 }
 
-function isSharedConnectionReady(connection: UsableExternalMcpConnection): boolean {
+export function isSharedConnectionReady(connection: ExternalMcpConnectionRow): boolean {
   return Boolean(connection.accessToken || connection.apiKey || (connection.authType === "none" && connection.connectedAt))
 }
 
-async function connectedForMember(input: {
-  connection: UsableExternalMcpConnection
+export async function connectedForMember(input: {
+  connection: ExternalMcpConnectionRow
   member: McpMemberIdentity
 }): Promise<boolean> {
   if (input.connection.credentialMode === "shared") return isSharedConnectionReady(input.connection)
@@ -514,21 +585,301 @@ async function connectedForMember(input: {
   return Boolean(account?.accessToken)
 }
 
+function bindingByRequirement(rows: PluginMcpRequirementBindingRow[]): Map<string, PluginMcpRequirementBindingRow> {
+  const bindings = new Map<string, PluginMcpRequirementBindingRow>()
+  for (const row of rows) {
+    bindings.set(requirementKey({ configObjectId: row.configObjectId, pluginId: row.pluginId, serverName: row.serverName }), row)
+  }
+  return bindings
+}
+
+function requirementKey(input: { configObjectId: string; pluginId: string; serverName: string }) {
+  return `${input.pluginId}\n${input.configObjectId}\n${input.serverName}`
+}
+
+function marketplaceRequirementAction(input: {
+  connectionId?: string
+  connectionName?: string
+  pluginName: string
+  state: MarketplaceMcpRequirementState
+}): MarketplaceMcpRequirementAction {
+  if (input.state === "ready") {
+    return {
+      type: "none",
+      label: "Ready",
+      surface: "none",
+      retry: "execute_capability",
+    }
+  }
+
+  if ((input.state === "needs_connection" || input.state === "reconnect") && input.connectionId) {
+    const connectionName = input.connectionName ?? "this connection"
+    return {
+      type: input.state === "reconnect" ? "reconnect" : "connect",
+      label: `${input.state === "reconnect" ? "Reconnect" : "Connect"} ${connectionName}`,
+      surface: "openwork_your_connections",
+      retry: "search_capabilities",
+      url: openworkYourConnectionsUrl(input.connectionId),
+    }
+  }
+
+  return {
+    type: "setup_connection",
+    label: `Ask an org admin to configure Connections for ${input.pluginName}`,
+    surface: "openwork_organization_connections",
+    retry: "search_capabilities",
+    url: openworkOrganizationConnectionsUrl(),
+  }
+}
+
+function requirementSort(left: MarketplaceMcpRequirementStatus, right: MarketplaceMcpRequirementStatus) {
+  return left.pluginName.localeCompare(right.pluginName)
+    || left.configObjectId.localeCompare(right.configObjectId)
+    || left.serverName.localeCompare(right.serverName)
+    || left.name.localeCompare(right.name)
+}
+
+function firstBlockingRequirement(requirements: MarketplaceMcpRequirementStatus[]) {
+  return requirements.find((requirement) => requirement.state === "needs_admin_setup")
+    ?? requirements.find((requirement) => requirement.state === "needs_connection" || requirement.state === "reconnect")
+    ?? null
+}
+
+function aggregateRequirementStatus(requirements: MarketplaceMcpRequirementStatus[]): MarketplaceCapabilityStatus | undefined {
+  if (requirements.length === 0) return undefined
+  const blocking = firstBlockingRequirement(requirements)
+  return blocking?.state ?? "ready"
+}
+
+function requirementHint(input: {
+  capabilityName: string
+  requirement: MarketplaceMcpRequirementStatus
+}) {
+  if (input.requirement.state === "needs_connection" || input.requirement.state === "reconnect") {
+    return `${input.capabilityName} belongs to marketplace plugin "${input.requirement.pluginName}", which requires "${input.requirement.name}". ${input.requirement.action.label} from Your Connections, then try again.`
+  }
+  return `${input.capabilityName} belongs to marketplace plugin "${input.requirement.pluginName}", which needs an org admin to configure its required MCP connection before it can run in OpenWork Cloud.`
+}
+
+function connectionById(connections: ExternalMcpConnectionRow[]) {
+  const map = new Map<string, ExternalMcpConnectionRow>()
+  for (const connection of connections) map.set(connection.id, connection)
+  return map
+}
+
+function connectionIsUsable(input: {
+  connectionId: string
+  usableConnections: ExternalMcpConnectionRow[]
+}) {
+  return input.usableConnections.some((connection) => connection.id === input.connectionId)
+}
+
+function matchingConnectionForRequirement(input: {
+  allConnections: ExternalMcpConnectionRow[]
+  requirement: MarketplacePluginMcpRequirement
+  usableConnections: ExternalMcpConnectionRow[]
+}) {
+  const allById = connectionById(input.allConnections)
+  if (input.requirement.externalMcpConnectionId) {
+    const connection = allById.get(input.requirement.externalMcpConnectionId) ?? null
+    if (!connection) return null
+    return comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(input.requirement.url)
+      ? connection
+      : null
+  }
+  return input.usableConnections.find((connection) => comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(input.requirement.url)) ?? null
+}
+
+async function statusForRequirement(input: {
+  allConnections: ExternalMcpConnectionRow[]
+  member: McpMemberIdentity
+  requirement: MarketplacePluginMcpRequirement
+  usableConnections: ExternalMcpConnectionRow[]
+}): Promise<MarketplaceMcpRequirementStatus> {
+  const connection = matchingConnectionForRequirement(input)
+  const usable = connection ? connectionIsUsable({ connectionId: connection.id, usableConnections: input.usableConnections }) : false
+  const base = {
+    configObjectId: input.requirement.configObjectId,
+    pluginId: input.requirement.pluginId,
+    pluginName: input.requirement.pluginName,
+    serverName: input.requirement.serverName,
+    name: input.requirement.name,
+    ...(connection && usable ? { connectionId: connection.id, connectionName: connection.name, credentialMode: connection.credentialMode } : {}),
+  }
+
+  if (!connection || !usable) {
+    const state = "needs_admin_setup"
+    return {
+      ...base,
+      state,
+      action: marketplaceRequirementAction({ pluginName: input.requirement.pluginName, state }),
+    }
+  }
+
+  const connected = await connectedForMember({ connection, member: input.member })
+  if (connected) {
+    const state = "ready"
+    return {
+      ...base,
+      state,
+      connectedForMe: true,
+      action: marketplaceRequirementAction({
+        connectionId: connection.id,
+        connectionName: connection.name,
+        pluginName: input.requirement.pluginName,
+        state,
+      }),
+    }
+  }
+
+  const state: MarketplaceMcpRequirementState = connection.credentialMode === "per_member" ? "needs_connection" : "needs_admin_setup"
+  return {
+    ...base,
+    state,
+    connectedForMe: false,
+    action: marketplaceRequirementAction({
+      connectionId: connection.id,
+      connectionName: connection.name,
+      pluginName: input.requirement.pluginName,
+      state,
+    }),
+  }
+}
+
+function requirementsForMcpObject(input: {
+  bindings: Map<string, PluginMcpRequirementBindingRow>
+  configObjectId: ConfigObjectId
+  pluginId: PluginId
+  pluginName: string
+  title: string
+  version: ConfigObjectVersionRow
+}): MarketplacePluginMcpRequirement[] {
+  const spec = versionServerSpec(input.version)
+  return marketplaceMcpServerEntries(spec, input.title)
+    .flatMap((entry) => {
+      const url = readString(entry.config.url)
+      if (!url) return []
+      const binding = input.bindings.get(requirementKey({ configObjectId: input.configObjectId, pluginId: input.pluginId, serverName: entry.name }))
+      return [{
+        configObjectId: input.configObjectId,
+        externalMcpConnectionId: binding?.externalMcpConnectionId ?? readExternalMcpConnectionId({ config: entry.config, spec }),
+        name: entry.name,
+        pluginId: input.pluginId,
+        pluginName: input.pluginName,
+        serverName: entry.name,
+        url,
+      }]
+    })
+}
+
+async function marketplacePluginMcpRequirements(input: {
+  organizationId: OrganizationId
+  pluginIds: PluginId[]
+}): Promise<MarketplacePluginMcpRequirement[]> {
+  const pluginIds = unique(input.pluginIds)
+  if (pluginIds.length === 0) return []
+  const rows = await db
+    .select({
+      configObjectId: ConfigObjectTable.id,
+      pluginId: PluginTable.id,
+      pluginName: PluginTable.name,
+      title: ConfigObjectTable.title,
+    })
+    .from(PluginConfigObjectTable)
+    .innerJoin(ConfigObjectTable, eq(ConfigObjectTable.id, PluginConfigObjectTable.configObjectId))
+    .innerJoin(PluginTable, eq(PluginTable.id, PluginConfigObjectTable.pluginId))
+    .where(and(
+      eq(PluginConfigObjectTable.organizationId, input.organizationId),
+      inArray(PluginConfigObjectTable.pluginId, pluginIds),
+      isNull(PluginConfigObjectTable.removedAt),
+      eq(ConfigObjectTable.organizationId, input.organizationId),
+      eq(ConfigObjectTable.objectType, "mcp"),
+      eq(ConfigObjectTable.status, "active"),
+      isNull(ConfigObjectTable.deletedAt),
+      eq(PluginTable.organizationId, input.organizationId),
+      eq(PluginTable.status, "active"),
+      isNull(PluginTable.deletedAt),
+    ))
+  const configObjectIds = unique(rows.map((row) => row.configObjectId))
+  const versions = await latestVersionsForReadiness(input.organizationId, configObjectIds)
+  const bindings = bindingByRequirement(await listPluginMcpRequirementBindings({
+    configObjectIds,
+    organizationId: input.organizationId,
+  }))
+
+  return rows
+    .flatMap((row) => {
+      const version = versions.get(row.configObjectId)
+      return version
+        ? requirementsForMcpObject({
+          bindings,
+          configObjectId: row.configObjectId,
+          pluginId: row.pluginId,
+          pluginName: row.pluginName,
+          title: row.title,
+          version,
+        })
+        : []
+    })
+    .sort((left, right) => left.pluginName.localeCompare(right.pluginName)
+      || left.configObjectId.localeCompare(right.configObjectId)
+      || left.serverName.localeCompare(right.serverName)
+      || left.name.localeCompare(right.name))
+}
+
+async function marketplacePluginMcpRequirementStatuses(input: {
+  member: McpMemberIdentity
+  organizationId: OrganizationId
+  pluginIds: PluginId[]
+}): Promise<Map<string, MarketplaceMcpRequirementStatus[]>> {
+  const requirements = await marketplacePluginMcpRequirements({ organizationId: input.organizationId, pluginIds: input.pluginIds })
+  const byPlugin = new Map<string, MarketplaceMcpRequirementStatus[]>()
+  if (requirements.length === 0) return byPlugin
+
+  const allConnections = await listExternalMcpConnections(input.organizationId)
+  const usableConnections = await listUsableExternalMcpConnections({
+    organizationId: input.organizationId,
+    orgMembershipId: input.member.orgMembershipId,
+    teamIds: input.member.teamIds,
+  })
+  for (const requirement of requirements) {
+    const status = await statusForRequirement({
+      allConnections,
+      member: input.member,
+      requirement,
+      usableConnections,
+    })
+    const existing = byPlugin.get(requirement.pluginId) ?? []
+    existing.push(status)
+    existing.sort(requirementSort)
+    byPlugin.set(requirement.pluginId, existing)
+  }
+  return byPlugin
+}
+
 async function resolveMcpReadinessConnections(input: {
   connections: UsableExternalMcpConnection[]
   dependencies: MarketplaceMcpDependency[]
   member: McpMemberIdentity
+  organizationId: OrganizationId
 }): Promise<MarketplaceCloudReadinessConnection[]> {
   const connectedCache = new Map<string, boolean>()
   const output: MarketplaceCloudReadinessConnection[] = []
+  const bindings = bindingByRequirement(await listPluginMcpRequirementBindings({
+    organizationId: input.organizationId,
+    configObjectIds: unique(input.dependencies.map((dependency) => dependency.configObjectId)),
+  }))
 
   for (const dependency of input.dependencies) {
-    const comparableDependencyUrl = dependency.url ? comparableMarketplaceMcpUrl(dependency.url) : ""
-    const matched = comparableDependencyUrl
-      ? input.connections.find((connection) => comparableMarketplaceMcpUrl(connection.url) === comparableDependencyUrl)
-      : null
+    const binding = bindings.get(requirementKey(dependency))
+    const explicitConnectionId = binding?.externalMcpConnectionId ?? dependency.externalMcpConnectionId
+    const matched = explicitConnectionId
+      ? input.connections.find((connection) => connection.id === explicitConnectionId && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(dependency.url))
+      : dependency.url
+        ? input.connections.find((connection) => comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(dependency.url))
+        : null
     if (!matched) {
-      output.push({ id: null, name: dependency.name, url: dependency.url })
+      output.push({ configObjectId: dependency.configObjectId, id: null, name: dependency.name, serverName: dependency.serverName, url: dependency.url })
       continue
     }
 
@@ -538,8 +889,10 @@ async function resolveMcpReadinessConnections(input: {
       connectedCache.set(matched.id, connectedForMe)
     }
     output.push({
+      configObjectId: dependency.configObjectId,
       id: matched.id,
       name: matched.name,
+      serverName: dependency.serverName,
       url: matched.url,
       credentialMode: matched.credentialMode,
       connectedForMe,
@@ -644,7 +997,7 @@ export async function resolveMarketplacePluginCloudReadiness(input: {
       const version = latestVersions.get(object.id)
       return version ? mcpDependenciesForObject({ object, version }) : []
     })
-    const connections = await resolveMcpReadinessConnections({ connections: usableConnections, dependencies, member: input.member })
+    const connections = await resolveMcpReadinessConnections({ connections: usableConnections, dependencies, member: input.member, organizationId: input.organizationId })
     const state = connections.some((connection) => connection.id === null || (connection.credentialMode === "shared" && connection.connectedForMe === false))
       ? "needs_admin_setup"
       : connections.some((connection) => connection.credentialMode === "per_member" && connection.connectedForMe === false)
@@ -662,19 +1015,41 @@ async function mcpHint(input: {
   row: MarketplaceCapabilityRow
   serverSpec: Record<string, unknown>
 }): Promise<{ hint: string; status: "connection_available" | "needs_connection" }> {
-  const urls = unique(
-    marketplaceMcpServerEntries(input.serverSpec, input.row.configObject.title)
-      .flatMap((entry) => {
-        const url = readString(entry.config.url)
-        return url ? [comparableMarketplaceMcpUrl(url)] : []
-      }),
-  )
-  if (urls.length > 0) {
+  const entries = marketplaceMcpServerEntries(input.serverSpec, input.row.configObject.title)
+  if (entries.length > 0) {
     const visibleConnections = await listUsableExternalMcpConnections({
       organizationId: input.organizationId,
       orgMembershipId: input.member.orgMembershipId,
       teamIds: input.member.teamIds,
     })
+
+    const bindings = bindingByRequirement(await listPluginMcpRequirementBindings({
+      organizationId: input.organizationId,
+      configObjectIds: [input.row.configObject.id],
+    }))
+    for (const entry of entries) {
+      const binding = bindings.get(requirementKey({ configObjectId: input.row.configObject.id, pluginId: input.row.plugin.id, serverName: entry.name }))
+      const explicitConnectionId = binding?.externalMcpConnectionId ?? readExternalMcpConnectionId({ config: entry.config, spec: input.serverSpec })
+      const declaredUrl = readString(entry.config.url)
+      const matching = explicitConnectionId
+        ? visibleConnections.find((connection) => connection.id === explicitConnectionId && declaredUrl && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(declaredUrl))
+        : null
+      if (matching) {
+        return {
+          status: "connection_available",
+          hint: `An External MCP Connection named "${matching.name}" already points at this server. Search capabilities for "${matching.name}" to use its tools.`,
+        }
+      }
+    }
+
+    const urls = unique(entries.flatMap((entry) => {
+      const hasExplicitConnection = Boolean(
+        bindings.get(requirementKey({ configObjectId: input.row.configObject.id, pluginId: input.row.plugin.id, serverName: entry.name }))?.externalMcpConnectionId
+        ?? readExternalMcpConnectionId({ config: entry.config, spec: input.serverSpec }),
+      )
+      const url = readString(entry.config.url)
+      return !hasExplicitConnection && url ? [comparableMarketplaceMcpUrl(url)] : []
+    }))
     const matching = visibleConnections.find((connection) => urls.includes(comparableMarketplaceMcpUrl(connection.url)))
     if (matching) {
       return {
@@ -717,6 +1092,11 @@ export async function searchMarketplaceCapabilities(input: {
     memberRow,
     rows: await listActiveMarketplaceRows(organizationId),
   })
+  const requirementStatusesByPluginId = await marketplacePluginMcpRequirementStatuses({
+    organizationId,
+    member: input.member,
+    pluginIds: unique(rows.map((row) => row.plugin.id)),
+  })
   const matchesByName = new Map<string, MarketplaceCapabilityMatch>()
 
   for (const row of rows) {
@@ -741,6 +1121,19 @@ export async function searchMarketplaceCapabilities(input: {
     if (row.configObject.objectType === "tool") {
       match.status = "needs_install"
       match.hint = objectHint(row)
+    }
+    if (marketplaceConfigObjectExecutionMode(row.configObject.objectType) === "instructional") {
+      const requirements = requirementStatusesByPluginId.get(row.plugin.id) ?? []
+      const requirementStatus = aggregateRequirementStatus(requirements)
+      const blockingRequirement = firstBlockingRequirement(requirements)
+      if (requirementStatus) {
+        match.status = requirementStatus
+        match.mcpRequirements = requirements
+      }
+      if (blockingRequirement) {
+        match.action = blockingRequirement.action
+        match.hint = requirementHint({ capabilityName: row.configObject.title, requirement: blockingRequirement })
+      }
     }
     matchesByName.set(name, match)
   }
@@ -799,6 +1192,28 @@ export async function executeMarketplaceCapability(input: {
         status: "content_not_synced",
         hint: contentNotSyncedHint(row),
       },
+    }
+  }
+
+  if (marketplaceConfigObjectExecutionMode(row.configObject.objectType) === "instructional") {
+    const requirementStatuses = await marketplacePluginMcpRequirementStatuses({
+      organizationId,
+      member: input.member,
+      pluginIds: [row.plugin.id],
+    })
+    const requirements = requirementStatuses.get(row.plugin.id) ?? []
+    const blockingRequirement = firstBlockingRequirement(requirements)
+    if (blockingRequirement) {
+      return {
+        ok: true,
+        result: {
+          ...basePayload(row),
+          status: blockingRequirement.state,
+          hint: requirementHint({ capabilityName: row.configObject.title, requirement: blockingRequirement }),
+          action: blockingRequirement.action,
+          mcpRequirements: requirements,
+        },
+      }
     }
   }
 

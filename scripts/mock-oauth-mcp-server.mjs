@@ -9,6 +9,10 @@ const autoApprove = process.env.AUTO_APPROVE !== "0";
 const disableDcr = process.env.DISABLE_DCR === "1";
 const mockClientId = process.env.MOCK_CLIENT_ID || "mock-preregistered-client";
 const mockClientSecret = process.env.MOCK_CLIENT_SECRET || "mock-preregistered-secret";
+const extraToolName = (process.env.MOCK_EXTRA_TOOL_NAME || "").trim();
+const extraToolTitle = (process.env.MOCK_EXTRA_TOOL_TITLE || extraToolName).trim();
+const extraToolDescription = (process.env.MOCK_EXTRA_TOOL_DESCRIPTION || "Returns a fixed result from the mock OAuth MCP server.").trim();
+const extraToolResult = process.env.MOCK_EXTRA_TOOL_RESULT || "mock oauth mcp ok";
 
 const clients = new Map();
 const codes = new Map();
@@ -77,6 +81,7 @@ function record(req, url) {
   };
   requests.push(entry);
   console.log(`[mock-oauth-mcp] ${entry.method} ${entry.path}`);
+  return entry;
 }
 
 function protectedResourceMetadata() {
@@ -284,9 +289,31 @@ function mcpResult(message) {
               required: ["text"],
             },
           },
+          ...(extraToolName ? [{
+            name: extraToolName,
+            title: extraToolTitle || extraToolName,
+            description: extraToolDescription,
+            inputSchema: {
+              type: "object",
+              properties: {
+                channel: { type: "string" },
+                unresolved: { type: "string" },
+              },
+            },
+          }] : []),
         ],
       };
     case "tools/call":
+      if (extraToolName && message.params?.name === extraToolName) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: extraToolResult,
+            },
+          ],
+        };
+      }
       return {
         content: [
           {
@@ -301,7 +328,8 @@ function mcpResult(message) {
 }
 
 async function handleMcp(req, res) {
-  if (!isAuthorized(req)) {
+  const authorized = isAuthorized(req);
+  if (!authorized) {
     json(res, 401, { error: "missing_mcp_token" }, {
       "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"`,
     });
@@ -315,6 +343,16 @@ async function handleMcp(req, res) {
 
   const body = await readJson(req).catch(() => ({}));
   const messages = Array.isArray(body) ? body : [body];
+  const entry = requests[requests.length - 1];
+  if (entry) {
+    entry.authorized = authorized;
+    entry.rpcMethods = messages
+      .filter((message) => message && typeof message === "object" && typeof message.method === "string")
+      .map((message) => message.method);
+    entry.toolNames = messages
+      .filter((message) => message && typeof message === "object" && message.method === "tools/call" && typeof message.params?.name === "string")
+      .map((message) => message.params.name);
+  }
   const responses = messages.flatMap((message) => {
     if (!message || typeof message !== "object" || message.id === undefined) return [];
     return [{ jsonrpc: "2.0", id: message.id, result: mcpResult(message) }];

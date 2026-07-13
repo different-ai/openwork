@@ -37,6 +37,7 @@ export const pluginAccessGrantIdSchema = denTypeIdSchema("pluginAccessGrant")
 export const marketplaceIdSchema = denTypeIdSchema("marketplace")
 export const marketplacePluginIdSchema = denTypeIdSchema("marketplacePlugin")
 export const marketplaceAccessGrantIdSchema = denTypeIdSchema("marketplaceAccessGrant")
+export const pluginMcpRequirementBindingIdSchema = denTypeIdSchema("pluginMcpRequirementBinding")
 export const connectorAccountIdSchema = denTypeIdSchema("connectorAccount")
 export const connectorInstanceIdSchema = denTypeIdSchema("connectorInstance")
 export const connectorInstanceAccessGrantIdSchema = denTypeIdSchema("connectorInstanceAccessGrant")
@@ -409,6 +410,18 @@ export const githubPluginMcpImportSchema = githubPluginMcpImportPreviewSchema.ex
   selectedServerNames: z.array(z.string().trim().min(1).max(255)).max(200).optional(),
 })
 
+export const pluginMcpRequirementConfigureSchema = z.object({
+  configObjectId: configObjectIdSchema,
+  serverName: z.string().trim().min(1).max(255),
+  authType: z.enum(["oauth", "apikey", "none"]).optional().default("oauth"),
+  credentialMode: z.enum(["shared", "per_member"]).optional(),
+  apiKey: z.string().trim().min(1).max(4096).optional(),
+  oauthClient: z.object({
+    clientId: z.string().trim().min(1).max(512),
+    clientSecret: z.string().trim().min(1).max(4096).optional(),
+  }).optional(),
+})
+
 export const githubDiscoveryTreeQuerySchema = z.object({
   cursor: z.string().trim().min(1).max(255).optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
@@ -559,8 +572,10 @@ const pluginCloudReadinessSchema = z.object({
   state: z.enum(["ready", "needs_signin", "needs_admin_setup", "desktop_only", "not_synced"]),
   hasInstructional: z.boolean(),
   connections: z.array(z.object({
+    configObjectId: configObjectIdSchema,
     id: z.string().nullable(),
     name: z.string(),
+    serverName: z.string(),
     url: z.string(),
     credentialMode: z.enum(["shared", "per_member"]).optional(),
     connectedForMe: z.boolean().optional(),
@@ -881,6 +896,30 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       reason: z.enum(["invalid_skill"]),
       sourcePath: z.string(),
     })),
+  }),
+)
+export const pluginMcpRequirementConfigureResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchPluginMcpRequirementConfigureResponse",
+  z.object({
+    binding: z.object({
+      id: pluginMcpRequirementBindingIdSchema,
+      configObjectId: configObjectIdSchema,
+      externalMcpConnectionId: z.string(),
+      pluginId: pluginIdSchema,
+      serverName: z.string(),
+    }),
+    connection: z.object({
+      id: z.string(),
+      name: z.string(),
+      url: z.string(),
+      authType: z.enum(["oauth", "apikey", "none"]),
+      credentialMode: z.enum(["shared", "per_member"]),
+      connected: z.boolean(),
+      connectedAt: nullableTimestampSchema,
+    }),
+    links: z.object({
+      yourConnections: z.string(),
+    }),
   }),
 )
 export const marketplacePluginListResponseSchema = pluginArchListResponseSchema("PluginArchMarketplacePluginListResponse", marketplacePluginSchema)
