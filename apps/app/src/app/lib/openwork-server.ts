@@ -1,4 +1,8 @@
-import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
+import type {
+  OpenWorkSession,
+  OpenWorkSessionMessage,
+  OpenWorkSessionSnapshot,
+} from "@openwork/session-contracts";
 import { desktopFetch } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
@@ -104,20 +108,9 @@ export type OpenworkWorkspaceList = {
   activeId?: string | null;
 };
 
-export type OpenworkSessionMessage = {
-  info: Message;
-  parts: Part[];
-};
+export type OpenworkSessionMessage = OpenWorkSessionMessage;
 
-export type OpenworkSessionSnapshot = {
-  session: Session;
-  messages: OpenworkSessionMessage[];
-  todos: Todo[];
-  status:
-    | { type: "idle" }
-    | { type: "busy" }
-    | { type: "retry"; attempt: number; message: string; next: number };
-};
+export type OpenworkSessionSnapshot = OpenWorkSessionSnapshot;
 
 export type OpenworkPluginItem = {
   spec: string;
@@ -1118,7 +1111,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       if (options?.search?.trim()) query.set("search", options.search.trim());
       if (typeof options?.limit === "number") query.set("limit", String(options.limit));
       const suffix = query.size ? `?${query.toString()}` : "";
-      return requestJson<{ items: Session[] }>(
+      return requestJson<{ items: OpenWorkSession[] }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions${suffix}`,
         { token, hostToken, timeoutMs: timeouts.sessionRead },
@@ -1175,7 +1168,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       );
     },
     getSession: (workspaceId: string, sessionId: string) =>
-      requestJson<{ item: Session }>(
+      requestJson<{ item: OpenWorkSession }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { token, hostToken, timeoutMs: timeouts.sessionRead },

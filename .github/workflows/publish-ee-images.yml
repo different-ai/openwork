@@ -28,6 +28,8 @@ on:
       - "ee/apps/inference/**"
       - "ee/packages/**"
       - "packages/email/**"
+      - "packages/extension-catalog/**"
+      - "packages/extension-contracts/**"
       - "packages/types/**"
       - "packages/ui/**"
       - "pnpm-lock.yaml"
