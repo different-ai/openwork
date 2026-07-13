@@ -2,14 +2,30 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "landing-connect-mcp";
 const MCP_SERVER_URL = "https://api.openworklabs.com/mcp/agent";
-const DOCS_URL = "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-codex";
+const DOCS_URL = "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-opencode";
 const SECTION_SELECTOR = "#connect-mcp";
 const BRING_SELECTOR = '[data-testid="connect-mcp-bring"]';
 const EXAMPLE_SELECTOR = '[data-testid="connect-mcp-example"]';
 const INSTALL_SELECTOR = '[data-testid="connect-mcp-install"]';
 const CODEX_COMMAND = `codex mcp add openwork --url ${MCP_SERVER_URL}`;
+const CODEX_LOGIN_COMMAND = "codex mcp login openwork";
+const CODEX_RECONNECT_COMMAND = `codex mcp logout openwork
+codex mcp login openwork`;
 const CODEX_CONNECTIONS_DEEPLINK = "codex://settings/connections";
+const CHATGPT_SETTINGS_URL = "https://chatgpt.com/#settings/Connectors";
+const OPENCODE_AUTH_COMMAND = "opencode mcp auth openwork";
+const OPENCODE_RECONNECT_COMMAND = `opencode mcp logout openwork
+opencode mcp auth openwork`;
 const INSTALL_COPY_BUTTON_SELECTOR = `${SECTION_SELECTOR} [role="tabpanel"]:not([hidden]) button[aria-label="Copy the OpenWork MCP install command"]`;
+const CLIENT_STATUS_EXPECTATIONS = [
+  { label: "Cursor", status: "Setup only", explanationNeedles: ["Cursor Web/Agents", "cursor://anysphere.cursor-mcp/oauth/callback"] },
+  { label: "Codex", status: "Setup only", explanationNeedles: ["Native proof must be rerun on this exact branch"] },
+  { label: "ChatGPT Desktop", status: "Setup only", explanationNeedles: ["Settings > MCP servers", "Native proof is not complete"] },
+  { label: "Claude Code", status: "Setup only", explanationNeedles: ["use /mcp in Claude Code"] },
+  { label: "OpenCode", status: "Verified", explanationNeedles: ["OpenCode native remote MCP OAuth"] },
+  { label: "VS Code", status: "Setup only", explanationNeedles: ["VS Code's MCP server prompt"] },
+  { label: "Any client", status: "Setup only", explanationNeedles: ["remote Streamable HTTP MCP servers and OAuth"] },
+];
 
 // Narration is loaded from the approved script (evals/voiceovers/landing-connect-mcp.md).
 // The runner fails this flow if the narration drifts from that script.
@@ -356,13 +372,59 @@ export default {
       name: "Frame 5",
       run: async (ctx) => {
         let codexClipboardRead = { text: "", error: "not read" };
-        let desktopClipboardRead = { text: "", error: "not read" };
+        const visibleStatusEvidence = {};
+        let opencodePanelText = "";
+        let codexPanelText = "";
 
-        await ctx.prove("Codex and ChatGPT Desktop get first-class setup choices without claiming an unsupported one-click install.", {
+        await ctx.prove("The client matrix shows evidence labels and exact verified auth commands without running native client auth.", {
           voiceover: vo[4],
           action: async () => {
             await ensureConnectSection(ctx);
             await scrollSelectorIntoView(ctx, INSTALL_SELECTOR);
+
+            for (const expected of CLIENT_STATUS_EXPECTATIONS) {
+              await realMouseClick(ctx, tabByLabelExpression(expected.label), `${expected.label} tab`);
+              await ctx.waitFor(
+                `(() => {
+                  const panel = document.querySelector(${JSON.stringify(`${SECTION_SELECTOR} [role="tabpanel"]:not([hidden])`)});
+                  const text = panel ? panel.innerText : "";
+                  return Boolean(panel)
+                    && text.includes(${JSON.stringify(expected.label)})
+                    && text.includes(${JSON.stringify(expected.status)})
+                    && ${JSON.stringify(expected.explanationNeedles)}.every((needle) => text.includes(needle));
+                })()`,
+                { timeoutMs: 10_000, label: `${expected.label} status and support explanation` },
+              );
+              const panelText = await ctx.eval(`(() => {
+                const panel = document.querySelector(${JSON.stringify(`${SECTION_SELECTOR} [role="tabpanel"]:not([hidden])`)});
+                return panel ? panel.innerText : "";
+              })()`);
+              visibleStatusEvidence[expected.label] = {
+                status: expected.status,
+                statusVisible: panelText.toLowerCase().includes(expected.status.toLowerCase()),
+                explanationVisible: expected.explanationNeedles.every((needle) => panelText.includes(needle)),
+              };
+            }
+
+            await realMouseClick(ctx, tabByLabelExpression("OpenCode"), "OpenCode tab");
+            await ctx.waitFor(
+              `(() => {
+                const panel = document.querySelector(${JSON.stringify(`${SECTION_SELECTOR} [role="tabpanel"]:not([hidden])`)});
+                const text = panel ? panel.innerText : "";
+                return Boolean(panel)
+                  && text.includes("Verified")
+                  && text.includes(${JSON.stringify(MCP_SERVER_URL)})
+                  && text.includes('"oauth": {}')
+                  && text.includes(${JSON.stringify(OPENCODE_AUTH_COMMAND)})
+                  && text.includes(${JSON.stringify(OPENCODE_RECONNECT_COMMAND)});
+              })()`,
+              { timeoutMs: 10_000, label: "OpenCode verified config, auth, and reconnect commands visible" },
+            );
+            opencodePanelText = await ctx.eval(`(() => {
+              const panel = document.querySelector(${JSON.stringify(`${SECTION_SELECTOR} [role="tabpanel"]:not([hidden])`)});
+              return panel ? panel.innerText : "";
+            })()`);
+
             await realMouseClick(ctx, tabByLabelExpression("Codex"), "Codex tab");
             await ctx.waitFor(
               `(() => {
@@ -373,14 +435,21 @@ export default {
                 const settings = Array.from(panel?.querySelectorAll("a") || [])
                   .find((link) => (link.textContent || "").trim() === "Open settings + copy URL");
                 return Boolean(panel
+                  && panel.innerText.includes("Setup only")
                   && panel.innerText.includes(${JSON.stringify(CODEX_COMMAND)})
+                  && panel.innerText.includes(${JSON.stringify(CODEX_LOGIN_COMMAND)})
+                  && panel.innerText.includes(${JSON.stringify(CODEX_RECONNECT_COMMAND)})
                   && codexIcon?.complete
                   && codexIcon.naturalWidth > 0
                   && codexIcon.src.includes("connect-icons%2Fcodex.png")
                   && settings?.getAttribute("href") === ${JSON.stringify(CODEX_CONNECTIONS_DEEPLINK)});
               })()`,
-              { timeoutMs: 10_000, label: "Codex product icon, command, and desktop settings link visible" },
+              { timeoutMs: 10_000, label: "Codex product icon, add/login commands, reconnect commands, and setup-only settings link visible" },
             );
+            codexPanelText = await ctx.eval(`(() => {
+              const panel = document.querySelector(${JSON.stringify(`${SECTION_SELECTOR} [role="tabpanel"]:not([hidden])`)});
+              return panel ? panel.innerText : "";
+            })()`);
             await grantClipboardPermissions(ctx);
             await realMouseClick(
               ctx,
@@ -409,63 +478,47 @@ export default {
             await ctx.waitFor(
               `(() => {
                 const panel = document.querySelector(${JSON.stringify(`${SECTION_SELECTOR} [role="tabpanel"]:not([hidden])`)});
-                const settings = Array.from(panel?.querySelectorAll("a") || [])
+                const codexLinks = Array.from(panel?.querySelectorAll("a") || [])
+                  .filter((link) => link.getAttribute("href") === ${JSON.stringify(CODEX_CONNECTIONS_DEEPLINK)});
+                const chatgptSettings = Array.from(panel?.querySelectorAll("a") || [])
                   .find((link) => (link.textContent || "").trim() === "Open settings + copy URL");
                 return Boolean(panel
+                  && panel.innerText.includes("Setup only")
                   && panel.innerText.toLowerCase().includes("guided desktop setup")
                   && panel.innerText.includes(${JSON.stringify(MCP_SERVER_URL)})
-                  && settings?.getAttribute("href") === ${JSON.stringify(CODEX_CONNECTIONS_DEEPLINK)});
+                  && panel.innerText.includes("ChatGPT Settings > MCP servers")
+                  && panel.innerText.includes("Open settings + copy URL")
+                  && chatgptSettings?.getAttribute("href") === ${JSON.stringify(CHATGPT_SETTINGS_URL)}
+                  && codexLinks.length === 0);
               })()`,
-              { timeoutMs: 10_000, label: "ChatGPT Desktop guided setup" },
+              { timeoutMs: 10_000, label: "ChatGPT Desktop setup-only OAuth starting point with ChatGPT settings link and without Codex deep link" },
             );
-            await ctx.eval(`(() => {
-              document.addEventListener("click", (event) => {
-                const link = event.target instanceof Element ? event.target.closest("a") : null;
-                if (link?.getAttribute("href") === ${JSON.stringify(CODEX_CONNECTIONS_DEEPLINK)}) {
-                  event.preventDefault();
-                }
-              }, { capture: true, once: true });
-              return true;
-            })()`);
-            await realMouseClick(
-              ctx,
-              `Array.from(document.querySelectorAll(${JSON.stringify(`${SECTION_SELECTOR} [role="tabpanel"]:not([hidden]) a`)}))
-                .find((link) => (link.textContent || "").trim() === "Open settings + copy URL")`,
-              "ChatGPT Desktop MCP settings link",
-            );
-            await ctx.waitFor(
-              `navigator.clipboard.readText().then((text) => text === ${JSON.stringify(MCP_SERVER_URL)}).catch(() => false)`,
-              { timeoutMs: 10_000, label: "Opening settings copies the server URL" },
-            );
-            try {
-              const text = await ctx.eval("navigator.clipboard.readText()", { awaitPromise: true });
-              desktopClipboardRead = { text, error: "" };
-            } catch (error) {
-              desktopClipboardRead = {
-                text: "",
-                error: error instanceof Error ? error.message : String(error),
-              };
-            }
             await sleep(150);
           },
           assert: async () => {
-            const desktopScan = await ctx.eval(`(() => {
+            const clientMatrixScan = await ctx.eval(`(() => {
               const section = document.querySelector(${JSON.stringify(SECTION_SELECTOR)});
               const tabs = Array.from(section ? section.querySelectorAll('[role="tab"]') : []);
               const panel = section?.querySelector('[role="tabpanel"]:not([hidden])');
-              const settings = Array.from(panel?.querySelectorAll("a") || [])
-                .find((link) => (link.textContent || "").trim() === "Open settings + copy URL");
               const codexTab = tabs.find((tab) => (tab.textContent || "").trim() === "Codex");
               const chatgptTab = tabs.find((tab) => (tab.textContent || "").trim() === "ChatGPT Desktop");
               const codexIcon = codexTab?.querySelector('img[data-product-icon="codex"]');
               const chatgptIcon = chatgptTab?.querySelector('img[data-product-icon="chatgpt"]');
+              const allCodexLinks = Array.from(section ? section.querySelectorAll('a') : [])
+                .filter((link) => link.getAttribute("href") === ${JSON.stringify(CODEX_CONNECTIONS_DEEPLINK)});
+              const activeCodexLinks = Array.from(panel?.querySelectorAll("a") || [])
+                .filter((link) => link.getAttribute("href") === ${JSON.stringify(CODEX_CONNECTIONS_DEEPLINK)});
+              const activeChatGptSettingsLinks = Array.from(panel?.querySelectorAll("a") || [])
+                .filter((link) => link.getAttribute("href") === ${JSON.stringify(CHATGPT_SETTINGS_URL)});
               return {
                 labels: tabs.map((tab) => (tab.textContent || "").trim()),
                 chatgptSelected: chatgptTab?.getAttribute("aria-selected"),
                 codexIconLoaded: Boolean(codexIcon?.complete && codexIcon.naturalWidth > 0 && codexIcon.src.includes("connect-icons%2Fcodex.png")),
                 chatgptIconLoaded: Boolean(chatgptIcon?.complete && chatgptIcon.naturalWidth > 0 && chatgptIcon.src.includes("connect-icons%2Fchatgpt.png")),
                 panelText: panel?.innerText || "",
-                settingsHref: settings?.getAttribute("href") || "",
+                codexDeepLinkCount: allCodexLinks.length,
+                activeCodexDeepLinkCount: activeCodexLinks.length,
+                activeChatGptSettingsLinkCount: activeChatGptSettingsLinks.length,
               };
             })()`);
             ctx.recordEvidence({
@@ -473,6 +526,41 @@ export default {
               name: "Codex command clipboard result",
               text: JSON.stringify(codexClipboardRead, null, 2),
             });
+            ctx.recordEvidence({
+              type: "output",
+              name: "Visible client support statuses",
+              text: JSON.stringify(visibleStatusEvidence, null, 2),
+            });
+            recordAssertion(
+              ctx,
+              "Every client panel exposes its visible Verified or Setup only status and support explanation",
+              CLIENT_STATUS_EXPECTATIONS.every((expected) => {
+                const evidence = visibleStatusEvidence[expected.label];
+                return evidence?.status === expected.status
+                  && evidence.statusVisible === true
+                  && evidence.explanationVisible === true;
+              }),
+              visibleStatusEvidence,
+            );
+            recordAssertion(
+              ctx,
+              "OpenCode shows the JSON config, opencode auth command, and logout-then-auth reconnect sequence",
+              opencodePanelText.includes(MCP_SERVER_URL)
+                && opencodePanelText.includes('"oauth": {}')
+                && opencodePanelText.includes(OPENCODE_AUTH_COMMAND)
+                && opencodePanelText.indexOf("opencode mcp logout openwork") >= 0
+                && opencodePanelText.indexOf(OPENCODE_AUTH_COMMAND, opencodePanelText.indexOf("opencode mcp logout openwork")) > opencodePanelText.indexOf("opencode mcp logout openwork"),
+              opencodePanelText,
+            );
+            recordAssertion(
+              ctx,
+              "Codex shows the add command, login command, and logout-then-login reconnect sequence",
+              codexPanelText.includes(CODEX_COMMAND)
+                && codexPanelText.includes(CODEX_LOGIN_COMMAND)
+                && codexPanelText.indexOf("codex mcp logout openwork") >= 0
+                && codexPanelText.indexOf(CODEX_LOGIN_COMMAND, codexPanelText.indexOf("codex mcp logout openwork")) > codexPanelText.indexOf("codex mcp logout openwork"),
+              codexPanelText,
+            );
             recordAssertion(
               ctx,
               "navigator.clipboard.readText returns the exact native Codex MCP command",
@@ -481,25 +569,22 @@ export default {
             );
             recordAssertion(
               ctx,
-              "Opening ChatGPT Desktop MCP settings copies the OpenWork server URL",
-              desktopClipboardRead.error === "" && desktopClipboardRead.text === MCP_SERVER_URL,
-              desktopClipboardRead,
-            );
-            recordAssertion(
-              ctx,
-              "The installer exposes real Codex and ChatGPT product icons with ChatGPT's guided settings link and server URL visible",
-              desktopScan.labels.includes("Codex")
-                && desktopScan.labels.includes("ChatGPT Desktop")
-                && desktopScan.chatgptSelected === "true"
-                && desktopScan.codexIconLoaded === true
-                && desktopScan.chatgptIconLoaded === true
-                && desktopScan.panelText.toLowerCase().includes("guided desktop setup")
-                && desktopScan.panelText.includes(MCP_SERVER_URL)
-                && desktopScan.settingsHref === CODEX_CONNECTIONS_DEEPLINK,
-              desktopScan,
+              "The installer exposes Codex and ChatGPT icons, keeps Codex as the only Codex deep link, and gives ChatGPT its own settings link while setup-only",
+              clientMatrixScan.labels.includes("Codex")
+                && clientMatrixScan.labels.includes("ChatGPT Desktop")
+                && clientMatrixScan.chatgptSelected === "true"
+                && clientMatrixScan.codexIconLoaded === true
+                && clientMatrixScan.chatgptIconLoaded === true
+                && clientMatrixScan.panelText.includes("Setup only")
+                && clientMatrixScan.panelText.includes("ChatGPT Settings > MCP servers")
+                && clientMatrixScan.panelText.includes(MCP_SERVER_URL)
+                && clientMatrixScan.codexDeepLinkCount === 1
+                && clientMatrixScan.activeCodexDeepLinkCount === 0
+                && clientMatrixScan.activeChatGptSettingsLinkCount === 1,
+              clientMatrixScan,
             );
           },
-          screenshot: { name: "frame-5", requireText: ["Codex", "ChatGPT Desktop", "GUIDED DESKTOP SETUP", "Open settings + copy URL"] },
+          screenshot: { name: "frame-5", requireText: ["ChatGPT Desktop", "Setup only", "Open settings + copy URL"] },
         });
       },
     },

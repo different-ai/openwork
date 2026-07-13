@@ -16,7 +16,11 @@ beforeAll(async () => {
 })
 
 function buildApp() {
-  const app = new Hono()
+  const app = new Hono<{ Variables: { requestId: string } }>()
+  app.use("*", async (c, next) => {
+    c.set("requestId", "req_admin_route")
+    await next()
+  })
   registerAdminMcpRoutes(app)
   return app
 }
@@ -32,11 +36,11 @@ describe("admin MCP OAuth protected-resource discovery", () => {
     const res = await app.request(`${ORIGIN}/.well-known/oauth-protected-resource/mcp/admin`)
     expect(res.status).toBe(200)
     const body = await res.json()
-    // Admin reuses the canonical /mcp resource so the minted token's audience
-    // matches; checkResourceAllowed treats /mcp as a parent of /mcp/admin.
+    // Admin discovery keeps the legacy parent resource for first-party desktop
+    // and legacy metadata consumers; public JWTs authenticate only /mcp/agent.
     expect(body.resource).toBe(`${ORIGIN}/mcp`)
     expect(body.authorization_servers).toEqual([`${ORIGIN}/api/auth`])
-    expect(body.scopes_supported).toContain("mcp:read")
+    expect(body.scopes_supported).toEqual(["mcp:read", "mcp:write", "offline_access"])
   })
 
   test("serves metadata at the path-suffixed well-known URL", async () => {
@@ -53,7 +57,10 @@ describe("admin MCP OAuth protected-resource discovery", () => {
     expect(res.status).toBe(401)
     const challenge = res.headers.get("www-authenticate") ?? ""
     // The challenge must advertise the canonical /mcp resource metadata, which
-    // is registered — not the unregistered /mcp/admin path.
-    expect(challenge).toContain(`resource_metadata="${ORIGIN}/mcp/.well-known/oauth-protected-resource"`)
+    // is registered — not the admin child resource.
+    expect(challenge).toContain(`resource_metadata="${ORIGIN}/.well-known/oauth-protected-resource/mcp"`)
+    expect(challenge).toContain(`scope="mcp:read mcp:write offline_access"`)
+    const body = await res.json()
+    expect(body).toMatchObject({ error: "missing_mcp_token", referenceId: "req_admin_route" })
   })
 })

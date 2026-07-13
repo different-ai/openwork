@@ -37,11 +37,7 @@ test("MCP resource metadata requests an offline refresh grant", () => {
 test("MCP JWT verification pins issuer, audience, and signing algorithm", () => {
   expect(mcpAuth.getMcpJwtVerifyOptions()).toEqual({
     issuer: getDenAuthIssuer("http://127.0.0.1:8790"),
-    audience: [
-      "http://127.0.0.1:8790/mcp",
-      "http://127.0.0.1:8790/mcp/agent",
-      "http://127.0.0.1:8790/mcp/admin",
-    ],
+    audience: "http://127.0.0.1:8790/mcp/agent",
     algorithms: [DEN_JWT_SIGNING_ALGORITHM],
   })
 })

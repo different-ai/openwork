@@ -1,9 +1,5 @@
-const BLOCKED_CUSTOM_REDIRECT_SCHEMES = new Set([
-  "data",
-  "file",
-  "javascript",
-  "vbscript",
-])
+export const MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION =
+  "MCP OAuth redirect URIs must use HTTPS callbacks or HTTP loopback callbacks and must not include fragments."
 
 function isIpv4Loopback(hostname: string) {
   const parts = hostname.split(".")
@@ -30,16 +26,15 @@ function isLoopbackHostname(hostname: string) {
     || isIpv4Loopback(normalized)
 }
 
-function isCustomAppScheme(protocol: string) {
-  const scheme = protocol.endsWith(":") ? protocol.slice(0, -1) : protocol
-  return /^[a-z][a-z0-9+.-]*$/.test(scheme) && !BLOCKED_CUSTOM_REDIRECT_SCHEMES.has(scheme)
-}
-
 export function isAllowedMcpOAuthRedirectUri(uri: string) {
   let parsed: URL
   try {
     parsed = new URL(uri)
   } catch {
+    return false
+  }
+
+  if (uri.includes("#")) {
     return false
   }
 
@@ -51,7 +46,7 @@ export function isAllowedMcpOAuthRedirectUri(uri: string) {
     return isLoopbackHostname(parsed.hostname)
   }
 
-  return isCustomAppScheme(parsed.protocol)
+  return false
 }
 
 export function getInvalidMcpOAuthRedirectUris(value: unknown) {

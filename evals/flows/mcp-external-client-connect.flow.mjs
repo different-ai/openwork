@@ -660,10 +660,10 @@ export default {
             ctx.recordEvidence({ type: "output", name: "Token exchange response", text: JSON.stringify(actual, null, 2) });
             recordAssertion(
               ctx,
-              "The authorization code exchanges for a non-empty MCP access token with an accepted token shape",
+              "The authorization code exchanges for a non-empty JWT MCP access token",
               state.tokenExchange?.ok === true
                 && state.accessToken.length > 0
-                && (tokenParts === 3 || state.accessToken.startsWith("ow_mcp_at_")),
+                && tokenParts === 3,
               actual,
             );
           },

@@ -8,19 +8,24 @@ import { useEffect, useRef, useState } from "react";
 import { capturePosthogEvent } from "../lib/posthog-client";
 import {
   ANY_CLIENT_COMMAND,
+  CHATGPT_SETTINGS_URL,
   CLAUDE_CODE_COMMAND,
   CODEX_COMMAND,
   CODEX_CONNECTIONS_DEEPLINK,
+  CODEX_LOGIN_COMMAND,
+  CODEX_RECONNECT_COMMAND,
   CONNECT_CLIENTS,
-  CURSOR_DEEPLINK,
+  CONNECT_CLIENT_SUPPORT,
   CURSOR_SNIPPET,
   MCP_SERVER_URL,
+  OPENCODE_AUTH_COMMAND,
+  OPENCODE_RECONNECT_COMMAND,
   OPENCODE_SNIPPET,
   VS_CODE_COMMAND,
 } from "./openwork-connect-installer-config";
 import type { OpenWorkConnectClientId } from "./openwork-connect-installer-config";
 
-const DOCS_URL = "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-codex";
+const DOCS_URL = "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-opencode";
 const SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
 
 type CopyMethod = "clipboard" | "execCommand" | "none";
@@ -32,6 +37,8 @@ type ClientInstall = {
   eyebrow: string;
   copyText: string;
   helper: string;
+  authText?: string;
+  reconnectText?: string;
 };
 
 const CLIENT_ORDER: ClientId[] = CONNECT_CLIENTS;
@@ -54,51 +61,55 @@ const CLIENT_INSTALLS: Record<ClientId, ClientInstall> = {
   cursor: {
     id: "cursor",
     label: "Cursor",
-    eyebrow: "One-click install or ~/.cursor/mcp.json",
+    eyebrow: "Cursor Web/Agents HTTPS callback",
     copyText: CURSOR_SNIPPET,
-    helper: "Use the one-click button, or paste this into ~/.cursor/mcp.json."
+    helper: "Setup-only for Cursor Web/Agents with its HTTPS OAuth callback. Cursor Desktop OAuth uses cursor://anysphere.cursor-mcp/oauth/callback, which OpenWork's MCP profile intentionally rejects."
   },
   codex: {
     id: "codex",
     label: "Codex",
     eyebrow: "Codex desktop, CLI, and IDE",
     copyText: CODEX_COMMAND,
-    helper: "Add OpenWork once. Codex desktop, the CLI, and the IDE extension share this MCP configuration."
+    helper: "Add OpenWork once, then sign in with Codex's MCP login command.",
+    authText: CODEX_LOGIN_COMMAND,
+    reconnectText: CODEX_RECONNECT_COMMAND
   },
   "chatgpt-desktop": {
     id: "chatgpt-desktop",
     label: "ChatGPT Desktop",
     eyebrow: "Guided desktop setup",
     copyText: MCP_SERVER_URL,
-    helper: "Open MCP connections, then paste the copied OpenWork server URL."
+    helper: "Open ChatGPT Settings > MCP servers, paste this URL, then start OAuth from ChatGPT's connection prompt."
   },
   "claude-code": {
     id: "claude-code",
     label: "Claude Code",
     eyebrow: "One terminal command",
     copyText: CLAUDE_CODE_COMMAND,
-    helper: "Claude Code opens your browser for OAuth, then stores the remote MCP server."
+    helper: "Add the remote HTTP server, then use /mcp in Claude Code and follow the client auth flow."
   },
   opencode: {
     id: "opencode",
     label: "OpenCode",
     eyebrow: "opencode.json MCP config",
     copyText: OPENCODE_SNIPPET,
-    helper: "Add this remote MCP server entry to your OpenCode config."
+    helper: "Add this remote MCP server entry to your OpenCode config, then authenticate.",
+    authText: OPENCODE_AUTH_COMMAND,
+    reconnectText: OPENCODE_RECONNECT_COMMAND
   },
   "vs-code": {
     id: "vs-code",
     label: "VS Code",
     eyebrow: "VS Code MCP command",
     copyText: VS_CODE_COMMAND,
-    helper: "Run this from a shell with the VS Code CLI on your path."
+    helper: "Run this from a shell with the VS Code CLI on your path, then start OAuth from VS Code's MCP server prompt."
   },
   "any-client": {
     id: "any-client",
     label: "Any client",
-    eyebrow: "Universal installer",
+    eyebrow: "Bring your own MCP client",
     copyText: ANY_CLIENT_COMMAND,
-    helper: "Use install-mcp for another client, or paste the remote server URL directly."
+    helper: "Paste this URL only into clients that support remote Streamable HTTP MCP servers and OAuth."
   }
 };
 
@@ -335,12 +346,12 @@ export function LandingConnectMcp() {
       >
         <div className="group mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="text-[13px] text-gray-500">
-            Developers: point your own agent at your org — one click or one command.
+            Developers: point your own agent at your org — verified clients and setup guides.
           </div>
           <div className="flex min-w-0 shrink-0 items-center gap-2 text-gray-400">
             <Plug size={14} aria-hidden="true" />
             <span className="text-xs text-gray-400">
-              Works with Codex, ChatGPT, Claude Code, Cursor — any MCP agent
+              Verified for OpenCode only; setup guides for Codex, Cursor, ChatGPT, Claude Code, VS Code, and more
             </span>
           </div>
         </div>
@@ -387,6 +398,7 @@ export function LandingConnectMcp() {
 
             {CLIENT_ORDER.map((clientId) => {
               const install = CLIENT_INSTALLS[clientId];
+              const support = CONNECT_CLIENT_SUPPORT[clientId];
               const selected = install.id === activeClient;
               const installFeedback = feedbackClient === install.id;
 
@@ -399,6 +411,7 @@ export function LandingConnectMcp() {
                   hidden={!selected}
                   data-feedback={installFeedback ? "true" : "false"}
                   data-copy-error={copyError ? "true" : "false"}
+                  data-support-status={support.status}
                 >
                   <div>
                     <div className="pb-3">
@@ -412,21 +425,30 @@ export function LandingConnectMcp() {
                             <span>{install.label}</span>
                           </h3>
                           <p className="mt-1 text-[13px] leading-5 text-gray-500">{install.helper}</p>
+                          <div className="mt-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                            <span className={`inline-flex w-fit rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${support.status === "Verified" ? "border-green-200 bg-green-50 text-green-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                              {support.status}
+                            </span>
+                            <span className="text-[12px] leading-5 text-gray-500">{support.explanation}</span>
+                          </div>
                         </div>
-                        {install.id === "cursor" ? (
-                          <a
-                            href={CURSOR_DEEPLINK}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex min-h-[42px] shrink-0 items-center justify-center rounded-full bg-[#011627] px-5 text-sm font-medium text-white shadow-[0_14px_32px_-16px_rgba(1,22,39,0.55)] transition-colors hover:bg-black"
-                          >
-                            Add to Cursor
-                          </a>
-                        ) : install.id === "codex" || install.id === "chatgpt-desktop" ? (
+                        {install.id === "codex" ? (
                           <a
                             href={CODEX_CONNECTIONS_DEEPLINK}
                             onClick={() => {
                               void writeClipboardText(MCP_SERVER_URL);
+                            }}
+                            className="inline-flex min-h-[42px] shrink-0 items-center justify-center rounded-full bg-[#011627] px-5 text-sm font-medium text-white shadow-[0_14px_32px_-16px_rgba(1,22,39,0.55)] transition-colors hover:bg-black"
+                          >
+                            {urlCopied ? "Copied URL" : "Open settings + copy URL"}
+                          </a>
+                        ) : install.id === "chatgpt-desktop" ? (
+                          <a
+                            href={CHATGPT_SETTINGS_URL}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={() => {
+                              void copyServerUrl();
                             }}
                             className="inline-flex min-h-[42px] shrink-0 items-center justify-center rounded-full bg-[#011627] px-5 text-sm font-medium text-white shadow-[0_14px_32px_-16px_rgba(1,22,39,0.55)] transition-colors hover:bg-black"
                           >
@@ -442,8 +464,28 @@ export function LandingConnectMcp() {
                       </pre>
                       {install.id === "any-client" ? (
                         <p className="mt-3 text-[13px] leading-6 text-gray-500">
-                          You can also paste the URL into any MCP client that supports remote servers with OAuth.
+                          Use this URL only with MCP clients that support remote Streamable HTTP servers with OAuth.
                         </p>
+                      ) : null}
+                      {install.authText ? (
+                        <div className="mt-3">
+                          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
+                            Authenticate
+                          </div>
+                          <pre className="overflow-x-auto whitespace-pre-wrap rounded-xl bg-[#011627] p-4 font-mono text-[12px] leading-6 text-white shadow-inner">
+                            <code>{install.authText}</code>
+                          </pre>
+                        </div>
+                      ) : null}
+                      {install.reconnectText ? (
+                        <div className="mt-3">
+                          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
+                            Reconnect or switch org
+                          </div>
+                          <pre className="overflow-x-auto whitespace-pre-wrap rounded-xl bg-[#011627] p-4 font-mono text-[12px] leading-6 text-white shadow-inner">
+                            <code>{install.reconnectText}</code>
+                          </pre>
+                        </div>
                       ) : null}
                       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-[12px] leading-5 text-gray-500">
@@ -564,8 +606,8 @@ export function LandingConnectMcp() {
 
       <div className="mt-8 flex flex-col gap-3 border-t border-gray-100 pt-5 text-[13px] leading-6 text-gray-600 sm:flex-row sm:items-center sm:justify-between">
         <p>
-          Works with any MCP client that supports remote servers with OAuth — your agent signs in with your
-          OpenWork account and only sees what your org shares with them.
+          Verified in OpenCode. Codex and other setup guides require remote Streamable HTTP MCP and OAuth
+          support — your agent signs in with your OpenWork account, and access is scoped by org membership, roles, policies, and exposure allowlists.
         </p>
         <a
           href={DOCS_URL}
