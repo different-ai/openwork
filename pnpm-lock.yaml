@@ -582,6 +582,31 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
 
+  ee/apps/enterprise-mock-lab:
+    dependencies:
+      '@hono/node-server':
+        specifier: ^1.13.8
+        version: 1.19.11(hono@4.12.12)
+      '@openwork/enterprise-mcp-mock-server':
+        specifier: workspace:*
+        version: link:../../../packages/enterprise-mcp-mock-server
+      hono:
+        specifier: ^4.7.2
+        version: 4.12.12
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsx:
+        specifier: ^4.15.7
+        version: 4.21.0
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
   ee/apps/inference:
     dependencies:
       '@hono/node-server':
@@ -778,6 +803,25 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/enterprise-mcp-mock-server:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      tsx:
+        specifier: ^4.15.7
+        version: 4.21.0
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
