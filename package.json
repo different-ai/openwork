@@ -35,6 +35,7 @@
     "build:web": "pnpm --filter @openwork-ee/den-web build",
     "preview": "pnpm --filter @openwork/app preview",
     "typecheck": "pnpm --filter @openwork/app typecheck",
+    "architecture:snapshot": "node scripts/architecture/snapshot-composition.mjs .",
     "check:enterprise-mcp-mock-server": "pnpm --filter @openwork/enterprise-mcp-mock-server check",
     "check:enterprise-mock-lab": "pnpm --filter @openwork-ee/enterprise-mock-lab check",
     "test:health": "pnpm --filter @openwork/app test:health",
