@@ -157,13 +157,133 @@ const tokenResponseSchema = z.object({
   scope: z.string().optional(),
 })
 
-export class OAuthTokenExchangeError extends Error {}
+const oauthErrorResponseSchema = z.object({
+  error: z.string().trim().min(1).max(128),
+  error_description: z.string().max(4_096).optional(),
+  error_codes: z.array(z.number().int()).max(16).optional(),
+  trace_id: z.string().uuid().optional(),
+  correlation_id: z.string().uuid().optional(),
+  timestamp: z.string().max(64).optional(),
+})
+
+export type OAuthTokenExchangeFailureCode =
+  | "oauth_invalid_client_secret"
+  | "oauth_invalid_client"
+  | "oauth_invalid_grant"
+  | "oauth_invalid_scope"
+  | "oauth_access_denied"
+  | "oauth_provider_unavailable"
+  | "oauth_token_response_invalid"
+  | "oauth_token_response_oversized"
+  | "oauth_token_endpoint_unreachable"
+  | "oauth_token_exchange_failed"
+
+export class OAuthTokenExchangeError extends Error {
+  readonly phase = "AUTH_TOKEN_ACQUISITION"
+
+  constructor(
+    message: string,
+    readonly code: OAuthTokenExchangeFailureCode = "oauth_token_exchange_failed",
+    readonly details: {
+      httpStatus?: number
+      providerOAuthError?: string
+      providerErrorCode?: number
+      providerTraceId?: string
+      providerCorrelationId?: string
+      providerTimestamp?: string
+    } = {},
+  ) {
+    super(message)
+    this.name = "OAuthTokenExchangeError"
+  }
+}
 export class OAuthClientConfigurationError extends Error {}
+
+export function oauthTokenExchangeErrorFromResponse(input: {
+  provider: NativeOAuthProviderConfig
+  status: number
+  body: unknown
+}): OAuthTokenExchangeError {
+  const parsed = oauthErrorResponseSchema.safeParse(input.body)
+  if (!parsed.success) {
+    return new OAuthTokenExchangeError(
+      `${input.provider.displayName} rejected the OAuth token exchange. Try Connect again; if it still fails, contact support with the diagnostic reference.`,
+      "oauth_token_exchange_failed",
+      { httpStatus: input.status },
+    )
+  }
+
+  const providerErrorCode = parsed.data.error_codes?.[0]
+  const details = {
+    httpStatus: input.status,
+    providerOAuthError: parsed.data.error,
+    ...(providerErrorCode !== undefined ? { providerErrorCode } : {}),
+    ...(parsed.data.trace_id ? { providerTraceId: parsed.data.trace_id } : {}),
+    ...(parsed.data.correlation_id ? { providerCorrelationId: parsed.data.correlation_id } : {}),
+    ...(parsed.data.timestamp ? { providerTimestamp: parsed.data.timestamp } : {}),
+  }
+
+  if (parsed.data.error === "invalid_client") {
+    if (input.provider.providerId === "microsoft-365" && providerErrorCode === 7_000_215) {
+      return new OAuthTokenExchangeError(
+        "Microsoft rejected the client secret during OAuth token exchange (AADSTS7000215). An organization administrator should replace the client secret value and try Connect again.",
+        "oauth_invalid_client_secret",
+        details,
+      )
+    }
+    return new OAuthTokenExchangeError(
+      `${input.provider.displayName} rejected the OAuth client credentials during token exchange. An organization administrator should verify the client ID and client secret value, then try Connect again.`,
+      "oauth_invalid_client",
+      details,
+    )
+  }
+
+  if (parsed.data.error === "invalid_grant") {
+    return new OAuthTokenExchangeError(
+      `${input.provider.displayName} rejected the authorization grant during token exchange. Restart Connect and complete a new authorization attempt.`,
+      "oauth_invalid_grant",
+      details,
+    )
+  }
+
+  if (parsed.data.error === "invalid_scope") {
+    return new OAuthTokenExchangeError(
+      `${input.provider.displayName} rejected the requested OAuth permissions. An organization administrator should review the configured permissions and consent, then try Connect again.`,
+      "oauth_invalid_scope",
+      details,
+    )
+  }
+
+  if (parsed.data.error === "access_denied") {
+    return new OAuthTokenExchangeError(
+      `${input.provider.displayName} denied the OAuth authorization request. Review consent and tenant policy, then try Connect again.`,
+      "oauth_access_denied",
+      details,
+    )
+  }
+
+  if (parsed.data.error === "server_error" || parsed.data.error === "temporarily_unavailable") {
+    return new OAuthTokenExchangeError(
+      `${input.provider.displayName} could not complete the OAuth token exchange because the provider was unavailable. Try Connect again later.`,
+      "oauth_provider_unavailable",
+      details,
+    )
+  }
+
+  return new OAuthTokenExchangeError(
+    `${input.provider.displayName} rejected the OAuth token exchange. Try Connect again; if it still fails, contact support with the diagnostic reference.`,
+    "oauth_token_exchange_failed",
+    details,
+  )
+}
 
 export function parseOAuthTokenResponse(value: unknown): TokenResponse {
   const parsed = tokenResponseSchema.safeParse(value)
   if (!parsed.success) {
-    throw new OAuthTokenExchangeError("Token endpoint returned an invalid OAuth response.")
+    throw new OAuthTokenExchangeError(
+      "The token endpoint returned an invalid OAuth response.",
+      "oauth_token_response_invalid",
+    )
   }
   return parsed.data
 }
@@ -171,7 +291,10 @@ export function parseOAuthTokenResponse(value: unknown): TokenResponse {
 async function readBoundedTokenResponse(response: Response): Promise<string> {
   const declaredBytes = Number(response.headers.get("content-length"))
   if (Number.isFinite(declaredBytes) && declaredBytes > TOKEN_RESPONSE_MAX_BYTES) {
-    throw new OAuthTokenExchangeError("Token endpoint response exceeded the allowed size.")
+    throw new OAuthTokenExchangeError(
+      "The token endpoint response exceeded the allowed size.",
+      "oauth_token_response_oversized",
+    )
   }
   if (!response.body) return ""
 
@@ -184,7 +307,10 @@ async function readBoundedTokenResponse(response: Response): Promise<string> {
     totalBytes += result.value.byteLength
     if (totalBytes > TOKEN_RESPONSE_MAX_BYTES) {
       await reader.cancel()
-      throw new OAuthTokenExchangeError("Token endpoint response exceeded the allowed size.")
+      throw new OAuthTokenExchangeError(
+        "The token endpoint response exceeded the allowed size.",
+        "oauth_token_response_oversized",
+      )
     }
     chunks.push(result.value)
   }
@@ -218,17 +344,24 @@ export function resolveOAuthEndpointUrl(input: {
   }
 }
 
-async function postTokenRequest(tokenUrl: string, params: URLSearchParams): Promise<TokenResponse> {
+async function postTokenRequest(input: {
+  provider: NativeOAuthProviderConfig
+  tokenUrl: string
+  params: URLSearchParams
+}): Promise<TokenResponse> {
   let response: Response
   try {
-    response = await fetch(tokenUrl, {
+    response = await fetch(input.tokenUrl, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: params,
+      body: input.params,
       signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
     })
   } catch {
-    throw new OAuthTokenExchangeError("Token endpoint could not be reached before the request deadline.")
+    throw new OAuthTokenExchangeError(
+      `${input.provider.displayName} token endpoint could not be reached before the request deadline.`,
+      "oauth_token_endpoint_unreachable",
+    )
   }
 
   const text = await readBoundedTokenResponse(response)
@@ -239,7 +372,11 @@ async function postTokenRequest(tokenUrl: string, params: URLSearchParams): Prom
     body = text
   }
   if (!response.ok) {
-    throw new OAuthTokenExchangeError(`Token request failed with status ${response.status}.`)
+    throw oauthTokenExchangeErrorFromResponse({
+      provider: input.provider,
+      status: response.status,
+      body,
+    })
   }
   return parseOAuthTokenResponse(body)
 }
@@ -259,7 +396,11 @@ export async function exchangeCodeForTokens(input: {
   })
   if (input.client.clientSecret) params.set("client_secret", input.client.clientSecret)
   if (input.provider.usesPkce && input.codeVerifier) params.set("code_verifier", input.codeVerifier)
-  return postTokenRequest(resolveOAuthEndpointUrl({ provider: input.provider, client: input.client, endpoint: "token" }), params)
+  return postTokenRequest({
+    provider: input.provider,
+    tokenUrl: resolveOAuthEndpointUrl({ provider: input.provider, client: input.client, endpoint: "token" }),
+    params,
+  })
 }
 
 async function refreshTokens(input: {
@@ -273,7 +414,11 @@ async function refreshTokens(input: {
     client_id: input.client.clientId,
   })
   if (input.client.clientSecret) params.set("client_secret", input.client.clientSecret)
-  return postTokenRequest(resolveOAuthEndpointUrl({ provider: input.provider, client: input.client, endpoint: "token" }), params)
+  return postTokenRequest({
+    provider: input.provider,
+    tokenUrl: resolveOAuthEndpointUrl({ provider: input.provider, client: input.client, endpoint: "token" }),
+    params,
+  })
 }
 
 /**
