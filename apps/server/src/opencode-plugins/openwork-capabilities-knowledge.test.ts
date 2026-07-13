@@ -27,6 +27,11 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).toContain("JWTs signed and validated with EdDSA");
     expect(knowledge).toContain("30-day inactivity window");
     expect(knowledge).toContain("reference_id");
+    expect(knowledge).toContain("require the user to sign in to OpenWork first");
+    expect(knowledge).toContain("openwork-cloud_search_capabilities");
+    expect(knowledge).toContain("openwork-cloud_execute_capability");
+    expect(knowledge).toContain("Settings > Connect");
+    expect(knowledge).toContain("custom or local MCP server");
     expect(knowledge).not.toContain("Access tokens are opaque");
     expect(knowledge).not.toContain("https://api.openworklabs.com/mcp`");
     expect(knowledge).not.toContain("openwork-ui-mcp");
