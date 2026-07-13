@@ -212,6 +212,9 @@ export type DenExternalMcpConnection = {
   externalAccountId?: string | null;
   grantedScopes?: string[];
   tenantId?: string | null;
+  pluginId?: string | null;
+  serverKey?: string | null;
+  instanceLabel?: string | null;
 };
 
 export type DenMcpConnectionConnectStart = {
@@ -1176,6 +1179,9 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
     ...(typeof value.externalAccountId === "string" || value.externalAccountId === null ? { externalAccountId: value.externalAccountId } : {}),
     ...(Array.isArray(value.grantedScopes) ? { grantedScopes: readStringArray(value.grantedScopes) } : {}),
     ...(typeof value.tenantId === "string" || value.tenantId === null ? { tenantId: value.tenantId } : {}),
+    pluginId: typeof value.pluginId === "string" ? value.pluginId : null,
+    serverKey: typeof value.serverKey === "string" ? value.serverKey : null,
+    instanceLabel: typeof value.instanceLabel === "string" ? value.instanceLabel : null,
   };
 }
 

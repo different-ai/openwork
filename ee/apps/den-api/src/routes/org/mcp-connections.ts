@@ -47,6 +47,7 @@ import {
   externalMcpOAuthCallbackError,
   safeExternalMcpEndpointForLog,
 } from "../../capability-sources/external-mcp-diagnostics.js"
+import { listExternalMcpConnectionPluginBindings } from "./plugin-system/store.js"
 import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 
@@ -147,6 +148,10 @@ const connectionResponseSchema = z.object({
   tenantId: z.string().nullable().optional(),
   /** Present only for scope=manageable (admin) listings. */
   access: accessSummarySchema.nullable(),
+  /** Present when this connection is configured as part of a marketplace plugin item. */
+  pluginId: z.string().nullable().optional(),
+  serverKey: z.string().nullable().optional(),
+  instanceLabel: z.string().nullable().optional(),
 }).meta({ ref: "ExternalMcpConnectionResponse" })
 
 const connectionListResponseSchema = z.object({
@@ -180,6 +185,22 @@ export function isAgentApiKeyConnection(input: { authType: string; sessionId?: s
 
 export function isAgentOAuthClientConnection(input: { oauthClient?: unknown; sessionId?: string | null }) {
   return Boolean(input.oauthClient) && input.sessionId === "mcp_internal"
+}
+
+/**
+ * Marketplace server-instance configuration carries the same credential
+ * material as connection creation (API keys, OAuth clients, config field
+ * values), so it gets the same agent boundary: the internal MCP principal
+ * may configure secretless instances but never submit secrets.
+ */
+export function isAgentServerInstanceSecretWrite(input: {
+  apiKey?: unknown
+  fieldValueCount?: number | null
+  oauthClient?: unknown
+  sessionId?: string | null
+}) {
+  if (input.sessionId !== "mcp_internal") return false
+  return Boolean(input.apiKey) || Boolean(input.oauthClient) || (input.fieldValueCount ?? 0) > 0
 }
 
 const listConnectionsQuerySchema = z.object({
@@ -251,6 +272,11 @@ async function toConnectionResponse(
   options: {
     callerOrgMembershipId: DenTypeId<"member">
     includeAccess: boolean
+    pluginBinding?: {
+      instanceLabel: string | null
+      pluginId: string
+      serverKey: string
+    } | null
   },
 ) {
   let connectedForMe = isConnectionConnected(row) && row.credentialMode === "shared"
@@ -283,6 +309,9 @@ async function toConnectionResponse(
     connectedAt: row.connectedAt ? row.connectedAt.toISOString() : null,
     connectedForMe,
     access,
+    pluginId: options.pluginBinding?.pluginId ?? null,
+    serverKey: options.pluginBinding?.serverKey ?? null,
+    instanceLabel: options.pluginBinding?.instanceLabel ?? null,
   }
 }
 
@@ -348,8 +377,16 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           return c.json({ error: "forbidden", message: "Only workspace owners and admins can list all MCP connections." }, 403)
         }
         const rows = await listExternalMcpConnections(payload.organization.id)
+        const bindings = await listExternalMcpConnectionPluginBindings({
+          connectionIds: rows.map((row) => row.id),
+          organizationId: payload.organization.id,
+        })
         const connections = await Promise.all(rows.map((row) =>
-          toConnectionResponse(row, { callerOrgMembershipId: payload.currentMember.id, includeAccess: true })))
+          toConnectionResponse(row, {
+            callerOrgMembershipId: payload.currentMember.id,
+            includeAccess: true,
+            pluginBinding: bindings.get(row.id) ?? null,
+          })))
         return c.json({ connections })
       }
 
@@ -366,8 +403,16 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         orgMembershipId: payload.currentMember.id,
         teamIds: memberTeams.map((team) => team.id),
       })
+      const bindings = await listExternalMcpConnectionPluginBindings({
+        connectionIds: rows.map((row) => row.id),
+        organizationId: payload.organization.id,
+      })
       const connections = await Promise.all(rows.map((row) =>
-        toConnectionResponse(row, { callerOrgMembershipId: payload.currentMember.id, includeAccess: false })))
+        toConnectionResponse(row, {
+          callerOrgMembershipId: payload.currentMember.id,
+          includeAccess: false,
+          pluginBinding: bindings.get(row.id) ?? null,
+        })))
       // Native providers (e.g. google-workspace) join the same list once the
       // org saved an OAuth client for them — same card, same connect flow,
       // same rollout gate (this sits after the gate check on purpose).

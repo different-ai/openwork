@@ -292,7 +292,8 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
   }));
 
   const visibleOrgMcpConnectionItems = orgMcpConnectionItems.filter((item) =>
-    !item.orgMcpConnection || !groupedExternalMcpConnectionIds.has(item.orgMcpConnection.id));
+    !item.orgMcpConnection ||
+    (!item.orgMcpConnection.pluginId && !groupedExternalMcpConnectionIds.has(item.orgMcpConnection.id)));
 
   return {
     // Org-managed MCP connections are beta, so keep them last in unified lists.

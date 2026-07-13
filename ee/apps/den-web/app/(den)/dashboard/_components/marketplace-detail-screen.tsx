@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ArrowLeft, Check, GitBranch, Github, Globe, Loader2, Plus, Puzzle, Users, X } from "lucide-react";
+import { Archive, ArrowLeft, BookOpen, Check, GitBranch, Github, Globe, Loader2, Pencil, Plus, Puzzle, Server, ShieldCheck, Users, X } from "lucide-react";
 import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import {
   getGithubIntegrationSetupRoute,
@@ -10,15 +11,33 @@ import {
   getPluginRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { DenButton } from "../../_components/ui/button";
+import { DenInput } from "../../_components/ui/input";
 import {
+  type DenMarketplace,
   formatMarketplaceTimestamp,
+  isSystemMarketplace,
   type MarketplacePluginSummary,
+  useAddPluginToMarketplace,
+  useArchiveMarketplace,
   useGrantMarketplaceAccess,
   useMarketplace,
   useMarketplaceAccess,
+  useRemovePluginFromMarketplace,
   useRevokeMarketplaceAccess,
+  useUpdateMarketplace,
 } from "./marketplace-data";
+import { usePlugins } from "./plugin-data";
 import { MarketplaceLogo } from "./marketplace-logo";
+import {
+  type PluginMcpConfigField,
+  type PluginMcpServerInstance,
+  type PluginMcpServerTemplate,
+  useConfigurePluginServerInstance,
+  usePluginServerTemplates,
+  useRemovePluginServerInstance,
+  useSetConfigObjectStatus,
+} from "./plugin-server-data";
 
 const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }> = {
   skill: { singular: "skill", plural: "skills" },
@@ -65,6 +84,11 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   }
 
   const { marketplace, plugins, source } = data;
+  // Seeded marketplaces are looked up by name and re-provisioned lazily, so
+  // renaming or archiving them would just respawn a copy — their identity is
+  // managed. "Your organization" additionally accepts custom composition.
+  const managedIdentity = isSystemMarketplace(marketplace);
+  const managedCatalog = managedIdentity && marketplace.name !== "Your organization";
 
   return (
     <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
@@ -76,6 +100,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
+        <MarketplaceIdentityActions managedIdentity={managedIdentity} marketplace={marketplace} />
       </div>
 
       <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
@@ -149,35 +174,241 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
 
         <MarketplaceAccessSection marketplaceId={marketplace.id} />
 
-        <section>
-          <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Plugins
-            </h2>
-            <p className="text-[11px] text-gray-400">
-              {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
-            </p>
-          </div>
-
-          {plugins.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
-              <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
-                No plugins in this marketplace yet
-              </p>
-              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
-                Plugins appear here as they're imported from the source repository.
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-3 md:grid-cols-2">
-              {plugins.map((plugin) => (
-                <MarketplacePluginCard key={plugin.id} orgSlug={orgSlug} plugin={plugin} />
-              ))}
-            </div>
-          )}
-        </section>
+        <MarketplacePluginsSection
+          managedCatalog={managedCatalog}
+          marketplaceId={marketplace.id}
+          orgSlug={orgSlug}
+          plugins={plugins}
+        />
       </div>
     </div>
+  );
+}
+
+function MarketplaceIdentityActions({
+  managedIdentity,
+  marketplace,
+}: {
+  managedIdentity: boolean;
+  marketplace: DenMarketplace;
+}) {
+  const router = useRouter();
+  const { orgSlug } = useOrgDashboard();
+  const archiveMutation = useArchiveMarketplace();
+  const [editOpen, setEditOpen] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+
+  if (managedIdentity) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 px-3 py-1 text-[12px] font-medium text-gray-500">
+        <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
+        Managed by OpenWork
+      </span>
+    );
+  }
+
+  async function archive() {
+    await archiveMutation.mutateAsync(marketplace.id);
+    router.push(getMarketplacesRoute(orgSlug));
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      {confirmArchive ? (
+        <>
+          <span className="text-[12.5px] text-gray-500">Archive this marketplace?</span>
+          <DenButton
+            size="sm"
+            variant="secondary"
+            disabled={archiveMutation.isPending}
+            onClick={() => setConfirmArchive(false)}
+          >
+            Keep
+          </DenButton>
+          <DenButton size="sm" loading={archiveMutation.isPending} onClick={() => void archive()}>
+            Archive
+          </DenButton>
+        </>
+      ) : (
+        <>
+          <DenButton size="sm" variant="secondary" icon={Pencil} onClick={() => setEditOpen(true)}>
+            Edit
+          </DenButton>
+          <DenButton size="sm" variant="secondary" icon={Archive} onClick={() => setConfirmArchive(true)}>
+            Archive
+          </DenButton>
+        </>
+      )}
+      {archiveMutation.error ? (
+        <span className="text-[12px] text-red-600">
+          {archiveMutation.error instanceof Error ? archiveMutation.error.message : "Failed to archive."}
+        </span>
+      ) : null}
+
+      <EditMarketplaceDialog
+        open={editOpen}
+        marketplace={marketplace}
+        onClose={() => setEditOpen(false)}
+      />
+    </div>
+  );
+}
+
+function EditMarketplaceDialog({
+  open,
+  marketplace,
+  onClose,
+}: {
+  open: boolean;
+  marketplace: DenMarketplace;
+  onClose: () => void;
+}) {
+  const updateMutation = useUpdateMarketplace();
+  const [name, setName] = useState(marketplace.name);
+  const [description, setDescription] = useState(marketplace.description ?? "");
+
+  useEffect(() => {
+    if (!open) return;
+    setName(marketplace.name);
+    setDescription(marketplace.description ?? "");
+  }, [open, marketplace.name, marketplace.description]);
+
+  if (!open) {
+    return null;
+  }
+
+  const trimmedName = name.trim();
+
+  async function submit() {
+    await updateMutation.mutateAsync({
+      marketplaceId: marketplace.id,
+      name: trimmedName,
+      description: description.trim() || null,
+    });
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+      <div
+        className="w-full max-w-[440px] rounded-2xl border border-gray-100 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.4)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-gray-950">Edit marketplace</h2>
+
+        <label className="mt-4 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Name</span>
+          <DenInput value={name} onChange={(event) => setName(event.target.value)} autoFocus />
+        </label>
+        <label className="mt-3 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Description</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={2}
+            className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 text-[13px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
+          />
+        </label>
+
+        {updateMutation.error ? (
+          <p className="mt-3 text-[12.5px] text-red-600">
+            {updateMutation.error instanceof Error ? updateMutation.error.message : "Failed to update marketplace."}
+          </p>
+        ) : null}
+
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <DenButton variant="secondary" onClick={onClose} disabled={updateMutation.isPending}>
+            Cancel
+          </DenButton>
+          <DenButton disabled={!trimmedName || updateMutation.isPending} onClick={() => void submit()}>
+            {updateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+            Save changes
+          </DenButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MarketplacePluginsSection({
+  managedCatalog,
+  marketplaceId,
+  orgSlug,
+  plugins,
+}: {
+  managedCatalog: boolean;
+  marketplaceId: string;
+  orgSlug: string | null;
+  plugins: MarketplacePluginSummary[];
+}) {
+  const pluginsQuery = usePlugins();
+  const addMutation = useAddPluginToMarketplace();
+  const removeMutation = useRemovePluginFromMarketplace();
+
+  const currentIds = useMemo(() => new Set(plugins.map((plugin) => plugin.id)), [plugins]);
+  const addable = (pluginsQuery.data ?? []).filter((plugin) => !currentIds.has(plugin.id));
+
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+          Plugins
+        </h2>
+        {managedCatalog ? (
+          <p className="text-[11px] text-gray-400">
+            {plugins.length} plugin{plugins.length === 1 ? "" : "s"} · curated by OpenWork
+          </p>
+        ) : (
+          <AccessAddPicker
+            label="Plugins"
+            options={addable.map((plugin) => ({
+              id: plugin.id,
+              label: plugin.name,
+              subtitle: plugin.description ?? "Plugin",
+            }))}
+            emptyLabel="Every plugin in your library is already here"
+            disabled={addMutation.isPending}
+            onAdd={(pluginId) => void addMutation.mutateAsync({ marketplaceId, pluginId })}
+          />
+        )}
+      </div>
+
+      {addMutation.error ? (
+        <p className="mb-3 text-[12px] text-red-600">
+          {addMutation.error instanceof Error ? addMutation.error.message : "Failed to add the plugin."}
+        </p>
+      ) : null}
+      {removeMutation.error ? (
+        <p className="mb-3 text-[12px] text-red-600">
+          {removeMutation.error instanceof Error ? removeMutation.error.message : "Failed to remove the plugin."}
+        </p>
+      ) : null}
+
+      {plugins.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
+          <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
+            No plugins in this marketplace yet
+          </p>
+          <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
+            Add plugins from your library with the picker above, import from GitHub, or connect a source repository.
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {plugins.map((plugin) => (
+            <MarketplacePluginCard
+              key={plugin.id}
+              orgSlug={orgSlug}
+              plugin={plugin}
+              onRemove={managedCatalog
+                ? undefined
+                : () => void removeMutation.mutateAsync({ marketplaceId, pluginId: plugin.id })}
+              removing={removeMutation.isPending}
+            />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -516,63 +747,421 @@ function AccessAddPicker({
 function MarketplacePluginCard({
   orgSlug,
   plugin,
+  onRemove,
+  removing,
 }: {
   orgSlug: string | null;
   plugin: MarketplacePluginSummary;
+  onRemove?: () => void;
+  removing?: boolean;
 }) {
   const orderedCountEntries = Object.entries(plugin.componentCounts)
     .filter(([, count]) => count > 0)
     .sort((a, b) => b[1] - a[1]);
 
   return (
-    <Link
-      href={getPluginRoute(orgSlug, plugin.id)}
-      className="group block overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
-    >
-      <div className="flex items-stretch">
-        <div className="relative w-[64px] shrink-0 overflow-hidden">
-          <StaticSeededGradient seed={plugin.id} className="absolute inset-0" />
-          <div className="relative flex h-full items-center justify-center">
-            <div className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-              <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />
+    <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+      <Link
+        href={getPluginRoute(orgSlug, plugin.id)}
+        className="group block transition hover:bg-gray-50/60"
+      >
+        <div className="flex items-stretch">
+          <div className="relative w-[64px] shrink-0 overflow-hidden">
+            <StaticSeededGradient seed={plugin.id} className="absolute inset-0" />
+            <div className="relative flex h-full items-center justify-center">
+              <div className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
+                <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />
+              </div>
             </div>
           </div>
-        </div>
-        <div className="min-w-0 flex-1 px-4 py-3">
-          <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
-            {plugin.name}
-          </p>
-          {plugin.description ? (
-            <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">
-              {plugin.description}
+          <div className="min-w-0 flex-1 px-4 py-3">
+            <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+              {plugin.name}
             </p>
-          ) : null}
+            {plugin.description ? (
+              <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">
+                {plugin.description}
+              </p>
+            ) : null}
 
-          {orderedCountEntries.length > 0 ? (
-            <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-gray-50 pt-2.5">
-              {orderedCountEntries.map(([type, count]) => (
-                <span
-                  key={type}
-                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11.5px] text-gray-600"
+            {orderedCountEntries.length > 0 ? (
+              <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-gray-50 pt-2.5">
+                {orderedCountEntries.map(([type, count]) => (
+                  <span
+                    key={type}
+                    className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11.5px] text-gray-600"
+                  >
+                    <span className="font-semibold text-gray-900">{count}</span>
+                    <span className="text-gray-500">{componentTypeLabel(type, count)}</span>
+                  </span>
+                ))}
+              </div>
+            ) : plugin.memberCount > 0 ? (
+              <p className="mt-2 text-[11.5px] text-gray-400">
+                {plugin.memberCount} imported object{plugin.memberCount === 1 ? "" : "s"}
+              </p>
+            ) : (
+              <p className="mt-2 text-[11.5px] text-gray-400">
+                {plugin.sourceFormat === "openwork-builtin"
+                  ? "Built into the OpenWork desktop app"
+                  : "Content imports when the source repository is connected"}
+              </p>
+            )}
+          </div>
+        </div>
+      </Link>
+      <MarketplacePluginResourceSummary pluginId={plugin.id} />
+      {onRemove ? (
+        <div className="flex justify-end border-t border-gray-50 px-4 py-2">
+          <button
+            type="button"
+            disabled={removing}
+            onClick={onRemove}
+            className="rounded-full px-2.5 py-1 text-[11.5px] font-medium text-gray-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Remove from marketplace
+          </button>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function MarketplacePluginResourceSummary({ pluginId }: { pluginId: string }) {
+  const templatesQuery = usePluginServerTemplates(pluginId);
+  const statusMutation = useSetConfigObjectStatus();
+
+  if (templatesQuery.isLoading) {
+    return <div className="border-t border-gray-100 px-4 py-3 text-[12px] text-gray-400">Loading resources...</div>;
+  }
+
+  if (templatesQuery.error || !templatesQuery.data) {
+    return null;
+  }
+
+  const { instances, mcpTemplates, skills } = templatesQuery.data;
+  if (instances.length === 0 && mcpTemplates.length === 0 && skills.length === 0) {
+    return null;
+  }
+
+  async function toggleSkill(configObjectId: string, active: boolean) {
+    await statusMutation.mutateAsync({
+      configObjectId,
+      pluginId,
+      status: active ? "inactive" : "active",
+    });
+  }
+
+  return (
+    <div className="space-y-3 border-t border-gray-100 px-4 py-3">
+      {mcpTemplates.length > 0 ? (
+        <div>
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+            <Server className="h-3.5 w-3.5" aria-hidden />
+            MCP servers
+          </div>
+          <div className="space-y-1.5">
+            {mcpTemplates.map((template) => {
+              const templateInstances = instances.filter((instance) => instance.serverKey === template.serverKey);
+              return (
+                <McpTemplateRow
+                  key={`${template.configObjectId}:${template.serverKey}`}
+                  instances={templateInstances}
+                  pluginId={pluginId}
+                  template={template}
+                />
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {skills.length > 0 ? (
+        <div>
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+            <BookOpen className="h-3.5 w-3.5" aria-hidden />
+            Skills
+          </div>
+          <div className="space-y-1.5">
+            {skills.map((skill) => {
+              const active = skill.status === "active";
+              return (
+                <button
+                  key={skill.configObjectId}
+                  type="button"
+                  disabled={statusMutation.isPending}
+                  onClick={() => void toggleSkill(skill.configObjectId, active)}
+                  className="flex w-full items-center justify-between gap-3 rounded-xl bg-gray-50 px-3 py-2 text-left transition hover:bg-gray-100 disabled:opacity-60"
                 >
-                  <span className="font-semibold text-gray-900">{count}</span>
-                  <span className="text-gray-500">{componentTypeLabel(type, count)}</span>
-                </span>
+                  <span className="min-w-0">
+                    <span className={`block truncate text-[12.5px] font-medium ${active ? "text-gray-900" : "text-gray-400"}`}>
+                      {skill.title}
+                    </span>
+                    {skill.description ? (
+                      <span className="mt-0.5 block truncate text-[11.5px] text-gray-400">{skill.description}</span>
+                    ) : null}
+                  </span>
+                  <span className={`relative inline-flex h-6 w-[42px] shrink-0 items-center rounded-full transition-colors ${active ? "bg-[#0f172a]" : "bg-gray-200"}`}>
+                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-[0_2px_6px_-1px_rgba(15,23,42,0.3)] transition-transform ${active ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function mcpAuthLabel(authType: "oauth" | "apikey" | "none") {
+  if (authType === "apikey") return "API key";
+  if (authType === "none") return "No auth";
+  return "OAuth";
+}
+
+function configFieldApplies(field: PluginMcpConfigField, authType: "oauth" | "apikey" | "none") {
+  if (field.placement === "bearer") return authType === "apikey";
+  if (field.placement === "oauth_client_id" || field.placement === "oauth_client_secret") return authType === "oauth";
+  return true;
+}
+
+function configFieldInputType(field: PluginMcpConfigField) {
+  if (field.kind === "secret") return "password";
+  if (field.kind === "url") return "url";
+  return "text";
+}
+
+function currentFieldValue(values: Array<{ key: string; value: string }>, key: string) {
+  return values.find((entry) => entry.key === key)?.value ?? "";
+}
+
+function updateFieldValues(values: Array<{ key: string; value: string }>, key: string, value: string) {
+  const next = values.filter((entry) => entry.key !== key);
+  return value ? [...next, { key, value }] : next;
+}
+
+function McpTemplateRow({
+  instances,
+  pluginId,
+  template,
+}: {
+  instances: PluginMcpServerInstance[];
+  pluginId: string;
+  template: PluginMcpServerTemplate;
+}) {
+  const configureMutation = useConfigurePluginServerInstance();
+  const removeMutation = useRemovePluginServerInstance();
+  const [configureOpen, setConfigureOpen] = useState(false);
+  const [instanceLabel, setInstanceLabel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [authType, setAuthType] = useState<"oauth" | "apikey" | "none">(template.authType);
+  const [credentialMode, setCredentialMode] = useState<"shared" | "per_member">(template.credentialModeDefault);
+  const [fieldValues, setFieldValues] = useState<Array<{ key: string; value: string }>>([]);
+
+  const busy = configureMutation.isPending || removeMutation.isPending;
+  const trimmedLabel = instanceLabel.trim();
+  const instanceName = trimmedLabel ? `${template.name} (${trimmedLabel})` : template.name;
+  const visibleConfigFields = template.configFields.filter((field) => configFieldApplies(field, authType));
+  const hasBearerField = visibleConfigFields.some((field) => field.placement === "bearer");
+  const missingRequiredField = visibleConfigFields.some((field) => field.required && !currentFieldValue(fieldValues, field.key).trim());
+  const apiKeyMissing = authType === "apikey" && !hasBearerField && !apiKey.trim();
+  const canConfigure = !busy && !missingRequiredField && !apiKeyMissing;
+
+  async function configure() {
+    await configureMutation.mutateAsync({
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+      apiKey: authType === "apikey" && !hasBearerField ? apiKey.trim() : undefined,
+      authType,
+      configObjectId: template.configObjectId,
+      credentialMode: authType === "oauth" ? credentialMode : "shared",
+      fieldValues: fieldValues
+        .filter((entry) => entry.value.trim())
+        .map((entry) => ({ key: entry.key, value: entry.value.trim() })),
+      instanceLabel: trimmedLabel || null,
+      name: instanceName,
+      pluginId,
+      serverKey: template.serverKey,
+    });
+    setConfigureOpen(false);
+    setApiKey("");
+    setFieldValues([]);
+    setInstanceLabel("");
+  }
+
+  async function remove(instanceId: string) {
+    await removeMutation.mutateAsync({ deleteConnection: true, instanceId, pluginId });
+  }
+
+  return (
+    <div className="rounded-xl bg-gray-50 px-3 py-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[12.5px] font-medium text-gray-900">{template.name}</p>
+          <p className="mt-0.5 truncate font-mono text-[11px] text-gray-400">{template.url}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11.5px] text-gray-500">
+          {instances.length} configured
+        </span>
+      </div>
+
+      {instances.length > 0 ? (
+        <div className="mt-2 space-y-1.5">
+          {instances.map((instance) => (
+            <div
+              key={instance.id}
+              className="flex items-center justify-between gap-2 rounded-lg border border-gray-100 bg-white px-2.5 py-2"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[11.5px] font-medium text-gray-800">
+                  {instance.instanceLabel || instance.connection?.name || "Configured server"}
+                </p>
+                <p className="mt-0.5 truncate text-[10.5px] text-gray-400">
+                  {instance.connection?.credentialMode === "shared" ? "One org account" : "Individual accounts"}
+                  <span className="px-1 text-gray-300">·</span>
+                  {instance.connection ? mcpAuthLabel(instance.connection.authType) : "Configured"}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void remove(instance.id)}
+                className="rounded-full px-2 py-1 text-[11px] font-medium text-gray-500 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {configureOpen ? (
+        <div className="mt-2 rounded-lg border border-gray-100 bg-white px-3 py-3">
+          <div className="grid gap-2 md:grid-cols-3">
+            <label className="min-w-0">
+              <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+                Label
+              </span>
+              <input
+                value={instanceLabel}
+                onChange={(event) => setInstanceLabel(event.target.value)}
+                placeholder="Prod"
+                className="h-8 w-full rounded-lg border border-gray-200 px-2 text-[12px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
+              />
+            </label>
+            <label className="min-w-0">
+              <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+                Authentication
+              </span>
+              <select
+                value={authType}
+                onChange={(event) => {
+                  const next = event.target.value === "apikey" ? "apikey" : event.target.value === "none" ? "none" : "oauth";
+                  setAuthType(next);
+                  if (next !== "oauth") setCredentialMode("shared");
+                }}
+                className="h-8 w-full rounded-lg border border-gray-200 bg-white px-2 text-[12px] text-gray-900 outline-none transition focus:border-gray-400"
+              >
+                <option value="oauth">OAuth</option>
+                <option value="apikey">API key</option>
+                <option value="none">No auth</option>
+              </select>
+            </label>
+            <label className="min-w-0">
+              <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+                Account
+              </span>
+              <select
+                value={authType === "oauth" ? credentialMode : "shared"}
+                disabled={authType !== "oauth"}
+                onChange={(event) => setCredentialMode(event.target.value === "shared" ? "shared" : "per_member")}
+                className="h-8 w-full rounded-lg border border-gray-200 bg-white px-2 text-[12px] text-gray-900 outline-none transition focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-400"
+              >
+                <option value="per_member">Individual accounts</option>
+                <option value="shared">One org account</option>
+              </select>
+            </label>
+          </div>
+          {authType === "apikey" && !hasBearerField ? (
+            <label className="mt-2 block min-w-0">
+              <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+                API key
+              </span>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                placeholder="Paste key"
+                className="h-8 w-full rounded-lg border border-gray-200 px-2 text-[12px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
+              />
+            </label>
+          ) : null}
+          {visibleConfigFields.length > 0 ? (
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              {visibleConfigFields.map((field) => (
+                <label key={field.key} className="min-w-0">
+                  <span className="mb-1 block truncate text-[10.5px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+                    {field.label}{field.required ? "" : " (optional)"}
+                  </span>
+                  <input
+                    type={configFieldInputType(field)}
+                    value={currentFieldValue(fieldValues, field.key)}
+                    onChange={(event) => setFieldValues((current) => updateFieldValues(current, field.key, event.target.value))}
+                    placeholder={field.kind === "secret" ? "Paste secret" : field.label}
+                    className="h-8 w-full rounded-lg border border-gray-200 px-2 text-[12px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
+                  />
+                  {field.description ? (
+                    <span className="mt-1 block text-[10.5px] leading-4 text-gray-400">{field.description}</span>
+                  ) : null}
+                </label>
               ))}
             </div>
-          ) : plugin.memberCount > 0 ? (
-            <p className="mt-2 text-[11.5px] text-gray-400">
-              {plugin.memberCount} imported object{plugin.memberCount === 1 ? "" : "s"}
-            </p>
-          ) : (
-            <p className="mt-2 text-[11.5px] text-gray-400">
-              {plugin.sourceFormat === "openwork-builtin"
-                ? "Built into the OpenWork desktop app"
-                : "Content imports when the source repository is connected"}
-            </p>
-          )}
+          ) : null}
+          <p className="mt-2 text-[11.5px] leading-5 text-gray-400">
+            Access defaults to everyone in the organization. Credentials are stored only on the External MCP Connection.
+          </p>
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setConfigureOpen(false)}
+              className="rounded-full px-3 py-1.5 text-[11.5px] font-medium text-gray-500 transition hover:bg-gray-50 hover:text-gray-900 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!canConfigure}
+              onClick={() => void configure()}
+              className="inline-flex items-center gap-1.5 rounded-full bg-gray-950 px-3 py-1.5 text-[11.5px] font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {configureMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <Plus className="h-3 w-3" aria-hidden />}
+              Configure
+            </button>
+          </div>
         </div>
-      </div>
-    </Link>
+      ) : (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => setConfigureOpen(true)}
+          className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11.5px] font-medium text-gray-700 shadow-[inset_0_0_0_1px_rgba(229,231,235,1)] transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Plus className="h-3 w-3" aria-hidden />
+          {instances.length === 0 ? "Configure" : "Add configuration"}
+        </button>
+      )}
+
+      {configureMutation.error ? (
+        <p className="mt-2 text-[11.5px] leading-5 text-red-600">
+          {configureMutation.error instanceof Error ? configureMutation.error.message : "Failed to configure MCP server."}
+        </p>
+      ) : null}
+      {removeMutation.error ? (
+        <p className="mt-2 text-[11.5px] leading-5 text-red-600">
+          {removeMutation.error instanceof Error ? removeMutation.error.message : "Failed to remove MCP server."}
+        </p>
+      ) : null}
+    </div>
   );
 }

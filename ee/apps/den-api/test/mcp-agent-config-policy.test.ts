@@ -15,6 +15,7 @@ type OpenApiDocument = {
 let isMcpOperationAllowed: typeof import("../src/mcp/policy.js")["isMcpOperationAllowed"]
 let isAgentApiKeyConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentApiKeyConnection"]
 let isAgentOAuthClientConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentOAuthClientConnection"]
+let isAgentServerInstanceSecretWrite: typeof import("../src/routes/org/mcp-connections.js")["isAgentServerInstanceSecretWrite"]
 let buildMcpCatalog: typeof import("../src/mcp/catalog.js")["buildMcpCatalog"]
 let searchCapabilities: typeof import("../src/mcp/search.js")["searchCapabilities"]
 let searchCapabilitySourceFilter: typeof import("../src/mcp/search.js")["searchCapabilitySourceFilter"]
@@ -45,6 +46,7 @@ beforeAll(async () => {
   const mcpConnections = await import("../src/routes/org/mcp-connections.js")
   isAgentApiKeyConnection = mcpConnections.isAgentApiKeyConnection
   isAgentOAuthClientConnection = mcpConnections.isAgentOAuthClientConnection
+  isAgentServerInstanceSecretWrite = mcpConnections.isAgentServerInstanceSecretWrite
   const app = (await import("../src/app.js")).default
   const response = await app.request("http://127.0.0.1:8790/openapi.json")
   document = await response.json()
@@ -125,5 +127,27 @@ describe("agent-configurable org connections policy", () => {
     expect(isAgentOAuthClientConnection({ oauthClient: { clientId: "client" }, sessionId: "normal_session" })).toBe(false)
     expect(isAgentOAuthClientConnection({ sessionId: "mcp_internal" })).toBe(false)
     expect(isAgentOAuthClientConnection({ oauthClient: null, sessionId: "mcp_internal" })).toBe(false)
+  })
+
+  test("plugin server-instance configuration stays policy-visible with the secret guard enforced in-route", () => {
+    expect(allowed("postV1PluginsByPluginIdServerInstances")).toBe(true)
+  })
+
+  test("server-instance secret material is blocked only for the internal agent principal", () => {
+    const secretShapes = [
+      { apiKey: "sk-live" },
+      { oauthClient: { clientId: "client" } },
+      { fieldValueCount: 1 },
+      { apiKey: "sk-live", fieldValueCount: 3, oauthClient: { clientId: "client" } },
+    ]
+    for (const shape of secretShapes) {
+      expect(isAgentServerInstanceSecretWrite({ ...shape, sessionId: "mcp_internal" })).toBe(true)
+      expect(isAgentServerInstanceSecretWrite({ ...shape, sessionId: "normal_session" })).toBe(false)
+      expect(isAgentServerInstanceSecretWrite({ ...shape, sessionId: null })).toBe(false)
+    }
+    // Secretless configuration (authType none / plain oauth) stays agent-usable,
+    // matching POST /v1/mcp-connections semantics.
+    expect(isAgentServerInstanceSecretWrite({ fieldValueCount: 0, sessionId: "mcp_internal" })).toBe(false)
+    expect(isAgentServerInstanceSecretWrite({ sessionId: "mcp_internal" })).toBe(false)
   })
 })

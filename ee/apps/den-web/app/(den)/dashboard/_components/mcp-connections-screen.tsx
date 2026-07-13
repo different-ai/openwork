@@ -501,7 +501,7 @@ export function McpConnectionsScreen() {
   );
 }
 
-function ImportPluginConnectionDialog({
+export function ImportPluginConnectionDialog({
   open,
   onClose,
   onImported,
@@ -831,7 +831,7 @@ function ImportPluginConnectionDialog({
   );
 }
 
-function GoogleWorkspaceDialog({
+export function GoogleWorkspaceDialog({
   open,
   submitting,
   error,
@@ -1198,7 +1198,7 @@ const ACCESS_MODE_OPTIONS: SegmentedControlOption<AddConnectionAccessMode>[] = [
   { value: "people", label: "Specific people" },
 ];
 
-function AddConnectionDialog({
+export function AddConnectionDialog({
   open,
   preset,
   submitting,

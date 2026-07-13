@@ -1,5 +1,5 @@
-import { and, desc, eq, inArray, or } from "@openwork-ee/den-db/drizzle"
-import { SkillHubMemberTable, SkillHubSkillTable, SkillHubTable, SkillTable } from "@openwork-ee/den-db/schema"
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { ConfigObjectTable, SkillHubMemberTable, SkillHubSkillTable, SkillHubTable, SkillTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { tokenize } from "./search.js"
@@ -87,6 +87,31 @@ function canAccessSkill(input: {
     || input.hubAccessibleSkillIds.has(input.skill.id)
 }
 
+async function listHiddenImportedSkillIds(organizationId: OrganizationId): Promise<Set<SkillId>> {
+  const rows = await db
+    .select({
+      denSkillId: ConfigObjectTable.denSkillId,
+      status: ConfigObjectTable.status,
+    })
+    .from(ConfigObjectTable)
+    .where(and(
+      eq(ConfigObjectTable.organizationId, organizationId),
+      eq(ConfigObjectTable.objectType, "skill"),
+      isNotNull(ConfigObjectTable.denSkillId),
+      isNull(ConfigObjectTable.deletedAt),
+    ))
+
+  const activeSkillIds = new Set<SkillId>()
+  const managedSkillIds = new Set<SkillId>()
+  for (const row of rows) {
+    if (!row.denSkillId) continue
+    managedSkillIds.add(row.denSkillId)
+    if (row.status === "active") activeSkillIds.add(row.denSkillId)
+  }
+
+  return new Set([...managedSkillIds].filter((skillId) => !activeSkillIds.has(skillId)))
+}
+
 async function listAccessibleSkills(input: {
   organizationId: string
   member: McpMemberIdentity | null
@@ -98,6 +123,7 @@ async function listAccessibleSkills(input: {
     organizationId,
     member,
   })
+  const hiddenImportedSkillIds = await listHiddenImportedSkillIds(organizationId)
 
   const skills = await db
     .select({
@@ -116,7 +142,7 @@ async function listAccessibleSkills(input: {
     member,
     skill,
     hubAccessibleSkillIds,
-  }))
+  }) && !hiddenImportedSkillIds.has(skill.id))
 }
 
 async function getAccessibleSkill(input: {
@@ -139,6 +165,8 @@ async function getAccessibleSkill(input: {
     organizationId,
     member,
   })
+  const hiddenImportedSkillIds = await listHiddenImportedSkillIds(organizationId)
+  if (hiddenImportedSkillIds.has(skillId)) return null
   const rows = await db
     .select({
       id: SkillTable.id,

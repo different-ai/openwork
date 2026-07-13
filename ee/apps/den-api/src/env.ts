@@ -23,6 +23,8 @@ const EnvSchema = z.object({
   DEN_WEB_APP_HOSTS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  GITHUB_TOKEN: z.string().optional(),
+  GH_TOKEN: z.string().optional(),
   GITHUB_CONNECTOR_APP_ID: z.string().optional(),
   GITHUB_CONNECTOR_APP_CLIENT_ID: z.string().optional(),
   GITHUB_CONNECTOR_APP_CLIENT_SECRET: z.string().optional(),
@@ -376,6 +378,7 @@ export const env = {
   github: {
     clientId: optionalString(parsed.GITHUB_CLIENT_ID),
     clientSecret: optionalString(parsed.GITHUB_CLIENT_SECRET),
+    token: optionalString(parsed.GITHUB_TOKEN) ?? optionalString(parsed.GH_TOKEN),
   },
   githubConnectorApp: {
     appId: optionalString(parsed.GITHUB_CONNECTOR_APP_ID),

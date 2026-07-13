@@ -102,7 +102,7 @@ import {
   resourceAccessGrantWriteSchema,
 } from "./schemas.js"
 
-type EndpointMethod = "DELETE" | "GET" | "PATCH" | "POST"
+type EndpointMethod = "DELETE" | "GET" | "PATCH" | "POST" | "PUT"
 type EndpointAudience = "admin" | "public_webhook"
 type EndpointTag = "Config Objects" | "Plugins" | "Marketplaces" | "Connectors" | "GitHub" | "Webhooks"
 
@@ -141,6 +141,7 @@ export const pluginArchRoutePaths = {
   configObjectArchive: `${orgBasePath}/config-objects/:configObjectId/archive`,
   configObjectDelete: `${orgBasePath}/config-objects/:configObjectId/delete`,
   configObjectRestore: `${orgBasePath}/config-objects/:configObjectId/restore`,
+  configObjectStatus: `${orgBasePath}/config-objects/:configObjectId/status`,
   configObjectPlugins: `${orgBasePath}/config-objects/:configObjectId/plugins`,
   configObjectPlugin: `${orgBasePath}/config-objects/:configObjectId/plugins/:pluginId`,
   configObjectAccess: `${orgBasePath}/config-objects/:configObjectId/access`,
@@ -162,6 +163,9 @@ export const pluginArchRoutePaths = {
   pluginConfigObject: `${orgBasePath}/plugins/:pluginId/config-objects/:configObjectId`,
   pluginResolved: `${orgBasePath}/plugins/:pluginId/resolved`,
   pluginReleases: `${orgBasePath}/plugins/:pluginId/releases`,
+  pluginServerTemplates: `${orgBasePath}/plugins/:pluginId/server-templates`,
+  pluginServerInstances: `${orgBasePath}/plugins/:pluginId/server-instances`,
+  pluginServerInstance: `${orgBasePath}/plugins/:pluginId/server-instances/:instanceId`,
   pluginAccess: `${orgBasePath}/plugins/:pluginId/access`,
   pluginAccessGrant: `${orgBasePath}/plugins/:pluginId/access/:grantId`,
   pluginGithubMcpImportPreview: `${orgBasePath}/plugins/import-mcps-from-github-url/preview`,
@@ -175,6 +179,7 @@ export const pluginArchRoutePaths = {
   marketplacePlugin: `${orgBasePath}/marketplaces/:marketplaceId/plugins/:pluginId`,
   marketplaceAccess: `${orgBasePath}/marketplaces/:marketplaceId/access`,
   marketplaceAccessGrant: `${orgBasePath}/marketplaces/:marketplaceId/access/:grantId`,
+  marketplaceWrapStandaloneConnections: `${orgBasePath}/marketplaces/wrap-standalone-connections`,
   connectorAccounts: `${orgBasePath}/connector-accounts`,
   connectorAccount: `${orgBasePath}/connector-accounts/:connectorAccountId`,
   connectorAccountDisconnect: `${orgBasePath}/connector-accounts/:connectorAccountId/disconnect`,

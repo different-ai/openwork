@@ -32,6 +32,7 @@ export const idTypesMapNameToPrefix = {
   configObjectAccessGrant: "coa",
   plugin: "plg",
   pluginConfigObject: "pco",
+  pluginMcpServerInstance: "psi",
   pluginAccessGrant: "pag",
   marketplace: "mkt",
   marketplacePlugin: "mkp",

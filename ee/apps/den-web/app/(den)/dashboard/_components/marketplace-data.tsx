@@ -264,6 +264,190 @@ export function useMarketplaces() {
   });
 }
 
+/**
+ * Marketplaces seeded by the platform (built-ins, directory, org wrap
+ * target). The lazy seeder looks them up by name, so renaming or archiving
+ * them from the UI would just respawn a fresh copy — treat them as managed.
+ */
+const SYSTEM_MARKETPLACE_NAMES = new Set([
+  "OpenWork Marketplace",
+  "Anthropic-Compatible Plugins",
+  "OpenWork Directory",
+  "Your organization",
+]);
+
+export function isSystemMarketplace(marketplace: Pick<DenMarketplace, "name">): boolean {
+  return SYSTEM_MARKETPLACE_NAMES.has(marketplace.name);
+}
+
+export function useCreateMarketplace() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { name: string; description?: string }): Promise<DenMarketplace> => {
+      let created: DenMarketplace | null = null;
+      await runReauthableAction("create-marketplace", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/marketplaces",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              name: input.name,
+              ...(input.description ? { description: input.description } : {}),
+            }),
+          },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to create marketplace (${response.status}).`);
+        }
+        created = isRecord(payload) && isRecord(payload.item) ? parseMarketplace(payload.item) : null;
+      });
+      if (!created) {
+        throw new Error("Marketplace create response was incomplete.");
+      }
+      return created;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.all });
+    },
+  });
+}
+
+export function useUpdateMarketplace() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { marketplaceId: string; name?: string; description?: string | null }) => {
+      await runReauthableAction("update-marketplace", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/marketplaces/${encodeURIComponent(input.marketplaceId)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              ...(input.name !== undefined ? { name: input.name } : {}),
+              ...(input.description !== undefined ? { description: input.description } : {}),
+            }),
+          },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to update marketplace (${response.status}).`);
+        }
+      });
+      return input.marketplaceId;
+    },
+    onSuccess: (marketplaceId) => {
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.list() });
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.resolved(marketplaceId) });
+    },
+  });
+}
+
+export function useArchiveMarketplace() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (marketplaceId: string) => {
+      await runReauthableAction("archive-marketplace", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/marketplaces/${encodeURIComponent(marketplaceId)}/archive`,
+          { method: "POST" },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to archive marketplace (${response.status}).`);
+        }
+      });
+      return marketplaceId;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.all });
+    },
+  });
+}
+
+export function useAddPluginToMarketplace() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { marketplaceId: string; pluginId: string }) => {
+      await runReauthableAction("add-marketplace-plugin", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/marketplaces/${encodeURIComponent(input.marketplaceId)}/plugins`,
+          { method: "POST", body: JSON.stringify({ pluginId: input.pluginId }) },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to add the plugin (${response.status}).`);
+        }
+      });
+      return input.marketplaceId;
+    },
+    onSuccess: (marketplaceId) => {
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.list() });
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.resolved(marketplaceId) });
+    },
+  });
+}
+
+export function useRemovePluginFromMarketplace() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { marketplaceId: string; pluginId: string }) => {
+      await runReauthableAction("remove-marketplace-plugin", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/marketplaces/${encodeURIComponent(input.marketplaceId)}/plugins/${encodeURIComponent(input.pluginId)}`,
+          { method: "DELETE" },
+          15000,
+        );
+        if (response.status !== 204 && !response.ok) {
+          throw getRequestError(payload, response, `Failed to remove the plugin (${response.status}).`);
+        }
+      });
+      return input.marketplaceId;
+    },
+    onSuccess: (marketplaceId) => {
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.list() });
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.resolved(marketplaceId) });
+    },
+  });
+}
+
+export function useWrapStandaloneConnections() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (marketplaceId?: string): Promise<number> => {
+      let wrappedCount = 0;
+      await runReauthableAction("wrap-standalone-connections", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/marketplaces/wrap-standalone-connections",
+          { method: "POST", body: JSON.stringify(marketplaceId ? { marketplaceId } : {}) },
+          20000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to wrap standalone connections (${response.status}).`);
+        }
+        if (isRecord(payload) && isRecord(payload.item) && typeof payload.item.wrappedCount === "number") {
+          wrappedCount = payload.item.wrappedCount;
+        }
+      });
+      return wrappedCount;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.all });
+    },
+  });
+}
+
 export function formatMarketplaceTimestamp(value: string | null): string {
   if (!value) return "Recently added";
   const date = new Date(value);

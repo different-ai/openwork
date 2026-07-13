@@ -1,5 +1,5 @@
-import { McpConnectionsScreen } from "../../_components/mcp-connections-screen";
+import { redirect } from "next/navigation";
 
 export default function McpConnectionsPage() {
-  return <McpConnectionsScreen />;
+  redirect("/dashboard/marketplaces?tab=servers");
 }

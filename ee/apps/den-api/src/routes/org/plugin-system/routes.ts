@@ -1,9 +1,13 @@
 import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { z } from "zod"
 import { queryValidator, jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../../openapi.js"
 import type { OrgRouteVariables } from "../shared.js"
+import { isAgentServerInstanceSecretWrite } from "../mcp-connections.js"
+import { resolvePublicOrigin } from "../../../capability-sources/generic-oauth.js"
+import { env } from "../../../env.js"
 import {
   accessGrantListResponseSchema,
   accessGrantMutationResponseSchema,
@@ -16,6 +20,7 @@ import {
   configObjectMutationResponseSchema,
   configObjectParamsSchema,
   configObjectPluginAttachSchema,
+  configObjectStatusUpdateSchema,
   configObjectVersionDetailResponseSchema,
   configObjectVersionListQuerySchema,
   configObjectVersionListResponseSchema,
@@ -87,6 +92,8 @@ import {
   marketplaceParamsSchema,
   marketplacePluginListResponseSchema,
   marketplaceResolvedResponseSchema,
+  marketplaceWrapStandaloneConnectionsResponseSchema,
+  marketplaceWrapStandaloneConnectionsSchema,
   marketplacePluginMutationResponseSchema,
   marketplacePluginParamsSchema,
   marketplacePluginWriteSchema,
@@ -101,6 +108,11 @@ import {
   pluginMembershipWriteSchema,
   pluginMutationResponseSchema,
   pluginParamsSchema,
+  pluginServerInstanceCreateSchema,
+  pluginServerInstanceDeleteQuerySchema,
+  pluginServerInstanceMutationResponseSchema,
+  pluginServerInstanceParamsSchema,
+  pluginServerTemplatesResponseSchema,
   pluginUpdateSchema,
   resourceAccessGrantWriteSchema,
 } from "./schemas.js"
@@ -115,6 +127,7 @@ import {
   createConnectorAccount,
   createConnectorInstance,
   createConnectorMapping,
+  configurePluginServerInstance,
   createGithubConnectorAccount,
   createMarketplace,
   createPluginBundle,
@@ -133,6 +146,7 @@ import {
   getMarketplaceDetail,
   getMarketplaceResolved,
   getPluginDetail,
+  listPluginServerTemplates,
   githubSetup,
   listConfigObjectPlugins,
   listConfigObjectVersions,
@@ -162,8 +176,10 @@ import {
   removeConfigObjectFromPlugin,
   removePluginFromMarketplace,
   removePluginMembership,
+  removePluginServerInstance,
   retryConnectorSyncEvent,
   setConfigObjectLifecycle,
+  setConfigObjectStatus,
   setConnectorInstanceLifecycle,
   setMarketplaceLifecycle,
   setPluginLifecycle,
@@ -174,6 +190,7 @@ import {
   updateMarketplace,
   updatePlugin,
   validateGithubTarget,
+  wrapStandaloneExternalMcpConnections,
 } from "./store.js"
 
 type OrgContext = Context<{ Variables: OrgRouteVariables }>
@@ -220,7 +237,7 @@ function routeErrorResponse(c: OrgContext, error: unknown) {
   throw error
 }
 
-function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "patch" | "post", path: string, ...handlers: unknown[]) {
+function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "patch" | "post" | "put", path: string, ...handlers: unknown[]) {
   const routeHandler = handlers.pop() as unknown
   const routeMiddlewares = handlers as unknown[]
   const routeApp = app as unknown as Record<string, (...args: unknown[]) => unknown>
@@ -490,6 +507,35 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         }
       })
   }
+
+  withPluginArchOrgContext(app, "put", pluginArchRoutePaths.configObjectStatus,
+    paramValidator(configObjectParamsSchema),
+    jsonValidator(configObjectStatusUpdateSchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "Set config object status",
+      description: "Toggles whether a config object is active in marketplace/plugin capability surfaces.",
+      responses: {
+        200: jsonResponse("Config object status updated successfully.", configObjectMutationResponseSchema),
+        400: jsonResponse("The status update request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage config objects.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to edit this config object.", forbiddenSchema),
+        404: jsonResponse("The config object could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<z.infer<typeof configObjectParamsSchema>>(c)
+        const body = validJson<z.infer<typeof configObjectStatusUpdateSchema>>(c)
+        return c.json({ ok: true, item: await setConfigObjectStatus({
+          configObjectId: normalizeDenTypeId("configObject", params.configObjectId),
+          context: actorContext(c),
+          status: body.status,
+        }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
 
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectPlugins,
     paramValidator(configObjectParamsSchema),
@@ -854,6 +900,111 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.pluginServerTemplates,
+    paramValidator(pluginParamsSchema),
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "List plugin MCP server templates",
+      description: "Returns MCP server templates, configured instances, and imported skills for a plugin.",
+      responses: {
+        200: jsonResponse("Plugin server templates returned successfully.", pluginServerTemplatesResponseSchema),
+        400: jsonResponse("The plugin path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to view plugin server templates.", unauthorizedSchema),
+        404: jsonResponse("The plugin could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<z.infer<typeof pluginParamsSchema>>(c)
+        return c.json({ item: await listPluginServerTemplates({
+          context: actorContext(c),
+          pluginId: normalizeDenTypeId("plugin", params.pluginId),
+        }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginServerInstances,
+    paramValidator(pluginParamsSchema),
+    jsonValidator(pluginServerInstanceCreateSchema),
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "Configure a plugin MCP server instance",
+      description: "Creates an External MCP Connection for one plugin MCP server template and binds it to the plugin as an instance. API-key, OAuth-client, and config-field credentials cannot be submitted through the agent surface; enter them in the OpenWork Cloud dashboard.",
+      responses: {
+        201: jsonResponse("Plugin MCP server instance configured successfully.", pluginServerInstanceMutationResponseSchema),
+        400: jsonResponse("The server instance request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to configure plugin server instances.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to edit this plugin.", forbiddenSchema),
+        404: jsonResponse("The plugin or config object could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<z.infer<typeof pluginParamsSchema>>(c)
+        const body = validJson<z.infer<typeof pluginServerInstanceCreateSchema>>(c)
+        // Secrets must not travel through chat transcripts: when the caller
+        // is the agent (internal MCP principal), refuse credential material.
+        if (isAgentServerInstanceSecretWrite({
+          apiKey: body.apiKey,
+          fieldValueCount: body.fieldValues?.length ?? 0,
+          oauthClient: body.oauthClient,
+          sessionId: c.get("session")?.id,
+        })) {
+          return c.json({ error: "invalid_request", message: "MCP server credentials cannot be set from the agent. Configure this server in the OpenWork Cloud dashboard under Extensions -> Marketplaces." }, 400)
+        }
+        return c.json({ ok: true, item: await configurePluginServerInstance({
+          access: body.access,
+          apiKey: body.apiKey,
+          authType: body.authType,
+          configObjectId: normalizeDenTypeId("configObject", body.configObjectId),
+          context: actorContext(c),
+          credentialMode: body.credentialMode,
+          fieldValues: body.fieldValues,
+          instanceLabel: body.instanceLabel,
+          name: body.name,
+          oauthClient: body.oauthClient,
+          pluginId: normalizeDenTypeId("plugin", params.pluginId),
+          redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
+          serverKey: body.serverKey,
+        }) }, 201)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "delete", pluginArchRoutePaths.pluginServerInstance,
+    paramValidator(pluginServerInstanceParamsSchema),
+    queryValidator(pluginServerInstanceDeleteQuerySchema),
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "Remove a plugin MCP server instance",
+      description: "Deletes a plugin MCP server instance binding and, by default, its External MCP Connection credentials.",
+      responses: {
+        204: emptyResponse("Plugin MCP server instance removed successfully."),
+        400: jsonResponse("The server instance deletion request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to remove plugin server instances.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to edit this plugin.", forbiddenSchema),
+        404: jsonResponse("The plugin server instance could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<z.infer<typeof pluginServerInstanceParamsSchema>>(c)
+        const query = validQuery<z.infer<typeof pluginServerInstanceDeleteQuerySchema>>(c)
+        await removePluginServerInstance({
+          context: actorContext(c),
+          deleteConnection: query.deleteConnection,
+          instanceId: normalizeDenTypeId("pluginMcpServerInstance", params.instanceId),
+          pluginId: normalizeDenTypeId("plugin", params.pluginId),
+        })
+        return c.body(null, 204)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginGithubMcpImportPreview,
     jsonValidator(githubPluginMcpImportPreviewSchema),
     describeRoute({
@@ -1020,6 +1171,31 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         await requirePluginArchCapability(context, "marketplace.create")
         const body = validJson<any>(c)
         return c.json({ ok: true, item: await createMarketplace({ context, description: body.description, logoUrl: body.logoUrl, name: body.name }) }, 201)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.marketplaceWrapStandaloneConnections,
+    jsonValidator(marketplaceWrapStandaloneConnectionsSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "Wrap standalone MCP connections",
+      description: "Creates marketplace plugin items for standalone External MCP Connections that are not already bound to a plugin.",
+      responses: {
+        200: jsonResponse("Standalone MCP connections wrapped successfully.", marketplaceWrapStandaloneConnectionsResponseSchema),
+        400: jsonResponse("The wrap request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to wrap connections.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to create plugins or edit the marketplace.", forbiddenSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const body = validJson<z.infer<typeof marketplaceWrapStandaloneConnectionsSchema>>(c)
+        return c.json({ ok: true, item: await wrapStandaloneExternalMcpConnections({
+          context: actorContext(c),
+          marketplaceId: body?.marketplaceId,
+        }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }

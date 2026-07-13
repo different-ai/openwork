@@ -42,6 +42,9 @@ export type ExternalMcpConnection = {
   grantedScopes?: string[];
   tenantId?: string | null;
   access: ExternalMcpAccessSummary | null;
+  pluginId?: string | null;
+  serverKey?: string | null;
+  instanceLabel?: string | null;
 };
 
 export type ExternalMcpPreset = {

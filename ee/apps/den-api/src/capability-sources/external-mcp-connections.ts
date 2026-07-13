@@ -3,7 +3,9 @@ import {
   ConnectedAccountTable,
   ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
+  type ExternalMcpConfigValue,
   OrgOAuthClientTable,
+  PluginMcpServerInstanceTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
@@ -58,6 +60,7 @@ export async function createExternalMcpConnection(input: {
   authType: "oauth" | "apikey" | "none"
   credentialMode: "shared" | "per_member"
   apiKey?: string | null
+  configValues?: ExternalMcpConfigValue[] | null
   createdByOrgMembershipId: OrgMembershipId
   access: ExternalMcpAccessInput
 }): Promise<ExternalMcpConnectionRow> {
@@ -70,6 +73,7 @@ export async function createExternalMcpConnection(input: {
     authType: input.authType,
     credentialMode: input.credentialMode,
     apiKey: input.apiKey ?? null,
+    configValues: input.configValues ?? null,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
   })
   await replaceExternalMcpConnectionAccess({
@@ -211,6 +215,9 @@ export async function deleteExternalMcpConnection(input: {
       eq(OrgOAuthClientTable.organizationId, input.organizationId),
       eq(OrgOAuthClientTable.providerId, existing.id),
     ))
+    await tx.delete(PluginMcpServerInstanceTable).where(
+      eq(PluginMcpServerInstanceTable.externalMcpConnectionId, existing.id),
+    )
     await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
     return true
   })

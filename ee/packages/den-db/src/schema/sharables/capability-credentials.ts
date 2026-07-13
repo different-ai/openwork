@@ -9,7 +9,7 @@ import {
   uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core"
-import { denTypeIdColumn, encryptedTextColumn } from "../../columns"
+import { denTypeIdColumn, encryptedColumn, encryptedTextColumn } from "../../columns"
 import { MemberTable, OrganizationTable } from "../org"
 
 /**
@@ -112,6 +112,35 @@ export type ExternalMcpAuthType = (typeof externalMcpAuthTypeValues)[number]
 export const externalMcpCredentialModeValues = ["shared", "per_member"] as const
 export type ExternalMcpCredentialMode = (typeof externalMcpCredentialModeValues)[number]
 
+export type ExternalMcpConfigValue = {
+  headerName?: string
+  key: string
+  queryParam?: string
+  value: string
+}
+
+function parseExternalMcpConfigValues(value: string): ExternalMcpConfigValue[] {
+  const parsed: unknown = JSON.parse(value)
+  if (!Array.isArray(parsed)) return []
+  return parsed.flatMap((entry): ExternalMcpConfigValue[] => {
+    if (typeof entry !== "object" || entry === null) return []
+    const record = Object.fromEntries(Object.entries(entry))
+    if (typeof record.key !== "string" || typeof record.value !== "string") return []
+    return [{
+      key: record.key,
+      value: record.value,
+      ...(typeof record.headerName === "string" ? { headerName: record.headerName } : {}),
+      ...(typeof record.queryParam === "string" ? { queryParam: record.queryParam } : {}),
+    }]
+  })
+}
+
+const encryptedExternalMcpConfigValuesColumn = (columnName: string) =>
+  encryptedColumn<ExternalMcpConfigValue[]>(columnName, {
+    deserialize: parseExternalMcpConfigValues,
+    serialize: (value) => JSON.stringify(value),
+  })
+
 /**
  * "Add any MCP" — an org-level registration of a third-party MCP server.
  * This is what makes Notion (or anything else) just an example rather than a
@@ -145,6 +174,11 @@ export const ExternalMcpConnectionTable = mysqlTable(
     credentialMode: mysqlEnum("credential_mode", externalMcpCredentialModeValues).notNull().default("shared"),
     /** Only set when authType = "apikey". Sent as a Bearer token. */
     apiKey: encryptedTextColumn("api_key"),
+    /**
+     * Optional configured header/query values for schema-driven MCP templates.
+     * These are credential-layer values and never live on plugin objects.
+     */
+    configValues: encryptedExternalMcpConfigValuesColumn("config_values"),
     /**
      * OAuth tokens for authType = "oauth". Unlike ConnectedAccountTable,
      * this is deliberately org-level, not per-member: an external MCP

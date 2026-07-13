@@ -414,6 +414,29 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 }
 
+function requestUrlForConnection(connection: ExternalMcpConnectionRow) {
+  const url = new URL(connection.url)
+  for (const configValue of connection.configValues ?? []) {
+    if (configValue.queryParam) {
+      url.searchParams.set(configValue.queryParam, configValue.value)
+    }
+  }
+  return url
+}
+
+function requestHeadersForConnection(connection: ExternalMcpConnectionRow) {
+  const headers: Record<string, string> = {}
+  if (connection.authType === "apikey" && connection.apiKey) {
+    headers.authorization = `Bearer ${connection.apiKey}`
+  }
+  for (const configValue of connection.configValues ?? []) {
+    if (configValue.headerName) {
+      headers[configValue.headerName] = configValue.value
+    }
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined
+}
+
 function buildTransport(
   connection: ExternalMcpConnectionRow,
   redirectUri: string,
@@ -433,16 +456,15 @@ function buildTransport(
   const lifecycleFetch = lifecycleDeadline
     ? bindExternalMcpFetchToLifecycle(guardedFetch, lifecycleDeadline, diagnostic)
     : guardedFetch
-  const transport = new StreamableHTTPClientTransport(new URL(connection.url), {
+  const headers = requestHeadersForConnection(connection)
+  const transport = new StreamableHTTPClientTransport(requestUrlForConnection(connection), {
     authProvider: provider,
     // SSRF guard: every outbound request (the MCP endpoint itself, but also
     // discovery documents and token endpoints the SDK follows to OTHER
     // hosts) is checked against private/reserved address ranges at request
     // time. Hosted-deployment protection; self-hosted/dev opt out via env.
     fetch: createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint: connection.url, tracker: diagnostic }),
-    requestInit: connection.authType === "apikey" && connection.apiKey
-      ? { headers: { authorization: `Bearer ${connection.apiKey}` } }
-      : undefined,
+    requestInit: headers ? { headers } : undefined,
   })
   return { transport, provider, diagnostic }
 }
