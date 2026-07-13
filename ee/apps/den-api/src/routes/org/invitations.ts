@@ -6,7 +6,6 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { db } from "../../db.js"
-import { resolveInvitationDownloadUrl } from "../../install-links.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
@@ -247,12 +246,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       },
     })
 
-    const downloadUrl = await resolveInvitationDownloadUrl({
-      organizationId: payload.organization.id,
-      createdByUserId: payload.currentMember.userId,
-      metadata: payload.organization.metadata,
-    })
-
     try {
       await sendEmail({
         to: email,
@@ -263,7 +256,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           invitedByEmail: user.email ?? "",
           organizationName: payload.organization.name,
           role,
-          downloadUrl,
         },
       })
     } catch (error) {

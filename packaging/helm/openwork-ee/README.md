@@ -155,7 +155,67 @@ ConfigMap is not used for service identity or auth-like observability values.
 
 OpenTelemetry uses OTLP over `http/protobuf`, with a shared endpoint and
 optional per-signal endpoint overrides. Per-signal exporters default to `otlp`,
-and trace sampling defaults to the standard parent-based always-on sampler:
+and trace sampling defaults to the standard parent-based always-on sampler.
+
+### OpenTelemetry quick start
+
+Before starting, you need:
+
+- An OpenTelemetry Collector or vendor endpoint reachable from the Kubernetes
+  cluster over OTLP HTTP. Port `4318` is the usual Collector port.
+- The endpoint's authentication token or headers, if it requires
+  authentication.
+- `kubectl` and Helm configured for the target cluster.
+
+The chart configures telemetry export from OpenWork; it does not install an
+OpenTelemetry Collector. For an in-cluster Collector, use its Kubernetes DNS
+name, for example
+`http://otel-collector.observability.svc.cluster.local:4318`. Do not use
+`localhost`, because that would refer to the OpenWork container itself.
+
+First create the namespace used by this example:
+
+```bash
+kubectl create namespace openwork
+```
+
+If the Collector does not require authentication, skip the Secret and leave
+`observability.otel.headers.existingSecret` empty.
+
+If it requires a bearer token, create the header Secret in the **same
+namespace as OpenWork**:
+
+```bash
+kubectl create secret generic openwork-otel-headers \
+  --namespace openwork \
+  --from-literal=OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <token>'
+```
+
+Replace `<token>` with the real token. Keep the single quotes so your shell
+passes the complete header as one value. To update an existing Secret without
+deleting it first, use:
+
+```bash
+kubectl create secret generic openwork-otel-headers \
+  --namespace openwork \
+  --from-literal=OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <token>' \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Multiple OTLP headers use the standard comma-separated `key=value` format:
+
+```bash
+kubectl create secret generic openwork-otel-headers \
+  --namespace openwork \
+  --from-literal=OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <token>,x-scope-orgid=<tenant>'
+```
+
+Do not put tokens directly in a values file. Kubernetes Secrets are not
+encrypted by default unless your cluster enables encryption at rest, so use
+your organization's external-secret or secret-management system in production
+when available.
+
+Create `values-observability.yaml`:
 
 ```yaml
 observability:
@@ -164,7 +224,7 @@ observability:
     denApi: openwork-den-api
     denWeb: openwork-den-web
   otel:
-    endpoint: "https://otel-collector.example.com/otlp"
+    endpoint: "http://otel-collector.observability.svc.cluster.local:4318"
     tracesEndpoint: ""
     metricsEndpoint: ""
     logsEndpoint: ""
@@ -179,9 +239,94 @@ observability:
       key: OTEL_EXPORTER_OTLP_HEADERS
 ```
 
+For a Collector without authentication, use:
+
+```yaml
+    headers:
+      existingSecret: ""
+      key: OTEL_EXPORTER_OTLP_HEADERS
+```
+
+Install or upgrade OpenWork with the values file:
+
+```bash
+helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
+  --namespace openwork \
+  --create-namespace \
+  --values values-observability.yaml
+```
+
 `observability.otel.headers.existingSecret` must name an existing Kubernetes
 Secret. Its key is exposed as `OTEL_EXPORTER_OTLP_HEADERS` only on `den-api` and
 `den-web`; it is not added to inference pods or migration Jobs.
+
+### Verify the OpenTelemetry setup
+
+The commands below assume the Helm release is named `openwork-ee`. If you use a
+different release name, run `kubectl get deployments,services --namespace
+openwork` to find the generated resource names.
+
+Confirm that the workloads are ready:
+
+```bash
+kubectl get pods --namespace openwork
+kubectl rollout status deployment/openwork-ee-den-api --namespace openwork
+kubectl rollout status deployment/openwork-ee-den-web --namespace openwork
+```
+
+Inspect the rendered environment references without printing the Secret's
+value:
+
+```bash
+kubectl describe deployment/openwork-ee-den-api --namespace openwork
+kubectl describe deployment/openwork-ee-den-web --namespace openwork
+```
+
+Look for `DEN_OBSERVABILITY_BACKEND=otel`, distinct `OTEL_SERVICE_NAME` values,
+the OTLP endpoint, and an `OTEL_EXPORTER_OTLP_HEADERS` reference to
+`openwork-otel-headers`.
+
+Generate a request that crosses both services. Keep this port-forward running:
+
+```bash
+kubectl port-forward service/openwork-ee-den-web 3005:3005 --namespace openwork
+```
+
+In another terminal:
+
+```bash
+curl --fail --silent --show-error \
+  http://127.0.0.1:3005/api/den/openapi.json >/dev/null
+```
+
+Your observability backend should show `openwork-den-web` and
+`openwork-den-api`, with one connected trace for the request. Logs from both
+services carry trace and span IDs. Den API also exports Hono request-duration
+and active-request metrics.
+
+### Endpoint and troubleshooting notes
+
+- `observability.otel.endpoint` is a base endpoint. OpenWork appends
+  `/v1/traces`, `/v1/metrics`, and `/v1/logs`.
+- Signal-specific endpoints are used exactly as written. Include the full
+  signal path, such as `https://collector.example.com/v1/traces`.
+- Only OTLP HTTP/protobuf is supported. Port `4317` is normally OTLP gRPC and
+  will not work; use the HTTP receiver, usually port `4318`.
+- The Secret must be in the OpenWork release namespace, and its key must match
+  `observability.otel.headers.key` exactly.
+- A `401` or `403` exporter error usually means the token or header syntax is
+  wrong. A connection error usually means the endpoint is not reachable from
+  the pod or a NetworkPolicy blocks it.
+- After changing an externally managed Secret, restart the deployments if your
+  secret controller does not trigger a rollout:
+
+  ```bash
+  kubectl rollout restart deployment/openwork-ee-den-api --namespace openwork
+  kubectl rollout restart deployment/openwork-ee-den-web --namespace openwork
+  ```
+- For lower production trace volume, use
+  `tracesSampler: parentbased_traceidratio` with `tracesSamplerArg: "0.1"` to
+  sample approximately ten percent of root traces.
 
 For Sentry runtime capture, configure the DSN directly or through an existing
 Secret. Helm runtime pods intentionally do not receive `SENTRY_AUTH_TOKEN`,
