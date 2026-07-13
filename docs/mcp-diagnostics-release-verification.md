@@ -1,143 +1,130 @@
-# MCP diagnostics release verification
-
-## Current status
-
-**Verification is just starting.** This branch is the controlled integration
-branch for the MCP diagnostics program. It is intentionally based on upstream
-`dev` and does not contain any of the three implementation branches yet.
+# MCP diagnostics controlled release
 
 Parent draft: [#2674](https://github.com/different-ai/openwork/pull/2674).
 
-The goal is to let Jalil review one understandable capability at a time,
-record what was personally verified, address findings on the source branch,
-and only then integrate that capability here. The parent draft pull request is
-the living status page for that process.
+## Management purpose
 
-## What we set out to build
+This branch is the controlled destination and verification ledger for the MCP
+diagnostics program. It records four different states deliberately:
 
-The program has three levels:
+1. implemented on a source branch;
+2. verified by automation;
+3. personally verified and understood by Jalil; and
+4. integrated into the controlled release.
 
-1. Structured MCP connection errors that identify the failed phase, safe error
-   code, responsible owner, and recommended action.
-2. A deterministic enterprise MCP server for ServiceNow and Microsoft-style
-   OAuth, protocol, session, catalog, and fault testing without customer data.
-3. Live Den-side diagnostic tracing that shows progress, highest proven health,
-   first failure, safe evidence, authorization continuation, and remediation.
+Automation can reduce risk, but it never changes Jalil's verification state or
+authorizes a merge by itself.
 
-## Source pull requests
+## Program goals
 
-| Level | Source pull request | Implemented | Technical review | Verified by Jalil | Integrated here |
-| --- | --- | --- | --- | --- | --- |
-| Structured errors | [#2669](https://github.com/different-ai/openwork/pull/2669) | Yes | Changes requested | Not started | No |
-| Enterprise mock | [#2670](https://github.com/different-ai/openwork/pull/2670) | Yes | Changes requested | Not started | No |
-| Live tracing | [#2672](https://github.com/different-ai/openwork/pull/2672) | Yes | Passed with documented operational limitations | Not started | No |
+The program has three user-facing levels:
 
-Passing isolated tests does not automatically change **Verified by Jalil**.
-That column changes only after Jalil reviews the relevant demonstration and
-accepts the behavior and any limitations.
+1. **Clear failure source:** identify where an MCP connection failed, who owns
+   the next action, and a safe diagnostic reference.
+2. **Enterprise development fixture:** reproduce Microsoft- and ServiceNow-style
+   OAuth/MCP behavior and controlled faults without customer data.
+3. **Live diagnostic mode:** show connection phases in real time, preserve the
+   highest proven health and real first failure, and support repair/retry.
 
-## Findings that must be managed
+The work also established a package-first outbound client boundary. Reusable
+MCP behavior belongs in a package; Den provides guarded network access,
+encrypted persistence, organization/member authority, and public diagnostics
+through explicit adapters.
 
-### Level 1: structured errors
+## Current status
 
-Three focused issues were found:
+| Area | Source | Automated state | Jalil verification | Integration state |
+| --- | --- | --- | --- | --- |
+| Structured MCP diagnostics | [#2669](https://github.com/different-ai/openwork/pull/2669) | Passed | Initial error-source behavior reviewed | **Merged into upstream `dev`** |
+| Native Microsoft 365 OAuth errors | [#2698](https://github.com/different-ai/openwork/pull/2698) | Focused tests and typecheck passed | Real Connect succeeded after replacing the secret value | Draft |
+| Enterprise mock package and lab | [#2670](https://github.com/different-ai/openwork/pull/2670) | 162 package and 20 lab tests passed | Lab opened; Den-to-mock walkthrough not complete | Draft |
+| Package-first enterprise client | [#2694](https://github.com/different-ai/openwork/pull/2694) | Source and Den matrices passed | Manual end-to-end review not complete | Draft |
+| Client/mock combined proof | [#2699](https://github.com/different-ai/openwork/pull/2699) | Four provider scenarios; 27 client tests passed | Manual replay not complete | Verification-only draft |
+| Live diagnostic tracing | [#2672](https://github.com/different-ai/openwork/pull/2672) | Earlier focused proof passed | Not started | Draft; refresh before review |
 
-- local OAuth callbacks can use Den Web instead of Den API;
-- an OAuth exchange can outlive its diagnostic deadline and write credentials
-  after the timeout response;
-- the detailed diagnostic owner and the higher-level user action can disagree.
+## Real Microsoft 365 learning
 
-These are high-priority but localized fixes. Level 1 should not be integrated
-until each issue has a regression test and its demonstration is reviewed.
+The browser authorization and callback succeeded, but token exchange returned
+HTTP 401. The old message only said `Token request failed with status 401`.
+Microsoft's safe response identified `invalid_client` / `AADSTS7000215`: the
+client secret value must be configured, not the secret ID. After the active
+secret value was supplied, Jalil confirmed the connection succeeded.
 
-### Level 2: enterprise mock
+#2698 maps that provider signal to a precise, safe administrator action and a
+Den diagnostic reference without exposing secrets or raw provider bodies.
 
-The default confidential-client profiles can select `client_secret_basic`
-while the profile requires `client_secret_post`. The DCR demonstration avoids
-that path, so the realistic manual/pre-registered enterprise flow still needs
-a direct Den SDK regression test and correction.
+Azure local development also confirmed the exact callback shape:
 
-The mock also simplifies provider-specific OAuth endpoint paths. Exact
-ServiceNow and Microsoft endpoint fidelity will be tracked separately after
-the primary client-authentication path is correct.
+```text
+http://localhost:<den-api-port>/v1/oauth-providers/microsoft-365/connect/callback
+```
 
-### Level 3: live tracing
+#2670 accepts exact HTTP OAuth callbacks on `localhost`, `127.0.0.1`, and
+`[::1]`. The mock lab's protected admin origin deliberately remains literal
+`127.0.0.1`; the admin origin and OAuth callback are separate trust boundaries.
 
-No new merge-blocking correctness defect was found. Its main limitations are
-operational: active diagnostics are not fully restart- or instance-durable,
-there is no per-organization concurrency limit yet, completion audits may be
-duplicated, and SSE resume can be improved.
+## Combined verification finding
 
-These limitations must be either accepted for the initial release or fixed
-before Level 3 is integrated.
+The package-first client/mock rehearsal found that a token-exchange 401 could
+be followed by a successful metadata request. The later successful request
+overwrote the recorded request phase, so the administrator could be directed
+to discovery instead of the incorrect client secret.
 
-### Combined integration
+#2694 now tracks request progress and failed-request evidence separately.
+#2699 proves that wrong-secret Microsoft and ServiceNow scenarios both retain
+`oauth-token-exchange`, while healthy flows complete OAuth, MCP initialization,
+catalog loading, and a safe read through the packages' public exports.
 
-The three source branches modify overlapping MCP client, URL guard, route, UI,
-mock, and diagnostic-model files. They cannot be combined safely by accepting
-merge conflicts mechanically. This parent branch will choose one coherent
-implementation for each overlap and run the union of all tests after every
-integration step.
+## What remains open
+
+- Jalil's manual healthy and wrong-secret ServiceNow mock walkthrough.
+- Jalil's manual healthy and wrong-secret Microsoft Enterprise walkthrough.
+- Live Microsoft Enterprise MCP and live ServiceNow tenant verification.
+- Refresh and review of live tracing against current upstream `dev`.
+- Maintainer decisions on package naming, adapters, rollout policy, and the
+  explicit mock-versus-live evidence boundary.
+
+The deterministic mock does not prove a customer's licensing, consent,
+Conditional Access, ACLs, proxy/CA, egress policy, region, patch level, or
+provider business behavior. Those require approved nonproduction tenants.
 
 ## Controlled verification process
 
-For each level:
+For each checkpoint:
 
-1. Jalil selects the next capability to review.
-2. The source PR is updated to fix its known blockers.
-3. Focused automated tests and a fresh user-visible proof are run.
-4. Jalil reviews the short demonstration and records what is understood and
-   accepted.
-5. Only the verified change is integrated into this parent branch.
-6. This ledger and the parent pull request are updated with the commit, proof,
-   accepted limitations, and remaining work.
-7. The combined parent branch is retested before selecting the next level.
+1. Jalil selects one visible behavior to understand.
+2. Start only the isolated services required for that behavior.
+3. Record **verified**, **needs changes**, or **deferred** here.
+4. Integrate only accepted source commits into this branch.
+5. Rerun cumulative package, Den, and browser checks.
+6. Update this ledger before selecting the next capability.
 
-After all three levels are integrated, the final gate is one connected journey:
+## Recommended next checkpoint
 
-```text
-Add enterprise mock connection
--> complete OAuth
--> test protocol and catalog readiness
--> run live diagnosis
--> inject a failure
--> identify the exact failing phase
--> repair the mock
--> retry successfully
-```
+Start with ServiceNow mock onboarding:
 
-Approved nonproduction ServiceNow and Microsoft tenants are a later provider
-verification stage. Local mock success alone will not be described as real
-provider conformance.
+1. create a healthy fixture;
+2. register Den's exact `localhost` callback;
+3. connect and confirm catalog readiness;
+4. switch to invalid client/wrong secret;
+5. confirm Den identifies OAuth token exchange and the organization-admin action;
+6. recover to healthy; and
+7. repeat the same story with Microsoft Enterprise.
 
-## Parent branch rules
-
-- Base every parent update on current upstream `dev`.
-- Keep this branch on Jalil's fork; do not push feature branches to upstream.
-- Do not integrate a source PR while its selected blocker is unresolved.
-- Do not label a capability user-verified based only on CI or agent review.
-- Keep secrets, raw OAuth values, session identifiers, and customer content
-  out of evidence and pull-request discussions.
-- Update this document and the parent draft description after every checkpoint.
-
-GitHub only permits a pull request to use branches in its base repository as
-its literal base. Because this parent branch intentionally exists only on
-Jalil's fork, the existing upstream source PRs remain based on upstream `dev`.
-Their descriptions link back to the parent release PR, and verified changes
-are integrated into this branch only after approval.
+Review live tracing only after the underlying package connection and failure
+story is understood.
 
 ## Verification log
 
 | Date | Checkpoint | Result |
 | --- | --- | --- |
-| 2026-07-11 | Parent integration branch created from current upstream `dev` | Complete |
-| 2026-07-11 | Parent draft opened and linked from all three source PRs | Complete |
-| 2026-07-11 | Initial technical review of the three source PRs recorded | Complete |
-| 2026-07-11 | Jalil-led capability verification | Not started |
-| 2026-07-11 | Implementation merged into parent | None |
+| 2026-07-11 | Controlled feature branch and parent draft created | Complete |
+| 2026-07-11 | Original three-level automated integration rehearsal | Passed in [#2675](https://github.com/different-ai/openwork/pull/2675) |
+| 2026-07-12 | Structured diagnostics landed in upstream `dev` | Complete via #2669 |
+| 2026-07-12 | Real native Microsoft 365 OAuth | Connected after correct secret value was configured |
+| 2026-07-12 | Mock aligned to Azure localhost and provider-specific wrong-secret errors | Automated checks passed |
+| 2026-07-12 | Package client tested against ServiceNow and Microsoft mocks | Passed in #2699; failure-phase bug found and fixed |
+| 2026-07-12 | Jalil manual Den-to-mock verification | Next checkpoint |
 
-## Next decision
-
-Jalil selects whether to begin with structured errors, the enterprise mock, or
-live tracing. The recommended starting point is structured errors because it
-defines the diagnostic language consumed by the later levels.
+Secrets, OAuth codes, tokens, session identifiers, customer hostnames, and
+customer content must remain outside commits, PR descriptions, and evidence.
