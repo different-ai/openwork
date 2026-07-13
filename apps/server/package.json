@@ -1,6 +1,7 @@
 {
   "name": "openwork-server",
   "version": "0.17.20",
+  "private": true,
   "description": "Filesystem-backed API for OpenWork remote clients",
   "type": "module",
   "bin": {
@@ -21,15 +22,12 @@
     "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
     "prebuild:bin:all": "pnpm run build:composition-deps",
     "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64 --target bun-windows-arm64",
+    "publish:npm": "node scripts/publish-npm.mjs",
+    "publish:npm:dry-run": "pnpm build:bin:all && node scripts/publish-npm.mjs --dry-run",
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepublishOnly": "pnpm build:bin"
+    "prepublishOnly": "node -e \"console.error('openwork-server is published via apps/server/scripts/publish-npm.mjs (meta + platform packages)'); process.exit(1)\""
   },
-  "files": [
-    "bin",
-    "dist",
-    "README.md"
-  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/different-ai/openwork.git",
@@ -47,9 +45,6 @@
     "cli"
   ],
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
-  },
   "exports": {
     ".": "./src/index.ts"
   },

@@ -767,23 +767,40 @@ jobs:
           set -euo pipefail
           # npm view exits non-zero for packages that don't exist yet (404).
           # Treat missing packages as "not published" so release can publish them.
-          orchestrator_current="$(npm view openwork-orchestrator version 2>/dev/null || true)"
-          server_current="$(npm view openwork-server version 2>/dev/null || true)"
+          orchestrator_current="$(npm view "openwork-orchestrator@${ORCHESTRATOR_VERSION}" version 2>/dev/null || true)"
 
+          publish_orchestrator=false
           if [ "$orchestrator_current" = "$ORCHESTRATOR_VERSION" ]; then
-            echo "publish_orchestrator=false" >> "$GITHUB_OUTPUT"
+            publish_orchestrator=false
           else
-            echo "publish_orchestrator=true" >> "$GITHUB_OUTPUT"
+            publish_orchestrator=true
           fi
+          echo "publish_orchestrator=$publish_orchestrator" >> "$GITHUB_OUTPUT"
 
-          if [ "$server_current" = "$SERVER_VERSION" ]; then
-            echo "publish_server=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish_server=true" >> "$GITHUB_OUTPUT"
-          fi
+          # The server is a meta package plus six exact-version platform
+          # packages. Checking only the meta package can hide an interrupted
+          # release, so any missing member makes the server publication run.
+          server_packages=(
+            openwork-server
+            openwork-server-darwin-arm64
+            openwork-server-darwin-x64
+            openwork-server-linux-x64
+            openwork-server-linux-arm64
+            openwork-server-windows-x64
+            openwork-server-windows-arm64
+          )
+          publish_server=false
+          for package_name in "${server_packages[@]}"; do
+            current="$(npm view "${package_name}@${SERVER_VERSION}" version 2>/dev/null || true)"
+            if [ "$current" != "$SERVER_VERSION" ]; then
+              publish_server=true
+              echo "${package_name}@${SERVER_VERSION} is not published yet"
+            fi
+          done
+          echo "publish_server=$publish_server" >> "$GITHUB_OUTPUT"
 
           publish_any=false
-          if [ "$orchestrator_current" != "$ORCHESTRATOR_VERSION" ] || [ "$server_current" != "$SERVER_VERSION" ]; then
+          if [ "$publish_orchestrator" = "true" ] || [ "$publish_server" = "true" ]; then
             publish_any=true
           fi
           echo "publish_any=$publish_any" >> "$GITHUB_OUTPUT"
@@ -811,9 +828,11 @@ jobs:
           npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
           echo "enabled=true" >> "$GITHUB_OUTPUT"
 
-      - name: Publish openwork-server
+      - name: Publish openwork-server packages
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
-        run: pnpm --filter openwork-server publish --access public --no-git-checks
+        run: |
+          pnpm --filter openwork-server build:bin:all
+          node apps/server/scripts/publish-npm.mjs
 
       - name: Publish openwork-orchestrator
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_orchestrator == 'true'
