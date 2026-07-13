@@ -1,16 +1,13 @@
 const SEARCH_HIGHLIGHT_MARK_ATTR = "data-search-highlight";
+export const SEARCH_HIGHLIGHT_SELECTOR = `mark[${SEARCH_HIGHLIGHT_MARK_ATTR}="true"]`;
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-function clearTextHighlights(root: HTMLElement) {
-  const marks = root.querySelectorAll(`mark[${SEARCH_HIGHLIGHT_MARK_ATTR}="true"]`);
+export function clearTextHighlights(root: HTMLElement) {
+  const marks = root.querySelectorAll(SEARCH_HIGHLIGHT_SELECTOR);
 
   for (const mark of marks) {
     const parent = mark.parentNode;
-    
-    if (!parent) {
-      continue;
-    }
-
+    if (!parent) continue;
     parent.replaceChild(document.createTextNode(mark.textContent ?? ""), mark);
   }
 
@@ -19,42 +16,25 @@ function clearTextHighlights(root: HTMLElement) {
 
 export function applyTextHighlights(root: HTMLElement, query: string) {
   const needle = query.trim().toLowerCase();
-  // Fast path: if search is inactive, avoid walking large message DOM trees.
-  // We only need to clear existing marks if a previous search actually added
-  // some.
+
   if (!needle) {
-    if (root.querySelector(`mark[${SEARCH_HIGHLIGHT_MARK_ATTR}="true"]`)) {
+    if (root.querySelector(SEARCH_HIGHLIGHT_SELECTOR)) {
       clearTextHighlights(root);
     }
-    
     return;
   }
 
   clearTextHighlights(root);
-
   const needlePattern = new RegExp(escapeRegExp(needle), "g");
-
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
-      const value = node.nodeValue;
-
-      if (!value || !value.trim()) {
-        return NodeFilter.FILTER_REJECT;
-      }
+      const value = node.nodeValue ?? "";
+      if (!value.trim()) return NodeFilter.FILTER_REJECT;
 
       const parent = node.parentElement;
-
-      if (!parent) {
-        return NodeFilter.FILTER_REJECT;
-      }
-
-      if (parent.closest("pre, code")) {
-        return NodeFilter.FILTER_REJECT;
-      }
-
-      if (parent.tagName === "SCRIPT" || parent.tagName === "STYLE") {
-        return NodeFilter.FILTER_REJECT;
-      }
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      if (parent.closest("pre, code")) return NodeFilter.FILTER_REJECT;
+      if (parent.tagName === "SCRIPT" || parent.tagName === "STYLE") return NodeFilter.FILTER_REJECT;
 
       return value.toLowerCase().includes(needle)
         ? NodeFilter.FILTER_ACCEPT
@@ -65,7 +45,7 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
   const nodes: Text[] = [];
   let current = walker.nextNode();
   while (current) {
-    nodes.push(current as Text);
+    if (current instanceof Text) nodes.push(current);
     current = walker.nextNode();
   }
 
@@ -89,7 +69,7 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
       fragment.appendChild(mark);
       searchIndex = matchIndex + needle.length;
     }
-    
+
     if (searchIndex < text.length) {
       fragment.appendChild(document.createTextNode(text.slice(searchIndex)));
     }
