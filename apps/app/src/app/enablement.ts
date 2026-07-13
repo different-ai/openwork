@@ -55,7 +55,7 @@ function evaluateCondition(condition: EnablementCondition, ctx: EnablementContex
  * Returns per-condition results and an overall `active` boolean.
  */
 export function evaluateEnablement(
-  conditions: EnablementCondition[] | undefined,
+  conditions: readonly EnablementCondition[] | undefined,
   ctx: EnablementContext,
 ): { active: boolean; results: EnablementResult[] } {
   if (!conditions || conditions.length === 0) {

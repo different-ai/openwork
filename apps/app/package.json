@@ -49,6 +49,8 @@
     "@heroicons/react": "^2.2.0",
     "@lexical/react": "^0.35.0",
     "@opencode-ai/sdk": "^1.17.11",
+    "@openwork/contribution-registry": "workspace:*",
+    "@openwork/extension-contracts": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
     "@paper-design/shaders-react": "0.0.72",

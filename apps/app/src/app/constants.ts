@@ -67,7 +67,7 @@ function extensionManifestToDirectoryInfo(manifest: OpenWorkExtensionManifest): 
     serverName: mcpResource?.mcpServerName ?? manifest.id,
     description: manifest.description,
     type: mcpResource?.command ? "local" : undefined,
-    command: mcpResource?.command,
+    command: mcpResource?.command ? [...mcpResource.command] : undefined,
     oauth: false,
     kind: "extension",
     iconSlug: manifest.icon?.simpleIconSlug,

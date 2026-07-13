@@ -15,7 +15,7 @@ src/
 │   │   ├── runtime-env.ts     Leaf: isElectronRuntime/isDesktopRuntime
 │   │   ├── desktop-types.ts   Leaf: desktop IPC wire types (WorkspaceInfo = shared WorkspaceWire)
 │   │   └── den-types.ts       Leaf: Den wire types (den.ts re-exports)
-│   ├── extensions.ts          Leaf: extension manifest contract (owns ReloadReason)
+│   ├── extensions.ts          Adapter: canonical extension contracts + built-in catalog
 │   ├── types.ts               Shared app types (type-only imports of leaves)
 │   ├── constants.ts, utils/   Shared constants/helpers
 │   └── cloud/, session/, …    Framework-free feature helpers
@@ -42,8 +42,9 @@ src/
 1. `src/app/` and `src/i18n/` never import from `src/react-app/` or
    `src/components/`. If something in the agnostic layer needs UI behavior,
    invert it (callback registration) or move the primitive down.
-2. Leaf modules (`runtime-env`, `desktop-types`, `den-types`, `extensions`)
-   import nothing (or types-only from other leaves). Low-level clients
+2. Leaf modules (`runtime-env`, `desktop-types`, `den-types`) import nothing
+   (or types-only from other leaves). `extensions` may import only the
+   browser-safe `@openwork/extension-contracts` package. Low-level clients
    (`opencode`, `openwork-server`, `den`) import leaves — never the `utils/`
    barrel (it drags in i18n).
 3. `kernel/` and `infra/` sit below `domains/`: they must not import domain

@@ -1,155 +1,38 @@
-// Owned here: reload vocabulary is part of the extension manifest contract.
-// types.ts re-exports it for the rest of the app.
-export type ReloadReason = "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
+import { openWorkExtensionManifestCatalogV1Schema } from "@openwork/extension-contracts";
 
-export type OpenWorkExtensionSourceFormat =
-  | "openwork-builtin"
-  | "openwork-extension-manifest"
-  | "claude-plugin"
-  | "opencode-plugin"
-  | "mcp-directory"
-  | "manual";
+export {
+  extensionContribution,
+  extensionEnablementCondition,
+  extensionManifestById,
+  extensionResource,
+  isTrustedBuiltInExtension,
+} from "@openwork/extension-contracts";
 
-export type OpenWorkExtensionSource = {
-  format: OpenWorkExtensionSourceFormat;
-  trusted: boolean;
-  origin?: "builtin" | "den" | "workspace" | "local";
-  reference?: string;
-};
+export type {
+  EnablementCondition,
+  EnablementConditionType,
+  EnablementResult,
+  OpenWorkExtensionComposer,
+  OpenWorkExtensionContribution,
+  OpenWorkExtensionContributionLocation,
+  OpenWorkExtensionContributionType,
+  OpenWorkExtensionIcon,
+  OpenWorkExtensionLifecycle,
+  OpenWorkExtensionLocalCommandRef,
+  OpenWorkExtensionManifest,
+  OpenWorkExtensionManifestV1,
+  OpenWorkExtensionPlatform,
+  OpenWorkExtensionResource,
+  OpenWorkExtensionResourceType,
+  OpenWorkExtensionSetup,
+  OpenWorkExtensionSource,
+  OpenWorkExtensionSourceFormat,
+  OpenWorkExtensionSourceOrigin,
+  ReloadReason,
+} from "@openwork/extension-contracts";
 
-export type OpenWorkExtensionResourceType =
-  | "skill"
-  | "agent"
-  | "command"
-  | "tool"
-  | "mcp"
-  | "opencode-plugin"
-  | "provider"
-  | "hook"
-  | "context"
-  | "secret"
-  | "file"
-  | "local-service"
-  | "native-binary";
-
-export type OpenWorkExtensionResource = {
-  type: OpenWorkExtensionResourceType;
-  id: string;
-  label?: string;
-  description?: string;
-  path?: string;
-  command?: string[];
-  envKey?: string;
-  packageName?: string;
-  providerId?: string;
-  mcpServerName?: string;
-  localCommandRef?: "openwork.computerUseMcp" | "openwork.uiMcp";
-  required?: boolean;
-};
-
-export type OpenWorkExtensionContributionType =
-  | "settings-panel"
-  | "setup-instructions"
-  | "composer-prompt"
-  | "session-side-panel"
-  | "session-rail-item"
-  | "control-actions"
-  | "server-route"
-  | "native-capability"
-  | "test-action";
-
-export type OpenWorkExtensionContribution = {
-  type: OpenWorkExtensionContributionType;
-  ref?: string;
-  label?: string;
-  description?: string;
-  prompt?: string;
-  location?: "settings-detail" | "composer" | "session-right-pane" | "session-rail" | "server" | "native";
-};
-
-export type OpenWorkExtensionSetup = {
-  instructions?: string;
-  primaryCta?: string;
-  secondaryCta?: string;
-  requiredEnv?: string[];
-  testActionRef?: string;
-};
-
-export type OpenWorkExtensionLifecycle = {
-  reload?: ReloadReason[];
-  detection?: string[];
-};
-
-// ---------------------------------------------------------------------------
-// Enablement — declarative conditions for extension "active" state
-// ---------------------------------------------------------------------------
-
-export type EnablementConditionType =
-  | "mcp-connected"
-  | "plugin-loaded"
-  | "provider-connected"
-  | "env-set"
-  | "permission-granted"
-  | "toggle-enabled";
-
-export type EnablementCondition = {
-  type: EnablementConditionType;
-  /** What to check — MCP server name, plugin id, env key, etc. */
-  ref: string;
-  /** Human-readable label shown in the UI. */
-  label: string;
-};
-
-/** Result of evaluating a single enablement condition at runtime. */
-export type EnablementResult = {
-  condition: EnablementCondition;
-  met: boolean;
-};
-
-export type OpenWorkExtensionManifest = {
-  schemaVersion: 1;
-  id: string;
-  name: string;
-  description: string;
-  preview?: boolean;
-  source: OpenWorkExtensionSource;
-  icon?: {
-    src?: string;
-    simpleIconSlug?: string;
-  };
-  composer?: {
-    prompt: string;
-  };
-  setup?: OpenWorkExtensionSetup;
-  resources: OpenWorkExtensionResource[];
-  contributions?: OpenWorkExtensionContribution[];
-  lifecycle?: OpenWorkExtensionLifecycle;
-  /** Declarative conditions that must ALL be true for the extension to be "active". */
-  enablement?: EnablementCondition[];
-  defaultEnabled?: boolean;
-  defaultHidden?: boolean;
-  platform?: Array<"darwin" | "linux" | "windows" | "web">;
-};
-
-export function extensionContribution(
-  manifest: OpenWorkExtensionManifest | undefined,
-  type: OpenWorkExtensionContributionType,
-): OpenWorkExtensionContribution | undefined {
-  return manifest?.contributions?.find((contribution) => contribution.type === type);
-}
-
-export function extensionResource(
-  manifest: OpenWorkExtensionManifest | undefined,
-  type: OpenWorkExtensionResourceType,
-): OpenWorkExtensionResource | undefined {
-  return manifest?.resources.find((resource) => resource.type === type);
-}
-
-export function isTrustedBuiltInExtension(manifest: OpenWorkExtensionManifest | undefined): boolean {
-  return manifest?.source.origin === "builtin" && manifest.source.trusted;
-}
-
-export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] = [
+/** Built-ins are parsed once so local descriptors obey the same wire contract as Den payloads. */
+export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS = openWorkExtensionManifestCatalogV1Schema.parse([
   {
     schemaVersion: 1,
     id: "openwork-browser",
@@ -353,4 +236,4 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     ],
     lifecycle: { reload: ["config"], detection: ["provider:ollama"] },
   },
-];
+]);

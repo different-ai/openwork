@@ -44,11 +44,13 @@ describe("Den extension projections", () => {
                 id: "plugin_test",
                 name: "Image Tools",
                 description: "Adds an image command.",
+                preview: true,
                 source: {
                   format: "claude-plugin",
                   origin: "den",
                   reference: "plugin_test",
                   trusted: false,
+                  futureSourceField: "ignored",
                 },
                 resources: [{
                   type: "command",
@@ -68,6 +70,15 @@ describe("Den extension projections", () => {
                 lifecycle: {
                   detection: ["command:plugin_test"],
                 },
+                enablement: [{
+                  type: "toggle-enabled",
+                  ref: "plugin_test",
+                  label: "Enabled",
+                }],
+                defaultEnabled: false,
+                defaultHidden: true,
+                platform: ["linux", "web"],
+                futureTopLevelField: "ignored",
               },
             },
           }],
@@ -98,5 +109,17 @@ describe("Den extension projections", () => {
     }]);
     expect(plugin.extension?.manifest?.setup?.instructions).toBe("Install from Den.");
     expect(plugin.extension?.manifest?.contributions?.[0]?.ref).toBe("den.claudePlugin.setup");
+    expect(plugin.extension?.manifest?.preview).toBe(true);
+    expect(plugin.extension?.manifest?.enablement).toEqual([{
+      type: "toggle-enabled",
+      ref: "plugin_test",
+      label: "Enabled",
+    }]);
+    expect(plugin.extension?.manifest?.defaultEnabled).toBe(false);
+    expect(plugin.extension?.manifest?.defaultHidden).toBe(true);
+    expect(plugin.extension?.manifest?.platform).toEqual(["linux", "web"]);
+    expect(plugin.extension?.manifest).not.toHaveProperty("futureTopLevelField");
+    expect(plugin.extension?.manifest?.source).not.toHaveProperty("futureSourceField");
+    expect(Object.isFrozen(plugin.extension?.manifest)).toBe(true);
   });
 });

@@ -28,6 +28,10 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
+import {
+  openWorkExtensionManifestCatalogV1Schema,
+  openWorkExtensionManifestV1Schema,
+} from "@openwork/extension-contracts"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
 import { requirePluginArchResourceRole, resolvePluginArchResourceRole } from "./access.js"
 import {
@@ -626,7 +630,7 @@ type PluginMarketplaceSummary = {
   name: string
 }
 
-const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
+const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = openWorkExtensionManifestCatalogV1Schema.parse([
   {
     schemaVersion: 1,
     id: "openwork-browser",
@@ -738,7 +742,7 @@ const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
     enablement: [{ type: "provider-connected", ref: "ollama", label: "Ollama provider" }],
     lifecycle: { reload: ["config"], detection: ["provider:ollama"] },
   },
-] as const
+])
 
 function defaultOpenWorkManifestForPlugin(row: PluginRow) {
   return DEFAULT_OPENWORK_EXTENSION_MANIFESTS.find((manifest) => manifest.name === row.name && manifest.description === row.description) ?? null
@@ -786,7 +790,7 @@ function serializePluginExtension(row: PluginRow, componentCounts: Record<string
   return {
     description: row.description,
     id: row.id,
-    manifest: {
+    manifest: openWorkExtensionManifestV1Schema.parse({
       schemaVersion: 1,
       id: row.id,
       name: row.name,
@@ -810,7 +814,7 @@ function serializePluginExtension(row: PluginRow, componentCounts: Record<string
       lifecycle: {
         detection: Object.keys(componentCounts).map((objectType) => `${objectType}:${row.id}`),
       },
-    },
+    }),
     name: row.name,
     sourceFormat,
   }

@@ -70,6 +70,12 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.17.11
         version: 1.17.11
+      '@openwork/contribution-registry':
+        specifier: workspace:*
+        version: link:../../packages/contribution-registry
+      '@openwork/extension-contracts':
+        specifier: workspace:*
+        version: link:../../packages/extension-contracts
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -322,6 +328,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.17.11
         version: 1.17.11
+      '@openwork/contribution-registry':
+        specifier: workspace:*
+        version: link:../../packages/contribution-registry
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
@@ -432,6 +441,9 @@ importers:
       '@openwork/enterprise-mcp-client':
         specifier: workspace:*
         version: link:../../../packages/enterprise-mcp-client
+      '@openwork/extension-contracts':
+        specifier: workspace:*
+        version: link:../../../packages/extension-contracts
       '@openwork/install-config':
         specifier: workspace:*
         version: link:../../../packages/install-config
@@ -769,6 +781,21 @@ importers:
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
       typescript:
         specifier: ^5.5.4
+        version: 5.9.3
+
+  packages/contribution-registry:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      tsx:
+        specifier: ^4.15.7
+        version: 4.21.0
+      typescript:
+        specifier: ^5.6.3
         version: 5.9.3
 
   packages/email:
