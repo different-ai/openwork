@@ -1,7 +1,7 @@
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { env } from "./env.js";
-import { deriveDenMcpResource } from "./mcp/resource.js";
+import { deriveDenMcpAgentResource, deriveDenMcpResource, mcpEndpointResource } from "./mcp/resource.js";
 import { getDenAuthIssuer, getDenJwtOptions } from "./mcp/jwt-policy.js";
 import {
   addRequestedMcpClientScopes,
@@ -101,11 +101,15 @@ function apiPublicMcpResource(apiPublicUrl: string | undefined) {
 }
 
 function mcpEndpointResourceAliases(resource: string) {
-  const base = resource.replace(/\/+$/, "");
-  return [`${base}/agent`, `${base}/admin`];
+  return [mcpEndpointResource(resource, "agent"), mcpEndpointResource(resource, "admin")];
 }
 
 export const DEN_MCP_RESOURCE = env.mcpResourceUrl ?? deriveDenMcpResource(env.betterAuthUrl, env.webAppHosts);
+export const DEN_MCP_OAUTH_RESOURCE = deriveDenMcpAgentResource({
+  apiPublicUrl: env.apiPublicUrl,
+  mcpResource: DEN_MCP_RESOURCE,
+});
+export const DEN_MCP_FIRST_PARTY_CLIENT_ID = "openwork-desktop";
 const DEN_API_PUBLIC_MCP_RESOURCES = apiPublicMcpResource(env.apiPublicUrl);
 const DEN_MCP_BASE_RESOURCES = [
   DEN_MCP_RESOURCE,
@@ -119,18 +123,32 @@ const DEN_MCP_BASE_RESOURCES = [
   ...DEN_API_PUBLIC_MCP_RESOURCES.flatMap((resource) => localMcpResourceAliases(resource)),
   ...env.mcpAdditionalResources.flatMap((resource) => localMcpResourceAliases(resource)),
 ];
-export const DEN_MCP_RESOURCES = Array.from(new Set([
+export const DEN_MCP_LEGACY_PARENT_RESOURCES = Array.from(new Set(DEN_MCP_BASE_RESOURCES));
+export const DEN_MCP_FIRST_PARTY_RESOURCES = Array.from(new Set([
   ...DEN_MCP_BASE_RESOURCES,
   // rmcp uses the configured concrete endpoint as the OAuth resource during
   // token exchange. Accept the two registered child endpoints as aliases of
   // their canonical parent resource.
   ...DEN_MCP_BASE_RESOURCES.flatMap((resource) => mcpEndpointResourceAliases(resource)),
 ]));
+export const DEN_MCP_RESOURCES = Array.from(new Set([
+  DEN_MCP_OAUTH_RESOURCE,
+  ...DEN_MCP_FIRST_PARTY_RESOURCES,
+]));
+export const DEN_MCP_OAUTH_VALID_AUDIENCES = [DEN_MCP_OAUTH_RESOURCE];
 export const DEN_MCP_TOKEN_USE_CLAIM = `${env.mcpClaimNamespace}/token_use`;
 export const DEN_MCP_ORG_ID_CLAIM = `${env.mcpClaimNamespace}/org_id`;
 export const DEN_MCP_RESOURCE_CLAIM = `${env.mcpClaimNamespace}/resource`;
 export const DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX = "ow_mcp_at_";
 export { DEN_MCP_SCOPES } from "./mcp/scopes.js";
+
+export function normalizeMcpOAuthResource(resource: string): string | null {
+  const normalized = resource.replace(/\/+$/, "");
+  if (normalized === DEN_MCP_OAUTH_RESOURCE) {
+    return DEN_MCP_OAUTH_RESOURCE;
+  }
+  return DEN_MCP_FIRST_PARTY_RESOURCES.includes(normalized) ? DEN_MCP_OAUTH_RESOURCE : null;
+}
 
 type AuthMemberHookRow = typeof schema.MemberTable.$inferSelect;
 
@@ -638,7 +656,7 @@ export const auth = betterAuth({
       loginPage: env.betterAuthUrl,
       consentPage: `${env.betterAuthUrl}/mcp/select-organization`,
       scopes: [...DEN_MCP_SCOPES],
-      validAudiences: DEN_MCP_RESOURCES,
+      validAudiences: DEN_MCP_OAUTH_VALID_AUDIENCES,
       allowPublicClientPrelogin: true,
       allowDynamicClientRegistration: true,
       allowUnauthenticatedClientRegistration: true,
@@ -683,9 +701,10 @@ export const auth = betterAuth({
       },
       customAccessTokenClaims: ({ referenceId, resource, scopes }) => {
         const claims: Record<string, string> = {};
-        if (hasMcpScope(scopes) || resource === DEN_MCP_RESOURCE) {
+        const mcpResource = typeof resource === "string" ? normalizeMcpOAuthResource(resource) : null;
+        if (hasMcpScope(scopes) || mcpResource) {
           claims[DEN_MCP_TOKEN_USE_CLAIM] = "mcp";
-          claims[DEN_MCP_RESOURCE_CLAIM] = resource ?? DEN_MCP_RESOURCE;
+          claims[DEN_MCP_RESOURCE_CLAIM] = mcpResource ?? DEN_MCP_OAUTH_RESOURCE;
         }
         if (referenceId) {
           claims[DEN_MCP_ORG_ID_CLAIM] = referenceId;

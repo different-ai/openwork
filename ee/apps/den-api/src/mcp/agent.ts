@@ -10,9 +10,10 @@ import { memberFacingMcpConnectionsEnabled } from "../capability-sources/externa
 import { EXTERNAL_MCP_DIAGNOSTIC_PHASES } from "../capability-sources/external-mcp-diagnostics.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { db } from "../db.js"
-import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
+import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
+import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { compareCapabilityMatches, SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter, type CapabilityMatch } from "./search.js"
 import { executeExternalCapability, externalMcpSearchCoverageHint, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities, type ExternalCapabilityExecuteResult } from "./external-capabilities.js"
 import { executeMarketplaceCapability, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType } from "./marketplace-capabilities.js"
@@ -252,14 +253,24 @@ export function createAgentMcpServer(): McpServer {
  */
 export function registerAgentMcpRoutes<T extends { Variables: Record<string, unknown> }>(app: Hono<T>) {
   app.get("/.well-known/oauth-protected-resource/mcp/agent", publicRoute, (c) =>
-    c.json(protectedResourceMetadata(c.req.raw)))
+    c.json(protectedResourceMetadata(c.req.raw, "agent")))
   app.get("/mcp/agent/.well-known/oauth-protected-resource", publicRoute, (c) =>
-    c.json(protectedResourceMetadata(c.req.raw)))
+    c.json(protectedResourceMetadata(c.req.raw, "agent")))
 
   app.all("/mcp/agent", tokenRoute, async (c) => {
-    const principal = await verifyMcpRequest(c.req.raw.headers, getMcpResourceUrl(c.req.raw))
+    const requestIdValue = c.get("requestId")
+    const requestId = typeof requestIdValue === "string" ? requestIdValue : "unknown"
+    const principal = await verifyMcpRequest(
+      c.req.raw.headers,
+      getMcpResourceContext(c.req.raw, "agent", requestId),
+    )
     if (principal instanceof Response) {
       return principal
+    }
+
+    const preflightResponse = await preflightMcpJsonRpcRequest(c.req.raw, requestId)
+    if (preflightResponse) {
+      return preflightResponse
     }
 
     const catalog = await getCatalog(app as unknown as Hono, c.env)
