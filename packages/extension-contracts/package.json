@@ -1,0 +1,48 @@
+{
+  "name": "@openwork/extension-contracts",
+  "version": "0.1.0-experimental.0",
+  "private": true,
+  "description": "Browser-safe, OpenWork-owned extension manifest contracts",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./schemas": {
+      "types": "./src/schemas.ts",
+      "development": "./src/schemas.ts",
+      "default": "./dist/schemas.js"
+    },
+    "./selectors": {
+      "types": "./src/selectors.ts",
+      "development": "./src/selectors.ts",
+      "default": "./dist/selectors.js"
+    },
+    "./validation": {
+      "types": "./src/validation.ts",
+      "development": "./src/validation.ts",
+      "default": "./dist/validation.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsx": "^4.15.7",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3"
+  }
+}
