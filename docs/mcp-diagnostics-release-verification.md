@@ -31,6 +31,22 @@ MCP behavior belongs in a package; Den provides guarded network access,
 encrypted persistence, organization/member authority, and public diagnostics
 through explicit adapters.
 
+## Microsoft 365 and current package boundary
+
+OpenWork's **Microsoft 365 quick add** is a native OAuth/Microsoft Graph
+integration. Jalil verified that it connects successfully, but it does not use
+`@openwork/enterprise-mcp-client`. The enterprise flag selects Den's external
+remote MCP runtime only.
+
+The Microsoft- and ServiceNow-named mock scenarios are provider-shaped
+fixtures, not new production quick-add connectors. The package is
+provider-neutral; `enterprise` describes hardened security, lifecycle,
+persistence, and diagnostics.
+
+The long-term direction is to consolidate reusable remote MCP behavior behind
+package contracts. Migrating native Microsoft 365 or every connection type is
+outside this release.
+
 ## Current status
 
 | Area | Source | Automated state | Jalil verification | Integration state |
