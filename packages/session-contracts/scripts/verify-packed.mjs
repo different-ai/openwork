@@ -41,6 +41,7 @@ try {
     import {
       validateOpenWorkSessionList,
       validateOpenWorkSessionSnapshot,
+      validateOpenWorkSessionStreamFrame,
     } from "@openwork/session-contracts";
 
     const session = { id: "ses_packed", passthrough: true };
@@ -55,6 +56,15 @@ try {
       status: { type: "idle" },
     });
     assert.equal(snapshot.ok, true);
+
+    const frame = validateOpenWorkSessionStreamFrame({
+      schemaVersion: 1,
+      kind: "event",
+      workspaceId: "workspace-packed",
+      source: { adapterId: "builtin/opencode", eventType: "session.updated" },
+      event: { kind: "session.updated", sessionId: session.id, info: session },
+    });
+    assert.equal(frame.ok, true);
   `)
   execFileSync(process.execPath, [consumer], { cwd: temporaryRoot, stdio: "inherit" })
 } finally {

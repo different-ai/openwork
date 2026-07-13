@@ -1,5 +1,6 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { ApiError } from "../errors.js";
+import { createOpenCodeSessionEventStreamResponse } from "../opencode-session-event-adapter.js";
 import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot } from "../session-read-model.js";
 import {
   createSessionGroupId,
@@ -178,6 +179,16 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
     });
     return jsonResponse({ items });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/events", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    return createOpenCodeSessionEventStreamResponse({
+      workspaceId: workspace.id,
+      signal: ctx.request.signal,
+      subscribe: (subscribeOptions) => opencode.event.subscribe(undefined, subscribeOptions),
+    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/session-groups", "client", async (ctx) => {

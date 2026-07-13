@@ -1,7 +1,10 @@
-import type {
-  OpenWorkSession,
-  OpenWorkSessionMessage,
-  OpenWorkSessionSnapshot,
+import {
+  validateOpenWorkSessionStreamFrame,
+  type OpenWorkSessionStreamFrame,
+  type OpenWorkSessionStreamErrorCode,
+  type OpenWorkSession,
+  type OpenWorkSessionMessage,
+  type OpenWorkSessionSnapshot,
 } from "@openwork/session-contracts";
 import { desktopFetch } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
@@ -816,6 +819,20 @@ export class OpenworkServerError extends Error {
   }
 }
 
+export class OpenworkSessionEventStreamError extends Error {
+  code: OpenWorkSessionStreamErrorCode;
+  retryable: boolean;
+  status?: number;
+
+  constructor(input: { code: OpenWorkSessionStreamErrorCode; message: string; retryable: boolean; status?: number }) {
+    super(input.message);
+    this.name = "OpenworkSessionEventStreamError";
+    this.code = input.code;
+    this.retryable = input.retryable;
+    this.status = input.status;
+  }
+}
+
 function buildHeaders(
   token?: string,
   hostToken?: string,
@@ -937,6 +954,113 @@ async function requestJson<T>(
   }
 
   return json as T;
+}
+
+function decodeOpenworkSseData(chunk: string): string | null {
+  const data = chunk
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.replace(/^data:\s?/, ""))
+    .join("\n");
+  return data || null;
+}
+
+async function* readOpenworkSessionEventStream(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<OpenWorkSessionStreamFrame> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completed = false;
+
+  const parseChunk = (chunk: string): OpenWorkSessionStreamFrame | null => {
+    const data = decodeOpenworkSseData(chunk);
+    if (!data) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      throw new OpenworkSessionEventStreamError({
+        code: "OPENWORK_SESSION_STREAM_INVALID_FRAME",
+        message: "OpenWork returned a malformed session event frame.",
+        retryable: true,
+      });
+    }
+    const result = validateOpenWorkSessionStreamFrame(parsed);
+    if (!result.ok) {
+      throw new OpenworkSessionEventStreamError({
+        code: "OPENWORK_SESSION_STREAM_INVALID_FRAME",
+        message: result.error.message,
+        retryable: true,
+      });
+    }
+    return result.value as OpenWorkSessionStreamFrame;
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+      for (const chunk of chunks) {
+        const frame = parseChunk(chunk);
+        if (frame) yield frame;
+      }
+    }
+    buffer += decoder.decode();
+    const frame = parseChunk(buffer);
+    if (frame) yield frame;
+    completed = true;
+  } finally {
+    if (!completed) {
+      try {
+        await reader.cancel();
+      } catch {
+        // The transport may already be closed or aborted.
+      }
+    }
+    reader.releaseLock();
+  }
+}
+
+export const __readOpenworkSessionEventStreamForTest = readOpenworkSessionEventStream;
+
+async function requestOpenworkSessionEventStream(input: {
+  baseUrl: string;
+  workspaceId: string;
+  token?: string;
+  hostToken?: string;
+  signal?: AbortSignal;
+}): Promise<{ stream: AsyncIterable<OpenWorkSessionStreamFrame> }> {
+  const url = `${input.baseUrl}/workspace/${encodeURIComponent(input.workspaceId)}/sessions/events`;
+  const response = await resolveFetch(url)(url, {
+    method: "GET",
+    headers: buildAuthHeaders(input.token, input.hostToken, { Accept: "text/event-stream" }),
+    signal: input.signal,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let json: any = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+    const code = typeof json?.code === "string" ? json.code : "request_failed";
+    const message = typeof json?.message === "string" ? json.message : response.statusText;
+    throw new OpenworkServerError(response.status, code, message, json?.details);
+  }
+  if (!response.body) {
+    throw new OpenworkSessionEventStreamError({
+      code: "OPENWORK_SESSION_STREAM_DISCONNECTED",
+      message: "OpenWork returned an empty session event stream.",
+      retryable: true,
+    });
+  }
+  return { stream: readOpenworkSessionEventStream(response.body) };
 }
 
 async function requestMultipartRaw(
@@ -1117,6 +1241,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken, timeoutMs: timeouts.sessionRead },
       );
     },
+    subscribeSessionEvents: (workspaceId: string, options?: { signal?: AbortSignal }) =>
+      requestOpenworkSessionEventStream({
+        baseUrl,
+        workspaceId,
+        token,
+        hostToken,
+        signal: options?.signal,
+      }),
     getSessionGroups: (workspaceId: string) =>
       requestJson<{ state: OpenworkSessionGroupState; updatedAt: number | null }>(
         baseUrl,

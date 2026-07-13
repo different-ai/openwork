@@ -10,7 +10,7 @@ import { TokenService } from "../tokens.js";
 import type { ServerConfig } from "../types.js";
 import { describeRoutes } from "./registry.js";
 
-const LEGACY_ROUTE_INVENTORY = `GET /health none
+const ROUTE_INVENTORY = `GET /health none
 GET /w/:id/health none
 POST /dev/log none
 GET /dev/log none
@@ -58,6 +58,7 @@ PATCH /workspaces/:id/display-name host
 POST /workspaces/:id/activate host
 DELETE /workspaces/:id host
 GET /workspace/:id/sessions client
+GET /workspace/:id/sessions/events client
 GET /workspace/:id/session-groups client
 PUT /workspace/:id/session-groups client
 POST /workspace/:id/session-groups client
@@ -150,7 +151,7 @@ function testConfig(): ServerConfig {
   };
 }
 
-test("preserves the complete legacy method/path/auth route inventory", () => {
+test("pins the complete method/path/auth route inventory", () => {
   const config = testConfig();
   const extensionActions: ExtensionActionService = {
     list: () => [],
@@ -168,7 +169,7 @@ test("preserves the complete legacy method/path/auth route inventory", () => {
     .map((route) => `${route.method} ${route.path} ${route.auth}`);
   const methodAndPath = inventory.map((route) => route.split(" ").slice(0, 2).join(" "));
 
-  expect(inventory.join("\n")).toBe(LEGACY_ROUTE_INVENTORY);
-  expect(inventory).toHaveLength(120);
+  expect(inventory.join("\n")).toBe(ROUTE_INVENTORY);
+  expect(inventory).toHaveLength(121);
   expect(new Set(methodAndPath).size).toBe(methodAndPath.length);
 });

@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai";
 import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
+import type { OpenWorkSessionFailure, OpenWorkSessionStreamFrame } from "@openwork/session-contracts";
 
 import { getReactQueryClient } from "../../../infra/query-client";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
@@ -13,7 +14,12 @@ import {
   parseStructuredOutputUIPart,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
-import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
+import {
+  createOpenworkServerClient,
+  OpenworkServerError,
+  OpenworkSessionEventStreamError,
+  type OpenworkSessionSnapshot,
+} from "@/app/lib/openwork-server";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
 import {
   useSessionActivityStore,
@@ -23,6 +29,7 @@ import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
 type SyncOptions = {
   workspaceId: string;
   baseUrl: string;
+  openworkBaseUrl?: string;
   openworkToken: string;
   onSessionUpdated?: (update: { sessionId: string; info: Record<string, unknown> }) => void;
   onSessionStatus?: (update: { sessionId: string; status: SessionStatus }) => void;
@@ -74,7 +81,7 @@ export const questionKey = (workspaceId: string, sessionId: string) =>
   ["react-session-questions", workspaceId, sessionId] as const;
 
 function syncKey(input: SyncOptions) {
-  return `${input.workspaceId}:${input.baseUrl}:${input.openworkToken}`;
+  return `${input.workspaceId}:${input.baseUrl}:${input.openworkBaseUrl ?? ""}:${input.openworkToken}`;
 }
 
 function getErrorStatus(error: unknown) {
@@ -89,8 +96,18 @@ function getErrorStatus(error: unknown) {
 }
 
 function shouldRetrySyncSubscribe(error: unknown) {
+  if (error instanceof OpenworkSessionEventStreamError) return error.retryable;
   const status = getErrorStatus(error);
   return status !== 401 && status !== 403 && status !== 404;
+}
+
+function shouldUseLegacySessionEventStream(error: unknown) {
+  return error instanceof OpenworkServerError && [404, 405, 501].includes(error.status);
+}
+
+function inferOpenworkBaseUrl(opencodeBaseUrl: string) {
+  const normalized = opencodeBaseUrl.replace(/\/+$/, "");
+  return normalized.replace(/\/workspace\/[^/]+\/opencode$/, "");
 }
 
 function isTrackedSession(entry: SyncEntry, sessionId: string) {
@@ -601,27 +618,105 @@ export function coalescePendingDeltas(items: PendingDelta[]) {
   return ordered;
 }
 
-function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
+function applySessionUpdated(
+  entry: SyncEntry,
+  workspaceId: string,
+  update: { sessionId: string; info: Record<string, unknown> },
+) {
+  const queryClient = getReactQueryClient();
+  if (!isTrackedSession(entry, update.sessionId)) return;
+  // Keep the cached snapshot's revert cursor in sync with the server. The
+  // renderer derives the visible transcript from this cursor, so a revert
+  // (or its cleanup on the next prompt) must reach the snapshot cache or
+  // the transcript stays frozen on stale history.
+  queryClient.setQueryData<OpenworkSessionSnapshot>(
+    snapshotKey(workspaceId, update.sessionId),
+    (current) => {
+      if (!current) return current;
+      const revert = (update.info as { revert?: OpenworkSessionSnapshot["session"]["revert"] }).revert;
+      return { ...current, session: { ...current.session, revert } };
+    },
+  );
+  for (const listener of entry.sessionUpdatedListeners) listener(update);
+}
+
+function applySessionFailure(entry: SyncEntry, workspaceId: string, sessionId: string, errorText: string) {
+  const queryClient = getReactQueryClient();
+  const runStartedAt = takeTaskRunStart(sessionId);
+  if (runStartedAt !== null) {
+    captureAnalyticsEvent("task_run_errored", {
+      duration_ms: Date.now() - runStartedAt,
+    });
+    trackTaskFailed(sessionId, Date.now() - runStartedAt);
+  }
+  notifyDesktopEvent({ type: "task.failed", sessionId, errorText });
+  useSessionActivityStore.getState().setError(workspaceId, sessionId, errorText);
+  if (isTrackedSession(entry, sessionId)) {
+    queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => {
+      // Key the error to the latest assistant turn so it lands beside the
+      // turn that failed and a later turn's error becomes its own message
+      // instead of overwriting this one. Falls back to the session id when
+      // no assistant turn exists yet (e.g. error before any output).
+      const turnKey = latestAssistantMessageId(current) ?? sessionId;
+      // Note: turnKey matches the snapshot's per-turn key (the errored
+      // assistant message id) so a reload reconciles instead of
+      // duplicating; the sessionId fallback only applies when the run
+      // errored before any assistant message existed.
+      return upsertMessage(current, createSessionErrorUIMessage(turnKey, errorText));
+    });
+  }
+}
+
+function describeNormalizedSessionFailure(failure: OpenWorkSessionFailure) {
+  return describeOpencodeSessionError({
+    data: {
+      message: failure.message,
+      providerID: failure.providerId,
+      statusCode: failure.statusCode,
+      responseBody: failure.responseBody,
+      ref: failure.reference,
+      retries: failure.retries,
+    },
+  });
+}
+
+const MAX_DETAILED_UNKNOWN_SESSION_EVENT_DIAGNOSTICS = 127;
+const UNKNOWN_SESSION_EVENT_OVERFLOW_KEY = "__overflow__";
+const unknownSessionEventDiagnostics = new Map<string, number>();
+
+function recordUnknownSessionEvent(frame: Extract<OpenWorkSessionStreamFrame, { kind: "event" }>) {
+  if (frame.event.kind !== "unknown") return;
+  const key = `${frame.source.adapterId}:${frame.event.sourceType}:${frame.event.reason}`;
+  const existingCount = unknownSessionEventDiagnostics.get(key);
+  if (existingCount !== undefined) {
+    unknownSessionEventDiagnostics.set(key, existingCount + 1);
+    return;
+  }
+  if (unknownSessionEventDiagnostics.size >= MAX_DETAILED_UNKNOWN_SESSION_EVENT_DIAGNOSTICS) {
+    const overflowCount = (unknownSessionEventDiagnostics.get(UNKNOWN_SESSION_EVENT_OVERFLOW_KEY) ?? 0) + 1;
+    unknownSessionEventDiagnostics.set(UNKNOWN_SESSION_EVENT_OVERFLOW_KEY, overflowCount);
+    if (overflowCount === 1) {
+      console.warn("[session-events] additional unknown canonical event types suppressed", {
+        detailedTypeLimit: MAX_DETAILED_UNKNOWN_SESSION_EVENT_DIAGNOSTICS,
+      });
+    }
+    return;
+  }
+  unknownSessionEventDiagnostics.set(key, 1);
+  console.warn("[session-events] ignored unknown canonical event", {
+    adapterId: frame.source.adapterId,
+    sourceType: frame.event.sourceType,
+    reason: frame.event.reason,
+  });
+}
+
+function applyLegacyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
   const queryClient = getReactQueryClient();
   const input = entry.input;
 
   if (event.type === "session.updated") {
     const update = getSessionUpdatedInfo(event);
-    if (!update) return;
-    if (!isTrackedSession(entry, update.sessionId)) return;
-    // Keep the cached snapshot's revert cursor in sync with the server. The
-    // renderer derives the visible transcript from this cursor, so a revert
-    // (or its cleanup on the next prompt) must reach the snapshot cache or
-    // the transcript stays frozen on stale history.
-    queryClient.setQueryData<OpenworkSessionSnapshot>(
-      snapshotKey(workspaceId, update.sessionId),
-      (current) => {
-        if (!current) return current;
-        const revert = (update.info as { revert?: OpenworkSessionSnapshot["session"]["revert"] }).revert;
-        return { ...current, session: { ...current.session, revert } };
-      },
-    );
-    for (const listener of entry.sessionUpdatedListeners) listener(update);
+    if (update) applySessionUpdated(entry, workspaceId, update);
     return;
   }
 
@@ -636,29 +731,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const sessionId = sessionIdFromProperties(event.properties);
     if (sessionId) {
       const errorText = describeOpencodeSessionError(sessionErrorFromProperties(event.properties));
-      const runStartedAt = takeTaskRunStart(sessionId);
-      if (runStartedAt !== null) {
-        captureAnalyticsEvent("task_run_errored", {
-          duration_ms: Date.now() - runStartedAt,
-        });
-        trackTaskFailed(sessionId, Date.now() - runStartedAt);
-      }
-      notifyDesktopEvent({ type: "task.failed", sessionId, errorText });
-      useSessionActivityStore.getState().setError(workspaceId, sessionId, errorText);
-      if (isTrackedSession(entry, sessionId)) {
-        queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => {
-          // Key the error to the latest assistant turn so it lands beside the
-          // turn that failed and a later turn's error becomes its own message
-          // instead of overwriting this one. Falls back to the session id when
-          // no assistant turn exists yet (e.g. error before any output).
-          const turnKey = latestAssistantMessageId(current) ?? sessionId;
-          // Note: turnKey matches the snapshot's per-turn key (the errored
-          // assistant message id) so a reload reconciles instead of
-          // duplicating; the sessionId fallback only applies when the run
-          // errored before any assistant message existed.
-          return upsertMessage(current, createSessionErrorUIMessage(turnKey, errorText));
-        });
-      }
+      applySessionFailure(entry, workspaceId, sessionId, errorText);
     }
     return;
   }
@@ -934,6 +1007,43 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   }
 }
 
+function applySessionStreamFrame(entry: SyncEntry, workspaceId: string, frame: OpenWorkSessionStreamFrame) {
+  if (frame.workspaceId !== workspaceId) {
+    throw new OpenworkSessionEventStreamError({
+      code: "OPENWORK_SESSION_STREAM_INVALID_FRAME",
+      message: "OpenWork returned a session event for the wrong workspace.",
+      retryable: true,
+    });
+  }
+  if (frame.kind === "stream.error") {
+    throw new OpenworkSessionEventStreamError(frame.error);
+  }
+  if (frame.event.kind === "session.updated") {
+    applySessionUpdated(entry, workspaceId, {
+      sessionId: frame.event.sessionId,
+      info: frame.event.info as Record<string, unknown>,
+    });
+    return;
+  }
+  if (frame.event.kind === "session.failed") {
+    applySessionFailure(
+      entry,
+      workspaceId,
+      frame.event.sessionId,
+      describeNormalizedSessionFailure(frame.event.failure),
+    );
+    return;
+  }
+  if (frame.event.kind === "compatibility") {
+    applyLegacyEvent(entry, workspaceId, {
+      type: frame.event.sourceType,
+      properties: frame.event.properties,
+    });
+    return;
+  }
+  recordUnknownSessionEvent(frame);
+}
+
 function scheduleDeltaFlush(entry: SyncEntry, workspaceId: string) {
   if (entry.deltaFlushScheduled) return;
   entry.deltaFlushScheduled = true;
@@ -1030,7 +1140,11 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
 }
 
 function startSync(input: SyncOptions) {
-  const client = createClient(input.baseUrl, undefined, { token: input.openworkToken, mode: "openwork" });
+  const legacyClient = createClient(input.baseUrl, undefined, { token: input.openworkToken, mode: "openwork" });
+  const openworkClient = createOpenworkServerClient({
+    baseUrl: input.openworkBaseUrl?.trim() || inferOpenworkBaseUrl(input.baseUrl),
+    token: input.openworkToken,
+  });
   const controller = new AbortController();
   const entry = syncs.get(syncKey(input));
   let disposed = false;
@@ -1055,16 +1169,34 @@ function startSync(input: SyncOptions) {
     const connectionController = new AbortController();
     activeConnectionController = connectionController;
     try {
-      const sub = await client.event.subscribe(undefined, { signal: connectionController.signal });
+      let canonicalSubscription: Awaited<ReturnType<typeof openworkClient.subscribeSessionEvents>> | null = null;
+      try {
+        canonicalSubscription = await openworkClient.subscribeSessionEvents(input.workspaceId, {
+          signal: connectionController.signal,
+        });
+      } catch (error) {
+        if (!shouldUseLegacySessionEventStream(error)) throw error;
+      }
       retryDelayMs = 1_000;
       lastEventAt = Date.now();
-      for await (const raw of sub.stream) {
-        if (controller.signal.aborted || connectionController.signal.aborted) return;
-        lastEventAt = Date.now();
-        const event = normalizeEvent(raw);
-        if (!event) continue;
-        if (!entry) continue;
-        applyEvent(entry, input.workspaceId, event);
+      if (canonicalSubscription) {
+        for await (const frame of canonicalSubscription.stream) {
+          if (controller.signal.aborted || connectionController.signal.aborted) return;
+          lastEventAt = Date.now();
+          if (!entry) continue;
+          applySessionStreamFrame(entry, input.workspaceId, frame);
+        }
+      } else {
+        const legacySubscription = await legacyClient.event.subscribe(undefined, {
+          signal: connectionController.signal,
+        });
+        for await (const raw of legacySubscription.stream) {
+          if (controller.signal.aborted || connectionController.signal.aborted) return;
+          lastEventAt = Date.now();
+          const event = normalizeEvent(raw);
+          if (!event || !entry) continue;
+          applyLegacyEvent(entry, input.workspaceId, event);
+        }
       }
       if (!controller.signal.aborted && activeConnectionController === connectionController) scheduleRetry();
     } catch (error) {
@@ -1279,5 +1411,25 @@ export function __disposeWorkspaceSessionSyncForTest(input: SyncOptions) {
 export function __applySessionSyncEventForTest(input: SyncOptions, event: OpencodeEvent) {
   const entry = syncs.get(syncKey(input));
   if (!entry) return;
-  applyEvent(entry, input.workspaceId, event);
+  applyLegacyEvent(entry, input.workspaceId, event);
+}
+
+export function __applySessionStreamFrameForTest(input: SyncOptions, frame: OpenWorkSessionStreamFrame) {
+  const entry = syncs.get(syncKey(input));
+  if (!entry) return;
+  applySessionStreamFrame(entry, input.workspaceId, frame);
+}
+
+export function __getUnknownSessionEventDiagnosticsForTest() {
+  return new Map(unknownSessionEventDiagnostics);
+}
+
+export function __resetUnknownSessionEventDiagnosticsForTest() {
+  unknownSessionEventDiagnostics.clear();
+}
+
+export function __shouldUseLegacySessionEventStreamForTest(status: number) {
+  return shouldUseLegacySessionEventStream(
+    new OpenworkServerError(status, "test", "test"),
+  );
 }

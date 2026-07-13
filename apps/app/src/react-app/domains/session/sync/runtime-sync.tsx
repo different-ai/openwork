@@ -9,6 +9,7 @@ type ReactSessionRuntimeProps = {
   sessionId: string | null;
   activeSessionIds?: string[];
   opencodeBaseUrl: string;
+  openworkBaseUrl: string;
   openworkToken: string;
   onSessionUpdated?: (update: { sessionId: string; info: Record<string, unknown> }) => void;
   onSessionStatus?: (update: { sessionId: string; status: SessionStatus }) => void;
@@ -19,6 +20,7 @@ export function ReactSessionRuntime(props: ReactSessionRuntimeProps) {
     const input = {
       workspaceId: props.workspaceId,
       baseUrl: props.opencodeBaseUrl,
+      openworkBaseUrl: props.openworkBaseUrl,
       openworkToken: props.openworkToken,
       onSessionUpdated: props.onSessionUpdated,
       onSessionStatus: props.onSessionStatus,
@@ -29,7 +31,7 @@ export function ReactSessionRuntime(props: ReactSessionRuntimeProps) {
       releaseSessions();
       releaseWorkspace();
     };
-  }, [props.workspaceId, props.sessionId, props.activeSessionIds, props.opencodeBaseUrl, props.openworkToken, props.onSessionUpdated, props.onSessionStatus]);
+  }, [props.workspaceId, props.sessionId, props.activeSessionIds, props.opencodeBaseUrl, props.openworkBaseUrl, props.openworkToken, props.onSessionUpdated, props.onSessionStatus]);
 
   return null;
 }

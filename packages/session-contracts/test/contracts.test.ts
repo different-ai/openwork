@@ -1,11 +1,13 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
+  OPEN_WORK_COMPATIBILITY_SESSION_EVENT_TYPES,
   validateOpenWorkSession,
   validateOpenWorkSessionList,
   validateOpenWorkSessionMessages,
   validateOpenWorkSessionSnapshot,
   validateOpenWorkSessionStatuses,
+  validateOpenWorkSessionStreamFrame,
   validateOpenWorkSessionTodos,
   type OpenWorkSession,
   type OpenWorkSessionMessage,
@@ -185,5 +187,134 @@ describe("OpenWork session read contracts", () => {
     assert.equal(Object.isFrozen(result.error.issues), true)
     assert.equal(Object.isFrozen(result.error.issues[0]), true)
     assert.equal(Object.isFrozen(result.error.issues[0]?.path), true)
+  })
+})
+
+describe("OpenWork session stream contracts", () => {
+  it("accepts normalized update and failure frames", () => {
+    const updated = validateOpenWorkSessionStreamFrame({
+      schemaVersion: 1,
+      kind: "event",
+      workspaceId: "workspace-1",
+      source: {
+        adapterId: "builtin/opencode",
+        eventType: "session.updated",
+        eventId: "event-7",
+      },
+      event: {
+        kind: "session.updated",
+        sessionId: "ses_1",
+        info: sessionFixture,
+      },
+    })
+    const failed = validateOpenWorkSessionStreamFrame({
+      schemaVersion: 1,
+      kind: "event",
+      workspaceId: "workspace-1",
+      source: {
+        adapterId: "builtin/opencode",
+        eventType: "session.error",
+      },
+      event: {
+        kind: "session.failed",
+        sessionId: "ses_1",
+        failure: {
+          code: "upstream_api",
+          message: "Rate limited",
+          retryable: true,
+          statusCode: 429,
+          providerId: "openai",
+        },
+      },
+    })
+
+    assert.equal(updated.ok, true)
+    assert.equal(failed.ok, true)
+    if (!updated.ok || !failed.ok) assert.fail("valid frames must pass")
+    if (updated.value.kind !== "event" || failed.value.kind !== "event") {
+      assert.fail("fixtures must remain event frames")
+    }
+    assert.equal(updated.value.source.eventId, "event-7")
+    assert.equal(updated.value.event.kind, "session.updated")
+    assert.equal(failed.value.event.kind, "session.failed")
+  })
+
+  it("freezes the compatibility bridge at exactly eighteen current event types", () => {
+    assert.equal(OPEN_WORK_COMPATIBILITY_SESSION_EVENT_TYPES.length, 18)
+    assert.deepEqual(OPEN_WORK_COMPATIBILITY_SESSION_EVENT_TYPES, [
+      "session.deleted",
+      "session.next.compaction.started",
+      "session.next.compaction.ended",
+      "session.compacted",
+      "session.status",
+      "todo.updated",
+      "permission.asked",
+      "permission.v2.asked",
+      "permission.replied",
+      "permission.v2.replied",
+      "question.asked",
+      "question.replied",
+      "question.rejected",
+      "message.updated",
+      "message.removed",
+      "message.part.updated",
+      "message.part.delta",
+      "session.idle",
+    ])
+
+    for (const sourceType of OPEN_WORK_COMPATIBILITY_SESSION_EVENT_TYPES) {
+      const result = validateOpenWorkSessionStreamFrame({
+        schemaVersion: 1,
+        kind: "event",
+        workspaceId: "workspace-1",
+        source: { adapterId: "builtin/opencode", eventType: sourceType },
+        event: { kind: "compatibility", sourceType, properties: { retained: true } },
+      })
+      assert.equal(result.ok, true, `${sourceType} must remain in the explicit bridge`)
+    }
+  })
+
+  it("accepts unknown diagnostics and stable stream failures", () => {
+    const unknown = validateOpenWorkSessionStreamFrame({
+      schemaVersion: 1,
+      kind: "event",
+      workspaceId: "workspace-1",
+      source: { adapterId: "builtin/opencode", eventType: "future.event" },
+      event: { kind: "unknown", sourceType: "future.event", reason: "unsupported_type" },
+    })
+    const disconnected = validateOpenWorkSessionStreamFrame({
+      schemaVersion: 1,
+      kind: "stream.error",
+      workspaceId: "workspace-1",
+      source: { adapterId: "builtin/opencode", eventType: "stream.error" },
+      error: {
+        code: "OPENWORK_SESSION_STREAM_ENGINE_UNAVAILABLE",
+        message: "Session event source disconnected.",
+        retryable: true,
+        status: 503,
+      },
+    })
+
+    assert.equal(unknown.ok, true)
+    assert.equal(disconnected.ok, true)
+  })
+
+  it("returns the stable immutable validation error for malformed frames", () => {
+    const result = validateOpenWorkSessionStreamFrame({
+      schemaVersion: 2,
+      kind: "event",
+      workspaceId: "",
+      source: { adapterId: "", eventType: "session.updated" },
+      event: { kind: "session.updated", sessionId: "ses_1", info: {} },
+    })
+
+    assert.equal(result.ok, false)
+    if (result.ok) assert.fail("malformed frame must fail")
+    assert.equal(result.error.code, "OPENWORK_SESSION_CONTRACT_INVALID")
+    assert.equal(result.error.contract, "openwork-session-stream-frame-v1")
+    assert.equal(result.error.message, "Invalid openwork-session-stream-frame-v1.")
+    assert.ok(result.error.issues.length >= 4)
+    assert.equal(Object.isFrozen(result.error), true)
+    assert.equal(Object.isFrozen(result.error.issues), true)
   })
 })

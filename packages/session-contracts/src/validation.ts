@@ -5,11 +5,13 @@ import {
   openWorkSessionMessagesSchema,
   openWorkSessionSnapshotSchema,
   openWorkSessionStatusesSchema,
+  openWorkSessionStreamFrameSchema,
   openWorkSessionTodosSchema,
   type SessionInfoReadModel,
   type SessionMessageReadModel,
   type SessionSnapshotReadModel,
   type SessionStatusReadModel,
+  type SessionStreamFrameReadModel,
   type SessionTodoReadModel,
 } from "./schemas.js"
 
@@ -20,6 +22,7 @@ export type OpenWorkSessionValidationContract =
   | "openwork-session-todos-v1"
   | "openwork-session-statuses-v1"
   | "openwork-session-snapshot-v1"
+  | "openwork-session-stream-frame-v1"
 
 export type OpenWorkSessionValidationIssueCode =
   | "invalid_format"
@@ -170,4 +173,10 @@ export function validateOpenWorkSessionSnapshot(
   input: unknown,
 ): OpenWorkSessionValidationResult<SessionSnapshotReadModel> {
   return validate("openwork-session-snapshot-v1", openWorkSessionSnapshotSchema, input)
+}
+
+export function validateOpenWorkSessionStreamFrame(
+  input: unknown,
+): OpenWorkSessionValidationResult<SessionStreamFrameReadModel> {
+  return validate("openwork-session-stream-frame-v1", openWorkSessionStreamFrameSchema, input)
 }
