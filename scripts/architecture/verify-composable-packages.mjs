@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -16,6 +16,7 @@ const packageNames = [
   "@openwork/session-contracts",
   "@openwork/session-groups",
   "@openwork/workspace-portability",
+  "@openwork/markdown",
 ];
 const exportSpecifiers = [
   "@openwork/extension-contracts",
@@ -31,7 +32,11 @@ const exportSpecifiers = [
   "@openwork/session-contracts/validation",
   "@openwork/session-groups",
   "@openwork/workspace-portability",
+  "@openwork/markdown",
+  "@openwork/markdown/browser",
+  "@openwork/markdown/text-highlights",
 ];
+const assetSpecifiers = ["@openwork/markdown/styles.css"];
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: "utf8", stdio: "inherit" });
@@ -81,12 +86,30 @@ try {
   run("pnpm", ["install", "--ignore-scripts"], consumerRoot);
 
   const requireFromConsumer = createRequire(join(consumerRoot, "verify.cjs"));
+  const importedModules = new Map();
   for (const specifier of exportSpecifiers) {
-    await import(pathToFileURL(requireFromConsumer.resolve(specifier)).href);
+    importedModules.set(specifier, await import(pathToFileURL(requireFromConsumer.resolve(specifier)).href));
+  }
+  for (const specifier of assetSpecifiers) {
+    const asset = readFileSync(requireFromConsumer.resolve(specifier), "utf8");
+    assert.match(asset, /@source\s+["']\.\/src["']/, `${specifier} must register its package source`);
   }
 
+  assert.equal(globalThis.document, undefined, "Node consumer proof must run without a DOM");
+  const markdownModule = importedModules.get("@openwork/markdown");
+  const headlessMarkdown = markdownModule.createMarkdownRenderingKernel({
+    sanitizeHtml: (html) => html,
+    isHighlightLanguageSupported: () => false,
+    highlightCode: () => Promise.reject(new Error("unused in synchronous proof")),
+  });
+  assert.match(
+    headlessMarkdown.renderSync("# Packed consumer", "document-preview"),
+    /<h1[^>]*>Packed consumer<\/h1>/,
+    "the packed root must render without browser globals",
+  );
+
   process.stdout.write(
-    `${JSON.stringify({ ok: true, packages: packageNames, exports: exportSpecifiers }, null, 2)}\n`,
+    `${JSON.stringify({ ok: true, packages: packageNames, exports: exportSpecifiers, assets: assetSpecifiers }, null, 2)}\n`,
   );
 } finally {
   rmSync(proofRoot, { recursive: true, force: true });

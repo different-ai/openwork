@@ -194,6 +194,8 @@ Each library package must provide:
 - named subpaths only when they isolate a realm, optional dependency, or
   independently meaningful contract;
 - `types`, `development`, and built `default` conditions where appropriate;
+- explicit static-asset subpaths for CSS, images, or WebAssembly when those
+  assets are part of the consumer contract;
 - an explicit `files` allowlist and an explicit `sideEffects` declaration;
 - no `src/*` wildcard export and no reliance on undeclared deep imports;
 - stable, serializable error codes at cross-realm boundaries;
@@ -530,63 +532,75 @@ not a claim that heuristics can guarantee an export contains no secret.
 - The superseded server safety module and duplicated app declarations are
   removed. The app/server typechecks and production builds remain the host gate.
 
-## Next slice: `@openwork/markdown`
+## Completed proof slice: `@openwork/markdown`
 
 ### Value and boundary
 
-The app has one 345-line rendering kernel shared by the conversation and
-document-preview Markdown surfaces, a 55-line browser adapter, text-highlight
-helpers, and six focused kernel tests. It already exposes useful ports for HTML
-sanitization and syntax highlighting. Seven direct app dependencies are
-exclusive to this capability: `marked`, `marked-emoji`, `marked-shiki`,
-`emojilib`, `dompurify`, `@shikijs/transformers`, and `shiki`.
+The app's 345-line rendering kernel, 55-line browser adapter, and text-highlight
+helpers now form one presentation package. The conversation and
+document-preview surfaces retain their intentionally different generated
+markup, but both consume one rendering policy and one browser composition.
+Seven capability-private dependencies moved with that value: `marked`,
+`marked-emoji`, `marked-shiki`, `emojilib`, `dompurify`,
+`@shikijs/transformers`, and `shiki`.
 
-The proposed package entrypoints are:
+The package entrypoints are:
 
 | Export | Realm | Owns |
 | --- | --- | --- |
 | `@openwork/markdown` | `neutral` | Rendering kernel, presentation variants, link/image safety policy, highlighting ports |
 | `@openwork/markdown/browser` | `browser` | DOMPurify/Shiki implementation and browser lifecycle |
-| `@openwork/markdown/text-highlights` | `neutral` or `browser`, based on live dependencies | Text-highlight parsing/selection contract |
+| `@openwork/markdown/text-highlights` | `browser` | DOM text-search highlighting and clearing contract |
 | `@openwork/markdown/styles.css` | `browser` | Explicit CSS/Tailwind integration required by generated markup |
 
-The exact subpaths must be reduced if they do not represent independent
-consumer purposes. The root must remain importable without `window` or
-`document`. Browser dependencies belong to the browser entrypoint, and the app
-must no longer declare capability-private dependencies.
+The root has no DOM access and receives sanitization, supported-language
+detection, and highlighting through explicit ports. Browser dependencies and
+DOM globals are isolated to named browser subpaths. Schema v1 declares the
+package's narrowest overall realm as browser, while the packed consumer
+separately proves that the root imports and renders under Node with no
+`document` global.
 
 ### What stays outside
 
-The two React wrappers remain app-local initially. They own router/desktop
+The two React wrappers remain app-local. They own router/desktop
 opening policy, motion, host state, image interactions, and product-specific
 composition. A React entrypoint is admitted later only if another consumer can
 use the same surface contract without importing app state.
 
-The generated HTML currently contains Tailwind utilities and OpenWork design
-tokens. The package must ship self-contained styles or an explicit exported
-source/style contract; relying on the app's incidental Tailwind scan is not
-acceptable. The preferred outcome is a package-owned stylesheet with an
-explicit side-effect export, proven in production output. If that is not
-technically viable, the host scan integration must be exported, documented,
-and tested as part of the package contract.
+The generated HTML contains Tailwind utilities and OpenWork design tokens. The
+package exports `@openwork/markdown/styles.css`, whose relative Tailwind v4
+`@source` declaration registers the package source from an installed location.
+The app imports that asset instead of relying on incidental monorepo scanning.
+The constitution now admits only explicit static-asset subpaths, checks that
+the asset exists and is packed, and requires exported CSS to appear in
+`sideEffects`.
 
-### Migration and proof
+### Migration and proof result
 
-1. Move the kernel, browser adapter, highlight helpers, and focused tests without
-   changing output.
-2. Declare the seven Markdown dependencies at the narrowest package/entrypoint
-   that imports them and remove them from the app.
-3. Migrate both existing wrappers through public exports; do not add a generic
-   React facade merely to hide imports.
-4. Pack and install the package in clean neutral and browser consumers; execute
-   every public entrypoint and verify no browser global is touched by the root.
-5. Prove sanitized raw HTML, unsafe links, emoji, tables, fenced-code fallback,
-   highlighted code, conversation links, and document-preview behavior.
-6. Prove production CSS/class retention and run app tests, typecheck, desktop
-   and web builds, `artifact-markdown-render`, and the canonical core Fraimz
-   flow.
-7. Remove old app modules, aliases, direct dependencies, and redundant tests
-   only after both surfaces use the installed contract.
+- Six focused kernel tests characterize empty input, fenced-code detection,
+  emoji, URL safety, raw-HTML policy, sanitizer invocation, the crafted Shiki
+  marker boundary, unsupported-language fallback, tables, images, links, and
+  both presentation class vocabularies.
+- Both existing React wrappers and the find surface consume public package
+  exports. The app-specific link menu, open-target matching, motion, image
+  interactions, streaming state, and React lifecycle stay in those wrappers.
+- The old app kernel, browser adapter, text-highlight implementation,
+  compatibility alias, app-owned test, and seven direct dependencies are
+  removed.
+- The seven-package tarball harness builds, tests, typechecks, packs, installs,
+  and resolves every JavaScript entrypoint plus the stylesheet asset in a clean
+  consumer. It executes the headless root under Node and caught an `emojilib`
+  JSON-import incompatibility; the production build now internalizes that data
+  and shares it through one generated chunk.
+- The package constitution passes with explicit static-asset validation. The
+  app typecheck, 190 remaining host tests, and production build pass; the six
+  moved tests pass from the package.
+- `experiment:markdown-css` proves that seven representative generated
+  selectors—including arbitrary-value, design-token, gradient, highlight, and
+  list utilities—survive the production Tailwind build.
+
+Desktop packaging and observable Fraimz proof remain whole-experiment gates;
+they are not package-internal responsibilities.
 
 ## Authority boundaries and non-goals
 

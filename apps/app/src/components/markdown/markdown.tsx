@@ -1,13 +1,13 @@
 /** @jsxImportSource react */
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
+import { browserMarkdownRenderingKernel } from "@openwork/markdown/browser";
+import { applyTextHighlights } from "@openwork/markdown/text-highlights";
 
 import { cn } from "@/lib/utils";
 import { useOpenTargets } from "@/lib/target-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 
-import { browserMarkdownRenderingKernel } from "./browser-rendering-kernel";
-import { applyTextHighlights } from "./text-highlights";
 import { LinkActionMenu } from "./link-action-menu";
 
 const WORKSPACES_PREFIX_PATTERN = /^workspaces\/[^/]+\//i;

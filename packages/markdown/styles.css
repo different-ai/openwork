@@ -1,0 +1,6 @@
+/*
+ * Tailwind v4 resolves this path from the package stylesheet. Importing the
+ * public asset makes generated renderer classes part of the consumer build
+ * without requiring the host to know this package's workspace location.
+ */
+@source "./src";

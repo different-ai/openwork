@@ -76,6 +76,9 @@ importers:
       '@openwork/extension-contracts':
         specifier: workspace:*
         version: link:../../packages/extension-contracts
+      '@openwork/markdown':
+        specifier: workspace:*
+        version: link:../../packages/markdown
       '@openwork/session-contracts':
         specifier: workspace:*
         version: link:../../packages/session-contracts
@@ -91,9 +94,6 @@ importers:
       '@openwork/workspace-portability':
         specifier: workspace:*
         version: link:../../packages/workspace-portability
-      '@shikijs/transformers':
-        specifier: ^4.0.2
-        version: 4.0.2
       '@tanstack/react-query':
         specifier: ^5.90.3
         version: 5.96.2(react@19.2.4)
@@ -115,12 +115,6 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
-      dompurify:
-        specifier: ^3.4.5
-        version: 3.4.5
-      emojilib:
-        specifier: ^4.0.3
-        version: 4.0.3
       fuzzysort:
         specifier: ^3.1.0
         version: 3.1.0
@@ -133,15 +127,6 @@ importers:
       lucide-react:
         specifier: ^0.577.0
         version: 0.577.0(react@19.2.4)
-      marked:
-        specifier: ^17.0.1
-        version: 17.0.1
-      marked-emoji:
-        specifier: ^2.0.3
-        version: 2.0.3(marked@17.0.1)
-      marked-shiki:
-        specifier: ^1.2.1
-        version: 1.2.1(marked@17.0.1)(shiki@4.0.2)
       motion:
         specifier: ^12.38.0
         version: 12.38.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -160,9 +145,6 @@ importers:
       shadcn:
         specifier: ^4.6.0
         version: 4.6.0(@types/node@25.6.0)(typescript@5.9.3)
-      shiki:
-        specifier: ^4.0.2
-        version: 4.0.2
       sonner:
         specifier: ^2.0.7
         version: 2.0.7(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -931,6 +913,43 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/markdown:
+    dependencies:
+      '@shikijs/transformers':
+        specifier: ^4.0.2
+        version: 4.0.2
+      dompurify:
+        specifier: ^3.4.5
+        version: 3.4.5
+      emojilib:
+        specifier: ^4.0.3
+        version: 4.0.3
+      marked:
+        specifier: ^17.0.1
+        version: 17.0.1
+      marked-emoji:
+        specifier: ^2.0.3
+        version: 2.0.3(marked@17.0.1)
+      marked-shiki:
+        specifier: ^1.2.1
+        version: 1.2.1(marked@17.0.1)(shiki@4.0.2)
+      shiki:
+        specifier: ^4.0.2
+        version: 4.0.2
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      tsx:
+        specifier: ^4.15.7
+        version: 4.21.0
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

@@ -1,9 +1,7 @@
 /** @jsxImportSource react */
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-
-import { browserMarkdownRenderingKernel } from "@/components/markdown/browser-rendering-kernel";
-
-import { applyTextHighlights } from "./text-highlights";
+import { browserMarkdownRenderingKernel } from "@openwork/markdown/browser";
+import { applyTextHighlights } from "@openwork/markdown/text-highlights";
 
 function MarkdownBlockInner(props: {
   text: string;

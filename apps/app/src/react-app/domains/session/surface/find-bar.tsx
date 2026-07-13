@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useSessionFindStore } from "./find-store";
-import { SEARCH_HIGHLIGHT_SELECTOR } from "./text-highlights";
+import { SEARCH_HIGHLIGHT_SELECTOR } from "@openwork/markdown/text-highlights";
 
 const MIN_QUERY_LENGTH = 2;
 const DEBOUNCE_MS = 150;

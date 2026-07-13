@@ -56,6 +56,7 @@ const browserOnlyImports = [
   "dompurify",
 ];
 const browserOnlyExtensions = [".css", ".scss", ".sass", ".less", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp"];
+const explicitAssetExtensions = new Set([...browserOnlyExtensions, ".wasm"]);
 const nodeBuiltins = new Set(
   builtinModules.flatMap((name) => {
     const bareName = name.replace(/^node:/, "");
@@ -126,8 +127,24 @@ function importedSpecifiers(source) {
 }
 
 function exportTargets(value, manifestPath, exportName) {
+  if (typeof value === "string") {
+    if (!value.startsWith("./")) {
+      report(manifestPath, `exports[${JSON.stringify(exportName)}] asset target must be package-relative`);
+      return [];
+    }
+    const extension = value.slice(value.lastIndexOf("."));
+    if (!explicitAssetExtensions.has(extension)) {
+      report(
+        manifestPath,
+        `exports[${JSON.stringify(exportName)}] string target must be an explicit static asset`,
+      );
+      return [];
+    }
+    return [{ condition: "asset", target: value }];
+  }
+
   if (!isRecord(value)) {
-    report(manifestPath, `exports[${JSON.stringify(exportName)}] must be a condition object`);
+    report(manifestPath, `exports[${JSON.stringify(exportName)}] must be a condition object or static asset`);
     return [];
   }
 
@@ -248,6 +265,31 @@ function validateMetadata(workspace) {
         report(manifestPath, `export key ${JSON.stringify(exportName)} must be an explicit package subpath`);
       }
       for (const { condition, target } of exportTargets(value, manifestPath, exportName)) {
+        if (condition === "asset") {
+          if (exportName === ".") {
+            report(manifestPath, "the root export cannot be a static asset");
+          }
+          if (!existsSync(resolve(packageDirectory, target))) {
+            report(manifestPath, `exports[${JSON.stringify(exportName)}] asset does not exist: ${target}`);
+          }
+          const topLevelPath = target.slice(2).split("/")[0];
+          if (!manifest.files?.includes(topLevelPath)) {
+            report(
+              manifestPath,
+              `files must include exported asset path ${JSON.stringify(topLevelPath)}`,
+            );
+          }
+          if (
+            target.endsWith(".css") &&
+            !(Array.isArray(manifest.sideEffects) && manifest.sideEffects.includes(target))
+          ) {
+            report(
+              manifestPath,
+              `exported stylesheet ${JSON.stringify(target)} must be listed in sideEffects`,
+            );
+          }
+          continue;
+        }
         const expectedDirectory = condition === "default" ? "./dist/" : "./src/";
         if (!target.startsWith(expectedDirectory)) {
           report(manifestPath, `exports[${JSON.stringify(exportName)}].${condition} must target ${expectedDirectory}`);

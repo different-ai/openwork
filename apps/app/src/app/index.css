@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @config "../../tailwind.config.ts";
 
+@import "@openwork/markdown/styles.css";
+
 @import "../styles/colors.css";
 
 @import "tw-animate-css";

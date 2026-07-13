@@ -10,7 +10,7 @@ import {
 } from "@shikijs/transformers";
 import { bundledLanguages, codeToHtml } from "shiki";
 
-import { createMarkdownRenderingKernel } from "./rendering-kernel";
+import { createMarkdownRenderingKernel } from "./index";
 
 function sanitizeMarkdownHtml(value: string) {
   return DOMPurify.sanitize(value, {

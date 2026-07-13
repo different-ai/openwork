@@ -3,6 +3,7 @@ import { markedEmoji } from "marked-emoji";
 import markedShiki from "marked-shiki";
 import emojiKeywords from "emojilib";
 
+/** OpenWork's two intentionally distinct Markdown presentation contracts. */
 export type MarkdownPresentationVariant = "conversation" | "document-preview";
 
 export type MarkdownHighlightRequest = {

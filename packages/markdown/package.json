@@ -1,0 +1,66 @@
+{
+  "name": "@openwork/markdown",
+  "version": "0.1.0-experimental.0",
+  "private": true,
+  "description": "Safe, presentation-aware Markdown rendering for OpenWork surfaces",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": [
+    "./styles.css"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./src/browser.ts",
+      "development": "./src/browser.ts",
+      "default": "./dist/browser.js"
+    },
+    "./text-highlights": {
+      "types": "./src/text-highlights.ts",
+      "development": "./src/text-highlights.ts",
+      "default": "./dist/text-highlights.js"
+    },
+    "./styles.css": "./styles.css"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "styles.css"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "openwork": {
+    "packageContract": {
+      "schemaVersion": 1,
+      "capability": "markdown-rendering",
+      "layer": "presentation",
+      "realms": [
+        "browser"
+      ],
+      "stability": "experimental"
+    }
+  },
+  "dependencies": {
+    "@shikijs/transformers": "^4.0.2",
+    "dompurify": "^3.4.5",
+    "emojilib": "^4.0.3",
+    "marked": "^17.0.1",
+    "marked-emoji": "^2.0.3",
+    "marked-shiki": "^1.2.1",
+    "shiki": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsx": "^4.15.7",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3"
+  }
+}
