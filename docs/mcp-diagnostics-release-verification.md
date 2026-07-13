@@ -37,9 +37,9 @@ through explicit adapters.
 | --- | --- | --- | --- | --- |
 | Structured MCP diagnostics | [#2669](https://github.com/different-ai/openwork/pull/2669) | Passed | Initial error-source behavior reviewed | **Merged into upstream `dev`** |
 | Native Microsoft 365 OAuth errors | [#2698](https://github.com/different-ai/openwork/pull/2698) | Focused tests and typecheck passed | Real Connect succeeded after replacing the secret value | Draft |
-| Enterprise mock package and lab | [#2670](https://github.com/different-ai/openwork/pull/2670) | 162 package and 20 lab tests passed | Lab opened; Den-to-mock walkthrough not complete | Draft |
+| Enterprise mock package and lab | [#2670](https://github.com/different-ai/openwork/pull/2670) | 162 local package and 20 lab tests passed; GitHub rerunning after Node 24 socket fix | Lab opened; Den-to-mock walkthrough not complete | Draft |
 | Package-first enterprise client | [#2694](https://github.com/different-ai/openwork/pull/2694) | Source and Den matrices passed | Manual end-to-end review not complete | Draft |
-| Client/mock combined proof | [#2699](https://github.com/different-ai/openwork/pull/2699) | Four provider scenarios; 27 client tests passed | Manual replay not complete | Verification-only draft |
+| Client/mock combined proof | [#2699](https://github.com/different-ai/openwork/pull/2699) | 23 client tests and four integration scenarios passed; GitHub rerunning after Docker dependency fix | Manual replay not complete | Verification-only draft |
 | Live diagnostic tracing | [#2672](https://github.com/different-ai/openwork/pull/2672) | Earlier focused proof passed | Not started | Draft; refresh before review |
 
 ## Real Microsoft 365 learning
@@ -60,8 +60,9 @@ http://localhost:<den-api-port>/v1/oauth-providers/microsoft-365/connect/callbac
 ```
 
 #2670 accepts exact HTTP OAuth callbacks on `localhost`, `127.0.0.1`, and
-`[::1]`. The mock lab's protected admin origin deliberately remains literal
-`127.0.0.1`; the admin origin and OAuth callback are separate trust boundaries.
+`[::1]`. The mock lab's protected admin origin is a separate exact literal
+loopback host (`127.0.0.1` by default, optionally `[::1]`) and never treats
+`localhost` as equivalent.
 
 ## Combined verification finding
 
