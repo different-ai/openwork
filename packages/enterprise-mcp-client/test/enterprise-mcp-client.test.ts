@@ -18,6 +18,7 @@ import {
   type EnterpriseMcpOAuthPersistence,
 } from "../src/index.js"
 import { EnterpriseMcpOAuthProvider } from "../src/oauth-provider.js"
+import { createEnterpriseMcpRequestObserver } from "../src/request-observer.js"
 import { collectEnterpriseMcpTools } from "../src/tool-catalog.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
 
@@ -246,6 +247,28 @@ function noAuthConnection(): EnterpriseMcpConnection {
 }
 
 describe("enterprise MCP client", () => {
+  it("preserves the last failed OAuth phase when a later cleanup request succeeds", async () => {
+    const controller = new AbortController()
+    const observer = createEnterpriseMcpRequestObserver({
+      connectionId: "connection-1",
+      operationPhase: "authorization-callback",
+      fetch: async (url) => new URL(url).pathname.endsWith("/token")
+        ? Response.json({ error: "invalid_client" }, { status: 401 })
+        : Response.json({ issuer: "https://provider.example.test" }),
+      signal: controller.signal,
+      clock: { now: () => Date.now() },
+    })
+
+    await observer.fetch("https://provider.example.test/token", {
+      method: "POST",
+      body: new URLSearchParams({ grant_type: "authorization_code", code: "code" }),
+    })
+    await observer.fetch("https://provider.example.test/.well-known/oauth-authorization-server")
+
+    assert.equal(observer.lastRequestPhase(), "oauth-server-discovery")
+    assert.equal(observer.lastFailedRequestPhase(), "oauth-token-exchange")
+  })
+
   it("connects, discovers tools, and calls a tool over MCP Streamable HTTP", async () => {
     const events: EnterpriseMcpDiagnosticEvent[] = []
     const client = createEnterpriseMcpClient({
