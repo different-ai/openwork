@@ -5,8 +5,8 @@ deletion condition passes in the same commit.
 
 | Candidate | Confidence | Evidence | Deletion condition | Status |
 | --- | --- | --- | --- | --- |
-| `apps/app/src/react-app/kernel/global-sdk-provider.tsx` | high | No imports outside its own file/docs; active provider composition omits it | App typecheck/build, relevant session tests, and canonical core fraimz pass without it | candidate |
-| `apps/app/src/react-app/kernel/global-sync-provider.tsx` | high | No imports outside its own file/docs; active provider composition omits it | Same as above; update architecture docs in the deletion commit | candidate |
+| `apps/app/src/react-app/kernel/global-sdk-provider.tsx` | high | No imports outside the paired legacy provider/docs; active provider composition omits it | 174 app tests, app typecheck/build, and canonical `core-flow` fraimz pass without it | removed |
+| `apps/app/src/react-app/kernel/global-sync-provider.tsx` | high | No imports outside its own file/docs; active provider composition omits it | Same proof; active provider diagram corrected in the deletion commit | removed |
 | Root `test:orchestrator` script | high | Invokes absent `test:router` script | Replace with an existing focused command or remove after CI/reference audit | candidate |
 | `ee/apps/den-controller` | high | Directory declares itself deprecated/non-workspace; old runner targets missing `src/index.ts` | Confirm no packaging/deployment/sibling references; remove runner/docs together | candidate |
 | `scripts/dev-web-local.sh` Den-controller branch | high | Launches the deprecated controller while root `dev:web-local` uses `dev:den` | Shell/CI/docs reference audit and replacement command proof | candidate |
@@ -25,6 +25,8 @@ deletion condition passes in the same commit.
 5. End-to-end proof for observable or runtime-bearing code.
 6. Commit-level rollback: deletion is not mixed with a behavior redesign.
 
-The unused-file scanner is advisory. Its current 335 raw candidates include
-framework, build, and generated-entry false positives and were not fully
-classified because the wrapper is not portable to macOS Bash 3.2.
+The unused-file scanner is advisory. Its first real run produced 335 raw
+candidates and exposed tests, evals, skill scripts, and package entrypoints in
+the old `safe to remove` bucket. The portable classifier now calls its first
+bucket an investigation queue and routes known convention/config signals to
+review. Neither bucket authorizes deletion without the evidence above.

@@ -23,8 +23,8 @@ src/
 └── react-app/
     ├── shell/                 Bootstrap, providers composition, routes (session-route,
     │                          settings-route), command palette, menus, boot/loading states
-    ├── kernel/                App-wide state + provider stack (server → global-sdk →
-    │                          global-sync → local), zustand store, platform
+    ├── kernel/                App-wide state + provider stack (server → local),
+    │                          zustand store, platform
     ├── infra/                 React-only runtime infra (query-client, provider-list-query)
     ├── design-system/         Reusable presentational primitives
     └── domains/               Feature-scoped code, one folder per product domain
@@ -61,14 +61,18 @@ Toasts are rendered with `sonner` (`@/components/ui/sonner`), mounted once via
 src/index.react.tsx                       React entry
   └─ QueryClientProvider + PlatformProvider
      └─ react-app/shell/providers.tsx     (AppProviders composition)
-        ServerProvider
-        └─ GlobalSDKProvider
-           └─ GlobalSyncProvider
-              └─ LocalProvider
-                 └─ react-app/shell/app-root.tsx → routes
-                    ├─ shell/session-route.tsx   → domains/session
-                    ├─ shell/settings-route.tsx  → domains/settings, connections
-                    └─ domains/{workspace,cloud,onboarding} flows
+        └─ BootStateProvider
+           └─ ServerProvider
+              └─ ArchitectureMismatchGate + DesktopRuntimeBoot
+                 └─ DenAuthProvider
+                    └─ DesktopConfigProvider
+                       └─ BrandThemeProvider + RestrictionNoticeProvider
+                          └─ LocalProvider
+                             └─ ReloadCoordinatorProvider
+                                └─ react-app/shell/app-root.tsx → routes
+                                   ├─ shell/session-route.tsx   → domains/session
+                                   ├─ shell/settings-route.tsx  → domains/settings, connections
+                                   └─ domains/{workspace,cloud,onboarding} flows
 ```
 
 ## State ownership
