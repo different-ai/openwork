@@ -19,6 +19,7 @@ catalogs:
 linkWorkspacePackages: true
 preferWorkspacePackages: true
 allowBuilds:
+  "@sentry/cli": true
   "@whiskeysockets/baileys": true
   better-sqlite3: true
   electron: true

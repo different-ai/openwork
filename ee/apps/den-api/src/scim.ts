@@ -5,6 +5,8 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { auth } from "./auth.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { appLogger } from "./observability/logger.js"
+import { SCIM_SYNC_FAILURE_RECORDED_OPERATIONAL_MARKER } from "./operational-log-markers.js"
 import { removeOrganizationMember } from "./orgs.js"
 import { verifyStoredScimToken } from "./scim-token-storage.js"
 
@@ -17,6 +19,7 @@ export type ScimSyncAction = "sync_resource" | "sync_user_id" | "delete_user" | 
 
 const SCIM_SYNC_RETRY_BASE_MS = 60_000
 const SCIM_SYNC_MAX_ATTEMPTS = 5
+const logger = appLogger.child({ component: "scim" })
 
 type ScimUserResource = {
   id?: unknown
@@ -424,9 +427,15 @@ export async function recordScimSyncFailure(input: {
   }
 
   await db.insert(ScimSyncEventTable).values(event)
-  console.error(
-    `[scim][sync_failure_recorded] organization=${event.organizationId} provider=${event.providerId} action=${event.action} event=${event.id} retryable=${retryable} reason=${event.lastError}`,
-  )
+  logger.error(`${SCIM_SYNC_FAILURE_RECORDED_OPERATIONAL_MARKER} scim sync failure recorded`, {
+    operational_marker: SCIM_SYNC_FAILURE_RECORDED_OPERATIONAL_MARKER,
+    organization_id: event.organizationId,
+    provider_id: event.providerId,
+    action: event.action,
+    event_id: event.id,
+    retryable,
+    reason: event.lastError,
+  })
   return event.id
 }
 

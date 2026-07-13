@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 
+import { denWebLogger } from "../../../observability/runtime-logger";
+
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -72,13 +74,30 @@ function shouldSkipResponseHeader(name: string): boolean {
   return HOP_BY_HOP_HEADERS.has(normalized) || RESPONSE_ONLY_HEADERS.has(normalized) || normalized === "set-cookie";
 }
 
-function cloneRequestHeaders(request: NextRequest): Headers {
+async function injectActiveTraceContext(headers: Headers): Promise<void> {
+  try {
+    const { context, isSpanContextValid, trace, TraceFlags } = await import("@opentelemetry/api");
+    const spanContext = trace.getSpanContext(context.active());
+    if (spanContext === undefined || !isSpanContextValid(spanContext)) return;
+
+    const flags = (spanContext.traceFlags & TraceFlags.SAMPLED) === TraceFlags.SAMPLED ? "01" : "00";
+    headers.set("traceparent", `00-${spanContext.traceId}-${spanContext.spanId}-${flags}`);
+    if (spanContext.traceState !== undefined) {
+      headers.set("tracestate", spanContext.traceState.serialize());
+    }
+  } catch {
+    return;
+  }
+}
+
+async function cloneRequestHeaders(request: NextRequest): Promise<Headers> {
   const headers = new Headers();
   request.headers.forEach((value, name) => {
     if (!shouldSkipRequestHeader(name)) {
       headers.append(name, value);
     }
   });
+  await injectActiveTraceContext(headers);
   return headers;
 }
 
@@ -134,6 +153,22 @@ function buildUpstreamErrorResponse(status: number, error: string): Response {
   });
 }
 
+function elapsedMs(startMs: number): number {
+  return Date.now() - startMs;
+}
+
+function upstreamOrigin(base: string): string {
+  try {
+    return new URL(base).origin;
+  } catch {
+    return "invalid";
+  }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
 async function readRequestBody(request: NextRequest): Promise<Uint8Array | null> {
   if (request.method === "GET" || request.method === "HEAD") return null;
   return new Uint8Array(await request.arrayBuffer());
@@ -144,19 +179,49 @@ export async function proxyUpstream(
   segments: string[] = [],
   options: ProxyOptions,
 ): Promise<Response> {
+  const startedAtMs = Date.now();
   const apiBase = readBaseUrlEnv("DEN_API_BASE");
   if (!apiBase) {
+    denWebLogger.error("den-web upstream proxy misconfigured", {
+      route_prefix: options.routePrefix,
+      method: request.method,
+      duration_ms: elapsedMs(startedAtMs),
+      missing: "DEN_API_BASE",
+    });
     return buildUpstreamErrorResponse(503, "DEN_API_BASE must be configured.");
   }
 
   const targetPath = getTargetPath(request, segments, options.routePrefix);
   const targetUrl = buildTargetUrl(apiBase, request, targetPath, options.upstreamPathPrefix);
-  const upstream = await fetch(targetUrl, {
+  let upstream: Response;
+  try {
+    upstream = await fetch(targetUrl, {
+      method: request.method,
+      headers: await cloneRequestHeaders(request),
+      body: await readRequestBody(request),
+      redirect: "manual",
+    });
+  } catch (error) {
+    denWebLogger.error("den-web upstream proxy failed", {
+      route_prefix: options.routePrefix,
+      method: request.method,
+      upstream_origin: upstreamOrigin(apiBase),
+      upstream_path: `/${[normalizePathPrefix(options.upstreamPathPrefix ?? ""), targetPath].filter(Boolean).join("/")}`,
+      duration_ms: elapsedMs(startedAtMs),
+      error_name: errorName(error),
+    });
+    throw error;
+  }
+
+  denWebLogger.log(upstream.ok ? "info" : "warn", "den-web upstream proxy completed", {
+    route_prefix: options.routePrefix,
     method: request.method,
-    headers: cloneRequestHeaders(request),
-    body: await readRequestBody(request),
-    redirect: "manual",
+    upstream_origin: upstreamOrigin(apiBase),
+    upstream_path: `/${[normalizePathPrefix(options.upstreamPathPrefix ?? ""), targetPath].filter(Boolean).join("/")}`,
+    status: upstream.status,
+    duration_ms: elapsedMs(startedAtMs),
   });
+
   const shouldDropBody = request.method === "HEAD" || NO_BODY_STATUS.has(upstream.status);
 
   return new Response(shouldDropBody ? null : upstream.body, {

@@ -4,6 +4,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
+import { appLogger } from "../../observability/logger.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -50,6 +51,7 @@ import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, or
 import type { OrgRouteVariables } from "./shared.js"
 
 const connectionParamsSchema = idParamSchema("connectionId", "externalMcpConnection")
+const logger = appLogger.child({ component: "mcp_connections" })
 
 const accessInputSchema = z.object({
   orgWide: z.boolean().optional().default(false),
@@ -462,10 +464,10 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           await connectExternalMcp(created, callbackRedirectUri(c.req.raw, created.id), undefined, undefined, c.get("requestId"))
         } catch (error) {
           const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "MCP_INITIALIZE")
-          console.error("external_mcp_connection_validation_failed", {
-            connectionId: created.id,
-            organizationId: payload.organization.id,
-            connectionEndpoint: safeExternalMcpEndpointForLog(created.url),
+          logger.error("external_mcp_connection_validation_failed", {
+            connection_id: created.id,
+            organization_id: payload.organization.id,
+            connection_endpoint: safeExternalMcpEndpointForLog(created.url),
             ...externalMcpDiagnosticForLog(error, c.get("requestId"), "MCP_INITIALIZE"),
           })
           return c.json({
@@ -656,10 +658,10 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ status: "needs_auth" as const, authorizeUrl: result.authorizeUrl })
       } catch (error) {
         const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "AUTH_RESOURCE_DISCOVERY")
-        console.error("external_mcp_connect_start_oauth_handshake_failed", {
-          connectionId: connection.id,
-          organizationId: payload.organization.id,
-          connectionEndpoint: safeExternalMcpEndpointForLog(connection.url),
+        logger.error("external_mcp_connect_start_oauth_handshake_failed", {
+          connection_id: connection.id,
+          organization_id: payload.organization.id,
+          connection_endpoint: safeExternalMcpEndpointForLog(connection.url),
           ...externalMcpDiagnosticForLog(error, c.get("requestId"), "AUTH_RESOURCE_DISCOVERY"),
         })
         return c.json({
@@ -715,15 +717,15 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         try {
           await abandonExternalMcpAuth(connection, state, member, c.get("requestId"))
         } catch (error) {
-          console.error("external_mcp_connect_callback_authorization_cleanup_failed", {
-            connectionId: connection.id,
-            organizationId: statePayload.organizationId,
+          logger.error("external_mcp_connect_callback_authorization_cleanup_failed", {
+            connection_id: connection.id,
+            organization_id: statePayload.organizationId,
             ...externalMcpDiagnosticForLog(error, c.get("requestId"), "AUTH_USER_OR_WORKLOAD"),
           })
         }
-        console.error("external_mcp_connect_callback_authorization_denied", {
-          connectionId: connection.id,
-          organizationId: statePayload.organizationId,
+        logger.error("external_mcp_connect_callback_authorization_denied", {
+          connection_id: connection.id,
+          organization_id: statePayload.organizationId,
           ...externalMcpDiagnosticForLog(callbackError, c.get("requestId"), "AUTH_USER_OR_WORKLOAD"),
         })
         return c.html(connectCallbackPage({
@@ -756,9 +758,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         )
       } catch (error) {
         const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "AUTH_TOKEN_ACQUISITION")
-        console.error("external_mcp_connect_callback_token_exchange_failed", {
-          connectionId: connection.id,
-          organizationId: statePayload.organizationId,
+        logger.error("external_mcp_connect_callback_token_exchange_failed", {
+          connection_id: connection.id,
+          organization_id: statePayload.organizationId,
           ...externalMcpDiagnosticForLog(error, c.get("requestId"), "AUTH_TOKEN_ACQUISITION"),
         })
         return c.html(connectCallbackPage({

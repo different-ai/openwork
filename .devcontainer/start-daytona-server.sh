@@ -119,7 +119,7 @@ echo "==> Pushing Den DB schema..."
 pnpm --filter @openwork-ee/den-db db:push > /tmp/den-db-push.log 2>&1
 
 echo "==> Starting Den API on :$DEN_API_PORT..."
-pkill -f "ee/apps/den-api/src/server.ts" >/dev/null 2>&1 || true
+pkill -f "ee/apps/den-api/src/main.ts" >/dev/null 2>&1 || true
 nohup env \
   PORT="$DEN_API_PORT" \
   DATABASE_URL="$DATABASE_URL" \
@@ -135,7 +135,7 @@ nohup env \
   DAYTONA_WORKER_PROXY_BASE_URL="$DAYTONA_WORKER_PROXY_BASE_URL" \
   OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
   NODE_OPTIONS="--conditions=development" \
-  pnpm --filter @openwork-ee/den-api exec tsx watch src/server.ts > /tmp/den-api.log 2>&1 &
+  pnpm --filter @openwork-ee/den-api exec tsx watch src/main.ts > /tmp/den-api.log 2>&1 &
 
 wait_for_http "http://127.0.0.1:$DEN_API_PORT/health" "Den API" 180
 

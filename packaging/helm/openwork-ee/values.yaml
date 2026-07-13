@@ -91,6 +91,36 @@ config:
     posthogKey: ""
     posthogHost: ""
 
+observability:
+  backend: none
+  serviceNames:
+    denApi: den-api
+    denWeb: den-web
+  otel:
+    endpoint: ""
+    tracesEndpoint: ""
+    metricsEndpoint: ""
+    logsEndpoint: ""
+    protocol: http/protobuf
+    exporters:
+      traces: otlp
+      metrics: otlp
+      logs: otlp
+    tracesSampler: parentbased_always_on
+    tracesSamplerArg: ""
+    headers:
+      existingSecret: ""
+      key: OTEL_EXPORTER_OTLP_HEADERS
+  sentry:
+    dsn: ""
+    dsnSecret:
+      existingSecret: ""
+      key: SENTRY_DSN
+    tracesSampleRate: "1"
+    environment: ""
+    release: ""
+    dist: ""
+
 secret:
   create: true
   existingSecret: ""

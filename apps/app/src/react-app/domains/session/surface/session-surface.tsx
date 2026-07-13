@@ -44,7 +44,7 @@ import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog"
 import { SessionDebugPanel } from "./debug-panel";
 import { deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { useLocal } from "@/react-app/kernel/local-provider";
-import { isModelReadableAttachment } from "@/react-app/domains/session/sync/attachment-support";
+import { isAttachmentFileReadable, resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
 import { SessionScrollOverlay } from "./scroll-overlay";
@@ -914,8 +914,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         { description: "Files over 25 MB were skipped." },
       );
     }
-    const unreadable = sized.filter((file) => !isModelReadableAttachment(file.type));
-    const accepted = sized.filter((file) => isModelReadableAttachment(file.type));
+    const unreadable = sized.filter((file) => !isAttachmentFileReadable(file));
+    const accepted = sized.filter(isAttachmentFileReadable);
     if (unreadable.length) {
       toast.warning(
         unreadable.length === 1
@@ -925,15 +925,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
       );
     }
     if (!accepted.length) return;
-    const next = accepted.map((file) => ({
-      id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
-      name: file.name,
-      mimeType: file.type || "application/octet-stream",
-      size: file.size,
-      kind: file.type.startsWith("image/") ? "image" as const : "file" as const,
-      file,
-      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
-    }));
+    const next = accepted.map((file) => {
+      const metadata = resolveAttachmentFileMetadata(file);
+      return {
+        id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
+        name: file.name,
+        mimeType: metadata.mime,
+        size: file.size,
+        kind: metadata.kind,
+        file,
+        previewUrl: metadata.kind === "image" ? URL.createObjectURL(file) : undefined,
+      };
+    });
     setComposerAttachments(props.sessionId, [...attachments, ...next]);
   };
 

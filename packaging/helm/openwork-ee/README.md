@@ -145,6 +145,73 @@ The existing Secret must contain the keys listed under `secret.keys`, especially
 
 Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
 
+## Observability
+
+The chart exposes first-class runtime observability settings for `den-api` and
+`den-web` only. `observability.backend` defaults to `none`; set it to `otel` or
+`sentry` to enable the matching runtime environment. The chart injects distinct
+`OTEL_SERVICE_NAME` values directly into each Deployment, so the shared
+ConfigMap is not used for service identity or auth-like observability values.
+
+OpenTelemetry uses OTLP over `http/protobuf`, with a shared endpoint and
+optional per-signal endpoint overrides. Per-signal exporters default to `otlp`,
+and trace sampling defaults to the standard parent-based always-on sampler:
+
+```yaml
+observability:
+  backend: otel
+  serviceNames:
+    denApi: openwork-den-api
+    denWeb: openwork-den-web
+  otel:
+    endpoint: "https://otel-collector.example.com/otlp"
+    tracesEndpoint: ""
+    metricsEndpoint: ""
+    logsEndpoint: ""
+    exporters:
+      traces: otlp
+      metrics: otlp
+      logs: otlp
+    tracesSampler: parentbased_always_on
+    tracesSamplerArg: ""
+    headers:
+      existingSecret: openwork-otel-headers
+      key: OTEL_EXPORTER_OTLP_HEADERS
+```
+
+`observability.otel.headers.existingSecret` must name an existing Kubernetes
+Secret. Its key is exposed as `OTEL_EXPORTER_OTLP_HEADERS` only on `den-api` and
+`den-web`; it is not added to inference pods or migration Jobs.
+
+For Sentry runtime capture, configure the DSN directly or through an existing
+Secret. Helm runtime pods intentionally do not receive `SENTRY_AUTH_TOKEN`,
+`SENTRY_ORG`, `SENTRY_PROJECT`, or `SENTRY_URL`; those are build-time source-map
+upload settings, not runtime settings.
+
+```yaml
+observability:
+  backend: sentry
+  sentry:
+    dsnSecret:
+      existingSecret: openwork-sentry-runtime
+      key: SENTRY_DSN
+    tracesSampleRate: "1"
+    environment: production
+    release: "2026.07.11"
+```
+
+Sentry source-map upload is build-time behavior. Helm configures runtime pods
+after images already exist, so it cannot retroactively upload source maps for
+Vercel or CI builds. Set `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`,
+and `SENTRY_URL` in the build environment that creates the image (for example,
+Vercel project build environment variables), not in Helm values or the chart
+ConfigMap. The generic published images cannot upload source maps after they
+are built; build your own image with CI/BuildKit source-map secrets when you
+need uploaded artifacts. `packaging/docker/Dockerfile.den-web` accepts optional
+BuildKit secret IDs `sentry_auth_token`, `sentry_org`, `sentry_project`,
+`sentry_url`, `sentry_release`, and `sentry_dist`; the EE image publish workflow
+wires these IDs from GitHub Secrets when present.
+
 ## GitHub Connector
 
 The GitHub repository connector uses a GitHub App. It is separate from GitHub

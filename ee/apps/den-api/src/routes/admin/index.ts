@@ -27,6 +27,7 @@ import { db } from "../../db.js"
 import { parseOrganizationPlan, type PlanTier } from "../../entitlements.js"
 import { adminRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { appLogger } from "../../observability/logger.js"
 import { normalizeOrganizationCapabilities } from "../../organization-capabilities.js"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../../organization-limits.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -46,6 +47,7 @@ type AdminBillingStatus = {
 }
 
 const DEFAULT_ORGANIZATION_FREE_SEAT_COUNT = calculateOrganizationSeatBillingCounts({ memberCount: 0 }).includedFree
+const logger = appLogger.child({ component: "admin_routes" })
 
 const overviewQuerySchema = z.object({
   includeBilling: z.string().optional(),
@@ -851,7 +853,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       try {
         return await refreshOrgSubscriptionFromStripe(subscriptionId)
       } catch (error) {
-        console.warn("[admin] failed to refresh Stripe subscription", subscriptionId, error)
+        logger.warn("failed to refresh Stripe subscription", { stripe_subscription_id: subscriptionId, error })
         return null
       }
     })

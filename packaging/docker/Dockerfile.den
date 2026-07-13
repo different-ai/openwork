@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM node:22-bookworm-slim
 
 RUN corepack enable
@@ -32,10 +33,34 @@ RUN pnpm --dir /app/packages/enterprise-mcp-client run build
 RUN pnpm --dir /app/packages/install-config run build
 RUN pnpm --dir /app/ee/packages/utils run build
 RUN pnpm --dir /app/ee/packages/den-db run build
-RUN pnpm --dir /app/ee/apps/den-api run build
+# Source-map upload is build-only; runtime Sentry still requires its own backend and DSN configuration.
+ARG DEN_UPLOAD_SENTRY_SOURCEMAPS=0
+ARG DEN_SENTRY_UPLOAD_BUILD_ID=disabled
+RUN --mount=type=secret,id=sentry_auth_token,required=false \
+  --mount=type=secret,id=sentry_org,required=false \
+  --mount=type=secret,id=sentry_project,required=false \
+  --mount=type=secret,id=sentry_url,required=false \
+  --mount=type=secret,id=sentry_release,required=false \
+  --mount=type=secret,id=sentry_dist,required=false \
+  set -eu; \
+  if [ "$DEN_UPLOAD_SENTRY_SOURCEMAPS" = "1" ]; then \
+    if [ ! -s /run/secrets/sentry_auth_token ] || [ ! -s /run/secrets/sentry_org ] || [ ! -s /run/secrets/sentry_project ] || [ ! -s /run/secrets/sentry_release ]; then \
+      echo "Sentry source-map upload requested but required BuildKit secrets are incomplete" >&2; \
+      exit 1; \
+    fi; \
+    export DEN_UPLOAD_SENTRY_SOURCEMAPS; \
+    export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token)"; \
+    export SENTRY_ORG="$(cat /run/secrets/sentry_org)"; \
+    export SENTRY_PROJECT="$(cat /run/secrets/sentry_project)"; \
+    export SENTRY_RELEASE="$(cat /run/secrets/sentry_release)"; \
+    if [ -s /run/secrets/sentry_url ]; then export SENTRY_URL="$(cat /run/secrets/sentry_url)"; fi; \
+    if [ -s /run/secrets/sentry_dist ]; then export SENTRY_DIST="$(cat /run/secrets/sentry_dist)"; fi; \
+    : "$DEN_SENTRY_UPLOAD_BUILD_ID"; \
+  fi; \
+  pnpm --dir /app/ee/apps/den-api run build
 
 EXPOSE 8788
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '8788') + '/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-CMD ["node", "/app/ee/apps/den-api/dist/server.js"]
+CMD ["node", "/app/ee/apps/den-api/dist/main.js"]

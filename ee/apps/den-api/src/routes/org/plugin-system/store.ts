@@ -67,6 +67,7 @@ import {
 } from "./default-marketplaces.js"
 import { db } from "../../../db.js"
 import { env } from "../../../env.js"
+import { appLogger } from "../../../observability/logger.js"
 import { roleIncludesOwner } from "../../../orgs.js"
 import { memberFacingMcpConnectionsEnabled } from "../../../capability-sources/external-mcp-rollout.js"
 import { resolveMarketplacePluginCloudReadiness } from "../../../mcp/marketplace-capabilities.js"
@@ -79,6 +80,7 @@ import {
 } from "../../../capability-sources/external-mcp-connections.js"
 
 type OrganizationId = PluginArchActorContext["organizationContext"]["organization"]["id"]
+const logger = appLogger.child({ component: "plugin_system_store" })
 type MemberId = PluginArchActorContext["organizationContext"]["currentMember"]["id"]
 type TeamId = PluginArchActorContext["memberTeams"][number]["id"]
 type ConfigObjectRow = typeof ConfigObjectTable.$inferSelect
@@ -5509,7 +5511,11 @@ export async function enqueueGithubWebhookSync(input: {
       autoImportError = error instanceof Error ? error.message : String(error)
       // Surface the failure instead of swallowing it silently so a sync that records an event
       // but never creates a version is diagnosable.
-      console.error(`[connectors][github] auto-import failed for target ${row.target.id} (delivery ${input.deliveryId}): ${autoImportError}`)
+      logger.error("github connector auto-import failed", {
+        connector_target_id: row.target.id,
+        delivery_id: input.deliveryId,
+        error: autoImportError,
+      })
     }
 
     const completedAt = new Date()

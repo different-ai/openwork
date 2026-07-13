@@ -160,10 +160,11 @@ import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-route
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
 import {
+  buildLocalProviderConfig,
   OPENAI_IMAGE_EXTENSION_ID,
   OPENAI_IMAGE_MODEL,
+  type LocalProviderInstallInput,
 } from "@/react-app/domains/settings/openai-image-extension";
-import { OLLAMA_PROVIDER_CONFIG, type LocalProviderInstallInput } from "@/react-app/domains/settings/openai-image-extension";
 
 const ROUTE_OPENWORK_CAPABILITIES: OpenworkServerCapabilities = {
   skills: { read: true, write: true, source: "openwork" },
@@ -1026,12 +1027,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       await client.patchConfig(workspaceId, {
         opencode: {
           provider: {
-            [input.providerId]: {
-              npm: "@ai-sdk/openai-compatible",
-              name: input.name,
-              options: { baseURL: input.baseURL },
-              models: { [modelId]: { name: input.modelName.trim() || modelId } },
-            },
+            [input.providerId]: buildLocalProviderConfig({ ...input, modelId }),
           },
         },
       });

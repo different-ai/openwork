@@ -1,5 +1,6 @@
 import { EmailSendError, emailSubjects, renderEmailHtml, sendEmail as sendSharedEmail, type EmailTemplate, type SendEmailInput } from "@openwork/email"
 import { env } from "../../env.js"
+import { appLogger } from "../../observability/logger.js"
 
 export { EmailSendError as DenEmailSendError }
 
@@ -15,6 +16,7 @@ export type DevEmailOutboxMetadata = Omit<DevEmailOutboxEntry, "html">
 
 const DEV_EMAIL_OUTBOX_MAX = 20
 const devEmailOutbox: DevEmailOutboxEntry[] = []
+const logger = appLogger.child({ component: "email" })
 
 // Dev/eval-only affordance: when OPENWORK_DEV_MODE=1, keep the last few
 // rendered emails in memory so UI evals can inspect real HTML without a mail
@@ -63,9 +65,12 @@ export async function sendEmail<Template extends EmailTemplate>(
   const to = input.to.trim()
   const subject = input.subject ?? emailSubjects[input.template](input.props)
 
-  console.info(
-    `[email] sending template=${input.template} hasFrom=${Boolean(env.email.from)} hasResend=${Boolean(env.resend.apiKey)} hasSmtp=${Boolean(env.smtp.host)}`,
-  )
+  logger.info("sending email", {
+    template: input.template,
+    has_from: Boolean(env.email.from),
+    has_resend: Boolean(env.resend.apiKey),
+    has_smtp: Boolean(env.smtp.host),
+  })
 
   if (env.devMode && to) {
     recordDevEmail({
@@ -88,9 +93,9 @@ export async function sendEmail<Template extends EmailTemplate>(
         smtp: env.smtp,
       },
     })
-    console.info(`[email] sent template=${input.template}`)
+    logger.info("email sent", { template: input.template })
   } catch (error) {
-    console.error(`[email] failed template=${input.template}`, error)
+    logger.error("email failed", { template: input.template, error })
     throw error
   }
 }
