@@ -91,7 +91,6 @@ IGNORE_PREFIXES=(
 )
 
 # ── Colors ──────────────────────────────────────────────────────────────────
-RED='\033[0;31m'
 YELLOW='\033[0;33m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -100,6 +99,34 @@ BOLD='\033[1m'
 RESET='\033[0m'
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+
+# Return a review reason for paths that tools invoke by convention rather than
+# through a source import. Case patterns are used instead of globstar so this
+# stays compatible with macOS Bash 3.2.
+entrypoint_convention_for() {
+  local filepath="$1"
+  case "$filepath" in
+    .opencode/skills/*/scripts/*)
+      echo "OpenCode skill script entrypoint convention"
+      ;;
+    evals/*|*/evals/*)
+      echo "eval entrypoint convention"
+      ;;
+    test/*|*/test/*|tests/*|*/tests/*|__tests__/*|*/__tests__/*|*.test.*|*.spec.*)
+      echo "test entrypoint convention"
+      ;;
+    bin/*|*/bin/*)
+      echo "package binary entrypoint convention"
+      ;;
+    scripts/*|*/scripts/*)
+      echo "script entrypoint convention"
+      ;;
+  esac
+}
+
+collect_package_json_files() {
+  find "$OPENWORK_ROOT" -name package.json -not -path '*/node_modules/*' -not -path '*/.git/*'
+}
 
 # Collect all internal infra files once
 collect_infra_files() {
@@ -112,10 +139,8 @@ collect_infra_files() {
       files="${files}${matched}"$'\n'
     fi
   done
-  # Also add all package.json files (for script references)
-  local pkg_jsons
-  pkg_jsons=$(find "$OPENWORK_ROOT" -name package.json -not -path '*/node_modules/*' -not -path '*/.git/*')
-  files="${files}${pkg_jsons}"$'\n'
+  # Also add package manifests (for scripts, bins, exports, and tool config).
+  files="${files}${PACKAGE_JSON_FILES:-}"$'\n'
   # And all tsconfig*.json files (for path aliases / includes)
   local tsconfigs
   tsconfigs=$(find "$OPENWORK_ROOT" -name 'tsconfig*.json' -not -path '*/node_modules/*' -not -path '*/.git/*')
@@ -127,6 +152,14 @@ collect_infra_files() {
 search_infra() {
   local pattern="$1"
   echo "$INFRA_FILES" | xargs grep -l "$pattern" 2>/dev/null || true
+}
+
+# Search package manifests separately so direct script/bin references get an
+# explicit explanation instead of being folded into generic infra.
+search_package_manifests() {
+  local pattern="$1"
+  [ -n "$PACKAGE_JSON_FILES" ] || return 0
+  echo "$PACKAGE_JSON_FILES" | xargs grep -l "$pattern" 2>/dev/null || true
 }
 
 # Search sibling repo CI/CD and build scripts for an openwork-relative path.
@@ -228,14 +261,15 @@ while IFS= read -r line; do
 done <<< "$KNIP_OUTPUT"
 
 if [ ${#UNUSED_FILES[@]} -eq 0 ]; then
-  echo -e "${GREEN}No unused files detected by knip.${RESET}"
+  echo -e "${GREEN}Knip reported no unused-file candidates.${RESET}"
   exit 0
 fi
 
-echo -e "Found ${BOLD}${#UNUSED_FILES[@]}${RESET} unused files. Cross-referencing...\n"
+echo -e "Knip reported ${BOLD}${#UNUSED_FILES[@]}${RESET} unused-file candidates. Cross-referencing...\n"
 
 # ── Step 2: Build infra file list once ─────────────────────────────────────
 echo -e "${DIM}  Indexing infra files...${RESET}" >&2
+PACKAGE_JSON_FILES=$(collect_package_json_files)
 INFRA_FILES=$(collect_infra_files)
 INFRA_FILE_COUNT=$(echo "$INFRA_FILES" | wc -l | tr -d ' ')
 echo -e "${DIM}  Found ${INFRA_FILE_COUNT} infra/config files to check against.${RESET}" >&2
@@ -248,7 +282,7 @@ fi
 # ── Step 3: Cross-reference each file ──────────────────────────────────────
 # Parallel indexed arrays keep the result model compatible with macOS Bash 3.2.
 # Each index corresponds to the same index in UNUSED_FILES.
-FILE_STATUSES=()  # "safe" | "infra" | "convention" | "routing" | "sibling_ci"
+FILE_STATUSES=()  # "candidate" | "package_manifest" | "infra" | "convention" | "routing" | "sibling_ci"
 FILE_REFS=()
 FILE_DATES=()
 
@@ -262,22 +296,36 @@ for filepath in "${UNUSED_FILES[@]}"; do
 
   name=$(basename "$filepath")
   stem="${name%.*}"
-  status="safe"
+  status="candidate"
   refs=""
 
-  # ── Check 1: Internal infra (CI, Docker, build scripts, configs, tsconfigs, package.jsons) ──
-  infra_hits=$(search_infra "$name")
-  # Also try the relative path for more specific matches in CI workflows
-  if [ -z "$infra_hits" ]; then
-    infra_hits=$(search_infra "$filepath")
+  # ── Check 1: Explicit package manifest references ──
+  package_hits=$(search_package_manifests "$name")
+  if [ -z "$package_hits" ]; then
+    package_hits=$(search_package_manifests "$filepath")
+  fi
+  if [ -n "$package_hits" ]; then
+    status="package_manifest"
+    refs="$package_hits"
+  fi
+
+  # ── Check 2: Internal infra (CI, Docker, build scripts, configs, tsconfigs) ──
+  if [ "$status" = "candidate" ]; then
+    infra_hits=$(search_infra "$name")
+    # Also try the relative path for more specific matches in CI workflows.
+    if [ -z "$infra_hits" ]; then
+      infra_hits=$(search_infra "$filepath")
+    fi
+  else
+    infra_hits=""
   fi
   if [ -n "$infra_hits" ]; then
     status="infra"
     refs="$infra_hits"
   fi
 
-  # ── Check 2: Convention-based usage ──
-  if [ "$status" = "safe" ]; then
+  # ── Check 3: Convention-based usage ──
+  if [ "$status" = "candidate" ]; then
     for pat in "${CONVENTION_PATTERNS[@]}"; do
       if [[ "$name" == *"$pat"* ]]; then
         status="convention"
@@ -287,8 +335,16 @@ for filepath in "${UNUSED_FILES[@]}"; do
     done
   fi
 
-  # ── Check 3: File-based routing dirs ──
-  if [ "$status" = "safe" ]; then
+  if [ "$status" = "candidate" ]; then
+    entrypoint_convention=$(entrypoint_convention_for "$filepath")
+    if [ -n "$entrypoint_convention" ]; then
+      status="convention"
+      refs="$entrypoint_convention"
+    fi
+  fi
+
+  # ── Check 4: File-based routing dirs ──
+  if [ "$status" = "candidate" ]; then
     for dir in "${ROUTING_DIRS[@]}"; do
       if [[ "$filepath" == "$dir"* ]]; then
         status="routing"
@@ -298,11 +354,11 @@ for filepath in "${UNUSED_FILES[@]}"; do
     done
   fi
 
-  # ── Check 4: Sibling repo CI/CD references ──
+  # ── Check 5: Sibling repo CI/CD references ──
   # Only search by the openwork-relative path (precise) or unique filename.
   # Since no sibling repo has npm deps on openwork packages, we only check
   # CI/CD and build scripts for direct path references.
-  if [ "$status" = "safe" ]; then
+  if [ "$status" = "candidate" ]; then
     sibling_hits=$(search_sibling_ci "$filepath")
     if [ -z "$sibling_hits" ]; then
       # Try filename only if it's specific enough (not a generic name)
@@ -336,70 +392,70 @@ done
 printf "\r%*s\r" 120 "" >&2
 
 # ── Step 4: Split into two buckets, sort by date ──────────────────────────
-safe_entries=()
-flagged_entries=()
+candidate_entries=()
+review_entries=()
 
 file_index=0
 for filepath in "${UNUSED_FILES[@]}"; do
   # Keep date and path first so sorting remains oldest-first, then path.
   entry="${FILE_DATES[$file_index]}|$filepath|$file_index"
-  if [ "${FILE_STATUSES[$file_index]}" = "safe" ]; then
-    safe_entries+=("$entry")
+  if [ "${FILE_STATUSES[$file_index]}" = "candidate" ]; then
+    candidate_entries+=("$entry")
   else
-    flagged_entries+=("$entry")
+    review_entries+=("$entry")
   fi
   file_index=$((file_index + 1))
 done
 
-safe_sorted=()
-if [ "${#safe_entries[@]}" -gt 0 ]; then
-  IFS=$'\n' safe_sorted=($(printf '%s\n' "${safe_entries[@]}" | sort))
+candidate_sorted=()
+if [ "${#candidate_entries[@]}" -gt 0 ]; then
+  IFS=$'\n' candidate_sorted=($(printf '%s\n' "${candidate_entries[@]}" | sort))
   unset IFS
 fi
 
-flagged_sorted=()
-if [ "${#flagged_entries[@]}" -gt 0 ]; then
-  IFS=$'\n' flagged_sorted=($(printf '%s\n' "${flagged_entries[@]}" | sort))
+review_sorted=()
+if [ "${#review_entries[@]}" -gt 0 ]; then
+  IFS=$'\n' review_sorted=($(printf '%s\n' "${review_entries[@]}" | sort))
   unset IFS
 fi
 
-safe_count=${#safe_sorted[@]}
-flagged_count=${#flagged_sorted[@]}
+candidate_count=${#candidate_sorted[@]}
+review_count=${#review_sorted[@]}
 
 # ── Step 5: Display ───────────────────────────────────────────────────────
 
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo -e "${RED}${BOLD} UNUSED — safe to remove (${safe_count})${RESET}"
+echo -e "${CYAN}${BOLD} CANDIDATES — no known entrypoint/config signal (${candidate_count})${RESET}"
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo -e "${DIM}  No imports in openwork source, no references in CI/CD, build${RESET}"
-echo -e "${DIM}  scripts, configs, conventions, routing, or sibling repo pipelines.${RESET}"
+echo -e "${DIM}  Knip found no imports and this audit found no known convention or${RESET}"
+echo -e "${DIM}  config reference. This is an investigation queue, not a deletion verdict.${RESET}"
 echo ""
 
-if [ "$safe_count" -eq 0 ]; then
-  echo -e "  ${GREEN}None — all files have references somewhere.${RESET}"
+if [ "$candidate_count" -eq 0 ]; then
+  echo -e "  ${GREEN}None — every candidate matched a review signal.${RESET}"
 else
-  for entry in "${safe_sorted[@]}"; do
+  for entry in "${candidate_sorted[@]}"; do
     entry_index="${entry##*|}"
     dated_path="${entry%|*}"
     date="${dated_path%%|*}"
     filepath="${dated_path#*|}"
     short_date="${date%%T*}"
-    echo -e "  ${RED}✗${RESET} ${DIM}${short_date}${RESET}  ./$filepath:1"
+    echo -e "  ${CYAN}?${RESET} ${DIM}${short_date}${RESET}  ./$filepath:1"
   done
 fi
 
 echo ""
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo -e "${YELLOW}${BOLD} REVIEW — referenced in infra/CI (${flagged_count})${RESET}"
+echo -e "${YELLOW}${BOLD} REVIEW — known entrypoint/config signal (${review_count})${RESET}"
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo -e "${DIM}  Not imported in source, but referenced by build/CI/config/routing.${RESET}"
-echo -e "${DIM}  Verify the reference is real before removing.${RESET}"
+echo -e "${DIM}  Not imported, but matched a test/eval/script/route convention or an${RESET}"
+echo -e "${DIM}  explicit manifest/config/CI reference. Prove the owner stale first.${RESET}"
 echo ""
 
-if [ "$flagged_count" -eq 0 ]; then
+if [ "$review_count" -eq 0 ]; then
   echo -e "  ${GREEN}None.${RESET}"
 else
-  for entry in "${flagged_sorted[@]}"; do
+  for entry in "${review_sorted[@]}"; do
     entry_index="${entry##*|}"
     dated_path="${entry%|*}"
     date="${dated_path%%|*}"
@@ -410,6 +466,10 @@ else
     formatted_refs=$(format_refs "$refs")
 
     case "$status" in
+      package_manifest)
+        echo -e "  ${YELLOW}⚠${RESET} ${DIM}${short_date}${RESET}  ./$filepath:1"
+        echo -e "    ${DIM}↳ package manifest: ${formatted_refs}${RESET}"
+        ;;
       infra)
         echo -e "  ${YELLOW}⚠${RESET} ${DIM}${short_date}${RESET}  ./$filepath:1"
         echo -e "    ${DIM}↳ ${formatted_refs}${RESET}"
@@ -432,5 +492,5 @@ fi
 
 echo ""
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo -e "${BOLD}Summary:${RESET}  ${RED}${safe_count} removable${RESET}  │  ${YELLOW}${flagged_count} need review${RESET}  │  ${#UNUSED_FILES[@]} total"
+echo -e "${BOLD}Summary:${RESET}  ${CYAN}${candidate_count} need investigation${RESET}  │  ${YELLOW}${review_count} have review signals${RESET}  │  ${#UNUSED_FILES[@]} total"
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
