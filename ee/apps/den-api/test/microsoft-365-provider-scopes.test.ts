@@ -146,9 +146,9 @@ describe("Microsoft 365 native provider", () => {
         error: "invalid_client",
         error_description: "AADSTS7000215: client_secret=microsoft-client-secret-value",
         error_codes: [7_000_215],
-        trace_id: "020c20ed-efd1-4399-af27-4c3593de1c00",
-        correlation_id: "6bb6c186-4672-4d6c-bc1d-970fb858d536",
-        timestamp: "2026-07-13 00:47:25Z",
+        trace_id: "00000000-0000-4000-8000-000000000001",
+        correlation_id: "00000000-0000-4000-8000-000000000002",
+        timestamp: "2030-01-02 03:04:05Z",
       }), {
         status: 401,
         headers: { "content-type": "application/json" },
@@ -168,7 +168,7 @@ describe("Microsoft 365 native provider", () => {
       expect(error).toBeInstanceOf(oauth.OAuthTokenExchangeError)
       if (!(error instanceof oauth.OAuthTokenExchangeError)) throw error
       expect(error.code).toBe("oauth_invalid_client_secret")
-      expect(error.details.providerTraceId).toBe("020c20ed-efd1-4399-af27-4c3593de1c00")
+      expect(error.details.providerTraceId).toBe("00000000-0000-4000-8000-000000000001")
       expect(error.message).toContain("AADSTS7000215")
       expect(error.message).not.toContain("microsoft-client-secret-value")
     }

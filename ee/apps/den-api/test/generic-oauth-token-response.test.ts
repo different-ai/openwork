@@ -50,9 +50,9 @@ describe("OAuth token response validation", () => {
         error: "invalid_client",
         error_description: "AADSTS7000215: invalid client secret value client_secret=must-not-escape",
         error_codes: [7_000_215],
-        trace_id: "020c20ed-efd1-4399-af27-4c3593de1c00",
-        correlation_id: "6bb6c186-4672-4d6c-bc1d-970fb858d536",
-        timestamp: "2026-07-13 00:47:25Z",
+        trace_id: "00000000-0000-4000-8000-000000000001",
+        correlation_id: "00000000-0000-4000-8000-000000000002",
+        timestamp: "2030-01-02 03:04:05Z",
       },
     })
 
@@ -62,9 +62,9 @@ describe("OAuth token response validation", () => {
       httpStatus: 401,
       providerOAuthError: "invalid_client",
       providerErrorCode: 7_000_215,
-      providerTraceId: "020c20ed-efd1-4399-af27-4c3593de1c00",
-      providerCorrelationId: "6bb6c186-4672-4d6c-bc1d-970fb858d536",
-      providerTimestamp: "2026-07-13 00:47:25Z",
+      providerTraceId: "00000000-0000-4000-8000-000000000001",
+      providerCorrelationId: "00000000-0000-4000-8000-000000000002",
+      providerTimestamp: "2030-01-02 03:04:05Z",
     })
     expect(error.message).toContain("AADSTS7000215")
     expect(error.message).toContain("replace the client secret value")
