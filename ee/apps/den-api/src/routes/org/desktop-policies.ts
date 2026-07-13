@@ -8,10 +8,10 @@ import {
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   desktopPolicyDefinitions,
-  desktopPolicyValueSchema,
-  normalizeDefaultDesktopPolicyValue,
-  normalizeDesktopPolicyValue,
-  type DesktopPolicyValue,
+  desktopPolicyDocumentWriteSchema,
+  normalizeDefaultDesktopPolicyDocument,
+  normalizeDesktopPolicyDocument,
+  resolveDesktopPolicyDocumentWrite,
 } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -31,7 +31,8 @@ const desktopPolicyParamsSchema = idParamSchema("desktopPolicyId", "desktopPolic
 
 const desktopPolicyWriteSchema = z.object({
   policyName: z.string().trim().min(1).max(255),
-  policy: desktopPolicyValueSchema,
+  policy: desktopPolicyDocumentWriteSchema,
+  priority: z.number().int().min(0).max(1_000_000).optional(),
   isEnabled: z.boolean().optional(),
   memberIds: z.array(denTypeIdSchema("member")).max(500).optional().default([]),
   teamIds: z.array(denTypeIdSchema("team")).max(500).optional().default([]),
@@ -123,9 +124,10 @@ async function loadDesktopPolicies(organizationId: typeof DesktopPolicyTable.$in
     policyName: policy.policyName,
     isDefault: policy.isDefault === true,
     isEnabled: policy.isEnabled === true,
+    priority: policy.priority,
     policy: policy.isDefault === true
-      ? normalizeDefaultDesktopPolicyValue(policy.policy)
-      : normalizeDesktopPolicyValue(policy.policy),
+      ? normalizeDefaultDesktopPolicyDocument(policy.policy)
+      : normalizeDesktopPolicyDocument(policy.policy),
     createdByOrgMemberId: policy.createdByOrgMemberId,
     createdAt: policy.createdAt,
     updatedAt: policy.updatedAt,
@@ -203,7 +205,8 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
             policyName: input.policyName.trim(),
             isDefault: null,
             isEnabled: input.isEnabled ?? true,
-            policy: normalizeDesktopPolicyValue(input.policy),
+            priority: input.priority ?? 0,
+            policy: resolveDesktopPolicyDocumentWrite({ value: input.policy }),
             createdByOrgMemberId: payload.currentMember.id,
             createdAt: now,
             updatedAt: now,
@@ -308,9 +311,19 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
             .set({
               policyName: existing.isDefault === true ? existing.policyName : input.policyName.trim(),
               isEnabled: existing.isDefault === true ? true : input.isEnabled ?? existing.isEnabled,
+              priority: existing.isDefault === true ? 0 : input.priority ?? existing.priority,
               policy: existing.isDefault === true
-                ? normalizeDefaultDesktopPolicyValue(input.policy)
-                : normalizeDesktopPolicyValue(input.policy),
+                ? resolveDesktopPolicyDocumentWrite({
+                    value: input.policy,
+                    existingPolicy: existing.policy,
+                    isDefault: true,
+                    preserveExistingOnboardingPrompts: true,
+                  })
+                : resolveDesktopPolicyDocumentWrite({
+                    value: input.policy,
+                    existingPolicy: existing.policy,
+                    preserveExistingOnboardingPrompts: true,
+                  }),
               updatedAt,
             })
             .where(eq(DesktopPolicyTable.id, existing.id))

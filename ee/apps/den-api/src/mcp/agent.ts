@@ -7,13 +7,14 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { z } from "zod"
 import { memberFacingMcpConnectionsEnabled } from "../capability-sources/external-mcp-rollout.js"
+import { EXTERNAL_MCP_DIAGNOSTIC_PHASES } from "../capability-sources/external-mcp-diagnostics.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { db } from "../db.js"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { compareCapabilityMatches, SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter, type CapabilityMatch } from "./search.js"
-import { executeExternalCapability, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities } from "./external-capabilities.js"
+import { executeExternalCapability, externalMcpSearchCoverageHint, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities, type ExternalCapabilityExecuteResult } from "./external-capabilities.js"
 import { executeMarketplaceCapability, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType } from "./marketplace-capabilities.js"
 import { executeSkillCapability, parseSkillCapabilityName, searchSkillCapabilities } from "./skill-capabilities.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
@@ -38,8 +39,25 @@ export const EXECUTE_CAPABILITY_ANNOTATIONS: ToolAnnotations = {
   openWorldHint: true,
 }
 
+const externalMcpDiagnosticOutputSchema = z.object({
+  referenceId: z.string(),
+  phase: z.enum(EXTERNAL_MCP_DIAGNOSTIC_PHASES),
+  category: z.string(),
+  code: z.string(),
+  highestPassed: z.enum(["configured", "reachable", "authorized", "protocol_ready", "catalog_ready", "operation_ready"]),
+  retryable: z.boolean(),
+  actionOwner: z.enum(["openwork", "network_admin", "provider_admin", "organization_admin", "member"]),
+  operatorAction: z.string(),
+  message: z.string(),
+  httpStatus: z.number().int().optional(),
+  operationPhase: z.enum(EXTERNAL_MCP_DIAGNOSTIC_PHASES).optional(),
+  outbound: z.object({ origin: z.string(), pathHash: z.string() }).optional(),
+  providerRequestId: z.string().optional(),
+  jsonRpcCode: z.number().int().optional(),
+})
+
 const connectionStatusOutputSchema = z.object({
-  layer: z.literal("downstream_provider"),
+  layer: z.enum(["mcp_connection", "downstream_provider"]),
   connectionId: z.string(),
   connectionName: z.string(),
   authType: z.enum(["oauth", "apikey", "none"]),
@@ -47,13 +65,14 @@ const connectionStatusOutputSchema = z.object({
   state: z.enum(["needs_connection", "reauth_required", "provider_error"]),
   errorCode: z.enum(["not_connected", "invalid_refresh_token", "invalid_grant", "unauthorized", "provider_error"]),
   message: z.string(),
-  actor: z.enum(["member", "organization_admin", "provider_admin"]),
+  actor: z.enum(["openwork", "network_admin", "provider_admin", "organization_admin", "member"]),
   action: z.object({
-    type: z.enum(["connect", "reconnect", "update_credentials", "inspect_connection", "fix_provider"]),
+    type: z.enum(["connect", "reconnect", "update_credentials", "inspect_connection", "fix_provider", "fix_network", "contact_openwork"]),
     label: z.string(),
-    surface: z.enum(["openwork_your_connections", "openwork_organization_connections", "provider_admin_console"]),
+    surface: z.enum(["openwork_your_connections", "openwork_organization_connections", "provider_admin_console", "network_infrastructure", "openwork_support"]),
     retry: z.literal("search_capabilities"),
   }),
+  diagnostic: externalMcpDiagnosticOutputSchema.optional(),
 })
 
 const capabilityMatchOutputSchema = z.object({
@@ -98,10 +117,27 @@ function textContent(text: string): { text: string; type: "text" }[] {
   return [{ type: "text", text }]
 }
 
-export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T[]) {
-  const result = matches.length > 0
-    ? { matches }
-    : { matches, hint: "No matches. Try broader or different keywords." }
+export function externalCapabilityErrorToolResult(
+  result: Exclude<ExternalCapabilityExecuteResult, { ok: true }>,
+): ExecuteCapabilityToolResult {
+  return {
+    isError: true,
+    content: textContent(JSON.stringify({
+      error: result.error,
+      message: result.message,
+      ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
+      ...(result.actionOwner ? { actionOwner: result.actionOwner } : {}),
+      ...(result.operatorAction ? { operatorAction: result.operatorAction } : {}),
+    })),
+  }
+}
+
+export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T[], coverageHint?: string) {
+  const hint = [
+    ...(matches.length === 0 ? ["No matches. Try broader or different keywords."] : []),
+    ...(coverageHint ? [coverageHint] : []),
+  ].join(" ")
+  const result = hint ? { matches, hint } : { matches }
   return {
     content: textContent(JSON.stringify(result, null, 2)),
     structuredContent: result,
@@ -282,6 +318,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         // tools/list (capability-sources/external-mcp-client.ts) — a
         // Notion/Linear/Stripe/... connection an admin added in Den shows
         // up here exactly like any native capability, ranked together.
+        let externalCoverageHint: string | undefined
         const externalMatches = sourceFilter.mcp && externalMcpConnectionsEnabled
           ? await searchExternalCapabilities({
             organizationId: principal.organizationId,
@@ -289,6 +326,9 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             query,
             redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
             limit: boundedLimit,
+            reportCoverage: (coverage) => {
+              externalCoverageHint = externalMcpSearchCoverageHint(coverage)
+            },
           })
           : []
         const marketplaceMatches = sourceFilter.marketplace && externalMcpConnectionsEnabled
@@ -312,7 +352,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         const matches = [...restMatches, ...adminMatches, ...externalMatches, ...marketplaceMatches, ...skillMatches]
           .sort(compareCapabilityMatches)
           .slice(0, boundedLimit)
-        return capabilitySearchToolResult(matches)
+        return capabilitySearchToolResult(matches, externalCoverageHint)
       },
     )
 
@@ -363,10 +403,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
                 redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
               })
               if (!result.ok) {
-                return {
-                  isError: true,
-                  content: textContent(JSON.stringify({ error: result.error, message: result.message })),
-                }
+                return externalCapabilityErrorToolResult(result)
               }
               // The SDK's callTool() can return either the standard {content:[...]}
               // shape or a legacy-compatibility {toolResult} shape; normalize to

@@ -124,6 +124,32 @@ test("provider installation failures route to the provider admin console", () =>
   })
 })
 
+test("structured diagnostics remain the single source of truth for fix ownership", async () => {
+  const { ExternalMcpDiagnosticTracker } = await import("../src/capability-sources/external-mcp-diagnostics.js")
+  const cause = Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" })
+  const diagnostic = new ExternalMcpDiagnosticTracker("req_network_owner").error(
+    new Error("fetch failed", { cause }),
+    "MCP_INITIALIZE",
+  ).diagnostic
+  const status = externalCapabilities.buildExternalConnectionStatus({
+    connection: { id: "connection-network", name: "Ticketing", authType: "none", credentialMode: "shared" },
+    state: "provider_error",
+    errorCode: "provider_error",
+    message: diagnostic.message,
+    diagnostic,
+  })
+
+  expect(diagnostic.actionOwner).toBe("network_admin")
+  expect(status).toMatchObject({
+    actor: diagnostic.actionOwner,
+    action: {
+      type: "fix_network",
+      label: diagnostic.operatorAction,
+      surface: "network_infrastructure",
+    },
+  })
+})
+
 test("generic provider failures route to connector inspection instead of cloud reauthorization", () => {
   const hint = externalCapabilities.externalConnectionErrorHint("Ticketing", new Error("Connection refused"))
 

@@ -12,6 +12,7 @@ import { getPluginRoute } from "../../_lib/den-org";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { IntegrationIcon } from "./integration-icon";
 import { Microsoft365Dialog } from "./microsoft-365-dialog";
+import { safeMcpAuthorizationUrl } from "./mcp-authorization-url";
 import { shouldShowMcpConnectionsStagingBanner } from "./mcp-connections-capability";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { marketplaceQueryKeys, useMarketplaces } from "./marketplace-data";
@@ -210,6 +211,7 @@ export function McpConnectionsScreen() {
   const telegramConnection = useTelegramConnection(true);
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
+  const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -239,14 +241,21 @@ export function McpConnectionsScreen() {
   }
 
   async function handleConnectOAuth(connectionId: string) {
-    const result = await startOAuth.mutateAsync(connectionId);
-    if (result.status === "connected") {
-      void refetch();
-      return;
-    }
-    if (result.authorizeUrl) {
-      window.open(result.authorizeUrl, "_blank", "noopener,noreferrer");
+    setConnectionActionError(null);
+    try {
+      const result = await startOAuth.mutateAsync(connectionId);
+      if (result.status === "connected") {
+        void refetch();
+        return;
+      }
+      if (!result.authorizeUrl) throw new Error("The MCP provider did not return an authorization URL.");
+      window.open(safeMcpAuthorizationUrl(result.authorizeUrl), "_blank", "noopener,noreferrer");
       pollUntilConnected(connectionId);
+    } catch (connectError) {
+      setConnectionActionError({
+        connectionId,
+        message: connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.",
+      });
     }
   }
 
@@ -286,6 +295,12 @@ export function McpConnectionsScreen() {
       {error ? (
         <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
           {error instanceof Error ? error.message : "Failed to load MCP connections."}
+        </div>
+      ) : null}
+
+      {connectionActionError ? (
+        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700" role="alert">
+          {connectionActionError.message}
         </div>
       ) : null}
 
@@ -432,6 +447,7 @@ export function McpConnectionsScreen() {
               connection={connection}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
+              errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
               onConnect={() => void handleConnectOAuth(connection.id)}
               onRemove={() => deleteConnection.mutate(connection.id)}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
@@ -1049,6 +1065,7 @@ function ConnectionRow({
   connection,
   polling,
   connecting,
+  errorMessage,
   onConnect,
   onRemove,
   removing,
@@ -1056,6 +1073,7 @@ function ConnectionRow({
   connection: ExternalMcpConnection;
   polling: boolean;
   connecting: boolean;
+  errorMessage: string | null;
   onConnect: () => void;
   onRemove: () => void;
   removing: boolean;
@@ -1099,6 +1117,7 @@ function ConnectionRow({
           <p className="mt-0.5 truncate text-[12px] text-gray-500">
             {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
           </p>
+          {errorMessage ? <p className="mt-1 text-[12px] text-red-600">{errorMessage}</p> : null}
         </div>
       </div>
 
@@ -1261,10 +1280,16 @@ function AddConnectionDialog({
         : undefined,
       access,
     };
-    const created = await onSubmit(input);
-    if (input.oauthClient && created.links?.oauthCallback) {
-      setOAuthCallback(created.links.oauthCallback);
-      setCopiedCallback(false);
+    try {
+      const created = await onSubmit(input);
+      if (input.oauthClient && created.links?.oauthCallback) {
+        setOAuthCallback(created.links.oauthCallback);
+        setCopiedCallback(false);
+      }
+    } catch {
+      // The mutation's typed error is rendered by the dialog's error prop.
+      // Consume the rejected promise so a clear validation failure does not
+      // also become an opaque browser-level unhandled rejection.
     }
   }
 

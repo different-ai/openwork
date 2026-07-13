@@ -7,11 +7,13 @@ import { ArrowLeft, Laptop } from "lucide-react";
 import {
   desktopPolicyDefaults,
   desktopPolicyKeys,
+  type DesktopPolicyDocumentWrite,
   type DesktopPolicyValue,
 } from "@openwork/types/den/desktop-policies";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
+import { DenTextarea } from "../../_components/ui/textarea";
 import { getDesktopPoliciesRoute, getMembersRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -26,6 +28,9 @@ import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 type PolicyDraft = {
   policyName: string;
   policy: Required<DesktopPolicyValue>;
+  priority: number;
+  onboardingPromptsEnabled: boolean;
+  onboardingPromptTexts: string[];
   memberIds: string[];
   teamIds: string[];
 };
@@ -33,9 +38,17 @@ type PolicyDraft = {
 const EMPTY_DRAFT: PolicyDraft = {
   policyName: "New desktop policy",
   policy: { ...desktopPolicyDefaults },
+  priority: 0,
+  onboardingPromptsEnabled: false,
+  onboardingPromptTexts: ["", "", ""],
   memberIds: [],
   teamIds: [],
 };
+
+const ONBOARDING_PROMPT_LABELS = ["First prompt", "Second prompt", "Optional third prompt"];
+const MAX_POLICY_PRIORITY = 1_000_000;
+const PRIORITY_HELP_ID = "desktop-policy-priority-help";
+const PRIORITY_ERROR_ID = "desktop-policy-priority-error";
 
 function requiredPolicyValue(value: DesktopPolicyValue): Required<DesktopPolicyValue> {
   return Object.fromEntries(
@@ -44,9 +57,17 @@ function requiredPolicyValue(value: DesktopPolicyValue): Required<DesktopPolicyV
 }
 
 function draftFromPolicy(policy: DenDesktopPolicy): PolicyDraft {
+  const onboardingPrompts = policy.policy.onboardingPrompts ?? [];
   return {
     policyName: policy.policyName,
     policy: requiredPolicyValue(policy.policy),
+    priority: policy.priority,
+    onboardingPromptsEnabled: onboardingPrompts.length > 0,
+    onboardingPromptTexts: [
+      onboardingPrompts[0] ?? "",
+      onboardingPrompts[1] ?? "",
+      onboardingPrompts[2] ?? "",
+    ],
     memberIds: policy.assignments.flatMap((assignment) => (assignment.orgMemberId ? [assignment.orgMemberId] : [])),
     teamIds: policy.assignments.flatMap((assignment) => (assignment.teamId ? [assignment.teamId] : [])),
   };
@@ -60,6 +81,65 @@ function policyToAssignmentPayload(policy: DenDesktopPolicy) {
   return {
     memberIds: policy.assignments.flatMap((assignment) => (assignment.orgMemberId ? [assignment.orgMemberId] : [])),
     teamIds: policy.assignments.flatMap((assignment) => (assignment.teamId ? [assignment.teamId] : [])),
+  };
+}
+
+function updateOnboardingPromptText(values: string[], index: number, nextValue: string) {
+  return values.map((value, valueIndex) => (valueIndex === index ? nextValue : value));
+}
+
+function getOnboardingPrompts(draft: PolicyDraft): string[] | undefined {
+  if (!draft.onboardingPromptsEnabled) return undefined;
+
+  const prompts = draft.onboardingPromptTexts.map((prompt) => prompt.trim());
+  const requiredPrompts = prompts.slice(0, 2);
+  if (requiredPrompts.some((prompt) => prompt.length === 0)) return undefined;
+  if (prompts.some((prompt) => prompt.length > 500)) return undefined;
+
+  return prompts[2] ? [...requiredPrompts, prompts[2]] : requiredPrompts;
+}
+
+function getPriorityError(draft: PolicyDraft, isDefault: boolean) {
+  if (isDefault) return null;
+  if (!Number.isInteger(draft.priority) || draft.priority < 0 || draft.priority > MAX_POLICY_PRIORITY) {
+    return `Priority must be a whole number from 0 to ${MAX_POLICY_PRIORITY}.`;
+  }
+  return null;
+}
+
+function getPromptError(draft: PolicyDraft, index: number) {
+  if (!draft.onboardingPromptsEnabled) return null;
+  const label = ONBOARDING_PROMPT_LABELS[index] ?? "Prompt";
+  const prompt = draft.onboardingPromptTexts[index] ?? "";
+  const trimmed = prompt.trim();
+  if (index < 2 && trimmed.length === 0) return `${label} is required.`;
+  if (trimmed.length > 500) return `${label} must be 500 characters or less.`;
+  return null;
+}
+
+function getPromptHelpId(index: number) {
+  return `desktop-policy-onboarding-prompt-${index}-help`;
+}
+
+function getPromptErrorId(index: number) {
+  return `desktop-policy-onboarding-prompt-${index}-error`;
+}
+
+function getDisabledPromptCopy(isDefault: boolean) {
+  return isDefault
+    ? "When organization prompts are off, OpenWork defaults are used."
+    : "When organization prompts are off, members inherit prompts from another matching policy or the default policy; if none apply, OpenWork defaults are used.";
+}
+
+function policyDocumentFromDraft(draft: PolicyDraft): DesktopPolicyDocumentWrite {
+  const onboardingPrompts = getOnboardingPrompts(draft);
+  return {
+    ...draft.policy,
+    ...(draft.onboardingPromptsEnabled
+      ? onboardingPrompts !== undefined
+        ? { onboardingPrompts }
+        : {}
+      : { onboardingPrompts: null }),
   };
 }
 
@@ -95,6 +175,8 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
 
   const initialLoad = busy && (definitions.length === 0 || (isEditing && !policy));
   const notFound = isEditing && !busy && !policy && desktopPolicies.length > 0;
+  const priorityError = getPriorityError(draft, isDefault);
+  const disabledPromptCopy = getDisabledPromptCopy(isDefault);
 
   const handleSave = async () => {
     const policyName = draft.policyName.trim();
@@ -102,13 +184,28 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
       setPageError("Policy name is required.");
       return;
     }
+    const nextPriorityError = getPriorityError(draft, isDefault);
+    if (nextPriorityError) {
+      setPageError(nextPriorityError);
+      return;
+    }
+    if (draft.onboardingPromptsEnabled) {
+      const promptError = ONBOARDING_PROMPT_LABELS
+        .map((_, index) => getPromptError(draft, index))
+        .find((error) => error !== null);
+      if (promptError) {
+        setPageError(promptError);
+        return;
+      }
+    }
     setPageError(null);
     try {
       await runReauthableAction("save-desktop-policy", async () => {
         setSaving(true);
         const payload: DesktopPolicyPayload = {
           policyName,
-          policy: draft.policy,
+          policy: policyDocumentFromDraft(draft),
+          priority: isDefault ? 0 : draft.priority,
           memberIds: isDefault ? [] : draft.memberIds,
           teamIds: isDefault ? [] : draft.teamIds,
         };
@@ -141,6 +238,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
         await updateDesktopPolicy(desktopPolicyId, {
           policyName: policy.policyName,
           policy: policy.policy,
+          priority: policy.priority,
           isEnabled: !policy.isEnabled,
           memberIds,
           teamIds,
@@ -173,10 +271,10 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
 
       {orgContext && !orgContext.entitlements.desktopPolicies ? <EnterprisePlanNotice feature="Desktop policy management" /> : null}
       {pageError ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">{pageError}</div>
+        <div role="alert" className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">{pageError}</div>
       ) : null}
       {error ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">{error}</div>
+        <div role="alert" className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">{error}</div>
       ) : null}
 
       {initialLoad ? (
@@ -203,6 +301,32 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
                 <span className="text-[12px] text-gray-500">The default desktop policy name cannot be changed.</span>
               ) : null}
             </label>
+            {!isDefault ? (
+              <label className="grid w-full gap-2 sm:w-40">
+                <span className="text-[13px] font-medium text-gray-700">Priority</span>
+                <DenInput
+                  type="number"
+                  min={0}
+                  max={MAX_POLICY_PRIORITY}
+                  step={1}
+                  value={draft.priority}
+                  aria-invalid={priorityError ? true : undefined}
+                  aria-describedby={priorityError ? `${PRIORITY_HELP_ID} ${PRIORITY_ERROR_ID}` : PRIORITY_HELP_ID}
+                  onChange={(event) => {
+                    const nextPriority = event.target.valueAsNumber;
+                    setDraft({
+                      ...draft,
+                      priority: Number.isInteger(nextPriority) ? nextPriority : 0,
+                    });
+                  }}
+                  disabled={saving || togglingEnabled}
+                />
+                <span id={PRIORITY_HELP_ID} className="text-[12px] text-gray-500">Higher wins when multiple targeted policies match.</span>
+                {priorityError ? (
+                  <span id={PRIORITY_ERROR_ID} className="text-[12px] text-red-600">{priorityError}</span>
+                ) : null}
+              </label>
+            ) : null}
             {isEditing && policy && !isDefault ? (
               <DenButton
                 type="button"
@@ -240,6 +364,60 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
                 />
               </label>
             ))}
+          </div>
+
+          <div className="grid gap-4 rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-4">
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                className="mt-1 h-5 w-5"
+                checked={draft.onboardingPromptsEnabled}
+                onChange={(event) => setDraft({ ...draft, onboardingPromptsEnabled: event.target.checked })}
+                disabled={saving || togglingEnabled}
+              />
+              <span>
+                <span className="block text-[14px] font-medium text-gray-950">Organization prompt suggestions</span>
+                <span className="mt-1 block text-[13px] leading-6 text-gray-500">
+                  Replace the desktop app's default task suggestions with prompts provided by your organization.
+                </span>
+              </span>
+            </label>
+
+            {draft.onboardingPromptsEnabled ? (
+              <div className="grid gap-3">
+                {ONBOARDING_PROMPT_LABELS.map((label, index) => {
+                  const promptError = getPromptError(draft, index);
+                  const promptHelpId = getPromptHelpId(index);
+                  const promptErrorId = getPromptErrorId(index);
+                  return (
+                    <label key={label} className="grid gap-2">
+                      <span className="text-[13px] font-medium text-gray-700">{label}</span>
+                      <DenTextarea
+                        rows={2}
+                        maxLength={500}
+                        value={draft.onboardingPromptTexts[index] ?? ""}
+                        aria-invalid={promptError ? true : undefined}
+                        aria-describedby={promptError ? `${promptHelpId} ${promptErrorId}` : promptHelpId}
+                        onChange={(event) => setDraft({
+                          ...draft,
+                          onboardingPromptTexts: updateOnboardingPromptText(draft.onboardingPromptTexts, index, event.target.value),
+                        })}
+                        disabled={saving || togglingEnabled}
+                        placeholder={index === 2 ? "Optional" : "Enter a suggested prompt"}
+                      />
+                      <span id={promptHelpId} className="text-[12px] text-gray-500">
+                        {(draft.onboardingPromptTexts[index] ?? "").trim().length}/500 characters
+                      </span>
+                      {promptError ? (
+                        <span id={promptErrorId} className="text-[12px] text-red-600">{promptError}</span>
+                      ) : null}
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-[13px] leading-6 text-gray-500">{disabledPromptCopy}</p>
+            )}
           </div>
 
           {!isDefault ? (

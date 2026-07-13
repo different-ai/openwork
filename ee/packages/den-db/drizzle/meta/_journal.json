@@ -232,6 +232,13 @@
       "when": 1783661302153,
       "tag": "0033_lethal_the_professor",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "5",
+      "when": 1783817428501,
+      "tag": "0034_wooden_nehzno",
+      "breakpoints": true
     }
   ]
 }

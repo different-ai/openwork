@@ -22,6 +22,7 @@ allowBuilds:
   "@whiskeysockets/baileys": true
   better-sqlite3: true
   electron: true
+  electron-winstaller: true
   esbuild: true
   msw: false
   node-pty: true
