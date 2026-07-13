@@ -38,6 +38,7 @@
     "architecture:snapshot": "node scripts/architecture/snapshot-composition.mjs .",
     "architecture:snapshot:test": "node --test scripts/architecture/snapshot-composition.test.mjs",
     "experiment:composable:packages": "node scripts/architecture/verify-composable-packages.mjs",
+    "experiment:package-contracts": "node scripts/architecture/verify-package-contracts.mjs",
     "check:enterprise-mcp-mock-server": "pnpm --filter @openwork/enterprise-mcp-mock-server check",
     "check:enterprise-mock-lab": "pnpm --filter @openwork-ee/enterprise-mock-lab check",
     "test:health": "pnpm --filter @openwork/app test:health",

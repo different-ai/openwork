@@ -3,8 +3,20 @@
   "version": "0.1.0-experimental.0",
   "private": true,
   "description": "Browser-safe, OpenWork-owned extension manifest contracts",
+  "license": "MIT",
   "type": "module",
   "sideEffects": false,
+  "openwork": {
+    "packageContract": {
+      "schemaVersion": 1,
+      "capability": "extension-manifest-contracts",
+      "layer": "contract",
+      "realms": [
+        "neutral"
+      ],
+      "stability": "experimental"
+    }
+  },
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -29,7 +41,8 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "README.md"
   ],
   "scripts": {
     "build": "tsup",

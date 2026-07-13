@@ -3,8 +3,20 @@
   "version": "0.1.0-experimental.0",
   "private": true,
   "description": "Validated built-in OpenWork extension catalog and compatibility projections",
+  "license": "MIT",
   "type": "module",
   "sideEffects": false,
+  "openwork": {
+    "packageContract": {
+      "schemaVersion": 1,
+      "capability": "built-in-extension-catalog",
+      "layer": "domain",
+      "realms": [
+        "neutral"
+      ],
+      "stability": "experimental"
+    }
+  },
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -19,7 +31,8 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "README.md"
   ],
   "scripts": {
     "build": "tsup",

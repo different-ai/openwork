@@ -1,11 +1,36 @@
 # `@openwork/contribution-registry`
 
+## Purpose
+
 A small, browser-safe registration kernel for explicit OpenWork composition
 roots. It has no runtime dependencies and no global state.
 
 The package indexes contributions, not application services. A host creates one
 realm-local registry for a specific surface, explicitly registers descriptor and
 binding pairs, and freezes assembly before constructing runtime values.
+
+## Supported realms
+
+Realm-neutral. Hosts in browser, Node, Electron, and Den can create independent
+registries without importing authority from another realm.
+
+## Authority
+
+None. Every executable factory and lifecycle decision is supplied and retained
+by the realm-local host.
+
+## Public exports
+
+- `@openwork/contribution-registry` exposes descriptor, diagnostic, binding,
+  assembly, and registry contracts plus `createContributionRegistry`.
+
+## Boundaries
+
+The package indexes inert metadata and host-supplied factories. It owns no
+singleton registry, application service, persistence, process, filesystem,
+network, or disposal lifecycle.
+
+## Example
 
 ```ts
 import {
@@ -38,7 +63,7 @@ if (assembly.status === "ready") {
 }
 ```
 
-## Contract
+## Contract guarantees
 
 - Descriptors are serializable metadata; executable factories live in separate
   bindings.

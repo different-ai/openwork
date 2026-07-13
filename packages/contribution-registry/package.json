@@ -3,7 +3,19 @@
   "private": true,
   "version": "0.1.0",
   "description": "Browser-safe registration kernel for explicit OpenWork composition roots",
+  "license": "MIT",
   "type": "module",
+  "openwork": {
+    "packageContract": {
+      "schemaVersion": 1,
+      "capability": "contribution-registration",
+      "layer": "kernel",
+      "realms": [
+        "neutral"
+      ],
+      "stability": "experimental"
+    }
+  },
   "exports": {
     ".": {
       "types": "./src/index.ts",
