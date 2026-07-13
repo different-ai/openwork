@@ -2261,7 +2261,6 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     installMediaPermissionHandlers(session, () => mainWindow);
-    await workspaceStore.importBundledDesktopBootstrapConfigIfPreferred();
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
     currentDisplayAppName = bootstrapConfig.brandAppName?.slice(0, 64) || APP_NAME;
     app.setName(currentDisplayAppName);

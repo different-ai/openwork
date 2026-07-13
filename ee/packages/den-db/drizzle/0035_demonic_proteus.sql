@@ -25,6 +25,9 @@ CREATE TABLE `mcp_diagnostic_attempt` (
 	`first_failure_message` text,
 	`action_owner` enum('openwork','network_admin','provider_admin','organization_admin','member'),
 	`operator_action` varchar(128),
+	`completion_audit_event_id` varchar(64),
+	`execution_lease_id` varchar(64),
+	`execution_lease_expires_at` timestamp(3),
 	`authorization_generation` int NOT NULL DEFAULT 0,
 	`authorization_claim_id` varchar(64),
 	`authorization_lease_expires_at` timestamp(3),
@@ -64,6 +67,8 @@ CREATE INDEX `emopg_connection_id` ON `external_mcp_oauth_pending_grant` (`exter
 CREATE INDEX `emopg_expires_at` ON `external_mcp_oauth_pending_grant` (`expires_at`);--> statement-breakpoint
 CREATE INDEX `mcp_diagnostic_attempt_organization_id` ON `mcp_diagnostic_attempt` (`organization_id`);--> statement-breakpoint
 CREATE INDEX `mcp_diagnostic_attempt_connection_id` ON `mcp_diagnostic_attempt` (`external_mcp_connection_id`);--> statement-breakpoint
+CREATE INDEX `mcp_diagnostic_attempt_org_status_member` ON `mcp_diagnostic_attempt` (`organization_id`,`status`,`created_by_org_membership_id`);--> statement-breakpoint
+CREATE INDEX `mcp_diagnostic_attempt_org_started_member` ON `mcp_diagnostic_attempt` (`organization_id`,`started_at`,`created_by_org_membership_id`);--> statement-breakpoint
 CREATE INDEX `mcp_diagnostic_attempt_expires_at` ON `mcp_diagnostic_attempt` (`expires_at`);--> statement-breakpoint
 CREATE INDEX `mcp_diagnostic_event_organization_id` ON `mcp_diagnostic_event` (`organization_id`);--> statement-breakpoint
 CREATE INDEX `mcp_diagnostic_event_attempt_id` ON `mcp_diagnostic_event` (`attempt_id`);--> statement-breakpoint

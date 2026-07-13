@@ -36,7 +36,7 @@
   "devDependencies": {
     "@openwork/types": "workspace:*",
     "electron": "^35.0.0",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.15.3",
     "electron-devtools-installer": "^4.0.0"
   },
   "packageManager": "pnpm@10.27.0"

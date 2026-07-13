@@ -1,1409 +1,1217 @@
-import { randomUUID } from "node:crypto"
-import { and, asc, eq, gte, inArray, isNull, lt, sql } from "@openwork-ee/den-db/drizzle"
-import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js"
-import {
-  ExternalMcpConnectionTable,
-  McpDiagnosticAttemptTable,
-  McpDiagnosticEventTable,
-  MemberTable,
-  OrganizationTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
-import {
-  MCP_DIAGNOSTIC_HEALTH_LEVELS,
-  type McpDiagnosticActionOwner,
-  type McpDiagnosticAttempt,
-  type McpDiagnosticAttemptStatus,
-  type McpDiagnosticEvent,
-  type McpDiagnosticEventOutcome,
-  type McpDiagnosticHealthLevel,
-  type McpDiagnosticPhase,
-  type McpDiagnosticSafeEvidence,
-  type McpDiagnosticSnapshot,
-} from "@openwork/types/den/mcp-diagnostics"
-import { db } from "../db.js"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../audit-events.js"
-import { roleIncludesPrivileged } from "../organization-member-guards.js"
+import { createHash } from "node:crypto"
+import { PrivateUrlError } from "./url-guard.js"
 
-export const MCP_DIAGNOSTIC_RETENTION_MS = 24 * 60 * 60 * 1000
-export const MCP_DIAGNOSTIC_EXECUTION_LEASE_MS = 30_000
-export const MCP_DIAGNOSTIC_RATE_WINDOW_MS = 10 * 60 * 1000
-export const MCP_DIAGNOSTIC_MAX_ACTIVE_PER_MEMBER = 2
-export const MCP_DIAGNOSTIC_MAX_ACTIVE_PER_ORGANIZATION = 8
-export const MCP_DIAGNOSTIC_MAX_STARTS_PER_MEMBER_WINDOW = 20
-export const MCP_DIAGNOSTIC_MAX_STARTS_PER_ORGANIZATION_WINDOW = 80
-const MCP_DIAGNOSTIC_CLEANUP_INTERVAL_MS = 60 * 60 * 1000
-export const MCP_DIAGNOSTIC_AUTHORIZATION_LEASE_MS = 90_000
-const SAFE_PATH_SEGMENTS = new Set([
-  ".well-known",
-  "authorize",
-  "mcp",
-  "mcp-server",
-  "oauth-authorization-server",
-  "oauth-protected-resource",
-  "openid-configuration",
-  "register",
-  "sncapps",
-  "token",
-])
-let cleanupTimer: ReturnType<typeof setInterval> | null = null
+export const EXTERNAL_MCP_DIAGNOSTIC_PHASES = [
+  "CONFIGURATION",
+  "NETWORK_DNS",
+  "NETWORK_TCP",
+  "NETWORK_TLS",
+  "HTTP_ROUTING",
+  "AUTH_RESOURCE_DISCOVERY",
+  "AUTH_ISSUER_DISCOVERY",
+  "AUTH_CLIENT_REGISTRATION",
+  "AUTH_USER_OR_WORKLOAD",
+  "AUTH_TOKEN_ACQUISITION",
+  "AUTH_RESOURCE_VALIDATION",
+  "MCP_TRANSPORT",
+  "MCP_VERSION",
+  "MCP_INITIALIZE",
+  "MCP_INITIALIZED",
+  "MCP_TOOL_DISCOVERY",
+  "MCP_TOOL_EXECUTION",
+  "PROVIDER_AUTHORIZATION",
+  "PROVIDER_EXECUTION",
+  "CONTINUITY_REFRESH",
+  "CONTINUITY_SESSION",
+  "SHUTDOWN",
+] as const
 
-type OrganizationId = DenTypeId<"organization">
-type MemberId = DenTypeId<"member">
-type ConnectionId = DenTypeId<"externalMcpConnection">
-type AttemptId = DenTypeId<"mcpDiagnosticAttempt">
-type AuditEventId = DenTypeId<"auditEvent">
+export type ExternalMcpDiagnosticPhase = (typeof EXTERNAL_MCP_DIAGNOSTIC_PHASES)[number]
 
-const ACTIVE_ATTEMPT_STATUSES = ["running", "waiting_for_authorization"] as const
+export type ExternalMcpHealthLevel =
+  | "configured"
+  | "reachable"
+  | "authorized"
+  | "protocol_ready"
+  | "catalog_ready"
+  | "operation_ready"
 
-type SafeEvidenceInput = {
-  url?: string | URL
-  method?: string
-  status?: number
-  contentType?: string | null
-  errorCode?: string | null
-  protocolVersion?: string | null
-  toolCount?: number
-  pageCount?: number
-}
-
-type DiagnosticFailure = {
+export type ExternalMcpDiagnostic = {
+  referenceId: string
+  phase: ExternalMcpDiagnosticPhase
   category: string
-  messageSafe: string
-  operatorAction: string
+  code: string
+  highestPassed: ExternalMcpHealthLevel
   retryable: boolean
-  actionOwner: McpDiagnosticActionOwner
-  errorCode: string | null
+  actionOwner: "openwork" | "network_admin" | "provider_admin" | "organization_admin" | "member"
+  operatorAction: string
+  message: string
+  httpStatus?: number
+  operationPhase?: ExternalMcpDiagnosticPhase
+  outbound?: ExternalMcpSafeOutbound
+  providerRequestId?: string
+  jsonRpcCode?: number
 }
 
-export class McpDiagnosticAttemptClosedError extends Error {
+export type ExternalMcpSafeOutbound = {
+  origin: string
+  pathHash: string
+}
+
+export type ExternalMcpSafeCause = {
+  name: string
+  code?: string
+  errno?: string | number
+  syscall?: string
+}
+
+type FetchLike = (url: string | URL, init?: RequestInit) => Promise<Response>
+
+// JSON MCP responses are expected to be compact. Event streams need more
+// headroom because a single request can carry multiple protocol messages, but
+// still need an absolute byte ceiling so a provider cannot grow Den memory
+// without bound.
+export const EXTERNAL_MCP_JSON_RESPONSE_LIMIT_BYTES = 4 * 1024 * 1024
+export const EXTERNAL_MCP_SSE_RESPONSE_LIMIT_BYTES = 16 * 1024 * 1024
+
+export class ExternalMcpLifecycleDeadlineError extends Error {
   constructor() {
-    super("The MCP diagnostic attempt is already complete.")
-    this.name = "McpDiagnosticAttemptClosedError"
+    super("External MCP lifecycle deadline exceeded.")
+    this.name = "ExternalMcpLifecycleDeadlineError"
   }
 }
 
-export class McpDiagnosticStartLimitError extends Error {
-  readonly kind: "concurrency" | "rate"
-  readonly scope: "member" | "organization"
-  readonly retryAfterSeconds: number
-
-  constructor(input: {
-    kind: "concurrency" | "rate"
-    scope: "member" | "organization"
-    retryAfterSeconds: number
-  }) {
-    const subject = input.scope === "member" ? "this administrator" : "this organization"
-    super(input.kind === "concurrency"
-      ? `Too many MCP diagnostics are already active for ${subject}. Wait for an active diagnostic to finish, then retry.`
-      : `MCP diagnostics were started too frequently for ${subject}. Wait before starting another diagnostic.`)
-    this.name = "McpDiagnosticStartLimitError"
-    this.kind = input.kind
-    this.scope = input.scope
-    this.retryAfterSeconds = input.retryAfterSeconds
+class ExternalMcpResponseBodyLimitError extends Error {
+  constructor() {
+    super("External MCP response body exceeded its byte limit.")
+    this.name = "ExternalMcpResponseBodyLimitError"
   }
 }
 
-export function isMcpDiagnosticAttemptClosedError(error: unknown, depth = 0): boolean {
-  if (!isRecord(error) || depth > 6) return false
-  if (error instanceof McpDiagnosticAttemptClosedError || error.name === "McpDiagnosticAttemptClosedError") return true
-  return "cause" in error && isMcpDiagnosticAttemptClosedError(error.cause, depth + 1)
+const HEALTH_RANK: Record<ExternalMcpHealthLevel, number> = {
+  configured: 0,
+  reachable: 1,
+  authorized: 2,
+  protocol_ready: 3,
+  catalog_ready: 4,
+  operation_ready: 5,
 }
 
-function boundedToken(value: string, maxLength: number): string | undefined {
-  const trimmed = value.trim()
-  if (!trimmed || trimmed.length > maxLength || !/^[a-zA-Z0-9_./+:-]+$/.test(trimmed)) return undefined
-  return trimmed
-}
+const TLS_ERROR_CODES = new Set([
+  "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+])
 
-function pathTemplate(pathname: string): string {
-  const serviceNow = pathname.match(/^\/sncapps\/mcp-server\/mcp\/[^/]+\/?$/)
-  if (serviceNow) return "/sncapps/mcp-server/mcp/{server}"
+const TCP_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+])
 
-  const segments = pathname.split("/").map((segment) => {
-    if (!segment) return segment
-    return SAFE_PATH_SEGMENTS.has(segment.toLowerCase()) ? segment : "{segment}"
-  })
-  return segments.join("/").slice(0, 512)
-}
+const SAFE_NATIVE_ERROR_CODES = new Set([
+  ...TLS_ERROR_CODES,
+  ...TCP_ERROR_CODES,
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ConnectionRefused",
+  "ConnectionReset",
+  "ConnectionTimedOut",
+  "Timeout",
+])
 
-export function safeMcpDiagnosticEvidence(input: SafeEvidenceInput = {}): McpDiagnosticSafeEvidence {
-  let origin: string | undefined
-  let path: string | undefined
-  if (input.url) {
-    try {
-      const url = input.url instanceof URL ? input.url : new URL(input.url)
-      origin = url.origin
-      path = pathTemplate(url.pathname)
-    } catch {
-      // Invalid URLs are classified separately. Never retain the raw value.
-    }
-  }
+const SAFE_ERROR_NAMES = new Set([
+  "Error",
+  "TypeError",
+  "SyntaxError",
+  "AggregateError",
+  "AbortError",
+  "FetchError",
+  "McpError",
+  "UnauthorizedError",
+  "InvalidClientError",
+  "UnauthorizedClientError",
+  "InvalidClientMetadataError",
+  "InvalidGrantError",
+  "InvalidRequestError",
+  "InvalidScopeError",
+  "InvalidTargetError",
+  "InvalidTokenError",
+  "InsufficientScopeError",
+  "MethodNotAllowedError",
+  "TooManyRequestsError",
+  "UnsupportedTokenTypeError",
+  "AccessDeniedError",
+  "UnsupportedGrantTypeError",
+  "UnsupportedResponseTypeError",
+  "TemporarilyUnavailableError",
+  "ServerError",
+])
 
-  const method = input.method ? boundedToken(input.method.toUpperCase(), 16) : undefined
-  const contentType = input.contentType
-    ? boundedToken(input.contentType.split(";", 1)[0] ?? "", 128)
-    : undefined
-  const errorCode = input.errorCode ? boundedToken(input.errorCode, 64) : undefined
-  const protocolVersion = input.protocolVersion && SUPPORTED_PROTOCOL_VERSIONS.includes(input.protocolVersion)
-    ? input.protocolVersion
-    : undefined
-
-  return {
-    ...(method ? { method } : {}),
-    ...(origin ? { origin } : {}),
-    ...(path ? { path } : {}),
-    ...(typeof input.status === "number" && Number.isInteger(input.status) ? { status: input.status } : {}),
-    ...(contentType ? { contentType } : {}),
-    ...(errorCode ? { errorCode } : {}),
-    ...(protocolVersion ? { protocolVersion } : {}),
-    ...(typeof input.toolCount === "number" && Number.isInteger(input.toolCount) ? { toolCount: input.toolCount } : {}),
-    ...(typeof input.pageCount === "number" && Number.isInteger(input.pageCount) ? { pageCount: input.pageCount } : {}),
-    detailsRedacted: true,
-  }
-}
+const TYPED_OAUTH_ERROR_NAMES = new Set([
+  "InvalidClientError",
+  "UnauthorizedClientError",
+  "InvalidClientMetadataError",
+  "InvalidGrantError",
+  "InvalidRequestError",
+  "InvalidScopeError",
+  "InvalidTargetError",
+  "InvalidTokenError",
+  "InsufficientScopeError",
+  "MethodNotAllowedError",
+  "TooManyRequestsError",
+  "UnsupportedTokenTypeError",
+  "AccessDeniedError",
+  "UnsupportedGrantTypeError",
+  "UnsupportedResponseTypeError",
+  "TemporarilyUnavailableError",
+  "ServerError",
+])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
 
-function errorCauseCode(error: unknown, depth = 0): string | null {
-  if (!isRecord(error) || depth > 6) return null
-  if (typeof error.code === "string") return boundedToken(error.code, 64) ?? null
-  return errorCauseCode(error.cause, depth + 1)
+function stringProperty(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) return undefined
+  const property = value[key]
+  return typeof property === "string" ? property : undefined
 }
 
-function errorName(error: unknown, depth = 0): string | null {
-  if (!isRecord(error) || depth > 6) return null
-  return errorName(error.cause, depth + 1)
-    ?? (typeof error.name === "string" ? error.name : null)
+function stringOrNumberProperty(value: unknown, key: string): string | number | undefined {
+  if (!isRecord(value)) return undefined
+  const property = value[key]
+  return typeof property === "string" || typeof property === "number" ? property : undefined
 }
 
-function errorText(error: unknown, depth = 0): string {
-  if (!isRecord(error) || depth > 6) return ""
-  const own = error instanceof Error ? error.message.toLowerCase() : ""
-  return `${own} ${errorText(error.cause, depth + 1)}`.trim()
+function errorCause(value: unknown): unknown {
+  return isRecord(value) ? value.cause : undefined
 }
 
-type SafeHttpFailure = {
-  phase: McpDiagnosticPhase
+function errorCode(value: unknown): string | undefined {
+  let current: unknown = value
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    const code = stringProperty(current, "code")
+    if (code) return code
+    current = errorCause(current)
+  }
+  return undefined
+}
+
+function numericErrorCode(value: unknown): number | undefined {
+  let current: unknown = value
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    const code = isRecord(current) ? current.code : undefined
+    // MCP/JSON-RPC protocol errors use negative integer codes. Positive
+    // values on SDK errors are commonly HTTP statuses and are already
+    // represented by httpStatus, so do not mislabel them as JSON-RPC.
+    if (typeof code === "number" && Number.isSafeInteger(code) && code < 0) return code
+    current = errorCause(current)
+  }
+  return undefined
+}
+
+function safeNativeToken(value: string | undefined, pattern: RegExp, maxLength = 64): string | undefined {
+  if (!value || value.length > maxLength || !pattern.test(value)) return undefined
+  return value
+}
+
+function errorName(value: unknown): string {
+  const name = value instanceof Error ? value.name : stringProperty(value, "name")
+  return name && SAFE_ERROR_NAMES.has(name) ? name : "Error"
+}
+
+function hasUnsupportedVersionMessage(value: unknown): boolean {
+  let current: unknown = value
+  const seen = new Set<unknown>()
+  for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
+    seen.add(current)
+    const message = current instanceof Error ? current.message : stringProperty(current, "message")
+    if (message && message.length <= 1_000) {
+      const normalized = message.toLowerCase()
+      if (
+        (normalized.includes("protocol version") || normalized.includes("mcp version"))
+        && (normalized.includes("unsupported") || normalized.includes("not supported") || normalized.includes("incompatible"))
+      ) return true
+    }
+    current = errorCause(current)
+  }
+  return false
+}
+
+function hasForbiddenPortMessage(value: unknown): boolean {
+  const outerMessage = value instanceof Error ? value.message : stringProperty(value, "message")
+  const outerName = value instanceof Error ? value.name : stringProperty(value, "name")
+  if (outerName !== "TypeError" || outerMessage?.toLowerCase() !== "fetch failed") return false
+
+  let current: unknown = errorCause(value)
+  const seen = new Set<unknown>()
+  for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
+    seen.add(current)
+    const message = current instanceof Error ? current.message : stringProperty(current, "message")
+    if (message && ["bad port", "forbidden port"].includes(message.trim().toLowerCase())) return true
+    current = errorCause(current)
+  }
+  return false
+}
+
+export function safeExternalMcpCauseChain(error: unknown): ExternalMcpSafeCause[] {
+  const causes: ExternalMcpSafeCause[] = []
+  let current: unknown = error
+  const seen = new Set<unknown>()
+  for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
+    seen.add(current)
+    const rawCode = stringProperty(current, "code")
+    const code = rawCode && SAFE_NATIVE_ERROR_CODES.has(rawCode) ? rawCode : undefined
+    const errno = stringOrNumberProperty(current, "errno")
+    const safeErrno = typeof errno === "number" && Number.isSafeInteger(errno)
+      ? errno
+      : typeof errno === "string"
+        ? safeNativeToken(errno, /^-?\d+$/, 16)
+        : undefined
+    const syscall = safeNativeToken(stringProperty(current, "syscall"), /^(connect|read|write|getaddrinfo|lookup|request)$/)
+    causes.push({
+      name: errorName(current),
+      ...(code ? { code } : {}),
+      ...(safeErrno !== undefined ? { errno: safeErrno } : {}),
+      ...(syscall ? { syscall } : {}),
+    })
+    current = errorCause(current)
+  }
+  return causes
+}
+
+function safeMessageFor(input: {
+  phase: ExternalMcpDiagnosticPhase
+  category: string
+  code: string
+}): string {
+  if (input.code === "MCP_LIFECYCLE_DEADLINE") {
+    return "The MCP lifecycle exceeded OpenWork's bounded diagnostic deadline."
+  }
+  if (input.code === "MCP_REQUEST_TIMEOUT") {
+    return "The MCP server did not answer the current protocol request within its bounded timeout."
+  }
+  if (input.code === "MCP_RESPONSE_BODY_LIMIT") {
+    return "The MCP server returned a response body larger than OpenWork can safely process."
+  }
+  if (input.category === "security_blocked") {
+    return "Den blocked the MCP URL because it violates the outbound network safety policy."
+  }
+  if (input.code === "MCP_FETCH_FORBIDDEN_PORT") {
+    return "The MCP URL uses a port that server-side HTTP clients are not permitted to access."
+  }
+  if (input.phase === "NETWORK_DNS") {
+    return "Den could not resolve the MCP host from its server network."
+  }
+  if (input.phase === "NETWORK_TCP") {
+    return "Den resolved the MCP host but could not establish a network connection."
+  }
+  if (input.phase === "NETWORK_TLS") {
+    return "Den reached the MCP host but could not verify or complete TLS."
+  }
+  if (input.phase === "AUTH_RESOURCE_DISCOVERY") {
+    return "The MCP endpoint did not provide usable protected-resource metadata."
+  }
+  if (input.phase === "AUTH_ISSUER_DISCOVERY") {
+    return "The authorization server did not provide usable OAuth metadata."
+  }
+  if (input.phase === "AUTH_CLIENT_REGISTRATION") {
+    return "OpenWork could not register or identify its OAuth client with the authorization server."
+  }
+  if (input.phase === "AUTH_TOKEN_ACQUISITION" || input.phase === "CONTINUITY_REFRESH") {
+    return "The authorization server rejected the code or token refresh exchange."
+  }
+  if (input.phase === "AUTH_USER_OR_WORKLOAD") {
+    return input.code === "MCP_OAUTH_ACCESS_DENIED"
+      ? "The provider did not grant authorization for this MCP connection."
+      : "The provider rejected the authorization request before issuing a code."
+  }
+  if (input.phase === "AUTH_RESOURCE_VALIDATION") {
+    return "The MCP resource rejected the supplied authorization."
+  }
+  if (input.phase === "MCP_VERSION") {
+    return "The MCP client and server could not agree on a supported protocol version."
+  }
+  if (input.phase === "MCP_INITIALIZE" || input.phase === "MCP_INITIALIZED") {
+    return "The MCP lifecycle failed during initialization."
+  }
+  if (input.phase === "MCP_TOOL_DISCOVERY") {
+    return input.code === "MCP_CATALOG_CURSOR_LOOP"
+      ? "The MCP server repeated a tool-catalog cursor, so OpenWork stopped safely."
+      : "OpenWork could not retrieve a complete, valid MCP tool catalog."
+  }
+  if (input.phase === "MCP_TOOL_EXECUTION" || input.phase === "PROVIDER_EXECUTION") {
+    return "The MCP connection is established, but the requested provider operation failed."
+  }
+  if (input.phase === "PROVIDER_AUTHORIZATION") {
+    return "The MCP connection is established, but provider policy denied the requested operation."
+  }
+  if (input.phase === "CONTINUITY_SESSION") {
+    return "The MCP session expired or was rejected and must be initialized again."
+  }
+  if (input.phase === "HTTP_ROUTING") {
+    return "Den reached the host, but the configured path did not behave like the intended MCP endpoint."
+  }
+  return "The MCP connection failed before OpenWork could complete the protocol lifecycle."
+}
+
+type Classification = Omit<ExternalMcpDiagnostic, "referenceId" | "highestPassed" | "message">
+
+function httpClassification(input: {
+  phase: ExternalMcpDiagnosticPhase
   status: number
-  hadAuthorization: boolean
+  hasAuthorization: boolean
   bearerChallenge: boolean
-  invalidToken: boolean
   insufficientScope: boolean
-}
-
-function errorHttpFailure(error: unknown, depth = 0): SafeHttpFailure | null {
-  if (!isRecord(error) || depth > 6) return null
-  const http = isRecord(error.http) ? error.http : null
-  if (
-    http
-    && typeof http.phase === "string"
-    && typeof http.status === "number"
-    && typeof http.hadAuthorization === "boolean"
-    && typeof http.bearerChallenge === "boolean"
-    && typeof http.invalidToken === "boolean"
-    && typeof http.insufficientScope === "boolean"
-  ) return http as SafeHttpFailure
-  return errorHttpFailure(error.cause, depth + 1)
-}
-
-export function classifyMcpDiagnosticFailure(error: unknown, phase: McpDiagnosticPhase): DiagnosticFailure {
-  const code = errorCauseCode(error)
-  const name = errorName(error)
-  const text = errorText(error)
-  const http = errorHttpFailure(error)
-
-  if (name === "PrivateUrlError") {
+  hasSession: boolean
+  contentType: string
+}): Classification | null {
+  const { phase, status } = input
+  if (status === 404 && input.hasSession) {
     return {
-      category: "security_blocked",
-      messageSafe: "Den blocked this destination under its outbound URL safety policy.",
-      operatorAction: "review_endpoint_and_ssrf_policy",
-      retryable: false,
-      actionOwner: "organization_admin",
-      errorCode: null,
-    }
-  }
-  if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
-    return {
-      category: "dns_failure",
-      messageSafe: "The MCP host could not be resolved from the Den server.",
-      operatorAction: "check_dns_and_den_egress",
-      retryable: code === "EAI_AGAIN",
-      actionOwner: "network_admin",
-      errorCode: code,
-    }
-  }
-  if (code === "ECONNREFUSED" || code === "ECONNRESET") {
-    return {
-      category: "network_connection_failed",
-      messageSafe: "Den reached the destination network, but the connection was refused or reset.",
-      operatorAction: "check_provider_allowlist_and_listener",
-      retryable: code === "ECONNRESET",
-      actionOwner: "network_admin",
-      errorCode: code,
-    }
-  }
-  if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT" || name === "TimeoutError" || name === "AbortError") {
-    return {
-      category: "network_timeout",
-      messageSafe: "The MCP request exceeded its Den-side network deadline.",
-      operatorAction: "check_den_egress_proxy_and_provider_availability",
-      retryable: true,
-      actionOwner: "network_admin",
-      errorCode: code,
-    }
-  }
-  if (code && [
-    "CERT_HAS_EXPIRED",
-    "SELF_SIGNED_CERT_IN_CHAIN",
-    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-    "ERR_TLS_CERT_ALTNAME_INVALID",
-    "DEPTH_ZERO_SELF_SIGNED_CERT",
-  ].includes(code)) {
-    return {
-      category: "tls_failure",
-      messageSafe: "The provider TLS certificate could not be validated from the Den server.",
-      operatorAction: "fix_provider_certificate_or_den_ca_bundle",
-      retryable: false,
-      actionOwner: "network_admin",
-      errorCode: code,
-    }
-  }
-  if (code === "MCP_LIFECYCLE_DEADLINE") {
-    return {
-      category: "lifecycle_deadline",
-      messageSafe: "The MCP lifecycle exceeded its bounded Den-side deadline.",
-      operatorAction: "reduce_provider_latency_or_catalog_pagination",
-      retryable: true,
-      actionOwner: "provider_admin",
-      errorCode: code,
-    }
-  }
-  if (code === "MCP_CLOSE_TIMEOUT") {
-    return {
-      category: "shutdown_timeout",
-      messageSafe: "The MCP client did not close within its bounded shutdown deadline.",
-      operatorAction: "inspect_provider_stream_shutdown",
+      phase: "CONTINUITY_SESSION",
+      category: "mcp_session_expired",
+      code: "MCP_SESSION_NOT_FOUND",
       retryable: true,
       actionOwner: "openwork",
-      errorCode: code,
+      operatorAction: "Reinitialize the MCP session, then retry the operation once.",
     }
   }
-  if (code === "MCP_RESPONSE_BODY_LIMIT") {
+  if (status === 404 && phase.startsWith("MCP_")) {
     return {
-      category: "response_too_large",
-      messageSafe: "The MCP server returned a response larger than Den can safely process.",
-      operatorAction: "reduce_provider_response_or_catalog_size",
+      phase: "HTTP_ROUTING",
+      category: "endpoint_not_found",
+      code: "MCP_HTTP_404",
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Verify the complete MCP endpoint path, including any provider tenant or instance prefix.",
+    }
+  }
+  if ((status === 406 || status === 415) && phase.startsWith("MCP_")) {
+    return {
+      phase: "MCP_TRANSPORT",
+      category: "mcp_transport_negotiation",
+      code: `MCP_HTTP_${status}`,
       retryable: false,
       actionOwner: "provider_admin",
-      errorCode: code,
+      operatorAction: "Verify Streamable HTTP content negotiation and the provider's supported MCP transport.",
     }
   }
-  if (code?.startsWith("MCP_CATALOG_")) {
+  if (status === 429) {
     return {
-      category: "mcp_catalog_bound",
-      messageSafe: "The MCP tool catalog exceeded a bounded safety or validity limit.",
-      operatorAction: "reduce_and_validate_provider_tool_catalog",
-      retryable: false,
-      actionOwner: "provider_admin",
-      errorCode: code,
-    }
-  }
-  if (name === "InvalidTokenError") {
-    return {
-      category: "oauth_invalid_token",
-      messageSafe: "The MCP resource rejected the configured OAuth token.",
-      operatorAction: "reconnect_provider_account_and_verify_resource_audience",
+      phase,
+      category: "provider_throttled",
+      code: "MCP_HTTP_429",
       retryable: true,
+      actionOwner: "provider_admin",
+      operatorAction: "Wait for the provider rate limit to reset, then retry with bounded backoff.",
+    }
+  }
+  if (status >= 500) {
+    return {
+      phase,
+      category: "provider_unavailable",
+      code: `MCP_HTTP_${status}`,
+      retryable: true,
+      actionOwner: "provider_admin",
+      operatorAction: "Check provider availability and reverse-proxy logs using the diagnostic reference, then retry.",
+    }
+  }
+  if ((status === 401 || status === 403) && phase.startsWith("MCP_") && input.hasAuthorization) {
+    // A 401 is itself an authentication challenge. A 403 is ambiguous for
+    // enterprise providers: only a Bearer/insufficient_scope challenge means
+    // token validation; an ordinary tools/* 403 is usually an ACL/role denial.
+    if (status === 401 || input.bearerChallenge || input.insufficientScope) {
+      return {
+        phase: "AUTH_RESOURCE_VALIDATION",
+        category: input.insufficientScope ? "oauth_insufficient_scope" : "oauth_resource_rejected",
+        code: input.insufficientScope ? "MCP_OAUTH_INSUFFICIENT_SCOPE" : `MCP_OAUTH_HTTP_${status}`,
+        retryable: status === 401,
+        actionOwner: input.insufficientScope ? "organization_admin" : "member",
+        operatorAction: input.insufficientScope
+          ? "Grant the provider scopes required by this MCP resource and reconnect."
+          : "Reconnect the provider account and verify token audience, tenant, and resource binding.",
+      }
+    }
+    if (status === 403 && (phase === "MCP_TOOL_DISCOVERY" || phase === "MCP_TOOL_EXECUTION")) {
+      return {
+        phase: "PROVIDER_AUTHORIZATION",
+        category: "provider_policy_denied",
+        code: "MCP_PROVIDER_HTTP_403",
+        retryable: false,
+        actionOwner: "provider_admin",
+        operatorAction: "Grant the provider role, ACL, or application permission required for this operation.",
+      }
+    }
+  }
+  if (status >= 400) {
+    return {
+      phase,
+      category: "http_failure",
+      code: `MCP_HTTP_${status}`,
+      retryable: status === 408,
+      actionOwner: "provider_admin",
+      operatorAction: "Inspect provider and proxy logs for the failing HTTP request using the diagnostic reference.",
+    }
+  }
+  if (phase.startsWith("MCP_") && input.contentType === "text/html") {
+    return {
+      phase: "HTTP_ROUTING",
+      category: "unexpected_html",
+      code: "MCP_HTTP_HTML_RESPONSE",
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Verify the MCP path is not a sign-in page, portal route, or proxy-generated HTML response.",
+    }
+  }
+  if (phase === "MCP_INITIALIZED" && (status === 202 || status === 204)) return null
+  if (phase.startsWith("MCP_") && input.contentType !== "application/json" && input.contentType !== "text/event-stream") {
+    return {
+      phase: "MCP_TRANSPORT",
+      category: "unexpected_content_type",
+      code: "MCP_HTTP_CONTENT_TYPE",
+      retryable: false,
+      actionOwner: "provider_admin",
+      operatorAction: "Return an MCP JSON or event-stream response with a standards-compliant Content-Type header.",
+    }
+  }
+  return null
+}
+
+function classifyByCode(code: string): Classification | null {
+  const normalizedCode = code === "ConnectionRefused"
+    ? "ECONNREFUSED"
+    : code === "ConnectionReset"
+      ? "ECONNRESET"
+      : code === "ConnectionTimedOut" || code === "Timeout"
+        ? "ETIMEDOUT"
+        : code
+  if (normalizedCode === "ENOTFOUND" || normalizedCode === "EAI_AGAIN") {
+    return {
+      phase: "NETWORK_DNS",
+      category: "dns_failure",
+      code: `MCP_${normalizedCode}`,
+      retryable: normalizedCode === "EAI_AGAIN",
+      actionOwner: "network_admin",
+      operatorAction: "Verify DNS resolution and Den egress for the MCP host.",
+    }
+  }
+  if (TLS_ERROR_CODES.has(normalizedCode)) {
+    return {
+      phase: "NETWORK_TLS",
+      category: "tls_failure",
+      code: `MCP_${normalizedCode}`,
+      retryable: false,
+      actionOwner: "network_admin",
+      operatorAction: "Verify the provider certificate chain, hostname, and Den trust store.",
+    }
+  }
+  if (TCP_ERROR_CODES.has(normalizedCode)) {
+    return {
+      phase: "NETWORK_TCP",
+      category: "network_failure",
+      code: `MCP_${normalizedCode}`,
+      retryable: normalizedCode === "ECONNRESET" || normalizedCode === "ETIMEDOUT" || normalizedCode.startsWith("UND_ERR_"),
+      actionOwner: "network_admin",
+      operatorAction: "Verify provider allowlists, firewall rules, proxy requirements, and service availability from Den.",
+    }
+  }
+  return null
+}
+
+function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase): Classification {
+  if (error instanceof ExternalMcpLifecycleDeadlineError) {
+    return {
+      phase: fallbackPhase,
+      category: "lifecycle_deadline",
+      code: "MCP_LIFECYCLE_DEADLINE",
+      retryable: true,
+      actionOwner: "provider_admin",
+      operatorAction: "Reduce provider latency or catalog pagination so the complete MCP lifecycle finishes within the bounded deadline, then retry.",
+    }
+  }
+  if (error instanceof ExternalMcpResponseBodyLimitError) {
+    return {
+      phase: fallbackPhase,
+      category: "response_too_large",
+      code: "MCP_RESPONSE_BODY_LIMIT",
+      retryable: false,
+      actionOwner: "provider_admin",
+      operatorAction: "Reduce the provider response size, tool catalog, or event-stream payload before retrying.",
+    }
+  }
+  if (error instanceof PrivateUrlError) {
+    return {
+      phase: "CONFIGURATION",
+      category: "security_blocked",
+      code: "MCP_URL_BLOCKED",
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Use a public HTTPS MCP URL or change the deployment's private-network policy through security review.",
+    }
+  }
+  if (hasForbiddenPortMessage(error)) {
+    return {
+      phase: "CONFIGURATION",
+      category: "unsupported_endpoint_port",
+      code: "MCP_FETCH_FORBIDDEN_PORT",
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Use the provider's supported HTTPS MCP port or place the endpoint behind a standard HTTPS listener.",
+    }
+  }
+
+  const code = errorCode(error)
+  if (code) {
+    const classified = classifyByCode(code)
+    if (classified) return classified
+  }
+
+  if (numericErrorCode(error) === -32001) {
+    return {
+      phase: fallbackPhase,
+      category: "request_timeout",
+      code: "MCP_REQUEST_TIMEOUT",
+      retryable: true,
+      actionOwner: "provider_admin",
+      operatorAction: "Check provider latency and retry after the current MCP request can complete within its bounded timeout.",
+    }
+  }
+
+  const name = errorName(error)
+  if (name === "InvalidClientError" || name === "UnauthorizedClientError" || name === "InvalidClientMetadataError") {
+    return {
+      phase: "AUTH_CLIENT_REGISTRATION",
+      category: "oauth_client_registration",
+      code: "MCP_OAUTH_CLIENT_REJECTED",
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Verify the client registration, redirect URI, client type, and token endpoint authentication method.",
+    }
+  }
+  if (name === "InvalidGrantError") {
+    return {
+      phase: fallbackPhase === "CONTINUITY_REFRESH" ? fallbackPhase : "AUTH_TOKEN_ACQUISITION",
+      category: "oauth_token_failure",
+      code: "MCP_OAUTH_INVALID_GRANT",
+      retryable: false,
       actionOwner: "member",
-      errorCode: code,
+      operatorAction: "Restart authorization; if it repeats, verify redirect URI and PKCE state.",
+    }
+  }
+  if (name === "InvalidScopeError") {
+    return {
+      phase: "AUTH_USER_OR_WORKLOAD",
+      category: "oauth_invalid_scope",
+      code: "MCP_OAUTH_INVALID_SCOPE",
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Correct the configured provider scopes and restart authorization.",
+    }
+  }
+  if (name === "InvalidTargetError") {
+    return {
+      phase: "AUTH_RESOURCE_VALIDATION",
+      category: "oauth_invalid_target",
+      code: "MCP_OAUTH_INVALID_TARGET",
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Correct the configured MCP resource or token audience and restart authorization.",
     }
   }
   if (name === "InsufficientScopeError") {
     return {
+      phase: "AUTH_RESOURCE_VALIDATION",
       category: "oauth_insufficient_scope",
-      messageSafe: "The OAuth token does not include the scopes required by this MCP resource.",
-      operatorAction: "grant_required_provider_scopes_and_reconnect",
+      code: "MCP_OAUTH_INSUFFICIENT_SCOPE",
       retryable: false,
       actionOwner: "organization_admin",
-      errorCode: code,
+      operatorAction: "Grant the MCP resource scopes required by the provider and restart authorization.",
     }
   }
-  if (name === "TooManyRequestsError") {
+  if (name === "InvalidTokenError") {
     return {
-      category: "provider_throttled",
-      messageSafe: "The provider rate-limited this MCP handshake request.",
-      operatorAction: "wait_for_provider_rate_limit_and_retry",
-      retryable: true,
+      phase: "AUTH_RESOURCE_VALIDATION",
+      category: "oauth_invalid_token",
+      code: "MCP_OAUTH_INVALID_TOKEN",
+      retryable: false,
+      actionOwner: "member",
+      operatorAction: "Reconnect the MCP account to obtain a token for the configured resource.",
+    }
+  }
+  if (name === "UnsupportedTokenTypeError") {
+    return {
+      phase: fallbackPhase,
+      category: "oauth_unsupported_token_type",
+      code: "MCP_OAUTH_UNSUPPORTED_TOKEN_TYPE",
+      retryable: false,
       actionOwner: "provider_admin",
-      errorCode: code,
+      operatorAction: "Configure the authorization server to issue a token type supported by the MCP client and resource.",
     }
   }
   if (name === "MethodNotAllowedError") {
     return {
-      category: "method_not_allowed",
-      messageSafe: "The provider does not allow the HTTP method required by this MCP phase.",
-      operatorAction: "verify_provider_endpoint_and_transport_method",
+      phase: fallbackPhase,
+      category: "oauth_method_not_allowed",
+      code: "MCP_OAUTH_METHOD_NOT_ALLOWED",
       retryable: false,
       actionOwner: "provider_admin",
-      errorCode: code,
+      operatorAction: "Verify the provider OAuth endpoint path and its supported HTTP method.",
     }
   }
-  if (name === "ExternalMcpOAuthClientRevisionError") {
+  if (name === "TooManyRequestsError") {
     return {
-      category: "oauth_client_revision_changed",
-      messageSafe: "The MCP OAuth client registration changed after this authorization started.",
-      operatorAction: "restart_provider_authorization",
+      phase: fallbackPhase,
+      category: "oauth_provider_throttled",
+      code: "MCP_OAUTH_TOO_MANY_REQUESTS",
       retryable: true,
-      actionOwner: "organization_admin",
-      errorCode: code,
-    }
-  }
-  if (name === "ExternalMcpPendingGrantError") {
-    return {
-      category: "oauth_pending_grant_invalid",
-      messageSafe: "The MCP OAuth authorization is missing, expired, or already consumed.",
-      operatorAction: "restart_provider_authorization",
-      retryable: true,
-      actionOwner: "member",
-      errorCode: code,
-    }
-  }
-  if (name === "McpDiagnosticCredentialFenceError") {
-    return {
-      category: "oauth_callback_lease_stale",
-      messageSafe: "This OAuth callback no longer holds the active diagnostic authorization lease.",
-      operatorAction: "restart_provider_authorization",
-      retryable: true,
-      actionOwner: "member",
-      errorCode: code,
-    }
-  }
-  if (http) {
-    if (
-      (http.phase === "AUTH_TOKEN_ACQUISITION" || http.phase === "CONTINUITY_REFRESH")
-      && (http.status === 404 || http.status === 405 || http.status >= 500)
-    ) {
-      const refreshing = http.phase === "CONTINUITY_REFRESH"
-      const unavailable = http.status >= 500
-      return {
-        category: refreshing ? "oauth_refresh_failure" : "oauth_token_failure",
-        messageSafe: unavailable
-          ? "The authorization server token endpoint was unavailable during the OAuth exchange."
-          : `The authorization server token endpoint rejected the required HTTP ${http.status === 404 ? "path" : "method"}.`,
-        operatorAction: unavailable
-          ? "inspect_authorization_server_token_endpoint_availability"
-          : "verify_authorization_server_token_endpoint",
-        retryable: unavailable,
-        actionOwner: unavailable ? "provider_admin" : "organization_admin",
-        errorCode: `MCP_OAUTH_TOKEN_HTTP_${http.status}`,
-      }
-    }
-    if (
-      http.phase === "AUTH_CLIENT_REGISTRATION"
-      && (http.status === 404 || http.status === 405 || http.status >= 500)
-    ) {
-      return {
-        category: "oauth_client_registration",
-        messageSafe: http.status >= 500
-          ? "The authorization server dynamic client registration endpoint was unavailable."
-          : "The authorization server did not expose a compatible dynamic client registration endpoint.",
-        operatorAction: http.status >= 500
-          ? "inspect_authorization_server_registration_availability"
-          : "configure_a_preregistered_oauth_client",
-        retryable: http.status >= 500,
-        actionOwner: "organization_admin",
-        errorCode: `MCP_OAUTH_DCR_HTTP_${http.status}`,
-      }
-    }
-    if (
-      (http.phase === "AUTH_RESOURCE_DISCOVERY" || http.phase === "AUTH_ISSUER_DISCOVERY")
-      && (http.status === 404 || http.status === 405 || http.status >= 500)
-    ) {
-      return {
-        category: "oauth_handshake_failure",
-        messageSafe: "The provider's OAuth discovery metadata could not be resolved from its standards-based candidates.",
-        operatorAction: "verify_authorization_server_metadata",
-        retryable: http.status >= 500,
-        actionOwner: "organization_admin",
-        errorCode: `MCP_OAUTH_DISCOVERY_HTTP_${http.status}`,
-      }
-    }
-    if (http.status === 429) {
-      return {
-        category: "provider_throttled",
-        messageSafe: "The provider rate-limited this MCP request.",
-        operatorAction: "wait_for_provider_rate_limit_and_retry",
-        retryable: true,
-        actionOwner: "provider_admin",
-        errorCode: "MCP_HTTP_429",
-      }
-    }
-    if (http.status === 404) {
-      return {
-        category: "endpoint_not_found",
-        messageSafe: "Den reached the host, but the configured MCP endpoint path was not found.",
-        operatorAction: "verify_complete_provider_mcp_endpoint_path",
-        retryable: false,
-        actionOwner: "organization_admin",
-        errorCode: "MCP_HTTP_404",
-      }
-    }
-    if (http.status === 405) {
-      return {
-        category: "method_not_allowed",
-        messageSafe: "The endpoint does not accept the HTTP method required by Streamable HTTP MCP.",
-        operatorAction: "verify_streamable_http_endpoint_and_method",
-        retryable: false,
-        actionOwner: "provider_admin",
-        errorCode: "MCP_HTTP_405",
-      }
-    }
-    if (http.status >= 500) {
-      return {
-        category: "provider_unavailable",
-        messageSafe: "The provider returned a server error during this MCP phase.",
-        operatorAction: "inspect_provider_and_reverse_proxy_availability",
-        retryable: true,
-        actionOwner: "provider_admin",
-        errorCode: `MCP_HTTP_${http.status}`,
-      }
-    }
-    if (http.status === 401 && http.bearerChallenge && !http.hadAuthorization) {
-      return {
-        category: "oauth_authorization_required",
-        messageSafe: "The MCP resource requires provider authorization before it can be diagnosed.",
-        operatorAction: "complete_provider_authorization",
-        retryable: true,
-        actionOwner: "member",
-        errorCode: "MCP_OAUTH_AUTHORIZATION_REQUIRED",
-      }
-    }
-    if ((http.status === 401 || http.status === 403) && (http.invalidToken || http.insufficientScope)) {
-      return {
-        category: http.insufficientScope ? "oauth_insufficient_scope" : "oauth_invalid_token",
-        messageSafe: http.insufficientScope
-          ? "The OAuth token does not include the scopes required by this MCP resource."
-          : "The MCP resource rejected the configured OAuth token.",
-        operatorAction: http.insufficientScope
-          ? "grant_required_provider_scopes_and_reconnect"
-          : "reconnect_provider_account_and_verify_resource_audience",
-        retryable: !http.insufficientScope,
-        actionOwner: http.insufficientScope ? "organization_admin" : "member",
-        errorCode: http.insufficientScope ? "MCP_OAUTH_INSUFFICIENT_SCOPE" : "MCP_OAUTH_INVALID_TOKEN",
-      }
-    }
-    if (http.status === 403 && http.hadAuthorization) {
-      return {
-        category: "provider_policy_denied",
-        messageSafe: "The provider accepted the identity but denied the required role or ACL.",
-        operatorAction: "grant_required_provider_role_acl_or_application_permission",
-        retryable: false,
-        actionOwner: "provider_admin",
-        errorCode: "MCP_PROVIDER_HTTP_403",
-      }
-    }
-    if (http.status === 401) {
-      return {
-        category: "oauth_authentication_failed",
-        messageSafe: "The MCP resource rejected the configured authentication.",
-        operatorAction: "verify_provider_credential_and_reconnect",
-        retryable: true,
-        actionOwner: "organization_admin",
-        errorCode: "MCP_HTTP_401",
-      }
-    }
-    if (http.status === 403) {
-      return {
-        category: "provider_policy_denied",
-        messageSafe: "The provider denied the required role, ACL, or application permission.",
-        operatorAction: "grant_required_provider_role_acl_or_application_permission",
-        retryable: false,
-        actionOwner: "provider_admin",
-        errorCode: "MCP_PROVIDER_HTTP_403",
-      }
-    }
-  }
-  if (phase === "MCP_VERSION" || text.includes("protocol version") || text.includes("unsupported version")) {
-    return {
-      category: "mcp_version",
-      messageSafe: "The client and server did not agree on a supported stable MCP revision.",
-      operatorAction: "align_provider_and_client_mcp_versions",
-      retryable: false,
       actionOwner: "provider_admin",
-      errorCode: code,
+      operatorAction: "Wait for the provider rate limit to reset, then retry with bounded backoff.",
     }
   }
-  if (phase === "AUTH_CLIENT_REGISTRATION") {
+  if (name === "AccessDeniedError") {
     return {
-      category: "oauth_client_registration",
-      messageSafe: "The authorization server did not accept the MCP OAuth client registration.",
-      operatorAction: "configure_a_preregistered_oauth_client",
-      retryable: false,
-      actionOwner: "organization_admin",
-      errorCode: code,
-    }
-  }
-  if (phase === "AUTH_TOKEN_ACQUISITION") {
-    return {
-      category: "oauth_token_failure",
-      messageSafe: "The authorization server did not complete the token exchange.",
-      operatorAction: "review_redirect_client_and_consent",
-      retryable: false,
-      actionOwner: "organization_admin",
-      errorCode: code,
-    }
-  }
-  if (phase === "CONTINUITY_REFRESH") {
-    return {
-      category: "oauth_refresh_failure",
-      messageSafe: "The authorization server did not refresh the MCP access token.",
-      operatorAction: "reconnect_provider_account_and_review_refresh_policy",
-      retryable: true,
-      actionOwner: "member",
-      errorCode: code,
-    }
-  }
-  if (phase === "MCP_TOOL_DISCOVERY") {
-    return {
-      category: "mcp_catalog",
-      messageSafe: "The MCP tool catalog was incomplete or invalid.",
-      operatorAction: "inspect_provider_tool_catalog",
-      retryable: false,
-      actionOwner: "provider_admin",
-      errorCode: code,
-    }
-  }
-  return {
-    category: phase.startsWith("AUTH_") ? "oauth_handshake_failure" : "mcp_connection_failure",
-    messageSafe: phase.startsWith("AUTH_")
-      ? "The OAuth handshake failed at this phase."
-      : "The MCP connection failed at this phase.",
-    operatorAction: phase.startsWith("AUTH_") ? "review_oauth_configuration" : "inspect_provider_and_den_logs",
-    retryable: false,
-    actionOwner: phase.startsWith("AUTH_") ? "organization_admin" : "provider_admin",
-    errorCode: code,
-  }
-}
-
-function toAttempt(row: typeof McpDiagnosticAttemptTable.$inferSelect): McpDiagnosticAttempt {
-  return {
-    id: row.id,
-    connectionId: row.externalMcpConnectionId,
-    status: row.status,
-    highestHealthLevel: row.highestHealthLevel,
-    firstFailedPhase: row.firstFailedPhase,
-    firstFailureCategory: row.firstFailureCategory,
-    firstFailureMessage: row.firstFailureMessage,
-    actionOwner: row.actionOwner,
-    operatorAction: row.operatorAction,
-    startedAt: row.startedAt.toISOString(),
-    completedAt: row.completedAt?.toISOString() ?? null,
-    expiresAt: row.expiresAt.toISOString(),
-  }
-}
-
-function toEvent(row: typeof McpDiagnosticEventTable.$inferSelect): McpDiagnosticEvent {
-  return {
-    id: row.id,
-    attemptId: row.attemptId,
-    sequence: row.sequence,
-    occurredAt: row.occurredAt.toISOString(),
-    phase: row.phase,
-    outcome: row.outcome,
-    elapsedMs: row.elapsedMs,
-    phaseDurationMs: row.phaseDurationMs,
-    healthLevel: row.healthLevel,
-    messageSafe: row.messageSafe,
-    category: row.category,
-    retryable: row.retryable,
-    actionOwner: row.actionOwner,
-    operatorAction: row.operatorAction,
-    evidence: row.evidence,
-  }
-}
-
-export async function cleanupExpiredMcpDiagnostics(now = new Date()): Promise<number> {
-  let deleted = 0
-  while (true) {
-    const expired = await db
-      .select({ id: McpDiagnosticAttemptTable.id })
-      .from(McpDiagnosticAttemptTable)
-      .where(lt(McpDiagnosticAttemptTable.expiresAt, now))
-      .limit(200)
-    if (expired.length === 0) return deleted
-    const attemptIds = expired.map((row) => row.id)
-    await db.transaction(async (tx) => {
-      await tx.delete(McpDiagnosticEventTable).where(inArray(McpDiagnosticEventTable.attemptId, attemptIds))
-      await tx.delete(McpDiagnosticAttemptTable).where(inArray(McpDiagnosticAttemptTable.id, attemptIds))
-    })
-    deleted += attemptIds.length
-    if (attemptIds.length < 200) return deleted
-  }
-}
-
-export function startMcpDiagnosticCleanupLoop(): void {
-  if (cleanupTimer) return
-  const run = () => {
-    void cleanupExpiredMcpDiagnostics().catch((error) => {
-      console.error("mcp_diagnostic_cleanup_failed", {
-        errorName: error instanceof Error ? error.name : "UnknownError",
-      })
-    })
-  }
-  run()
-  cleanupTimer = setInterval(run, MCP_DIAGNOSTIC_CLEANUP_INTERVAL_MS)
-  cleanupTimer.unref()
-}
-
-function isTerminalAttemptStatus(status: McpDiagnosticAttemptStatus): boolean {
-  return status === "succeeded" || status === "failed" || status === "expired"
-}
-
-function executionLeaseIsAbandoned(
-  attempt: Pick<typeof McpDiagnosticAttemptTable.$inferSelect, "startedAt" | "executionLeaseExpiresAt">,
-  now: Date,
-): boolean {
-  if (attempt.executionLeaseExpiresAt) return attempt.executionLeaseExpiresAt.getTime() <= now.getTime()
-  return attempt.startedAt.getTime() + MCP_DIAGNOSTIC_EXECUTION_LEASE_MS <= now.getTime()
-}
-
-/**
- * Converts an attempt whose owning Den process stopped heartbeating into a
- * retryable, redacted terminal result. The row lock makes restart recovery
- * race safely with a late OAuth callback or a still-live runner heartbeat.
- */
-export async function recoverAbandonedMcpDiagnosticAttempt(input: {
-  organizationId: OrganizationId
-  attemptId: AttemptId
-  now?: Date
-}): Promise<McpDiagnosticEvent | null> {
-  const now = input.now ?? new Date()
-  const eventId = createDenTypeId("mcpDiagnosticEvent")
-  const recovered = await db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(McpDiagnosticAttemptTable)
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      ))
-      .limit(1)
-      .for("update")
-    const attempt = rows[0]
-    if (!attempt || isTerminalAttemptStatus(attempt.status) || !executionLeaseIsAbandoned(attempt, now)) return null
-
-    const sequence = attempt.lastSequence + 1
-    const messageSafe = "The Den diagnostic worker stopped before this attempt completed. Run the diagnostic again."
-    await tx.insert(McpDiagnosticEventTable).values({
-      id: eventId,
-      organizationId: input.organizationId,
-      attemptId: input.attemptId,
-      sequence,
-      phase: "CONTINUITY_SESSION",
-      outcome: "failed",
-      elapsedMs: Math.max(0, now.getTime() - attempt.startedAt.getTime()),
-      phaseDurationMs: null,
-      healthLevel: attempt.highestHealthLevel,
-      messageSafe,
-      category: "diagnostic_execution_interrupted",
-      retryable: true,
-      actionOwner: "openwork",
-      operatorAction: "run_diagnostic_again",
-      evidence: safeMcpDiagnosticEvidence({ errorCode: "MCP_DIAGNOSTIC_EXECUTION_LOST" }),
-      occurredAt: now,
-    })
-    await tx
-      .update(McpDiagnosticAttemptTable)
-      .set({
-        status: "failed",
-        lastSequence: sequence,
-        firstFailedPhase: attempt.firstFailedPhase ?? "CONTINUITY_SESSION",
-        firstFailureCategory: attempt.firstFailureCategory ?? "diagnostic_execution_interrupted",
-        firstFailureMessage: attempt.firstFailureMessage ?? messageSafe,
-        actionOwner: attempt.actionOwner ?? "openwork",
-        operatorAction: attempt.operatorAction ?? "run_diagnostic_again",
-        executionLeaseId: null,
-        executionLeaseExpiresAt: null,
-        authorizationClaimId: null,
-        authorizationLeaseExpiresAt: null,
-        completedAt: now,
-      })
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      ))
-    const events = await tx
-      .select()
-      .from(McpDiagnosticEventTable)
-      .where(eq(McpDiagnosticEventTable.id, eventId))
-      .limit(1)
-    return events[0] ? toEvent(events[0]) : null
-  })
-  if (!recovered) return null
-
-  const [attempt, snapshot] = await Promise.all([
-    getMcpDiagnosticAttemptRow({ organizationId: input.organizationId, attemptId: input.attemptId }),
-    getMcpDiagnosticSnapshot({ organizationId: input.organizationId, attemptId: input.attemptId }),
-  ])
-  if (attempt && snapshot) {
-    try {
-      const actorUserId = await getMcpDiagnosticAdminActorUserId({
-        organizationId: input.organizationId,
-        memberId: attempt.createdByOrgMembershipId,
-      })
-      if (actorUserId) {
-        await recordMcpDiagnosticCompletionAuditOnce({
-          organizationId: input.organizationId,
-          actorUserId,
-          attemptId: input.attemptId,
-          connectionId: attempt.externalMcpConnectionId,
-          status: snapshot.attempt.status,
-          highestHealthLevel: snapshot.attempt.highestHealthLevel,
-          firstFailedPhase: snapshot.attempt.firstFailedPhase,
-        })
-      }
-    } catch (error) {
-      console.error("mcp_diagnostic_recovery_audit_write_failed", {
-        organizationId: input.organizationId,
-        attemptId: input.attemptId,
-        errorName: error instanceof Error ? error.name : "UnknownError",
-      })
-    }
-  }
-  return recovered
-}
-
-async function recoverAbandonedMcpDiagnosticAttemptsForOrganization(input: {
-  organizationId: OrganizationId
-  now: Date
-}): Promise<void> {
-  const active = await db
-    .select({ id: McpDiagnosticAttemptTable.id, startedAt: McpDiagnosticAttemptTable.startedAt, executionLeaseExpiresAt: McpDiagnosticAttemptTable.executionLeaseExpiresAt })
-    .from(McpDiagnosticAttemptTable)
-    .where(and(
-      eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-      inArray(McpDiagnosticAttemptTable.status, ACTIVE_ATTEMPT_STATUSES),
-    ))
-    .limit(100)
-  for (const attempt of active) {
-    if (!executionLeaseIsAbandoned(attempt, input.now)) continue
-    await recoverAbandonedMcpDiagnosticAttempt({
-      organizationId: input.organizationId,
-      attemptId: attempt.id,
-      now: input.now,
-    })
-  }
-}
-
-export async function createMcpDiagnosticAttempt(input: {
-  organizationId: OrganizationId
-  connectionId: ConnectionId
-  createdByOrgMembershipId: MemberId
-  now?: Date
-}): Promise<McpDiagnosticAttempt> {
-  const now = input.now ?? new Date()
-  const id = createDenTypeId("mcpDiagnosticAttempt")
-  const completionAuditEventId = createDenTypeId("auditEvent")
-  await cleanupExpiredMcpDiagnostics(now)
-  await recoverAbandonedMcpDiagnosticAttemptsForOrganization({ organizationId: input.organizationId, now })
-  await db.transaction(async (tx) => {
-    const organizations = await tx
-      .select({ id: OrganizationTable.id })
-      .from(OrganizationTable)
-      .where(eq(OrganizationTable.id, input.organizationId))
-      .limit(1)
-      .for("update")
-    if (!organizations[0]) throw new Error("Unknown organization for MCP diagnostic attempt.")
-
-    // Serialize start with connection deletion. If deletion wins, this row is
-    // absent and no orphan diagnostic can be created. If start wins, deletion
-    // waits and then removes the newly-created attempt in the same transaction.
-    const connections = await tx
-      .select({ id: ExternalMcpConnectionTable.id })
-      .from(ExternalMcpConnectionTable)
-      .where(and(
-        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
-        eq(ExternalMcpConnectionTable.id, input.connectionId),
-      ))
-      .limit(1)
-      .for("update")
-    if (!connections[0]) throw new Error("Unknown MCP connection for diagnostic attempt.")
-
-    const activeOrganizationRows = await tx
-      .select({ count: sql<number>`count(*)` })
-      .from(McpDiagnosticAttemptTable)
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        inArray(McpDiagnosticAttemptTable.status, ACTIVE_ATTEMPT_STATUSES),
-      ))
-    const activeMemberRows = await tx
-      .select({ count: sql<number>`count(*)` })
-      .from(McpDiagnosticAttemptTable)
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.createdByOrgMembershipId, input.createdByOrgMembershipId),
-        inArray(McpDiagnosticAttemptTable.status, ACTIVE_ATTEMPT_STATUSES),
-      ))
-    const rateWindowStart = new Date(now.getTime() - MCP_DIAGNOSTIC_RATE_WINDOW_MS)
-    const organizationRateRows = await tx
-      .select({ count: sql<number>`count(*)` })
-      .from(McpDiagnosticAttemptTable)
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        gte(McpDiagnosticAttemptTable.startedAt, rateWindowStart),
-      ))
-    const memberRateRows = await tx
-      .select({ count: sql<number>`count(*)` })
-      .from(McpDiagnosticAttemptTable)
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.createdByOrgMembershipId, input.createdByOrgMembershipId),
-        gte(McpDiagnosticAttemptTable.startedAt, rateWindowStart),
-      ))
-
-    if (Number(activeMemberRows[0]?.count ?? 0) >= MCP_DIAGNOSTIC_MAX_ACTIVE_PER_MEMBER) {
-      throw new McpDiagnosticStartLimitError({ kind: "concurrency", scope: "member", retryAfterSeconds: 5 })
-    }
-    if (Number(activeOrganizationRows[0]?.count ?? 0) >= MCP_DIAGNOSTIC_MAX_ACTIVE_PER_ORGANIZATION) {
-      throw new McpDiagnosticStartLimitError({ kind: "concurrency", scope: "organization", retryAfterSeconds: 5 })
-    }
-    const rateRetryAfterSeconds = Math.ceil(MCP_DIAGNOSTIC_RATE_WINDOW_MS / 1000)
-    if (Number(memberRateRows[0]?.count ?? 0) >= MCP_DIAGNOSTIC_MAX_STARTS_PER_MEMBER_WINDOW) {
-      throw new McpDiagnosticStartLimitError({ kind: "rate", scope: "member", retryAfterSeconds: rateRetryAfterSeconds })
-    }
-    if (Number(organizationRateRows[0]?.count ?? 0) >= MCP_DIAGNOSTIC_MAX_STARTS_PER_ORGANIZATION_WINDOW) {
-      throw new McpDiagnosticStartLimitError({ kind: "rate", scope: "organization", retryAfterSeconds: rateRetryAfterSeconds })
-    }
-
-    await tx.insert(McpDiagnosticAttemptTable).values({
-      id,
-      organizationId: input.organizationId,
-      externalMcpConnectionId: input.connectionId,
-      createdByOrgMembershipId: input.createdByOrgMembershipId,
-      completionAuditEventId,
-      startedAt: now,
-      expiresAt: new Date(now.getTime() + MCP_DIAGNOSTIC_RETENTION_MS),
-    })
-  })
-  const row = await getMcpDiagnosticAttemptRow({ organizationId: input.organizationId, attemptId: id })
-  if (!row) throw new Error("Failed to create MCP diagnostic attempt.")
-  return toAttempt(row)
-}
-
-async function getMcpDiagnosticAttemptRow(input: { organizationId: OrganizationId; attemptId: AttemptId }) {
-  const rows = await db
-    .select()
-    .from(McpDiagnosticAttemptTable)
-    .where(and(
-      eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-      eq(McpDiagnosticAttemptTable.id, input.attemptId),
-    ))
-    .limit(1)
-  return rows[0] ?? null
-}
-
-export async function getMcpDiagnosticAttempt(input: {
-  organizationId: OrganizationId
-  attemptId: AttemptId
-}): Promise<McpDiagnosticAttempt | null> {
-  const row = await getMcpDiagnosticAttemptRow(input)
-  return row ? toAttempt(row) : null
-}
-
-export async function getMcpDiagnosticAttemptForCallback(attemptId: AttemptId) {
-  const rows = await db
-    .select()
-    .from(McpDiagnosticAttemptTable)
-    .where(eq(McpDiagnosticAttemptTable.id, attemptId))
-    .limit(1)
-  return rows[0] ?? null
-}
-
-export async function claimMcpDiagnosticExecutionLease(input: {
-  organizationId: OrganizationId
-  attemptId: AttemptId
-  now?: Date
-  leaseMs?: number
-}): Promise<{ leaseId: string; leaseExpiresAt: Date } | null> {
-  const now = input.now ?? new Date()
-  return db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(McpDiagnosticAttemptTable)
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      ))
-      .limit(1)
-      .for("update")
-    const attempt = rows[0]
-    if (
-      !attempt
-      || isTerminalAttemptStatus(attempt.status)
-      || (attempt.executionLeaseId
-        && attempt.executionLeaseExpiresAt
-        && attempt.executionLeaseExpiresAt.getTime() > now.getTime())
-    ) return null
-
-    const leaseId = randomUUID()
-    const leaseExpiresAt = new Date(now.getTime() + (input.leaseMs ?? MCP_DIAGNOSTIC_EXECUTION_LEASE_MS))
-    await tx
-      .update(McpDiagnosticAttemptTable)
-      .set({ executionLeaseId: leaseId, executionLeaseExpiresAt: leaseExpiresAt })
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      ))
-    return { leaseId, leaseExpiresAt }
-  })
-}
-
-export async function renewMcpDiagnosticExecutionLease(input: {
-  organizationId: OrganizationId
-  attemptId: AttemptId
-  leaseId: string
-  now?: Date
-  leaseMs?: number
-}): Promise<void> {
-  const now = input.now ?? new Date()
-  await db
-    .update(McpDiagnosticAttemptTable)
-    .set({ executionLeaseExpiresAt: new Date(now.getTime() + (input.leaseMs ?? MCP_DIAGNOSTIC_EXECUTION_LEASE_MS)) })
-    .where(and(
-      eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-      eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      eq(McpDiagnosticAttemptTable.executionLeaseId, input.leaseId),
-      inArray(McpDiagnosticAttemptTable.status, ACTIVE_ATTEMPT_STATUSES),
-    ))
-}
-
-export async function releaseMcpDiagnosticExecutionLease(input: {
-  organizationId: OrganizationId
-  attemptId: AttemptId
-  leaseId: string
-}): Promise<void> {
-  await db
-    .update(McpDiagnosticAttemptTable)
-    .set({ executionLeaseId: null, executionLeaseExpiresAt: null })
-    .where(and(
-      eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-      eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      eq(McpDiagnosticAttemptTable.executionLeaseId, input.leaseId),
-    ))
-}
-
-/**
- * A completion audit id is allocated with the attempt. Both the background
- * runner and OAuth callback can therefore retry this write using the same
- * primary key, yielding one durable audit row across processes.
- */
-export async function recordMcpDiagnosticCompletionAuditOnce(input: {
-  organizationId: OrganizationId
-  actorUserId: DenTypeId<"user">
-  attemptId: AttemptId
-  connectionId: ConnectionId
-  status: McpDiagnosticAttemptStatus
-  highestHealthLevel: McpDiagnosticHealthLevel
-  firstFailedPhase: McpDiagnosticPhase | null
-}): Promise<void> {
-  let completionAuditEventId: AuditEventId | null = null
-  await db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(McpDiagnosticAttemptTable)
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-        eq(McpDiagnosticAttemptTable.externalMcpConnectionId, input.connectionId),
-      ))
-      .limit(1)
-      .for("update")
-    const attempt = rows[0]
-    if (!attempt || !isTerminalAttemptStatus(attempt.status)) return
-    completionAuditEventId = attempt.completionAuditEventId ?? createDenTypeId("auditEvent")
-    if (!attempt.completionAuditEventId) {
-      await tx
-        .update(McpDiagnosticAttemptTable)
-        .set({ completionAuditEventId })
-        .where(and(
-          eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-          eq(McpDiagnosticAttemptTable.id, input.attemptId),
-          isNull(McpDiagnosticAttemptTable.completionAuditEventId),
-        ))
-    }
-  })
-  if (!completionAuditEventId) return
-  await recordOrganizationAuditEvent({
-    eventId: completionAuditEventId,
-    organizationId: input.organizationId,
-    actorUserId: input.actorUserId,
-    action: ORGANIZATION_AUDIT_ACTIONS.mcpDiagnosticCompleted,
-    payload: {
-      attemptId: input.attemptId,
-      connectionId: input.connectionId,
-      status: input.status,
-      highestHealthLevel: input.highestHealthLevel,
-      firstFailedPhase: input.firstFailedPhase,
-    },
-  })
-}
-
-export async function reserveMcpDiagnosticAuthorizationGeneration(input: {
-  organizationId: OrganizationId
-  attemptId: AttemptId
-}): Promise<number> {
-  return db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(McpDiagnosticAttemptTable)
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      ))
-      .limit(1)
-      .for("update")
-    const attempt = rows[0]
-    if (!attempt || attempt.status !== "running") throw new McpDiagnosticAttemptClosedError()
-    const generation = attempt.authorizationGeneration + 1
-    await tx
-      .update(McpDiagnosticAttemptTable)
-      .set({
-        authorizationGeneration: generation,
-        authorizationClaimId: null,
-        authorizationLeaseExpiresAt: null,
-      })
-      .where(eq(McpDiagnosticAttemptTable.id, input.attemptId))
-    return generation
-  })
-}
-
-export async function claimMcpDiagnosticAuthorizationCallback(input: {
-  organizationId: OrganizationId
-  connectionId: ConnectionId
-  attemptId: AttemptId
-  createdByOrgMembershipId: MemberId
-  generation: number
-  now?: Date
-  leaseMs?: number
-}): Promise<{ leaseId: string; leaseExpiresAt: Date } | null> {
-  const now = input.now ?? new Date()
-  return db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(McpDiagnosticAttemptTable)
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-        eq(McpDiagnosticAttemptTable.externalMcpConnectionId, input.connectionId),
-        eq(McpDiagnosticAttemptTable.createdByOrgMembershipId, input.createdByOrgMembershipId),
-      ))
-      .limit(1)
-      .for("update")
-    const attempt = rows[0]
-    if (
-      !attempt
-      || attempt.status !== "waiting_for_authorization"
-      || attempt.authorizationGeneration !== input.generation
-      || attempt.expiresAt.getTime() <= now.getTime()
-      || (attempt.authorizationClaimId
-        && attempt.authorizationLeaseExpiresAt
-        && attempt.authorizationLeaseExpiresAt.getTime() > now.getTime())
-    ) return null
-
-    const leaseId = randomUUID()
-    const leaseExpiresAt = new Date(now.getTime() + (input.leaseMs ?? MCP_DIAGNOSTIC_AUTHORIZATION_LEASE_MS))
-    await tx
-      .update(McpDiagnosticAttemptTable)
-      .set({ authorizationClaimId: leaseId, authorizationLeaseExpiresAt: leaseExpiresAt })
-      .where(eq(McpDiagnosticAttemptTable.id, input.attemptId))
-    return { leaseId, leaseExpiresAt }
-  })
-}
-
-export type McpDiagnosticAuthorizationExpiryResult =
-  | { status: "expired"; event: McpDiagnosticEvent }
-  | { status: "claimed"; retryAt: Date }
-  | { status: "terminal" }
-  | { status: "not_eligible" }
-
-export async function expireMcpDiagnosticAuthorizationIfEligible(input: {
-  organizationId: OrganizationId
-  attemptId: AttemptId
-  generation: number
-  now?: Date
-}): Promise<McpDiagnosticAuthorizationExpiryResult> {
-  const now = input.now ?? new Date()
-  const eventId = createDenTypeId("mcpDiagnosticEvent")
-  return db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(McpDiagnosticAttemptTable)
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      ))
-      .limit(1)
-      .for("update")
-    const attempt = rows[0]
-    if (!attempt) return { status: "not_eligible" as const }
-    if (attempt.status === "succeeded" || attempt.status === "failed" || attempt.status === "expired") {
-      return { status: "terminal" as const }
-    }
-    if (attempt.status !== "waiting_for_authorization" || attempt.authorizationGeneration !== input.generation) {
-      return { status: "not_eligible" as const }
-    }
-    if (
-      attempt.authorizationClaimId
-      && attempt.authorizationLeaseExpiresAt
-      && attempt.authorizationLeaseExpiresAt.getTime() > now.getTime()
-    ) return { status: "claimed" as const, retryAt: attempt.authorizationLeaseExpiresAt }
-
-    const sequence = attempt.lastSequence + 1
-    await tx.insert(McpDiagnosticEventTable).values({
-      id: eventId,
-      organizationId: input.organizationId,
-      attemptId: input.attemptId,
-      sequence,
       phase: "AUTH_USER_OR_WORKLOAD",
-      outcome: "failed",
-      elapsedMs: Math.max(0, now.getTime() - attempt.startedAt.getTime()),
-      phaseDurationMs: null,
-      healthLevel: "reachable",
-      messageSafe: "The provider authorization window expired before a callback completed under an active lease.",
-      category: "oauth_user_interaction",
+      category: "oauth_access_denied",
+      code: "MCP_OAUTH_ACCESS_DENIED",
       retryable: false,
       actionOwner: "member",
-      operatorAction: "restart_provider_authorization",
-      evidence: safeMcpDiagnosticEvidence(),
-      occurredAt: now,
-    })
-    await tx
-      .update(McpDiagnosticAttemptTable)
-      .set({
-        status: "expired",
-        lastSequence: sequence,
-        highestHealthLevel: "reachable",
-        firstFailedPhase: "AUTH_USER_OR_WORKLOAD",
-        firstFailureCategory: "oauth_user_interaction",
-        firstFailureMessage: "The provider authorization window expired before a callback completed under an active lease.",
-        actionOwner: "member",
-        operatorAction: "restart_provider_authorization",
-        authorizationClaimId: null,
-        authorizationLeaseExpiresAt: null,
-        executionLeaseId: null,
-        executionLeaseExpiresAt: null,
-        completedAt: now,
-      })
-      .where(eq(McpDiagnosticAttemptTable.id, input.attemptId))
-    const events = await tx
-      .select()
-      .from(McpDiagnosticEventTable)
-      .where(eq(McpDiagnosticEventTable.id, eventId))
-      .limit(1)
-    if (!events[0]) throw new Error("Failed to persist the expired MCP diagnostic event.")
-    return { status: "expired" as const, event: toEvent(events[0]) }
-  })
-}
-
-export async function getMcpDiagnosticAdminActorUserId(input: {
-  organizationId: OrganizationId
-  memberId: MemberId
-}): Promise<DenTypeId<"user"> | null> {
-  const rows = await db
-    .select({ userId: MemberTable.userId, role: MemberTable.role })
-    .from(MemberTable)
-    .where(and(
-      eq(MemberTable.organizationId, input.organizationId),
-      eq(MemberTable.id, input.memberId),
-      isNull(MemberTable.removedAt),
-    ))
-    .limit(1)
-  const member = rows[0]
-  if (!member?.userId || !roleIncludesPrivileged(member.role)) return null
-  return member.userId
-}
-
-function healthRank(level: McpDiagnosticHealthLevel): number {
-  return MCP_DIAGNOSTIC_HEALTH_LEVELS.indexOf(level) + 1
-}
-
-export async function appendMcpDiagnosticEvent(input: {
-  organizationId: OrganizationId
-  attemptId: AttemptId
-  phase: McpDiagnosticPhase
-  outcome: McpDiagnosticEventOutcome
-  healthLevel: McpDiagnosticHealthLevel
-  messageSafe: string
-  phaseDurationMs?: number | null
-  category?: string | null
-  retryable?: boolean | null
-  actionOwner?: McpDiagnosticActionOwner | null
-  operatorAction?: string | null
-  evidence?: McpDiagnosticSafeEvidence
-  attemptStatus?: McpDiagnosticAttemptStatus
-  now?: Date
-}): Promise<McpDiagnosticEvent> {
-  const occurredAt = input.now ?? new Date()
-  const eventId = createDenTypeId("mcpDiagnosticEvent")
-
-  return db.transaction(async (tx) => {
-    await tx
-      .update(McpDiagnosticAttemptTable)
-      .set({ lastSequence: sql`${McpDiagnosticAttemptTable.lastSequence} + 1` })
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      ))
-
-    const rows = await tx
-      .select()
-      .from(McpDiagnosticAttemptTable)
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      ))
-      .limit(1)
-    const attempt = rows[0]
-    if (!attempt || attempt.status === "succeeded" || attempt.status === "failed" || attempt.status === "expired") {
-      throw new McpDiagnosticAttemptClosedError()
+      operatorAction: "Restart authorization and grant consent; if policy blocks consent, contact the provider administrator.",
     }
-
-    const elapsedMs = Math.max(0, occurredAt.getTime() - attempt.startedAt.getTime())
-    await tx.insert(McpDiagnosticEventTable).values({
-      id: eventId,
-      organizationId: input.organizationId,
-      attemptId: input.attemptId,
-      sequence: attempt.lastSequence,
-      phase: input.phase,
-      outcome: input.outcome,
-      elapsedMs,
-      phaseDurationMs: input.phaseDurationMs ?? null,
-      healthLevel: input.healthLevel,
-      messageSafe: input.messageSafe.slice(0, 512),
-      category: input.category ?? null,
-      retryable: input.retryable ?? null,
-      actionOwner: input.actionOwner ?? null,
-      operatorAction: input.operatorAction ?? null,
-      evidence: input.evidence ?? safeMcpDiagnosticEvidence(),
-      occurredAt,
-    })
-
-    const terminal = input.attemptStatus === "succeeded"
-      || input.attemptStatus === "failed"
-      || input.attemptStatus === "expired"
-    await tx
-      .update(McpDiagnosticAttemptTable)
-      .set({
-        highestHealthLevel: sql`case when field(${McpDiagnosticAttemptTable.highestHealthLevel}, 'configured', 'reachable', 'authorized', 'protocol_ready', 'catalog_ready') < ${healthRank(input.healthLevel)} then ${input.healthLevel} else ${McpDiagnosticAttemptTable.highestHealthLevel} end`,
-        ...(input.attemptStatus ? { status: input.attemptStatus } : {}),
-        ...(terminal ? { completedAt: occurredAt } : {}),
-        ...(terminal
-          ? {
-              authorizationClaimId: null,
-              authorizationLeaseExpiresAt: null,
-              executionLeaseId: null,
-              executionLeaseExpiresAt: null,
-            }
-          : {}),
-      })
-      .where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      ))
-
-    if (input.outcome === "failed") {
-      await tx
-        .update(McpDiagnosticAttemptTable)
-        .set({
-          firstFailedPhase: input.phase,
-          firstFailureCategory: input.category ?? "mcp_connection_failure",
-          firstFailureMessage: input.messageSafe.slice(0, 512),
-          actionOwner: input.actionOwner ?? "provider_admin",
-          operatorAction: input.operatorAction ?? "inspect_provider_and_den_logs",
-          status: input.attemptStatus ?? "failed",
-          authorizationClaimId: null,
-          authorizationLeaseExpiresAt: null,
-          executionLeaseId: null,
-          executionLeaseExpiresAt: null,
-          completedAt: occurredAt,
-        })
-        .where(and(
-          eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-          eq(McpDiagnosticAttemptTable.id, input.attemptId),
-          isNull(McpDiagnosticAttemptTable.firstFailedPhase),
-        ))
+  }
+  if (name === "InvalidRequestError" || name === "UnsupportedGrantTypeError" || name === "UnsupportedResponseTypeError") {
+    return {
+      phase: fallbackPhase,
+      category: "oauth_request_rejected",
+      code: name === "UnsupportedGrantTypeError"
+        ? "MCP_OAUTH_UNSUPPORTED_GRANT_TYPE"
+        : name === "UnsupportedResponseTypeError"
+          ? "MCP_OAUTH_UNSUPPORTED_RESPONSE_TYPE"
+          : "MCP_OAUTH_INVALID_REQUEST",
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Verify the provider OAuth flow, redirect URI, PKCE, and registered grant/response types.",
     }
+  }
+  if (name === "TemporarilyUnavailableError" || name === "ServerError") {
+    return {
+      phase: fallbackPhase,
+      category: "oauth_provider_unavailable",
+      code: name === "TemporarilyUnavailableError" ? "MCP_OAUTH_TEMPORARILY_UNAVAILABLE" : "MCP_OAUTH_SERVER_ERROR",
+      retryable: true,
+      actionOwner: "provider_admin",
+      operatorAction: "Check authorization-server availability and retry with bounded backoff.",
+    }
+  }
+  if (hasUnsupportedVersionMessage(error)) {
+    return {
+      phase: "MCP_VERSION",
+      category: "mcp_version_mismatch",
+      code: "MCP_UNSUPPORTED_VERSION",
+      retryable: false,
+      actionOwner: "provider_admin",
+      operatorAction: "Configure the provider to support an MCP protocol version compatible with OpenWork.",
+    }
+  }
 
-    const eventRows = await tx
-      .select()
-      .from(McpDiagnosticEventTable)
-      .where(eq(McpDiagnosticEventTable.id, eventId))
-      .limit(1)
-    const event = eventRows[0]
-    if (!event) throw new Error("Failed to append MCP diagnostic event.")
-    return toEvent(event)
-  })
+  const phase = fallbackPhase
+  const category = phase.startsWith("AUTH_")
+    ? "oauth_failure"
+    : phase.startsWith("MCP_") || phase.startsWith("CONTINUITY_")
+      ? "mcp_protocol_failure"
+      : "connection_failure"
+  return {
+    phase,
+    category,
+    code: `MCP_${phase}`,
+    retryable: phase === "NETWORK_TCP" || phase === "MCP_TRANSPORT",
+    actionOwner: phase.startsWith("AUTH_") ? "organization_admin" : "provider_admin",
+    operatorAction: phase.startsWith("AUTH_")
+      ? "Verify the endpoint's OAuth metadata and provider application configuration."
+      : "Inspect the provider's MCP logs using the diagnostic reference and retry after correcting the named layer.",
+  }
 }
 
-export async function failMcpDiagnosticAttempt(input: {
-  organizationId: OrganizationId
-  attemptId: AttemptId
-  phase: McpDiagnosticPhase
-  healthLevel: McpDiagnosticHealthLevel
-  error: unknown
-  phaseDurationMs?: number | null
-  url?: string | URL
-  evidence?: McpDiagnosticSafeEvidence
-}): Promise<McpDiagnosticEvent> {
-  const failure = classifyMcpDiagnosticFailure(input.error, input.phase)
-  const baseEvidence = input.evidence ?? safeMcpDiagnosticEvidence({ url: input.url })
-  return appendMcpDiagnosticEvent({
-    organizationId: input.organizationId,
-    attemptId: input.attemptId,
-    phase: input.phase,
-    outcome: "failed",
-    healthLevel: input.healthLevel,
-    messageSafe: failure.messageSafe,
-    category: failure.category,
-    retryable: failure.retryable,
-    actionOwner: failure.actionOwner,
-    operatorAction: failure.operatorAction,
-    phaseDurationMs: input.phaseDurationMs,
-    evidence: {
-      ...baseEvidence,
-      ...(failure.errorCode ? { errorCode: failure.errorCode } : {}),
-      detailsRedacted: true,
-    },
-    attemptStatus: "failed",
-  })
+export class ExternalMcpDiagnosticError extends Error {
+  readonly diagnostic: ExternalMcpDiagnostic
+  readonly safeCauseChain: ExternalMcpSafeCause[]
+
+  constructor(diagnostic: ExternalMcpDiagnostic, cause?: unknown) {
+    super(diagnostic.message, cause === undefined ? undefined : { cause })
+    this.name = "ExternalMcpDiagnosticError"
+    this.diagnostic = diagnostic
+    this.safeCauseChain = cause === undefined ? [] : safeExternalMcpCauseChain(cause)
+  }
 }
 
-export async function getMcpDiagnosticSnapshot(input: {
-  organizationId: OrganizationId
-  attemptId: AttemptId
-}): Promise<McpDiagnosticSnapshot | null> {
-  const attempt = await getMcpDiagnosticAttemptRow(input)
-  if (!attempt) return null
-  if (attempt.expiresAt.getTime() <= Date.now()) {
-    await db.transaction(async (tx) => {
-      await tx.delete(McpDiagnosticEventTable).where(eq(McpDiagnosticEventTable.attemptId, input.attemptId))
-      await tx.delete(McpDiagnosticAttemptTable).where(and(
-        eq(McpDiagnosticAttemptTable.organizationId, input.organizationId),
-        eq(McpDiagnosticAttemptTable.id, input.attemptId),
-      ))
-    })
+export class ExternalMcpDiagnosticTracker {
+  readonly referenceId: string
+  private readonly credentialContext?: {
+    authType: "oauth" | "apikey" | "none"
+    credentialMode: "shared" | "per_member"
+  }
+  private phase: ExternalMcpDiagnosticPhase = "CONFIGURATION"
+  private highestPassed: ExternalMcpHealthLevel = "configured"
+  private lastFailedPhase: ExternalMcpDiagnosticPhase | null = null
+  private capturedFailure: { phase: ExternalMcpDiagnosticPhase; error: unknown } | null = null
+  private lastHttpStatus: number | null = null
+  private forcedClassification: Classification | null = null
+  private outbound: ExternalMcpSafeOutbound | null = null
+  private providerRequestId: string | null = null
+
+  constructor(referenceId: string, credentialContext?: {
+    authType: "oauth" | "apikey" | "none"
+    credentialMode: "shared" | "per_member"
+  }) {
+    this.referenceId = referenceId
+    this.credentialContext = credentialContext
+  }
+
+  get activePhase(): ExternalMcpDiagnosticPhase {
+    return this.phase
+  }
+
+  begin(phase: ExternalMcpDiagnosticPhase): void {
+    this.phase = phase
+    this.lastFailedPhase = null
+    this.capturedFailure = null
+    this.lastHttpStatus = null
+    this.forcedClassification = null
+    this.providerRequestId = null
+  }
+
+  passed(phase: ExternalMcpDiagnosticPhase, health?: ExternalMcpHealthLevel): void {
+    this.phase = phase
+    this.lastFailedPhase = null
+    this.capturedFailure = null
+    this.forcedClassification = null
+    if (health && HEALTH_RANK[health] > HEALTH_RANK[this.highestPassed]) {
+      this.highestPassed = health
+    }
+  }
+
+  failed(phase: ExternalMcpDiagnosticPhase, classification?: Classification): void {
+    this.phase = phase
+    this.lastFailedPhase = phase
+    this.forcedClassification = classification ?? null
+  }
+
+  captureFailure(phase: ExternalMcpDiagnosticPhase, error: unknown): void {
+    this.failed(phase)
+    this.capturedFailure = { phase, error }
+  }
+
+  captureResponseBodyLimit(phase: ExternalMcpDiagnosticPhase, error: unknown): void {
+    const classification = classifyError(error, phase)
+    this.failed(phase, classification)
+    this.capturedFailure = { phase, error }
+  }
+
+  recordHttpStatus(status: number): void {
+    this.lastHttpStatus = status
+  }
+
+  recordOutbound(rawUrl: string | URL): void {
+    this.outbound = safeExternalMcpOutbound(rawUrl)
+  }
+
+  recordProviderRequestId(headers: Headers): void {
+    for (const name of [
+      "x-ms-request-id",
+      "x-ms-correlation-request-id",
+      "x-servicenow-request-id",
+      "x-correlation-id",
+      "x-transaction-id",
+      "request-id",
+      "x-request-id",
+    ]) {
+      const value = safeNativeToken(headers.get(name) ?? undefined, /^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/, 128)
+      if (value) {
+        this.providerRequestId = value
+        return
+      }
+    }
+  }
+
+  providerToolError(result?: unknown): ExternalMcpDiagnosticError {
+    const structuredContent = isRecord(result) && isRecord(result.structuredContent)
+      ? result.structuredContent
+      : null
+    const providerStatus = structuredContent?.providerStatus
+    const providerCategory = structuredContent?.category
+    const requestId = safeNativeToken(
+      typeof structuredContent?.requestId === "string" ? structuredContent.requestId : undefined,
+      /^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/,
+      128,
+    )
+    if (requestId) this.providerRequestId = requestId
+
+    const classification: Classification = providerStatus === 403 && providerCategory === "provider_policy"
+      ? {
+          phase: "PROVIDER_AUTHORIZATION",
+          category: "provider_policy_denied",
+          code: "MCP_PROVIDER_HTTP_403",
+          retryable: false,
+          actionOwner: "provider_admin",
+          operatorAction: "Grant the provider role, ACL, or application permission required for this operation.",
+        }
+      : providerStatus === 429
+        ? {
+            phase: "PROVIDER_EXECUTION",
+            category: "provider_throttled",
+            code: "MCP_PROVIDER_HTTP_429",
+            retryable: true,
+            actionOwner: "provider_admin",
+            operatorAction: "Wait for the provider rate limit to reset, then retry with bounded backoff.",
+          }
+        : {
+            phase: "PROVIDER_EXECUTION",
+            category: "provider_tool_error",
+            code: "MCP_PROVIDER_TOOL_ERROR",
+            retryable: false,
+            actionOwner: "provider_admin",
+            operatorAction: "Inspect the provider operation result and provider logs using the diagnostic reference.",
+          }
+    this.failed(classification.phase, classification)
+    return this.error(new Error("Provider returned an MCP tool error result."), classification.phase)
+  }
+
+  error(error: unknown, fallbackPhase = this.lastFailedPhase ?? this.phase): ExternalMcpDiagnosticError {
+    if (error instanceof ExternalMcpDiagnosticError) return error
+    const source = errorCode(error) || !this.capturedFailure ? { phase: fallbackPhase, error } : this.capturedFailure
+    const inferredClassification = classifyError(source.error, source.phase)
+    const classified = this.forcedClassification
+      && !TYPED_OAUTH_ERROR_NAMES.has(errorName(source.error))
+      && inferredClassification.phase !== "MCP_VERSION"
+      ? this.forcedClassification
+      : inferredClassification
+    const classification: Classification = classified.actionOwner === "member"
+      && this.credentialContext
+      && (classified.phase.startsWith("AUTH_") || classified.phase === "CONTINUITY_REFRESH")
+      && this.credentialContext.credentialMode === "shared"
+      ? {
+          ...classified,
+          actionOwner: "organization_admin",
+          operatorAction: this.credentialContext.authType === "apikey"
+            ? "Update the organization-managed API key for this MCP connection, then retry."
+            : "Reconnect the organization-managed provider account, then retry.",
+        }
+      : classified
+    const diagnosticWithoutMessage = {
+      referenceId: this.referenceId,
+      highestPassed: this.highestPassed,
+      ...classification,
+    }
+    const diagnostic: ExternalMcpDiagnostic = {
+      ...diagnosticWithoutMessage,
+      message: safeMessageFor(diagnosticWithoutMessage),
+      ...(this.lastHttpStatus === null ? {} : { httpStatus: this.lastHttpStatus }),
+      ...(classification.phase === source.phase ? {} : { operationPhase: source.phase }),
+      ...(this.outbound ? { outbound: this.outbound } : {}),
+      ...(this.providerRequestId ? { providerRequestId: this.providerRequestId } : {}),
+      ...(numericErrorCode(source.error) === undefined ? {} : { jsonRpcCode: numericErrorCode(source.error) }),
+    }
+    return new ExternalMcpDiagnosticError(diagnostic, error)
+  }
+}
+
+function requestBodyText(init?: RequestInit): string | null {
+  if (typeof init?.body === "string") return init.body
+  if (init?.body instanceof URLSearchParams) return init.body.toString()
+  return null
+}
+
+function requestHeader(init: RequestInit | undefined, name: string): string | null {
+  if (!init?.headers) return null
+  return new Headers(init.headers).get(name)
+}
+
+function jsonRpcMethod(body: string | null): string | null {
+  if (!body || body.length > 64_000) return null
+  try {
+    const parsed: unknown = JSON.parse(body)
+    return isRecord(parsed) && typeof parsed.method === "string" ? parsed.method : null
+  } catch {
     return null
   }
-  const events = await db
-    .select()
-    .from(McpDiagnosticEventTable)
-    .where(and(
-      eq(McpDiagnosticEventTable.organizationId, input.organizationId),
-      eq(McpDiagnosticEventTable.attemptId, input.attemptId),
-    ))
-    .orderBy(asc(McpDiagnosticEventTable.sequence))
-  return { attempt: toAttempt(attempt), events: events.map(toEvent) }
+}
+
+function requestPhase(input: string | URL, init: RequestInit | undefined, endpoint: URL): ExternalMcpDiagnosticPhase {
+  const url = new URL(String(input))
+  const path = url.pathname
+  if (path.includes("/.well-known/oauth-protected-resource")) return "AUTH_RESOURCE_DISCOVERY"
+  if (path.includes("/.well-known/oauth-authorization-server") || path.includes("/.well-known/openid-configuration")) {
+    return "AUTH_ISSUER_DISCOVERY"
+  }
+
+  const body = requestBodyText(init)
+  const contentType = requestHeader(init, "content-type") ?? ""
+  if (contentType.includes("application/x-www-form-urlencoded") && body) {
+    const form = new URLSearchParams(body)
+    return form.get("grant_type") === "refresh_token" ? "CONTINUITY_REFRESH" : "AUTH_TOKEN_ACQUISITION"
+  }
+  if (contentType.includes("application/json") && body?.includes("\"redirect_uris\"")) {
+    return "AUTH_CLIENT_REGISTRATION"
+  }
+
+  if (url.origin === endpoint.origin && url.pathname === endpoint.pathname) {
+    const method = jsonRpcMethod(body)
+    if (method === "initialize") return "MCP_INITIALIZE"
+    if (method === "notifications/initialized") return "MCP_INITIALIZED"
+    if (method === "tools/list") return "MCP_TOOL_DISCOVERY"
+    if (method === "tools/call") return "MCP_TOOL_EXECUTION"
+    return "MCP_TRANSPORT"
+  }
+  return "HTTP_ROUTING"
+}
+
+function healthForPhase(phase: ExternalMcpDiagnosticPhase): ExternalMcpHealthLevel | undefined {
+  if (phase === "HTTP_ROUTING" || phase === "AUTH_RESOURCE_DISCOVERY" || phase === "AUTH_ISSUER_DISCOVERY" || phase === "AUTH_CLIENT_REGISTRATION") {
+    return "reachable"
+  }
+  // An HTTP response proves reachability only. Higher health levels are
+  // advanced by parsed OAuth/MCP operations after schema, lifecycle, and
+  // pagination checks succeed; a 200 HTML page must never become
+  // protocol_ready or catalog_ready.
+  if (phase.startsWith("MCP_") || phase === "AUTH_RESOURCE_VALIDATION") return "reachable"
+  return undefined
+}
+
+function responseBodyLimit(contentType: string): number {
+  return contentType === "text/event-stream"
+    ? EXTERNAL_MCP_SSE_RESPONSE_LIMIT_BYTES
+    : EXTERNAL_MCP_JSON_RESPONSE_LIMIT_BYTES
+}
+
+function preserveResponseMetadata(target: Response, source: Response): void {
+  for (const key of ["url", "redirected", "type"] as const) {
+    try {
+      Object.defineProperty(target, key, { configurable: true, value: source[key] })
+    } catch {
+      // These properties are diagnostic conveniences only. The status,
+      // headers, and bounded body are the protocol-relevant fields.
+    }
+  }
+}
+
+function boundedExternalMcpResponse(input: {
+  response: Response
+  contentType: string
+  phase: ExternalMcpDiagnosticPhase
+  tracker: ExternalMcpDiagnosticTracker
+}): Response {
+  if (!input.response.body) return input.response
+  const limit = responseBodyLimit(input.contentType)
+  const advertisedLength = input.response.headers.get("content-length")
+  if (advertisedLength && /^\d+$/.test(advertisedLength)) {
+    const length = Number(advertisedLength)
+    if (Number.isSafeInteger(length) && length > limit) {
+      const error = new ExternalMcpResponseBodyLimitError()
+      input.tracker.captureResponseBodyLimit(input.phase, error)
+      throw input.tracker.error(error, input.phase)
+    }
+  }
+
+  const reader = input.response.body.getReader()
+  let bytesRead = 0
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await reader.read()
+        if (next.done) {
+          controller.close()
+          return
+        }
+        bytesRead += next.value.byteLength
+        if (bytesRead > limit) {
+          const error = new ExternalMcpResponseBodyLimitError()
+          input.tracker.captureResponseBodyLimit(input.phase, error)
+          await reader.cancel(error).catch(() => undefined)
+          controller.error(error)
+          return
+        }
+        controller.enqueue(next.value)
+      } catch (error) {
+        controller.error(error)
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason)
+    },
+  })
+  const bounded = new Response(body, {
+    status: input.response.status,
+    statusText: input.response.statusText,
+    headers: input.response.headers,
+  })
+  preserveResponseMetadata(bounded, input.response)
+  return bounded
+}
+
+export function createExternalMcpDiagnosticFetch(input: {
+  fetch: FetchLike
+  endpoint: string
+  tracker: ExternalMcpDiagnosticTracker
+}): FetchLike {
+  const endpoint = new URL(input.endpoint)
+  return async (url, init) => {
+    let phase: ExternalMcpDiagnosticPhase
+    try {
+      phase = requestPhase(url, init, endpoint)
+    } catch (error) {
+      input.tracker.failed("CONFIGURATION")
+      throw input.tracker.error(error, "CONFIGURATION")
+    }
+    input.tracker.begin(phase)
+    input.tracker.recordOutbound(url)
+    try {
+      const response = await input.fetch(url, init)
+      input.tracker.recordHttpStatus(response.status)
+      input.tracker.recordProviderRequestId(response.headers)
+      const challenge = response.headers.get("www-authenticate") ?? ""
+      const hasAuthorization = Boolean(requestHeader(init, "authorization"))
+      const unauthenticatedChallenge = phase === "MCP_INITIALIZE"
+        && response.status === 401
+        && !hasAuthorization
+        && /\bbearer\b/i.test(challenge)
+      const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? ""
+      const classification = unauthenticatedChallenge
+        ? null
+        : httpClassification({
+            phase,
+            status: response.status,
+            hasAuthorization,
+            bearerChallenge: /\bbearer\b/i.test(challenge),
+            insufficientScope: /\binsufficient_scope\b/i.test(challenge),
+            hasSession: Boolean(requestHeader(init, "mcp-session-id")),
+            contentType,
+          })
+      input.tracker.passed(phase, "reachable")
+      if (classification) {
+        input.tracker.failed(classification.phase, {
+          ...classification,
+          ...(classification.phase === phase ? {} : { operationPhase: phase }),
+        })
+      } else if (response.ok || unauthenticatedChallenge) {
+        input.tracker.passed(phase, healthForPhase(phase))
+      } else {
+        input.tracker.failed(phase)
+      }
+      return boundedExternalMcpResponse({ response, contentType, phase, tracker: input.tracker })
+    } catch (error) {
+      input.tracker.captureFailure(phase, error)
+      throw error
+    }
+  }
+}
+
+export function externalMcpDiagnosticForResponse(error: unknown, referenceId: string, fallbackPhase: ExternalMcpDiagnosticPhase): ExternalMcpDiagnostic {
+  if (error instanceof ExternalMcpDiagnosticError) return error.diagnostic
+  return new ExternalMcpDiagnosticTracker(referenceId).error(error, fallbackPhase).diagnostic
+}
+
+const OAUTH_CALLBACK_ERROR_NAMES: Record<string, string> = {
+  access_denied: "AccessDeniedError",
+  invalid_client: "InvalidClientError",
+  invalid_request: "InvalidRequestError",
+  invalid_scope: "InvalidScopeError",
+  invalid_target: "InvalidTargetError",
+  invalid_token: "InvalidTokenError",
+  insufficient_scope: "InsufficientScopeError",
+  method_not_allowed: "MethodNotAllowedError",
+  too_many_requests: "TooManyRequestsError",
+  unsupported_token_type: "UnsupportedTokenTypeError",
+  server_error: "ServerError",
+  temporarily_unavailable: "TemporarilyUnavailableError",
+  unauthorized_client: "UnauthorizedClientError",
+  unsupported_response_type: "UnsupportedResponseTypeError",
+}
+
+export function externalMcpOAuthCallbackError(referenceId: string, providerErrorCode: string): ExternalMcpDiagnosticError {
+  const tracker = new ExternalMcpDiagnosticTracker(referenceId)
+  tracker.begin("AUTH_USER_OR_WORKLOAD")
+  const error = new Error("OAuth provider returned an authorization error.")
+  error.name = OAUTH_CALLBACK_ERROR_NAMES[providerErrorCode] ?? "Error"
+  return tracker.error(error, "AUTH_USER_OR_WORKLOAD")
+}
+
+export function externalMcpDiagnosticForLog(error: unknown, referenceId: string, fallbackPhase: ExternalMcpDiagnosticPhase) {
+  const diagnosticError = error instanceof ExternalMcpDiagnosticError
+    ? error
+    : new ExternalMcpDiagnosticTracker(referenceId).error(error, fallbackPhase)
+  return {
+    diagnostic: diagnosticError.diagnostic,
+    causeChain: diagnosticError.safeCauseChain,
+  }
+}
+
+export function safeExternalMcpOutbound(rawUrl: string | URL): ExternalMcpSafeOutbound {
+  const url = new URL(String(rawUrl))
+  return {
+    origin: url.origin,
+    pathHash: `sha256:${createHash("sha256").update(url.pathname).digest("hex").slice(0, 16)}`,
+  }
+}
+
+export function safeExternalMcpEndpointForLog(rawUrl: string): ExternalMcpSafeOutbound | { invalid: true } {
+  try {
+    return safeExternalMcpOutbound(rawUrl)
+  } catch {
+    return { invalid: true }
+  }
+}
+
+export function catalogDiagnosticError(input: {
+  tracker: ExternalMcpDiagnosticTracker
+  code:
+    | "MCP_CATALOG_CURSOR_LOOP"
+    | "MCP_CATALOG_PAGE_LIMIT"
+    | "MCP_CATALOG_ITEM_LIMIT"
+    | "MCP_CATALOG_DUPLICATE_TOOL"
+    | "MCP_CATALOG_TOOL_NAME_LIMIT"
+    | "MCP_CATALOG_TOOL_DESCRIPTION_LIMIT"
+    | "MCP_CATALOG_TOOL_TITLE_LIMIT"
+    | "MCP_CATALOG_SCHEMA_SIZE_LIMIT"
+    | "MCP_CATALOG_SCHEMA_DEPTH_LIMIT"
+    | "MCP_CATALOG_SCHEMA_CYCLE"
+    | "MCP_CATALOG_CURSOR_SIZE_LIMIT"
+    | "MCP_CATALOG_BYTE_LIMIT"
+  operatorAction: string
+}): ExternalMcpDiagnosticError {
+  input.tracker.failed("MCP_TOOL_DISCOVERY")
+  const diagnostic: ExternalMcpDiagnostic = {
+    referenceId: input.tracker.referenceId,
+    phase: "MCP_TOOL_DISCOVERY",
+    category: "mcp_catalog",
+    code: input.code,
+    highestPassed: "protocol_ready",
+    retryable: false,
+    actionOwner: "provider_admin",
+    operatorAction: input.operatorAction,
+    message: safeMessageFor({ phase: "MCP_TOOL_DISCOVERY", category: "mcp_catalog", code: input.code }),
+  }
+  return new ExternalMcpDiagnosticError(diagnostic)
+}
+
+export function lifecycleDeadlineDiagnosticError(input: {
+  tracker: ExternalMcpDiagnosticTracker
+  phase: ExternalMcpDiagnosticPhase
+}): ExternalMcpDiagnosticError {
+  return input.tracker.error(new ExternalMcpLifecycleDeadlineError(), input.phase)
+}
+
+export function providerToolDiagnosticError(input: {
+  tracker: ExternalMcpDiagnosticTracker
+  result?: unknown
+}): ExternalMcpDiagnosticError {
+  return input.tracker.providerToolError(input.result)
 }

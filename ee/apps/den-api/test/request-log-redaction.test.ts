@@ -1,38 +1,34 @@
-import { describe, expect, test } from "bun:test"
-import { redactDenRequestLogLine } from "../src/request-log-redaction.js"
+import { expect, test } from "bun:test"
+import { redactRequestLogLine } from "../src/request-log-redaction.js"
 
-describe("Den request log redaction", () => {
-  test("redacts OAuth code and state on external MCP callbacks", () => {
-    const line = redactDenRequestLogLine(
-      "<-- GET /v1/mcp-connections/emc_example/connect/callback?code=secret-code&state=secret-state&safe=visible",
-    )
-    expect(line).not.toContain("secret-code")
-    expect(line).not.toContain("secret-state")
-    expect(line).not.toContain("visible")
-    expect(line).toContain("oauth_callback=%5BREDACTED%5D")
-  })
+test("redacts OAuth and credential query values from request logs", () => {
+  const line = "<-- GET /v1/mcp-connections/emc_1/connect/callback?code=secret-code&state=signed-state&safe=value&client_secret=hidden"
+  const redacted = redactRequestLogLine(line)
 
-  test("redacts percent-encoded OAuth parameter names on response logs", () => {
-    const line = redactDenRequestLogLine(
-      "--> GET /v1/mcp-connections/emc_example/connect/callback?%2563ode=encoded-code&st%61te=encoded-state 200 8ms",
-    )
-    expect(line).not.toContain("encoded-code")
-    expect(line).not.toContain("encoded-state")
-    expect(line).toEndWith(" 200 8ms")
-  })
+  expect(redacted).toBe("<-- GET /v1/mcp-connections/emc_1/connect/callback?code=[REDACTED]&state=[REDACTED]&safe=value&client_secret=[REDACTED]")
+  expect(redacted).not.toContain("secret-code")
+  expect(redacted).not.toContain("signed-state")
+  expect(redacted).not.toContain("hidden")
+})
 
-  test("redacts provider denial descriptions and arbitrary callback parameters", () => {
-    const line = redactDenRequestLogLine(
-      "<-- GET /v1/mcp-connections/emc_example/connect/callback?error=access_denied&error_description=tenant-sensitive&custom=provider-data&state=secret-state",
-    )
-    expect(line).not.toContain("access_denied")
-    expect(line).not.toContain("tenant-sensitive")
-    expect(line).not.toContain("provider-data")
-    expect(line).not.toContain("secret-state")
-  })
+test("preserves ordinary diagnostic query parameters", () => {
+  expect(redactRequestLogLine("<-- GET /health?verbose=1")).toBe("<-- GET /health?verbose=1")
+})
 
-  test("does not rewrite unrelated request paths", () => {
-    const line = "<-- GET /v1/search?state=california&code=incident"
-    expect(redactDenRequestLogLine(line)).toBe(line)
-  })
+test("redacts encoded and mixed-case credential parameter names", () => {
+  const redacted = redactRequestLogLine("<-- GET /callback?%63ode=secret&MIXED=value&Access_Token=token-secret")
+  expect(redacted).toContain("%63ode=[REDACTED]")
+  expect(redacted).toContain("Access_Token=[REDACTED]")
+  expect(redacted).toContain("MIXED=value")
+  expect(redacted).not.toContain("token-secret")
+})
+
+test("redacts Microsoft and ServiceNow OAuth denial details", () => {
+  const line = "<-- GET /callback?error=access_denied&error_description=tenant-user-detail&error_uri=https%3A%2F%2Fprovider.invalid%2Fsecret&session_state=opaque-session&state=signed"
+  const redacted = redactRequestLogLine(line)
+  for (const secret of ["access_denied", "tenant-user-detail", "provider.invalid", "opaque-session", "signed"]) {
+    expect(redacted).not.toContain(secret)
+  }
+  expect(redacted).toContain("error=[REDACTED]")
+  expect(redacted).toContain("error_description=[REDACTED]")
 })

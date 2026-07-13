@@ -157,6 +157,7 @@ export type DesktopBootstrapConfig = {
   requireSignin: boolean;
   brandAppName?: string | null;
   brandLogoUrl?: string | null;
+  brandIconUrl?: string | null;
   writtenAt?: string | null;
   claimLinks?: Array<{
     id: string;

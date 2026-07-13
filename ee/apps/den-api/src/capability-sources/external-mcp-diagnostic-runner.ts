@@ -21,7 +21,7 @@ import {
   renewMcpDiagnosticExecutionLease,
   reserveMcpDiagnosticAuthorizationGeneration,
   safeMcpDiagnosticEvidence,
-} from "./external-mcp-diagnostics.js"
+} from "./external-mcp-diagnostic-store.js"
 import {
   deleteExternalMcpOAuthPendingGrant,
   type ExternalMcpConnectionRow,

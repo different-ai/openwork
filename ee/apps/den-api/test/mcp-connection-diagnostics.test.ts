@@ -20,7 +20,8 @@ let app: typeof import("../src/app.js").default
 let db: typeof import("../src/db.js").db
 let schema: typeof import("@openwork-ee/den-db/schema")
 let drizzle: typeof import("@openwork-ee/den-db/drizzle")
-let diagnostics: typeof import("../src/capability-sources/external-mcp-diagnostics.js")
+let diagnostics: typeof import("../src/capability-sources/external-mcp-diagnostic-store.js")
+let structuredDiagnostics: typeof import("../src/capability-sources/external-mcp-diagnostics.js")
 let genericOAuth: typeof import("../src/capability-sources/generic-oauth.js")
 let externalMcpConnections: typeof import("../src/capability-sources/external-mcp-connections.js")
 let externalMcpClient: typeof import("../src/capability-sources/external-mcp-client.js")
@@ -96,11 +97,12 @@ beforeAll(async () => {
   }).db
   mock.module("../src/db.js", () => ({ db: realDb }))
 
-  const [appMod, dbMod, schemaMod, drizzleMod, diagnosticsMod, connectionsMod, externalMcpClientMod, runnerMod, genericOAuthMod, oauthCredentialsMod, envMod] = await Promise.all([
+  const [appMod, dbMod, schemaMod, drizzleMod, diagnosticsMod, structuredDiagnosticsMod, connectionsMod, externalMcpClientMod, runnerMod, genericOAuthMod, oauthCredentialsMod, envMod] = await Promise.all([
     import("../src/app.js"),
     import("../src/db.js"),
     import("@openwork-ee/den-db/schema"),
     import("@openwork-ee/den-db/drizzle"),
+    import("../src/capability-sources/external-mcp-diagnostic-store.js"),
     import("../src/capability-sources/external-mcp-diagnostics.js"),
     import("../src/capability-sources/external-mcp-connections.js"),
     import("../src/capability-sources/external-mcp-client.js"),
@@ -114,6 +116,7 @@ beforeAll(async () => {
   schema = schemaMod
   drizzle = drizzleMod
   diagnostics = diagnosticsMod
+  structuredDiagnostics = structuredDiagnosticsMod
   externalMcpConnections = connectionsMod
   externalMcpClient = externalMcpClientMod
   externalMcpDiagnosticRunner = runnerMod
@@ -383,7 +386,7 @@ test("post-OAuth wrong-audience failures persist resource validation instead of 
   expect(snapshot?.attempt.status).toBe("failed")
   expect(snapshot?.attempt.firstFailedPhase).toBe("AUTH_RESOURCE_VALIDATION")
   expect(snapshot?.attempt.firstFailureCategory).toBe("oauth_invalid_token")
-  expect(snapshot?.attempt.actionOwner).toBe("member")
+  expect(snapshot?.attempt.actionOwner).toBe("organization_admin")
   expect(JSON.stringify(snapshot)).not.toContain("must-not-appear")
 })
 
@@ -557,7 +560,7 @@ test("parallel first-time DCR starts share one client revision and callbacks rej
   expect((await externalMcpConnections.getExternalMcpConnection({ organizationId, connectionId: connection.id }))?.accessToken).toBe("callback-b-token")
 })
 
-test("revoked refresh credentials are invalidated for reauthorization without an early durable write", async () => {
+test("revoked refresh credentials are durably cleared before reauthorization", async () => {
   const connection = await createOAuthDiagnosticConnection("Revoked refresh")
   await externalMcpConnections.saveExternalMcpTokens({
     connectionId: connection.id,
@@ -579,7 +582,7 @@ test("revoked refresh credentials are invalidated for reauthorization without an
   expect((await externalMcpConnections.getExternalMcpConnection({
     organizationId,
     connectionId: connection.id,
-  }))?.refreshToken).toBe("revoked-refresh")
+  }))?.refreshToken).toBeNull()
 })
 
 test("callback credential CAS wins before timeout and makes timeout ineligible", async () => {
@@ -836,9 +839,10 @@ test("callback deadline aborts the SDK token exchange without late credential, c
   }
   await Bun.sleep(25)
 
-  expect(failure).toBeInstanceOf(externalMcpClient.ExternalMcpDiagnosticError)
-  expect(failure).toHaveProperty("cause.code", "MCP_LIFECYCLE_DEADLINE")
-  expect(deadline.signal.reason).toHaveProperty("code", "MCP_LIFECYCLE_DEADLINE")
+  expect(failure).toBeInstanceOf(structuredDiagnostics.ExternalMcpDiagnosticError)
+  expect(failure).toHaveProperty("diagnostic.code", "MCP_LIFECYCLE_DEADLINE")
+  expect(deadline.signal.reason).toBeInstanceOf(structuredDiagnostics.ExternalMcpDiagnosticError)
+  expect(deadline.signal.reason).toHaveProperty("diagnostic.code", "MCP_LIFECYCLE_DEADLINE")
   expect(io).toEqual({ active: 0, aborted: 1, completed: 0 })
   const persistenceNow = new Date()
   await expect(externalMcpConnections.saveExternalMcpCallbackTokens({

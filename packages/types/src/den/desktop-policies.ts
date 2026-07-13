@@ -102,6 +102,31 @@ export const desktopPolicyValueSchema = z
 
 export type DesktopPolicyValue = z.infer<typeof desktopPolicyValueSchema>;
 
+export const onboardingPromptsSchema = z
+  .array(z.string().trim().min(1).max(500))
+  .min(2)
+  .max(3);
+
+export const desktopPolicyDocumentSchema = desktopPolicyValueSchema
+  .extend({
+    onboardingPrompts: onboardingPromptsSchema.optional(),
+  })
+  .meta({ ref: "DenDesktopPolicyDocument" });
+
+export const desktopPolicyDocumentWriteSchema = desktopPolicyValueSchema
+  .extend({
+    onboardingPrompts: onboardingPromptsSchema.nullable().optional(),
+  })
+  .meta({ ref: "DenDesktopPolicyDocumentWrite" });
+
+export type DesktopPolicyDocument = z.infer<typeof desktopPolicyDocumentSchema>;
+export type DesktopPolicyDocumentWrite = z.infer<
+  typeof desktopPolicyDocumentWriteSchema
+>;
+export type DefaultDesktopPolicyDocument = Required<DesktopPolicyValue> & {
+  onboardingPrompts?: string[];
+};
+
 export const desktopPolicyKeys = desktopPolicyDefinitions.map(
   (definition) => definition.id,
 ) as DesktopPolicyKey[];
@@ -153,6 +178,7 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     brandIconUrl: z.string().url().max(2048).optional(),
     brandAccentColor: z.enum(brandAccentColorValues).optional(),
     connectEnabled: z.boolean().optional(),
+    onboardingPrompts: onboardingPromptsSchema.optional(),
   })
   .meta({ ref: "DenDesktopConfig" });
 
@@ -185,6 +211,15 @@ function normalizeAllowedDesktopVersions(value: unknown): string[] | undefined {
   ];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export function normalizeOnboardingPrompts(value: unknown): string[] | undefined {
+  const parsed = onboardingPromptsSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export function normalizeDesktopPolicyValue(
   value: unknown,
 ): DesktopPolicyValue {
@@ -212,6 +247,73 @@ export function normalizeDefaultDesktopPolicyValue(
       normalized[definition.id] ?? definition.defaultValue,
     ]),
   ) as Required<DesktopPolicyValue>;
+}
+
+export function normalizeDesktopPolicyDocument(
+  value: unknown,
+): DesktopPolicyDocument {
+  const policy = normalizeDesktopPolicyValue(value);
+  const raw = isRecord(value) ? value : null;
+  const onboardingPrompts = normalizeOnboardingPrompts(raw?.onboardingPrompts);
+
+  return {
+    ...policy,
+    ...(onboardingPrompts !== undefined ? { onboardingPrompts } : {}),
+  };
+}
+
+export function normalizeDesktopPolicyDocumentWrite(
+  value: unknown,
+): DesktopPolicyDocumentWrite {
+  const policy = normalizeDesktopPolicyValue(value);
+  const raw = isRecord(value) ? value : null;
+  const rawPrompts = raw?.onboardingPrompts;
+  const onboardingPrompts = normalizeOnboardingPrompts(rawPrompts);
+
+  return {
+    ...policy,
+    ...(rawPrompts === null
+      ? { onboardingPrompts: null }
+      : onboardingPrompts !== undefined
+        ? { onboardingPrompts }
+        : {}),
+  };
+}
+
+export function resolveDesktopPolicyDocumentWrite(input: {
+  value: unknown;
+  existingPolicy?: unknown;
+  isDefault?: boolean;
+  preserveExistingOnboardingPrompts?: boolean;
+}): DesktopPolicyDocument {
+  const write = normalizeDesktopPolicyDocumentWrite(input.value);
+  const policy = input.isDefault === true
+    ? normalizeDefaultDesktopPolicyValue(write)
+    : normalizeDesktopPolicyValue(write);
+  const onboardingPrompts = Array.isArray(write.onboardingPrompts)
+    ? write.onboardingPrompts
+    : write.onboardingPrompts === undefined &&
+        input.preserveExistingOnboardingPrompts === true
+      ? normalizeDesktopPolicyDocument(input.existingPolicy ?? {}).onboardingPrompts
+      : undefined;
+
+  return {
+    ...policy,
+    ...(onboardingPrompts !== undefined ? { onboardingPrompts } : {}),
+  };
+}
+
+export function normalizeDefaultDesktopPolicyDocument(
+  value: unknown,
+): DefaultDesktopPolicyDocument {
+  const policy = normalizeDefaultDesktopPolicyValue(value);
+  const raw = isRecord(value) ? value : null;
+  const onboardingPrompts = normalizeOnboardingPrompts(raw?.onboardingPrompts);
+
+  return {
+    ...policy,
+    ...(onboardingPrompts !== undefined ? { onboardingPrompts } : {}),
+  };
 }
 
 export function allDesktopPolicies(
@@ -250,6 +352,62 @@ export function calculateEffectiveDesktopPolicy(input: {
   return calculated;
 }
 
+export type DesktopPolicyPromptCandidate = {
+  id: string;
+  priority: number;
+  createdAt: Date | string | number | null;
+  policy: unknown;
+};
+
+function getCreatedAtTime(value: Date | string | number | null) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function comparePromptCandidates(
+  left: DesktopPolicyPromptCandidate,
+  right: DesktopPolicyPromptCandidate,
+) {
+  if (left.priority !== right.priority) return right.priority - left.priority;
+
+  const leftCreatedAt = getCreatedAtTime(left.createdAt);
+  const rightCreatedAt = getCreatedAtTime(right.createdAt);
+  if (leftCreatedAt !== rightCreatedAt) return leftCreatedAt - rightCreatedAt;
+
+  return left.id.localeCompare(right.id);
+}
+
+export function selectEffectiveOnboardingPrompts(input: {
+  defaultPolicy?: unknown;
+  assignedPolicies: DesktopPolicyPromptCandidate[];
+}): string[] | undefined {
+  const candidatesById = new Map<string, DesktopPolicyPromptCandidate>();
+  for (const candidate of input.assignedPolicies) {
+    if (!candidatesById.has(candidate.id)) {
+      candidatesById.set(candidate.id, candidate);
+    }
+  }
+
+  const targetedCandidates = [...candidatesById.values()]
+    .filter(
+      (candidate) =>
+        normalizeDesktopPolicyDocument(candidate.policy).onboardingPrompts !==
+        undefined,
+    )
+    .sort(comparePromptCandidates);
+  const targetedPolicy = targetedCandidates[0]
+    ? normalizeDesktopPolicyDocument(targetedCandidates[0].policy)
+    : null;
+
+  return (
+    targetedPolicy?.onboardingPrompts ??
+    normalizeDesktopPolicyDocument(input.defaultPolicy ?? {}).onboardingPrompts
+  );
+}
+
 function normalizeBrandUrl(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -271,14 +429,12 @@ function normalizeBrandAppName(value: unknown): string | undefined {
 function normalizeBrandAccentColor(value: unknown): BrandAccentColor | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim().toLowerCase();
-  return (brandAccentColorValues as readonly string[]).includes(trimmed)
-    ? (trimmed as BrandAccentColor)
-    : undefined;
+  return brandAccentColorValues.find((color) => color === trimmed);
 }
 
 export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const policy = normalizeDesktopPolicyValue(value);
-  const raw = value as Record<string, unknown> | null;
+  const raw = isRecord(value) ? value : null;
   const allowedDesktopVersions = normalizeAllowedDesktopVersions(
     raw?.allowedDesktopVersions,
   );
@@ -288,6 +444,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const brandAccentColor = normalizeBrandAccentColor(raw?.brandAccentColor);
   const connectEnabled =
     typeof raw?.connectEnabled === "boolean" ? raw.connectEnabled : undefined;
+  const onboardingPrompts = normalizeOnboardingPrompts(raw?.onboardingPrompts);
 
   return {
     ...policy,
@@ -297,5 +454,6 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(brandIconUrl !== undefined ? { brandIconUrl } : {}),
     ...(brandAccentColor !== undefined ? { brandAccentColor } : {}),
     ...(connectEnabled !== undefined ? { connectEnabled } : {}),
+    ...(onboardingPrompts !== undefined ? { onboardingPrompts } : {}),
   };
 }

@@ -273,7 +273,7 @@ export default {
             const text = await panelEval(ctx, "document.body.innerText");
             ctx.assert(text.includes(`${APP_NAME} Installer`), `Installer title missing from ${text.slice(0, 500)}`);
             ctx.assert(text.includes(`This sets up ${APP_NAME} for ${ORG_NAME}`), `Installer organization copy missing from ${text.slice(0, 500)}`);
-            ctx.assert(text.includes("Configured via install link"), "Installer did not report install-link configuration.");
+            ctx.assert(text.includes("Configured via organization setup file"), "Installer did not report its adjacent organization setup file.");
           },
           screenshot: { name: "frame-3-acme-work-installer", sandboxCapture: true, textTargetUrlIncludes: "127.0.0.1", requireText: [`${APP_NAME} Installer`, `This sets up ${APP_NAME} for ${ORG_NAME}`] },
         });

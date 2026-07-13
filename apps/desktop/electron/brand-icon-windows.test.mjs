@@ -169,7 +169,7 @@ test("builds a per-user Start Menu shortcut with the branded Windows identity", 
   }), {
     target: "C:\\Program Files\\OpenWork\\OpenWork.exe",
     cwd: "C:\\Program Files\\OpenWork",
-    description: "OpenWork organization desktop",
+    description: "OpenWork desktop",
     icon: "C:\\Users\\Admin\\brand-icon.ico",
     iconIndex: 0,
     appUserModelId: "com.differentai.openwork.brand.1234",

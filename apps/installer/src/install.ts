@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 
 import { desktopBootstrapPath, legacyDesktopBootstrapPath } from "./bootstrap-path"
+import { installerBundleDirectories } from "./config-sources"
 import type { InstallerConfig } from "./config"
 import { releaseAssetFor, type ReleaseAsset } from "./release-asset"
 
@@ -23,6 +24,8 @@ export type InstallStatus = {
 export type InstallOptions = {
   /** Stop after resolving + HEAD-checking the download; used by CI smoke tests. */
   dryRun?: boolean
+  /** Explicit bundle roots used by tests and managed launchers. */
+  bundleDirectories?: string[]
   onStatus?: (status: InstallStatus) => void
 }
 
@@ -37,9 +40,6 @@ const status: InstallStatus = {
   error: null,
 }
 
-const HOSTED_DESKTOP_WEB_URL = "https://app.openworklabs.com"
-const HOSTED_DESKTOP_API_URL = "https://api.openworklabs.com"
-
 type BootstrapCandidate = {
   config: Record<string, unknown>
   mtimeMs: number
@@ -47,20 +47,6 @@ type BootstrapCandidate = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
-}
-
-function bootstrapUrlOrigin(value: unknown): string {
-  if (typeof value !== "string" || !value.trim()) return ""
-  try {
-    return new URL(value.trim()).origin
-  } catch {
-    return value.trim().replace(/\/+$/, "")
-  }
-}
-
-function isHostedBootstrapConfig(config: Record<string, unknown>): boolean {
-  const baseUrlOrigin = bootstrapUrlOrigin(config.baseUrl)
-  return baseUrlOrigin === HOSTED_DESKTOP_WEB_URL || baseUrlOrigin === HOSTED_DESKTOP_API_URL
 }
 
 function readBootstrapCandidate(candidatePath: string): BootstrapCandidate | null {
@@ -81,8 +67,7 @@ function bootstrapCandidateTimeMs(candidate: BootstrapCandidate): number {
 }
 
 function compareBootstrapCandidates(left: BootstrapCandidate, right: BootstrapCandidate): number {
-  const classDifference = Number(!isHostedBootstrapConfig(left.config)) - Number(!isHostedBootstrapConfig(right.config))
-  return classDifference || bootstrapCandidateTimeMs(left) - bootstrapCandidateTimeMs(right)
+  return bootstrapCandidateTimeMs(left) - bootstrapCandidateTimeMs(right)
 }
 
 export function installStatus(): InstallStatus {
@@ -95,9 +80,9 @@ function update(partial: Partial<InstallStatus>, onStatus?: (status: InstallStat
 }
 
 /**
- * Prefer an installed organization deployment over hosted defaults while
- * retaining prepared/claimLinks state. One-time handoff grants must not survive
- * reinstall (see normalizeDesktopBootstrapConfig in the Electron shell).
+ * The generic installer is an explicit, confirmed provisioning action, so its
+ * deployment always wins. Retain unrelated prepared/claimLinks state and drop
+ * one-time handoff grants (see normalizeDesktopBootstrapConfig in Electron).
  */
 export function writeBootstrapConfig(
   config: InstallerConfig,
@@ -114,24 +99,22 @@ export function writeBootstrapConfig(
   installedCandidates.sort((left, right) => compareBootstrapCandidates(right, left))
   const installed = installedCandidates[0]
   const existing = installed ? installed.config : {}
-  const preserveInstalledDeployment = installed ? !isHostedBootstrapConfig(installed.config) : false
   const prepared = canonicalCandidate?.config.prepared ?? legacyCandidate?.config.prepared
   const claimLinks = canonicalCandidate?.config.claimLinks ?? legacyCandidate?.config.claimLinks
   const next: Record<string, unknown> = {
     ...existing,
-    ...(!preserveInstalledDeployment
-      ? {
-          baseUrl: config.webUrl,
-          apiBaseUrl: config.apiUrl,
-          requireSignin: config.requireSignin,
-          brandAppName: config.appName,
-          ...(config.logoUrl ? { brandLogoUrl: config.logoUrl } : {}),
-        }
-      : {}),
+    baseUrl: config.webUrl,
+    apiBaseUrl: config.apiUrl,
+    requireSignin: config.requireSignin,
+    brandAppName: config.appName,
+    ...(config.logoUrl ? { brandLogoUrl: config.logoUrl } : {}),
+    ...(config.iconUrl ? { brandIconUrl: config.iconUrl } : {}),
     ...(prepared !== undefined ? { prepared } : {}),
     ...(claimLinks !== undefined ? { claimLinks } : {}),
     writtenAt: new Date().toISOString(),
   }
+  if (!config.logoUrl) delete next.brandLogoUrl
+  if (!config.iconUrl) delete next.brandIconUrl
   delete next.handoff
   mkdirSync(path.dirname(target), { recursive: true })
   writeFileSync(target, `${JSON.stringify(next, null, 2)}\n`, "utf8")
@@ -141,6 +124,18 @@ export function writeBootstrapConfig(
     // Best-effort cleanup only; the canonical config was written successfully.
   }
   return target
+}
+
+export function bundledReleaseAssetPath(fileName: string, directories = installerBundleDirectories()): string | null {
+  for (const directory of directories) {
+    const candidate = path.join(directory, fileName)
+    try {
+      if (statSync(candidate).isFile()) return candidate
+    } catch {
+      // A missing adjacent artifact is normal for the standalone installer.
+    }
+  }
+  return null
 }
 
 /** Ask the deployment's Den API which desktop version it supports. */
@@ -263,27 +258,35 @@ export async function runInstall(config: InstallerConfig, opts: InstallOptions =
 
   try {
     const bootstrapPath = writeBootstrapConfig(config)
-    update({ step: "check-version", message: "Checking your deployment for the supported app version..." }, opts.onStatus)
-    const version = await fetchLatestSupportedVersion(config.apiUrl)
+    update({ step: "check-version", message: "Checking the supported app version..." }, opts.onStatus)
+    const version = config.appVersion ?? await fetchLatestSupportedVersion(config.apiUrl)
     const asset = releaseAssetFor(version)
-    update({ version, message: `Deployment supports OpenWork ${version}.` }, opts.onStatus)
+    const bundledArtifact = bundledReleaseAssetPath(asset.fileName, opts.bundleDirectories)
+    update({ version, message: bundledArtifact ? `OpenWork ${version} is ready in this setup bundle.` : `Deployment supports OpenWork ${version}.` }, opts.onStatus)
 
     if (opts.dryRun) {
-      const head = await fetch(asset.url, { method: "HEAD", redirect: "follow" })
-      if (!head.ok) throw new Error(`Release asset missing (${head.status}): ${asset.url}`)
+      if (!bundledArtifact) {
+        const head = await fetch(asset.url, { method: "HEAD", redirect: "follow" })
+        if (!head.ok) throw new Error(`Release asset missing (${head.status}): ${asset.url}`)
+      }
       update(
-        { state: "done", step: null, message: `Dry run ok: ${asset.fileName} available; config written to ${bootstrapPath}.` },
+        { state: "done", step: null, message: `Dry run ok: ${asset.fileName} ${bundledArtifact ? "bundled" : "available"}; config written to ${bootstrapPath}.` },
         opts.onStatus,
       )
       return installStatus()
     }
 
-    update({ step: "download", message: `Downloading OpenWork ${version}...` }, opts.onStatus)
     const workDir = path.join(os.tmpdir(), `openwork-installer-${process.pid}-${Math.random().toString(36).slice(2)}`)
     mkdirSync(workDir, { recursive: true })
     try {
-      const artifactPath = path.join(workDir, asset.fileName)
-      await downloadAsset(asset, artifactPath, opts)
+      const artifactPath = bundledArtifact ?? path.join(workDir, asset.fileName)
+      if (bundledArtifact) {
+        const bundledBytes = statSync(bundledArtifact).size
+        update({ step: "install", message: `Using bundled OpenWork ${version}...`, downloadedBytes: bundledBytes, totalBytes: bundledBytes }, opts.onStatus)
+      } else {
+        update({ step: "download", message: `Downloading OpenWork ${version}...` }, opts.onStatus)
+        await downloadAsset(asset, artifactPath, opts)
+      }
 
       update({ step: "install", message: "Installing OpenWork..." }, opts.onStatus)
       const installedPath =

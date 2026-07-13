@@ -3,7 +3,7 @@
 // normalization/discovery, and the workspace-facing command operations.
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -120,8 +120,6 @@ const DEFAULT_DESKTOP_BOOTSTRAP_PATH = (() => {
 // LOCALAPPDATA and XDG_CONFIG_HOME. Keep reading that file when the canonical one
 // is missing so existing installs keep their deployment config.
 const LEGACY_DESKTOP_BOOTSTRAP_PATH = path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
-const DESKTOP_BOOTSTRAP_FILENAME = "desktop-bootstrap.json";
-const STANDARD_DESKTOP_INSTALLER_PATTERN = /^openwork-(?:mac-(?:arm64|x64)-.+\.dmg|win-x64-.+\.exe)$/i;
 const HOSTED_DESKTOP_WEB_URL = "https://app.openworklabs.com";
 const HOSTED_DESKTOP_API_URL = "https://api.openworklabs.com";
 
@@ -341,81 +339,6 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       });
     } catch (migrationError) {
       console.warn("[desktop-bootstrap] legacy config migration failed", migrationError);
-    }
-  }
-
-  function bundleSearchRoots() {
-    const roots = [];
-    const override = process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR?.trim();
-    if (override) roots.push(path.resolve(override));
-    for (const name of ["downloads", "desktop"]) {
-      try {
-        const candidate = app.getPath(name);
-        if (candidate) roots.push(candidate);
-      } catch {
-        // Electron can omit a shell path in constrained environments.
-      }
-    }
-    return Array.from(new Set(roots));
-  }
-
-  async function directoryContainsStandardDesktopInstaller(directory) {
-    try {
-      const entries = await readdir(directory, { withFileTypes: true });
-      return entries.some((entry) => entry.isFile() && STANDARD_DESKTOP_INSTALLER_PATTERN.test(entry.name));
-    } catch {
-      return false;
-    }
-  }
-
-  async function bundledDesktopBootstrapPaths() {
-    const candidates = [];
-    for (const root of bundleSearchRoots()) {
-      candidates.push(path.join(root, DESKTOP_BOOTSTRAP_FILENAME));
-      try {
-        const entries = await readdir(root, { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.isDirectory()) {
-            candidates.push(path.join(root, entry.name, DESKTOP_BOOTSTRAP_FILENAME));
-          }
-        }
-      } catch {
-        // A missing Downloads/Desktop directory is normal in headless runs.
-      }
-    }
-    return Array.from(new Set(candidates));
-  }
-
-  async function importBundledDesktopBootstrapConfigIfPreferred() {
-    const configPath = desktopBootstrapPath();
-    const primary = await readDesktopBootstrapCandidate(configPath);
-    const legacyPath = legacyDesktopBootstrapPath();
-    const legacy = legacyPath ? await readDesktopBootstrapCandidate(legacyPath) : null;
-    const installedCandidates = [primary, legacy].filter((candidate) => candidate?.ok);
-    installedCandidates.sort((left, right) => compareDesktopBootstrapCandidates(right, left));
-    const installed = installedCandidates[0];
-    if (installed && !isHostedDesktopBootstrapConfig(installed.normalized)) return false;
-
-    const bundledCandidates = [];
-    for (const candidatePath of await bundledDesktopBootstrapPaths()) {
-      if (!(await directoryContainsStandardDesktopInstaller(path.dirname(candidatePath)))) continue;
-      const candidate = await readDesktopBootstrapCandidate(candidatePath);
-      if (candidate.ok) bundledCandidates.push(candidate);
-    }
-    bundledCandidates.sort((left, right) => compareDesktopBootstrapCandidates(right, left));
-    const newest = bundledCandidates[0];
-    if (!newest || (installed && compareDesktopBootstrapCandidates(newest, installed) <= 0)) return false;
-
-    try {
-      await writeJsonFileAtomic(configPath, newest.normalized);
-      console.info("[desktop-bootstrap] imported organization download bundle", {
-        from: newest.path,
-        to: configPath,
-      });
-      return true;
-    } catch (error) {
-      console.warn("[desktop-bootstrap] organization download import failed", error);
-      return false;
     }
   }
 
@@ -1233,7 +1156,6 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     forgetWorkspace,
     getDesktopBootstrapConfig,
     importConfig,
-    importBundledDesktopBootstrapConfigIfPreferred,
     listLocalWorkspacePaths,
     migrateLegacyElectronWorkspaceStateIfNeeded,
     readWorkspaceOpenworkConfig,

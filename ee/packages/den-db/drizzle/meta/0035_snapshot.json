@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "b6fd2038-7d79-4bbe-93d3-781bcdcbec07",
-  "prevId": "b229c466-572b-4cff-85de-40ad6883135e",
+  "id": "ffbeed1b-6816-4c9c-8f75-2ec9b8a5a1d0",
+  "prevId": "e9890eff-a6ab-400b-8b52-9dce53f3bb59",
   "tables": {
     "account": {
       "name": "account",
@@ -2045,6 +2045,14 @@
           "autoincrement": false,
           "default": true
         },
+        "priority": {
+          "name": "priority",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
         "policy": {
           "name": "policy",
           "type": "json",
@@ -2103,6 +2111,13 @@
           "name": "desktop_policy_is_enabled",
           "columns": [
             "is_enabled"
+          ],
+          "isUnique": false
+        },
+        "desktop_policy_priority": {
+          "name": "desktop_policy_priority",
+          "columns": [
+            "priority"
           ],
           "isUnique": false
         },

@@ -31,7 +31,7 @@ import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
-import { redactDenRequestLogLine } from "./request-log-redaction.js"
+import { redactRequestLogLine } from "./request-log-redaction.js"
 
 type AppVariables = RequestIdVariables & AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> & Partial<MemberTeamsContext>
 
@@ -60,7 +60,7 @@ const openApiDocumentSchema = z.object({
 
 const app = new Hono<{ Variables: AppVariables }>()
 
-const requestLogger = logger((line, ...rest) => console.log(redactDenRequestLogLine(line), ...rest))
+const requestLogger = logger((line) => console.log(redactRequestLogLine(line)))
 
 app.use("*", async (c, next) => {
   if (c.req.path === "/health" || c.req.path === "/ready") {

@@ -58,6 +58,16 @@ export function desktopReleaseAssetName(platform: string, releaseTag: string) {
   return null
 }
 
+export function genericInstallerAssetName(platform: string) {
+  if (platform === "mac-arm64" || platform === "mac-x64") {
+    return `openwork-installer-${platform}.zip`
+  }
+  if (platform === "win-x64") {
+    return "openwork-installer-win-x64.exe"
+  }
+  return null
+}
+
 async function verifyDesktopFallbackUrl(input: {
   candidateUrl: string
   fallbackUrl: string

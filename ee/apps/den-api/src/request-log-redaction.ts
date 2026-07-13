@@ -1,22 +1,36 @@
-const EXTERNAL_MCP_CALLBACK_PATH = /^\/v1\/mcp-connections\/[^/]+\/connect\/callback$/
+const QUERY_PARAMETER = /([?&])([^=&\s]+)=([^&\s]*)/g
+const SENSITIVE_QUERY_PARAMETERS = new Set([
+  "code",
+  "state",
+  "access_token",
+  "refresh_token",
+  "id_token",
+  "client_secret",
+  "code_verifier",
+  "api_key",
+  "token",
+  "error",
+  "error_description",
+  "error_uri",
+  "session_state",
+])
 
-function redactCallbackPath(path: string): string {
-  let parsed: URL
-  try {
-    parsed = new URL(path, "http://den-request-log.invalid")
-  } catch {
-    return path
-  }
-  if (!EXTERNAL_MCP_CALLBACK_PATH.test(parsed.pathname)) return path
-  return parsed.search
-    ? `${parsed.pathname}?oauth_callback=%5BREDACTED%5D`
-    : parsed.pathname
-}
-
-/** Redacts OAuth callback credentials before Hono writes the request path. */
-export function redactDenRequestLogLine(line: string): string {
-  const match = /^(<--|-->)\s+(\S+)\s+(\S+)(.*)$/.exec(line)
-  if (!match) return line
-  const [, direction, method, path, suffix] = match
-  return `${direction} ${method} ${redactCallbackPath(path)}${suffix}`
+/**
+ * Hono's request logger includes the full query string. OAuth callbacks carry
+ * short-lived credentials in that query, so redact them before the line
+ * reaches stdout. Parameter names and route shape remain available for
+ * diagnostics while values never enter routine logs.
+ */
+export function redactRequestLogLine(line: string): string {
+  return line.replace(QUERY_PARAMETER, (match, separator: string, rawName: string) => {
+    let name: string
+    try {
+      name = decodeURIComponent(rawName.replace(/\+/g, " ")).toLowerCase()
+    } catch {
+      return match
+    }
+    return SENSITIVE_QUERY_PARAMETERS.has(name)
+      ? `${separator}${rawName}=[REDACTED]`
+      : match
+  })
 }

@@ -91,8 +91,13 @@ export async function getExternalMcpConnection(input: {
   return rows[0] ?? null
 }
 
-/** Unscoped lookup by id only — needed for the public OAuth callback, where identity comes from the signed state token, not an authenticated org context. */
-export async function getExternalMcpConnectionById(connectionId: ExternalMcpConnectionId): Promise<ExternalMcpConnectionRow | null> {
+/**
+ * Unscoped lookup used only after the public OAuth callback has authenticated
+ * the connection and organization binding from its signed state token.
+ */
+export async function getExternalMcpConnectionById(
+  connectionId: ExternalMcpConnectionId,
+): Promise<ExternalMcpConnectionRow | null> {
   const rows = await db
     .select()
     .from(ExternalMcpConnectionTable)
@@ -507,12 +512,32 @@ export async function deleteExternalMcpOAuthPendingGrant(input: {
 
 export async function saveExternalMcpPendingCodeVerifier(input: {
   connectionId: ExternalMcpConnectionId
-  codeVerifier: string
+  codeVerifier: string | null
 }): Promise<void> {
   await db
     .update(ExternalMcpConnectionTable)
     .set({ pendingCodeVerifier: input.codeVerifier })
     .where(eq(ExternalMcpConnectionTable.id, input.connectionId))
+}
+
+export async function clearExternalMcpTokens(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+}): Promise<boolean> {
+  const existing = await getExternalMcpConnection(input)
+  if (!existing) return false
+  await db
+    .update(ExternalMcpConnectionTable)
+    .set({
+      accessToken: null,
+      refreshToken: null,
+      tokenType: null,
+      scope: null,
+      expiresAt: null,
+      connectedAt: null,
+    })
+    .where(eq(ExternalMcpConnectionTable.id, existing.id))
+  return true
 }
 
 export async function saveExternalMcpTokens(input: {
@@ -753,14 +778,10 @@ export async function disconnectExternalMcpConnection(input: {
   const existing = await getExternalMcpConnection(input)
   if (!existing) return false
   await db.delete(ExternalMcpOAuthPendingGrantTable).where(eq(ExternalMcpOAuthPendingGrantTable.externalMcpConnectionId, existing.id))
+  await clearExternalMcpTokens(input)
   await db
     .update(ExternalMcpConnectionTable)
     .set({
-      accessToken: null,
-      refreshToken: null,
-      tokenType: null,
-      scope: null,
-      expiresAt: null,
       pendingCodeVerifier: null,
       oauthRegistrationLeaseHash: null,
       oauthRegistrationLeaseExpiresAt: null,
