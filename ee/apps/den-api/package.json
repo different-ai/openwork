@@ -29,6 +29,7 @@
     "@openwork-ee/utils": "workspace:*",
     "@openwork/email": "workspace:*",
     "@openwork/enterprise-mcp-client": "workspace:*",
+    "@openwork/extension-catalog": "workspace:*",
     "@openwork/extension-contracts": "workspace:*",
     "@openwork/install-config": "workspace:*",
     "@openwork/types": "workspace:*",
