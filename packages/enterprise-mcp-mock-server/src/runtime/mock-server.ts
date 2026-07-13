@@ -245,6 +245,10 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
       response.once("close", finalize)
       void this.route(request, response)
     })
+    // Scenario activation deliberately restarts the listener on the same fixed
+    // port so OAuth resource authority remains exact. Avoid leaving a pooled
+    // client with a stale keep-alive socket across that lifecycle boundary.
+    server.maxRequestsPerSocket = 1
     server.on("connection", (socket) => {
       this.sockets.add(socket)
       socket.once("close", () => this.sockets.delete(socket))
