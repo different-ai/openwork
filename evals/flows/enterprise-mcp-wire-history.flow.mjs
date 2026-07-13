@@ -99,9 +99,6 @@ async function startDiagnostics(ctx) {
     mobile: false,
     width: 1200,
   });
-  await ctx.client.send("Network.setExtraHTTPHeaders", {
-    headers: { Authorization: `Basic ${Buffer.from(`${ADMIN_USERNAME}:${ADMIN_PASSWORD}`).toString("base64")}` },
-  });
 }
 
 async function stopDiagnostics() {
@@ -226,10 +223,42 @@ export default {
   },
   steps: [
     {
+      name: "Administrator sign-in",
+      run: async (ctx) => {
+        await ctx.prove("The dashboard uses an application sign-in instead of browser-native authentication", {
+          voiceover: vo[0],
+          action: async () => {
+            await navigate(ctx);
+          },
+          assert: async () => {
+            const view = await ctx.eval(`(() => ({
+              form: Boolean(document.querySelector('form.login-form')),
+              password: document.querySelector('input[name="password"]')?.getAttribute('autocomplete') ?? '',
+              username: document.querySelector('input[name="username"]')?.getAttribute('autocomplete') ?? '',
+            }))()`);
+            record(ctx, "An unauthenticated browser is redirected to the Diagnostics sign-in form", view.form, view);
+            record(ctx, "The sign-in fields expose the correct password-manager semantics", view.username === "username" && view.password === "current-password", view);
+          },
+          screenshot: { name: "administrator-sign-in", requireText: ["Sign in", "Username", "Password"] },
+        });
+        await ctx.eval(`(() => {
+          const username = document.querySelector('input[name="username"]');
+          const password = document.querySelector('input[name="password"]');
+          const form = document.querySelector('form.login-form');
+          if (!(username instanceof HTMLInputElement) || !(password instanceof HTMLInputElement) || !(form instanceof HTMLFormElement)) return false;
+          username.value = ${JSON.stringify(ADMIN_USERNAME)};
+          password.value = ${JSON.stringify(ADMIN_PASSWORD)};
+          form.requestSubmit();
+          return true;
+        })()`);
+        await ctx.waitFor("!document.querySelector('form.login-form') && Boolean(document.querySelector('.hero'))", { timeoutMs: 20_000, label: "Authenticated Diagnostics dashboard" });
+      },
+    },
+    {
       name: "One private-cloud run",
       run: async (ctx) => {
         await ctx.prove("One run ID groups every request that reached the public Diagnostics service", {
-          voiceover: vo[0],
+          voiceover: vo[1],
           action: async () => {
             ctx.diagnostic = await runControlledDiagnostic();
             await navigate(ctx, ctx.diagnostic.runId);
@@ -252,7 +281,7 @@ export default {
       name: "OAuth boundary",
       run: async (ctx) => {
         await ctx.prove("OAuth discovery and token exchange are independently visible without exposing either secret", {
-          voiceover: vo[1],
+          voiceover: vo[2],
           action: async () => {
             await ctx.eval(`(() => {
               const article = [...document.querySelectorAll('article.exchange')].find((item) => item.textContent?.includes('oauth-token'));
@@ -277,7 +306,7 @@ export default {
       name: "MCP boundary",
       run: async (ctx) => {
         await ctx.prove("MCP initialize, session continuity, catalog, and tool call remain separate diagnostic steps", {
-          voiceover: vo[2],
+          voiceover: vo[3],
           action: async () => {
             await ctx.eval(`(() => {
               const article = [...document.querySelectorAll('article.exchange')].find((item) => item.textContent?.includes('mcp-tools-call'));
@@ -299,7 +328,7 @@ export default {
       run: async (ctx) => {
         try {
           await ctx.prove("A stripped authorization header is attributed to the authenticated POST step as HTTP 401", {
-            voiceover: vo[3],
+            voiceover: vo[4],
             action: async () => {
               ctx.failureRunId = randomUUID();
               const response = await diagnosticRequest("/diagnostics/egress", ctx.failureRunId, "http-post", {

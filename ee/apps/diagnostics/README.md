@@ -22,7 +22,7 @@ not an in-app multi-instance operation.
 pnpm --filter @openwork-ee/diagnostics dev
 ```
 
-Open `http://localhost:3010` and use HTTP Basic authentication:
+Open `http://localhost:3010` and sign in with:
 
 - username: `diagnostics-admin`
 - password: `OpenWorkDiagnosticsLocal!`
@@ -54,9 +54,9 @@ Set these production environment variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `DIAGNOSTICS_ADMIN_USERNAME` | Dashboard Basic-auth username. |
-| `DIAGNOSTICS_ADMIN_PASSWORD` | Dashboard password, at least 24 characters. |
-| `DIAGNOSTICS_SIGNING_SECRET` | Signs short-lived synthetic OAuth access tokens and stateless MCP session IDs, at least 32 characters. |
+| `DIAGNOSTICS_ADMIN_USERNAME` | Dashboard sign-in username. |
+| `DIAGNOSTICS_ADMIN_PASSWORD` | Dashboard sign-in password, at least 24 characters. |
+| `DIAGNOSTICS_SIGNING_SECRET` | Signs the one-hour dashboard cookie, short-lived synthetic OAuth access tokens, and stateless MCP session IDs; at least 32 characters. |
 | `DIAGNOSTICS_MCP_BEARER_TOKEN` | Synthetic diagnostic token shared with the test Den or client, at least 24 characters. Never use a provider/customer credential. |
 | `DIAGNOSTICS_PROFILE` | `generic`, `microsoft`, or `servicenow`. |
 | `NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` | Fixed production origin, normally `https://diagnostic.openworklabs.com`. Preview deployments use Vercel's deployment-specific `VERCEL_URL` instead. |
@@ -76,11 +76,13 @@ https://diagnostic.openworklabs.com/mcp
 
 Before enabling public DNS, add Vercel Firewall rate-limit rules for `/mcp`,
 `/diagnostics/*`, `/oauth/token`, and `/.well-known/*` (for example, 120
-requests per minute per source). This preserves enough room for a complete run
-while preventing a broken or hostile client from continuously replacing the
-bounded rolling history. Treat this as a production gate, not an optional
-follow-up: publish the rules and verify an excess request receives HTTP 429
-before attaching the public hostname.
+requests per minute per source). Add a tighter rule for
+`/api/dashboard-session` (for example, 10 attempts per minute per source) to
+slow password guessing. This preserves enough room for a complete run while
+preventing a broken or hostile client from continuously replacing the bounded
+rolling history. Treat this as a production gate, not an optional follow-up:
+publish the rules and verify an excess request receives HTTP 429 before
+attaching the public hostname.
 
 The app fails closed in Vercel when a required credential or Redis setting is
 missing, the profile is invalid, Redis is not HTTPS, or application secrets are
@@ -91,8 +93,8 @@ before sharing the allowlist hostname:
 
 1. `GET https://diagnostic.openworklabs.com/health` returns HTTP 200 and
    `{"service":"openwork-diagnostics","status":"ok"}`.
-2. The dashboard returns HTTP 401 without Basic authentication and HTTP 200
-   with the configured administrator credentials.
+2. The dashboard redirects to `/login` without a signed session, accepts the
+   configured administrator credentials, and signs out by clearing the session.
 3. The Firewall rule returns HTTP 429 when its threshold is exceeded.
 4. A Den run completes all six steps, and its **Open support trace** link still
    shows 13 exchanges after unrelated requests reach the deployment.

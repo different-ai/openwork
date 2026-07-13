@@ -55,7 +55,10 @@ export default async function DiagnosticsPage({ searchParams }: { searchParams: 
     <meta httpEquiv="refresh" content="5" />
     <header className="hero">
       <div><p className="eyebrow">OpenWork Enterprise</p><h1>Diagnostics</h1><p>Prove that an enterprise allowlist reaches us, then inspect the client handshake request by request.</p></div>
-      <div className="endpoint"><span>Active {config.profile} MCP endpoint</span><code>{origin}/mcp</code></div>
+      <div className="hero-actions">
+        <div className="endpoint"><span>Active {config.profile} MCP endpoint</span><code>{origin}/mcp</code></div>
+        <form action="/api/dashboard-session" method="post"><input name="intent" type="hidden" value="logout" /><button className="logout-button" type="submit">Sign out</button></form>
+      </div>
     </header>
     <section className="safety">
       <strong>Safe by default.</strong> Every exchange is retained for at most 24 hours. Credentials, OAuth codes, tokens, cookies, session IDs, unknown headers, and tool argument values are redacted before storage.
