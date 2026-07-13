@@ -160,11 +160,12 @@ test("fault definitions are named, phase-specific, applicable, and scenario-boun
   assert.deepEqual(dcrFault?.applicableProfiles, ["synthetic-enterprise-oauth-mcp"])
 })
 
-test("redirect URI policy accepts HTTPS and literal loopback HTTP only", () => {
+test("redirect URI policy accepts HTTPS plus Azure-compatible localhost and literal loopback HTTP", () => {
   assert.equal(isSafeOAuthRedirectUri("https://app.example.com/oauth/callback"), true)
   assert.equal(isSafeOAuthRedirectUri("http://127.0.0.1:19876/mcp/oauth/callback"), true)
   assert.equal(isSafeOAuthRedirectUri("http://[::1]:19876/mcp/oauth/callback"), true)
-  assert.equal(isSafeOAuthRedirectUri("http://localhost:19876/callback"), false)
+  assert.equal(isSafeOAuthRedirectUri("http://localhost:19876/callback"), true)
+  assert.equal(isSafeOAuthRedirectUri("http://localhost.example.com:19876/callback"), false)
   assert.equal(isSafeOAuthRedirectUri("http://127.0.0.1.example.com/callback"), false)
   assert.equal(isSafeOAuthRedirectUri("javascript:alert(1)"), false)
   assert.equal(isSafeOAuthRedirectUri("https://user:password@app.example.com/callback"), false)
@@ -173,7 +174,7 @@ test("redirect URI policy accepts HTTPS and literal loopback HTTP only", () => {
   const base = createDefaultScenario()
   assert.equal(
     scenarioSchema.safeParse({ ...base, oauth: { ...base.oauth, redirectUris: ["http://localhost:19876/callback"] } }).success,
-    false,
+    true,
   )
 })
 

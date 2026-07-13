@@ -222,6 +222,8 @@ Use this short review path first:
 
 At every step, inspect the safe event timeline. It may contain phase, event, correlation ID, and request method; it must not contain the admin secret, OAuth client secret, authorization code, bearer token, session ID, request body, or tool arguments.
 
+The control-plane browser origin and the OAuth callback are intentionally different concerns. Keep the lab UI on its literal loopback origin such as `http://127.0.0.1:8794`, but register Den's callback exactly as displayed. Microsoft Entra development registrations commonly use `http://localhost:<port>/...`; the fixture accepts that exact `localhost` callback and never rewrites it to `127.0.0.1`.
+
 ## API verification
 
 The HTML interface and JSON API use the same control plane. The following local-only example needs `curl` and `jq`. It assumes the lab is already running and the admin secret remains in the current shell environment.
