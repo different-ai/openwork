@@ -586,6 +586,31 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
 
+  ee/apps/diagnostics:
+    dependencies:
+      next:
+        specifier: 16.2.1
+        version: 16.2.1(@opentelemetry/api@1.9.0)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      react:
+        specifier: 'catalog:'
+        version: 19.2.4
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.2.4(react@19.2.4)
+    devDependencies:
+      '@types/node':
+        specifier: 20.12.12
+        version: 20.12.12
+      '@types/react':
+        specifier: 19.2.14
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: 19.2.3
+        version: 19.2.3(@types/react@19.2.14)
+      typescript:
+        specifier: 5.4.5
+        version: 5.4.5
+
   ee/apps/enterprise-mock-lab:
     dependencies:
       '@hono/node-server':
@@ -12737,7 +12762,7 @@ snapshots:
 
   '@types/nodemailer@8.0.0':
     dependencies:
-      '@types/node': 25.6.0
+      '@types/node': 20.12.12
 
   '@types/prop-types@15.7.15': {}
 
