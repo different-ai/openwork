@@ -9,6 +9,7 @@
  * OAuth plumbing — `generic-oauth.ts` drives every provider the same way.
  */
 
+import { MICROSOFT_365_DEFAULT_FEATURES } from "@openwork/types/den/microsoft-365"
 import { env } from "../env.js"
 
 export type NativeOAuthProviderConfig = {
@@ -27,6 +28,8 @@ export type NativeOAuthProviderConfig = {
   extraAuthorizeParams?: Record<string, string>
   /** OrgOAuthClient.extra key used to bind authorize and token endpoints to one tenant. */
   tenantIdExtraKey?: string
+  /** Higher provider scopes that satisfy a narrower required scope. */
+  scopeImplications?: Record<string, string[]>
 }
 
 export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> = {
@@ -69,11 +72,26 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
     tokenUrl: env.microsoftOAuthTokenUrl ?? "https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token",
     websiteUrl: "https://www.microsoft.com/microsoft-365",
     defaultScopes: ["openid", "profile", "email", "offline_access", "User.Read"],
-    defaultFeatures: ["mailRead", "calendarRead", "filesRead"],
+    defaultFeatures: [...MICROSOFT_365_DEFAULT_FEATURES],
     optionalFeatures: {
       mailRead: ["Mail.Read"],
+      mailDraft: ["Mail.ReadWrite"],
       calendarRead: ["Calendars.Read"],
+      calendarWrite: ["Calendars.ReadWrite"],
       filesRead: ["Files.Read"],
+      filesWrite: ["Files.ReadWrite"],
+      filesReadAll: ["Files.Read.All"],
+      filesFull: ["Files.ReadWrite.All"],
+      teamsChatRead: ["Chat.Read"],
+      teamsChatSend: ["Chat.Read", "ChatMessage.Send"],
+    },
+    scopeImplications: {
+      "Mail.ReadWrite": ["Mail.Read"],
+      "Calendars.ReadWrite": ["Calendars.Read"],
+      "Files.ReadWrite": ["Files.Read"],
+      "Files.Read.All": ["Files.Read"],
+      "Files.ReadWrite.All": ["Files.Read", "Files.ReadWrite", "Files.Read.All"],
+      "Chat.ReadWrite": ["Chat.Read", "ChatMessage.Send"],
     },
     usesPkce: true,
     tenantIdExtraKey: "tenantId",
@@ -102,6 +120,23 @@ export function resolveProviderScopes(provider: NativeOAuthProviderConfig, featu
   }
 
   return scopes
+}
+
+export function providerScopesSatisfy(
+  provider: NativeOAuthProviderConfig,
+  grantedScopes: readonly string[] | null,
+  requiredScope: string,
+): boolean {
+  if (!grantedScopes || grantedScopes.length === 0) return false
+  const normalizedRequired = requiredScope.toLowerCase()
+  for (const grantedScope of grantedScopes) {
+    if (grantedScope.toLowerCase() === normalizedRequired) return true
+    const implicationEntry = Object.entries(provider.scopeImplications ?? {})
+      .find(([scope]) => scope.toLowerCase() === grantedScope.toLowerCase())
+    const impliedScopes = implicationEntry?.[1] ?? []
+    if (impliedScopes.some((scope) => scope.toLowerCase() === normalizedRequired)) return true
+  }
+  return false
 }
 
 function providerDefaultFeatures(provider: NativeOAuthProviderConfig): string[] {

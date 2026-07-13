@@ -4,17 +4,13 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
-import { orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
 import { MicrosoftGraphClient, MicrosoftGraphRequestError } from "../../capability-sources/microsoft-graph.js"
 import { getOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
-import { clientSelectedFeatures, getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
+import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy } from "../../capability-sources/provider-registry.js"
 import type { OrgRouteVariables } from "./shared.js"
-
-const MAIL_READ_SCOPE = "Mail.Read"
-const CALENDAR_READ_SCOPE = "Calendars.Read"
-const FILES_READ_SCOPE = "Files.Read"
 
 const CONNECT_MICROSOFT_ACCOUNT_MESSAGE = "Connect your Microsoft work account first: open Settings > Connect and use Connect your account on the Microsoft 365 row, or connect from the OpenWork Cloud dashboard."
 
@@ -61,6 +57,19 @@ const mailMessageResponseSchema = z.object({
   message: mailMessageSchema,
 }).meta({ ref: "Microsoft365MailMessageResponse" })
 
+const mailDraftBodySchema = z.object({
+  to: z.array(z.string().email()).min(1).max(50),
+  cc: z.array(z.string().email()).max(50).optional(),
+  bcc: z.array(z.string().email()).max(50).optional(),
+  subject: z.string().trim().min(1).max(998),
+  body: z.string().max(200_000),
+}).meta({ ref: "Microsoft365MailDraftBody" })
+
+const mailDraftResponseSchema = z.object({
+  ok: z.literal(true),
+  draft: mailMessageSchema,
+}).meta({ ref: "Microsoft365MailDraftResponse" })
+
 const calendarEventsQuerySchema = z.object({
   timeMin: z.string().datetime().describe("Inclusive lower bound for event start time."),
   timeMax: z.string().datetime().describe("Exclusive upper bound for event start time."),
@@ -87,6 +96,24 @@ const calendarEventsResponseSchema = z.object({
   ok: z.literal(true),
   events: z.array(calendarEventSchema),
 }).meta({ ref: "Microsoft365CalendarEventsResponse" })
+
+const calendarEventBodySchema = z.object({
+  subject: z.string().trim().min(1).max(255),
+  body: z.string().max(20_000).optional(),
+  start: z.string().datetime(),
+  end: z.string().datetime(),
+  timeZone: z.string().trim().min(1).max(100).default("UTC"),
+  location: z.string().trim().max(255).optional(),
+  attendees: z.array(z.string().email()).max(100).optional(),
+}).refine((value) => Date.parse(value.end) > Date.parse(value.start), {
+  message: "end must be after start",
+  path: ["end"],
+}).meta({ ref: "Microsoft365CalendarEventBody" })
+
+const calendarEventResponseSchema = z.object({
+  ok: z.literal(true),
+  event: calendarEventSchema,
+}).meta({ ref: "Microsoft365CalendarEventResponse" })
 
 const driveFilesQuerySchema = z.object({
   query: z.string().trim().min(1).max(500).describe("Text to search in OneDrive file names and content."),
@@ -121,6 +148,64 @@ const driveFileResponseSchema = z.object({
     contentUnavailableReason: z.enum(["folder", "file_too_large", "unsupported_content_type"]).nullable(),
   }),
 }).meta({ ref: "Microsoft365DriveFileResponse" })
+
+const driveFileWriteBodySchema = z.object({
+  path: z.string().trim().min(1).max(512)
+    .refine((value) => !value.split("/").some((segment) => segment === "." || segment === ".."), "path cannot contain . or .. segments"),
+  content: z.string().max(200_000),
+}).meta({ ref: "Microsoft365DriveFileWriteBody" })
+
+const driveFileWriteResponseSchema = z.object({
+  ok: z.literal(true),
+  file: driveItemSchema,
+}).meta({ ref: "Microsoft365DriveFileWriteResponse" })
+
+const teamsChatsQuerySchema = z.object({
+  maxResults: z.coerce.number().int().min(1).max(50).default(20),
+}).meta({ ref: "Microsoft365TeamsChatsQuery" })
+
+const teamsChatParamSchema = z.object({
+  chatId: z.string().trim().min(1).max(1_024),
+}).meta({ ref: "Microsoft365TeamsChatParams" })
+
+const teamsMessagesQuerySchema = z.object({
+  maxResults: z.coerce.number().int().min(1).max(50).default(20),
+}).meta({ ref: "Microsoft365TeamsMessagesQuery" })
+
+const teamsMessageBodySchema = z.object({
+  content: z.string().trim().min(1).max(20_000),
+}).meta({ ref: "Microsoft365TeamsMessageBody" })
+
+const teamsChatSchema = z.object({
+  id: z.string(),
+  topic: z.string(),
+  chatType: z.string(),
+  webUrl: z.string(),
+  lastUpdatedDateTime: z.string(),
+}).meta({ ref: "Microsoft365TeamsChat" })
+
+const teamsMessageSchema = z.object({
+  id: z.string(),
+  createdDateTime: z.string(),
+  content: z.string(),
+  from: emailAddressSchema.nullable(),
+  webUrl: z.string(),
+}).meta({ ref: "Microsoft365TeamsMessage" })
+
+const teamsChatsResponseSchema = z.object({
+  ok: z.literal(true),
+  chats: z.array(teamsChatSchema),
+}).meta({ ref: "Microsoft365TeamsChatsResponse" })
+
+const teamsMessagesResponseSchema = z.object({
+  ok: z.literal(true),
+  messages: z.array(teamsMessageSchema),
+}).meta({ ref: "Microsoft365TeamsMessagesResponse" })
+
+const teamsMessageResponseSchema = z.object({
+  ok: z.literal(true),
+  message: teamsMessageSchema,
+}).meta({ ref: "Microsoft365TeamsMessageResponse" })
 
 const needsConnectionSchema = z.object({
   error: z.literal("needs_connection"),
@@ -178,10 +263,19 @@ async function defaultAccessTokenResolver(input: {
   }
 }
 
-function missingScope(scopes: string[] | null, requiredScope: string): boolean {
-  if (!scopes || scopes.length === 0) return false
-  const required = requiredScope.toLowerCase()
-  return !scopes.some((scope) => scope.toLowerCase() === required)
+function featureEnabled(token: Extract<Microsoft365AccessToken, { kind: "ok" }>, features: readonly string[]): boolean {
+  return features.some((feature) => token.enabledFeatures.includes(feature))
+}
+
+function featureGranted(token: Extract<Microsoft365AccessToken, { kind: "ok" }>, features: readonly string[]): boolean {
+  if (!token.scopes || token.scopes.length === 0) return true
+  const provider = getNativeOAuthProvider("microsoft-365")
+  if (!provider) return false
+  return features.some((feature) => {
+    if (!token.enabledFeatures.includes(feature)) return false
+    const requiredScopes = provider.optionalFeatures?.[feature] ?? []
+    return requiredScopes.every((scope) => providerScopesSatisfy(provider, token.scopes, scope))
+  })
 }
 
 function missingPermissionMessage(label: string): string {
@@ -203,7 +297,7 @@ function graphError(error: unknown): { error: "microsoft_graph_error"; message: 
 }
 
 /**
- * Read-only Microsoft 365 capabilities. The default path uses the calling
+ * Delegated Microsoft 365 capabilities. Read and mutation routes both use the calling
  * member's delegated token from the shared native-provider vault. Tests and
  * self-host staging can inject a Graph base URL, fetch implementation, and
  * token resolver without changing production auth behavior.
@@ -246,10 +340,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
       if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
-      if (!token.enabledFeatures.includes("mailRead")) {
+      if (!featureEnabled(token, ["mailRead"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("Outlook mail access") }, 409)
       }
-      if (missingScope(token.scopes, MAIL_READ_SCOPE)) {
+      if (!featureGranted(token, ["mailRead"])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Outlook mail read") }, 409)
       }
 
@@ -286,10 +380,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
       if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
-      if (!token.enabledFeatures.includes("mailRead")) {
+      if (!featureEnabled(token, ["mailRead"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("Outlook mail access") }, 409)
       }
-      if (missingScope(token.scopes, MAIL_READ_SCOPE)) {
+      if (!featureGranted(token, ["mailRead"])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Outlook mail read") }, 409)
       }
 
@@ -322,10 +416,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
       if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
-      if (!token.enabledFeatures.includes("calendarRead")) {
+      if (!featureEnabled(token, ["calendarRead"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("Outlook calendar access") }, 409)
       }
-      if (missingScope(token.scopes, CALENDAR_READ_SCOPE)) {
+      if (!featureGranted(token, ["calendarRead"])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Outlook calendar read") }, 409)
       }
 
@@ -363,10 +457,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
       if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
-      if (!token.enabledFeatures.includes("filesRead")) {
+      if (!featureEnabled(token, ["filesRead", "filesWrite", "filesReadAll", "filesFull"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("OneDrive access") }, 409)
       }
-      if (missingScope(token.scopes, FILES_READ_SCOPE)) {
+      if (!featureGranted(token, ["filesRead", "filesWrite", "filesReadAll", "filesFull"])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("OneDrive read") }, 409)
       }
 
@@ -400,16 +494,241 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
       if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
-      if (!token.enabledFeatures.includes("filesRead")) {
+      if (!featureEnabled(token, ["filesRead", "filesWrite", "filesReadAll", "filesFull"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("OneDrive access") }, 409)
       }
-      if (missingScope(token.scopes, FILES_READ_SCOPE)) {
+      if (!featureGranted(token, ["filesRead", "filesWrite", "filesReadAll", "filesFull"])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("OneDrive read") }, 409)
       }
 
       try {
         const { itemId } = c.req.valid("param")
         return c.json({ ok: true, file: await graphClient(token.accessToken).getDriveItemWithContent(itemId) })
+      } catch (error) {
+        return c.json(graphError(error), 502)
+      }
+    },
+  )
+
+  app.post(
+    "/v1/capabilities/microsoft-365/mail-drafts",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Create an Outlook draft as the calling member",
+      description: "Creates a draft in the calling member's mailbox. It never sends the message. Microsoft requires delegated Mail.ReadWrite for draft creation.",
+      responses: {
+        200: jsonResponse("Outlook draft created.", mailDraftResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    memberRoute,
+    jsonValidator(mailDraftBodySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
+      if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
+      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (!featureEnabled(token, ["mailDraft"])) {
+        return c.json({ error: "needs_connection", message: disabledFeatureMessage("Outlook draft creation") }, 409)
+      }
+      if (!featureGranted(token, ["mailDraft"])) {
+        return c.json({ error: "needs_connection", message: missingPermissionMessage("Outlook mail read/write") }, 409)
+      }
+
+      try {
+        const body = c.req.valid("json")
+        const draft = await graphClient(token.accessToken).createMailDraft(body)
+        return c.json({ ok: true, draft })
+      } catch (error) {
+        return c.json(graphError(error), 502)
+      }
+    },
+  )
+
+  app.post(
+    "/v1/capabilities/microsoft-365/calendar-events",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Create an Outlook calendar event as the calling member",
+      description: "Creates an event in the calling member's default calendar. Adding attendees can send Microsoft calendar invitations.",
+      responses: {
+        200: jsonResponse("Outlook calendar event created.", calendarEventResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    memberRoute,
+    jsonValidator(calendarEventBodySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
+      if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
+      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (!featureEnabled(token, ["calendarWrite"])) {
+        return c.json({ error: "needs_connection", message: disabledFeatureMessage("Outlook calendar event creation") }, 409)
+      }
+      if (!featureGranted(token, ["calendarWrite"])) {
+        return c.json({ error: "needs_connection", message: missingPermissionMessage("Outlook calendar read/write") }, 409)
+      }
+
+      try {
+        const event = await graphClient(token.accessToken).createCalendarEvent(c.req.valid("json"))
+        return c.json({ ok: true, event })
+      } catch (error) {
+        return c.json(graphError(error), 502)
+      }
+    },
+  )
+
+  app.put(
+    "/v1/capabilities/microsoft-365/drive-files",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Create or replace a OneDrive text file as the calling member",
+      description: "Creates or replaces a bounded UTF-8 text file at a path in the calling member's OneDrive.",
+      responses: {
+        200: jsonResponse("OneDrive file written.", driveFileWriteResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    memberRoute,
+    jsonValidator(driveFileWriteBodySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
+      if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
+      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (!featureEnabled(token, ["filesWrite", "filesFull"])) {
+        return c.json({ error: "needs_connection", message: disabledFeatureMessage("OneDrive file writing") }, 409)
+      }
+      if (!featureGranted(token, ["filesWrite", "filesFull"])) {
+        return c.json({ error: "needs_connection", message: missingPermissionMessage("OneDrive write") }, 409)
+      }
+
+      try {
+        const file = await graphClient(token.accessToken).putDriveTextFile(c.req.valid("json"))
+        return c.json({ ok: true, file })
+      } catch (error) {
+        return c.json(graphError(error), 502)
+      }
+    },
+  )
+
+  app.get(
+    "/v1/capabilities/microsoft-365/teams-chats",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "List Microsoft Teams chats as the calling member",
+      description: "Lists the calling member's Microsoft Teams chats using delegated Chat.Read permission.",
+      responses: {
+        200: jsonResponse("Teams chats returned.", teamsChatsResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    memberRoute,
+    queryValidator(teamsChatsQuerySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
+      if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
+      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (!featureEnabled(token, ["teamsChatRead", "teamsChatSend"])) {
+        return c.json({ error: "needs_connection", message: disabledFeatureMessage("Teams chat reading") }, 409)
+      }
+      if (!featureGranted(token, ["teamsChatRead", "teamsChatSend"])) {
+        return c.json({ error: "needs_connection", message: missingPermissionMessage("Teams chat read") }, 409)
+      }
+
+      try {
+        const chats = await graphClient(token.accessToken).listTeamsChats(c.req.valid("query").maxResults)
+        return c.json({ ok: true, chats })
+      } catch (error) {
+        return c.json(graphError(error), 502)
+      }
+    },
+  )
+
+  app.get(
+    "/v1/capabilities/microsoft-365/teams-chats/:chatId/messages",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "List messages in a Microsoft Teams chat as the calling member",
+      description: "Reads recent messages from one Teams chat using delegated Chat.Read permission.",
+      responses: {
+        200: jsonResponse("Teams chat messages returned.", teamsMessagesResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    memberRoute,
+    paramValidator(teamsChatParamSchema),
+    queryValidator(teamsMessagesQuerySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
+      if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
+      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (!featureEnabled(token, ["teamsChatRead", "teamsChatSend"])) {
+        return c.json({ error: "needs_connection", message: disabledFeatureMessage("Teams chat reading") }, 409)
+      }
+      if (!featureGranted(token, ["teamsChatRead", "teamsChatSend"])) {
+        return c.json({ error: "needs_connection", message: missingPermissionMessage("Teams chat read") }, 409)
+      }
+
+      try {
+        const messages = await graphClient(token.accessToken).listTeamsMessages(
+          c.req.valid("param").chatId,
+          c.req.valid("query").maxResults,
+        )
+        return c.json({ ok: true, messages })
+      } catch (error) {
+        return c.json(graphError(error), 502)
+      }
+    },
+  )
+
+  app.post(
+    "/v1/capabilities/microsoft-365/teams-chats/:chatId/messages",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Send a message to an existing Microsoft Teams chat as the calling member",
+      description: "Sends one message to an existing Teams chat. The operation cannot create a new chat.",
+      responses: {
+        200: jsonResponse("Teams chat message sent.", teamsMessageResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    memberRoute,
+    paramValidator(teamsChatParamSchema),
+    jsonValidator(teamsMessageBodySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
+      if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
+      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (!featureEnabled(token, ["teamsChatSend"])) {
+        return c.json({ error: "needs_connection", message: disabledFeatureMessage("Teams chat sending") }, 409)
+      }
+      if (!featureGranted(token, ["teamsChatSend"])) {
+        return c.json({ error: "needs_connection", message: missingPermissionMessage("Teams chat send") }, 409)
+      }
+
+      try {
+        const message = await graphClient(token.accessToken).sendTeamsMessage(
+          c.req.valid("param").chatId,
+          c.req.valid("json").content,
+        )
+        return c.json({ ok: true, message })
       } catch (error) {
         return c.json(graphError(error), 502)
       }
