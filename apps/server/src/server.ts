@@ -59,6 +59,11 @@ import {
 } from "./workspace-export-safety.js";
 import { serve, type ServeResult } from "./serve-node.js";
 import { registerCoreRoutes } from "./routes/core.js";
+import {
+  BUNDLED_SERVER_ROUTE_FAMILY_DESCRIPTORS,
+  composeServerRouteFamilies,
+  type ServerRouteFamilyDescriptor,
+} from "./routes/family-composition.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
@@ -1300,7 +1305,7 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
   };
 }
 
-function createRoutes(
+export function createRoutes(
   config: ServerConfig,
   approvals: ApprovalService,
   tokens: TokenService,
@@ -1309,56 +1314,112 @@ function createRoutes(
   onWorkspacesChanged: () => void,
 ): Route[] {
   const routes: Route[] = [];
-  registerCoreRoutes({
-    routes,
-    config,
-    tokens,
-    env,
-    extensionActions,
-    serverVersion: SERVER_VERSION,
-    opencodeVersion: OPENCODE_VERSION,
-    jsonResponse,
-    readJsonBody,
-    readOptionalJsonBody,
-    parseOptionalBoolean,
-    ensureWritable,
-    buildCapabilities,
-    fetchRuntimeControl,
-    resolveWorkspace,
-    serializeWorkspace,
-    resolveToyUiEnabled,
-    resolveDevLogPath,
-    createOpenAiRealtimeVoiceSession,
-  });
+  const routeFamilyComposition = composeServerRouteFamilies([
+    {
+      descriptor: BUNDLED_SERVER_ROUTE_FAMILY_DESCRIPTORS.core,
+      register: (familyRoutes) => registerCoreRoutes({
+        routes: familyRoutes,
+        config,
+        tokens,
+        env,
+        extensionActions,
+        serverVersion: SERVER_VERSION,
+        opencodeVersion: OPENCODE_VERSION,
+        jsonResponse,
+        readJsonBody,
+        readOptionalJsonBody,
+        parseOptionalBoolean,
+        ensureWritable,
+        buildCapabilities,
+        fetchRuntimeControl,
+        resolveWorkspace,
+        serializeWorkspace,
+        resolveToyUiEnabled,
+        resolveDevLogPath,
+        createOpenAiRealtimeVoiceSession,
+      }),
+    },
+    {
+      descriptor: BUNDLED_SERVER_ROUTE_FAMILY_DESCRIPTORS.workspaces,
+      register: (familyRoutes) => registerWorkspaceRoutes({
+        routes: familyRoutes,
+        config,
+        onWorkspacesChanged,
+        jsonResponse,
+        readJsonBody,
+        readOptionalJsonBody,
+        parseOptionalBoolean,
+        ensureWritable,
+        resolveWorkspace,
+        serializeWorkspace,
+        reloadOpencodeEngine,
+      }),
+    },
+    {
+      descriptor: BUNDLED_SERVER_ROUTE_FAMILY_DESCRIPTORS.sessions,
+      register: (familyRoutes) => registerSessionRoutes({
+        routes: familyRoutes,
+        config,
+        jsonResponse,
+        parseOptionalBoolean,
+        parseOptionalPositiveInteger,
+        parseOptionalNonNegativeInteger,
+        readJsonBody,
+        ensureWritable,
+        requireClientScope,
+        resolveWorkspace,
+        createWorkspaceOpencodeClient,
+        unwrapOpencodeResult,
+      }),
+    },
+    {
+      descriptor: BUNDLED_SERVER_ROUTE_FAMILY_DESCRIPTORS.operations,
+      register: (familyRoutes) => registerOperationRoutes({
+        routes: familyRoutes,
+        config,
+        jsonResponse,
+        readJsonBody,
+        requireClientScope,
+        resolveWorkspace,
+        reloadOpencodeEngine,
+      }),
+    },
+    {
+      descriptor: BUNDLED_SERVER_ROUTE_FAMILY_DESCRIPTORS.files,
+      register: (familyRoutes) => registerFileRoutes({
+        routes: familyRoutes,
+        config,
+        jsonResponse,
+        readJsonBody,
+        ensureWritable,
+        requireApproval,
+        requireClientScope,
+        resolveWorkspace,
+        resolveInboxEnabled,
+        resolveOutboxEnabled,
+        resolveInboxMaxBytes,
+        scopeRank,
+      }),
+    },
+  ]);
+  if (routeFamilyComposition.status === "invalid") {
+    throw new Error(
+      `Invalid server route-family composition: ${routeFamilyComposition.diagnostics.map((issue) => issue.message).join(" ")}`,
+    );
+  }
+  const mountRouteFamily = (descriptor: ServerRouteFamilyDescriptor): void => {
+    const family = routeFamilyComposition.families.find(
+      (candidate) => candidate.descriptor.id === descriptor.id,
+    );
+    if (family === undefined) {
+      throw new Error(`Invalid server route-family composition: missing family "${descriptor.id}".`);
+    }
+    routes.push(...family.routes);
+  };
 
-  registerWorkspaceRoutes({
-    routes,
-    config,
-    onWorkspacesChanged,
-    jsonResponse,
-    readJsonBody,
-    readOptionalJsonBody,
-    parseOptionalBoolean,
-    ensureWritable,
-    resolveWorkspace,
-    serializeWorkspace,
-    reloadOpencodeEngine,
-  });
-
-  registerSessionRoutes({
-    routes,
-    config,
-    jsonResponse,
-    parseOptionalBoolean,
-    parseOptionalPositiveInteger,
-    parseOptionalNonNegativeInteger,
-    readJsonBody,
-    ensureWritable,
-    requireClientScope,
-    resolveWorkspace,
-    createWorkspaceOpencodeClient,
-    unwrapOpencodeResult,
-  });
+  mountRouteFamily(BUNDLED_SERVER_ROUTE_FAMILY_DESCRIPTORS.core);
+  mountRouteFamily(BUNDLED_SERVER_ROUTE_FAMILY_DESCRIPTORS.workspaces);
+  mountRouteFamily(BUNDLED_SERVER_ROUTE_FAMILY_DESCRIPTORS.sessions);
 
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -1919,30 +1980,8 @@ function createRoutes(
     return jsonResponse({ updatedAt: Date.now() });
   });
 
-  registerOperationRoutes({
-    routes,
-    config,
-    jsonResponse,
-    readJsonBody,
-    requireClientScope,
-    resolveWorkspace,
-    reloadOpencodeEngine,
-  });
-
-  registerFileRoutes({
-    routes,
-    config,
-    jsonResponse,
-    readJsonBody,
-    ensureWritable,
-    requireApproval,
-    requireClientScope,
-    resolveWorkspace,
-    resolveInboxEnabled,
-    resolveOutboxEnabled,
-    resolveInboxMaxBytes,
-    scopeRank,
-  });
+  mountRouteFamily(BUNDLED_SERVER_ROUTE_FAMILY_DESCRIPTORS.operations);
+  mountRouteFamily(BUNDLED_SERVER_ROUTE_FAMILY_DESCRIPTORS.files);
 
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);

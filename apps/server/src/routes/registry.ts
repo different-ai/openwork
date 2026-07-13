@@ -16,11 +16,16 @@ export interface RequestContext {
   actor?: Actor;
 }
 
-export interface Route {
-  method: string;
+/** Serializable route metadata; executable handlers remain host-local. */
+export interface RouteDescriptor {
+  readonly method: string;
+  readonly path: string;
+  readonly auth: AuthMode;
+}
+
+export interface Route extends RouteDescriptor {
   regex: RegExp;
   keys: string[];
-  auth: AuthMode;
   handler: (ctx: RequestContext) => Promise<Response>;
 }
 
@@ -43,7 +48,15 @@ export function matchRoute(routes: Route[], method: string, path: string): Match
 export function addRoute(routes: Route[], method: string, path: string, auth: AuthMode, handler: Route["handler"]): void {
   const keys: string[] = [];
   const regex = pathToRegex(path, keys);
-  routes.push({ method, regex, keys, auth, handler });
+  routes.push({ method, path, regex, keys, auth, handler });
+}
+
+export function describeRoutes(routes: readonly Route[]): readonly Readonly<RouteDescriptor>[] {
+  return Object.freeze(routes.map((route) => Object.freeze({
+    method: route.method,
+    path: route.path,
+    auth: route.auth,
+  })));
 }
 
 function pathToRegex(path: string, keys: string[]): RegExp {
