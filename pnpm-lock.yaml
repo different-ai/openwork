@@ -88,6 +88,9 @@ importers:
       '@openwork/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@openwork/workspace-portability':
+        specifier: workspace:*
+        version: link:../../packages/workspace-portability
       '@shikijs/transformers':
         specifier: ^4.0.2
         version: 4.0.2
@@ -322,6 +325,9 @@ importers:
       '@openwork/session-groups':
         specifier: workspace:*
         version: link:../../packages/session-groups
+      '@openwork/workspace-portability':
+        specifier: workspace:*
+        version: link:../../packages/workspace-portability
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
@@ -1005,6 +1011,21 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/workspace-portability:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      tsx:
+        specifier: ^4.15.7
+        version: 4.21.0
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

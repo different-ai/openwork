@@ -11,6 +11,13 @@ import type {
   SessionGroupEvent,
   SessionGroupState,
 } from "@openwork/session-groups";
+import type {
+  WorkspaceExportBundle,
+  WorkspaceExportSensitiveMode,
+  WorkspaceExportWarning,
+  WorkspaceImportChange,
+  WorkspaceImportPreview,
+} from "@openwork/workspace-portability";
 import { desktopFetch } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
@@ -304,43 +311,11 @@ export type OpenworkMcpEngineSync = {
   failures: Array<{ name: string; status?: number; message?: string }>;
 };
 
-export type OpenworkWorkspaceExport = {
-  workspaceId: string;
-  exportedAt: number;
-  opencode?: Record<string, unknown>;
-  openwork?: Record<string, unknown>;
-  skills?: Array<{ name: string; description?: string; trigger?: string; content: string }>;
-  commands?: Array<{ name: string; description?: string; template?: string }>;
-  files?: Array<{ path: string; content: string }>;
-};
-
-export type OpenworkWorkspaceImportChange = {
-  kind: "opencode" | "openwork" | "skill" | "command" | "file";
-  action: "create" | "update" | "replace" | "delete" | "unchanged";
-  label: string;
-  path: string;
-};
-
-export type OpenworkWorkspaceImportPreview = {
-  fingerprint: string;
-  summary: {
-    total: number;
-    create: number;
-    update: number;
-    replace: number;
-    delete: number;
-    unchanged: number;
-  };
-  changes: OpenworkWorkspaceImportChange[];
-};
-
-export type OpenworkWorkspaceExportSensitiveMode = "auto" | "include" | "exclude";
-
-export type OpenworkWorkspaceExportWarning = {
-  id: string;
-  label: string;
-  detail: string;
-};
+export type OpenworkWorkspaceExport = WorkspaceExportBundle;
+export type OpenworkWorkspaceImportChange = WorkspaceImportChange;
+export type OpenworkWorkspaceImportPreview = WorkspaceImportPreview;
+export type OpenworkWorkspaceExportSensitiveMode = WorkspaceExportSensitiveMode;
+export type OpenworkWorkspaceExportWarning = WorkspaceExportWarning;
 
 export type OpenworkBlueprintSessionsMaterializeResult = {
   ok: boolean;

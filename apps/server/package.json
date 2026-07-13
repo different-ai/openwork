@@ -8,7 +8,7 @@
     "openwork-server": "bin/openwork-server.mjs"
   },
   "scripts": {
-    "build:composition-deps": "pnpm --filter @openwork/contribution-registry build && pnpm --filter @openwork/session-contracts build && pnpm --filter @openwork/session-groups build",
+    "build:composition-deps": "pnpm --filter @openwork/contribution-registry build && pnpm --filter @openwork/session-contracts build && pnpm --filter @openwork/session-groups build && pnpm --filter @openwork/workspace-portability build",
     "predev": "pnpm run build:composition-deps",
     "dev": "OPENWORK_DEV_MODE=1 bun src/cli.ts",
     "pretest": "pnpm run build:composition-deps",
@@ -53,6 +53,7 @@
     "@openwork/contribution-registry": "workspace:*",
     "@openwork/session-contracts": "workspace:*",
     "@openwork/session-groups": "workspace:*",
+    "@openwork/workspace-portability": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "drizzle-orm": "^0.45.1",
     "jsonc-parser": "^3.2.1",

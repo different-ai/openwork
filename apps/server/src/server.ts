@@ -3,6 +3,12 @@ import { readFile, writeFile, rm } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import {
+  collectWorkspaceExportWarnings,
+  stripSensitiveWorkspaceExportData,
+  type WorkspaceExportBundle,
+  type WorkspaceExportSensitiveMode,
+} from "@openwork/workspace-portability";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
@@ -52,11 +58,6 @@ import {
   type WorkspaceImportPlan,
   workspaceImportPreviewApprovalPaths,
 } from "./workspace-import-preview.js";
-import {
-  collectWorkspaceExportWarnings,
-  stripSensitiveWorkspaceExportData,
-  type WorkspaceExportSensitiveMode,
-} from "./workspace-export-safety.js";
 import { serve, type ServeResult } from "./serve-node.js";
 import { registerCoreRoutes } from "./routes/core.js";
 import {
@@ -3092,7 +3093,7 @@ async function exportWorkspace(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   options?: { sensitiveMode?: WorkspaceExportSensitiveMode },
-) {
+): Promise<WorkspaceExportBundle> {
   const sensitiveMode = options?.sensitiveMode ?? "auto";
   const rawOpencode = await readOpencodeConfig(workspace.path);
   let opencode = sanitizePortableOpencodeConfig(rawOpencode);

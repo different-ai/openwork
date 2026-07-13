@@ -1,13 +1,21 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import type {
+  PortableFile,
+  WorkspaceImportChange,
+  WorkspaceImportChangeAction,
+  WorkspaceImportChangeKind,
+  WorkspaceImportMode,
+  WorkspaceImportPreview,
+} from "@openwork/workspace-portability";
 
 import { sanitizeOpenworkTemplateConfig } from "./blueprint-sessions.js";
 import { buildCommandContent } from "./commands.js";
 import { ApiError } from "./errors.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { readJsoncFile } from "./jsonc.js";
-import { planPortableFiles, listPortableFilePaths, type PortableFile } from "./portable-files.js";
+import { planPortableFiles, listPortableFilePaths } from "./portable-files.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { buildSkillContent } from "./skills.js";
 import { exists } from "./utils.js";
@@ -19,34 +27,18 @@ import {
   projectSkillsDir,
 } from "./workspace-files.js";
 
-export type WorkspaceImportMode = "merge" | "replace";
-export type WorkspaceImportChangeKind = "opencode" | "openwork" | "skill" | "command" | "file";
-export type WorkspaceImportChangeAction = "create" | "update" | "replace" | "delete" | "unchanged";
-
-export type WorkspaceImportChange = {
-  kind: WorkspaceImportChangeKind;
-  action: WorkspaceImportChangeAction;
-  label: string;
-  path: string;
-};
+export type {
+  WorkspaceImportChange,
+  WorkspaceImportChangeAction,
+  WorkspaceImportChangeKind,
+  WorkspaceImportMode,
+  WorkspaceImportPreview,
+} from "@openwork/workspace-portability";
 
 type WorkspaceImportPlannedChange = WorkspaceImportChange & {
   absolutePath: string;
   beforeDigest: string;
   afterDigest: string;
-};
-
-export type WorkspaceImportPreview = {
-  fingerprint: string;
-  summary: {
-    total: number;
-    create: number;
-    update: number;
-    replace: number;
-    delete: number;
-    unchanged: number;
-  };
-  changes: WorkspaceImportChange[];
 };
 
 export type WorkspaceImportPlan = Omit<WorkspaceImportPreview, "changes"> & {

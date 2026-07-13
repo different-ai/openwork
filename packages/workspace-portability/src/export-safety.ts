@@ -1,12 +1,6 @@
-import type { PortableFile } from "./portable-files.js";
+import type { PortableFile, WorkspaceExportWarning } from "./types.js";
 
-export type WorkspaceExportSensitiveMode = "auto" | "include" | "exclude";
-
-export type WorkspaceExportWarning = {
-  id: string;
-  label: string;
-  detail: string;
-};
+export type { WorkspaceExportSensitiveMode, WorkspaceExportWarning } from "./types.js";
 
 const CONFIG_SECTION_METADATA: Record<string, { warningId: string; label: string; intro: string }> = {
   mcp: {

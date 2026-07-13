@@ -15,6 +15,7 @@ const packageNames = [
   "@openwork/extension-catalog",
   "@openwork/session-contracts",
   "@openwork/session-groups",
+  "@openwork/workspace-portability",
 ];
 const exportSpecifiers = [
   "@openwork/extension-contracts",
@@ -29,6 +30,7 @@ const exportSpecifiers = [
   "@openwork/session-contracts/types",
   "@openwork/session-contracts/validation",
   "@openwork/session-groups",
+  "@openwork/workspace-portability",
 ];
 
 function run(command, args, cwd) {

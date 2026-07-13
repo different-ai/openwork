@@ -478,29 +478,30 @@ events. The complete app suite, app/server typechecks, and production builds
 remain the host parity gate. This slice removes duplicate state/event types and
 transition implementations without moving host authority into the package.
 
-## Next slice: `@openwork/workspace-portability`
+## Completed proof slice: `@openwork/workspace-portability`
 
 ### Value and boundary
 
-The current server already contains 323 lines of environment-neutral workspace
+The server previously contained 323 lines of environment-neutral workspace
 export policy in `workspace-export-safety.ts`, with focused tests for benign
 configuration, secret-like keys and values, provider settings, portable files,
-and exclude-mode stripping. The app separately declares corresponding export
-mode/warning/file wire types. This is a cohesive domain boundary with server and
-browser consumers.
+and exclude-mode stripping. The app separately declared corresponding export,
+import-preview, mode, warning, and file wire types. Those owners are now one
+cohesive domain boundary with server and browser consumers.
 
-The first package owns:
+The package owns:
 
 - `PortableFile`;
+- workspace export bundle and import-preview wire contracts;
 - `WorkspaceExportSensitiveMode`;
 - `WorkspaceExportWarning`;
+- portable path allowlists, normalization, and stable portability errors;
 - `collectWorkspaceExportWarnings`;
 - `stripSensitiveWorkspaceExportData`.
 
-Its root is neutral and has no runtime host dependency. A later `./paths`
-subpath may own normalized portable-path decisions only if server import/export
-consumers prove the same semantics. It must return OpenWork-owned results or
-errors, never server `ApiError`.
+Its root is neutral and has no runtime host dependency. It returns
+OpenWork-owned values and `WorkspacePortabilityError`; the server adapter maps
+the two stable portability codes to the existing `ApiError` transport shape.
 
 ### What stays outside
 
@@ -510,20 +511,24 @@ and HTTP error mapping stay in `openwork-server`. The app retains transport and
 dialog state. Secret detection remains a documented warning/sanitization policy,
 not a claim that heuristics can guarantee an export contains no secret.
 
-### Migration and proof
+### Migration and proof result
 
-1. Move the pure types and behavior with their characterization tests.
-2. Make server export code consume the package; keep filesystem code as a
-   server adapter.
-3. Replace duplicated app declarations with package imports while preserving
-   the current client-facing aliases if needed.
-4. Build, typecheck, test, and install the packed package in clean Node and
-   browser-type consumers.
-5. Run full server tests/typecheck/build, app tests/typecheck/build, and the
-   affected workspace export flow.
-6. Delete the old safety module and redundant declarations; remove obsolete
-   dependencies/exports and record any compatibility facade with a zero-usage
-   deletion condition.
+- The safety implementation and four characterization tests moved into the
+  package; three additional tests cover path normalization, allowlists, value
+  coercion, traversal, environment files, reserved segments, and stable errors.
+- The server export flow consumes the package directly. Filesystem traversal,
+  absolute-path planning, writes, and transport-error mapping remain in its
+  adapter and retain three focused tests.
+- The server import preview and app client now consume the same import/export
+  types; the public app aliases remain source-compatible.
+- Six packages build, typecheck, pack, install together into a clean consumer,
+  and resolve every public export from the tarballs.
+- Sixteen existing import-preview tests prove preview/apply fingerprints,
+  replacement, deletion, approval, rollback-on-write-failure, and public-shape
+  behavior. Two new route tests prove auto/include/exclude and invalid-mode HTTP
+  compatibility through the packaged policy.
+- The superseded server safety module and duplicated app declarations are
+  removed. The app/server typechecks and production builds remain the host gate.
 
 ## Next slice: `@openwork/markdown`
 

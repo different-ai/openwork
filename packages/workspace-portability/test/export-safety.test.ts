@@ -1,12 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import assert from "node:assert/strict"
+import { describe, it } from "node:test"
 
 import {
   collectWorkspaceExportWarnings,
   stripSensitiveWorkspaceExportData,
-} from "./workspace-export-safety.js";
+} from "../src/index.js"
 
 describe("workspace export safety", () => {
-  test("does not warn for benign mcp, plugin, and portable files", () => {
+  it("does not warn for benign mcp, plugin, and portable files", () => {
     const warnings = collectWorkspaceExportWarnings({
       opencode: {
         mcp: { jira: { type: "remote", url: "https://jira.example.com/mcp", key: "primary" } },
@@ -18,10 +19,10 @@ describe("workspace export safety", () => {
       ],
     });
 
-    expect(warnings).toEqual([]);
+    assert.deepEqual(warnings, []);
   });
 
-  test("warns only when secret-like keys or values are present", () => {
+  it("warns only when secret-like keys or values are present", () => {
     const warnings = collectWorkspaceExportWarnings({
       opencode: {
         mcp: {
@@ -43,22 +44,22 @@ describe("workspace export safety", () => {
       ],
     });
 
-    expect(warnings.map((warning) => warning.id)).toEqual([
+    assert.deepEqual(warnings.map((warning) => warning.id), [
       "mcp-config",
       "plugin-config",
       "portable-file:.opencode/plugins/demo/index.ts",
       "portable-file:.opencode/tools/run.ts",
     ]);
-    expect(warnings[0]?.detail).toContain("apiKey");
-    expect(warnings[0]?.detail).toContain("Bearer");
-    expect(warnings[1]?.detail).toContain("token");
-    expect(warnings[1]?.detail).toContain("key");
-    expect(warnings[2]?.detail).toContain("apiKey");
-    expect(warnings[3]?.detail).toContain("key");
-    expect(warnings[3]?.detail).toContain("long URL");
+    assert.match(warnings[0]?.detail ?? "", /apiKey/);
+    assert.match(warnings[0]?.detail ?? "", /Bearer/);
+    assert.match(warnings[1]?.detail ?? "", /token/);
+    assert.match(warnings[1]?.detail ?? "", /key/);
+    assert.match(warnings[2]?.detail ?? "", /apiKey/);
+    assert.match(warnings[3]?.detail ?? "", /key/);
+    assert.match(warnings[3]?.detail ?? "", /long URL/);
   });
 
-  test("warns when a non-portable provider section still contains secrets", () => {
+  it("warns when a non-portable provider section still contains secrets", () => {
     const warnings = collectWorkspaceExportWarnings({
       opencode: {
         provider: {
@@ -73,12 +74,12 @@ describe("workspace export safety", () => {
       files: [],
     });
 
-    expect(warnings.map((warning) => warning.id)).toEqual(["provider-config"]);
-    expect(warnings[0]?.label).toBe("Provider settings");
-    expect(warnings[0]?.detail).toContain("apiKey");
+    assert.deepEqual(warnings.map((warning) => warning.id), ["provider-config"]);
+    assert.equal(warnings[0]?.label, "Provider settings");
+    assert.match(warnings[0]?.detail ?? "", /apiKey/);
   });
 
-  test("exclude mode removes only flagged values and files", () => {
+  it("exclude mode removes only flagged values and files", () => {
     const sanitized = stripSensitiveWorkspaceExportData({
       opencode: {
         plugin: {
@@ -103,12 +104,12 @@ describe("workspace export safety", () => {
       ],
     });
 
-    expect(sanitized.opencode).toEqual({
+    assert.deepEqual(sanitized.opencode, {
       plugin: { demo: { enabled: true } },
       mcp: { jira: { enabled: true, url: "https://jira.example.com/mcp" } },
       command: { review: { template: "Review it" } },
     });
-    expect(sanitized.files).toEqual([
+    assert.deepEqual(sanitized.files, [
       { path: ".opencode/tools/run.ts", content: "console.log('safe tool');" },
       { path: ".opencode/agents/reviewer.md", content: "agent" },
     ]);

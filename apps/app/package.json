@@ -4,7 +4,7 @@
   "version": "0.17.20",
   "type": "module",
   "scripts": {
-    "build:composition-deps": "pnpm --filter @openwork/extension-contracts build && pnpm --filter @openwork/extension-catalog build && pnpm --filter @openwork/contribution-registry build && pnpm --filter @openwork/session-contracts build && pnpm --filter @openwork/session-groups build",
+    "build:composition-deps": "pnpm --filter @openwork/extension-contracts build && pnpm --filter @openwork/extension-catalog build && pnpm --filter @openwork/contribution-registry build && pnpm --filter @openwork/session-contracts build && pnpm --filter @openwork/session-groups build && pnpm --filter @openwork/workspace-portability build",
     "pretest": "pnpm run build:composition-deps",
     "test": "bun test --isolate tests/",
     "dev": "OPENWORK_DEV_MODE=1 vite",
@@ -59,6 +59,7 @@
     "@openwork/session-groups": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
+    "@openwork/workspace-portability": "workspace:*",
     "@shikijs/transformers": "^4.0.2",
     "@tanstack/react-query": "^5.90.3",
     "@xterm/addon-fit": "^0.11.0",
