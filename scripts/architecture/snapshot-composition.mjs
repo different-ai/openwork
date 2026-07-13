@@ -1,20 +1,11 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { extname, join, relative, resolve } from "node:path";
 
 const root = resolve(process.argv[2] ?? ".");
 const sourceExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
-const ignoredDirectories = new Set([
-  ".git",
-  ".next",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-  "target",
-]);
 
 function git(...args) {
   return execFileSync("git", ["-C", root, ...args], {
@@ -40,15 +31,17 @@ function lines(source) {
   return source.endsWith("\n") ? source.split("\n").length - 1 : source.split("\n").length;
 }
 
-function walk(directory, output = []) {
-  if (!existsSync(directory)) return output;
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (ignoredDirectories.has(entry.name)) continue;
-    const absolute = join(directory, entry.name);
-    if (entry.isDirectory()) walk(absolute, output);
-    else output.push(absolute);
-  }
-  return output;
+function repositoryFiles(...areas) {
+  const output = execFileSync(
+    "git",
+    ["-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", ...areas],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  return output
+    .split("\0")
+    .filter(Boolean)
+    .filter((path) => existsSync(join(root, path)))
+    .sort();
 }
 
 function repoPath(absolute) {
@@ -70,7 +63,10 @@ function occurrences(source, pattern) {
   return [...source.matchAll(pattern)].length;
 }
 
-const allFiles = ["apps", "packages", "ee"].flatMap((area) => walk(join(root, area)));
+// Measure repository inputs, not generated copies. Including non-ignored
+// untracked files keeps the snapshot useful during development while Git's
+// ignore rules exclude packaged apps, build output, dependencies, and state.
+const allFiles = repositoryFiles("apps", "packages", "ee").map((path) => join(root, path));
 const sourceFiles = allFiles.filter((absolute) => sourceExtensions.has(extname(absolute)));
 const implementationFiles = sourceFiles.filter((absolute) => isProductImplementation(repoPath(absolute)));
 const testFiles = sourceFiles.filter((absolute) => isTestPath(repoPath(absolute)));
@@ -84,15 +80,9 @@ const testStats = testFiles.map((absolute) => {
   return { path: repoPath(absolute), lines: lines(source) };
 });
 
-const packageFiles = ["apps", "packages", "ee/apps", "ee/packages"]
-  .flatMap((area) => {
-    const directory = join(root, area);
-    if (!existsSync(directory)) return [];
-    return readdirSync(directory, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => join(directory, entry.name, "package.json"))
-      .filter(existsSync);
-  });
+const packageFiles = repositoryFiles("apps", "packages", "ee/apps", "ee/packages")
+  .filter((path) => /^(?:apps|packages|ee\/apps|ee\/packages)\/[^/]+\/package\.json$/.test(path))
+  .map((path) => join(root, path));
 
 const packages = packageFiles
   .map((absolute) => {
@@ -194,9 +184,7 @@ const staleCandidates = [
   "scripts/dev-web-local.sh",
 ].map((path) => ({ path, exists: existsSync(join(root, path)) }));
 
-const flowDirectory = join(root, "evals/flows");
-const fraimzFlowFiles = walk(flowDirectory)
-  .map(repoPath)
+const fraimzFlowFiles = repositoryFiles("evals/flows")
   .filter((path) => path.endsWith(".flow.mjs"))
   .sort();
 
