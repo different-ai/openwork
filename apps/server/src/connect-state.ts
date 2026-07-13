@@ -9,6 +9,9 @@ import {
 } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 import { ensureDir } from "./utils.js";
+import type { ConnectSnapshot } from "./connect-contract.js";
+
+export type { ConnectSnapshot } from "./connect-contract.js";
 
 const CONNECT_STATE_FILE = "connect-state.json";
 const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
@@ -16,14 +19,6 @@ const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
 type PersistedConnectState = {
   connectEnabled: boolean;
   updatedAt: number;
-};
-
-export type ConnectSnapshot = {
-  connectEnabled: boolean;
-  cloudMcpPresent: boolean;
-  googleWorkspace: {
-    legacyConfigured: boolean;
-  };
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

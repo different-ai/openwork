@@ -4,35 +4,18 @@ import { dirname, resolve, sep } from "node:path";
 import { ApiError } from "../errors.js";
 import type { EnvService } from "../env-file.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
+import {
+  createOpenAiImageGenerationActionContributions,
+  type OpenAiImageGenerationActionOperations,
+} from "./openai-image-generation-actions.js";
 
-export const OPENAI_IMAGE_GENERATION_EXTENSION_ID = "openai-image-generation";
+export {
+  OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS,
+  OPENAI_IMAGE_GENERATION_EXTENSION_ID,
+} from "./openai-image-generation-actions.js";
+
 const OPENAI_IMAGE_MODEL = "gpt-image-2";
 const OPENAI_IMAGE_API_TIMEOUT_MS = 60_000;
-
-export const OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS = [
-  {
-    extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID,
-    action: "status",
-    title: "OpenAI image generation status",
-    description: "Check whether OpenAI image generation is configured and ready for OpenWork extension actions.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-  },
-  {
-    extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID,
-    action: "image_generate",
-    title: "Generate image artifact",
-    description: "Generate a PNG image artifact using OpenAI image generation with gpt-image-2.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        prompt: { type: "string", description: "Image prompt to turn into an artifact." },
-        filename: { type: "string", description: "Optional output filename without extension." },
-      },
-      required: ["prompt"],
-      additionalProperties: false,
-    },
-  },
-];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -178,26 +161,21 @@ async function generateOpenAiImageArtifact(config: ServerConfig, env: EnvService
   };
 }
 
+export function createOpenAiImageGenerationActionOperations(
+  config: ServerConfig,
+  env: EnvService,
+): OpenAiImageGenerationActionOperations {
+  return {
+    status: () => openAiImageGenerationStatus(env),
+    generate: (args, clientContext) => generateOpenAiImageArtifact(config, env, args, clientContext),
+  };
+}
+
+/** @deprecated Use the image generation action contributions from the server composition root. */
 export async function callOpenAiImageGenerationExtensionAction(config: ServerConfig, env: EnvService, action: string, args: Record<string, unknown>, context: Record<string, unknown>) {
-  if (action === "status") {
-    return {
-      ok: true,
-      extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID,
-      action,
-      result: await openAiImageGenerationStatus(env),
-      context,
-    };
-  }
-  if (action === "image_generate") {
-    const result = await generateOpenAiImageArtifact(config, env, args, context);
-    return {
-      ok: true,
-      extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID,
-      action,
-      path: result.path,
-      result,
-      context,
-    };
-  }
-  return null;
+  const operations = createOpenAiImageGenerationActionOperations(config, env);
+  const contribution = createOpenAiImageGenerationActionContributions(operations)
+    .find((item) => item.descriptor.action === action);
+  if (!contribution?.execute) return null;
+  return contribution.execute({ args, clientContext: context, hostContext: {} });
 }

@@ -35,6 +35,10 @@ const connectStateResponseSchema = z.object({
   googleWorkspace: z.object({ legacyConfigured: z.boolean() }),
 }).passthrough();
 
+const issuedTokenSchema = z.object({
+  token: z.string(),
+}).passthrough();
+
 const gatedCallSchema = z.object({
   ok: z.literal(false),
   error: z.literal("use_openwork_cloud"),
@@ -59,6 +63,20 @@ const googleWorkspaceStatusActionSchema = z.object({
   result: googleWorkspaceStatusSchema,
 }).passthrough();
 
+const generatedImageActionSchema = z.object({
+  ok: z.literal(true),
+  extensionId: z.literal("openai-image-generation"),
+  action: z.literal("image_generate"),
+  path: z.string(),
+  result: z.object({
+    path: z.string(),
+    bytes: z.number(),
+    model: z.string(),
+    workspaceId: z.string(),
+  }).passthrough(),
+  context: z.record(z.string(), z.unknown()),
+}).passthrough();
+
 type ActionItem = z.infer<typeof actionSchema>;
 
 const previousEnv = {
@@ -67,7 +85,9 @@ const previousEnv = {
   legacyGoogleClientSecret: process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
   tokenBrokerUrl: process.env.OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL,
   legacyTokenBrokerUrl: process.env.GOOGLE_WORKSPACE_TOKEN_BROKER_URL,
+  openAiApiKey: process.env.OPENAI_API_KEY,
 };
+const previousFetch = globalThis.fetch;
 
 const stops: Array<() => void | Promise<void>> = [];
 const dirs: string[] = [];
@@ -124,6 +144,16 @@ function clientJsonHeaders() {
 
 function hostJsonHeaders() {
   return { "x-openwork-host-token": HOST_TOKEN, "content-type": "application/json" };
+}
+
+async function issueViewerToken(base: string): Promise<string> {
+  const response = await fetch(`${base}/tokens`, {
+    method: "POST",
+    headers: hostJsonHeaders(),
+    body: JSON.stringify({ scope: "viewer", label: "extension-action-test" }),
+  });
+  expect(response.status).toBe(201);
+  return (await readSchema(response, issuedTokenSchema)).token;
 }
 
 async function readSchema<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
@@ -191,6 +221,27 @@ function expectAllActions(actions: ActionItem[]) {
   expect(actions.filter((action) => action.extensionId === "openai-image-generation")).toHaveLength(2);
 }
 
+function expectActionOrder(actions: ActionItem[]) {
+  expect(actions.map((action) => `${action.extensionId}/${action.action}`)).toEqual([
+    "google-workspace/status",
+    "google-workspace/calendar_list_events",
+    "google-workspace/gmail_create_draft",
+    "google-workspace/gmail_create_reply_draft",
+    "google-workspace/gmail_list_messages",
+    "google-workspace/gmail_get_message",
+    "google-workspace/gmail_download_attachment",
+    "google-workspace/drive_search_files",
+    "google-workspace/drive_read_file",
+    "google-workspace/drive_update_file",
+    "google-workspace/calendar_create_event",
+    "google-workspace/chat_list_spaces",
+    "google-workspace/chat_list_messages",
+    "google-workspace/chat_send_message",
+    "openai-image-generation/status",
+    "openai-image-generation/image_generate",
+  ]);
+}
+
 beforeEach(() => {
   clearLegacyGoogleWorkspaceEnv();
 });
@@ -208,14 +259,78 @@ afterEach(async () => {
   restoreEnv("OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.legacyGoogleClientSecret);
   restoreEnv("OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL", previousEnv.tokenBrokerUrl);
   restoreEnv("GOOGLE_WORKSPACE_TOKEN_BROKER_URL", previousEnv.legacyTokenBrokerUrl);
+  restoreEnv("OPENAI_API_KEY", previousEnv.openAiApiKey);
+  globalThis.fetch = previousFetch;
 });
 
 describe("Connect-aware legacy extension gating", () => {
   test("defaults to unchanged legacy extension behavior when no connect state file exists", async () => {
     const { base } = await boot();
 
-    expectAllActions(await listActions(base));
+    const actions = await listActions(base);
+    expectAllActions(actions);
+    expectActionOrder(actions);
     await expectLegacyCallPassesThrough(base);
+  });
+
+  test("rejects viewer calls before parsing their request body", async () => {
+    const { base } = await boot();
+    const viewerToken = await issueViewerToken(base);
+
+    const viewer = await fetch(`${base}/experimental/extensions/call`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${viewerToken}`, "content-type": "application/json" },
+      body: "{not-json",
+    });
+    expect(viewer.status).toBe(403);
+    expect(await readSchema(viewer, apiErrorSchema)).toEqual({
+      code: "forbidden",
+      message: "Viewer tokens cannot call extension actions",
+    });
+
+    const collaborator = await fetch(`${base}/experimental/extensions/call`, {
+      method: "POST",
+      headers: clientJsonHeaders(),
+      body: "{not-json",
+    });
+    expect(collaborator.status).toBe(400);
+    expect(await readSchema(collaborator, apiErrorSchema)).toEqual({
+      code: "invalid_json",
+      message: "Invalid JSON body",
+    });
+  });
+
+  test("preserves image generation path at both the top level and in the result", async () => {
+    process.env.OPENAI_API_KEY = "test-image-key";
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url === "https://api.openai.com/v1/images/generations") {
+          return new Response(JSON.stringify({
+            data: [{ b64_json: Buffer.from("fake png bytes").toString("base64") }],
+          }), { status: 200 });
+        }
+        return previousFetch(input, init);
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+    const { base, config } = await boot();
+
+    const response = await fetch(`${base}/experimental/extensions/call`, {
+      method: "POST",
+      headers: clientJsonHeaders(),
+      body: JSON.stringify({
+        extensionId: "openai-image-generation",
+        action: "image_generate",
+        args: { prompt: "A quiet lake", filename: "quiet-lake" },
+        context: { directory: config.workspaces[0]?.path },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const payload = await readSchema(response, generatedImageActionSchema);
+    expect(payload.path).toBe("artifacts/quiet-lake.png");
+    expect(payload.result.path).toBe(payload.path);
+    expect(payload.context).toEqual({ directory: config.workspaces[0]?.path });
   });
 
   test("keeps legacy extension behavior unchanged when connectEnabled is false", async () => {

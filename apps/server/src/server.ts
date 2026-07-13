@@ -24,6 +24,8 @@ import { defaultWorkspaceOpenworkConfig, ensureWorkspaceFiles, readRawOpencodeCo
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { EnvService } from "./env-file.js";
+import type { ExtensionActionService } from "./extensions/action-contract.js";
+import { createServerExtensionActionService } from "./extensions/composition.js";
 import {
   normalizeResourceSnapshot,
   readDesktopCloudSyncState,
@@ -663,6 +665,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
   const env = new EnvService();
+  const extensionActions = createServerExtensionActionService(config, env);
   const logger = createServerLogger(config);
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   const refreshWorkspaceReloadBaseline = (workspaceId: string, reasons?: ReloadReason[]) =>
@@ -672,7 +675,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     watcherHandle.close();
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   };
-  const routes = createRoutes(config, approvals, tokens, env, restartReloadWatchers);
+  const routes = createRoutes(config, approvals, tokens, env, extensionActions, restartReloadWatchers);
 
   const serverOptions: {
     hostname: string;
@@ -1302,6 +1305,7 @@ function createRoutes(
   approvals: ApprovalService,
   tokens: TokenService,
   env: EnvService,
+  extensionActions: ExtensionActionService,
   onWorkspacesChanged: () => void,
 ): Route[] {
   const routes: Route[] = [];
@@ -1310,6 +1314,7 @@ function createRoutes(
     config,
     tokens,
     env,
+    extensionActions,
     serverVersion: SERVER_VERSION,
     opencodeVersion: OPENCODE_VERSION,
     jsonResponse,

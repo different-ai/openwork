@@ -15,7 +15,7 @@ import {
   googleWorkspaceStatus,
   googleWorkspaceTestConnection,
 } from "../extensions/google-workspace.js";
-import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "../extensions/index.js";
+import type { ExtensionActionService } from "../extensions/action-contract.js";
 import type { TokenService } from "../tokens.js";
 import {
   TOY_UI_CSS,
@@ -40,6 +40,7 @@ interface RegisterCoreRoutesOptions {
   config: ServerConfig;
   tokens: TokenService;
   env: EnvService;
+  extensionActions: ExtensionActionService;
   serverVersion: string;
   opencodeVersion: string;
   jsonResponse: JsonResponse;
@@ -66,6 +67,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     config,
     tokens,
     env,
+    extensionActions,
     serverVersion,
     opencodeVersion,
     jsonResponse,
@@ -288,7 +290,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsonResponse({
       ok: true,
       schemaVersion: 1,
-      actions: listExperimentalExtensionActions(extensionId, connectSnapshot),
+      actions: extensionActions.list(extensionId, { connectSnapshot }),
     });
   });
 
@@ -297,7 +299,8 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       throw new ApiError(403, "forbidden", "Viewer tokens cannot call extension actions");
     }
     const body = await readJsonBody(ctx.request);
-    return jsonResponse(await callExperimentalExtensionAction(config, env, body, await getConnectSnapshot(config)));
+    const connectSnapshot = await getConnectSnapshot(config);
+    return jsonResponse(await extensionActions.call(body, { connectSnapshot }));
   });
 
   addRoute(routes, "GET", "/experimental/google-workspace/status", "client", async () => {

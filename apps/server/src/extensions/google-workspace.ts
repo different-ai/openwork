@@ -6,8 +6,16 @@ import { homedir } from "node:os";
 
 import { ApiError } from "../errors.js";
 import type { ServerConfig } from "../types.js";
+import {
+  createGoogleWorkspaceActionContributions,
+  GOOGLE_WORKSPACE_EXTENSION_ID,
+  type GoogleWorkspaceActionOperations,
+} from "./google-workspace-actions.js";
 
-export const GOOGLE_WORKSPACE_EXTENSION_ID = "google-workspace";
+export {
+  GOOGLE_WORKSPACE_EXTENSION_ACTIONS,
+  GOOGLE_WORKSPACE_EXTENSION_ID,
+} from "./google-workspace-actions.js";
 
 const GOOGLE_WORKSPACE_DESKTOP_CLIENT_ID = "929071212606-pmkqimjhm2tnp68kbklnout0irllj99h.apps.googleusercontent.com";
 const GOOGLE_WORKSPACE_CLIENT_ID_ENV = "OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID";
@@ -44,230 +52,6 @@ export type GoogleWorkspaceOptionalFeature = keyof typeof GOOGLE_WORKSPACE_OPTIO
 function isGoogleWorkspaceOptionalFeature(value: string): value is GoogleWorkspaceOptionalFeature {
   return Object.hasOwn(GOOGLE_WORKSPACE_OPTIONAL_FEATURES, value);
 }
-
-export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "status",
-    title: "Google Workspace status",
-    description: "Check whether Google Workspace is connected and ready for OpenWork extension actions.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "calendar_list_events",
-    title: "List calendar events",
-    description: "List events from the connected Google Calendar account for a requested time range.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        timeMin: { type: "string", description: "Inclusive ISO datetime lower bound." },
-        timeMax: { type: "string", description: "Exclusive ISO datetime upper bound." },
-        maxResults: { type: "number", description: "Maximum events to return." },
-      },
-      required: ["timeMin", "timeMax"],
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "gmail_create_draft",
-    title: "Create Gmail draft",
-    description: "Create a Gmail draft for the connected account. This does not send email.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        to: { type: "array", items: { type: "string" }, description: "Recipient email addresses." },
-        cc: { type: "array", items: { type: "string" }, description: "Optional CC recipients." },
-        bcc: { type: "array", items: { type: "string" }, description: "Optional BCC recipients." },
-        subject: { type: "string", description: "Draft subject." },
-        body: { type: "string", description: "Plain text draft body." },
-        attachments: {
-          type: "array",
-          description: "Optional local files to attach. Paths may be relative to the active workspace/directory or absolute under an authorized workspace root.",
-          items: {
-            type: "object",
-            properties: {
-              path: { type: "string", description: "Workspace-relative path or authorized absolute file path." },
-              filename: { type: "string", description: "Optional attachment filename shown in Gmail." },
-              mimeType: { type: "string", description: "Optional attachment MIME type. Defaults from the file extension when possible." },
-            },
-            required: ["path"],
-            additionalProperties: false,
-          },
-        },
-      },
-      required: ["to", "subject", "body"],
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "gmail_create_reply_draft",
-    title: "Create Gmail reply draft",
-    description: "Create a Gmail draft reply in an existing thread. This does not send email. Requires Gmail read access (gmail.readonly scope).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        messageId: { type: "string", description: "Gmail message id to reply to." },
-        body: { type: "string", description: "Plain text reply body." },
-        replyAll: { type: "boolean", description: "Reply to everyone on the original message. Defaults to true." },
-      },
-      required: ["messageId", "body"],
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "gmail_list_messages",
-    title: "List Gmail messages",
-    description: "List recent Gmail messages for the connected account. Requires Gmail read access (gmail.readonly scope).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Optional Gmail search query, e.g. 'is:unread' or 'from:someone@example.com'." },
-        maxResults: { type: "number", description: "Maximum messages to return." },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "gmail_get_message",
-    title: "Read Gmail message",
-    description: "Read a Gmail message by id, including its plain text body and attachment metadata. Requires Gmail read access (gmail.readonly scope).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        messageId: { type: "string", description: "Gmail message id." },
-      },
-      required: ["messageId"],
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "gmail_download_attachment",
-    title: "Download Gmail attachment",
-    description: "Download a Gmail attachment by message id and attachment id. Returns base64-encoded attachment bytes. Requires Gmail read access (gmail.readonly scope).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        messageId: { type: "string", description: "Gmail message id." },
-        attachmentId: { type: "string", description: "Gmail attachment id from gmail_get_message attachment metadata." },
-      },
-      required: ["messageId", "attachmentId"],
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "drive_search_files",
-    title: "Search Drive files",
-    description: "Search files available to OpenWork through the connected Google Drive scope. With full Drive access enabled, this searches the entire Drive.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Search text." },
-        maxResults: { type: "number", description: "Maximum files to return." },
-      },
-      required: ["query"],
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "drive_read_file",
-    title: "Read Drive file",
-    description: "Read a Drive file available to OpenWork by file id.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        fileId: { type: "string", description: "Google Drive file id." },
-      },
-      required: ["fileId"],
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "drive_update_file",
-    title: "Update Drive file",
-    description: "Replace the plain text content of a Drive file available to OpenWork by file id.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        fileId: { type: "string", description: "Google Drive file id." },
-        content: { type: "string", description: "New plain text content for the file." },
-      },
-      required: ["fileId", "content"],
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "calendar_create_event",
-    title: "Create calendar event",
-    description: "Create an event on the connected Google Calendar. Requires calendar editing access (calendar.events scope).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        summary: { type: "string", description: "Event title." },
-        description: { type: "string", description: "Optional event description." },
-        location: { type: "string", description: "Optional event location." },
-        start: { type: "string", description: "Event start as ISO datetime." },
-        end: { type: "string", description: "Event end as ISO datetime." },
-        timeZone: { type: "string", description: "Optional IANA time zone, e.g. 'Europe/Paris'." },
-        attendees: { type: "array", items: { type: "string" }, description: "Optional attendee email addresses." },
-      },
-      required: ["summary", "start", "end"],
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "chat_list_spaces",
-    title: "List Google Chat spaces",
-    description: "List Google Chat spaces for the connected account. Requires Google Chat access.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        maxResults: { type: "number", description: "Maximum spaces to return." },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "chat_list_messages",
-    title: "List Google Chat messages",
-    description: "List recent messages in a Google Chat space. Requires Google Chat access.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        spaceId: { type: "string", description: "Chat space id or resource name, e.g. 'spaces/AAAA1234'." },
-        maxResults: { type: "number", description: "Maximum messages to return." },
-      },
-      required: ["spaceId"],
-      additionalProperties: false,
-    },
-  },
-  {
-    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
-    action: "chat_send_message",
-    title: "Send Google Chat message",
-    description: "Send a text message to a Google Chat space. Requires Google Chat access.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        spaceId: { type: "string", description: "Chat space id or resource name, e.g. 'spaces/AAAA1234'." },
-        text: { type: "string", description: "Message text." },
-      },
-      required: ["spaceId", "text"],
-      additionalProperties: false,
-    },
-  },
-];
 
 type GoogleWorkspaceFlow = {
   flowId: string;
@@ -1178,30 +962,44 @@ async function googleWorkspaceSendChatMessage(config: ServerConfig, args: Record
   });
 }
 
+export function createGoogleWorkspaceActionOperations(config: ServerConfig): GoogleWorkspaceActionOperations {
+  return {
+    status: (extra) => googleWorkspaceStatus(config, extra),
+    calendarListEvents: (args) => googleWorkspaceListEvents(config, args),
+    gmailCreateDraft: (args, clientContext) => googleWorkspaceCreateDraft(config, args, clientContext),
+    gmailCreateReplyDraft: (args) => googleWorkspaceCreateReplyDraft(config, args),
+    gmailListMessages: (args) => googleWorkspaceListMessages(config, args),
+    gmailGetMessage: (args) => googleWorkspaceGetMessage(config, args),
+    gmailDownloadAttachment: (args) => googleWorkspaceDownloadAttachment(config, args),
+    driveSearchFiles: (args) => googleWorkspaceSearchFiles(config, args),
+    driveReadFile: (args) => googleWorkspaceReadFile(config, args),
+    driveUpdateFile: (args) => googleWorkspaceUpdateFile(config, args),
+    calendarCreateEvent: (args) => googleWorkspaceCreateEvent(config, args),
+    chatListSpaces: (args) => googleWorkspaceListChatSpaces(config, args),
+    chatListMessages: (args) => googleWorkspaceListChatMessages(config, args),
+    chatSendMessage: (args) => googleWorkspaceSendChatMessage(config, args),
+  };
+}
+
+/** @deprecated Use the Google Workspace action contributions from the server composition root. */
 export async function callGoogleWorkspaceExtensionAction(config: ServerConfig, action: string, args: Record<string, unknown>, context: Record<string, unknown>, statusExtra: Record<string, unknown> = {}) {
+  const operations = createGoogleWorkspaceActionOperations(config);
   if (action === "status") {
     return {
       ok: true,
       extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
       action,
-      result: await googleWorkspaceStatus(config, statusExtra),
+      result: await operations.status(statusExtra),
       context,
     };
   }
-  if (action === "calendar_list_events") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceListEvents(config, args), context };
-  if (action === "gmail_create_draft") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceCreateDraft(config, args, context), context };
-  if (action === "gmail_create_reply_draft") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceCreateReplyDraft(config, args), context };
-  if (action === "gmail_list_messages") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceListMessages(config, args), context };
-  if (action === "gmail_get_message") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceGetMessage(config, args), context };
-  if (action === "gmail_download_attachment") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceDownloadAttachment(config, args), context };
-  if (action === "drive_search_files") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceSearchFiles(config, args), context };
-  if (action === "drive_read_file") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceReadFile(config, args), context };
-  if (action === "drive_update_file") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceUpdateFile(config, args), context };
-  if (action === "calendar_create_event") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceCreateEvent(config, args), context };
-  if (action === "chat_list_spaces") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceListChatSpaces(config, args), context };
-  if (action === "chat_list_messages") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceListChatMessages(config, args), context };
-  if (action === "chat_send_message") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceSendChatMessage(config, args), context };
-  return null;
+  const contribution = createGoogleWorkspaceActionContributions(operations, {
+    isGated: () => false,
+    guidance: () => "",
+    statusExtra: () => statusExtra,
+  }).find((item) => item.descriptor.action === action);
+  if (!contribution?.execute) return null;
+  return contribution.execute({ args, clientContext: context, hostContext: {} });
 }
 
 export async function googleWorkspaceStatus(config: ServerConfig, extra: Record<string, unknown> = {}) {
