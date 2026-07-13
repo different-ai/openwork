@@ -12,9 +12,6 @@ import { pathToFileURL } from "node:url";
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
 const DIRECT_RUNTIME = "direct";
-const ORCHESTRATOR_RUNTIME = "openwork-orchestrator";
-const OPENWORK_SERVER_PORT_RANGE_START = 48_000;
-const OPENWORK_SERVER_PORT_RANGE_END = 51_000;
 
 function truncateOutput(value, limit = 8000) {
   const text = String(value ?? "");
@@ -182,24 +179,6 @@ function snapshotOpenworkServerState(state) {
     lastStdout: state.lastStdout,
     lastStderr: state.lastStderr,
     managedOpencodeExecution: state.managedOpencodeExecution,
-  };
-}
-
-const SECRET_ENV_PATTERN = /(TOKEN|PASSWORD|USERNAME|AUTH|SECRET|KEY|CREDENTIAL)/i;
-
-function redactedExecutionSnapshot(command, args, cwd, injectedEnv) {
-  return {
-    command,
-    args: [...args],
-    cwd,
-    env: Object.entries(injectedEnv ?? {})
-      .filter((entry) => typeof entry[1] === "string")
-      .map(([name, value]) => ({
-        name,
-        value: SECRET_ENV_PATTERN.test(name) ? "<redacted>" : value,
-        redacted: SECRET_ENV_PATTERN.test(name),
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name)),
   };
 }
 
@@ -625,16 +604,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return readJsonFile(orchestratorStatePath(dataDir), null);
   }
 
-  async function readOrchestratorAuthFile(dataDir) {
-    return readJsonFile(orchestratorAuthPath(dataDir), null);
-  }
-
-  async function writeOrchestratorAuthFile(dataDir, auth) {
-    const filePath = orchestratorAuthPath(dataDir);
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, `${JSON.stringify({ ...auth, updatedAt: nowMs() }, null, 2)}\n`, "utf8");
-  }
-
   async function clearOrchestratorAuthFile(dataDir) {
     await rm(orchestratorAuthPath(dataDir), { force: true });
   }
@@ -1014,36 +983,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return `curl -fsSL https://opencode.ai/install | bash -s -- --version ${version} --no-modify-path`;
   }
 
-  function spawnManagedChild(state, program, args, options = {}) {
-    const child = spawn(program, args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-
-    state.child = child;
-    state.childExited = false;
-    state.lastStdout = null;
-    state.lastStderr = null;
-
-    child.stdout?.on("data", (chunk) => appendOutput(state, "lastStdout", chunk.toString()));
-    child.stderr?.on("data", (chunk) => appendOutput(state, "lastStderr", chunk.toString()));
-    child.on("exit", (code) => {
-      state.childExited = true;
-      if (code != null && code !== 0) {
-        appendOutput(state, "lastStderr", `Process exited with code ${code}.\n`);
-      }
-      options.onExit?.(code);
-    });
-    child.on("error", (error) => {
-      state.childExited = true;
-      appendOutput(state, "lastStderr", `${error instanceof Error ? error.message : String(error)}\n`);
-    });
-
-    return child;
-  }
-
   function processMatchesSidecar(command) {
     return commandMatchesPackagedSidecar(command, sidecarDirs);
   }
@@ -1122,10 +1061,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       `${JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2)}\n`,
       "utf8",
     );
-  }
-
-  function generateManagedCredentials() {
-    return [randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, ""), randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "")];
   }
 
   async function issueOwnerToken(baseUrl, hostToken) {
@@ -1282,137 +1217,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       await persistPreferredOpenworkPort(activeWorkspace, boundPort);
     }
     return snapshotOpenworkServerState(openworkServerState);
-  }
-
-  async function resolveOrchestratorBaseUrl() {
-    if (orchestratorState.baseUrl) {
-      return orchestratorState.baseUrl;
-    }
-    const stateFile = await readOrchestratorStateFile(orchestratorState.dataDir || orchestratorDataDir());
-    const baseUrl = stateFile?.daemon?.baseUrl?.trim();
-    if (!baseUrl) {
-      throw new Error("orchestrator daemon is not running");
-    }
-    return baseUrl;
-  }
-
-  async function startOrchestratorRuntime(projectDir, options = {}) {
-    const dataDir = orchestratorDataDir();
-    await mkdir(dataDir, { recursive: true });
-    const daemonPort = await findFreePort("127.0.0.1");
-    const opencodePort = await findFreePort("127.0.0.1");
-    const [username, password] = generateManagedCredentials();
-
-    const orchestratorProgram = resolveBinary("openwork-orchestrator") ?? resolveBinary("openwork");
-    if (!orchestratorProgram) {
-      throw new Error("Failed to locate openwork-orchestrator.");
-    }
-
-    const opencodeBinary = resolveOpencodeBinary(options.opencodeBinPath);
-    if (!opencodeBinary?.path) {
-      throw new Error("Failed to locate opencode.");
-    }
-
-    const env = await buildChildEnv({
-      OPENWORK_INTERNAL_ALLOW_OPENCODE_CREDENTIALS: "1",
-      OPENWORK_OPENCODE_USERNAME: username,
-      OPENWORK_OPENCODE_PASSWORD: password,
-      ...(options.opencodeEnableExa !== false ? { OPENCODE_ENABLE_EXA: "1" } : {}),
-    });
-
-    const args = [
-      "daemon",
-      "run",
-      "--data-dir",
-      dataDir,
-      "--daemon-host",
-      "127.0.0.1",
-      "--daemon-port",
-      String(daemonPort),
-      "--opencode-bin",
-      opencodeBinary.path,
-      "--opencode-host",
-      "127.0.0.1",
-      "--opencode-workdir",
-      projectDir,
-      "--opencode-port",
-      String(opencodePort),
-      "--allow-external",
-      "--cors",
-      "*",
-    ];
-
-    spawnManagedChild(orchestratorState, orchestratorProgram, args, { env });
-    orchestratorState.dataDir = dataDir;
-    orchestratorState.daemonPort = daemonPort;
-    orchestratorState.baseUrl = `http://127.0.0.1:${daemonPort}`;
-
-    await writeOrchestratorAuthFile(dataDir, {
-      opencodeUsername: username,
-      opencodePassword: password,
-      projectDir,
-    });
-
-    const health = await waitForHttpOk(`${orchestratorState.baseUrl}/health`, 180_000).then((response) => response.json());
-    const opencode = health?.opencode;
-    if (!opencode?.port) {
-      throw new Error("Orchestrator did not report OpenCode status.");
-    }
-
-    engineState.runtime = ORCHESTRATOR_RUNTIME;
-    engineState.projectDir = projectDir;
-    engineState.hostname = "127.0.0.1";
-    engineState.port = opencode.port;
-    engineState.baseUrl = `http://127.0.0.1:${opencode.port}`;
-    engineState.opencodeUsername = username;
-    engineState.opencodePassword = password;
-    engineState.opencodeBinPath = opencodeBinary.path;
-    engineState.opencodeBinSource = opencodeBinary.source;
-
-    return snapshotEngineState(engineState);
-  }
-
-  async function startDirectRuntime(projectDir, options = {}) {
-    const opencodeBinary = resolveOpencodeBinary(options.opencodeBinPath);
-    if (!opencodeBinary?.path) {
-      throw new Error("Failed to locate opencode.");
-    }
-
-    const port = await findFreePort("127.0.0.1");
-    const [username, password] = generateManagedCredentials();
-    const env = await buildChildEnv({
-      OPENCODE_SERVER_USERNAME: username,
-      OPENCODE_SERVER_PASSWORD: password,
-    });
-
-    const args = ["serve", "--hostname", "127.0.0.1", "--port", String(port), "--cors", "*"];
-    engineState.execution = redactedExecutionSnapshot(opencodeBinary.path, args, projectDir, {
-      OPENCODE_SERVER_USERNAME: username,
-      OPENCODE_SERVER_PASSWORD: password,
-    });
-
-    spawnManagedChild(
-      engineState,
-      opencodeBinary.path,
-      args,
-      {
-        cwd: projectDir,
-        env,
-      },
-    );
-
-    engineState.runtime = DIRECT_RUNTIME;
-    engineState.projectDir = projectDir;
-    engineState.hostname = "127.0.0.1";
-    engineState.port = port;
-    engineState.baseUrl = `http://127.0.0.1:${port}`;
-    engineState.opencodeUsername = username;
-    engineState.opencodePassword = password;
-    engineState.opencodeBinPath = opencodeBinary.path;
-    engineState.opencodeBinSource = opencodeBinary.source;
-
-    await waitForHttpOk(`${engineState.baseUrl}/health`, 10_000).catch(() => undefined);
-    return snapshotEngineState(engineState);
   }
 
   async function stopAllRuntimeChildren() {
