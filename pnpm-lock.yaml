@@ -819,9 +819,6 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
-      '@openwork/enterprise-mcp-mock-server':
-        specifier: workspace:*
-        version: link:../enterprise-mcp-mock-server
       '@types/node':
         specifier: ^20.11.30
         version: 20.12.12
@@ -841,6 +838,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@openwork/enterprise-mcp-client':
+        specifier: workspace:*
+        version: link:../enterprise-mcp-client
       '@types/node':
         specifier: ^20.11.30
         version: 20.12.12

@@ -16,7 +16,7 @@ import {
   type EnterpriseMcpOAuthClientRegistration,
   type EnterpriseMcpOAuthCredential,
   type EnterpriseMcpOAuthPersistence,
-} from "../src/index.js"
+} from "@openwork/enterprise-mcp-client"
 
 const correctClientSecret = "synthetic-test-client-secret-32-bytes"
 const wrongClientSecret = "wrong-secret-must-not-be-echoed"
