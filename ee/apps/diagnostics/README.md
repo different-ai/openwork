@@ -59,19 +59,19 @@ Set these production environment variables:
 | `DIAGNOSTICS_SIGNING_SECRET` | Signs short-lived synthetic OAuth access tokens and stateless MCP session IDs, at least 32 characters. |
 | `DIAGNOSTICS_MCP_BEARER_TOKEN` | Synthetic diagnostic token shared with the test Den or client, at least 24 characters. Never use a provider/customer credential. |
 | `DIAGNOSTICS_PROFILE` | `generic`, `microsoft`, or `servicenow`. |
-| `NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` | Fixed production origin, normally `https://diagnostic.openwork.software`. Preview deployments use Vercel's deployment-specific `VERCEL_URL` instead. |
+| `NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` | Fixed production origin, normally `https://diagnostic.openworklabs.com`. Preview deployments use Vercel's deployment-specific `VERCEL_URL` instead. |
 
 Keep Vercel's **Automatically expose System Environment Variables** setting
 enabled. Preview deployments derive their OAuth and MCP resource URLs from the
 deployment-specific `VERCEL_URL`; production continues to require the fixed
 `NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` allowlist hostname.
 
-Attach `diagnostic.openwork.software` in the project's Vercel **Domains**
+Attach `diagnostic.openworklabs.com` in the project's Vercel **Domains**
 settings, then create the CNAME value Vercel provides at the DNS provider. The
 stable customer allowlist entry is the same host; the MCP URL is:
 
 ```text
-https://diagnostic.openwork.software/mcp
+https://diagnostic.openworklabs.com/mcp
 ```
 
 Before enabling public DNS, add Vercel Firewall rate-limit rules for `/mcp`,
@@ -89,7 +89,7 @@ reused. `/health` reports only configuration names, never values.
 After the production deployment is promoted, verify all of the following
 before sharing the allowlist hostname:
 
-1. `GET https://diagnostic.openwork.software/health` returns HTTP 200 and
+1. `GET https://diagnostic.openworklabs.com/health` returns HTTP 200 and
    `{"service":"openwork-diagnostics","status":"ok"}`.
 2. The dashboard returns HTTP 401 without Basic authentication and HTTP 200
    with the configured administrator credentials.
@@ -132,11 +132,12 @@ HTTP reached OpenWork. If a row exists, its response status and next missing
 step narrow the issue to proxy authentication, header stripping, redirects,
 OAuth, or MCP.
 
-For a customer-hosted Den, the operator sets the same synthetic secret and the
-stable public origin:
+For a customer-hosted Den, the operator sets the same synthetic secret. Den
+uses `https://diagnostic.openworklabs.com` by default; set
+`DEN_DIAGNOSTICS_ORIGIN` only to override that fixed destination:
 
 ```dotenv
-DEN_DIAGNOSTICS_ORIGIN=https://diagnostic.openwork.software
+DEN_DIAGNOSTICS_ORIGIN=https://diagnostic.openworklabs.com
 DEN_DIAGNOSTICS_BEARER_TOKEN=<same synthetic diagnostic token>
 ```
 

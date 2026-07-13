@@ -6,6 +6,8 @@ import { denApiAppVersion } from "./version.js"
 import { parseEnterpriseMcpClientEnabled } from "./enterprise-mcp-client-flag.js"
 import { z } from "zod"
 
+export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
+
 const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
   DATABASE_HOST: z.string().min(1).optional(),
@@ -228,8 +230,7 @@ function normalizeOrigin(origin: string) {
 }
 
 function normalizeDiagnosticsOrigin(value: string | undefined, allowInsecureHttp: boolean) {
-  const configured = optionalString(value)
-  if (!configured) return undefined
+  const configured = optionalString(value) ?? DEFAULT_DEN_DIAGNOSTICS_ORIGIN
 
   let url: URL
   try {

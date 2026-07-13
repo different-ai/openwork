@@ -19,11 +19,10 @@ const unavailableSchema = z.object({
 
 export function egressDiagnosticConfiguration(): EgressDiagnosticConfiguration {
   const missingConfiguration: EgressDiagnosticConfiguration["missingConfiguration"] = []
-  if (!env.diagnostics.origin) missingConfiguration.push("DEN_DIAGNOSTICS_ORIGIN")
   if (!env.diagnostics.bearerToken) missingConfiguration.push("DEN_DIAGNOSTICS_BEARER_TOKEN")
   return {
     available: missingConfiguration.length === 0,
-    targetOrigin: env.diagnostics.origin ?? null,
+    targetOrigin: env.diagnostics.origin,
     missingConfiguration,
   }
 }
@@ -61,7 +60,7 @@ export function registerOrgEgressDiagnosticRoutes<T extends { Variables: OrgRout
     orgRoleRoute(["admin"]),
     async (c) => {
       const configuration = egressDiagnosticConfiguration()
-      if (!configuration.available || !env.diagnostics.origin || !env.diagnostics.bearerToken) {
+      if (!configuration.available || !env.diagnostics.bearerToken) {
         return c.json({
           error: "egress_diagnostics_not_configured" as const,
           missingConfiguration: configuration.missingConfiguration,

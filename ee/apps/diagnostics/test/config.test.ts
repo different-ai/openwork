@@ -16,7 +16,7 @@ function configureHostedEnvironment(): void {
   process.env.DIAGNOSTICS_SIGNING_SECRET = "diagnostics-signing-secret-that-is-unique"
   process.env.DIAGNOSTICS_MCP_BEARER_TOKEN = "diagnostics-bearer-token-unique"
   process.env.DIAGNOSTICS_PROFILE = "servicenow"
-  process.env.NEXT_PUBLIC_DIAGNOSTICS_ORIGIN = "https://diagnostic.openwork.software"
+  process.env.NEXT_PUBLIC_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
   process.env.UPSTASH_REDIS_REST_URL = "https://synthetic-redis.example"
   process.env.UPSTASH_REDIS_REST_TOKEN = "synthetic-redis-token"
   delete process.env.KV_REST_API_URL

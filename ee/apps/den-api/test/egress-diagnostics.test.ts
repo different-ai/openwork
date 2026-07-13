@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 import {
   EGRESS_DIAGNOSTIC_ID_HEADER,
   EGRESS_DIAGNOSTIC_RUN_HEADER,
@@ -9,6 +12,37 @@ import {
 import { runEgressDiagnostic } from "../src/egress-diagnostics"
 
 const origin = "https://diagnostic.openwork.test"
+const denApiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+
+function expectConfiguredOrigin(expectedOrigin: string, configuredOrigin?: string): void {
+  const result = spawnSync(process.execPath, ["--conditions", "development", "--eval", `
+    const { env } = await import("./src/env.ts")
+    if (env.diagnostics.origin !== process.env.TEST_EXPECTED_ORIGIN) {
+      throw new Error(\`Expected diagnostics origin \${process.env.TEST_EXPECTED_ORIGIN}, got \${env.diagnostics.origin}\`)
+    }
+  `], {
+    cwd: denApiRoot,
+    encoding: "utf8",
+    env: {
+      PATH: process.env.PATH ?? "",
+      HOME: process.env.HOME ?? "",
+      TMPDIR: process.env.TMPDIR ?? "",
+      DATABASE_URL: "mysql://root:password@127.0.0.1:3306/openwork_test",
+      DB_MODE: "mysql",
+      DEN_DB_ENCRYPTION_KEY: "x".repeat(32),
+      BETTER_AUTH_SECRET: "y".repeat(32),
+      BETTER_AUTH_URL: "https://den.openwork.test",
+      OPENWORK_DEV_MODE: "0",
+      PROVISIONER_MODE: "stub",
+      TEST_EXPECTED_ORIGIN: expectedOrigin,
+      ...(configuredOrigin ? { DEN_DIAGNOSTICS_ORIGIN: configuredOrigin } : {}),
+    },
+  })
+
+  if (result.status !== 0) {
+    throw new Error(["Diagnostics origin probe failed", result.stdout, result.stderr].join("\n"))
+  }
+}
 
 function json(value: unknown, status = 200, headers: HeadersInit = {}): Response {
   return Response.json(value, { status, headers: { [EGRESS_DIAGNOSTIC_ID_HEADER]: randomUUID(), ...headers } })
@@ -58,6 +92,11 @@ function healthyDiagnosticFetch(seen: Request[]): typeof fetch {
 }
 
 describe("Den private-cloud egress diagnostic", () => {
+  test("defaults to the OpenWork Labs diagnostic host and accepts an operator override", () => {
+    expectConfiguredOrigin("https://diagnostic.openworklabs.com")
+    expectConfiguredOrigin("https://diagnostic.customer.example", "https://diagnostic.customer.example/")
+  })
+
   test("attributes a healthy HTTP, redirect, OAuth, and MCP story to one run", async () => {
     const seen: Request[] = []
     let clock = Date.parse("2026-07-13T12:00:00.000Z")
