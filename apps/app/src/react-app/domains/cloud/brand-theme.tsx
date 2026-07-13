@@ -84,6 +84,11 @@ export function useBrandLogoUrl(): string | undefined {
   return useOrgRestrictions().brandLogoUrl;
 }
 
+/** Organization-managed display name. It does not change the signed app identity. */
+export function useBrandAppName(): string {
+  return useOrgRestrictions().brandAppName ?? "OpenWork";
+}
+
 const POLICY_NOTIFICATION_DEDUPE = "desktop-policy-active";
 
 /**
@@ -101,7 +106,7 @@ function DesktopPolicyNotificationEffect() {
     const hasRestriction = desktopPolicyKeys.some(
       (key) => config[key] === false,
     );
-    const hasBranding = Boolean(config.brandLogoUrl ?? config.brandAccentColor);
+    const hasBranding = Boolean(config.brandAppName ?? config.brandLogoUrl ?? config.brandAccentColor);
     if (!hasRestriction && !hasBranding) return;
 
     firedRef.current = true;

@@ -228,20 +228,19 @@ jobs:
             exit 0
           fi
 
-          DRAFT_FLAG=""
           PRERELEASE_FLAG=""
-          if [ "${{ steps.resolve.outputs.draft }}" = "true" ]; then
-            DRAFT_FLAG="--draft"
-          fi
           if [ "${{ steps.resolve.outputs.prerelease }}" = "true" ]; then
             PRERELEASE_FLAG="--prerelease"
           fi
 
+          # A new release must never be public while its artifacts are still
+          # building. The final publish-release job is the only place that
+          # removes draft status, after every required asset has been checked.
           gh release create "${{ steps.resolve.outputs.release_tag }}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "${{ steps.resolve.outputs.release_name }}" \
             --notes-file "$BODY_FILE" \
-            $DRAFT_FLAG $PRERELEASE_FLAG
+            --draft $PRERELEASE_FLAG
 
   verify-release:
     name: Verify Release Versions
@@ -845,6 +844,21 @@ jobs:
       tag: ${{ needs.resolve-release.outputs.release_tag }}
     secrets: inherit
 
+  publish-generic-installer:
+    name: Build + Publish Generic Installers
+    needs: [resolve-release, verify-release]
+    if: |
+      needs.resolve-release.result == 'success' &&
+      needs.verify-release.result == 'success' &&
+      needs.resolve-release.outputs.prerelease != 'true'
+    uses: ./.github/workflows/release-generic-installer.yml
+    with:
+      release_tag: ${{ needs.resolve-release.outputs.release_tag }}
+      publish_mode: release
+      platforms: mac-arm64,mac-x64,win-x64
+      sign_windows: ${{ needs.resolve-release.outputs.sign_windows == 'true' }}
+    secrets: inherit
+
   aur-publish:
     name: Publish AUR
     needs: [resolve-release, publish-electron, publish-release]
@@ -908,6 +922,7 @@ jobs:
       - release-orchestrator-sidecars
       - publish-npm
       - publish-daytona-snapshot
+      - publish-generic-installer
     if: |
       always() &&
       needs.resolve-release.result == 'success' &&
@@ -916,7 +931,9 @@ jobs:
       (needs.publish-electron-assets.result == 'success' || needs.publish-electron-assets.result == 'skipped') &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
-      (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')
+      (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped') &&
+      ((needs.resolve-release.outputs.prerelease == 'true' && needs.publish-generic-installer.result == 'skipped') ||
+       (needs.resolve-release.outputs.prerelease != 'true' && needs.publish-generic-installer.result == 'success'))
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
@@ -927,6 +944,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
+          if [ "${RELEASE_PRERELEASE}" != "true" ]; then
+            published_assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+            for required_asset in \
+              openwork-installer-mac-arm64.zip \
+              openwork-installer-mac-x64.zip \
+              openwork-installer-win-x64.exe; do
+              if ! grep -Fxq "$required_asset" <<<"$published_assets"; then
+                echo "Stable release $RELEASE_TAG is missing required generic installer asset: $required_asset" >&2
+                exit 1
+              fi
+            done
+          fi
 
           # Dispatch-based recovery runs default draft=false but may target a
           # draft release created by an earlier tag push; always flip drafts

@@ -50,8 +50,8 @@ export function resolveConnectRowGroup(
   }
 }
 
-export function resolveConnectionRowGroup(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe">): Exclude<ConnectRowGroup, "needs_admin_setup" | "excluded"> {
-  if (connection.credentialMode === "per_member" && !connection.connectedForMe) return "needs_signin";
+export function resolveConnectionRowGroup(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect">): Exclude<ConnectRowGroup, "needs_admin_setup" | "excluded"> {
+  if (connection.credentialMode === "per_member" && (!connection.connectedForMe || connection.needsReconnect === true)) return "needs_signin";
   return "ready";
 }
 

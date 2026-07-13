@@ -84,6 +84,10 @@ export const idTypesMapNameToPrefix = {
   connectedAccount: "cta",
   externalMcpConnection: "emc",
   externalMcpConnectionAccessGrant: "emg",
+  telegramConnection: "tgc",
+  telegramPairing: "tgp",
+  telegramChatBinding: "tgb",
+  telegramUpdate: "tgu",
   memory: "mem",
   memctx: "mctx",
 } as const

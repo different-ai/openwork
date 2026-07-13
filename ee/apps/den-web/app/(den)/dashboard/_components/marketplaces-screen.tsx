@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Cable, Search, Store } from "lucide-react";
-import { PaperMeshGradient } from "@openwork/ui/react";
+import { StaticSeededGradient } from "@openwork/ui/react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenInput } from "../../_components/ui/input";
 import { buttonVariants } from "../../_components/ui/button";
@@ -81,9 +81,7 @@ export function MarketplacesScreen() {
             >
               <div className="flex items-stretch">
                 <div className="relative w-[68px] shrink-0 overflow-hidden">
-                  <div className="absolute inset-0">
-                    <PaperMeshGradient seed={marketplace.id} speed={0} />
-                  </div>
+                  <StaticSeededGradient seed={marketplace.id} className="absolute inset-0" />
                   <div className="relative flex h-full items-center justify-center">
                     <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
                       <MarketplaceLogo

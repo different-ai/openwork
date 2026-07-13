@@ -770,7 +770,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const settings = readDenSettings();
     return [
       settings.baseUrl,
-      settings.apiBaseUrl ?? "",
       settings.activeOrgId?.trim() ?? "",
       settings.authToken?.trim() ?? "",
     ].join("::");
@@ -798,7 +797,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     const client = createDenClient({
       baseUrl: settings.baseUrl,
-      apiBaseUrl: settings.apiBaseUrl,
       token,
     });
     const request = client
@@ -1347,7 +1345,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     try {
       const den = createDenClient({
         baseUrl: settings.baseUrl,
-        apiBaseUrl: settings.apiBaseUrl,
         token,
       });
       const provider = await den.getOrgLlmProviderConnection(orgId, cloudProviderId);
@@ -1499,7 +1496,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const settings = readDenSettings();
     return [
       settings.baseUrl,
-      settings.apiBaseUrl ?? "",
       settings.activeOrgId?.trim() ?? "",
       settings.authToken?.trim() ?? "",
       options.selectedWorkspaceDisplay().workspaceType,

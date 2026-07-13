@@ -390,6 +390,19 @@ export type GoogleWorkspaceAuthStatus = {
     driveFileName: string | null;
     gmailDraftId: string | null;
   } | null;
+  connect?: {
+    enabled: true;
+    cloudMcpPresent: boolean;
+    guidance: string;
+  };
+};
+
+export type OpenworkConnectState = {
+  ok: true;
+  schemaVersion: 1;
+  connectEnabled: boolean;
+  cloudMcpPresent: boolean;
+  googleWorkspace: { legacyConfigured: boolean };
 };
 
 export type GoogleWorkspaceConnectStart = {
@@ -413,13 +426,19 @@ export type OpenworkExtensionActionCall = {
   context?: Record<string, unknown>;
 };
 
-export type OpenworkExtensionActionResult = {
-  ok: boolean;
-  extensionId: string;
-  action: string;
-  result: unknown;
-  context?: Record<string, unknown>;
-};
+export type OpenworkExtensionActionResult =
+  | {
+    ok: true;
+    extensionId: string;
+    action: string;
+    result: unknown;
+    context?: Record<string, unknown>;
+  }
+  | {
+    ok: false;
+    error: string;
+    message: string;
+  };
 
 export type OpenworkResolvedArtifactTarget = {
   id: string;
@@ -1017,6 +1036,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),
+    setConnectState: (connectEnabled: boolean) => requestJson<OpenworkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
     googleWorkspaceConnectStart: (options?: { gmailRead?: boolean; features?: string[] }) => requestJson<GoogleWorkspaceConnectStart>(baseUrl, "/experimental/google-workspace/connect/start", { token, hostToken, method: "POST", body: { gmailRead: options?.gmailRead === true, features: options?.features ?? [] }, timeoutMs: timeouts.status }),
     googleWorkspaceConnectStatus: (flowId: string) => requestJson<GoogleWorkspaceConnectStatus>(baseUrl, `/experimental/google-workspace/connect/status/${encodeURIComponent(flowId)}`, { token, hostToken, timeoutMs: timeouts.status }),
     googleWorkspaceDisconnect: (accountId?: string | null) => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/disconnect", { token, hostToken, method: "POST", body: accountId ? { accountId } : {}, timeoutMs: timeouts.status }),

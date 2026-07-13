@@ -37,6 +37,7 @@ export function DesktopPoliciesScreen() {
     list.sort((a, b) => {
       if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
       if (a.isEnabled !== b.isEnabled) return a.isEnabled ? -1 : 1;
+      if (a.priority !== b.priority) return b.priority - a.priority;
       const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return aTime - bTime;
@@ -97,11 +98,13 @@ export function DesktopPoliciesScreen() {
                 <col className="w-[1%]" />
                 <col className="w-[1%]" />
                 <col className="w-[1%]" />
+                <col className="w-[1%]" />
               </colgroup>
               <thead className="bg-gray-50 text-[12px] uppercase tracking-[0.08em] text-gray-500">
                 <tr>
                   <th scope="col" className="whitespace-nowrap px-4 py-3 font-medium">Name</th>
                   <th scope="col" className="whitespace-nowrap px-4 py-3 font-medium">Enabled</th>
+                  <th scope="col" className="whitespace-nowrap px-4 py-3 font-medium">Priority</th>
                   <th scope="col" className="whitespace-nowrap px-4 py-3 font-medium">Created</th>
                   <th scope="col" className="whitespace-nowrap px-4 py-3 font-medium text-right">
                     <span className="sr-only">Actions</span>
@@ -125,6 +128,9 @@ export function DesktopPoliciesScreen() {
                         <span className={`inline-flex items-center rounded-full px-3 py-1 text-[12px] font-medium ${policy.isEnabled ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
                           {policy.isEnabled ? "Yes" : "No"}
                         </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-4 text-[13px] text-gray-600">
+                        {policy.isDefault ? "Fallback" : policy.priority}
                       </td>
                       <td className="whitespace-nowrap px-4 py-4 text-[13px] text-gray-600">
                         {formatPolicyTimestamp(policy.createdAt)}

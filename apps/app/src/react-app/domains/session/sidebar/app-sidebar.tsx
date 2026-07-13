@@ -38,6 +38,7 @@ import {
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { useBrandLogoUrl } from "../../cloud/brand-theme";
 
 import {
   Sidebar,
@@ -102,7 +103,6 @@ import {
   type SessionGroupDefinition,
 } from "./session-management-store";
 import { cn } from "@/lib/utils";
-import { useBrandLogoUrl } from "../../cloud/brand-theme";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
 
@@ -741,12 +741,12 @@ export function AppSidebar(props: AppSidebarProps) {
         {brandLogoUrl ? (
           <div
             data-testid="brand-logo"
-            className="flex shrink-0 items-center px-3 pb-3 pt-2 mac:pt-0"
+            className="flex h-14 shrink-0 items-center px-3 pb-3 pt-2 mac:pt-0"
           >
             <img
               src={brandLogoUrl}
               alt="Organization logo"
-              className="h-9 max-h-9 w-auto max-w-[180px] object-contain object-left"
+              className="max-h-9 w-auto max-w-[140px] object-contain object-left"
             />
           </div>
         ) : null}

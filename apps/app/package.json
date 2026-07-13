@@ -1,10 +1,10 @@
 {
   "name": "@openwork/app",
   "private": true,
-  "version": "0.17.14",
+  "version": "0.17.22",
   "type": "module",
   "scripts": {
-    "test": "bun test tests/",
+    "test": "bun test --isolate tests/",
     "dev": "OPENWORK_DEV_MODE=1 vite",
     "build": "vite build",
     "dev:web": "OPENWORK_DEV_MODE=1 vite",

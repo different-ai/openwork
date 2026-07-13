@@ -8,6 +8,7 @@ function seedRequiredEnv() {
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
+  process.env.DEN_REQUIRE_EMAIL_VERIFICATION = "true"
 }
 
 let orgRoutesModule: typeof import("../src/routes/org/index.js")
@@ -43,19 +44,18 @@ function createOrgAppWithUser(user: { id: string; email: string; emailVerified: 
   return app
 }
 
-test("unverified accounts may create their own org and invite, but not join one", () => {
-  // Unverified is the only blocked transition: joining someone else's org.
-  expect(validateInvitationAcceptVerification({ emailVerified: false })).toEqual({
+test("deployments with required email verification block unverified joins", () => {
+  expect(validateInvitationAcceptVerification({ emailVerified: false, emailVerificationRequired: true })).toEqual({
     ok: false,
     error: "email_verification_required",
     message: "Verify your email address before joining an organization.",
   })
-  expect(validateInvitationAcceptVerification({ emailVerified: null })).toEqual({
+  expect(validateInvitationAcceptVerification({ emailVerified: null, emailVerificationRequired: true })).toEqual({
     ok: false,
     error: "email_verification_required",
     message: "Verify your email address before joining an organization.",
   })
-  expect(validateInvitationAcceptVerification({ emailVerified: undefined })).toEqual({
+  expect(validateInvitationAcceptVerification({ emailVerified: undefined, emailVerificationRequired: true })).toEqual({
     ok: false,
     error: "email_verification_required",
     message: "Verify your email address before joining an organization.",
@@ -63,7 +63,13 @@ test("unverified accounts may create their own org and invite, but not join one"
 })
 
 test("verified accounts are allowed to join an organization", () => {
-  expect(validateInvitationAcceptVerification({ emailVerified: true })).toEqual({ ok: true })
+  expect(validateInvitationAcceptVerification({ emailVerified: true, emailVerificationRequired: true })).toEqual({ ok: true })
+})
+
+test("deployments without required email verification let invited users join", () => {
+  expect(validateInvitationAcceptVerification({ emailVerified: false, emailVerificationRequired: false })).toEqual({ ok: true })
+  expect(validateInvitationAcceptVerification({ emailVerified: null, emailVerificationRequired: false })).toEqual({ ok: true })
+  expect(validateInvitationAcceptVerification({ emailVerified: undefined, emailVerificationRequired: false })).toEqual({ ok: true })
 })
 
 test("accept-invitation route blocks an unverified user with 403 before touching the database", async () => {

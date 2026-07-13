@@ -1,4 +1,4 @@
-export type CapabilitySource = "rest" | "external_mcp" | "marketplace" | "skills"
+export type CapabilitySource = "rest" | "admin" | "external_mcp" | "marketplace" | "skills"
 
 export type CapabilityMatch = {
   name: string

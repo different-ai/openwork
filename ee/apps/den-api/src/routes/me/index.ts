@@ -1,5 +1,5 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, RateLimitTable } from "@openwork-ee/den-db/schema"
+import { AuthAccountTable, AuthUserTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
@@ -53,6 +53,17 @@ const sendDownloadLinkEmailFailedSchema = z.object({
   message: z.string(),
 }).meta({ ref: "SendDownloadLinkEmailFailedError" })
 
+const updateProfileSchema = z.object({
+  firstName: z.string().trim().max(120),
+  lastName: z.string().trim().max(120),
+}).refine((value) => value.firstName.length > 0 || value.lastName.length > 0, {
+  message: "Enter a first or last name.",
+})
+
+const updateProfileResponseSchema = z.object({
+  user: z.object({}).passthrough(),
+}).meta({ ref: "UpdateCurrentUserProfileResponse" })
+
 const setActiveOrganizationSchema = z.object({
   organizationId: denTypeIdSchema("organization").optional(),
   organizationSlug: z.string().trim().min(1).max(255).optional(),
@@ -98,6 +109,10 @@ function normalizeAuthProvider(providerId: string) {
     return "scim"
   }
   return normalized || "unknown"
+}
+
+function normalizeNamePart(value: string) {
+  return value.replace(/\s+/g, " ").trim()
 }
 
 async function checkDownloadLinkRateLimit(userId: string, now: number) {
@@ -248,6 +263,43 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     },
   )
 
+  app.patch(
+    "/v1/me/profile",
+    describeRoute({
+      tags: ["Users"],
+      summary: "Update current user profile",
+      description: "Updates the signed-in user's display name.",
+      responses: {
+        200: jsonResponse("Current user profile updated successfully.", updateProfileResponseSchema),
+        400: jsonResponse("The profile update request body was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update profile data.", unauthorizedSchema),
+      },
+    }),
+    authenticatedRoute(),
+    jsonValidator(updateProfileSchema),
+    async (c) => {
+      const user = c.get("user")
+      const input = c.req.valid("json")
+      const firstName = normalizeNamePart(input.firstName)
+      const lastName = normalizeNamePart(input.lastName)
+      const name = [firstName, lastName].filter((part) => part.length > 0).join(" ")
+      const updatedAt = new Date()
+
+      await db
+        .update(AuthUserTable)
+        .set({ name, updatedAt })
+        .where(eq(AuthUserTable.id, normalizeDenTypeId("user", user.id)))
+
+      return c.json({
+        user: {
+          ...user,
+          name,
+          updatedAt,
+        },
+      })
+    },
+  )
+
   app.post(
     "/v1/me/active-organization",
     describeRoute({
@@ -328,8 +380,14 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }
           : {}),
+        ...(typeof metadata.brandAppName === "string"
+          ? { brandAppName: metadata.brandAppName }
+          : {}),
         ...(typeof metadata.brandLogoUrl === "string"
           ? { brandLogoUrl: metadata.brandLogoUrl }
+          : {}),
+        ...(typeof metadata.brandIconUrl === "string"
+          ? { brandIconUrl: metadata.brandIconUrl }
           : {}),
         ...(typeof metadata.brandAccentColor === "string"
           ? { brandAccentColor: metadata.brandAccentColor }

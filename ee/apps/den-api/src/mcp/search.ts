@@ -1,5 +1,5 @@
 import { getParameters, hasJsonRequestBody, pathParameterNamesFromTemplate, type McpToolOperation } from "./catalog.js"
-import { rankCapabilities } from "./ranking.js"
+import { rankCapabilities, tokenizeText } from "./ranking.js"
 import type { CapabilityCandidate, CapabilityMatch } from "./ranking.js"
 
 /**
@@ -19,10 +19,58 @@ import type { CapabilityCandidate, CapabilityMatch } from "./ranking.js"
  */
 
 export const SEARCH_CAPABILITIES_TOOL_NAME = "search_capabilities"
+export type SearchCapabilityType = "all" | "api" | "admin" | "mcp" | "marketplace" | "skills"
 
 export type { CapabilityCandidate, CapabilityMatch } from "./ranking.js"
-export { tokenizeText as tokenize } from "./ranking.js"
 
+export function compareCapabilityMatches(a: CapabilityMatch, b: CapabilityMatch): number {
+  const statusPriority = Number("kind" in b && b.kind === "connection_status")
+    - Number("kind" in a && a.kind === "connection_status")
+  return statusPriority || (b.score - a.score) || a.name.localeCompare(b.name)
+}
+
+export function searchCapabilitySourceFilter(type?: SearchCapabilityType) {
+  const capabilityType = type ?? "all"
+  return {
+    api: capabilityType === "all" || capabilityType === "api",
+    admin: capabilityType === "all" || capabilityType === "admin",
+    mcp: capabilityType === "all" || capabilityType === "mcp",
+    marketplace: capabilityType === "all" || capabilityType === "marketplace" || capabilityType === "skills",
+    skills: capabilityType === "all" || capabilityType === "skills",
+  }
+}
+
+export function tokenize(value: string): string[] {
+  return tokenizeText(value)
+}
+
+export function scoreText(
+  nameTokens: string[],
+  summaryTokens: string[],
+  queryTokens: string[],
+  extraTokens: string[] = [],
+): number {
+  let score = 0
+  for (const queryToken of queryTokens) {
+    if (nameTokens.includes(queryToken)) {
+      score += 5
+    } else if (nameTokens.some((token) => token.startsWith(queryToken) || queryToken.startsWith(token))) {
+      score += 3
+    }
+    if (summaryTokens.includes(queryToken)) {
+      score += 2
+    }
+    if (extraTokens.includes(queryToken)) {
+      score += 1
+    }
+  }
+  return score
+}
+
+/**
+ * Splits a camelCase / PascalCase tool name into lowercase word tokens so a
+ * query like "organization" matches a tool named `getOrganizations`.
+ */
 function summaryFor(operation: McpToolOperation): string {
   return operation.operation.summary ?? operation.operation.description ?? `${operation.method} ${operation.path}`
 }

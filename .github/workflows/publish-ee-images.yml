@@ -176,7 +176,42 @@ jobs:
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
-      - name: Build and optionally push
+      - name: Resolve Sentry source-map upload
+        id: sentry_sourcemaps
+        if: ${{ needs.artifact-version.outputs.publish == 'true' && github.event_name != 'pull_request' }}
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          SENTRY_RELEASE: ${{ secrets.SENTRY_RELEASE }}
+        run: |
+          set -euo pipefail
+
+          has_value() {
+            [[ "$1" =~ [^[:space:]] ]]
+          }
+
+          den_api_upload=false
+          den_web_upload=false
+
+          if has_value "$SENTRY_AUTH_TOKEN" && has_value "$SENTRY_ORG" && has_value "$SENTRY_PROJECT" && has_value "$SENTRY_RELEASE"; then
+            den_api_upload=true
+          else
+            echo "Den API Sentry source-map upload disabled: configure SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT, and SENTRY_RELEASE to enable it."
+          fi
+
+          if has_value "$SENTRY_AUTH_TOKEN" && has_value "$SENTRY_ORG" && has_value "$SENTRY_PROJECT"; then
+            den_web_upload=true
+          else
+            echo "Den Web Sentry source-map upload disabled: configure SENTRY_AUTH_TOKEN, SENTRY_ORG, and SENTRY_PROJECT to enable it."
+          fi
+
+          echo "den_api_upload=$den_api_upload" >> "$GITHUB_OUTPUT"
+          echo "den_web_upload=$den_web_upload" >> "$GITHUB_OUTPUT"
+
+      - name: Build and optionally push without Sentry source-map upload
+        if: ${{ matrix.image == 'openwork-inference' || (matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload != 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload != 'true') }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -188,6 +223,34 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          build-args: |
+            ${{ matrix.image == 'openwork-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
+            ${{ matrix.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
+
+      - name: Build and push with Sentry source-map upload
+        if: ${{ (matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true') }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          build-args: |
+            ${{ matrix.image == 'openwork-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
+            ${{ matrix.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
+            ${{ matrix.image == 'openwork-den-api' && format('DEN_SENTRY_UPLOAD_BUILD_ID={0}-{1}', github.run_id, github.run_attempt) || '' }}
+            ${{ matrix.image == 'openwork-den-web' && format('DEN_WEB_SENTRY_UPLOAD_BUILD_ID={0}-{1}', github.run_id, github.run_attempt) || '' }}
+          secrets: |
+            sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}
+            sentry_org=${{ secrets.SENTRY_ORG }}
+            sentry_project=${{ secrets.SENTRY_PROJECT }}
+            sentry_url=${{ secrets.SENTRY_URL }}
+            sentry_release=${{ secrets.SENTRY_RELEASE }}
+            sentry_dist=${{ secrets.SENTRY_DIST }}
 
       - name: Smoke health endpoint
         if: ${{ github.event_name == 'pull_request' }}

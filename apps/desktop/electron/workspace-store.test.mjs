@@ -23,31 +23,37 @@ async function withIsolatedBootstrapStore(callback) {
   const previousHome = process.env.HOME;
   const previousXdg = process.env.XDG_CONFIG_HOME;
   const previousOverride = process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
+  const previousBundleDir = process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR;
   const previousDevMode = process.env.OPENWORK_DEV_MODE;
 
   process.env.HOME = home;
   process.env.XDG_CONFIG_HOME = xdg;
   delete process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
+  delete process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR;
   delete process.env.OPENWORK_DEV_MODE;
 
   try {
     const module = await import(`./workspace-store.mjs?bootstrap-test=${Date.now()}-${Math.random()}`);
-    const store = module.createWorkspaceStore({
+    const createStore = () => module.createWorkspaceStore({
       app: { getPath: (name) => name === "userData" ? path.join(root, "userData") : root },
       defaultDenBaseUrl: "https://default.example.com",
       defaultRequireSignin: false,
       forceRequireSignin: false,
     });
+    const store = createStore();
     return await callback({
       store,
+      createStore,
       canonicalPath: path.join(xdg, "openwork", "desktop-bootstrap.json"),
       legacyPath: path.join(home, ".config", "openwork", "desktop-bootstrap.json"),
+      root,
       userDataPath: path.join(root, "userData"),
     });
   } finally {
     restoreEnv("HOME", previousHome);
     restoreEnv("XDG_CONFIG_HOME", previousXdg);
     restoreEnv("OPENWORK_DESKTOP_BOOTSTRAP_PATH", previousOverride);
+    restoreEnv("OPENWORK_BOOTSTRAP_BUNDLE_DIR", previousBundleDir);
     restoreEnv("OPENWORK_DEV_MODE", previousDevMode);
   }
 }
@@ -102,7 +108,6 @@ test("recovers empty desktop workspace state from token store paths", async () =
     else process.env.OPENWORK_SERVER_CONFIG = previous;
   }
 });
-
 test("prefers server config workspaces when desktop state is empty", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
   const userData = path.join(root, "userData");
@@ -247,6 +252,70 @@ test("desktop bootstrap migrates a newer legacy writtenAt to canonical", async (
   });
 });
 
+test("desktop bootstrap prefers an older legacy organization config over a newer canonical hosted default", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath }) => {
+    await writeBootstrapConfig(canonicalPath, {
+      baseUrl: "https://app.openworklabs.com/api/den/",
+      apiBaseUrl: "https://api.unrelated.example",
+      requireSignin: false,
+      writtenAt: "2026-07-10T13:00:00.000Z",
+    });
+    await writeBootstrapConfig(legacyPath, {
+      baseUrl: "https://openwork.organization.internal.example",
+      apiBaseUrl: "https://api.organization.internal.example",
+      requireSignin: true,
+      writtenAt: "2026-07-09T12:00:00.000Z",
+    });
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.baseUrl, "https://openwork.organization.internal.example");
+    const migrated = JSON.parse(await readFile(canonicalPath, "utf8"));
+    assert.equal(migrated.baseUrl, "https://openwork.organization.internal.example");
+  });
+});
+
+test("desktop bootstrap keeps an older canonical organization config over a newer legacy hosted default", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath }) => {
+    await writeBootstrapConfig(canonicalPath, {
+      baseUrl: "https://openwork.organization.internal.example",
+      apiBaseUrl: "https://api.organization.internal.example",
+      requireSignin: true,
+      writtenAt: "2026-07-09T12:00:00.000Z",
+    });
+    await writeBootstrapConfig(legacyPath, {
+      baseUrl: "https://api.openworklabs.com/v1/",
+      apiBaseUrl: "https://api.unrelated.example",
+      requireSignin: false,
+      writtenAt: "2026-07-10T13:00:00.000Z",
+    });
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.baseUrl, "https://openwork.organization.internal.example");
+    const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
+    assert.equal(persisted.baseUrl, "https://openwork.organization.internal.example");
+  });
+});
+
+test("desktop bootstrap ignores a newer malformed canonical config when legacy is valid", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath }) => {
+    await writeBootstrapConfig(legacyPath, {
+      baseUrl: "https://legacy.organization.internal.example",
+      requireSignin: true,
+    });
+    await mkdir(path.dirname(canonicalPath), { recursive: true });
+    await writeFile(canonicalPath, "{ malformed", "utf8");
+    const older = new Date("2026-07-09T12:00:00.000Z");
+    const newer = new Date("2026-07-10T12:00:00.000Z");
+    await utimes(legacyPath, older, older);
+    await utimes(canonicalPath, newer, newer);
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.baseUrl, "https://legacy.organization.internal.example");
+    const migrated = JSON.parse(await readFile(canonicalPath, "utf8"));
+    assert.equal(migrated.baseUrl, "https://legacy.organization.internal.example");
+  });
+});
+
 test("desktop bootstrap falls back to mtime when writtenAt is missing", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath }) => {
     await writeBootstrapConfig(canonicalPath, {
@@ -272,11 +341,13 @@ test("desktop bootstrap writes include a fresh writtenAt stamp", async () => {
     const config = await store.setDesktopBootstrapConfig({
       baseUrl: "https://canonical.example.com",
       requireSignin: true,
+      brandIconUrl: "https://canonical.example.com/icon.png",
     });
     assert.equal(Number.isFinite(Date.parse(config.writtenAt)), true);
 
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(persisted.baseUrl, "https://canonical.example.com");
+    assert.equal(persisted.brandIconUrl, "https://canonical.example.com/icon.png");
     assert.equal(Number.isFinite(Date.parse(persisted.writtenAt)), true);
   });
 });

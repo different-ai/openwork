@@ -22,6 +22,10 @@ type PrivilegedOrgRouteContext = {
   get: <K extends "organizationContext" | "session">(key: K) => OrgRouteVariables[K]
 }
 
+type OrganizationAdminRouteContext = {
+  get: (key: "organizationContext") => OrgRouteVariables["organizationContext"]
+}
+
 export function hasFreshPrivilegedSession(payload: { session: { createdAt?: Date | string | null } | null | undefined }, now = new Date()) {
   const createdAt = payload.session?.createdAt
   const createdAtMs = createdAt instanceof Date
@@ -123,7 +127,12 @@ export function ensureOwner(c: PrivilegedOrgRouteContext) {
   return ensureFreshPrivilegedSession(c)
 }
 
-export function ensureOrganizationAdmin(c: PrivilegedOrgRouteContext, message: string) {
+/**
+ * Checks workspace owner/admin authorization without requiring a recent login.
+ * Use this for routine workspace administration; security-sensitive or
+ * destructive actions should use ensureOrganizationAdmin instead.
+ */
+export function ensureOrganizationAdminRole(c: OrganizationAdminRouteContext, message: string) {
   const payload = c.get("organizationContext")
   if (!payload) {
     return {
@@ -135,7 +144,7 @@ export function ensureOrganizationAdmin(c: PrivilegedOrgRouteContext, message: s
   }
 
   if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
-    return ensureFreshPrivilegedSession(c)
+    return { ok: true as const }
   }
 
   return {
@@ -145,6 +154,15 @@ export function ensureOrganizationAdmin(c: PrivilegedOrgRouteContext, message: s
       message,
     },
   }
+}
+
+export function ensureOrganizationAdmin(c: PrivilegedOrgRouteContext, message: string) {
+  const permission = ensureOrganizationAdminRole(c, message)
+  if (!permission.ok) {
+    return permission
+  }
+
+  return ensureFreshPrivilegedSession(c)
 }
 
 export function ensureInviteManager(c: PrivilegedOrgRouteContext) {

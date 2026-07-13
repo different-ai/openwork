@@ -1,4 +1,4 @@
-import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt, lt, lte } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, AuthUserTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
@@ -6,6 +6,7 @@ import type { MiddlewareHandler } from "hono"
 import { DEN_API_KEY_HEADER, getApiKeySessionById, type DenApiKeySession } from "./api-keys.js"
 import { auth } from "./auth.js"
 import { db } from "./db.js"
+import { getDenSessionExpiresAt, getDenSessionRefreshCutoff } from "./session-lifetime.js"
 
 type AuthSessionLike = Awaited<ReturnType<typeof auth.api.getSession>>
 type AuthSessionValue = NonNullable<AuthSessionLike>
@@ -142,7 +143,7 @@ function readBearerToken(headers: Headers): string | null {
   return token || null
 }
 
-async function getSessionFromBearerToken(token: string): Promise<AuthSessionLike> {
+async function findActiveBearerSession(token: string, now: Date) {
   const rows = await db
     .select({
       session: {
@@ -169,14 +170,13 @@ async function getSessionFromBearerToken(token: string): Promise<AuthSessionLike
     })
     .from(AuthSessionTable)
     .innerJoin(AuthUserTable, eq(AuthSessionTable.userId, AuthUserTable.id))
-    .where(and(eq(AuthSessionTable.token, token), gt(AuthSessionTable.expiresAt, new Date())))
+    .where(and(eq(AuthSessionTable.token, token), gt(AuthSessionTable.expiresAt, now)))
     .limit(1)
 
-  const row = rows[0]
-  if (!row) {
-    return null
-  }
+  return rows[0] ?? null
+}
 
+function bearerSessionValue(row: NonNullable<Awaited<ReturnType<typeof findActiveBearerSession>>>): AuthSessionValue {
   return {
     session: row.session,
     user: {
@@ -184,6 +184,46 @@ async function getSessionFromBearerToken(token: string): Promise<AuthSessionLike
       id: normalizeDenTypeId("user", row.user.id),
     },
   }
+}
+
+async function getSessionFromBearerToken(token: string): Promise<AuthSessionLike> {
+  const row = await findActiveBearerSession(token, new Date())
+  if (!row) {
+    return null
+  }
+
+  const now = new Date()
+  const refreshCutoff = getDenSessionRefreshCutoff(now)
+  if (row.session.expiresAt > refreshCutoff) {
+    return bearerSessionValue(row)
+  }
+
+  const nextExpiresAt = getDenSessionExpiresAt(now)
+  await db
+    .update(AuthSessionTable)
+    .set({
+      expiresAt: nextExpiresAt,
+      updatedAt: now,
+    })
+    .where(and(
+      eq(AuthSessionTable.token, token),
+      gt(AuthSessionTable.expiresAt, now),
+      lte(AuthSessionTable.expiresAt, refreshCutoff),
+      lt(AuthSessionTable.expiresAt, nextExpiresAt),
+    ))
+
+  const renewed = await findActiveBearerSession(token, now)
+  return renewed ? bearerSessionValue(renewed) : null
+}
+
+export async function revokeBearerSession(headers: Headers) {
+  const token = readBearerToken(headers)
+  if (!token) {
+    return false
+  }
+
+  await db.delete(AuthSessionTable).where(eq(AuthSessionTable.token, token))
+  return true
 }
 
 export async function getRequestSession(headers: Headers): Promise<AuthSessionLike> {
@@ -217,6 +257,11 @@ export async function getRequestSession(headers: Headers): Promise<AuthSessionLi
   return getSessionFromBearerToken(bearerToken)
 }
 
+export function shouldSkipRequestSession(request: Request) {
+  return request.method.toUpperCase() === "POST"
+    && new URL(request.url).pathname === "/api/auth/sign-out"
+}
+
 async function getRequestApiKeySession(headers: Headers, session: AuthSessionLike): Promise<DenApiKeySession | null> {
   if (!headers.has(DEN_API_KEY_HEADER) || !session?.session?.id) {
     return null
@@ -226,7 +271,9 @@ async function getRequestApiKeySession(headers: Headers, session: AuthSessionLik
 }
 
 export const sessionMiddleware: MiddlewareHandler<{ Variables: AuthContextVariables }> = async (c, next) => {
-  const resolved = await getRequestSession(c.req.raw.headers)
+  const resolved = shouldSkipRequestSession(c.req.raw)
+    ? null
+    : await getRequestSession(c.req.raw.headers)
   const apiKey = await getRequestApiKeySession(c.req.raw.headers, resolved)
   c.set("user", resolved?.user ?? null)
   c.set("session", resolved?.session ?? null)

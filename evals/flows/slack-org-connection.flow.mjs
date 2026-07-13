@@ -219,7 +219,7 @@ export default {
             ctx.assert(clicked, `No scoped Connect button found for ${CONNECTION_NAME}.`);
             await ctx.switchToNewTab({ timeoutMs: 20_000, label: "OAuth popup" });
             await ctx.waitForText("Connected", { timeoutMs: 30_000 });
-            ctx.switchBack();
+            await ctx.switchBack();
           },
           assert: async () => {
             await ctx.waitFor(rowConnectedAsYouScript(), { timeoutMs: 60_000, label: `${CONNECTION_NAME} shows Connected as you` });

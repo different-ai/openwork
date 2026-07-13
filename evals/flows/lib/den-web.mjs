@@ -11,10 +11,15 @@ export function denApiUrl() {
 }
 
 export async function denApiFetch(path, options = {}) {
-  const response = await fetch(`${denApiUrl()}${path}`, {
+  // Better Auth rejects auth requests with no Origin header (CSRF
+  // protection). Origin is a forbidden request header, so Node's fetch
+  // strips a hand-set value on recent Node versions — route auth paths
+  // through den-web instead: its upstream proxy injects a trusted Origin
+  // (DEN_AUTH_ORIGIN) when the client sends none. Bearer-token /v1 calls
+  // don't need an Origin and keep hitting den-api directly.
+  const base = path.startsWith("/api/auth/") && denWebUrl() ? denWebUrl() : denApiUrl();
+  const response = await fetch(`${base}${path}`, {
     ...options,
-    // Better Auth rejects auth requests with no Origin header (CSRF
-    // protection); a real browser always sends one, Node's fetch doesn't.
     headers: { "content-type": "application/json", origin: denWebUrl(), ...(options.headers ?? {}) },
   });
   const text = await response.text();
@@ -46,10 +51,42 @@ export async function signInViaBrowser(ctx, email, password) {
   await ctx.eval(`(() => { window.location.href = ${JSON.stringify(denWebUrl())}; return true; })()`);
   await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
   await ctx.waitFor(
-    "Boolean(document.querySelector('input[type=\"email\"]')) && Boolean(document.querySelector('input[type=\"password\"]'))",
-    { timeoutMs: 30_000, label: "email + password fields" },
+    "Boolean(document.querySelector('input[type=\"email\"]'))",
+    { timeoutMs: 30_000, label: "email field" },
   );
-  await ctx.fill('input[type="email"]', email);
+
+  const passwordAlreadyVisible = await ctx.eval("Boolean(document.querySelector('input[type=\"password\"]'))");
+  if (!passwordAlreadyVisible) {
+    await ctx.fill('input[type="email"]', email);
+    const advanced = await ctx.eval(`(() => {
+      const form = document.querySelector('input[type="email"]')?.closest('form');
+      const button = form?.querySelector('button[type="submit"]');
+      button?.click();
+      return Boolean(button);
+    })()`);
+    ctx.assert(advanced, "No Next button found on the email-first sign-in card.");
+    await ctx.waitFor(
+      "Boolean(document.querySelector('input[type=\"password\"]'))",
+      { timeoutMs: 20_000, label: "password step" },
+    );
+  } else {
+    const switchedToSignIn = await ctx.eval(`(() => {
+      const button = [...document.querySelectorAll('button[type="button"]')]
+        .find((entry) => (entry.textContent ?? '').trim() === 'Sign in');
+      button?.click();
+      return Boolean(button);
+    })()`);
+    if (switchedToSignIn) {
+      await ctx.waitFor(
+        `(() => {
+          const submit = document.querySelector('button[type="submit"]');
+          return (submit?.textContent ?? '').includes('Sign in');
+        })()`,
+        { timeoutMs: 10_000, label: "sign-in form selected" },
+      );
+    }
+    await ctx.fill('input[type="email"]', email);
+  }
   await ctx.fill('input[type="password"]', password);
   const submitted = await ctx.eval(`(() => {
     const button = document.querySelector('button[type="submit"]');
@@ -102,11 +139,11 @@ export async function openYourConnections(ctx) {
 }
 
 /** Mints an agent MCP token for a signed-in session (POST /v1/mcp/token). */
-export async function mintMcpToken(sessionToken, ctx) {
+export async function mintMcpToken(sessionToken, ctx, scopes) {
   const { response, body } = await denApiFetch("/v1/mcp/token", {
     method: "POST",
     headers: { authorization: `Bearer ${sessionToken}` },
-    body: "{}",
+    body: JSON.stringify(scopes ? { scopes } : {}),
   });
   ctx.assert(response.ok, `Minting an MCP token failed: ${response.status}`);
   return body.token;

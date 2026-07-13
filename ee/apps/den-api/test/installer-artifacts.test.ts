@@ -10,14 +10,17 @@ function seedRequiredEnv() {
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
 }
 
+let installerReleaseAssetUrl: typeof import("../src/utils/installer-artifacts.js")["installerReleaseAssetUrl"]
+let desktopReleaseAssetName: typeof import("../src/utils/installer-artifacts.js")["desktopReleaseAssetName"]
 let resolveInstallerArtifact: typeof import("../src/utils/installer-artifacts.js")["resolveInstallerArtifact"]
+let resolveInstallerFallbackUrl: typeof import("../src/utils/installer-artifacts.js")["resolveInstallerFallbackUrl"]
 
 beforeAll(async () => {
   seedRequiredEnv()
-  ;({ resolveInstallerArtifact } = await import("../src/utils/installer-artifacts.js"))
+  ;({ desktopReleaseAssetName, installerReleaseAssetUrl, resolveInstallerArtifact, resolveInstallerFallbackUrl } = await import("../src/utils/installer-artifacts.js"))
 })
 
-const FILE_NAME = "openwork-installer-mac-arm64.zip"
+const FILE_NAME = "openwork-mac-arm64-9.9.9.dmg"
 
 function tempDir(prefix: string) {
   return mkdtempSync(path.join(os.tmpdir(), prefix))
@@ -31,6 +34,51 @@ function fetcherReturning(status: number, body: string | null, calls: string[]) 
 }
 
 describe("resolveInstallerArtifact", () => {
+  test("builds a standard desktop asset URL for the configured release", () => {
+    expect(installerReleaseAssetUrl(FILE_NAME, {
+      releaseTag: "v9.9.9+build 2",
+      releaseRepo: "different-ai/openwork",
+    })).toBe(`https://github.com/different-ai/openwork/releases/download/v9.9.9%2Bbuild%202/${FILE_NAME}`)
+  })
+
+  test.each([
+    ["mac-arm64", "v9.9.9", "openwork-mac-arm64-9.9.9.dmg"],
+    ["mac-x64", "9.9.9", "openwork-mac-x64-9.9.9.dmg"],
+    ["win-x64", "v9.9.9", "openwork-win-x64-9.9.9.exe"],
+  ])("maps %s to the standard release artifact", (platform, releaseTag, expected) => {
+    expect(desktopReleaseAssetName(platform, releaseTag)).toBe(expected)
+  })
+
+  test.each([
+    ["mac-arm64", "openwork-mac-arm64-9.9.9.dmg"],
+    ["mac-x64", "openwork-mac-x64-9.9.9.dmg"],
+    ["win-x64", "openwork-win-x64-9.9.9.exe"],
+  ])("uses the verified normal %s desktop asset when the generic installer is unavailable", async (platform, asset) => {
+    const calls: string[] = []
+    const fallback = await resolveInstallerFallbackUrl(platform, "https://openworklabs.com/download", {
+      releaseTag: "v9.9.9",
+      releaseRepo: "different-ai/openwork",
+      fetcher: (url) => {
+        calls.push(url)
+        return Promise.resolve(new Response(null, { status: 200 }))
+      },
+    })
+
+    const expected = `https://github.com/different-ai/openwork/releases/download/v9.9.9/${asset}`
+    expect(calls).toEqual([expected])
+    expect(fallback).toBe(expected)
+  })
+
+  test("uses the stable download page instead of an unverified release URL", async () => {
+    const fallback = await resolveInstallerFallbackUrl("mac-arm64", "https://openworklabs.com/download", {
+      releaseTag: "v0.0.0-missing",
+      releaseRepo: "different-ai/openwork",
+      fetcher: () => Promise.resolve(new Response(null, { status: 404 })),
+    })
+
+    expect(fallback).toBe("https://openworklabs.com/download")
+  })
+
   test("prefers the local artifacts dir over cache and network", async () => {
     const artifactsDir = tempDir("ow-installer-artifacts-dir-")
     const cacheDir = tempDir("ow-installer-cache-")

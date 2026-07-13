@@ -255,7 +255,7 @@ export default {
             rejectText: ["Connection failed"],
           },
         });
-        ctx.switchBack();
+        await ctx.switchBack();
 
         await ctx.prove("Den's own polling flips the row to Connected as you", {
           assert: async () => {

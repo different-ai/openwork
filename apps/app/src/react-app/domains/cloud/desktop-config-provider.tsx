@@ -24,10 +24,13 @@ import {
   readDenSettings,
   type DenDesktopConfig,
 } from "../../../app/lib/den";
+import { applyBrandAppName, applyBrandIcon } from "../../../app/lib/desktop";
+import { createOpenworkServerClient } from "../../../app/lib/openwork-server";
 import {
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
 } from "../../../app/lib/den-session-events";
+import { resolveOpenworkConnection } from "../../shell/openwork-connection";
 import { useDenAuth } from "./den-auth-provider";
 
 export type DesktopConfigStore = {
@@ -52,9 +55,12 @@ const DESKTOP_CONFIG_CACHE_PREFIX = "openwork.den.desktopConfig:";
 const DESKTOP_CONFIG_ITEMS = [
   ...desktopPolicyKeys,
   "allowedDesktopVersions",
+  "brandAppName",
   "brandLogoUrl",
+  "brandIconUrl",
   "brandAccentColor",
   "connectEnabled",
+  "onboardingPrompts",
 ] as const satisfies readonly (keyof DenDesktopConfig)[];
 
 type DesktopConfigItem = (typeof DESKTOP_CONFIG_ITEMS)[number];
@@ -146,13 +152,14 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   const denAuth = useDenAuth();
   const [desktopConfigState, setDesktopConfigState] = useState<DesktopConfigState>({
     config: DEFAULT_DESKTOP_CONFIG,
-    loading: false,
+    loading: true,
   });
   const { config, loading } = desktopConfigState;
   // Bumped whenever the browser tells us the Den session or settings changed.
   const [settingsVersion, bumpSettingsVersion] = useReducer((value: number) => value + 1, 0);
   // Monotonic run id — same guard-against-stale-resolution pattern as DenAuthProvider.
   const refreshRunRef = useRef(0);
+  const lastPushedConnectEnabledRef = useRef<boolean | null>(null);
   // Safe in-memory copy of the last config we actually applied. State drives
   // rendering, while this ref lets the handler compare without stale closures.
   const currentDesktopConfigRef = useRef<DenDesktopConfig>(DEFAULT_DESKTOP_CONFIG);
@@ -167,6 +174,28 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
     if (actions.length === 0) return false;
 
+    const brandAppNameAction = actions.find((action) => action.item === "brandAppName");
+    const brandAppNamePromise = brandAppNameAction
+      ? (() => {
+          const appName = typeof brandAppNameAction.nextValue === "string" ? brandAppNameAction.nextValue : null;
+          document.title = appName ?? "OpenWork";
+          return applyBrandAppName(appName).then(() => undefined).catch(() => undefined);
+        })()
+      : Promise.resolve();
+
+    const brandIconAction = actions.find((action) => action.item === "brandIconUrl");
+    if (brandIconAction) {
+      void brandAppNamePromise.then(() => applyBrandIcon(
+        typeof brandIconAction.nextValue === "string" ? brandIconAction.nextValue : null,
+      )).then((result) => {
+        if (!result.ok) {
+          console.warn(`[brand-icon] Desktop icon was not applied: ${result.reason ?? "unknown failure"}`);
+        }
+      }).catch((error: unknown) => {
+        console.warn("[brand-icon] Desktop icon apply request failed", error);
+      });
+    }
+
     currentDesktopConfigRef.current = normalizedConfig;
     setDesktopConfigState((current) => ({
       ...current,
@@ -179,9 +208,10 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const currentRun = ++refreshRunRef.current;
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
+    const activeOrgId = settings.activeOrgId?.trim() ?? "";
     const cacheKey = getDesktopConfigCacheKey();
 
-    if (!isSignedIn || !token || !settings.activeOrgId?.trim()) {
+    if (!isSignedIn || !token || !activeOrgId) {
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
       setDesktopConfigState((current) => ({ ...current, loading: false }));
       return;
@@ -199,9 +229,8 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     try {
       const nextConfig = await createDenClient({
         baseUrl: settings.baseUrl,
-        apiBaseUrl: settings.apiBaseUrl,
         token,
-      }).getDesktopConfig();
+      }).getDesktopConfig(activeOrgId);
 
       if (currentRun !== refreshRunRef.current) return;
 
@@ -273,6 +302,29 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       window.clearInterval(interval);
     };
   }, [desktopConfigHandler, isSignedIn]);
+
+  const connectEnabled = config.connectEnabled === true;
+
+  useEffect(() => {
+    if (loading) return;
+    if (lastPushedConnectEnabledRef.current === connectEnabled) return;
+    let cancelled = false;
+
+    void (async () => {
+      const connection = await resolveOpenworkConnection();
+      if (cancelled || !connection.normalizedBaseUrl || !connection.resolvedHostToken) return;
+      lastPushedConnectEnabledRef.current = connectEnabled;
+      await createOpenworkServerClient({
+        baseUrl: connection.normalizedBaseUrl,
+        token: connection.resolvedToken,
+        hostToken: connection.resolvedHostToken,
+      }).setConnectState(connectEnabled);
+    })().catch(() => null);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectEnabled, loading]);
 
   // Dev-only: expose a bridge so evals can inject config directly without
   // requiring a cloud sign-in. This simply applies the config to React state.

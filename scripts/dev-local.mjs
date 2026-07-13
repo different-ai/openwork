@@ -232,6 +232,7 @@ async function main() {
         INFERENCE_PROXY_BASE_URL: process.env.INFERENCE_PROXY_BASE_URL?.trim() || `http://127.0.0.1:${inferencePort}`,
         DEN_WEB_PORT: webPort,
         DEN_API_BASE: process.env.DEN_API_BASE?.trim() || `http://127.0.0.1:${apiPort}`,
+        DEN_API_PUBLIC_URL: process.env.DEN_API_PUBLIC_URL?.trim() || `http://localhost:${apiPort}`,
         DEN_AUTH_ORIGIN: process.env.DEN_AUTH_ORIGIN?.trim() || `http://localhost:${webPort}`,
         DEN_AUTH_FALLBACK_BASE: process.env.DEN_AUTH_FALLBACK_BASE?.trim() || `http://127.0.0.1:${apiPort}`,
       },

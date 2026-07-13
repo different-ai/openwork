@@ -160,10 +160,11 @@ import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-route
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
 import {
+  buildLocalProviderConfig,
   OPENAI_IMAGE_EXTENSION_ID,
   OPENAI_IMAGE_MODEL,
+  type LocalProviderInstallInput,
 } from "@/react-app/domains/settings/openai-image-extension";
-import { OLLAMA_PROVIDER_CONFIG, type LocalProviderInstallInput } from "@/react-app/domains/settings/openai-image-extension";
 
 const ROUTE_OPENWORK_CAPABILITIES: OpenworkServerCapabilities = {
   skills: { read: true, write: true, source: "openwork" },
@@ -952,6 +953,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         args: { prompt },
         context: { directory: selectedWorkspaceRoot || undefined },
       });
+      if (!response.ok) {
+        setImageGenerationError(response.message);
+        return;
+      }
       const result = response.result;
       const path = typeof result === "object" && result !== null && "path" in result && typeof result.path === "string"
         ? result.path
@@ -1022,12 +1027,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       await client.patchConfig(workspaceId, {
         opencode: {
           provider: {
-            [input.providerId]: {
-              npm: "@ai-sdk/openai-compatible",
-              name: input.name,
-              options: { baseURL: input.baseURL },
-              models: { [modelId]: { name: input.modelName.trim() || modelId } },
-            },
+            [input.providerId]: buildLocalProviderConfig({ ...input, modelId }),
           },
         },
       });
@@ -1564,6 +1564,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       : [],
   );
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
+  const openworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
+    (server) => server.name === "openwork-cloud",
+  )?.config.url ?? null;
 
   // Build enablement context from all available runtime state.
   const enablementContext = useMemo<EnablementContext>(() => {
@@ -1664,6 +1667,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const extensionItemsForExtensions = useMemo(
     () => extensionItems.items.filter((item) => item.source !== "org-connection"),
     [extensionItems.items],
+  );
+  const installedOrgMcpConnectionItems = useMemo(
+    () => extensionItems.orgMcpConnectionItems.filter((item) => item.installState === "installed"),
+    [extensionItems.orgMcpConnectionItems],
   );
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
@@ -1907,6 +1914,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   };
 
+  // Hooks must run unconditionally: this useCallback used to sit below the
+  // redirect returns, so the bare <-> workspace-scoped settings transition
+  // changed the hook count and crashed the whole settings surface
+  // ("Rendered more/fewer hooks than during the previous render").
+  const refreshConnectMarketplaceItems = useCallback(
+    () => extensionsStore.refreshCloudOrgMarketplaces({ force: true }),
+    [extensionsStore],
+  );
+
   if (route.redirectPath && !props.embedded) {
     const target = selectedWorkspaceId
       ? workspaceSettingsRoute(selectedWorkspaceId, route.redirectPath)
@@ -1921,10 +1937,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const openCloudAccountSettings = () => {
     navigateSettingsPath("cloud-account");
   };
-  const refreshConnectMarketplaceItems = useCallback(
-    () => extensionsStore.refreshCloudOrgMarketplaces({ force: true }),
-    [extensionsStore],
-  );
 
   const settingsView = (() => {
     switch (route.tab) {
@@ -2010,6 +2022,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             analyticsEnabled={local.prefs.analyticsEnabled}
             onToggleAnalytics={() => {
               local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
+            }}
+            desktopNotifications={local.prefs.desktopNotifications}
+            onDesktopNotificationsChange={(desktopNotifications) => {
+              local.setPrefs((previous) => ({ ...previous, desktopNotifications }));
             }}
             memoryEnabled={memoryEnabled}
             onToggleMemory={toggleMemory}
@@ -2098,8 +2114,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 readConfigFile={(scope) => connectionsStore.readMcpConfigFile(scope)}
                 installedSkills={extensionItems.installedSkills}
                 installedPlugins={extensionItems.installedCloudPlugins}
+                installedOrgMcpItems={installedOrgMcpConnectionItems}
                 uninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
                 removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
+                orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
+                disconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}
                 readSkill={(name) => extensionsStore.readSkill(name)}
                 previewClaudePlugin={(url) => extensionsStore.previewClaudePlugin(url)}
                 installClaudePlugin={(url) => extensionsStore.installClaudePlugin(url)}
@@ -2120,9 +2139,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 configSlotForBuiltIn={extensionController.configSlotForEntry}
                 isBuiltInConnected={extensionController.isConnected}
                 extensionItems={extensionItemsForExtensions}
+                orgMcpConnections={orgMcpConnections.connections}
                 orgMcpConnectingId={orgMcpConnections.connectingId}
+                orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
                 onConnectOrgMcp={(connectionId) => {
                   void orgMcpConnections.connect(connectionId);
+                }}
+                onDisconnectOrgMcp={(connectionId) => {
+                  void orgMcpConnections.disconnect(connectionId);
                 }}
                 refreshOrgMcpConnections={orgMcpConnections.refresh}
                 setBuiltInEnabled={setOpenWorkExtensionEnabled}
@@ -2159,9 +2183,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             configSlotForBuiltIn={extensionController.configSlotForEntry}
             isBuiltInConnected={extensionController.isConnected}
             extensionItems={extensionItemsForExtensions}
+            orgMcpConnections={orgMcpConnections.connections}
             orgMcpConnectingId={orgMcpConnections.connectingId}
+            orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
             onConnectOrgMcp={(connectionId) => {
               void orgMcpConnections.connect(connectionId);
+            }}
+            onDisconnectOrgMcp={(connectionId) => {
+              void orgMcpConnections.disconnect(connectionId);
             }}
             refreshOrgMcpConnections={orgMcpConnections.refresh}
             setBuiltInEnabled={setOpenWorkExtensionEnabled}
@@ -2197,6 +2226,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             })}
             opencodeDevModeEnabled={false}
             openDebugDeepLink={async () => ({ ok: false, message: "Debug deep links are not wired into the React settings route yet." })}
+            cloudMcpUrl={openworkCloudMcpUrl}
             canMigrateRuntimeConfig={Boolean(openworkClient && selectedWorkspaceId)}
             migrateRuntimeConfig={async () => {
               if (!openworkClient || !selectedWorkspaceId) {

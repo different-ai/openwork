@@ -19,6 +19,7 @@ const noPendingUserId = createDenTypeId("user")
 const noInviteUserId = createDenTypeId("user")
 const mergeUserId = createDenTypeId("user")
 const ownerMergeUserId = createDenTypeId("user")
+const acceptedInviteUserId = createDenTypeId("user")
 const expiredInviteUserId = createDenTypeId("user")
 const nonMatchingInviteUserId = createDenTypeId("user")
 const otherOrgInviteUserId = createDenTypeId("user")
@@ -32,6 +33,7 @@ const noPendingEmail = `no-pending+${noPendingUserId}@invite-duplicates.test`
 const noInviteEmail = `no-invite+${noInviteUserId}@invite-duplicates.test`
 const mergeEmail = `merge+${mergeUserId}@invite-duplicates.test`
 const ownerMergeEmail = `owner-merge+${ownerMergeUserId}@invite-duplicates.test`
+const acceptedInviteEmail = `accepted+${acceptedInviteUserId}@invite-duplicates.test`
 const expiredEmail = `expired+${expiredInviteUserId}@invite-duplicates.test`
 const nonMatchingEmail = `non-matching+${nonMatchingInviteUserId}@invite-duplicates.test`
 const otherOrgEmail = `other-org+${otherOrgInviteUserId}@invite-duplicates.test`
@@ -61,6 +63,7 @@ const userIds = [
   noInviteUserId,
   mergeUserId,
   ownerMergeUserId,
+  acceptedInviteUserId,
   expiredInviteUserId,
   nonMatchingInviteUserId,
   otherOrgInviteUserId,
@@ -176,6 +179,7 @@ beforeAll(async () => {
     { id: noInviteUserId, name: "No Invite", email: noInviteEmail, emailVerified: false },
     { id: mergeUserId, name: "Merge User", email: mergeEmail, emailVerified: true },
     { id: ownerMergeUserId, name: "Owner Merge", email: ownerMergeEmail, emailVerified: true },
+    { id: acceptedInviteUserId, name: "Accepted Invite", email: acceptedInviteEmail, emailVerified: false },
     { id: expiredInviteUserId, name: "Expired Invite", email: expiredEmail, emailVerified: false },
     { id: nonMatchingInviteUserId, name: "Non Matching", email: nonMatchingEmail, emailVerified: false },
     { id: otherOrgInviteUserId, name: "Other Org", email: otherOrgEmail, emailVerified: false },
@@ -432,6 +436,40 @@ test("acceptInvitation does not downgrade an existing owner while removing the p
   expect(relatedMembers[0]?.role).toBe("owner")
   expect(relatedMembers[0]?.joinedAt).toBeInstanceOf(Date)
   await expect(invitationStatus(invitationId)).resolves.toBe("accepted")
+})
+
+test("acceptInvitationForUser returns the existing member when bootstrap already accepted the invite", async () => {
+  if (!orgs) {
+    throw new Error("orgs module not initialized")
+  }
+  const invitationId = createDenTypeId("invitation")
+  const placeholderId = createDenTypeId("member")
+  await createInvitation({
+    invitationId,
+    memberId: placeholderId,
+    organizationId,
+    email: acceptedInviteEmail,
+    role: "member",
+    expiresAt: future,
+    inviterMemberId: ownerMemberId,
+  })
+
+  const bootstrapMember = await orgs.ensureBootstrapMembershipForOrganization({
+    organizationId,
+    userId: acceptedInviteUserId,
+    role: "member",
+    email: acceptedInviteEmail,
+  })
+  await expect(invitationStatus(invitationId)).resolves.toBe("accepted")
+
+  const accepted = await orgs.acceptInvitationForUser({
+    userId: acceptedInviteUserId,
+    email: acceptedInviteEmail,
+    invitationId,
+  })
+
+  expect(accepted?.invitation.id).toBe(invitationId)
+  expect(accepted?.member.id).toBe(bootstrapMember.id)
 })
 
 test("bootstrap ignores expired, non-matching, and other-org invitations", async () => {

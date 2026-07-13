@@ -18,6 +18,11 @@
  * - OPENWORK_EVAL_DEN_TOKEN      Bearer session token for the demo owner
  */
 
+const revealHidden = async (ctx) => {
+  const showing = await ctx.eval("document.body.innerText.includes('Showing hidden')");
+  if (!showing) await ctx.clickText("Show hidden", { timeoutMs: 30_000 });
+};
+
 async function denFetch(ctx, path, options = {}) {
   const base = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
   const response = await fetch(`${base}${path}`, {
@@ -160,6 +165,8 @@ export default {
           action: async () => {
             await ctx.navigateHash("/settings/extensions/mcp");
             await ctx.expectHashIncludes("/settings/extensions/mcp");
+            await ctx.waitForText("Add Custom App", { timeoutMs: 30_000 });
+            await revealHidden(ctx);
           },
           assert: async () => {
             await ctx.expectText("OpenWork Cloud Control", { timeoutMs: 30_000 });

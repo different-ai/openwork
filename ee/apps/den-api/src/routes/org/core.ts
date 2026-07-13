@@ -5,7 +5,9 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
+import { validateBrandIconUrl } from "../../brand-icon-validation.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
+import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
 import { db } from "../../db.js"
 import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
@@ -38,9 +40,11 @@ const updateOrganizationSchema = z.object({
   allowedEmailDomains: z.array(z.string().trim().min(1).max(255)).max(100).nullable().optional(),
   allowedDesktopVersions: z.array(z.string().trim().min(1).max(32)).max(200).nullable().optional(),
   requireSso: z.boolean().optional(),
+  brandAppName: z.string().trim().min(1).max(64).nullable().optional(),
   brandLogoUrl: z.string().url().max(2048).nullable().optional(),
+  brandIconUrl: z.string().url().max(2048).nullable().optional(),
   brandAccentColor: z.string().trim().min(1).max(32).nullable().optional(),
-}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.brandLogoUrl !== undefined || value.brandAccentColor !== undefined, {
+}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
   message: "Provide at least one organization field to update.",
 })
 
@@ -113,6 +117,18 @@ const invalidEmailDomainSchema = z.object({
   message: z.string(),
   invalidDomains: z.array(z.string()),
 }).meta({ ref: "InvalidEmailDomainError" })
+
+const invalidBrandIconSchema = z.object({
+  error: z.literal("invalid_brand_icon"),
+  reason: z.string(),
+  message: z.string(),
+}).meta({ ref: "InvalidBrandIconError" })
+
+const updateOrganizationBadRequestSchema = z.union([
+  invalidRequestSchema,
+  invalidEmailDomainSchema,
+  invalidBrandIconSchema,
+]).meta({ ref: "UpdateOrganizationBadRequest" })
 
 const accountEmailDomainNotAllowedSchema = z.object({
   error: z.literal("account_email_domain_not_allowed"),
@@ -243,7 +259,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         200: jsonResponse("Invitation accepted successfully.", invitationAcceptedResponseSchema),
         400: jsonResponse("The invitation acceptance request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to accept an invitation.", unauthorizedSchema),
-        403: jsonResponse("API keys cannot accept invitations, or the account email is unverified.", forbiddenSchema),
+        403: jsonResponse("API keys cannot accept invitations, or the deployment requires a verified account email.", forbiddenSchema),
         409: jsonResponse("The current account email is not allowed to join this organization.", accountEmailDomainNotAllowedSchema),
         404: jsonResponse("The invitation could not be found.", notFoundSchema),
       },
@@ -266,7 +282,10 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: "user_email_required" }, 400)
     }
 
-    const verification = validateInvitationAcceptVerification({ emailVerified: user.emailVerified })
+    const verification = validateInvitationAcceptVerification({
+      emailVerified: user.emailVerified,
+      emailVerificationRequired: env.requireEmailVerification,
+    })
     if (!verification.ok) {
       return c.json({ error: verification.error, message: verification.message }, 403)
     }
@@ -319,7 +338,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       description: "Updates organization fields that workspace owners are allowed to change, including the display name, allowed invitation email domains, and allowed desktop versions. The slug is immutable to avoid breaking dashboard URLs.",
       responses: {
         200: jsonResponse("Organization updated successfully.", organizationResponseSchema),
-        400: jsonResponse("The organization update request body was invalid or contained malformed email domains.", invalidEmailDomainSchema),
+        400: jsonResponse("The organization update request body was invalid, contained malformed email domains, or contained an invalid brand icon URL.", updateOrganizationBadRequestSchema),
         401: jsonResponse("The caller must be signed in to update an organization.", unauthorizedSchema),
         402: jsonResponse("Enabling enforced SSO or desktop version controls requires an Enterprise plan.", enterprisePlanRequiredSchema),
         403: jsonResponse("Only workspace owners can update the organization.", forbiddenSchema),
@@ -337,8 +356,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
 
-      const normalizedDomains = input.allowedEmailDomains === undefined
-        ? { domains: undefined, invalidDomains: [] as string[] }
+      const normalizedDomains: { domains: string[] | null | undefined; invalidDomains: string[] } = input.allowedEmailDomains === undefined
+        ? { domains: undefined, invalidDomains: [] }
         : normalizeAllowedEmailDomains(input.allowedEmailDomains)
 
       if (normalizedDomains.invalidDomains.length > 0) {
@@ -359,11 +378,22 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         }
       }
 
-      const enablesBranding = (typeof input.brandLogoUrl === "string") || (typeof input.brandAccentColor === "string")
+      const enablesBranding = (typeof input.brandAppName === "string") || (typeof input.brandLogoUrl === "string") || (typeof input.brandIconUrl === "string") || (typeof input.brandAccentColor === "string")
       if (enablesBranding) {
         const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
         if (!entitlement.ok) {
           return c.json(entitlement.response, entitlement.status)
+        }
+      }
+
+      if (typeof input.brandIconUrl === "string") {
+        const brandIconCheck = await validateBrandIconUrl(input.brandIconUrl)
+        if (!brandIconCheck.ok) {
+          return c.json({
+            error: "invalid_brand_icon",
+            reason: brandIconCheck.reason,
+            message: brandIconCheck.message,
+          }, 400)
         }
       }
 
@@ -373,7 +403,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         allowedEmailDomains: normalizedDomains.domains,
         allowedDesktopVersions: input.allowedDesktopVersions,
         requireSso: input.requireSso,
+        brandAppName: input.brandAppName,
         brandLogoUrl: input.brandLogoUrl,
+        brandIconUrl: input.brandIconUrl,
         brandAccentColor: input.brandAccentColor,
       })
 
@@ -494,6 +526,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           // /admin reads the raw capability from its own endpoint.
           mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {
             gatingEnabled: env.mcpConnectionsGatingEnabled,
+          }),
+          installLinks: organizationInstallLinksEnabled(payload.organization.metadata, {
+            gatingEnabled: env.installLinksGatingEnabled,
           }),
         },
         authMethods: {

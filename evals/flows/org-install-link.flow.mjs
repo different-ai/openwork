@@ -198,17 +198,17 @@ export default {
               const run = requireInstallerRun(state.frame3InstallerRun, "frame 3 installer run");
               ctx.assert(run.status === 0, `Installer dry-run exited ${run.status}: ${run.stderr || run.stdout}`);
               ctx.assert(run.stdout.includes("OpenWork Installer — Acme Robotics"), "Installer stdout did not name Acme Robotics.");
-              ctx.assert(run.stdout.includes("Configured via install link"), "Installer stdout did not say it was configured via install link.");
+              ctx.assert(run.stdout.includes("Configured via organization setup file"), "Installer stdout did not identify the adjacent organization setup file.");
               ctx.assert(run.stdout.includes("Dry run ok"), "Installer stdout did not report Dry run ok.");
               ctx.output("headless-installer-dry-run", run.combined);
 
               await ctx.expectText("This sets up OpenWork for Acme Robotics");
-              await ctx.expectText("Configured via install link");
+              await ctx.expectText("Configured via organization setup file");
               await ctx.expectText("Install");
             },
             screenshot: {
               name: "installer-announces-acme",
-              requireText: ["This sets up OpenWork for Acme Robotics", "Configured via install link", "Install"],
+              requireText: ["This sets up OpenWork for Acme Robotics", "Configured via organization setup file", "Install"],
             },
           });
         });

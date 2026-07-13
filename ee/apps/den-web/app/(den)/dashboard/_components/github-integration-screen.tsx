@@ -18,7 +18,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { PaperMeshGradient } from "@openwork/ui/react";
+import { StaticSeededGradient } from "@openwork/ui/react";
 import {
   getGithubIntegrationAccountRoute,
   getGithubIntegrationRoute,
@@ -429,9 +429,7 @@ function PluginListItem({ plugin }: {
     <article className="group overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]">
       <div className="flex items-stretch">
         <div className="relative w-[72px] shrink-0 overflow-hidden">
-          <div className="absolute inset-0">
-            <PaperMeshGradient seed={plugin.id} speed={0} />
-          </div>
+          <StaticSeededGradient seed={plugin.id} className="absolute inset-0" />
           <div className="relative flex h-full items-center justify-center">
             <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
               <Puzzle className="h-4.5 w-4.5 text-gray-700" aria-hidden />
@@ -861,9 +859,7 @@ function RepositoryCard({
   const innerContent = (
     <div className="flex items-stretch">
       <div className="relative w-[72px] shrink-0 overflow-hidden">
-        <div className="absolute inset-0">
-          <PaperMeshGradient seed={fullName} speed={0} />
-        </div>
+        <StaticSeededGradient seed={fullName} className="absolute inset-0" />
         <div className="relative flex h-full items-center justify-center">
           <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
             <GitBranch className="h-4 w-4 text-gray-700" aria-hidden />
@@ -1140,9 +1136,7 @@ function DiscoveredPluginCard({
     <button type="button" onClick={onToggle} disabled={!plugin.supported} className={baseClass}>
       <div className="flex items-stretch">
         <div className="relative w-[72px] shrink-0 overflow-hidden">
-          <div className="absolute inset-0">
-            <PaperMeshGradient seed={plugin.key} speed={0} />
-          </div>
+          <StaticSeededGradient seed={plugin.key} className="absolute inset-0" />
           <div className="relative flex h-full items-center justify-center">
             <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
               <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />

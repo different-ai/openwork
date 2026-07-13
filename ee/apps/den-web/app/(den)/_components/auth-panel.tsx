@@ -14,6 +14,35 @@ type PanelContent = {
   submitLabel: string;
 };
 
+type EmailFirstStep = "email" | "sso" | "google" | "github" | "password" | "new_account";
+type ResolvedLoginStep = Exclude<EmailFirstStep, "email">;
+
+type LoginOption = {
+  nextStep: ResolvedLoginStep;
+  signInPath: string | null;
+  signInUrl: string | null;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isResolvedLoginStep(value: unknown): value is ResolvedLoginStep {
+  return value === "sso" || value === "google" || value === "github" || value === "password" || value === "new_account";
+}
+
+function readLoginOption(payload: unknown): LoginOption | null {
+  if (!isRecord(payload) || !isResolvedLoginStep(payload.nextStep)) {
+    return null;
+  }
+
+  return {
+    nextStep: payload.nextStep,
+    signInPath: typeof payload.signInPath === "string" ? payload.signInPath : null,
+    signInUrl: typeof payload.signInUrl === "string" ? payload.signInUrl : null,
+  };
+}
+
 function getDesktopGrant(url: string | null) {
   if (!url) return null;
   try {
@@ -75,6 +104,7 @@ export function AuthPanel({
   lockEmail = false,
   hideSocialAuth = false,
   hideEmailField = false,
+  emailFirstFlow = false,
   eyebrow = "Account",
   bare = false,
   signUpContent,
@@ -87,6 +117,7 @@ export function AuthPanel({
   lockEmail?: boolean;
   hideSocialAuth?: boolean;
   hideEmailField?: boolean;
+  emailFirstFlow?: boolean;
   eyebrow?: string;
   // When true the panel renders without its own `den-frame`/padding, so a parent
   // (the unified split auth card) can own the surface. Defaults to a self-framed
@@ -104,11 +135,16 @@ export function AuthPanel({
   const [passwordResetBusy, setPasswordResetBusy] = useState(false);
   const [passwordResetInfo, setPasswordResetInfo] = useState("");
   const [passwordResetError, setPasswordResetError] = useState<string | null>(null);
+  const [loginOption, setLoginOption] = useState<LoginOption | null>(null);
+  const [loginOptionBusy, setLoginOptionBusy] = useState(false);
+  const [loginOptionError, setLoginOptionError] = useState<string | null>(null);
   const {
     authMode,
     setAuthMode,
     email,
     setEmail,
+    authName,
+    setAuthName,
     password,
     setPassword,
     verificationCode,
@@ -180,6 +216,45 @@ export function AuthPanel({
     submitLabel: "Send reset link",
   };
 
+  const emailFirstStep: EmailFirstStep = loginOption?.nextStep ?? "email";
+  const emailFirstEmail = email.trim();
+  const emailFirstContent: PanelContent =
+    emailFirstStep === "email"
+      ? {
+          title: "Continue to OpenWork.",
+          copy: "Enter your email and we'll send you to the right sign-in step.",
+          submitLabel: "Next",
+        }
+      : emailFirstStep === "sso"
+      ? {
+          title: "Sign in with SSO.",
+          copy: emailFirstEmail ? `${emailFirstEmail} is managed by your organization.` : "Your organization manages this account.",
+          submitLabel: "Sign in with SSO",
+        }
+      : emailFirstStep === "google"
+      ? {
+          title: "Welcome back.",
+          copy: "Use Google to continue with this account.",
+          submitLabel: "Sign in with Google",
+        }
+      : emailFirstStep === "github"
+      ? {
+          title: "Welcome back.",
+          copy: "Use GitHub to continue with this account.",
+          submitLabel: "Sign in with GitHub",
+        }
+      : emailFirstStep === "password"
+      ? {
+          title: "Enter your password.",
+          copy: emailFirstEmail ? `Sign in as ${emailFirstEmail}.` : "Sign in with your password.",
+          submitLabel: "Sign in",
+        }
+      : {
+          title: "Create your account.",
+          copy: "Set up your OpenWork Cloud account.",
+          submitLabel: "Sign up",
+        };
+
   const desktopGrant = getDesktopGrant(desktopRedirectUrl);
   const isPasswordResetRequest = authMode === "sign-in" && passwordResetRequested && !verificationRequired;
   const formBusy = !runtimeConfigLoaded || (isPasswordResetRequest ? passwordResetBusy : authBusy || desktopRedirectBusy);
@@ -187,6 +262,8 @@ export function AuthPanel({
     ? resolvedVerificationContent
     : isPasswordResetRequest
       ? passwordResetContent
+      : emailFirstFlow
+      ? emailFirstContent
       : isSingleOrgSsoMode
       ? singleOrgSsoContent
       : authMode === "sign-in"
@@ -198,7 +275,7 @@ export function AuthPanel({
   // The segmented tabs are the primary sign-in/sign-up switch. Hide them for the
   // focused sub-flows (email verification, password reset) where switching mode
   // mid-step would be confusing.
-  const showModeTabs = !isSingleOrgSsoMode && !verificationRequired && !isPasswordResetRequest;
+  const showModeTabs = !emailFirstFlow && !isSingleOrgSsoMode && !verificationRequired && !isPasswordResetRequest;
   const showSingleOrgSso = isSingleOrgMode && Boolean(singleOrgSlug) && !verificationRequired && !isPasswordResetRequest && (!hideSocialAuth || isSingleOrgSsoMode);
   const showSingleOrgSsoDivider = showSingleOrgSso && !isSingleOrgSsoMode;
   const showEmailPasswordAuth = !isSingleOrgSsoMode;
@@ -213,9 +290,10 @@ export function AuthPanel({
     prefillRef.current = key;
     setAuthMode(initialMode);
     setEmail(prefilledEmail?.trim() ?? "");
+    setAuthName("");
     setPassword("");
     setVerificationCode("");
-  }, [initialMode, prefillKey, prefilledEmail, setAuthMode, setEmail, setPassword, setVerificationCode]);
+  }, [initialMode, prefillKey, prefilledEmail, setAuthMode, setAuthName, setEmail, setPassword, setVerificationCode]);
 
   const switchMode = (mode: AuthMode) => {
     if (mode === authMode && !passwordResetRequested) {
@@ -245,6 +323,73 @@ export function AuthPanel({
       nextUrl.searchParams.set("loginHint", trimmedEmail);
     }
     window.location.assign(nextUrl.toString());
+  };
+
+  const startEmailFirstSso = () => {
+    const target = loginOption?.signInPath ?? loginOption?.signInUrl;
+    if (!target) {
+      setLoginOptionError("Could not find your organization SSO sign-in link. Try again.");
+      return;
+    }
+
+    const nextUrl = new URL(target, window.location.origin);
+    nextUrl.searchParams.set("callbackURL", getSocialCallbackUrl(runtimeConfig.openworkAuthCallbackUrl));
+    const trimmedEmail = email.trim();
+    if (trimmedEmail) {
+      nextUrl.searchParams.set("loginHint", trimmedEmail);
+    }
+    window.location.assign(nextUrl.toString());
+  };
+
+  const resolveEmailFirstStep = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setLoginOptionError("Enter your email to continue.");
+      return;
+    }
+
+    setLoginOptionBusy(true);
+    setLoginOptionError(null);
+    setLoginOption(null);
+    setPassword("");
+    setAuthName("");
+
+    try {
+      const { response, payload } = await requestJson(`/v1/auth/login-options?email=${encodeURIComponent(trimmedEmail)}`, { method: "GET" }, 12000);
+      if (!response.ok) {
+        setLoginOptionError(getErrorMessage(payload, `Could not check sign-in options (${response.status}).`));
+        return;
+      }
+
+      const nextOption = readLoginOption(payload);
+      if (!nextOption) {
+        setLoginOptionError("The sign-in options response was incomplete. Try again.");
+        return;
+      }
+
+      setEmail(trimmedEmail);
+      setAuthMode(nextOption.nextStep === "new_account" ? "sign-up" : "sign-in");
+      setLoginOption(nextOption);
+    } catch (error) {
+      setLoginOptionError(error instanceof Error ? error.message : "Could not check sign-in options.");
+    } finally {
+      setLoginOptionBusy(false);
+    }
+  };
+
+  const handleAuthNavigation = async (next: Awaited<ReturnType<typeof submitAuth>>) => {
+    const oauthRoute = typeof window === "undefined" ? null : getMcpOAuthSelectOrganizationRoute(window.location.search);
+    if (next && oauthRoute) {
+      router.replace(oauthRoute);
+      return;
+    }
+    if (next === "dashboard" || next === "join-org") {
+      const target = await resolveUserLandingRoute();
+      if (target && !isSamePathname(pathname, target)) {
+        router.replace(target);
+      }
+    }
   };
 
   const submitPasswordResetRequest = async (event: FormEvent<HTMLFormElement>) => {
@@ -284,6 +429,8 @@ export function AuthPanel({
   /*  Already signed in + desktop handoff: simplified view               */
   /* ------------------------------------------------------------------ */
   const isSignedInWithDesktopHandoff = desktopAuthRequested && desktopRedirectUrl && showAuthFeedback && authInfo && !authError;
+  const emailFirstPanelActive = emailFirstFlow && !verificationRequired && !isPasswordResetRequest;
+  const emailFirstFormBusy = loginOptionBusy || authBusy || desktopRedirectBusy;
 
   if (isSignedInWithDesktopHandoff) {
     return (
@@ -341,6 +488,200 @@ export function AuthPanel({
             Go to dashboard &rarr;
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (emailFirstPanelActive) {
+    return (
+      <div className={shellClass("gap-4 sm:gap-5", "p-5 sm:p-6 md:p-7")}>
+        <div className="grid gap-3">
+          <p className="den-eyebrow">{eyebrow}</p>
+          <div className="grid gap-2">
+            <h2 className="den-title-lg">{activeContent.title}</h2>
+            <p className="den-copy">{activeContent.copy}</p>
+          </div>
+        </div>
+
+        {desktopAuthRequested && desktopRedirectUrl ? (
+          <div className="grid gap-3">
+            <button
+              type="button"
+              className="den-button-primary w-full"
+              onClick={() => window.location.assign(desktopRedirectUrl)}
+            >
+              Open OpenWork
+              <ArrowRight className="h-4 w-4" />
+            </button>
+            <p className="m-0 text-center text-xs text-[var(--dls-text-secondary)]">
+              Sign in below, then click above to return to the app.
+            </p>
+          </div>
+        ) : null}
+
+        {emailFirstStep === "email" ? (
+          <form className="grid gap-4" onSubmit={resolveEmailFirstStep}>
+            <label className="grid gap-2">
+              <span className="den-label">Email</span>
+              <input
+                className="den-input"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                required
+              />
+            </label>
+            <button
+              type="submit"
+              className="den-button-primary w-full"
+              disabled={emailFirstFormBusy}
+            >
+              {loginOptionBusy ? "Checking..." : "Next"}
+              {!loginOptionBusy ? <ArrowRight className="h-4 w-4" /> : null}
+            </button>
+          </form>
+        ) : null}
+
+        {emailFirstStep === "sso" ? (
+          <button
+            type="button"
+            className="den-button-primary w-full"
+            onClick={startEmailFirstSso}
+            disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+          >
+            Sign in with SSO
+            <ArrowRight className="h-4 w-4" />
+          </button>
+        ) : null}
+
+        {emailFirstStep === "google" ? (
+          <SocialButton
+            onClick={() => void beginSocialAuth("google")}
+            disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+          >
+            <GoogleLogo />
+            <span>Sign in with Google</span>
+          </SocialButton>
+        ) : null}
+
+        {emailFirstStep === "github" ? (
+          <SocialButton
+            onClick={() => void beginSocialAuth("github")}
+            disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+          >
+            <GitHubLogo />
+            <span>Sign in with GitHub</span>
+          </SocialButton>
+        ) : null}
+
+        {emailFirstStep === "password" ? (
+          <form
+            className="grid gap-4"
+            onSubmit={async (event) => {
+              const next = await submitAuth(event);
+              await handleAuthNavigation(next);
+            }}
+          >
+            <label className="grid gap-2">
+              <span className="den-label">Password</span>
+              <input
+                className="den-input"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </label>
+            <div className="-mt-2 flex justify-end">
+              <button
+                type="button"
+                className="text-sm font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+                onClick={() => {
+                  setAuthMode("sign-in");
+                  setPasswordResetRequested(true);
+                  setPasswordResetInfo("");
+                  setPasswordResetError(null);
+                }}
+              >
+                Forgot password?
+              </button>
+            </div>
+            <button type="submit" className="den-button-primary w-full" disabled={formBusy}>
+              {formBusy ? "Working..." : "Sign in"}
+              {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
+            </button>
+          </form>
+        ) : null}
+
+        {emailFirstStep === "new_account" ? (
+          <form
+            className="grid gap-4"
+            onSubmit={async (event) => {
+              const next = await submitAuth(event);
+              await handleAuthNavigation(next);
+            }}
+          >
+            <label className="grid gap-2">
+              <span className="den-label">Email</span>
+              <input
+                className="den-input"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                required
+              />
+            </label>
+            <label className="grid gap-2">
+              <span className="den-label">Name</span>
+              <input
+                className="den-input"
+                type="text"
+                value={authName}
+                onChange={(event) => setAuthName(event.target.value)}
+                autoComplete="name"
+                required
+              />
+            </label>
+            <div className="den-divider" aria-hidden="true">
+              <span>or</span>
+            </div>
+            <SocialButton
+              onClick={() => void beginSocialAuth("google")}
+              disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+            >
+              <GoogleLogo />
+              <span>Sign up with Google</span>
+            </SocialButton>
+            <label className="grid gap-2">
+              <span className="den-label">Password</span>
+              <input
+                className="den-input"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="new-password"
+                required
+              />
+            </label>
+            <button type="submit" className="den-button-primary w-full" disabled={formBusy}>
+              {formBusy ? "Working..." : "Sign up"}
+              {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
+            </button>
+          </form>
+        ) : null}
+
+        {loginOptionError || showAuthFeedback ? (
+          <div
+            className="den-frame-inset grid gap-1 rounded-[1.5rem] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]"
+            aria-live="polite"
+          >
+            {loginOptionError ? <p className="font-medium text-rose-600">{loginOptionError}</p> : <p>{authInfo}</p>}
+            {!loginOptionError && authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -415,17 +756,7 @@ export function AuthPanel({
           const next = verificationRequired
             ? await submitVerificationCode(event)
             : await submitAuth(event);
-          const oauthRoute = typeof window === "undefined" ? null : getMcpOAuthSelectOrganizationRoute(window.location.search);
-          if (next && oauthRoute) {
-            router.replace(oauthRoute);
-            return;
-          }
-          if (next === "dashboard" || next === "join-org") {
-            const target = await resolveUserLandingRoute();
-            if (target && !isSamePathname(pathname, target)) {
-              router.replace(target);
-            }
-          }
+          await handleAuthNavigation(next);
         }}
       >
         {showSingleOrgSso ? (

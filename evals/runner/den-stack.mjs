@@ -4,7 +4,8 @@
  * Brings up everything the cloud eval flows need, idempotently:
  *   1. MySQL (docker compose, reuses the dev:den compose project + volume)
  *   2. Schema push (only when the database is empty)
- *   3. den-api on :8790 (only when not already healthy)
+ *   3. den-api behind a local proxy on :8790: bare /* plus den-web
+ *      /api/den/* topology (only when not already healthy)
  *   4. Demo-org seed (only when the demo owner cannot sign in)
  *   5. Desktop bootstrap pointed at the local Den + dev Electron with CDP
  *      (only when no CDP endpoint is reachable)
@@ -28,22 +29,26 @@ const REPO_ROOT = resolve(RUNNER_DIR, "..", "..");
 const STATE_DIR = join(RUNNER_DIR, "..", "results", ".den-stack");
 
 const DEN_API_PORT = Number(process.env.OPENWORK_EVAL_DEN_PORT ?? 8790);
+const DEN_API_INTERNAL_PORT = DEN_API_PORT + 1;
 const DEN_API_URL = `http://127.0.0.1:${DEN_API_PORT}`;
+const DEN_API_INTERNAL_URL = `http://127.0.0.1:${DEN_API_INTERNAL_PORT}`;
 const DEN_BASE_URL = `http://localhost:${DEN_API_PORT}`;
 const DEMO_EMAIL = process.env.DEN_DEMO_OWNER_EMAIL ?? "alex@acme.test";
 const DEMO_PASSWORD = process.env.DEN_DEMO_OWNER_PASSWORD ?? "OpenWorkDemo123!";
 const MYSQL_CONTAINER = "openwork-web-local-mysql";
 const COMPOSE_ARGS = ["compose", "-p", "openwork-den-local", "-f", "packaging/docker/docker-compose.web-local.yml"];
+const DEN_WEB_ORIGIN = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "http://localhost:3005").replace(/\/+$/, "");
+const DEN_TRUSTED_ORIGINS = `${DEN_BASE_URL},${DEN_WEB_ORIGIN},http://localhost:5173,http://127.0.0.1:5173`;
 
 const DEN_ENV = {
   OPENWORK_DEV_MODE: "1",
-  PORT: String(DEN_API_PORT),
+  PORT: String(DEN_API_INTERNAL_PORT),
   DATABASE_URL: "mysql://root:password@127.0.0.1:3306/openwork_den",
   DEN_DB_ENCRYPTION_KEY: "local-dev-db-encryption-key-please-change-1234567890",
   BETTER_AUTH_SECRET: "local-dev-secret-not-for-production-use!!",
   BETTER_AUTH_URL: DEN_BASE_URL,
-  DEN_BETTER_AUTH_TRUSTED_ORIGINS: `${DEN_BASE_URL},http://localhost:5173,http://127.0.0.1:5173`,
-  CORS_ORIGINS: `${DEN_BASE_URL},http://localhost:5173,http://127.0.0.1:5173`,
+  DEN_BETTER_AUTH_TRUSTED_ORIGINS: DEN_TRUSTED_ORIGINS,
+  CORS_ORIGINS: DEN_TRUSTED_ORIGINS,
   PROVISIONER_MODE: "stub",
   STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY ?? "sk_test_openwork_eval",
   STRIPE_INFERENCE_PRICE_ID: process.env.STRIPE_INFERENCE_PRICE_ID ?? "price_openwork_models_eval",
@@ -171,25 +176,54 @@ async function ensureSchema(log) {
 }
 
 async function ensureDenApi(log) {
-  if (await httpOk(`${DEN_API_URL}/health`)) {
-    log(`den-api already healthy on :${DEN_API_PORT}`);
+  const publicHealthOk = await httpOk(`${DEN_API_URL}/health`);
+  const denWebPathHealthOk = await httpOk(`${DEN_API_URL}/api/den/health`);
+  if (publicHealthOk && denWebPathHealthOk) {
+    log("den stack already healthy (with /api/den path)");
     return;
   }
-  log(`Starting den-api on :${DEN_API_PORT}...`);
-  const pid = spawnDetached("npx", ["tsx", "src/server.ts"], {
+  if (publicHealthOk) {
+    throw new Error(
+      `A den-api is already healthy on :${DEN_API_PORT}, but it does not serve /api/den. ` +
+      "The desktop app cannot use a bare den-api there; rerun with OPENWORK_EVAL_DEN_PORT=<free port>.",
+    );
+  }
+
+  log(`Starting den-api on internal :${DEN_API_INTERNAL_PORT} (proxied on :${DEN_API_PORT})...`);
+  const pid = spawnDetached("npx", ["tsx", "src/main.ts"], {
     logName: "den-api",
     cwd: join(REPO_ROOT, "ee", "apps", "den-api"),
     env: DEN_ENV,
   });
   await writePidState("den-api.pid", pid);
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    if (await httpOk(`${DEN_API_URL}/health`)) {
+    if (await httpOk(`${DEN_API_INTERNAL_URL}/health`)) {
       log("den-api healthy");
-      return;
+      break;
     }
     await sleep(2_000);
   }
-  throw new Error("den-api did not become healthy within 60s.");
+  if (!(await httpOk(`${DEN_API_INTERNAL_URL}/health`))) {
+    throw new Error(`den-api did not become healthy on internal :${DEN_API_INTERNAL_PORT} within 60s.`);
+  }
+
+  log(`Starting den proxy on :${DEN_API_PORT} -> :${DEN_API_INTERNAL_PORT}...`);
+  const proxyPid = spawnDetached(process.execPath, [join(RUNNER_DIR, "den-proxy.mjs")], {
+    logName: "den-proxy",
+    env: {
+      DEN_PROXY_LISTEN_PORT: String(DEN_API_PORT),
+      DEN_PROXY_UPSTREAM_PORT: String(DEN_API_INTERNAL_PORT),
+    },
+  });
+  await writePidState("den-proxy.pid", proxyPid);
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    if (await httpOk(`${DEN_API_URL}/api/den/health`)) {
+      log("den proxy healthy");
+      return;
+    }
+    await sleep(1_000);
+  }
+  throw new Error("den proxy did not expose /api/den/health within 30s.");
 }
 
 async function ensureSeed(log) {
@@ -288,6 +322,10 @@ export async function ensureDenStack({ log, cdpCandidates, skipApp = false }) {
 }
 
 export async function denStackDown({ log }) {
+  const proxyPid = await readPidState("den-proxy.pid");
+  if (proxyPid) {
+    try { process.kill(Number(proxyPid)); log(`Stopped den-proxy (pid ${proxyPid})`); } catch { /* already gone */ }
+  }
   const apiPid = await readPidState("den-api.pid");
   if (apiPid) {
     try { process.kill(Number(apiPid)); log(`Stopped den-api (pid ${apiPid})`); } catch { /* already gone */ }

@@ -10,7 +10,7 @@ import {
 
 function candidate(input: {
   name: string
-  source: "rest" | "external_mcp" | "marketplace"
+  source: "rest" | "admin" | "external_mcp" | "marketplace" | "skills"
   searchName?: string
   summary: string
   keywords?: string[]
@@ -84,6 +84,20 @@ const corpus: CapabilityCandidate[] = [
     summary: "Create a page in Notion.",
     keywords: ["Notion"],
   }),
+  candidate({
+    name: "skill:incident-response",
+    source: "skills",
+    searchName: "Incident response playbook",
+    summary: "Guide responders through a production outage.",
+    keywords: ["skill", "playbook"],
+  }),
+  candidate({
+    name: "admin:listOrganizations",
+    source: "admin",
+    searchName: "list organizations",
+    summary: "List organizations for platform support.",
+    keywords: ["admin", "platform"],
+  }),
 ]
 
 describe("capability lexical ranking", () => {
@@ -137,6 +151,13 @@ describe("capability lexical ranking", () => {
     const notion = rankCapabilities("notion page", corpus, { limit: 5 })[0]
     expect(notion?.name).toBe("mcp:notion:createPage")
     expect(notion?.source).toBe("external_mcp")
+
+    expect(rankCapabilities("production outage playbook", corpus, { limit: 5 })[0]).toEqual(
+      expect.objectContaining({ name: "skill:incident-response", source: "skills" }),
+    )
+    expect(rankCapabilities("platform organizations", corpus, { limit: 5 })[0]).toEqual(
+      expect.objectContaining({ name: "admin:listOrganizations", source: "admin" }),
+    )
   })
 
   test("returns bounded sorted integer scores", () => {

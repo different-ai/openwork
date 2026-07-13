@@ -4,11 +4,27 @@
  * Kept pure so the encoding is unit-testable without any HTTP.
  */
 
+import { randomUUID } from "node:crypto"
+
 function hasNonAscii(value: string): boolean {
   for (const char of value) {
     if (char.codePointAt(0)! > 0x7e || char.codePointAt(0)! < 0x20) return true
   }
   return false
+}
+
+export type GmailDraftAttachment = {
+  filename: string
+  mimeType: string
+  content: Buffer
+}
+
+function encodeMimeParameter(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+}
+
+function base64MimeContent(content: Buffer): string {
+  return content.toString("base64").match(/.{1,76}/g)?.join("\r\n") ?? ""
 }
 
 /** RFC 2047 B-encoding for header values that contain non-ASCII characters. */
@@ -38,15 +54,45 @@ export function readGmailDraftIds(text: string): { draftId: string | null; messa
   }
 }
 
-export function buildGmailDraftRaw(input: { to: string; subject: string; body: string }): string {
-  const message = [
+export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: string; subject: string; body: string; headers?: { name: string; value: string }[]; attachments?: GmailDraftAttachment[] }): string {
+  const headers = [
     `To: ${input.to}`,
+    input.cc ? `Cc: ${input.cc}` : null,
+    input.bcc ? `Bcc: ${input.bcc}` : null,
     `Subject: ${encodeMimeHeaderValue(input.subject)}`,
+    ...(input.headers ?? []).map((header) => `${header.name}: ${header.value}`),
+  ].filter((line) => typeof line === "string")
+  const attachments = input.attachments ?? []
+  const message = attachments.length === 0 ? [
+    ...headers,
     "MIME-Version: 1.0",
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: base64",
     "",
     Buffer.from(input.body, "utf8").toString("base64"),
-  ].join("\r\n")
+  ].join("\r\n") : (() => {
+    const boundary = `openwork-${randomUUID()}`
+    return [
+      ...headers,
+      "MIME-Version: 1.0",
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      "",
+      `--${boundary}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+      "Content-Transfer-Encoding: base64",
+      "",
+      Buffer.from(input.body, "utf8").toString("base64"),
+      ...attachments.flatMap((attachment) => [
+        `--${boundary}`,
+        `Content-Type: ${attachment.mimeType}; name="${encodeMimeParameter(attachment.filename)}"`,
+        `Content-Disposition: attachment; filename="${encodeMimeParameter(attachment.filename)}"`,
+        "Content-Transfer-Encoding: base64",
+        "",
+        base64MimeContent(attachment.content),
+      ]),
+      `--${boundary}--`,
+      "",
+    ].join("\r\n")
+  })()
   return Buffer.from(message, "utf8").toString("base64url")
 }

@@ -17,6 +17,12 @@ on:
     branches:
       - dev
   workflow_dispatch:
+    inputs:
+      publish_pointer:
+        description: "Update alpha-macos-latest (leave off for isolated branch validation)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -213,7 +219,7 @@ jobs:
             --clobber
 
       - name: Update alpha updater pointer
-        if: env.MACOS_NOTARIZE == 'true'
+        if: env.MACOS_NOTARIZE == 'true' && (github.event_name == 'push' || inputs.publish_pointer == true)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

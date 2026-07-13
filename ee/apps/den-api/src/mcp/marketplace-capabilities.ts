@@ -28,6 +28,7 @@ type PluginId = DenTypeId<"plugin">
 type ConfigObjectId = DenTypeId<"configObject">
 type ConfigObjectRow = typeof ConfigObjectTable.$inferSelect
 type ConfigObjectType = ConfigObjectRow["objectType"]
+export type MarketplaceCapabilityObjectType = ConfigObjectType
 type ConfigObjectVersionRow = typeof ConfigObjectVersionTable.$inferSelect
 type MemberRow = Pick<typeof MemberTable.$inferSelect, "id" | "role">
 type UsableExternalMcpConnection = Awaited<ReturnType<typeof listUsableExternalMcpConnections>>[number]
@@ -687,6 +688,7 @@ function commandArguments(body: unknown): string {
 export async function listMarketplaceCapabilityCandidates(input: {
   enabled?: boolean
   member: McpMemberIdentity | null
+  objectTypes?: MarketplaceCapabilityObjectType[]
   organizationId: string
 }): Promise<MarketplaceCapabilityCandidate[]> {
   if (input.enabled === false || !input.member) return []
@@ -704,6 +706,7 @@ export async function listMarketplaceCapabilityCandidates(input: {
   const candidatesByName = new Map<string, MarketplaceCapabilityCandidate>()
 
   for (const row of rows) {
+    if (input.objectTypes && !input.objectTypes.includes(row.configObject.objectType)) continue
     const name = buildMarketplaceCapabilityName(row.plugin.id, row.configObject.id)
     if (candidatesByName.has(name)) continue
     const match: MarketplaceCapabilityFields = {
@@ -743,12 +746,14 @@ export async function searchMarketplaceCapabilities(input: {
   enabled?: boolean
   limit?: number
   member: McpMemberIdentity | null
+  objectTypes?: MarketplaceCapabilityObjectType[]
   organizationId: string
   query: string
 }): Promise<MarketplaceCapabilityMatch[]> {
   return rankCapabilities(input.query, await listMarketplaceCapabilityCandidates({
     enabled: input.enabled,
     member: input.member,
+    objectTypes: input.objectTypes,
     organizationId: input.organizationId,
   }), { limit: input.limit })
 }

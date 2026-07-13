@@ -2,8 +2,9 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { Cloud, Columns2, FileText, Globe, Mic2, Settings2, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cloud, Columns2, FileText, Globe, Mic2, Settings2, TextSearch, X, Zap } from "lucide-react";
 
+import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
 import { OPENWORK_EXTENSION_CATALOG } from "../../../../app/constants";
 import { buildDenAuthUrl, readDenBootstrapConfig } from "../../../../app/lib/den";
@@ -69,6 +70,15 @@ import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { getExtensionId, isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "../../settings/extension-state";
 import { cn } from "@/lib/utils";
+import {
+  canNavigateSelectedConversationHistory,
+  createConversationTabHistory,
+  navigateConversationTabHistory,
+  removeConversationHistoryEntry,
+  syncConversationTabHistory,
+  type ConversationTabHistory,
+  type ConversationHistoryDirection,
+} from "./conversation-tab-history";
 
 const STARTUP_SKELETON_ROWS = [
   { id: "intro", titleWidth: "42%", bodyWidth: "88%" },
@@ -81,6 +91,13 @@ const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
 export type OpenSessionTab = {
   workspaceId: string;
   sessionId: string;
+};
+
+type PendingConversationHistoryNavigation = {
+  history: ConversationTabHistory;
+  fromWorkspaceId: string;
+  fromSessionId: string | null;
+  targetSessionId: string;
 };
 
 type StatusBarOverrides = Pick<
@@ -353,6 +370,10 @@ export function SessionPage(props: SessionPageProps) {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [sessionActionId, setSessionActionId] = useState<string | null>(null);
   const [sessionTabs, setSessionTabs] = useState<OpenSessionTab[]>([]);
+  const [conversationHistory, setConversationHistory] = useState(() => (
+    createConversationTabHistory(props.selectedWorkspaceId, props.selectedSessionId)
+  ));
+  const [pendingConversationHistoryNavigation, setPendingConversationHistoryNavigation] = useState<PendingConversationHistoryNavigation | null>(null);
   const [splitSessionId, setSplitSessionId] = useState<string | null>(null);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [createGroupLabel, setCreateGroupLabel] = useState("");
@@ -665,6 +686,38 @@ export function SessionPage(props: SessionPageProps) {
     [props.selectedSessionId, props.sidebar.workspaceSessionGroups],
   );
   useEffect(() => {
+    if (pendingConversationHistoryNavigation) {
+      if (
+        pendingConversationHistoryNavigation.history.workspaceId === props.selectedWorkspaceId &&
+        pendingConversationHistoryNavigation.targetSessionId === props.selectedSessionId
+      ) {
+        setConversationHistory(pendingConversationHistoryNavigation.history);
+        setPendingConversationHistoryNavigation(null);
+        return;
+      }
+      if (
+        pendingConversationHistoryNavigation.fromWorkspaceId === props.selectedWorkspaceId &&
+        pendingConversationHistoryNavigation.fromSessionId === props.selectedSessionId
+      ) {
+        return;
+      }
+      setPendingConversationHistoryNavigation(null);
+    }
+
+    setConversationHistory((current) => syncConversationTabHistory(
+      current,
+      props.selectedWorkspaceId,
+      props.selectedSessionId,
+    ));
+  }, [pendingConversationHistoryNavigation, props.selectedSessionId, props.selectedWorkspaceId]);
+  useEffect(() => {
+    if (!pendingConversationHistoryNavigation) return undefined;
+    const id = window.setTimeout(() => {
+      setPendingConversationHistoryNavigation((current) => current === pendingConversationHistoryNavigation ? null : current);
+    }, 5000);
+    return () => window.clearTimeout(id);
+  }, [pendingConversationHistoryNavigation]);
+  useEffect(() => {
     setSessionTabs((current) => {
       const currentWorkspaceTabs = current.filter((tab) => tab.workspaceId === props.selectedWorkspaceId);
       const next = props.selectedSessionId && !currentWorkspaceTabs.some((tab) => tab.sessionId === props.selectedSessionId)
@@ -751,6 +804,18 @@ export function SessionPage(props: SessionPageProps) {
   );
   const canRenderSplitSurface = Boolean(canRenderReactSurface && splitSessionId && splitSessionId !== props.selectedSessionId);
   const findButtonSessionId = props.selectedSessionId;
+  const canGoBackInConversationHistory = !pendingConversationHistoryNavigation && canNavigateSelectedConversationHistory(
+    conversationHistory,
+    props.selectedWorkspaceId,
+    props.selectedSessionId,
+    "back",
+  );
+  const canGoForwardInConversationHistory = !pendingConversationHistoryNavigation && canNavigateSelectedConversationHistory(
+    conversationHistory,
+    props.selectedWorkspaceId,
+    props.selectedSessionId,
+    "forward",
+  );
 
   const openSessionTab = useCallback((workspaceId: string, sessionId: string) => {
     setSessionTabs((current) => {
@@ -762,17 +827,37 @@ export function SessionPage(props: SessionPageProps) {
   }, [props.sidebar]);
 
   const closeSessionTab = useCallback((sessionId: string) => {
+    const nextTab = sessionTabs.find((tab) => tab.sessionId !== sessionId && tab.workspaceId === props.selectedWorkspaceId);
     setSessionTabs((current) => current.filter((tab) => tab.sessionId !== sessionId));
     setSplitSessionId((current) => current === sessionId ? null : current);
+    setPendingConversationHistoryNavigation(null);
+    setConversationHistory((current) => removeConversationHistoryEntry(current, props.selectedWorkspaceId, sessionId));
     if (sessionId !== props.selectedSessionId) return;
 
-    const nextTab = sessionTabs.find((tab) => tab.sessionId !== sessionId && tab.workspaceId === props.selectedWorkspaceId);
     if (nextTab) {
       props.sidebar.onOpenSession(nextTab.workspaceId, nextTab.sessionId);
       return;
     }
     props.sidebar.onSelectWorkspace(props.selectedWorkspaceId);
   }, [props.selectedSessionId, props.selectedWorkspaceId, props.sidebar, sessionTabs]);
+
+  const navigateConversationHistory = useCallback((direction: ConversationHistoryDirection) => {
+    if (!canNavigateSelectedConversationHistory(
+      conversationHistory,
+      props.selectedWorkspaceId,
+      props.selectedSessionId,
+      direction,
+    )) return;
+    const next = navigateConversationTabHistory(conversationHistory, direction);
+    if (!next.sessionId) return;
+    setPendingConversationHistoryNavigation({
+      history: next.history,
+      fromWorkspaceId: props.selectedWorkspaceId,
+      fromSessionId: props.selectedSessionId,
+      targetSessionId: next.sessionId,
+    });
+    props.sidebar.onOpenSession(next.history.workspaceId, next.sessionId);
+  }, [conversationHistory, props.selectedSessionId, props.selectedWorkspaceId, props.sidebar]);
 
   useEffect(() => {
     if (!showSessionLoadingState) {
@@ -1010,53 +1095,96 @@ export function SessionPage(props: SessionPageProps) {
               {!showDelayedSessionLoadingState && canRenderReactSurface ? (
                 <div className="flex h-full min-h-0 flex-col">
                   {sessionTabs.length > 0 ? (
-                    <div className="flex h-10 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-background/80 px-2 mac:backdrop-blur-xl">
-                      {sessionTabs.map((tab) => {
-                        const title = sessionTitleForId(props.sidebar.workspaceSessionGroups, tab.sessionId) || t("session.default_title");
-                        const active = tab.sessionId === props.selectedSessionId;
-                        const split = tab.sessionId === splitSessionId;
-                        return (
-                          <div
-                            key={tab.sessionId}
-                            data-session-tab-id={tab.sessionId}
-                            className={cn(
-                              "group flex max-w-56 shrink-0 items-center gap-1 rounded-lg border px-2 py-1 text-xs transition-colors",
-                              active
-                                ? "border-border bg-dls-surface text-dls-text shadow-sm"
-                                : "border-transparent text-dls-secondary hover:bg-dls-hover hover:text-dls-text",
-                              split && "border-primary/30 bg-primary/10 text-primary",
-                            )}
-                          >
-                            <button
-                              type="button"
-                              className="min-w-0 flex-1 truncate text-left"
-                              onClick={() => props.sidebar.onOpenSession(tab.workspaceId, tab.sessionId)}
-                              title={title}
+                    <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-background/80 px-2 mac:backdrop-blur-xl">
+                      <div className="flex shrink-0 items-center gap-0.5 pr-1" role="group" aria-label="Conversation history controls">
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                className="rounded-lg text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40"
+                                aria-label="Back in conversation history"
+                                title="Back in conversation history"
+                                data-conversation-history-control="back"
+                                disabled={!canGoBackInConversationHistory}
+                                onClick={() => navigateConversationHistory("back")}
+                              >
+                                <ArrowLeft size={14} />
+                              </Button>
+                            }
+                          />
+                          <TooltipContent>Back in conversation history</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                className="rounded-lg text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40"
+                                aria-label="Forward in conversation history"
+                                title="Forward in conversation history"
+                                data-conversation-history-control="forward"
+                                disabled={!canGoForwardInConversationHistory}
+                                onClick={() => navigateConversationHistory("forward")}
+                              >
+                                <ArrowRight size={14} />
+                              </Button>
+                            }
+                          />
+                          <TooltipContent>Forward in conversation history</TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+                        {sessionTabs.map((tab) => {
+                          const title = sessionTitleForId(props.sidebar.workspaceSessionGroups, tab.sessionId) || t("session.default_title");
+                          const active = tab.sessionId === props.selectedSessionId;
+                          const split = tab.sessionId === splitSessionId;
+                          return (
+                            <div
+                              key={tab.sessionId}
+                              data-session-tab-id={tab.sessionId}
+                              data-session-tab-active={active ? "true" : undefined}
+                              className={cn(
+                                "group flex max-w-56 shrink-0 items-center gap-1 rounded-lg border px-2 py-1 text-xs transition-colors",
+                                active
+                                  ? "border-border bg-dls-surface text-dls-text"
+                                  : "border-transparent text-dls-secondary hover:bg-dls-hover hover:text-dls-text",
+                                split && "border-primary/30 bg-primary/10 text-primary",
+                              )}
                             >
-                              {title}
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded p-0.5 text-dls-secondary hover:bg-dls-hover hover:text-dls-text disabled:pointer-events-none disabled:opacity-40"
-                              onClick={() => setSplitSessionId(split ? null : tab.sessionId)}
-                              disabled={active}
-                              title={split ? "Close split" : "Open in split view"}
-                              aria-label={split ? "Close split" : "Open in split view"}
-                            >
-                              <Columns2 size={13} />
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded p-0.5 text-dls-secondary opacity-80 hover:bg-dls-hover hover:text-dls-text group-hover:opacity-100"
-                              onClick={() => closeSessionTab(tab.sessionId)}
-                              title="Close tab"
-                              aria-label="Close tab"
-                            >
-                              <X size={13} />
-                            </button>
-                          </div>
-                        );
-                      })}
+                              <button
+                                type="button"
+                                className="min-w-0 flex-1 truncate text-left"
+                                onClick={() => props.sidebar.onOpenSession(tab.workspaceId, tab.sessionId)}
+                                title={title}
+                              >
+                                {title}
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded p-0.5 text-dls-secondary hover:bg-dls-hover hover:text-dls-text disabled:pointer-events-none disabled:opacity-40"
+                                onClick={() => setSplitSessionId(split ? null : tab.sessionId)}
+                                disabled={active}
+                                title={split ? "Close split" : "Open in split view"}
+                                aria-label={split ? "Close split" : "Open in split view"}
+                              >
+                                <Columns2 size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded p-0.5 text-dls-secondary opacity-80 hover:bg-dls-hover hover:text-dls-text group-hover:opacity-100"
+                                onClick={() => closeSessionTab(tab.sessionId)}
+                                title="Close tab"
+                                aria-label="Close tab"
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   ) : null}
                   <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -1231,7 +1359,7 @@ export function SessionPage(props: SessionPageProps) {
                               );
                             }}
                           >
-                            <img src="/openwork-mark.svg" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
+                            <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" width={20} height={20} className="mt-0.5 shrink-0" />
                             <div>
                               <div className="text-[13px] font-medium text-dls-text">Browse the web</div>
                               <div className="mt-0.5 text-[11px] text-dls-secondary">Search Craigslist for couches and list the results</div>

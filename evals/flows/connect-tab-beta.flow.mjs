@@ -25,7 +25,7 @@ const state = {
 
 export default {
   id: FLOW_ID,
-  title: "Desktop Connect tab beta shell shows pitch, active org MCP cards, and leaves Extensions local-only",
+  title: "Desktop Connect tab alpha shell shows pitch, active org MCP cards, and leaves Extensions local-only",
   kind: "user-facing",
   spec: "evals/voiceovers/connect-tab-beta.md",
   requiredEnv: [
@@ -38,7 +38,7 @@ export default {
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("The Connect tab is visible in the Cloud settings group with a Beta badge", {
+        await ctx.prove("The Connect tab is visible in the Cloud settings group with an Alpha badge", {
           voiceover: vo[0],
           action: async () => {
             await prepareSignedInDesktopWithConnectOff(ctx);
@@ -50,13 +50,13 @@ export default {
             const nav = await readSettingsSidebar(ctx);
             ctx.assert(nav.text.includes("Cloud"), `Settings sidebar did not include Cloud: ${nav.text}`);
             ctx.assert(nav.connectButtonText.includes("Connect"), `Connect tab button missing: ${JSON.stringify(nav)}`);
-            ctx.assert(nav.connectButtonText.includes("Beta"), `Connect tab button missing Beta badge: ${nav.connectButtonText}`);
+            ctx.assert(nav.connectButtonText.includes("Alpha"), `Connect tab button missing Alpha badge: ${nav.connectButtonText}`);
             await ctx.expectHashIncludes("/settings/cloud-account");
           },
           screenshot: {
             name: "connect-tab-beta-sidebar",
-            claim: "Settings shows Connect under Cloud and marks it Beta.",
-            requireText: ["Cloud", "Connect", "BETA"],
+            claim: "Settings shows Connect under Cloud and marks it Alpha.",
+            requireText: ["Cloud", "Connect", "ALPHA"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -76,7 +76,7 @@ export default {
               text: document.body.innerText,
               cardCount: document.querySelectorAll('[data-testid="connect-org-mcp-card"]').length,
             }))()`);
-            ctx.assert(proof.text.includes("Ask your organization admin to enable Connect (beta) to get started."), "Pitch body was missing.");
+            ctx.assert(proof.text.includes("Ask your organization admin to enable Connect (alpha) to get started."), "Pitch body was missing.");
             ctx.assert(proof.text.includes("Manage in Den web"), "Pitch did not include the Den web link.");
             ctx.assert(proof.cardCount === 0, `Pitch rendered org connection cards: ${proof.cardCount}`);
             ctx.assert(!proof.text.includes("AVAILABLE APPS"), "Connect pitch leaked the local quick-connect grid.");
@@ -114,7 +114,7 @@ export default {
           },
           screenshot: {
             name: "connect-tab-beta-active-card",
-            claim: "Connect active state shows the org status row and the beta org MCP connection card.",
+            claim: "Connect active state shows the org status row and the alpha org MCP connection card.",
             requireText: ["Connected to", CONNECTION_NAME, "NEEDS YOUR SIGN-IN"],
             rejectText: ["AVAILABLE APPS", "Something went wrong"],
           },

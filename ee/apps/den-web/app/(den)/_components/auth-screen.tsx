@@ -178,7 +178,7 @@ export function AuthScreen() {
             ) : hasResolvedSession ? (
               <SessionStatusPanel mode="redirecting" />
             ) : (
-              <AuthPanel bare />
+              <AuthPanel bare emailFirstFlow />
             )}
           </div>
         </div>

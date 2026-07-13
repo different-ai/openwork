@@ -1,7 +1,20 @@
 /** @jsxImportSource react */
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
 import { t } from "@/i18n";
+import {
+  DESKTOP_NOTIFICATION_PREFERENCE_VALUES,
+  isDesktopNotificationPreference,
+  type DesktopNotificationPreference,
+} from "@/react-app/kernel/desktop-notification-preferences";
 import {
   LayoutSection,
   LayoutSectionDescription,
@@ -24,11 +37,29 @@ export type PreferencesViewProps = {
   onToggleAutoCompactContext: () => void;
   analyticsEnabled: boolean;
   onToggleAnalytics: () => void;
+  desktopNotifications: DesktopNotificationPreference;
+  onDesktopNotificationsChange: (value: DesktopNotificationPreference) => void;
   memoryEnabled: boolean;
   onToggleMemory: () => void;
 };
 
+function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference) {
+  switch (value) {
+    case "important":
+      return t("settings.desktop_notifications.important");
+    case "all":
+      return t("settings.desktop_notifications.all");
+    case "off":
+      return t("settings.desktop_notifications.off");
+  }
+}
+
 export function PreferencesView(props: PreferencesViewProps) {
+  const desktopNotificationItems = DESKTOP_NOTIFICATION_PREFERENCE_VALUES.map((value) => ({
+    value,
+    label: desktopNotificationPreferenceLabel(value),
+  }));
+
   return (
     <LayoutStack>
       <LayoutSection>
@@ -65,6 +96,47 @@ export function PreferencesView(props: PreferencesViewProps) {
                 disabled={props.busy || props.autoCompactContextBusy}
                 onCheckedChange={props.onToggleAutoCompactContext}
               />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      </LayoutSection>
+
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>{t("settings.desktop_notifications.title")}</LayoutSectionTitle>
+          <LayoutSectionDescription>{t("settings.desktop_notifications.section_desc")}</LayoutSectionDescription>
+        </LayoutSectionHeader>
+
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.desktop_notifications.mode")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("settings.desktop_notifications.mode_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <div className="w-44 max-w-full">
+                <Select
+                  value={props.desktopNotifications}
+                  items={desktopNotificationItems}
+                  onValueChange={(value) => {
+                    if (isDesktopNotificationPreference(value)) {
+                      props.onDesktopNotificationsChange(value);
+                    }
+                  }}
+                  disabled={props.busy}
+                >
+                  <SelectTrigger className="w-full" aria-label={t("settings.desktop_notifications.mode")}>
+                    <SelectValue placeholder={t("settings.desktop_notifications.off")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {DESKTOP_NOTIFICATION_PREFERENCE_VALUES.map((value) => (
+                        <SelectItem key={value} value={value}>
+                          {desktopNotificationPreferenceLabel(value)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>
         </LayoutSectionItem>

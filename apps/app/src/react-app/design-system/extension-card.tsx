@@ -30,7 +30,7 @@ export type ExtensionCardProps = {
   hidden?: boolean;
   /** Whether this extension is still in preview. */
   preview?: boolean;
-  /** Whether this extension is beta / untested. */
+  /** Whether this extension is alpha / untested. */
   beta?: boolean;
   /** Reason this item is visible but unavailable. */
   disabledReason?: string | null;
@@ -163,7 +163,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
             ) : null}
             {beta ? (
               <span className="shrink-0 rounded-md bg-amber-3 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
-                {t("common.beta")}
+                {t("common.alpha")}
               </span>
             ) : null}
             {disabledReason ? (

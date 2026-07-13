@@ -112,8 +112,76 @@ const sessionMessagesEnvelopeSchema = z.object({
   items: z.array(sessionMessageSchema),
 }).passthrough();
 
-const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
+const connectStateResponseSchema = z.object({
+  ok: z.literal(true),
+  schemaVersion: z.number(),
+  connectEnabled: z.boolean(),
+  cloudMcpPresent: z.boolean(),
+  googleWorkspace: z.object({
+    legacyConfigured: z.boolean(),
+  }).passthrough(),
+}).passthrough();
+
+export type OpenWorkExtensionConnectState = {
+  connectEnabled: boolean;
+  cloudMcpPresent: boolean;
+  googleWorkspace: {
+    legacyConfigured: boolean;
+  };
+};
+
+export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
   "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_extension_list_actions to inspect available extension actions, then call the matching action with openwork_extension_call.";
+
+export const OPENWORK_CLOUD_CONNECTION_INSTRUCTION =
+  "The OpenWork Cloud connection is active. For email (Gmail), calendar, Google Drive, and org-connected services such as Notion, Linear, Slack, etc., FIRST call openwork-cloud_search_capabilities with 2-4 keyword variants, then call openwork-cloud_execute_capability with an exact returned name. Do not claim these are unavailable without searching. OpenWork extensions (openwork_extension_list_actions / openwork_extension_call) remain available for other local actions such as image generation, but do NOT use them for Google Workspace, and never direct the user to Settings > Extensions for Google Workspace; use Settings > Connect. A successful search proves OpenWork Cloud itself is authorized, so never tell the user to reconnect OpenWork Cloud because a downstream connector failed. If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly: use Your Connections for the member, the organization Connections dashboard for an org admin, or the provider admin console for a provider-side failure. After the requested human fixes that connector, search again in the same task. Do not try browser_* or openwork_ui_* workarounds or repeat the same call unchanged; results are live, not cached, so unchanged retries return the same error.";
+
+export const OPENWORK_CONNECT_GOOGLE_WORKSPACE_DISCONNECTED_INSTRUCTION =
+  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} Google Workspace is not connected on this device; if the user asks for email, calendar, or Google Drive, tell them to connect their account in Settings > Connect (never Settings > Extensions).`;
+
+const CONNECT_STATE_CACHE_MS = 15_000;
+
+type OpenWorkFetch = (url: string, init?: RequestInit) => Promise<Response>;
+type Clock = () => number;
+type CachedOpenWorkExtensionDiscoveryInstruction = {
+  at: number;
+  instruction: string;
+};
+
+let cachedOpenWorkExtensionDiscoveryInstruction: CachedOpenWorkExtensionDiscoveryInstruction | null = null;
+
+export function composeOpenWorkExtensionDiscoveryInstruction(state: OpenWorkExtensionConnectState | null): string {
+  if (!state || !state.connectEnabled || state.googleWorkspace.legacyConfigured) {
+    return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+  }
+  return state.cloudMcpPresent
+    ? OPENWORK_CLOUD_CONNECTION_INSTRUCTION
+    : OPENWORK_CONNECT_GOOGLE_WORKSPACE_DISCONNECTED_INSTRUCTION;
+}
+
+export function resetOpenWorkExtensionDiscoveryInstructionCacheForTests(): void {
+  cachedOpenWorkExtensionDiscoveryInstruction = null;
+}
+
+export async function resolveOpenWorkExtensionDiscoveryInstruction(fetcher: OpenWorkFetch = fetch, now: Clock = Date.now): Promise<string> {
+  const currentTime = now();
+  if (
+    cachedOpenWorkExtensionDiscoveryInstruction &&
+    currentTime - cachedOpenWorkExtensionDiscoveryInstruction.at < CONNECT_STATE_CACHE_MS
+  ) {
+    return cachedOpenWorkExtensionDiscoveryInstruction.instruction;
+  }
+
+  let instruction = OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+  try {
+    instruction = composeOpenWorkExtensionDiscoveryInstruction(await fetchOpenWorkConnectState(fetcher));
+  } catch {
+    instruction = OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+  }
+
+  cachedOpenWorkExtensionDiscoveryInstruction = { at: currentTime, instruction };
+  return instruction;
+}
 
 const OPENWORK_UI_CONTROL_INSTRUCTION =
   `IMPORTANT: You are running inside the OpenWork desktop app. When the user asks you to open settings, navigate the app, add providers, or control the OpenWork UI in any way, ALWAYS use the openwork_ui_* tools — NOT the browser_* tools. The browser tools are for external websites only. The openwork_ui_* tools control the app directly and are instant (one tool call).
@@ -122,14 +190,16 @@ To open settings: openwork_ui_execute_action with actionId "settings.panel.open"
 To add a provider: openwork_ui_execute_action with actionId "settings.provider.add" and optional args {providerId:"anthropic"}
 To see what the user sees: openwork_ui_snapshot
 To list all available actions: openwork_ui_list_actions
-To ask what OpenWork can do: openwork_ui_execute_action with actionId "help.capabilities"
+To ask what OpenWork can do: openwork_ui_execute_action with actionId "help.capabilities"`;
 
-## Cross-session memory
+const OPENWORK_SESSION_MEMORY_INSTRUCTION =
+  `## Cross-session memory
 When the user asks what they said, what happened, or what was decided in another OpenWork chat/session, treat it as a session-history lookup, not hidden model memory.
 Use openwork_session_search first to search session titles and message transcripts across workspaces. If there is one clear match, use openwork_session_read with the returned sessionId/workspaceId to retrieve transcript context without navigating the UI.
-Answer only from the returned search/read results. If multiple sessions match, ask a short clarifying question. If the returned transcript is limited or missing the older context needed, say so instead of guessing.
+Answer only from the returned search/read results. If multiple sessions match, ask a short clarifying question. If the returned transcript is limited or missing the older context needed, say so instead of guessing.`;
 
-Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the OpenWork app itself. Those are for browsing external websites.
+const OPENWORK_BROWSER_INSTRUCTION =
+  `Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the OpenWork app itself. Those are for browsing external websites.
 
 ## Built-in Browser (external websites)
 For web browsing tasks, ALWAYS start with openwork_browser_open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
@@ -171,6 +241,16 @@ function userAppDataDir(): string {
   if (platform() === "darwin") return join(homedir(), "Library", "Application Support");
   if (platform() === "win32") return process.env.APPDATA || join(homedir(), "AppData", "Roaming");
   return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+}
+
+// The agent-facing UI-control surface (system steering + openwork_ui_* tools)
+// is opt-in: it noises every session's prompt/tool list, and the supported way
+// to grant agents UI control is the hidden "OpenWork UI Control" MCP in
+// Settings -> Extensions. Set OPENWORK_UI_CONTROL_TOOLS=1 to re-enable the
+// built-in preview surface (used by internal tooling).
+function uiControlToolsEnabled(): boolean {
+  const raw = process.env.OPENWORK_UI_CONTROL_TOOLS?.trim().toLowerCase() ?? "";
+  return raw === "1" || raw === "true";
 }
 
 function uiControlDiscoveryPaths(): string[] {
@@ -229,6 +309,23 @@ async function serverGet(path: string): Promise<unknown> {
   const payload = await parseResponse(response);
   if (!response.ok) throw new Error(errorMessage(payload, "OpenWork server request failed"));
   return payload;
+}
+
+async function fetchOpenWorkConnectState(fetcher: OpenWorkFetch): Promise<OpenWorkExtensionConnectState> {
+  const { url, token } = requireOpenWorkServer();
+  const response = await fetcher(`${url}/experimental/connect/state`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const payload = await parseResponse(response);
+  if (!response.ok) throw new Error(errorMessage(payload, "OpenWork connect state request failed"));
+  const parsed = connectStateResponseSchema.parse(payload);
+  return {
+    connectEnabled: parsed.connectEnabled,
+    cloudMcpPresent: parsed.cloudMcpPresent,
+    googleWorkspace: {
+      legacyConfigured: parsed.googleWorkspace.legacyConfigured,
+    },
+  };
 }
 
 function collapseWhitespace(value: string): string {
@@ -597,10 +694,14 @@ function contextPayload(context: OpenCodeContext) {
   };
 }
 
-export const OpenWorkExtensionsPreview = async () => ({
+export const OpenWorkExtensionsPreview = async () => {
+  const uiControlEnabled = uiControlToolsEnabled();
+  return {
   "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
-    output.system.push(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
-    output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);
+    output.system.push(await resolveOpenWorkExtensionDiscoveryInstruction());
+    output.system.push(OPENWORK_SESSION_MEMORY_INSTRUCTION);
+    output.system.push(OPENWORK_BROWSER_INSTRUCTION);
+    if (uiControlEnabled) output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);
   },
   tool: {
     openwork_extension_list_actions: {
@@ -632,6 +733,7 @@ export const OpenWorkExtensionsPreview = async () => ({
         return JSON.stringify(payload, null, 2);
       },
     },
+    ...(uiControlEnabled ? {
     openwork_ui_snapshot: {
       description: "Get a snapshot of the current OpenWork UI state: active route, narration, visible actions, and status. Use this to understand what the user sees before taking action.",
       args: {},
@@ -660,6 +762,7 @@ export const OpenWorkExtensionsPreview = async () => ({
         return JSON.stringify(result, null, 2);
       },
     },
+    } : {}),
     openwork_session_search: {
       description: "Search OpenWork past chat sessions by title and full message transcript text without navigating the UI. Use this when the user refers to another/past chat or asks what was said, decided, or done previously.",
       args: sessionSearchArgsSchema.shape,
@@ -727,4 +830,5 @@ export const OpenWorkExtensionsPreview = async () => ({
       },
     },
   },
-});
+  };
+};
