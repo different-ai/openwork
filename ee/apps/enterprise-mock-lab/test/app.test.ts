@@ -14,7 +14,7 @@ import { SecurityService } from "../src/security.js"
 const ORIGIN = "http://127.0.0.1:8794"
 const ADMIN_SECRET = "local-admin-secret-with-more-than-32-characters"
 const CLIENT_SECRET = "synthetic-oauth-client-secret"
-const DEN_CALLBACK = "http://127.0.0.1:8790/v1/mcp-connections/connection-123/connect/callback"
+const DEN_CALLBACK = "http://localhost:8790/v1/mcp-connections/connection-123/connect/callback"
 
 const profile: LabProfile = {
   description: "ServiceNow MCP inbound quickstart simulation",
