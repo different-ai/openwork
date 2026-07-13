@@ -18,7 +18,7 @@ The script auto-detects whether it's running inside a factory layout (`../../.._
 2. **Indexes infra files** — collects all build/config/CI files into a single searchable set:
    - GitHub workflow YAMLs
    - Dockerfiles and docker-compose files
-   - Deployment configs (Vercel, Tauri)
+   - Deployment configs (Vercel)
    - Build tool configs (vite, tailwind, postcss, next, drizzle, tsup, playwright)
    - Build scripts (`.mjs`, `.ts`, `.sh` across all workspaces)
    - `.opencode` skill scripts
@@ -29,9 +29,12 @@ The script auto-detects whether it's running inside a factory layout (`../../.._
    - **Convention patterns** — filenames like `postinstall`, `drizzle.config`, Tauri hooks
    - **File-based routing dirs** — Next.js server routes, app routes, and API routes that are entry points by convention
    - **Sibling repo CI/CD** — workflows, Dockerfiles, and build scripts in sibling repos and factory-level CI, with smart filtering to avoid false positives on generic filenames (e.g., `index`, `utils`, `config`)
-4. **Displays results in two buckets** (oldest first within each):
-   - `✗` **Safe to remove** — no references found anywhere (red)
-   - `⚠` **Review before removing** — referenced in infra/CI (yellow) or sibling CI (cyan)
+4. **Displays results in two advisory buckets** (oldest first within each):
+   - `?` **Candidates** — no known entrypoint, convention, or config signal was found
+   - `⚠` **Review** — a package manifest, convention, infra/CI, or sibling-CI signal was found
+
+Neither bucket is a deletion verdict. A candidate still needs an owner,
+runtime-entry, packaging, documentation, and consumer audit before removal.
 
 A progress indicator shows the current file being checked during cross-referencing.
 
