@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "6f92015d-82d2-4e3f-b7d3-2aca03032643",
+  "id": "7193a3f7-2e93-48bc-a3ab-8eab620ed0dd",
   "prevId": "e9890eff-a6ab-400b-8b52-9dce53f3bb59",
   "tables": {
     "account": {
@@ -2143,6 +2143,46 @@
           "name": "desktop_policy_id",
           "columns": [
             "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "organization_diagnostic_credential": {
+      "name": "organization_diagnostic_credential",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bearer_token": {
+          "name": "bearer_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "organization_diagnostic_credential_organization_id": {
+          "name": "organization_diagnostic_credential_organization_id",
+          "columns": [
+            "organization_id"
           ]
         }
       },
@@ -4379,176 +4419,6 @@
       "compositePrimaryKeys": {
         "org_oauth_client_id": {
           "name": "org_oauth_client_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "external_mcp_tool_manifest": {
-      "name": "external_mcp_tool_manifest",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "external_mcp_connection_id": {
-          "name": "external_mcp_connection_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "principal": {
-          "name": "principal",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "config_hash": {
-          "name": "config_hash",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "enum('ok','error')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "tools": {
-          "name": "tools",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "tool_count": {
-          "name": "tool_count",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "tools_hash": {
-          "name": "tools_hash",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "tools_truncated": {
-          "name": "tools_truncated",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "last_error": {
-          "name": "last_error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "duration_ms": {
-          "name": "duration_ms",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "listed_at": {
-          "name": "listed_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "stale_at": {
-          "name": "stale_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "refresh_started_at": {
-          "name": "refresh_started_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
-        }
-      },
-      "indexes": {
-        "emtm_connection_principal": {
-          "name": "emtm_connection_principal",
-          "columns": [
-            "external_mcp_connection_id",
-            "principal"
-          ],
-          "isUnique": true
-        },
-        "emtm_organization_id": {
-          "name": "emtm_organization_id",
-          "columns": [
-            "organization_id"
-          ],
-          "isUnique": false
-        },
-        "emtm_listed_at": {
-          "name": "emtm_listed_at",
-          "columns": [
-            "listed_at"
-          ],
-          "isUnique": false
-        },
-        "emtm_refresh_started_at": {
-          "name": "emtm_refresh_started_at",
-          "columns": [
-            "refresh_started_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "external_mcp_tool_manifest_id": {
-          "name": "external_mcp_tool_manifest_id",
           "columns": [
             "id"
           ]

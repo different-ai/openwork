@@ -1,0 +1,1 @@
+ALTER TABLE `organization_diagnostic_credential` MODIFY COLUMN `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3);

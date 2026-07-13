@@ -1,7 +1,7 @@
 {
   "name": "@openwork/desktop",
   "private": true,
-  "version": "0.17.22",
+  "version": "0.17.23",
   "description": "OpenWork desktop shell",
   "author": {
     "name": "OpenWork",
