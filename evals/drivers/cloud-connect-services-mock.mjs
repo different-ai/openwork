@@ -315,7 +315,9 @@ function handleMicrosoftOAuth(request, response, url, rawBody) {
       return true;
     }
     const callback = new URL(redirectUri);
-    callback.searchParams.set("code", "mock-microsoft-authorization-code");
+    const requestedScopes = url.searchParams.get("scope") ?? MICROSOFT_SCOPES.join(" ");
+    const encodedScopes = Buffer.from(requestedScopes, "utf8").toString("base64url");
+    callback.searchParams.set("code", `mock-microsoft-authorization-code.${encodedScopes}`);
     const state = url.searchParams.get("state");
     if (state) callback.searchParams.set("state", state);
     response.writeHead(302, { location: callback.toString() });
@@ -330,9 +332,22 @@ function handleMicrosoftOAuth(request, response, url, rawBody) {
       sendJson(response, 400, { error: "unsupported_grant_type" });
       return true;
     }
+    const authorizationCode = form.get("code") ?? "";
+    const encodedScopes = authorizationCode.startsWith("mock-microsoft-authorization-code.")
+      ? authorizationCode.slice("mock-microsoft-authorization-code.".length)
+      : "";
+    let authorizedScopes = form.get("scope") ?? MICROSOFT_SCOPES.join(" ");
+    if (encodedScopes) {
+      try {
+        authorizedScopes = Buffer.from(encodedScopes, "base64url").toString("utf8");
+      } catch {
+        sendJson(response, 400, { error: "invalid_grant", error_description: "The mock authorization code is malformed." });
+        return true;
+      }
+    }
     sendJson(response, 200, {
       token_type: "Bearer",
-      scope: form.get("scope") ?? MICROSOFT_SCOPES.join(" "),
+      scope: authorizedScopes,
       expires_in: 3600,
       access_token: MOCK_MICROSOFT_ACCESS_TOKEN,
       refresh_token: MOCK_MICROSOFT_REFRESH_TOKEN,
@@ -380,6 +395,17 @@ function handleMicrosoftGraph(request, response, url) {
     return true;
   }
 
+  if (url.pathname === "/graph/v1.0/me/messages" && request.method === "POST") {
+    sendJson(response, 201, {
+      id: "draft-openwork-test",
+      subject: "OpenWork permission parity draft",
+      bodyPreview: "Drafted by the deterministic Microsoft Graph mock.",
+      webLink: "https://outlook.office.test/mail/draft-openwork-test",
+      isDraft: true,
+    });
+    return true;
+  }
+
   const messageMatch = url.pathname.match(/^\/graph\/v1\.0\/me\/messages\/([^/]+)$/);
   if (messageMatch && request.method === "GET") {
     const message = MICROSOFT_MESSAGES.find((item) => item.id === decodeURIComponent(messageMatch[1]));
@@ -399,6 +425,17 @@ function handleMicrosoftGraph(request, response, url) {
     return true;
   }
 
+  if (url.pathname === "/graph/v1.0/me/events" && request.method === "POST") {
+    sendJson(response, 201, {
+      id: "event-openwork-test",
+      subject: "OpenWork permission parity review",
+      start: { dateTime: "2026-07-13T10:00:00Z", timeZone: "UTC" },
+      end: { dateTime: "2026-07-13T10:30:00Z", timeZone: "UTC" },
+      webLink: "https://outlook.office.test/calendar/event-openwork-test",
+    });
+    return true;
+  }
+
   if (
     (url.pathname === "/graph/v1.0/me/drive/root/children" || url.pathname.startsWith("/graph/v1.0/me/drive/root/search"))
     && request.method === "GET"
@@ -414,6 +451,50 @@ function handleMicrosoftGraph(request, response, url) {
 
   if (url.pathname === "/graph/v1.0/me/drive/items/file-q3-plan/content" && request.method === "GET") {
     sendText(response, 200, Q3_FILE_CONTENT);
+    return true;
+  }
+
+  if (url.pathname === "/graph/v1.0/me/drive/root:/OpenWork/permission-parity.txt:/content" && request.method === "PUT") {
+    sendJson(response, 201, {
+      id: "file-permission-parity",
+      name: "permission-parity.txt",
+      size: 37,
+      webUrl: "https://onedrive.office.test/files/file-permission-parity",
+      file: { mimeType: "text/plain" },
+    });
+    return true;
+  }
+
+  if (url.pathname === "/graph/v1.0/me/chats" && request.method === "GET") {
+    sendJson(response, 200, graphEnvelope([{
+      id: "chat-openwork-test",
+      topic: "OpenWork launch",
+      chatType: "group",
+      webUrl: "https://teams.office.test/chats/chat-openwork-test",
+      lastUpdatedDateTime: "2026-07-13T09:00:00Z",
+    }]));
+    return true;
+  }
+
+  if (url.pathname === "/graph/v1.0/chats/chat-openwork-test/messages" && request.method === "GET") {
+    sendJson(response, 200, graphEnvelope([{
+      id: "teams-message-existing",
+      createdDateTime: "2026-07-13T09:05:00Z",
+      body: { contentType: "text", content: "Ready for the permission review." },
+      from: { user: { id: "microsoft-user-openwork-test", displayName: "OpenWork Tester" } },
+      webUrl: "https://teams.office.test/messages/teams-message-existing",
+    }]));
+    return true;
+  }
+
+  if (url.pathname === "/graph/v1.0/chats/chat-openwork-test/messages" && request.method === "POST") {
+    sendJson(response, 201, {
+      id: "teams-message-sent",
+      createdDateTime: "2026-07-13T09:10:00Z",
+      body: { contentType: "text", content: "Permission parity verified." },
+      from: { user: { id: "microsoft-user-openwork-test", displayName: "OpenWork Tester" } },
+      webUrl: "https://teams.office.test/messages/teams-message-sent",
+    });
     return true;
   }
 

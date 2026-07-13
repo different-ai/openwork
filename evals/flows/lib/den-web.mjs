@@ -51,24 +51,42 @@ export async function signInViaBrowser(ctx, email, password) {
   await ctx.eval(`(() => { window.location.href = ${JSON.stringify(denWebUrl())}; return true; })()`);
   await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
   await ctx.waitFor(
-    "Boolean(document.querySelector('input[type=\"email\"]')) && Boolean(document.querySelector('input[type=\"password\"]'))",
-    { timeoutMs: 30_000, label: "email + password fields" },
+    "Boolean(document.querySelector('input[type=\"email\"]'))",
+    { timeoutMs: 30_000, label: "email field" },
   );
-  const switchedToSignIn = await ctx.eval(`(() => {
-    const button = [...document.querySelectorAll('button')].find((entry) => (entry.textContent ?? '').trim() === 'Sign in');
-    button?.click();
-    return Boolean(button);
-  })()`);
-  if (switchedToSignIn) {
+
+  const passwordAlreadyVisible = await ctx.eval("Boolean(document.querySelector('input[type=\"password\"]'))");
+  if (!passwordAlreadyVisible) {
+    await ctx.fill('input[type="email"]', email);
+    const advanced = await ctx.eval(`(() => {
+      const form = document.querySelector('input[type="email"]')?.closest('form');
+      const button = form?.querySelector('button[type="submit"]');
+      button?.click();
+      return Boolean(button);
+    })()`);
+    ctx.assert(advanced, "No Next button found on the email-first sign-in card.");
     await ctx.waitFor(
-      `(() => {
-        const submit = document.querySelector('button[type="submit"]');
-        return (submit?.textContent ?? '').includes('Sign in');
-      })()`,
-      { timeoutMs: 10_000, label: "sign-in form selected" },
+      "Boolean(document.querySelector('input[type=\"password\"]'))",
+      { timeoutMs: 20_000, label: "password step" },
     );
+  } else {
+    const switchedToSignIn = await ctx.eval(`(() => {
+      const button = [...document.querySelectorAll('button[type="button"]')]
+        .find((entry) => (entry.textContent ?? '').trim() === 'Sign in');
+      button?.click();
+      return Boolean(button);
+    })()`);
+    if (switchedToSignIn) {
+      await ctx.waitFor(
+        `(() => {
+          const submit = document.querySelector('button[type="submit"]');
+          return (submit?.textContent ?? '').includes('Sign in');
+        })()`,
+        { timeoutMs: 10_000, label: "sign-in form selected" },
+      );
+    }
+    await ctx.fill('input[type="email"]', email);
   }
-  await ctx.fill('input[type="email"]', email);
   await ctx.fill('input[type="password"]', password);
   const submitted = await ctx.eval(`(() => {
     const button = document.querySelector('button[type="submit"]');

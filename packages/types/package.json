@@ -24,6 +24,11 @@
       "development": "./src/den/inference.ts",
       "default": "./src/den/inference.ts"
     },
+    "./den/microsoft-365": {
+      "types": "./src/den/microsoft-365.ts",
+      "development": "./src/den/microsoft-365.ts",
+      "default": "./src/den/microsoft-365.ts"
+    },
     "./workspace": {
       "types": "./src/workspace.ts",
       "development": "./src/workspace.ts",
