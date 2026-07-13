@@ -5,14 +5,10 @@ import { Check } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { useNativeProviderClient } from "./mcp-connections-data";
-
-const DEFAULT_FEATURES = ["mailRead", "calendarRead", "filesRead"];
-
-const PERMISSIONS = [
-  { key: "mailRead", label: "Read Outlook mail", scope: "Mail.Read" },
-  { key: "calendarRead", label: "Read Outlook calendar", scope: "Calendars.Read" },
-  { key: "filesRead", label: "Read OneDrive files", scope: "Files.Read" },
-];
+import {
+  MICROSOFT_365_DEFAULT_FEATURES,
+  MICROSOFT_365_PERMISSION_GROUPS,
+} from "./microsoft-365-permissions";
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -40,7 +36,7 @@ export function Microsoft365Dialog({
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [tenantId, setTenantId] = useState("");
-  const [features, setFeatures] = useState<string[]>(DEFAULT_FEATURES);
+  const [features, setFeatures] = useState<string[]>([...MICROSOFT_365_DEFAULT_FEATURES]);
   const [copiedRedirectUri, setCopiedRedirectUri] = useState(false);
   const [replacingCredentials, setReplacingCredentials] = useState(false);
   const featuresPrefilled = useRef(false);
@@ -50,7 +46,7 @@ export function Microsoft365Dialog({
     setClientId("");
     setClientSecret("");
     setTenantId("");
-    setFeatures(DEFAULT_FEATURES);
+    setFeatures([...MICROSOFT_365_DEFAULT_FEATURES]);
     setCopiedRedirectUri(false);
     setReplacingCredentials(false);
     featuresPrefilled.current = false;
@@ -74,7 +70,7 @@ export function Microsoft365Dialog({
   const trimmedClientSecret = clientSecret.trim();
   const trimmedTenantId = tenantId.trim();
   const showCredentialFields = !loadingConfig && (!configured || replacingCredentials);
-  const saveDisabled = loadingConfig || features.length === 0 || (showCredentialFields && (!trimmedClientId || !trimmedClientSecret || !trimmedTenantId));
+  const saveDisabled = loadingConfig || (showCredentialFields && (!trimmedClientId || !trimmedClientSecret || !trimmedTenantId));
 
   function toggleFeature(feature: string) {
     setFeatures((current) => current.includes(feature)
@@ -93,7 +89,7 @@ export function Microsoft365Dialog({
           {configured ? "Update Microsoft 365" : "Set up Microsoft 365"}
         </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          Use one Entra web app for your organization. Each teammate then connects their own work account; OpenWork only requests the read permissions you choose.
+          Use one Entra web app for your organization. Each teammate then connects their own work account; OpenWork requests only the permissions your administrator enables below.
         </p>
 
         <div className="mt-5 space-y-4">
@@ -131,32 +127,40 @@ export function Microsoft365Dialog({
           </div>
 
           <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-            <p className="text-[13px] font-semibold text-gray-900">Read-only access</p>
+            <p className="text-[13px] font-semibold text-gray-900">Permissions</p>
             <p className="mt-1 text-[12px] leading-5 text-gray-500">
-              Base sign-in also uses User.Read. OpenWork does not request mail, calendar, or file write permissions.
+              Pick what your team&apos;s AI can do across Outlook, Calendar, OneDrive, and Teams. Signing in always shares the member&apos;s basic profile through User.Read.
             </p>
-            <div className="mt-3 space-y-2">
-              {PERMISSIONS.map((permission) => (
-                <label key={permission.key} className="flex items-start gap-2 text-[13px] text-gray-700">
-                  <input
-                    type="checkbox"
-                    data-feature={permission.key}
-                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-gray-900"
-                    checked={features.includes(permission.key)}
-                    disabled={loadingConfig}
-                    onChange={() => toggleFeature(permission.key)}
-                  />
-                  <span>
-                    <span className="block">{permission.label}</span>
-                    <span className="font-mono text-[11px] text-gray-400">{permission.scope}</span>
-                  </span>
-                </label>
+            <div className="mt-3 space-y-4">
+              {MICROSOFT_365_PERMISSION_GROUPS.map((group) => (
+                <div key={group.name}>
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400">{group.name}</p>
+                  <div className="space-y-2">
+                    {group.permissions.map((permission) => (
+                      <label key={permission.key} className="flex items-start gap-2 text-[13px] text-gray-700">
+                        <input
+                          type="checkbox"
+                          data-feature={permission.key}
+                          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-gray-900"
+                          checked={features.includes(permission.key)}
+                          disabled={loadingConfig}
+                          onChange={() => toggleFeature(permission.key)}
+                        />
+                        <span>
+                          <span className="block">{permission.label}</span>
+                          <span className="block font-mono text-[11px] text-gray-400">{permission.scope}</span>
+                          {permission.detail ? <span className="mt-0.5 block text-[11px] leading-4 text-amber-700">{permission.detail}</span> : null}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
 
           <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-[12px] leading-5 text-blue-800">
-            Already using Entra OIDC SSO with a Web app registration you control? You can reuse that registration by adding this callback and the delegated Graph permissions. A SAML-only enterprise app may still need a separate app registration. SSO signs people into OpenWork; this separate consent grants their agent read-only Microsoft 365 access.
+            Already using Entra OIDC SSO with a Web app registration you control? You can reuse that registration by adding this callback and the delegated Graph permissions. A SAML-only enterprise app may still need a separate app registration. SSO signs people into OpenWork; this separate consent grants only the Microsoft 365 capabilities selected above.
           </div>
 
           {loadingConfig ? (

@@ -162,4 +162,141 @@ describe("Microsoft 365 injected routes", () => {
     expect(await disconnectedResponse.json()).toEqual({ error: "needs_connection", message: "Connect Microsoft 365 first." })
     expect(graphCalls).toBe(1)
   })
+
+  test("executes enabled write and Teams capabilities with the member's delegated scopes", async () => {
+    const context = organizationContext()
+    const requests: Request[] = []
+    const graphFetch: typeof fetch = async (input, init) => {
+      const request = new Request(input, init)
+      requests.push(request)
+      const url = new URL(request.url)
+      if (url.pathname.endsWith("/me/messages")) {
+        return Response.json({ id: "draft_1", subject: "Follow up", body: { contentType: "text", content: "Hello" } }, { status: 201 })
+      }
+      if (url.pathname.endsWith("/me/events")) {
+        return Response.json({
+          id: "event_1",
+          subject: "Review",
+          start: { dateTime: "2026-07-13T10:00:00Z", timeZone: "UTC" },
+          end: { dateTime: "2026-07-13T10:30:00Z", timeZone: "UTC" },
+        }, { status: 201 })
+      }
+      if (decodeURIComponent(url.pathname).endsWith("/me/drive/root:/OpenWork/notes.txt:/content")) {
+        return Response.json({ id: "file_1", name: "notes.txt", file: { mimeType: "text/plain" } }, { status: 201 })
+      }
+      if (url.pathname.endsWith("/me/chats")) {
+        return Response.json({ value: [{ id: "chat_1", topic: "Launch", chatType: "group" }] })
+      }
+      if (url.pathname.endsWith("/chats/chat_1/messages") && request.method === "GET") {
+        return Response.json({ value: [{ id: "message_1", body: { content: "Ready" } }] })
+      }
+      if (url.pathname.endsWith("/chats/chat_1/messages") && request.method === "POST") {
+        return Response.json({ id: "message_2", body: { content: "Ship it" } }, { status: 201 })
+      }
+      return new Response("not found", { status: 404 })
+    }
+
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerMicrosoft365Routes(app, {
+      graphBaseUrl: "https://graph.example.test/v1.0",
+      fetch: graphFetch,
+      memberRoute: contextMiddleware(context),
+      resolveAccessToken: async () => ({
+        kind: "ok",
+        accessToken: "delegated-member-token",
+        scopes: ["Mail.ReadWrite", "Calendars.ReadWrite", "Files.ReadWrite.All", "Chat.Read", "ChatMessage.Send"],
+        enabledFeatures: ["mailDraft", "calendarWrite", "filesFull", "teamsChatSend"],
+      }),
+    })
+
+    const draftResponse = await app.request("http://den-api.local/v1/capabilities/microsoft-365/mail-drafts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ to: ["ada@example.test"], subject: "Follow up", body: "Hello" }),
+    })
+    expect(draftResponse.status).toBe(200)
+    expect(await draftResponse.json()).toMatchObject({ draft: { id: "draft_1" } })
+
+    const eventResponse = await app.request("http://den-api.local/v1/capabilities/microsoft-365/calendar-events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        subject: "Review",
+        start: "2026-07-13T10:00:00.000Z",
+        end: "2026-07-13T10:30:00.000Z",
+        timeZone: "UTC",
+      }),
+    })
+    expect(eventResponse.status).toBe(200)
+    expect(await eventResponse.json()).toMatchObject({ event: { id: "event_1" } })
+
+    const fileResponse = await app.request("http://den-api.local/v1/capabilities/microsoft-365/drive-files", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "OpenWork/notes.txt", content: "Notes" }),
+    })
+    expect(fileResponse.status).toBe(200)
+    expect(await fileResponse.json()).toMatchObject({ file: { id: "file_1" } })
+
+    const chatsResponse = await app.request("http://den-api.local/v1/capabilities/microsoft-365/teams-chats?maxResults=5")
+    expect(chatsResponse.status).toBe(200)
+    expect(await chatsResponse.json()).toMatchObject({ chats: [{ id: "chat_1" }] })
+
+    const messagesResponse = await app.request("http://den-api.local/v1/capabilities/microsoft-365/teams-chats/chat_1/messages?maxResults=5")
+    expect(messagesResponse.status).toBe(200)
+    expect(await messagesResponse.json()).toMatchObject({ messages: [{ id: "message_1" }] })
+
+    const sendResponse = await app.request("http://den-api.local/v1/capabilities/microsoft-365/teams-chats/chat_1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "Ship it" }),
+    })
+    expect(sendResponse.status).toBe(200)
+    expect(await sendResponse.json()).toMatchObject({ message: { id: "message_2" } })
+    expect(requests.map((request) => request.method)).toEqual(["POST", "POST", "PUT", "GET", "GET", "POST"])
+  })
+
+  test("accepts stronger scopes for enabled reads but rejects writes without their feature or grant", async () => {
+    const context = organizationContext()
+    let graphCalls = 0
+    const graphFetch: typeof fetch = async () => {
+      graphCalls += 1
+      return Response.json({ value: [{ id: "message_1" }] })
+    }
+    const strongerReadApp = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerMicrosoft365Routes(strongerReadApp, {
+      fetch: graphFetch,
+      memberRoute: contextMiddleware(context),
+      resolveAccessToken: async () => ({
+        kind: "ok",
+        accessToken: "token",
+        scopes: ["Mail.ReadWrite"],
+        enabledFeatures: ["mailRead"],
+      }),
+    })
+    expect((await strongerReadApp.request("http://den-api.local/v1/capabilities/microsoft-365/mail-messages")).status).toBe(200)
+
+    const missingWriteGrantApp = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerMicrosoft365Routes(missingWriteGrantApp, {
+      fetch: graphFetch,
+      memberRoute: contextMiddleware(context),
+      resolveAccessToken: async () => ({
+        kind: "ok",
+        accessToken: "token",
+        scopes: ["Mail.Read"],
+        enabledFeatures: ["mailDraft"],
+      }),
+    })
+    const denied = await missingWriteGrantApp.request("http://den-api.local/v1/capabilities/microsoft-365/mail-drafts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ to: ["ada@example.test"], subject: "Draft", body: "Body" }),
+    })
+    expect(denied.status).toBe(409)
+    expect(await denied.json()).toEqual({
+      error: "needs_connection",
+      message: "Your connected Microsoft account is missing the Outlook mail read/write permission. An admin can enable it on the Microsoft 365 connection in OpenWork Cloud -> Connections; then reconnect your account.",
+    })
+    expect(graphCalls).toBe(1)
+  })
 })

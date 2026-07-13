@@ -7,6 +7,7 @@ export default defineConfig({
     "den/desktop-policies": "src/den/desktop-policies.ts",
     "den/inference": "src/den/inference.ts",
     "den/mcp-diagnostics": "src/den/mcp-diagnostics.ts",
+    "den/microsoft-365": "src/den/microsoft-365.ts",
   },
   tsconfig: "./tsconfig.json",
   format: ["esm"],

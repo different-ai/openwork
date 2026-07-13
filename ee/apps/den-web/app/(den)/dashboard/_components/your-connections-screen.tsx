@@ -8,6 +8,7 @@ import { getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IntegrationIcon } from "./integration-icon";
 import { safeMcpAuthorizationUrl } from "./mcp-authorization-url";
+import { MICROSOFT_365_DISPLAY_SCOPES } from "./microsoft-365-permissions";
 import {
   canDisconnectNativeProviderAccount,
   type ExternalMcpConnection,
@@ -168,7 +169,7 @@ function YourConnectionRow({
   const needsAdminConnect = isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
   const canDisconnect = canDisconnectNativeProviderAccount(connection);
   const microsoftScopes = connection.id === "microsoft-365"
-    ? (connection.grantedScopes ?? []).filter((scope) => ["Mail.Read", "Calendars.Read", "Files.Read"].includes(scope))
+    ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
     : [];
 
   return (

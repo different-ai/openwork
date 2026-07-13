@@ -61,6 +61,22 @@ export type Microsoft365DriveItemWithContent = Microsoft365DriveItem & {
   contentUnavailableReason: "folder" | "file_too_large" | "unsupported_content_type" | null
 }
 
+export type Microsoft365TeamsChat = {
+  id: string
+  topic: string
+  chatType: string
+  webUrl: string
+  lastUpdatedDateTime: string
+}
+
+export type Microsoft365TeamsMessage = {
+  id: string
+  createdDateTime: string
+  content: string
+  from: Microsoft365EmailAddress | null
+  webUrl: string
+}
+
 type MicrosoftGraphClientOptions = {
   accessToken: string
   baseUrl?: string
@@ -215,33 +231,33 @@ function readOnlineMeetingUrl(event: Record<string, unknown>): string | null {
   return joinUrl || readString(event, "onlineMeetingUrl") || null
 }
 
+export function extractMicrosoftCalendarEvent(json: unknown): Microsoft365CalendarEvent {
+  const event = isRecord(json) ? json : {}
+  const start = readEventTime(event, "start")
+  const end = readEventTime(event, "end")
+  const location = readRecord(event, "location")
+  return {
+    id: readString(event, "id"),
+    subject: readString(event, "subject"),
+    preview: readString(event, "bodyPreview"),
+    start: start.dateTime,
+    startTimeZone: start.timeZone,
+    end: end.dateTime,
+    endTimeZone: end.timeZone,
+    isAllDay: readBoolean(event, "isAllDay"),
+    location: location ? readString(location, "displayName") : "",
+    organizer: readEmailAddress(event.organizer),
+    attendees: readEmailAddresses(event, "attendees"),
+    webLink: readString(event, "webLink"),
+    onlineMeetingUrl: readOnlineMeetingUrl(event),
+  }
+}
+
 export function extractMicrosoftCalendarEvents(json: unknown): Microsoft365CalendarEvent[] {
   const root = isRecord(json) ? json : {}
-  const events: Microsoft365CalendarEvent[] = []
-  for (const value of readArray(root, "value")) {
-    if (!isRecord(value)) continue
-    const id = readString(value, "id")
-    if (!id) continue
-    const start = readEventTime(value, "start")
-    const end = readEventTime(value, "end")
-    const location = readRecord(value, "location")
-    events.push({
-      id,
-      subject: readString(value, "subject"),
-      preview: readString(value, "bodyPreview"),
-      start: start.dateTime,
-      startTimeZone: start.timeZone,
-      end: end.dateTime,
-      endTimeZone: end.timeZone,
-      isAllDay: readBoolean(value, "isAllDay"),
-      location: location ? readString(location, "displayName") : "",
-      organizer: readEmailAddress(value.organizer),
-      attendees: readEmailAddresses(value, "attendees"),
-      webLink: readString(value, "webLink"),
-      onlineMeetingUrl: readOnlineMeetingUrl(value),
-    })
-  }
-  return events
+  return readArray(root, "value")
+    .map(extractMicrosoftCalendarEvent)
+    .filter((event) => Boolean(event.id))
 }
 
 function extractDriveItem(value: unknown): Microsoft365DriveItem {
@@ -273,6 +289,52 @@ export function extractMicrosoftDriveItem(json: unknown): Microsoft365DriveItem 
   return extractDriveItem(json)
 }
 
+function extractTeamsChat(value: unknown): Microsoft365TeamsChat {
+  const chat = isRecord(value) ? value : {}
+  return {
+    id: readString(chat, "id"),
+    topic: readString(chat, "topic"),
+    chatType: readString(chat, "chatType"),
+    webUrl: readString(chat, "webUrl"),
+    lastUpdatedDateTime: readString(chat, "lastUpdatedDateTime"),
+  }
+}
+
+export function extractMicrosoftTeamsChats(json: unknown): Microsoft365TeamsChat[] {
+  const root = isRecord(json) ? json : {}
+  return readArray(root, "value")
+    .map(extractTeamsChat)
+    .filter((chat) => Boolean(chat.id))
+}
+
+function readChatMessageSender(message: Record<string, unknown>): Microsoft365EmailAddress | null {
+  const from = readRecord(message, "from")
+  const user = from ? readRecord(from, "user") : null
+  if (!user) return null
+  const address = readString(user, "userIdentityType") || readString(user, "id")
+  if (!address) return null
+  return { name: readString(user, "displayName"), address }
+}
+
+export function extractMicrosoftTeamsMessage(json: unknown): Microsoft365TeamsMessage {
+  const message = isRecord(json) ? json : {}
+  const body = readRecord(message, "body")
+  return {
+    id: readString(message, "id"),
+    createdDateTime: readString(message, "createdDateTime"),
+    content: body ? readString(body, "content") : "",
+    from: readChatMessageSender(message),
+    webUrl: readString(message, "webUrl"),
+  }
+}
+
+export function extractMicrosoftTeamsMessages(json: unknown): Microsoft365TeamsMessage[] {
+  const root = isRecord(json) ? json : {}
+  return readArray(root, "value")
+    .map(extractMicrosoftTeamsMessage)
+    .filter((message) => Boolean(message.id))
+}
+
 function isTextContentType(contentType: string): boolean {
   const normalized = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? ""
   return normalized.startsWith("text/")
@@ -289,6 +351,13 @@ function escapeGraphSearch(value: string): string {
 
 export function escapeOneDriveSearchPath(value: string): string {
   return value.replace(/'/g, "''")
+}
+
+export function encodeOneDrivePath(value: string): string {
+  return value.split("/")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")
 }
 
 export class MicrosoftGraphRequestError extends Error {
@@ -378,6 +447,28 @@ export class MicrosoftGraphClient {
     return { ...message, body: body.text, bodyTruncated: message.bodyTruncated || body.truncated }
   }
 
+  async createMailDraft(input: {
+    to: string[]
+    cc?: string[]
+    bcc?: string[]
+    subject: string
+    body: string
+  }): Promise<Microsoft365MailMessage> {
+    const recipient = (address: string) => ({ emailAddress: { address } })
+    const url = this.url("me/messages")
+    return extractMicrosoftMailMessage(await this.requestJson("Microsoft 365 mail draft create", url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        subject: input.subject,
+        body: { contentType: "Text", content: input.body },
+        toRecipients: input.to.map(recipient),
+        ccRecipients: (input.cc ?? []).map(recipient),
+        bccRecipients: (input.bcc ?? []).map(recipient),
+      }),
+    }))
+  }
+
   async listCalendarEvents(input: { start: string; end: string; maxResults: number }): Promise<Microsoft365CalendarEvent[]> {
     const url = this.url("me/calendarView")
     url.searchParams.set("startDateTime", input.start)
@@ -386,6 +477,33 @@ export class MicrosoftGraphClient {
     url.searchParams.set("$orderby", "start/dateTime")
     url.searchParams.set("$select", "id,subject,bodyPreview,start,end,isAllDay,location,organizer,attendees,webLink,onlineMeeting,onlineMeetingUrl")
     return extractMicrosoftCalendarEvents(await this.requestJson("Microsoft 365 calendar list", url))
+  }
+
+  async createCalendarEvent(input: {
+    subject: string
+    body?: string
+    start: string
+    end: string
+    timeZone: string
+    location?: string
+    attendees?: string[]
+  }): Promise<Microsoft365CalendarEvent> {
+    const url = this.url("me/events")
+    return extractMicrosoftCalendarEvent(await this.requestJson("Microsoft 365 calendar event create", url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        subject: input.subject,
+        body: { contentType: "Text", content: input.body ?? "" },
+        start: { dateTime: input.start, timeZone: input.timeZone },
+        end: { dateTime: input.end, timeZone: input.timeZone },
+        location: { displayName: input.location ?? "" },
+        attendees: (input.attendees ?? []).map((address) => ({
+          emailAddress: { address },
+          type: "required",
+        })),
+      }),
+    }))
   }
 
   async searchDriveItems(input: { query: string; maxResults: number }): Promise<Microsoft365DriveItem[]> {
@@ -437,5 +555,37 @@ export class MicrosoftGraphClient {
       truncated: content.truncated,
       contentUnavailableReason: null,
     }
+  }
+
+  async putDriveTextFile(input: { path: string; content: string }): Promise<Microsoft365DriveItem> {
+    const encodedPath = encodeOneDrivePath(input.path)
+    const url = this.url(`me/drive/root:/${encodedPath}:/content`)
+    return extractMicrosoftDriveItem(await this.requestJson("Microsoft 365 OneDrive file write", url, {
+      method: "PUT",
+      headers: { "content-type": "text/plain; charset=utf-8" },
+      body: input.content,
+    }))
+  }
+
+  async listTeamsChats(maxResults: number): Promise<Microsoft365TeamsChat[]> {
+    const url = this.url("me/chats")
+    url.searchParams.set("$top", String(maxResults))
+    url.searchParams.set("$select", "id,topic,chatType,webUrl,lastUpdatedDateTime")
+    return extractMicrosoftTeamsChats(await this.requestJson("Microsoft 365 Teams chat list", url))
+  }
+
+  async listTeamsMessages(chatId: string, maxResults: number): Promise<Microsoft365TeamsMessage[]> {
+    const url = this.url(`chats/${encodeURIComponent(chatId)}/messages`)
+    url.searchParams.set("$top", String(maxResults))
+    return extractMicrosoftTeamsMessages(await this.requestJson("Microsoft 365 Teams message list", url))
+  }
+
+  async sendTeamsMessage(chatId: string, content: string): Promise<Microsoft365TeamsMessage> {
+    const url = this.url(`chats/${encodeURIComponent(chatId)}/messages`)
+    return extractMicrosoftTeamsMessage(await this.requestJson("Microsoft 365 Teams message send", url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body: { contentType: "text", content } }),
+    }))
   }
 }
