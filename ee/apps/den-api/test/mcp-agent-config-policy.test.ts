@@ -73,6 +73,16 @@ describe("agent-configurable org connections policy", () => {
     expect(allowed("getV1McpConnectionsByConnectionIdTools")).toBe(true)
   })
 
+  test("manual MCP tool execution stays outside the agent API catalog", () => {
+    const operation = document.paths["/v1/mcp-connections/{connectionId}/tools/call"]?.post
+    expect(operation).toBeDefined()
+    expect(operation ? isMcpOperationAllowed({
+      method: "post",
+      path: "/v1/mcp-connections/{connectionId}/tools/call",
+      operation,
+    }) : true).toBe(false)
+  })
+
   test("agent catalog search discovers member list and admin create mcp-connection operations", () => {
     const catalog = buildMcpCatalog(document)
     const memberMatches = searchCapabilities(catalog, "list external mcp connections", 10)

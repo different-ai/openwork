@@ -29,12 +29,14 @@ const otherMemberId = createDenTypeId("member")
 let connectionId: DenTypeId<"externalMcpConnection">
 let disconnectedConnectionId: DenTypeId<"externalMcpConnection">
 let perMemberConnectionId: DenTypeId<"externalMcpConnection">
+let restrictedConnectionId: DenTypeId<"externalMcpConnection">
 let otherConnectionId: DenTypeId<"externalMcpConnection">
 let failingConnectionId: DenTypeId<"externalMcpConnection">
 let fakeServer: ReturnType<typeof Bun.serve> | undefined
 let errorServer: ReturnType<typeof Bun.serve> | undefined
 const observedMethods: string[] = []
 const observedAuthorization: Array<string | null> = []
+const observedArguments: Array<Record<string, unknown>> = []
 
 beforeAll(async () => {
   mock.restore()
@@ -60,7 +62,13 @@ beforeAll(async () => {
           openWorldHint: false,
         },
       },
-      async () => ({ content: [{ type: "text", text: "not called" }] }),
+      async (input) => {
+        observedArguments.push(input)
+        return {
+          content: [{ type: "text", text: `Found incidents for ${input.query}` }],
+          structuredContent: { resultCount: 1 },
+        }
+      },
     )
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
@@ -158,6 +166,19 @@ beforeAll(async () => {
     tokenType: "Bearer",
   })
 
+  restrictedConnectionId = (await createExternalMcpConnection({
+    organizationId,
+    name: "Admin-only Incident MCP",
+    url,
+    authType: "none",
+    credentialMode: "shared",
+    createdByOrgMembershipId: adminMemberId,
+    access: { orgWide: false, memberIds: [adminMemberId], teamIds: [] },
+  })).id
+  await db.update(schema.ExternalMcpConnectionTable)
+    .set({ connectedAt: new Date() })
+    .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, restrictedConnectionId))
+
   otherConnectionId = (await createExternalMcpConnection({
     organizationId: otherOrganizationId,
     name: "Other MCP",
@@ -209,6 +230,24 @@ function request(id: string, userId = adminUserId) {
     headers: {
       "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId, organizationId }),
     },
+  }))
+}
+
+function callRequest(
+  id: string,
+  userId = adminUserId,
+  body: { toolName: string; arguments: Record<string, unknown> } = {
+    toolName: "search_incidents",
+    arguments: { query: "INC0001" },
+  },
+) {
+  return app.fetch(new Request(`http://den-api.local/v1/mcp-connections/${id}/tools/call`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId, organizationId }),
+    },
+    body: JSON.stringify(body),
   }))
 }
 
@@ -281,7 +320,7 @@ test("catalog inspection requires a connected credential", async () => {
   expect(response.status).toBe(409)
   expect(await response.json()).toEqual({
     error: "connection_not_ready",
-    message: "Connect this MCP before inspecting its tools.",
+    message: "Connect this MCP before using its tools.",
   })
 })
 
@@ -297,9 +336,93 @@ test("catalog inspection is tenant scoped", async () => {
   expect(response.status).toBe(404)
 })
 
-test("catalog inspection is admin only", async () => {
+test("a granted member can inspect the live tool catalog", async () => {
   const response = await request(connectionId, memberUserId)
-  expect(response.status).toBe(403)
+  expect(response.status).toBe(200)
+  expect(await response.json()).toMatchObject({ tools: [{ name: "search_incidents" }] })
+})
+
+test("an ungranted member cannot inspect or run a connection", async () => {
+  const catalogResponse = await request(restrictedConnectionId, memberUserId)
+  expect(catalogResponse.status).toBe(403)
+  const callResponse = await callRequest(restrictedConnectionId, memberUserId)
+  expect(callResponse.status).toBe(403)
+})
+
+test("a granted member manually runs a tool with a diagnostic reference", async () => {
+  observedMethods.length = 0
+  observedArguments.length = 0
+  const response = await callRequest(connectionId, memberUserId, {
+    toolName: "search_incidents",
+    arguments: { query: "network timeout", status: "active" },
+  })
+  expect(response.status).toBe(200)
+  expect(await response.json()).toMatchObject({
+    referenceId: expect.any(String),
+    durationMs: expect.any(Number),
+    result: {
+      content: [{ type: "text", text: "Found incidents for network timeout" }],
+      structuredContent: { resultCount: 1 },
+    },
+  })
+  expect(observedMethods).toContain("tools/call")
+  expect(observedArguments).toEqual([{ query: "network timeout", status: "active" }])
+})
+
+test("per-member tool execution uses only the calling member's credential", async () => {
+  observedAuthorization.length = 0
+  const response = await callRequest(perMemberConnectionId)
+  expect(response.status).toBe(200)
+  expect(observedAuthorization).toContain("Bearer member-catalog-token")
+
+  const missingCredential = await callRequest(perMemberConnectionId, memberUserId)
+  expect(missingCredential.status).toBe(409)
+})
+
+test("manual tool execution is tenant scoped", async () => {
+  const response = await callRequest(otherConnectionId)
+  expect(response.status).toBe(404)
+})
+
+test("manual tool failures return a structured diagnostic without provider secrets", async () => {
+  const response = await callRequest(failingConnectionId)
+  expect(response.status).toBe(502)
+  const body: unknown = await response.json()
+  expect(body).toMatchObject({ error: "tool_execution_failed" })
+  expect(JSON.stringify(body)).not.toContain("provider-catalog-secret")
+})
+
+test("manual tool execution validates a JSON object payload", async () => {
+  const response = await app.fetch(new Request(`http://den-api.local/v1/mcp-connections/${connectionId}/tools/call`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId: memberUserId, organizationId }),
+    },
+    body: JSON.stringify({ toolName: "search_incidents", arguments: [] }),
+  }))
+  expect(response.status).toBe(400)
+})
+
+test("manual tool execution rejects payloads larger than 1 MB", async () => {
+  const body = JSON.stringify({
+    toolName: "search_incidents",
+    arguments: { query: "x".repeat(1024 * 1024) },
+  })
+  const response = await app.fetch(new Request(`http://den-api.local/v1/mcp-connections/${connectionId}/tools/call`, {
+    method: "POST",
+    headers: {
+      "content-length": String(Buffer.byteLength(body)),
+      "content-type": "application/json",
+      "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId: memberUserId, organizationId }),
+    },
+    body,
+  }))
+  expect(response.status).toBe(413)
+  expect(await response.json()).toEqual({
+    error: "payload_too_large",
+    message: "Tool arguments must fit within 1 MB.",
+  })
 })
 
 test("catalog failures return a structured diagnostic without provider secrets", async () => {

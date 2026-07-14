@@ -1,4 +1,5 @@
 import type { Hono } from "hono"
+import { bodyLimit } from "hono/body-limit"
 import type { RequestIdVariables } from "hono/request-id"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -26,6 +27,7 @@ import { emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jso
 import { createOAuthStateToken, resolvePublicOrigin, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
 import {
   abandonExternalMcpAuth,
+  callExternalMcpTool,
   connectExternalMcp,
   completeExternalMcpAuth,
   listExternalMcpTools,
@@ -67,6 +69,7 @@ import type { OrgRouteVariables } from "./shared.js"
 
 const connectionParamsSchema = idParamSchema("connectionId", "externalMcpConnection")
 const logger = appLogger.child({ component: "mcp_connections" })
+const MANUAL_MCP_TOOL_REQUEST_MAX_BYTES = 1024 * 1024
 
 const accessInputSchema = z.object({
   orgWide: z.boolean().optional().default(false),
@@ -232,6 +235,17 @@ const connectionToolListResponseSchema = z.object({
   tools: z.array(connectionToolSchema),
 }).meta({ ref: "ExternalMcpConnectionToolListResponse" })
 
+const runConnectionToolBodySchema = z.object({
+  toolName: z.string().trim().min(1).max(255),
+  arguments: z.record(z.string(), z.unknown()),
+}).meta({ ref: "ExternalMcpConnectionToolRunInput" })
+
+const connectionToolRunResponseSchema = z.object({
+  referenceId: z.string(),
+  durationMs: z.number().nonnegative(),
+  result: z.unknown(),
+}).meta({ ref: "ExternalMcpConnectionToolRunResponse" })
+
 const connectionNotReadySchema = z.object({
   error: z.literal("connection_not_ready"),
   message: z.string(),
@@ -324,6 +338,17 @@ const connectionToolListFailedSchema = z.object({
   diagnostic: externalMcpDiagnosticSchema,
 }).meta({ ref: "ExternalMcpConnectionToolListFailedError" })
 
+const connectionToolRunFailedSchema = z.object({
+  error: z.literal("tool_execution_failed"),
+  message: z.string(),
+  diagnostic: externalMcpDiagnosticSchema,
+}).meta({ ref: "ExternalMcpConnectionToolRunFailedError" })
+
+const connectionToolRequestTooLargeSchema = z.object({
+  error: z.literal("payload_too_large"),
+  message: z.string(),
+}).meta({ ref: "ExternalMcpConnectionToolRequestTooLargeError" })
+
 const connectStartFailedSchema = z.object({
   error: z.literal("oauth_handshake_failed"),
   message: z.string(),
@@ -343,6 +368,30 @@ function isConnectionConnected(row: ExternalMcpConnectionRow): boolean {
     return true
   }
   return Boolean(row.accessToken || row.apiKey || (row.authType === "none" && row.connectedAt))
+}
+
+type ExternalMcpToolCredentialContext =
+  | { ok: true; member?: { orgMembershipId: DenTypeId<"member"> } }
+  | { ok: false; message: string }
+
+async function resolveExternalMcpToolCredential(
+  connection: ExternalMcpConnectionRow,
+  orgMembershipId: DenTypeId<"member">,
+): Promise<ExternalMcpToolCredentialContext> {
+  if (connection.credentialMode === "per_member") {
+    const account = await getConnectedAccount({
+      organizationId: connection.organizationId,
+      orgMembershipId,
+      providerId: connection.id,
+    })
+    return account?.accessToken
+      ? { ok: true, member: { orgMembershipId } }
+      : { ok: false, message: "Connect your account before using this MCP's tools." }
+  }
+
+  return isConnectionConnected(connection)
+    ? { ok: true }
+    : { ok: false, message: "Connect this MCP before using its tools." }
 }
 
 type ConnectionRequiredBy = {
@@ -682,23 +731,21 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List tools exposed by an External MCP Connection",
-      description: "Admin-only. Uses the connection credential owned by Den to read its live MCP tools/list catalog. Credentials and tool calls are never returned.",
+      description: "Uses the Den-managed credential available to the calling member to read the live MCP tools/list catalog. Granted members can inspect connections available under Your Connections; workspace owners and admins can also inspect connections they manage. Credentials and tool calls are never returned.",
       responses: {
         200: jsonResponse("External MCP tool catalog.", connectionToolListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can inspect MCP tools.", forbiddenSchema),
+        403: jsonResponse("The caller has not been granted access to this connection.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
         409: jsonResponse("The connection has no usable credential for this member.", connectionNotReadySchema),
         502: jsonResponse("The upstream MCP tool catalog could not be read.", connectionToolListFailedSchema),
       },
     }),
     orgMemberRoute(),
+    resolveMemberTeamsMiddleware,
     paramValidator(connectionParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can inspect MCP tools.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
-
       const { connectionId } = c.req.valid("param")
       const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
       const connection = await getExternalMcpConnection({
@@ -709,25 +756,25 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
       }
 
-      const member = connection.credentialMode === "per_member"
-        ? { orgMembershipId: payload.currentMember.id }
-        : undefined
-      if (connection.credentialMode === "per_member") {
-        const account = await getConnectedAccount({
-          organizationId: payload.organization.id,
-          orgMembershipId: payload.currentMember.id,
-          providerId: connection.id,
-        })
-        if (!account?.accessToken) {
-          return c.json({
-            error: "connection_not_ready",
-            message: "Connect your account before inspecting this MCP's tools.",
-          }, 409)
+      const isAdmin = verifyOrgRole({ roles: ["admin"], userContext: payload.currentMember })
+      if (!isAdmin) {
+        const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
+        const canUse = memberFacingMcpConnectionsEnabled(payload.organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
+          && await memberCanUseExternalMcpConnection({
+            connectionId: connection.id,
+            orgMembershipId: payload.currentMember.id,
+            teamIds: memberTeams.map((team) => team.id),
+          })
+        if (!canUse) {
+          return c.json({ error: "forbidden", message: `You have not been granted access to "${connection.name}".` }, 403)
         }
-      } else if (!isConnectionConnected(connection)) {
+      }
+
+      const credential = await resolveExternalMcpToolCredential(connection, payload.currentMember.id)
+      if (!credential.ok) {
         return c.json({
           error: "connection_not_ready",
-          message: "Connect this MCP before inspecting its tools.",
+          message: credential.message,
         }, 409)
       }
 
@@ -735,7 +782,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         const tools = await listExternalMcpTools(
           connection,
           callbackRedirectUri(c.req.raw, connectionId),
-          member,
+          credential.member,
           c.get("requestId"),
         )
         return c.json({
@@ -767,6 +814,103 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({
           error: "tool_catalog_failed",
           message: `Could not inspect "${connection.name}": ${diagnostic.message} Reference: ${diagnostic.referenceId}.`,
+          diagnostic,
+        }, 502)
+      }
+    },
+  )
+
+  app.post(
+    "/v1/mcp-connections/:connectionId/tools/call",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "Manually run a tool from an External MCP Connection",
+      description: "Human-only diagnostic runner. Executes one named MCP tool with caller-supplied JSON arguments using the Den-managed shared credential or the calling member's connected credential. The caller must already be granted access to the connection. Credentials, arguments, and results are never written to logs.",
+      responses: {
+        200: jsonResponse("The MCP tool completed.", connectionToolRunResponseSchema),
+        400: jsonResponse("Invalid tool name or arguments.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller has not been granted access to this connection.", forbiddenSchema),
+        404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
+        409: jsonResponse("The connection has no usable credential for this member.", connectionNotReadySchema),
+        413: jsonResponse("The tool arguments exceeded the request size limit.", connectionToolRequestTooLargeSchema),
+        502: jsonResponse("The upstream MCP tool call failed.", connectionToolRunFailedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    resolveMemberTeamsMiddleware,
+    bodyLimit({
+      maxSize: MANUAL_MCP_TOOL_REQUEST_MAX_BYTES,
+      onError: (c) => c.json({
+        error: "payload_too_large",
+        message: "Tool arguments must fit within 1 MB.",
+      }, 413),
+    }),
+    paramValidator(connectionParamsSchema),
+    jsonValidator(runConnectionToolBodySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const { connectionId } = c.req.valid("param")
+      const { toolName, arguments: toolArguments } = c.req.valid("json")
+      const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
+      const connection = await getExternalMcpConnection({
+        organizationId: payload.organization.id,
+        connectionId: externalMcpConnectionId,
+      })
+      if (!connection) {
+        return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+      }
+
+      const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
+      const canUse = memberFacingMcpConnectionsEnabled(payload.organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
+        && await memberCanUseExternalMcpConnection({
+          connectionId: connection.id,
+          orgMembershipId: payload.currentMember.id,
+          teamIds: memberTeams.map((team) => team.id),
+        })
+      if (!canUse) {
+        return c.json({ error: "forbidden", message: `You have not been granted access to "${connection.name}".` }, 403)
+      }
+
+      const credential = await resolveExternalMcpToolCredential(connection, payload.currentMember.id)
+      if (!credential.ok) {
+        return c.json({
+          error: "connection_not_ready",
+          message: credential.message,
+        }, 409)
+      }
+
+      const startedAt = Date.now()
+      try {
+        const result = await callExternalMcpTool({
+          connection,
+          redirectUri: callbackRedirectUri(c.req.raw, connectionId),
+          toolName,
+          args: toolArguments,
+          member: credential.member,
+          diagnosticReferenceId: c.get("requestId"),
+        })
+        const durationMs = Date.now() - startedAt
+        logger.info("external_mcp_manual_tool_succeeded", {
+          connection_id: connection.id,
+          organization_id: payload.organization.id,
+          org_membership_id: payload.currentMember.id,
+          duration_ms: durationMs,
+          diagnostic_reference_id: c.get("requestId"),
+        })
+        return c.json({ referenceId: c.get("requestId"), durationMs, result })
+      } catch (error) {
+        const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "MCP_TOOL_EXECUTION")
+        logger.error("external_mcp_manual_tool_failed", {
+          connection_id: connection.id,
+          organization_id: payload.organization.id,
+          org_membership_id: payload.currentMember.id,
+          connection_endpoint: safeExternalMcpEndpointForLog(connection.url),
+          ...externalMcpDiagnosticForLog(error, c.get("requestId"), "MCP_TOOL_EXECUTION"),
+        })
+        return c.json({
+          error: "tool_execution_failed",
+          message: `Could not run "${toolName}" on "${connection.name}": ${diagnostic.message} Reference: ${diagnostic.referenceId}.`,
           diagnostic,
         }, 502)
       }
