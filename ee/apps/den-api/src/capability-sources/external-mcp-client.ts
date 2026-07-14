@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { env } from "../env.js"
 import { appendPublicApiPath } from "../request-url.js"
+import { externalMcpOAuthRuntimeFromStateToken } from "./generic-oauth.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
 import {
   type OAuthClientProvider,
@@ -206,6 +207,8 @@ type ExternalMcpOAuthRegistrationPolicy = {
 }
 
 const EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY = "registrationProvenance"
+const EXTERNAL_MCP_OAUTH_CLIENT_INFORMATION_KEY = "clientInformationV2"
+const EXTERNAL_MCP_LEGACY_OAUTH_CLIENT_INFORMATION_KEY = "clientInformation"
 const EXTERNAL_MCP_TOKEN_ENDPOINT_AUTH_METHODS = [
   "client_secret_basic",
   "client_secret_post",
@@ -226,10 +229,12 @@ function externalMcpTokenEndpointAuthMethods(state: OAuthDiscoveryState): string
 
 export function externalMcpOAuthRegistrationPolicy(
   state: OAuthDiscoveryState,
+  clientMetadataUrl?: string,
 ): ExternalMcpOAuthRegistrationPolicy {
   const supported = externalMcpTokenEndpointAuthMethods(state)
   if (
-    state.authorizationServerMetadata?.client_id_metadata_document_supported === true
+    clientMetadataUrl
+    && state.authorizationServerMetadata?.client_id_metadata_document_supported === true
     && supported.includes("none")
   ) {
     return { provenance: "cimd", tokenEndpointAuthMethod: "none" }
@@ -288,17 +293,9 @@ export function externalMcpOAuthClientRegistrationProvenance(input: {
   const explicit = input.extra?.[EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY]
   if (explicit === "pre_registered" || explicit === "dcr" || explicit === "cimd") return explicit
 
-  // Rows saved before provenance was introduced can be classified without
-  // exposing credentials: SDK-created rows contain clientInformation, while
-  // admin-entered clients historically did not.
-  if (isRecord(input.extra?.clientInformation)) {
-    if (
-      !input.clientSecret
-      && input.expectedClientMetadataUrl
-      && input.clientId === input.expectedClientMetadataUrl
-    ) return "cimd"
-    return "dcr"
-  }
+  // Legacy metadata is ambiguous because an administrator could rotate only
+  // the secret on a DCR-created row without clearing that metadata. Fail safe:
+  // never auto-delete an unmarked client; explicit provenance is required.
   return "pre_registered"
 }
 
@@ -326,12 +323,35 @@ export function safeExternalMcpClientInformation(
   return safe
 }
 
+export function externalMcpOAuthClientExtra(input: {
+  clientInformation: OAuthClientInformationMixed
+  registrationProvenance: ExternalMcpOAuthRegistrationProvenance
+  previousExtra?: Record<string, unknown> | null
+}): Record<string, unknown> {
+  const extra = { ...(input.previousExtra ?? {}) }
+  // Older Den replicas return `extra.clientInformation` verbatim. Leaving a
+  // sanitized value there would make them miss the separately encrypted
+  // client-secret column during a rollback. Versioned metadata is ignored by
+  // old readers, which then safely reconstruct credentials from the columns.
+  delete extra[EXTERNAL_MCP_LEGACY_OAUTH_CLIENT_INFORMATION_KEY]
+  extra[EXTERNAL_MCP_OAUTH_CLIENT_INFORMATION_KEY] = safeExternalMcpClientInformation(input.clientInformation)
+  extra[EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY] = input.registrationProvenance
+  return extra
+}
+
+function externalMcpStoredClientInformation(extra: Record<string, unknown> | null): Record<string, unknown> | null {
+  const versioned = extra?.[EXTERNAL_MCP_OAUTH_CLIENT_INFORMATION_KEY]
+  if (isRecord(versioned)) return versioned
+  const legacy = extra?.[EXTERNAL_MCP_LEGACY_OAUTH_CLIENT_INFORMATION_KEY]
+  return isRecord(legacy) ? legacy : null
+}
+
 export function restoreExternalMcpClientInformation(input: {
   clientId: string
   clientSecret: string | null
   extra: Record<string, unknown> | null
 }): OAuthClientInformationMixed {
-  const candidate = input.extra?.clientInformation
+  const candidate = externalMcpStoredClientInformation(input.extra)
   const full = OAuthClientInformationFullSchema.safeParse({
     ...(isRecord(candidate) ? candidate : {}),
     client_id: input.clientId,
@@ -342,9 +362,7 @@ export function restoreExternalMcpClientInformation(input: {
     client_id: input.clientId,
     client_secret: input.clientSecret ?? undefined,
   })
-  const storedTokenEndpointAuthMethod = isRecord(candidate)
-    ? candidate.token_endpoint_auth_method
-    : undefined
+  const storedTokenEndpointAuthMethod = candidate?.token_endpoint_auth_method
   if (typeof storedTokenEndpointAuthMethod !== "string") return base
   return { ...base, token_endpoint_auth_method: storedTokenEndpointAuthMethod }
 }
@@ -466,6 +484,13 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     return this.redirectUri
   }
 
+  private get candidateClientMetadataUrl(): string | undefined {
+    return externalMcpClientMetadataUrl({
+      connectionId: this.connection.id,
+      redirectUri: this.redirectUri,
+    })
+  }
+
   /**
    * Prefer the MCP 2025-11-25 Client ID Metadata Document flow when an
    * authorization server advertises it. The public document is scoped to one
@@ -475,10 +500,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
    */
   get clientMetadataUrl(): string | undefined {
     if (this.registrationPolicy?.provenance !== "cimd") return undefined
-    return externalMcpClientMetadataUrl({
-      connectionId: this.connection.id,
-      redirectUri: this.redirectUri,
-    })
+    return this.candidateClientMetadataUrl
   }
 
   /**
@@ -528,6 +550,10 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
    * committed between the optimistic read and the claim is never duplicated.
    */
   private async waitForRegisteredClientOrAcquireLease() {
+    const authorizationActor = this.authorizationActor
+    if (!authorizationActor) {
+      throw new Error("An authorization actor is required before dynamic OAuth client registration.")
+    }
     const leaseToken = this.registrationLeaseToken ?? randomUUID()
     while (true) {
       this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
@@ -539,9 +565,15 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
         leaseToken,
         startedAt: now,
         staleBefore: new Date(now.getTime() - EXTERNAL_MCP_DCR_LEASE_STALE_MS),
+        expectedAuthorizationEpoch: this.connection.oauthAuthorizationEpoch,
+        authorizationActor,
+        assertActive: () => this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION"),
       })
       if (lease === "connection_missing") {
         throw new Error("The external MCP connection no longer exists.")
+      }
+      if (lease === "connection_changed") {
+        throw new Error("The external MCP connection was disconnected while OAuth registration was starting.")
       }
       if (lease === "acquired") {
         this.registrationLeaseToken = leaseToken
@@ -632,10 +664,16 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
         extra: client.extra,
       })
       const storedProvenance = client.extra?.[EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY]
-      const storedMethod = isRecord(client.extra?.clientInformation)
-        ? client.extra.clientInformation.token_endpoint_auth_method
-        : undefined
-      if (storedProvenance === registrationProvenance && storedMethod === tokenEndpointAuthMethod) {
+      const storedClientInformation = externalMcpStoredClientInformation(client.extra)
+      const storedMethod = storedClientInformation?.token_endpoint_auth_method
+      const hasVersionedClientInformation = isRecord(
+        client.extra?.[EXTERNAL_MCP_OAUTH_CLIENT_INFORMATION_KEY],
+      ) && client.extra?.[EXTERNAL_MCP_LEGACY_OAUTH_CLIENT_INFORMATION_KEY] === undefined
+      if (
+        hasVersionedClientInformation
+        && storedProvenance === registrationProvenance
+        && storedMethod === tokenEndpointAuthMethod
+      ) {
         this.loadedClientRevision = externalMcpOAuthClientRevision(client)
         this.loadedClientProvenance = registrationProvenance
         this.diagnostic.passed("AUTH_CLIENT_REGISTRATION", "reachable")
@@ -650,10 +688,11 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
         expected: externalMcpOAuthClientRevision(client),
         next: {
           ...externalMcpOAuthClientValue(client),
-          extra: {
-            clientInformation: safeExternalMcpClientInformation(clientInformation),
-            [EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY]: registrationProvenance,
-          },
+          extra: externalMcpOAuthClientExtra({
+            clientInformation,
+            registrationProvenance,
+            previousExtra: client.extra,
+          }),
         },
       })
       if (persisted.status === "applied") {
@@ -695,10 +734,10 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       ? "cimd"
       : "dcr"
     const normalizedClientInformation = { ...clientInformation, token_endpoint_auth_method: tokenEndpointAuthMethod }
-    const extra = {
-      clientInformation: safeExternalMcpClientInformation(normalizedClientInformation),
-      [EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY]: registrationProvenance,
-    }
+    const extra = externalMcpOAuthClientExtra({
+      clientInformation: normalizedClientInformation,
+      registrationProvenance,
+    })
     const authorizationActor = this.authorizationActor
     if (!authorizationActor) {
       throw new Error("An authorization actor is required before persisting an OAuth client registration.")
@@ -722,6 +761,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
         clientId: clientInformation.client_id,
         clientSecret: clientInformation.client_secret ?? null,
         extra,
+        assertActive: () => this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION"),
       })
       this.loadedClientProvenance = "dcr"
       this.registrationLeaseToken = undefined
@@ -822,7 +862,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     assertExternalMcpPkceDiscovery(state)
     // Enforce the same supported intersection used by preview discovery at
     // the credential boundary, immediately before CIMD/DCR can run.
-    this.registrationPolicy = externalMcpOAuthRegistrationPolicy(state)
+    this.registrationPolicy = externalMcpOAuthRegistrationPolicy(state, this.candidateClientMetadataUrl)
     this.savedDiscoveryState = state
   }
 
@@ -858,7 +898,10 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    const expiresAt = tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null
+    if (tokens.expires_in !== undefined && (!Number.isFinite(tokens.expires_in) || tokens.expires_in < 0)) {
+      throw new Error("The OAuth provider returned an invalid access-token lifetime.")
+    }
+    const expiresAt = tokens.expires_in !== undefined ? new Date(Date.now() + tokens.expires_in * 1000) : null
     const isAuthorizationCodeCommit = this.authorizationActor !== undefined
       && this.authorizationCodeEpoch !== undefined
     const phase = this.diagnostic.activePhase === "CONTINUITY_REFRESH"
@@ -875,6 +918,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       tokenType: tokens.token_type ?? null,
       scope: tokens.scope,
       expiresAt,
+      assertActive: () => this.assertLifecycleActive(phase),
     }
     const committedTokenRevision = isAuthorizationCodeCommit
       ? await saveExternalMcpAuthorizationCodeTokens({
@@ -982,6 +1026,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       expectedAuthorizationEpoch: this.connection.oauthAuthorizationEpoch,
       signedState,
       codeVerifier,
+      assertActive: () => this.assertLifecycleActive("AUTH_USER_OR_WORKLOAD"),
     })
   }
 
@@ -1004,6 +1049,13 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       await this.clearMatchingLegacyCodeVerifier(exactTransaction.codeVerifier)
       this.assertLifecycleActive("AUTH_TOKEN_ACQUISITION")
       return exactTransaction.codeVerifier
+    }
+    // State tokens minted by this release carry the selected external-MCP
+    // runtime. They always have an exact state-keyed transaction, so a replay
+    // or missing row must not consume the single legacy slot belonging to a
+    // newer browser tab. Only unmarked states from older replicas may use it.
+    if (externalMcpOAuthRuntimeFromStateToken(signedState)) {
+      throw new Error("The OAuth authorization transaction is missing, expired, or already consumed.")
     }
     const codeVerifier = await consumeLegacyExternalMcpPendingCodeVerifier(transactionInput)
     this.assertLifecycleActive("AUTH_TOKEN_ACQUISITION")

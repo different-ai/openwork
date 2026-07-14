@@ -58,11 +58,34 @@ export function createPkcePair() {
   return { verifier, challenge }
 }
 
+export type ExternalMcpOAuthRuntime = "current" | "enterprise"
+
+/**
+ * Read the rollout marker from an already-issued OAuth state token without
+ * treating it as authenticated data. External MCP callback routes verify the
+ * signature before constructing a provider; this helper only narrows the
+ * legacy PKCE fallback inside that provider. A malformed or unsigned token is
+ * rejected by the route and must never use this parser as an authority check.
+ */
+export function externalMcpOAuthRuntimeFromStateToken(token: string): ExternalMcpOAuthRuntime | undefined {
+  const [encodedPayload, encodedSignature, extraPart] = token.split(".")
+  if (!encodedPayload || !encodedSignature || extraPart !== undefined) return undefined
+  try {
+    const payload: unknown = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"))
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined
+    const runtime = "externalMcpRuntime" in payload ? payload.externalMcpRuntime : undefined
+    return runtime === "current" || runtime === "enterprise" ? runtime : undefined
+  } catch {
+    return undefined
+  }
+}
+
 type OAuthStatePayload = {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
   providerId: string
   binding?: string
+  externalMcpRuntime?: ExternalMcpOAuthRuntime
   nonce: string
   exp: number
 }
@@ -72,6 +95,7 @@ export function createOAuthStateToken(input: {
   orgMembershipId: DenTypeId<"member">
   providerId: string
   binding?: string
+  externalMcpRuntime?: ExternalMcpOAuthRuntime
   secret: string
   ttlSeconds?: number
   now?: number
@@ -82,6 +106,7 @@ export function createOAuthStateToken(input: {
     orgMembershipId: input.orgMembershipId,
     providerId: input.providerId,
     ...(input.binding ? { binding: input.binding } : {}),
+    ...(input.externalMcpRuntime ? { externalMcpRuntime: input.externalMcpRuntime } : {}),
     nonce: randomUUID(),
     exp: Math.floor(nowMs / 1000) + (input.ttlSeconds ?? 10 * 60),
   }
@@ -91,11 +116,14 @@ export function createOAuthStateToken(input: {
 }
 
 export function verifyOAuthStateToken(input: { token: string; secret: string; now?: number }): OAuthStatePayload | null {
-  const [encodedPayload, encodedSignature] = input.token.split(".")
-  if (!encodedPayload || !encodedSignature) return null
+  const [encodedPayload, encodedSignature, extraPart] = input.token.split(".")
+  if (!encodedPayload || !encodedSignature || extraPart !== undefined) return null
 
   const expectedSignature = createHmac("sha256", input.secret).update(encodedPayload).digest()
   const providedSignature = Buffer.from(encodedSignature, "base64url")
+  if (encodedSignature.length !== 43 || providedSignature.toString("base64url") !== encodedSignature) {
+    return null
+  }
   const expectedBytes = new Uint8Array(expectedSignature)
   const providedBytes = new Uint8Array(providedSignature)
   if (expectedBytes.length !== providedBytes.length || !timingSafeEqual(expectedBytes, providedBytes)) {
@@ -110,6 +138,9 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
       || typeof payload.orgMembershipId !== "string"
       || typeof payload.providerId !== "string"
       || (payload.binding !== undefined && typeof payload.binding !== "string")
+      || (payload.externalMcpRuntime !== undefined
+        && payload.externalMcpRuntime !== "current"
+        && payload.externalMcpRuntime !== "enterprise")
       || typeof payload.nonce !== "string"
       || typeof payload.exp !== "number"
       || payload.exp < nowSeconds

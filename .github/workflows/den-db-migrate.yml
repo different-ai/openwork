@@ -26,6 +26,10 @@ on:
       - dev
     paths:
       - "ee/packages/den-db/drizzle/**"
+      - "ee/packages/den-db/scripts/**"
+      - "ee/packages/den-db/src/fulltext.ts"
+      - "ee/packages/den-db/package.json"
+      - ".github/workflows/den-db-migrate.yml"
   workflow_dispatch:
     inputs:
       baseline:
@@ -33,7 +37,7 @@ on:
         type: boolean
         default: false
       baseline_through:
-        description: "Baseline through this migration tag (default: latest, e.g. 0020_breezy_siren)"
+        description: "Baseline through this migration tag (default: safe legacy cutoff 0037; use latest only for a verified current schema)"
         type: string
         required: false
       dry_run:
@@ -102,15 +106,26 @@ jobs:
         uses: planetscale/setup-pscale-action@v1
 
       - name: Disable safe migrations (allow DDL for this run only)
+        id: ddl-window
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
+          echo "restore=false" >> "$GITHUB_OUTPUT"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run requested; leaving safe migrations enabled."
+            exit 0
+          fi
           state="$(pscale branch show "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG" --format json | jq -r '.safe_migrations')"
           echo "safe_migrations before run: $state"
           if [ "$state" = "true" ]; then
+            # Write the restoration intent before the mutating command so an
+            # ambiguous CLI response still reaches the always() cleanup step.
+            echo "restore=true" >> "$GITHUB_OUTPUT"
             pscale branch safe-migrations disable "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG"
             echo "Safe migrations disabled for the duration of this run."
           elif [ "$state" = "false" ]; then
-            echo "Safe migrations already disabled; will re-enable at the end of this run."
+            echo "Safe migrations already disabled; preserving the pre-run state."
           else
             echo "::error::Could not read safe_migrations state for $DATABASE_NAME/$PLANETSCALE_BRANCH."
             exit 1
@@ -146,6 +161,9 @@ jobs:
 
       - name: Baseline existing migrations (one-time)
         if: github.event_name == 'workflow_dispatch' && inputs.baseline
+        env:
+          BASELINE_THROUGH: ${{ inputs.baseline_through }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
           # Retry only when a stale gateway node still reports DDL as disabled.
@@ -165,14 +183,14 @@ jobs:
             done
             return 1
           }
-          extra=""
-          if [ -n "${{ inputs.baseline_through }}" ]; then
-            extra="--through ${{ inputs.baseline_through }}"
+          baseline_args=()
+          if [ -n "$BASELINE_THROUGH" ]; then
+            baseline_args+=(--through "$BASELINE_THROUGH")
           fi
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:baseline -- $extra
+          if [ "$DRY_RUN" = "true" ]; then
+            run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:baseline -- "${baseline_args[@]}"
           else
-            run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:baseline -- --yes $extra
+            run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:baseline -- --yes "${baseline_args[@]}"
           fi
 
       - name: Apply migrations
@@ -198,7 +216,7 @@ jobs:
           run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:migrate
 
       - name: Re-enable safe migrations
-        if: always() && steps.setup-pscale.conclusion == 'success'
+        if: always() && steps.setup-pscale.conclusion == 'success' && steps.ddl-window.outputs.restore == 'true'
         run: |
           set -euo pipefail
           pscale branch safe-migrations enable "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG"

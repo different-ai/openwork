@@ -40,10 +40,12 @@ describe("MCP connection edit projection", () => {
     })).toBe(true);
   });
 
-  test("prefills everyone, teams, or people from direct assignments", () => {
+  test("prefills everyone, teams, people, or no direct assignment", () => {
     expect(mcpAccessMode({ orgWide: true, memberIds: [], teamIds: [] })).toBe("everyone");
     expect(mcpAccessMode({ orgWide: false, memberIds: [], teamIds: ["team_1"] })).toBe("teams");
     expect(mcpAccessMode({ orgWide: false, memberIds: ["mem_1"], teamIds: [] })).toBe("people");
+    expect(mcpAccessMode({ orgWide: false, memberIds: [], teamIds: [] })).toBe("none");
+    expect(mcpAccessMode(null)).toBe("none");
   });
 
   test("explains marketplace ownership using unique server-derived plugin names", () => {

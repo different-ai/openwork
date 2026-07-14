@@ -13,7 +13,7 @@ export type Executor = {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 export async function createExecutor(): Promise<Executor> {
@@ -25,7 +25,7 @@ export async function createExecutor(): Promise<Executor> {
     return {
       query: async (sql, args = []) => {
         const [rows] = await connection.query(sql, args)
-        return Array.isArray(rows) ? rows.filter(isRecord) : []
+        return Array.isArray(rows) ? (rows as unknown[]).filter(isRecord) : []
       },
       close: () => connection.end(),
     }

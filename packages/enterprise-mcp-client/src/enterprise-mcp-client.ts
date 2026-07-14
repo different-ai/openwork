@@ -34,6 +34,10 @@ const redirectUriSchema = z.string().trim().url()
 const toolNameSchema = z.string().trim().min(1)
 const authorizationIdSchema = z.string().min(1).max(8 * 1024)
 const authorizationCodeSchema = z.string().min(1).max(8 * 1024)
+const requestedScopesSchema = z.array(z.string().trim().min(1).max(512).regex(/^\S+$/))
+  .max(100)
+  .refine((scopes) => scopes.join(" ").length <= 8_192)
+  .refine((scopes) => new Set(scopes).size === scopes.length)
 
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000
 const DEFAULT_CLOSE_TIMEOUT_MS = 5_000
@@ -68,6 +72,20 @@ function validateConnection(connection: EnterpriseMcpConnection): URL {
   const parsed = connectionSchema.parse({ id: connection.id, serverUrl: connection.serverUrl })
   if (connection.authorization.type === "api-key" && !connection.authorization.token.trim()) {
     throw new Error("An API key connection requires a non-empty token.")
+  }
+  if (connection.authorization.type === "oauth") {
+    if (connection.authorization.requestedScopes) {
+      requestedScopesSchema.parse(connection.authorization.requestedScopes)
+    }
+    if (connection.authorization.clientMetadataUrl) {
+      const metadataUrl = new URL(connection.authorization.clientMetadataUrl)
+      if (metadataUrl.protocol !== "https:" || metadataUrl.pathname === "/") {
+        throw new Error("An enterprise MCP OAuth Client ID Metadata Document must use HTTPS with a non-root path.")
+      }
+      if (metadataUrl.username || metadataUrl.password || metadataUrl.hash) {
+        throw new Error("An enterprise MCP OAuth Client ID Metadata Document cannot contain credentials or a fragment.")
+      }
+    }
   }
   const url = new URL(parsed.serverUrl)
   if (url.protocol !== "https:" && url.protocol !== "http:") {
@@ -186,6 +204,8 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           persistence: input.connection.authorization.persistence,
           flow: input.flow,
           clientName,
+          requestedScopes: input.connection.authorization.requestedScopes,
+          clientMetadataUrl: input.connection.authorization.clientMetadataUrl,
           clock,
           lifecycle: {
             expiresAt: configuredExpiresAt,
@@ -273,6 +293,12 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       })
       throw wrapped
     } finally {
+      try {
+        await session.oauthProvider?.releaseDynamicRegistrationClaim()
+      } catch {
+        // A failed provider request must not retain the distributed DCR claim.
+        // The application adapter also expires abandoned claims defensively.
+      }
       session.controller.abort()
     }
   }

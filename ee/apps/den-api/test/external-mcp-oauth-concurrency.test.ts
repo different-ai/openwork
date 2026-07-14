@@ -18,6 +18,7 @@ let drizzle: typeof import("@openwork-ee/den-db/drizzle")
 let connections: typeof import("../src/capability-sources/external-mcp-connections.js")
 let ExternalMcpOAuthProvider: typeof import("../src/capability-sources/external-mcp-client.js").ExternalMcpOAuthProvider
 let ExternalMcpDiagnosticTracker: typeof import("../src/capability-sources/external-mcp-diagnostics.js").ExternalMcpDiagnosticTracker
+let createOAuthStateToken: typeof import("../src/capability-sources/generic-oauth.js").createOAuthStateToken
 
 const userId = createDenTypeId("user")
 const targetUserId = createDenTypeId("user")
@@ -81,6 +82,7 @@ beforeAll(async () => {
     import("../src/capability-sources/external-mcp-connections.js"),
     import("../src/capability-sources/external-mcp-client.js"),
     import("../src/capability-sources/external-mcp-diagnostics.js"),
+    import("../src/capability-sources/generic-oauth.js"),
   ])
   db = modules[0].db
   schema = modules[1]
@@ -88,6 +90,7 @@ beforeAll(async () => {
   connections = modules[3]
   ExternalMcpOAuthProvider = modules[4].ExternalMcpOAuthProvider
   ExternalMcpDiagnosticTracker = modules[5].ExternalMcpDiagnosticTracker
+  createOAuthStateToken = modules[6].createOAuthStateToken
 
   await db.insert(schema.AuthUserTable).values([
     {
@@ -243,6 +246,32 @@ describe("current Den external MCP OAuth concurrency", () => {
 
     expect(await provider({ state: "signed-state-from-old-replica" }).codeVerifier()).toBe(verifier)
     await expect(provider({ state: "signed-state-from-old-replica" }).codeVerifier()).rejects.toThrow("already consumed")
+  })
+
+  test("a replay of a marked state cannot steal the newer tab's legacy bridge verifier", async () => {
+    const markedState = () => createOAuthStateToken({
+      organizationId,
+      orgMembershipId: memberId,
+      providerId: connection.id,
+      binding: connections.externalMcpIdentityBinding(connection),
+      externalMcpRuntime: "current",
+      secret: process.env.BETTER_AUTH_SECRET!,
+    })
+    const firstState = markedState()
+    const firstVerifier = "f".repeat(43)
+    const firstStart = provider({ state: firstState })
+    firstStart.state()
+    await firstStart.saveCodeVerifier(firstVerifier)
+    expect(await provider({ state: firstState }).codeVerifier()).toBe(firstVerifier)
+
+    const secondState = markedState()
+    const secondVerifier = "s".repeat(43)
+    const secondStart = provider({ state: secondState })
+    secondStart.state()
+    await secondStart.saveCodeVerifier(secondVerifier)
+
+    await expect(provider({ state: firstState }).codeVerifier()).rejects.toThrow("already consumed")
+    expect(await provider({ state: secondState }).codeVerifier()).toBe(secondVerifier)
   })
 
   test("completes a pre-deploy per-member legacy verifier only for that member", async () => {
@@ -583,7 +612,7 @@ describe("current Den external MCP OAuth concurrency", () => {
       connectionId: connection.id,
       orgMembershipId: memberId,
       signedState: "signed-state-keep",
-    })).toEqual({ codeVerifier: "k".repeat(43), authorizationEpoch: 0 })
+    })).toMatchObject({ codeVerifier: "k".repeat(43), authorizationEpoch: 0 })
   })
 
   test("single-flights DCR and lets the waiting replica reuse the winner", async () => {
@@ -817,11 +846,20 @@ describe("current Den external MCP OAuth concurrency", () => {
       clientSecret: "administrator-rotated-secret",
       extra: {
         registrationProvenance: "pre_registered",
-        clientInformation: {
+        clientInformationV2: {
           client_id: "administrator-rotated-client",
           token_endpoint_auth_method: "client_secret_basic",
         },
       },
+    })
+    expect(currentRows[0]?.extra?.clientInformation).toBeUndefined()
+    const oldReplicaRead = currentRows[0]?.extra?.clientInformation ?? {
+      client_id: currentRows[0]?.clientId,
+      client_secret: currentRows[0]?.clientSecret ?? undefined,
+    }
+    expect(oldReplicaRead).toEqual({
+      client_id: "administrator-rotated-client",
+      client_secret: "administrator-rotated-secret",
     })
   })
 
@@ -1544,6 +1582,8 @@ describe("current Den external MCP OAuth concurrency", () => {
       leaseToken: "takeover-owner",
       startedAt: new Date(),
       staleBefore: new Date(Date.now() - 60_000),
+      expectedAuthorizationEpoch: 0,
+      authorizationActor: { orgMembershipId: memberId },
     })).toBe("acquired")
 
     const persistenceInput = {

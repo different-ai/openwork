@@ -11,6 +11,7 @@ import {
 import { env } from "../env.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
 import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
+import { externalMcpClientMetadataUrl } from "./external-mcp-client.js"
 import type { ExternalMcpMemberContext, ExternalMcpConnectResult } from "./external-mcp-client.js"
 import type { ExternalMcpLifecycleDeadline } from "./external-mcp-client.js"
 import { DenEnterpriseMcpOAuthPersistence } from "./enterprise-mcp-oauth-persistence.js"
@@ -25,16 +26,24 @@ import {
 
 function toEnterpriseConnection(
   connection: ExternalMcpConnectionRow,
+  redirectUri: string | undefined,
   member?: ExternalMcpMemberContext,
   authorizationActor?: ExternalMcpMemberContext,
 ): EnterpriseMcpConnection {
   if (connection.authType === "oauth") {
+    const clientMetadataUrl = redirectUri
+      ? externalMcpClientMetadataUrl({ connectionId: connection.id, redirectUri })
+      : undefined
     return {
       id: connection.id,
       serverUrl: connection.url,
       authorization: {
         type: "oauth",
         persistence: new DenEnterpriseMcpOAuthPersistence(connection, member, authorizationActor),
+        ...(connection.requestedOAuthScopes?.length
+          ? { requestedScopes: connection.requestedOAuthScopes }
+          : {}),
+        ...(clientMetadataUrl ? { clientMetadataUrl } : {}),
       },
     }
   }
@@ -209,7 +218,7 @@ export async function connectExternalMcp(
     diagnosticReferenceId,
     lifecycleDeadline,
     operation: (client) => client.connect({
-      connection: toEnterpriseConnection(connection, member, authorizationActor),
+      connection: toEnterpriseConnection(connection, redirectUri, member, authorizationActor),
       redirectUri,
       authorizationId: signedState,
     }),
@@ -230,7 +239,7 @@ export async function completeExternalMcpAuth(
     connection,
     diagnosticReferenceId,
     operation: (client) => client.completeAuthorization({
-      connection: toEnterpriseConnection(connection, member, authorizationActor),
+      connection: toEnterpriseConnection(connection, redirectUri, member, authorizationActor),
       redirectUri,
       code,
       authorizationId: signedState,
@@ -249,7 +258,7 @@ export async function abandonExternalMcpAuth(
     connection,
     diagnosticReferenceId,
     operation: (client) => client.abandonAuthorization({
-      connection: toEnterpriseConnection(connection, member, authorizationActor),
+      connection: toEnterpriseConnection(connection, undefined, member, authorizationActor),
       authorizationId: signedState,
       reason: "provider-rejected",
     }),
@@ -268,7 +277,7 @@ export async function listExternalMcpTools(
     diagnosticReferenceId,
     lifecycleDeadline,
     operation: (client) => client.listTools({
-      connection: toEnterpriseConnection(connection, member),
+      connection: toEnterpriseConnection(connection, redirectUri, member),
       redirectUri,
     }),
   })
@@ -286,7 +295,7 @@ export async function callExternalMcpTool(input: {
     connection: input.connection,
     diagnosticReferenceId: input.diagnosticReferenceId,
     operation: (client) => client.callTool({
-      connection: toEnterpriseConnection(input.connection, input.member),
+      connection: toEnterpriseConnection(input.connection, input.redirectUri, input.member),
       redirectUri: input.redirectUri,
       toolName: input.toolName,
       arguments: input.args,

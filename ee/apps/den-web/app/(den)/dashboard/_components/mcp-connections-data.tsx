@@ -50,7 +50,10 @@ export type ExternalMcpConnection = {
   tenantId?: string | null;
   requiredBy: ExternalMcpRequiredBy[];
   identityManagedBy: ExternalMcpRequiredBy[];
+  /** Direct assignments edited from the Connections dialog. */
   access: ExternalMcpAccessSummary | null;
+  /** Effective assignments inherited from marketplace/plugin bindings. */
+  inheritedAccess: ExternalMcpAccessSummary | null;
   oauthClientId?: string | null;
 };
 
@@ -331,6 +334,18 @@ function parseRequiredBy(value: unknown): ExternalMcpRequiredBy[] {
   });
 }
 
+function parseAccessSummary(value: unknown): ExternalMcpAccessSummary | null {
+  if (!isRecord(value)
+    || typeof value.orgWide !== "boolean"
+    || !isStringArray(value.memberIds)
+    || !isStringArray(value.teamIds)) return null;
+  return {
+    orgWide: value.orgWide,
+    memberIds: [...new Set(value.memberIds)],
+    teamIds: [...new Set(value.teamIds)],
+  };
+}
+
 async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string): Promise<ExternalMcpConnection[]> {
   const { response, payload } = await requestJson(
     `/v1/mcp-connections?scope=${scope}`,
@@ -345,6 +360,8 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
     ...connection,
     requiredBy: parseRequiredBy(connection.requiredBy),
     identityManagedBy: parseRequiredBy(connection.identityManagedBy),
+    access: parseAccessSummary(connection.access),
+    inheritedAccess: parseAccessSummary(connection.inheritedAccess),
     updatedAt: typeof connection.updatedAt === "string" ? connection.updatedAt : null,
     ...(typeof connection.needsReconnect === "boolean" ? { needsReconnect: connection.needsReconnect } : {}),
     ...(isStringArray(connection.missingFeatures) ? { missingFeatures: connection.missingFeatures } : {}),

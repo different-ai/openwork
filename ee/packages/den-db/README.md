@@ -60,12 +60,21 @@ local env vars — see `.env.example`):
 A database previously managed with `db:push` has no `__drizzle_migrations`
 table, so the first `db:migrate` would try to replay every migration.
 Record the existing history once (marks migrations as applied without
-executing them):
+executing them). With no `--through` argument, this intentionally stops at
+`0037_futuristic_sage`. Before recording anything, the command fingerprints
+the live tables, columns, defaults, primary/unique keys, and indexes against
+the committed 0037 snapshot. It fails closed when the database is older or
+partially applied. `db:migrate` then inspects, repairs, and records the
+non-idempotent 0038 migration statement-by-statement:
 
 ```bash
 pnpm --dir ee/packages/den-db db:baseline           # dry run
 pnpm --dir ee/packages/den-db db:baseline -- --yes  # record
 ```
+
+Use `--through latest` only when the current schema was just applied to an
+empty database (the bootstrap command does this automatically). The command
+also verifies the matching latest snapshot before it writes the ledger.
 
 Or run the `Den DB Migrate` workflow manually with `baseline: true`
 (use `dry_run: true` first to see the plan).
@@ -76,13 +85,20 @@ Migrations run **before** new code deploys, so they must be
 expand/contract safe: additive columns are nullable or defaulted, no
 renames or drops while old code still reads the schema, contract steps
 ship as a later migration once no deployed code references the old shape.
+For hosted deployments, make successful completion of `Den DB Migrate` a
+pre-deploy gate; do not let an API rollout race the independent workflow.
 
 ## Notes
 
 - The migration chain has no `0000` baseline (history starts at `0001`,
   which alters pre-existing tables), so empty production databases should use
-  `db:bootstrap`. It applies the current schema once, records the migration
-  baseline, then runs `db:migrate`. Use `db:push` only for development.
+  `db:bootstrap`. Before its first state push it writes a zero-timestamp marker
+  into Drizzle's ignored migration ledger. A retry can therefore distinguish
+  and resume an interrupted fresh push, verify the latest snapshot, finish the
+  baseline, and clear the marker. A non-empty no-ledger database is adopted
+  through 0037 only after the complete 0037 snapshot fingerprint passes; it is
+  never versioned from table count alone. Migration 0038 is then resumed
+  statement-by-statement. Use `db:push` directly only for development.
 - `db:generate` is the default path for new migration files.
 - `drizzle/meta/` must stay in sync with the SQL migration history so future generation stays incremental.
 - Only repair `drizzle/meta/` manually when recovering broken Drizzle history.

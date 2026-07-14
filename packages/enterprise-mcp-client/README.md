@@ -36,12 +36,12 @@ or environment variables.
 
 The public OAuth persistence contract is split into three narrow ports:
 
-- `clientRegistrations`: validated pre-registered or dynamically registered
-  clients with an opaque compare-and-swap revision and explicit expiry;
-- `authorizations`: state-bound, expiring PKCE transactions that are loaded
-  without consumption; and
-- `credentials`: token load/save/invalidation, including an atomic callback
-  commit that consumes the matching authorization transaction.
+- `clientRegistrations`: validated administrator pre-registered, dynamically
+  registered, or Client ID Metadata clients with an opaque compare-and-swap
+  revision, provenance, and explicit expiry;
+- `authorizations`: state-bound, expiring PKCE transactions atomically
+  consumed into an adapter-local one-shot handle; and
+- `credentials`: token load/save/invalidation fenced by that handle.
 
 Every persistence write receives an absolute `commitExpiresAt` and abort
 signal. An adapter must reject or roll back a transaction that cannot commit
@@ -55,12 +55,23 @@ then silently writing credentials afterward.
   OAuth discovery, registration, token endpoints, SSE, and tool calls.
 - OAuth connect requires the caller's signed authorization id before network
   or persistence work begins. No random-state fallback exists.
+- Authorization servers must explicitly advertise PKCE S256. Saved and newly
+  registered clients must also match an advertised supported token-endpoint
+  authentication method; omitted method metadata uses the RFC 8414
+  `client_secret_basic` default.
+- Reviewed fallback scopes flow through client metadata, DCR, and the authorize
+  request while MCP challenge and protected-resource scopes retain priority.
 - PKCE transactions are state-bound, individually expiring, capped, encrypted
-  by Den, and consumed in the same database transaction as callback tokens.
+  by Den, and atomically consumed before the token endpoint is called. Token
+  persistence rechecks the one-shot handle, connection epoch, client revision,
+  actor authority, and lifecycle deadline.
 - Callback token commit verifies the OAuth client revision, authorization
   revision, connection identity, member/shared ownership, and lifecycle.
 - Dynamic client registration is first-writer-wins. A losing concurrent DCR
   cannot silently continue with the wrong client.
+- Provider rejection or expiry can rotate only the exact dynamic-registration
+  revision. Administrator pre-registered and Client ID Metadata clients are
+  preserved for explicit operator repair.
 - New DCR client secrets are stored only in Den's encrypted client-secret
   column. Unencrypted JSON metadata excludes `client_secret` and
   `registration_access_token`.

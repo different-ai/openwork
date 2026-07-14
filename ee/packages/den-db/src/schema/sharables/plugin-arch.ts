@@ -5,6 +5,7 @@ import {
   json,
   mysqlEnum,
   mysqlTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -21,6 +22,7 @@ export const configObjectCreatedViaValues = ["cloud", "import", "connector", "sy
 export const pluginStatusValues = ["active", "inactive", "deleted", "archived"] as const
 export const marketplaceStatusValues = ["active", "inactive", "deleted", "archived"] as const
 export const membershipSourceValues = ["manual", "connector", "api", "system"] as const
+export const pluginImportSourceProviderValues = ["github"] as const
 export const accessRoleValues = ["viewer", "editor", "manager"] as const
 export const connectorTypeValues = ["github"] as const
 export const connectorAccountStatusValues = ["active", "inactive", "disconnected", "error"] as const
@@ -112,6 +114,59 @@ export const PluginTable = mysqlTable(
     index("plugin_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("plugin_status").on(table.status),
     index("plugin_name").on(table.name),
+  ],
+)
+
+/**
+ * Immutable provenance for a plugin materialized from an external source.
+ *
+ * This row deliberately outlives marketplace membership and plugin lifecycle
+ * changes. The organization/provider/source tuple is the durable uniqueness
+ * claim, so renaming, moving, archiving, or restoring a plugin cannot make the
+ * same source importable a second time.
+ */
+export const PluginImportSourceTable = mysqlTable(
+  "plugin_import_source",
+  {
+    pluginId: denTypeIdColumn("plugin", "plugin_id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    provider: mysqlEnum("provider", pluginImportSourceProviderValues).notNull(),
+    canonicalSourceKey: varchar("canonical_source_key", { length: 64 }).notNull(),
+    canonicalSourceUrl: varchar("canonical_source_url", { length: 2048 }).notNull(),
+    sourceRevisionRef: varchar("source_revision_ref", { length: 255 }),
+    createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("plugin_import_source_organization_id").on(table.organizationId),
+    uniqueIndex("plugin_import_source_org_provider_key").on(
+      table.organizationId,
+      table.provider,
+      table.canonicalSourceKey,
+    ),
+  ],
+)
+
+/**
+ * Marks external MCP connections created by marketplace/plugin import.
+ *
+ * Ownership is connection-scoped rather than copied into one config payload:
+ * any number of imported plugins may reference the connection, and OpenWork
+ * may reclaim it only after the final binding disappears.
+ */
+export const PluginManagedExternalMcpConnectionTable = mysqlTable(
+  "plugin_managed_external_mcp_connection",
+  {
+    externalMcpConnectionId: denTypeIdColumn("externalMcpConnection", "external_mcp_connection_id").notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    createdByPluginId: denTypeIdColumn("plugin", "created_by_plugin_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.externalMcpConnectionId], name: "plugin_managed_mcp_connection_pk" }),
+    index("plugin_managed_mcp_connection_organization_id").on(table.organizationId),
+    index("plugin_managed_mcp_connection_created_by_plugin_id").on(table.createdByPluginId),
   ],
 )
 
@@ -512,7 +567,23 @@ export const pluginRelations = relations(PluginTable, ({ many, one }) => ({
     fields: [PluginTable.organizationId],
     references: [OrganizationTable.id],
   }),
+  importSource: one(PluginImportSourceTable),
   mappings: many(ConnectorMappingTable),
+}))
+
+export const pluginImportSourceRelations = relations(PluginImportSourceTable, ({ one }) => ({
+  createdByOrgMembership: one(MemberTable, {
+    fields: [PluginImportSourceTable.createdByOrgMembershipId],
+    references: [MemberTable.id],
+  }),
+  organization: one(OrganizationTable, {
+    fields: [PluginImportSourceTable.organizationId],
+    references: [OrganizationTable.id],
+  }),
+  plugin: one(PluginTable, {
+    fields: [PluginImportSourceTable.pluginId],
+    references: [PluginTable.id],
+  }),
 }))
 
 export const marketplaceRelations = relations(MarketplaceTable, ({ many, one }) => ({
@@ -759,6 +830,8 @@ export const connectorSourceTombstoneRelations = relations(ConnectorSourceTombst
 export const configObject = ConfigObjectTable
 export const configObjectVersion = ConfigObjectVersionTable
 export const plugin = PluginTable
+export const pluginImportSource = PluginImportSourceTable
+export const pluginManagedExternalMcpConnection = PluginManagedExternalMcpConnectionTable
 export const marketplace = MarketplaceTable
 export const marketplacePlugin = MarketplacePluginTable
 export const marketplaceAccessGrant = MarketplaceAccessGrantTable

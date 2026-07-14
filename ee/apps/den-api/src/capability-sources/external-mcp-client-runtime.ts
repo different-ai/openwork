@@ -1,4 +1,5 @@
 import { env } from "../env.js"
+import type { ExternalMcpOAuthRuntime } from "./generic-oauth.js"
 import {
   abandonExternalMcpAuth as abandonWithCurrentClient,
   callExternalMcpTool as callWithCurrentClient,
@@ -46,11 +47,26 @@ export function selectExternalMcpClientRuntime(input: {
   return input.enterpriseMcpClientEnabled ? input.enterprise : input.current
 }
 
+export function externalMcpClientRuntimeForId(runtimeId: ExternalMcpOAuthRuntime): ExternalMcpClientRuntime {
+  return runtimeId === "enterprise" ? enterpriseMcpClient : currentDenMcpClient
+}
+
+export const selectedExternalMcpClientRuntimeId: ExternalMcpOAuthRuntime = env.enterpriseMcpClientEnabled
+  ? "enterprise"
+  : "current"
+
+export function externalMcpClientRuntimeIdForOAuthState(
+  pinnedRuntimeId: ExternalMcpOAuthRuntime | undefined,
+  selectedRuntimeId: ExternalMcpOAuthRuntime = selectedExternalMcpClientRuntimeId,
+): ExternalMcpOAuthRuntime {
+  return pinnedRuntimeId ?? selectedRuntimeId
+}
+
 export const externalMcpClientRuntimeName = env.enterpriseMcpClientEnabled
   ? "@openwork/enterprise-mcp-client"
   : "current Den MCP client"
 
-const selectedRuntime = selectExternalMcpClientRuntime({
+export const selectedExternalMcpClientRuntime = selectExternalMcpClientRuntime({
   enterpriseMcpClientEnabled: env.enterpriseMcpClientEnabled,
   current: currentDenMcpClient,
   enterprise: enterpriseMcpClient,
@@ -62,4 +78,4 @@ export const {
   abandonExternalMcpAuth,
   listExternalMcpTools,
   callExternalMcpTool,
-} = selectedRuntime
+} = selectedExternalMcpClientRuntime

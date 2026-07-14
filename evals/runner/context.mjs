@@ -59,12 +59,13 @@ export class EvalContext {
    * Requires cdpBaseUrl (set automatically by the runner); not available
    * against a raw client-only context.
    */
-  async switchToNewTab({ match, timeoutMs = DEFAULT_TIMEOUT_MS, label } = {}) {
+  async switchToNewTab({ match, timeoutMs = DEFAULT_TIMEOUT_MS, label, beforeTargetIds } = {}) {
     if (!this.cdpBaseUrl) {
       throw new EvalError("switchToNewTab requires cdpBaseUrl on the context.");
     }
-    const before = await listTargets(this.cdpBaseUrl);
-    const beforeIds = new Set(before.map((entry) => entry.id));
+    const beforeIds = beforeTargetIds
+      ? new Set(beforeTargetIds)
+      : new Set((await listTargets(this.cdpBaseUrl)).map((entry) => entry.id));
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       const targets = await listTargets(this.cdpBaseUrl);

@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "ee/packages/den-db/**"
+      - ".github/workflows/den-db-check.yml"
 
 permissions:
   contents: read
@@ -12,6 +13,20 @@ jobs:
   migrations-in-sync:
     name: Schema and migrations in sync
     runs-on: blacksmith-4vcpu-ubuntu-2204
+    env:
+      DEN_DB_MIGRATION_TEST_URL: mysql://root:openwork-migrations@127.0.0.1:3306/mysql
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: openwork-migrations
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -popenwork-migrations"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
 
     steps:
       - name: Checkout
@@ -27,8 +42,14 @@ jobs:
         with:
           version: 11.4.0
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Install dependencies
         run: pnpm install --filter "@openwork-ee/den-db..."
+
+      - name: Check migration lifecycle policy
+        run: pnpm --filter @openwork-ee/den-db test:migrations
 
       - name: Generate migrations from schema
         run: pnpm --filter @openwork-ee/den-db db:generate

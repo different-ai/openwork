@@ -125,22 +125,41 @@ function rejectInvalidPreregisteredClient(res) {
 }
 
 function requirePreregisteredAuthorizeClient(res, params) {
-  if (!disableDcr) return true;
-  if (params.get("client_id") === mockClientId) return true;
+  const clientId = params.get("client_id") || "";
+  if (disableDcr ? clientId === mockClientId : clients.has(clientId)) return true;
   rejectInvalidPreregisteredClient(res);
   return false;
 }
 
 function requirePreregisteredTokenClient(req, res, form, grant) {
-  if (!disableDcr) return true;
   const basic = basicClient(req);
   const clientId = basic?.clientId || form.client_id || grant?.clientId || "";
-  if (clientId !== mockClientId) {
+  if (disableDcr) {
+    if (clientId !== mockClientId) {
+      rejectInvalidPreregisteredClient(res);
+      return false;
+    }
+    const suppliedSecret = basic?.clientSecret ?? form.client_secret;
+    if (suppliedSecret !== undefined && suppliedSecret !== mockClientSecret) {
+      rejectInvalidPreregisteredClient(res);
+      return false;
+    }
+    return true;
+  }
+
+  const client = clients.get(clientId);
+  if (!client) {
     rejectInvalidPreregisteredClient(res);
     return false;
   }
-  const suppliedSecret = basic?.clientSecret ?? form.client_secret;
-  if (suppliedSecret !== undefined && suppliedSecret !== mockClientSecret) {
+
+  const method = client.token_endpoint_auth_method || "none";
+  const suppliedSecret = method === "client_secret_basic" ? basic?.clientSecret : form.client_secret;
+  if (method === "client_secret_basic" && basic?.clientId !== clientId) {
+    rejectInvalidPreregisteredClient(res);
+    return false;
+  }
+  if (method !== "none" && suppliedSecret !== client.client_secret) {
     rejectInvalidPreregisteredClient(res);
     return false;
   }
@@ -200,17 +219,31 @@ function authorize(req, res, url) {
 </html>`);
 }
 
-async function registerClient(req, res) {
+async function registerClient(req, res, requestEntry) {
   if (disableDcr) {
     json(res, 404, { error: "not_found" });
     return;
   }
   const body = await readJson(req).catch(() => ({}));
+  if (requestEntry) {
+    requestEntry.body = {
+      grant_types: Array.isArray(body.grant_types) ? body.grant_types : [],
+      redirect_uris: Array.isArray(body.redirect_uris) ? body.redirect_uris : [],
+      response_types: Array.isArray(body.response_types) ? body.response_types : [],
+      scope: typeof body.scope === "string" ? body.scope : null,
+      token_endpoint_auth_method: typeof body.token_endpoint_auth_method === "string"
+        ? body.token_endpoint_auth_method
+        : null,
+    };
+  }
   const clientId = `mock-client-${randomUUID()}`;
+  const tokenEndpointAuthMethod = body.token_endpoint_auth_method || "none";
+  const clientSecret = tokenEndpointAuthMethod === "none" ? null : `mock-client-secret-${randomUUID()}`;
   const client = {
     client_id: clientId,
     client_id_issued_at: Math.floor(Date.now() / 1000),
-    token_endpoint_auth_method: body.token_endpoint_auth_method || "none",
+    ...(clientSecret ? { client_secret: clientSecret, client_secret_expires_at: 0 } : {}),
+    token_endpoint_auth_method: tokenEndpointAuthMethod,
     redirect_uris: Array.isArray(body.redirect_uris) ? body.redirect_uris : [],
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
@@ -327,7 +360,7 @@ function mcpResult(message) {
   }
 }
 
-async function handleMcp(req, res) {
+async function handleMcp(req, res, requestEntry) {
   const authorized = isAuthorized(req);
   if (!authorized) {
     json(res, 401, { error: "missing_mcp_token" }, {
@@ -343,13 +376,12 @@ async function handleMcp(req, res) {
 
   const body = await readJson(req).catch(() => ({}));
   const messages = Array.isArray(body) ? body : [body];
-  const entry = requests[requests.length - 1];
-  if (entry) {
-    entry.authorized = authorized;
-    entry.rpcMethods = messages
+  if (requestEntry) {
+    requestEntry.authorized = authorized;
+    requestEntry.rpcMethods = messages
       .filter((message) => message && typeof message === "object" && typeof message.method === "string")
       .map((message) => message.method);
-    entry.toolNames = messages
+    requestEntry.toolNames = messages
       .filter((message) => message && typeof message === "object" && message.method === "tools/call" && typeof message.params?.name === "string")
       .map((message) => message.params.name);
   }
@@ -370,7 +402,7 @@ async function handleMcp(req, res) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", issuer);
-    record(req, url);
+    const requestEntry = record(req, url);
 
     if (req.method === "OPTIONS") {
       json(res, 204, {});
@@ -405,7 +437,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/register" && req.method === "POST") {
-      await registerClient(req, res);
+      await registerClient(req, res, requestEntry);
       return;
     }
 
@@ -425,7 +457,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/mcp") {
-      await handleMcp(req, res);
+      await handleMcp(req, res, requestEntry);
       return;
     }
 

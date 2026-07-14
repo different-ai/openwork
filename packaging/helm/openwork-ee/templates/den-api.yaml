@@ -32,6 +32,10 @@ metadata:
     {{- include "openwork-ee.componentLabels" (dict "root" . "component" "den-api") | nindent 4 }}
 spec:
   replicas: {{ .Values.denApi.replicaCount }}
+  # OAuth state formats change atomically with Den API releases. Never run
+  # mixed Den API revisions that could consume one authorization twice.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "openwork-ee.componentSelectorLabels" (dict "root" . "component" "den-api") | nindent 6 }}

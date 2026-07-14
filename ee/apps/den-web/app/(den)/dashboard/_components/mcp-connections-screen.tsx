@@ -25,6 +25,7 @@ import {
   mcpAccessMode,
   type McpConnectionAccessMode,
 } from "./mcp-connection-editing";
+import { effectiveMcpAccess, formatInheritedMcpAccess } from "./mcp-connection-display";
 import { copyTextToClipboard } from "./mcp-clipboard";
 import { shouldShowMcpConnectionsStagingBanner } from "./mcp-connections-capability";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -409,6 +410,23 @@ export function McpConnectionsScreen() {
     return updated;
   }
 
+  async function handleRemoveConnection(connection: ExternalMcpConnection): Promise<void> {
+    if (!window.confirm(`Remove “${connection.name}”? This deletes its saved credentials and assignments.`)) return;
+    setConnectionActionError(null);
+    try {
+      await deleteConnection.mutateAsync(connection.id);
+    } catch (removeError) {
+      setConnectionActionError({
+        connectionId: connection.id,
+        message: removeError instanceof Error ? removeError.message : "Failed to remove the MCP connection.",
+      });
+      // A plugin can bind the connection after this view loaded. Refreshing
+      // makes the server's authoritative provenance visible and disables the
+      // remove action while retaining the actionable 409 message in the row.
+      void refetch();
+    }
+  }
+
   return (
     <DashboardPageTemplate
       icon={Plug}
@@ -603,7 +621,7 @@ export function McpConnectionsScreen() {
                 setEditingConnection(connection);
               }}
               onConnect={() => void handleConnectOAuth(connection.id)}
-              onRemove={() => deleteConnection.mutate(connection.id)}
+              onRemove={() => void handleRemoveConnection(connection)}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
               toolsOpen={toolsConnectionId === connection.id}
               onToggleTools={() => setToolsConnectionId((current) => current === connection.id ? null : connection.id)}
@@ -1492,7 +1510,7 @@ function GoogleWorkspaceDialog({
 }
 
 function accessSummaryLabel(connection: ExternalMcpConnection): string {
-  const access = connection.access;
+  const access = effectiveMcpAccess(connection.access, connection.inheritedAccess);
   if (!access) return "";
   if (access.orgWide) return "Everyone in the org";
   const parts: string[] = [];
@@ -1530,6 +1548,7 @@ function ConnectionRow({
   const needsOAuthConnect = !isPerMember && connection.authType === "oauth" && !connection.connected;
 
   const canInspectTools = connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe;
+  const requiredByNames = [...new Set(connection.requiredBy.map((item) => item.name))];
 
   return (
     <div>
@@ -1559,7 +1578,7 @@ function ConnectionRow({
                   Not connected
                 </span>
               )}
-              {connection.access ? (
+              {connection.access || connection.inheritedAccess ? (
                 <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
                   {accessSummaryLabel(connection)}
                 </span>
@@ -1568,6 +1587,11 @@ function ConnectionRow({
             <p className="mt-0.5 truncate text-[12px] text-gray-500">
               {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
             </p>
+            {requiredByNames.length > 0 ? (
+              <p className="mt-1 text-[12px] text-amber-700">
+                Required by {requiredByNames.join(", ")}. Remove it from the plugin before deleting this connection.
+              </p>
+            ) : null}
             {errorMessage ? (
               <p className="mt-1 text-[12px] text-red-600">
                 {errorMessage}{" "}
@@ -1614,6 +1638,8 @@ function ConnectionRow({
             icon={Trash2}
             loading={removing}
             onClick={onRemove}
+            disabled={requiredByNames.length > 0}
+            title={requiredByNames.length > 0 ? "This connection is still required by a marketplace plugin" : "Remove this connection"}
             aria-label={`Remove ${connection.name}`}
           >
             Remove
@@ -1817,7 +1843,11 @@ function SegmentedControl<TValue extends string>({
   onChange: (value: TValue) => void;
   disabled?: boolean;
 }) {
-  const gridColumns = options.length === 2 ? "grid-cols-2" : "grid-cols-3";
+  const gridColumns = options.length === 2
+    ? "grid-cols-2"
+    : options.length === 4
+      ? "grid-cols-2 sm:grid-cols-4"
+      : "grid-cols-3";
 
   return (
     <div className={`grid ${gridColumns} gap-1 rounded-full border border-gray-200 bg-gray-50 p-1`} role="group">
@@ -1841,7 +1871,7 @@ function SegmentedControl<TValue extends string>({
   );
 }
 
-type AddConnectionAccessMode = McpConnectionAccessMode;
+type AddConnectionAccessMode = Exclude<McpConnectionAccessMode, "none">;
 
 const AUTH_TYPE_OPTIONS: SegmentedControlOption<ExternalMcpAuthType>[] = [
   { value: "oauth", label: "OAuth" },
@@ -1883,7 +1913,7 @@ function EditConnectionDialog({
   const [showOAuthClient, setShowOAuthClient] = useState(false);
   const [oauthClientId, setOAuthClientId] = useState("");
   const [oauthClientSecret, setOAuthClientSecret] = useState("");
-  const [accessMode, setAccessMode] = useState<AddConnectionAccessMode>("everyone");
+  const [accessMode, setAccessMode] = useState<McpConnectionAccessMode>("everyone");
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [confirmingIdentityChange, setConfirmingIdentityChange] = useState(false);
@@ -1916,6 +1946,15 @@ function EditConnectionDialog({
   );
   const marketplaceOwners = connection?.identityManagedBy ?? [];
   const marketplaceManaged = marketplaceOwners.length > 0;
+  const editAccessModeOptions = useMemo<SegmentedControlOption<McpConnectionAccessMode>[]>(() => [
+    ...ACCESS_MODE_OPTIONS,
+    { value: "none", label: marketplaceManaged ? "Inherited only" : "Nobody" },
+  ], [marketplaceManaged]);
+  const inheritedAssignmentLabel = formatInheritedMcpAccess(
+    connection?.inheritedAccess ?? null,
+    teams,
+    members.map((member) => ({ id: member.id, name: member.user.name || member.user.email })),
+  );
   const proposedCredentialMode = authType === "oauth" ? credentialMode : "shared";
   const identityChanged = Boolean(connection && editableMcpIdentityChanged(connection, {
     url,
@@ -2017,7 +2056,11 @@ function EditConnectionDialog({
         {marketplaceManaged ? (
           <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-[12px] leading-5 text-blue-800" data-testid="marketplace-managed-identity-note">
             <p className="font-semibold text-blue-900">Server and authentication are managed by {marketplaceIdentityOwnerNames(marketplaceOwners)}.</p>
-            <p className="mt-1">Change those values in the marketplace plugin definition. You can still rename this connection and edit its direct assignments here.</p>
+            <p className="mt-1">Change those values in the marketplace plugin definition. You can still rename this connection here.</p>
+            <p className="mt-1" data-testid="marketplace-inherited-access-note">
+              {inheritedAssignmentLabel ? <>Inherited plugin access: <span className="font-semibold">{inheritedAssignmentLabel}</span>. </> : null}
+              The controls below manage only additional direct assignments and never replace plugin access.
+            </p>
           </div>
         ) : null}
 
@@ -2163,14 +2206,20 @@ function EditConnectionDialog({
           </div>
 
           <div>
-            <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Who can use this?</label>
+            <label className="mb-1.5 block text-[12px] font-medium text-gray-700">
+              {marketplaceManaged ? "Additional direct assignments" : "Who can use this?"}
+            </label>
             <SegmentedControl
-              options={ACCESS_MODE_OPTIONS}
+              options={editAccessModeOptions}
               value={accessMode}
               onChange={(option) => {
                 if (option !== accessMode) {
                   if (option === "teams") setSelectedMemberIds([]);
                   if (option === "people") setSelectedTeamIds([]);
+                  if (option === "none") {
+                    setSelectedMemberIds([]);
+                    setSelectedTeamIds([]);
+                  }
                 }
                 setAccessMode(option);
               }}

@@ -7,10 +7,12 @@ import { startScimMaintenanceLoop } from "./scim-maintenance.js"
 import { startWorkerProvisioningReconcileLoop } from "./workers/reconciler.js"
 import { startTelegramUpdateDispatcher } from "./capability-sources/telegram-dispatcher.js"
 import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-client-runtime.js"
+import { startExternalMcpOAuthTransactionMaintenanceLoop } from "./capability-sources/external-mcp-oauth-maintenance.js"
 
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
 const stopTelegramUpdateDispatcher = startTelegramUpdateDispatcher()
+const stopExternalMcpOAuthTransactionMaintenanceLoop = startExternalMcpOAuthTransactionMaintenanceLoop()
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
 
@@ -68,6 +70,7 @@ async function stopBackgroundLoops() {
     stopScimMaintenanceLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopTelegramUpdateDispatcher(),
+    stopExternalMcpOAuthTransactionMaintenanceLoop(),
   ])
 
   for (const result of results) {

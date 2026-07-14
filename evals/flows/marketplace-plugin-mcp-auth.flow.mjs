@@ -54,6 +54,7 @@ const state = {
   mcpConfigObjectId: null,
   connectionId: null,
   yourConnectionsUrl: null,
+  discoveryPayload: null,
   mcpToken: null,
   toolsListPayload: null,
   skillSearchPayload: null,
@@ -75,6 +76,7 @@ export default {
   preserveTheme: true,
   spec: "evals/voiceovers/marketplace-plugin-mcp-auth.md",
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  teardown: teardownMarketplacePluginMcpAuth,
   steps: [
     {
       name: "Setup",
@@ -121,18 +123,23 @@ export default {
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("Alex opens the missing Slack setup dialog and sees the read-only plugin-declared URL", {
+        await ctx.prove("Alex opens the missing Slack setup dialog and sees the discovered OAuth requirements for the read-only plugin URL", {
           voiceover: vo[1],
           action: async () => {
             await openSlackSetupDialog(ctx);
+            await captureSlackDiscovery(ctx);
             await openWhoSignsInPicker(ctx);
           },
           assert: async () => {
             await ctx.expectText("Set up Slack");
             await ctx.expectText("Plugin-declared URL");
             await ctx.expectText("Read-only. The URL comes from the plugin and is verified server-side.");
+            await ctx.expectText("OAuth app details needed");
+            await ctx.expectText("OAuth client ID");
+            await ctx.expectText("REQUESTED OAUTH PERMISSIONS");
             await ctx.expectText("Each user connects their own account");
             await ctx.expectText("Organization-shared account");
+            assertSlackDiscovery(ctx);
             const dialogState = await ctx.eval(`(() => {
               const text = document.body.innerText;
               const editableUrlFields = [...document.querySelectorAll('input, textarea')]
@@ -147,8 +154,8 @@ export default {
           },
           screenshot: {
             name: "frame-2-slack-setup-dialog",
-            claim: "The Slack requirement opens with both sign-in modes and a read-only plugin-declared URL.",
-            requireText: ["Set up Slack", "Plugin-declared URL", "Read-only", "Each user connects their own account", "Organization-shared account"],
+            claim: "The Slack requirement shows live OAuth discovery, the required client ID, provider scopes, both sign-in modes, and a read-only plugin URL.",
+            requireText: ["Set up Slack", "Plugin-declared URL", "OAuth app details needed", "OAuth client ID", "REQUESTED OAUTH PERMISSIONS", "Each user connects their own account", "Organization-shared account"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -174,17 +181,19 @@ export default {
             const configureLog = await readConfigureLog(ctx);
             state.connectionId = configureLog?.payload?.item?.connection?.id ?? null;
             state.yourConnectionsUrl = configureLog?.payload?.item?.links?.yourConnections ?? null;
+            await openMarketplaceManagedConnectionInConnections(ctx);
           },
           assert: async () => {
             ctx.assert(Boolean(state.connectionId), "Configure response did not include a connection id.");
             ctx.assert(Boolean(state.yourConnectionsUrl), "Configure response did not include a Your Connections URL.");
             await assertConfiguredConnection(ctx);
+            await assertMarketplaceManagedConnectionUi(ctx);
             await assertAllSkillsSearchableForMaya(ctx);
           },
           screenshot: {
-            name: "frame-3-slack-connection-configured",
-            claim: "The Slack requirement is configured for individual accounts, scoped by the Support marketplace grant.",
-            requireText: ["Connection configured", "Slack", PLUGIN_NAME, "Open Your Connections"],
+            name: "frame-3-slack-marketplace-managed-connection",
+            claim: "Connections shows Slack as an individual connection with inherited Support access, separate additional direct assignments, and server/authentication identity managed by Support Operations.",
+            requireText: ["Connections", "Edit MCP connection", "Server and authentication are managed by Support Operations", "Inherited plugin access", "Additional direct assignments", "Individual accounts", SUPPORT_TEAM_NAME],
             rejectText: ["Something went wrong", "Failed to configure connection"],
           },
         });
@@ -334,20 +343,6 @@ export default {
             requireText: ["Slack tool executed", "Create shift handoff", EXTERNAL_TOOL_NAME, EXTERNAL_TOOL_RESULT],
             rejectText: ["needs_connection", "Connection failed"],
           },
-        });
-      },
-    },
-    {
-      name: "Cleanup",
-      run: async (ctx) => {
-        await cleanupSeededResources(ctx).catch((error) => {
-          ctx.log(`Cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
-        });
-        await cleanupSupportTeam(ctx).catch((error) => {
-          ctx.log(`Support team cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
-        });
-        await stopMock(ctx).catch((error) => {
-          ctx.log(`Mock cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
         });
       },
     },
@@ -631,8 +626,43 @@ async function cleanupSeededResources(ctx) {
     state.adminSession = await signInApi(ADMIN_EMAIL, ADMIN_PASSWORD);
   }
   if (!state.adminSession) return;
-  await cleanupConnections(ctx);
-  await cleanupMarketplaces(ctx);
+  const failures = [];
+  for (const [label, cleanup] of [
+    ["marketplace and plugin resources", cleanupMarketplaces],
+    ["managed MCP connections", cleanupConnections],
+  ]) {
+    try {
+      await cleanup(ctx);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ctx.log(`Seeded-resource cleanup failed for ${label}: ${message}`);
+      failures.push(new Error(`${label}: ${message}`));
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, `Seeded-resource cleanup failed for ${failures.length} resource group(s).`);
+  }
+}
+
+async function teardownMarketplacePluginMcpAuth(ctx) {
+  const failures = [];
+  for (const [label, cleanup] of [
+    ["seeded marketplace resources", cleanupSeededResources],
+    ["Support team", cleanupSupportTeam],
+    ["mock OAuth MCP server", stopMock],
+  ]) {
+    try {
+      await cleanup(ctx);
+      ctx.log(`Teardown completed: ${label}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ctx.log(`Teardown failed for ${label}: ${message}`);
+      failures.push(new Error(`${label}: ${message}`));
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, `Marketplace MCP eval teardown failed for ${failures.length} resource group(s).`);
+  }
 }
 
 async function cleanupConnections(ctx) {
@@ -775,6 +805,7 @@ async function installEvalFetchPatch(ctx) {
       const init = args[1] ?? {};
       const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
       const method = (init.method || (input instanceof Request ? input.method : 'GET') || 'GET').toUpperCase();
+      const pathname = new URL(url, window.location.href).pathname;
       const response = await original(...args);
       if (url.includes('/v1/mcp-connections/presets') && response.ok) {
         const payload = await response.clone().json().catch(() => ({}));
@@ -791,7 +822,13 @@ async function installEvalFetchPatch(ctx) {
         headers.set('content-type', 'application/json');
         return new Response(JSON.stringify({ presets }), { status: response.status, statusText: response.statusText, headers });
       }
-      if (method === 'POST' && url.includes('/v1/plugins/') && url.includes('/mcp-connections')) {
+      if (method === 'POST' && pathname.endsWith('/mcp-connections/discover')) {
+        const requestBody = typeof init.body === 'string' ? JSON.parse(init.body) : null;
+        response.clone().json().then((payload) => {
+          localStorage.setItem('__marketplacePluginMcpAuthDiscoveryResponse', JSON.stringify({ status: response.status, request: requestBody, payload }));
+        }).catch(() => undefined);
+      }
+      if (method === 'POST' && pathname.includes('/v1/plugins/') && pathname.endsWith('/mcp-connections')) {
         const requestBody = typeof init.body === 'string' ? JSON.parse(init.body) : null;
         const sanitizedRequest = requestBody ? {
           ...requestBody,
@@ -804,6 +841,7 @@ async function installEvalFetchPatch(ctx) {
       }
       return response;
     };
+    localStorage.removeItem('__marketplacePluginMcpAuthDiscoveryResponse');
     localStorage.removeItem('__marketplacePluginMcpAuthConfigureResponse');
     return true;
   })()`);
@@ -884,6 +922,47 @@ async function openSlackSetupDialog(ctx) {
   await ctx.waitForText("Set up Slack", { timeoutMs: 20_000 });
 }
 
+async function captureSlackDiscovery(ctx) {
+  await ctx.waitFor("Boolean(localStorage.getItem('__marketplacePluginMcpAuthDiscoveryResponse'))", {
+    timeoutMs: 30_000,
+    label: "captured Slack discovery response",
+  });
+  const discoveryLog = await readDiscoveryLog(ctx);
+  ctx.assert(discoveryLog?.status === 200, `Slack discovery failed: ${JSON.stringify(discoveryLog).slice(0, 800)}`);
+  state.discoveryPayload = discoveryLog?.payload?.item ?? null;
+  await ctx.waitForText("OAuth app details needed", { timeoutMs: 20_000 });
+}
+
+function assertSlackDiscovery(ctx) {
+  const item = state.discoveryPayload;
+  const discovery = item?.discovery;
+  const requiredInputs = Array.isArray(discovery?.inputs)
+    ? discovery.inputs.filter((input) => input?.required === true && input?.supported === true)
+    : [];
+  const scopes = Array.isArray(discovery?.oauth?.scopes) ? discovery.oauth.scopes : [];
+  recordAssertion(ctx, "Slack discovery is server-derived, Support-scoped, OAuth with a pre-registered client, and preserves advertised permissions", Boolean(item)
+    && item.url === MOCK_MCP_URL
+    && item.serverName === MCP_SERVER_NAME
+    && item.configObjectId === state.mcpConfigObjectId
+    && item.assignment?.access?.orgWide === false
+    && (item.assignment?.access?.teamIds ?? []).includes(state.supportTeamId)
+    && item.assignment?.policy === "union_of_active_config_object_plugin_and_marketplace_grants"
+    && discovery?.auth?.kind === "oauth"
+    && discovery?.auth?.confidence === "verified"
+    && discovery?.oauth?.registration === "pre_registered"
+    && discovery?.oauth?.pkce === "s256"
+    && requiredInputs.some((input) => input.placement === "oauth_client_id")
+    && scopes.includes("mcp:read")
+    && scopes.includes("mcp:write"), {
+    assignment: item?.assignment,
+    auth: discovery?.auth,
+    inputs: requiredInputs,
+    oauth: discovery?.oauth,
+    serverName: item?.serverName,
+    url: item?.url,
+  });
+}
+
 async function openWhoSignsInPicker(ctx) {
   const opened = await ctx.waitFor(`(() => {
     const trigger = [...document.querySelectorAll('button[aria-haspopup="listbox"]')]
@@ -929,29 +1008,94 @@ async function readConfigureLog(ctx) {
   })()`);
 }
 
+async function readDiscoveryLog(ctx) {
+  return ctx.eval(`(() => {
+    const raw = localStorage.getItem('__marketplacePluginMcpAuthDiscoveryResponse');
+    return raw ? JSON.parse(raw) : null;
+  })()`);
+}
+
+async function openMarketplaceManagedConnectionInConnections(ctx) {
+  const connectionId = requireState(state.connectionId, "configured connection id");
+  await ctx.eval("(() => { window.location.href = '/dashboard/mcp-connections'; return true; })()");
+  await ctx.waitFor("window.location.pathname.endsWith('/dashboard/mcp-connections')", { timeoutMs: 30_000, label: "Connections route" });
+  await ctx.waitForText("Connections", { timeoutMs: 30_000 });
+  const editSelector = `[data-testid="edit-mcp-connection-${connectionId}"]`;
+  const clicked = await ctx.waitFor(`(() => {
+    const button = document.querySelector(${JSON.stringify(editSelector)});
+    button?.scrollIntoView({ block: 'center' });
+    button?.click();
+    return Boolean(button);
+  })()`, { timeoutMs: 30_000, label: "marketplace-managed Slack edit button" });
+  ctx.assert(Boolean(clicked), `Connections did not show an edit action for ${connectionId}.`);
+  await ctx.waitForText("Edit MCP connection", { timeoutMs: 20_000 });
+  await ctx.waitForText(`Server and authentication are managed by ${PLUGIN_NAME}.`, { timeoutMs: 20_000 });
+}
+
 async function assertConfiguredConnection(ctx) {
   const configureLog = await readConfigureLog(ctx);
+  ctx.assert(configureLog?.status === 200, `Configure request failed: ${JSON.stringify(configureLog).slice(0, 800)}`);
   ctx.assert(configureLog?.request?.configObjectId === state.mcpConfigObjectId, `Configure request was not bound to the Slack configObjectId: ${JSON.stringify(configureLog?.request)}`);
   ctx.assert(configureLog?.request?.serverName === MCP_SERVER_NAME, `Configure request did not use serverName Slack: ${JSON.stringify(configureLog?.request)}`);
   ctx.assert(configureLog?.request?.requestHadUrl === false, `Configure request unexpectedly accepted a URL: ${JSON.stringify(configureLog?.request)}`);
+  ctx.assert(configureLog?.request?.oauthClient?.clientId === MOCK_CLIENT_ID, `Configure request did not include the reviewed Slack client ID: ${JSON.stringify(configureLog?.request)}`);
+  ctx.assert(configureLog?.request?.oauthClient?.clientSecret === "<redacted>", "Configure request did not include a client secret in the redacted browser proof.");
   ctx.assert(configureLog?.payload?.item?.binding?.configObjectId === state.mcpConfigObjectId, `Configure response binding missing configObjectId: ${JSON.stringify(configureLog?.payload).slice(0, 500)}`);
   ctx.assert(configureLog?.payload?.item?.binding?.serverName === MCP_SERVER_NAME, `Configure response binding missing serverName Slack: ${JSON.stringify(configureLog?.payload).slice(0, 500)}`);
 
   const listed = await orgApi(ctx, "/v1/mcp-connections?scope=manageable");
   const connection = (listed.connections ?? []).find((entry) => entry.id === state.connectionId);
   ctx.assert(Boolean(connection), `Configured connection ${state.connectionId} not found.`);
-  recordAssertion(ctx, "Configured connection is per-member, Support-scoped through inherited marketplace access, and URL is the plugin payload URL", connection.credentialMode === "per_member"
+  const returnedSecretFields = Object.keys(connection ?? {}).filter((key) => key.toLowerCase().includes("secret"));
+  recordAssertion(ctx, "Configured connection is per-member, inherits Support-scoped access separately from direct assignments, remains plugin-identity-managed, and stores the reviewed OAuth client and scopes without returning secrets", connection.credentialMode === "per_member"
     && connection.url === MOCK_MCP_URL
     && connection.access?.orgWide === false
-    && (connection.access?.teamIds ?? []).includes(state.supportTeamId)
-    && (connection.requiredBy ?? []).some((entry) => entry.name === PLUGIN_NAME), {
+    && !(connection.access?.teamIds ?? []).includes(state.supportTeamId)
+    && connection.inheritedAccess?.orgWide === false
+    && (connection.inheritedAccess?.teamIds ?? []).includes(state.supportTeamId)
+    && (connection.requiredBy ?? []).some((entry) => entry.name === PLUGIN_NAME)
+    && (connection.identityManagedBy ?? []).some((entry) => entry.name === PLUGIN_NAME)
+    && connection.oauthClientId === MOCK_CLIENT_ID
+    && (connection.requestedOAuthScopes ?? []).includes("mcp:read")
+    && (connection.requestedOAuthScopes ?? []).includes("mcp:write")
+    && returnedSecretFields.length === 0, {
     id: connection.id,
     name: connection.name,
     url: connection.url,
     credentialMode: connection.credentialMode,
     access: connection.access,
+    inheritedAccess: connection.inheritedAccess,
     requiredBy: connection.requiredBy,
+    identityManagedBy: connection.identityManagedBy,
+    oauthClientId: connection.oauthClientId,
+    requestedOAuthScopes: connection.requestedOAuthScopes,
+    returnedSecretFields,
   });
+}
+
+async function assertMarketplaceManagedConnectionUi(ctx) {
+  const uiState = await ctx.eval(`(() => {
+    const compact = (value) => (value ?? '').replace(/\\s+/g, ' ').trim();
+    const dialog = document.querySelector('[data-testid="edit-mcp-connection-dialog"]');
+    const note = dialog?.querySelector('[data-testid="marketplace-managed-identity-note"]');
+    const identityLabels = ['OAuth', 'API key', 'None', 'Individual accounts', 'One org account'];
+    const identityButtons = [...(dialog?.querySelectorAll('button') ?? [])]
+      .filter((button) => identityLabels.includes(compact(button.innerText)));
+    return {
+      dialogText: compact(dialog?.innerText),
+      identityControls: identityButtons.map((button) => ({ disabled: button.disabled, label: compact(button.innerText) })),
+      noteText: compact(note?.innerText),
+      urlDisabled: dialog?.querySelector('[data-testid="edit-mcp-url"]')?.disabled === true,
+    };
+  })()`);
+  recordAssertion(ctx, "Connections keeps marketplace-owned server, authentication, and account identity locked while naming inherited Support access separately from additional direct assignments", uiState.noteText.includes(`Server and authentication are managed by ${PLUGIN_NAME}.`)
+    && uiState.noteText.includes("Change those values in the marketplace plugin definition.")
+    && uiState.noteText.includes(`Inherited plugin access: ${SUPPORT_TEAM_NAME} team.`)
+    && uiState.dialogText.includes("Additional direct assignments")
+    && uiState.urlDisabled === true
+    && uiState.identityControls.length === 5
+    && uiState.identityControls.every((control) => control.disabled === true)
+    && uiState.dialogText.includes(SUPPORT_TEAM_NAME), uiState);
 }
 
 async function assertAllSkillsSearchableForMaya(ctx) {

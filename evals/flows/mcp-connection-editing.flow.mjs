@@ -238,6 +238,16 @@ async function manageableConnection(ctx, connectionId) {
 }
 
 async function cleanup(ctx) {
+  if (state.pluginId && state.managedConfigObjectId) {
+    const detached = await denApiFetch(
+      `/v1/plugins/${state.pluginId}/config-objects/${state.managedConfigObjectId}`,
+      { method: "DELETE", headers: authHeaders() },
+    );
+    ctx.assert(
+      detached.response.ok || detached.response.status === 404,
+      `Plugin MCP cleanup failed for ${state.managedConfigObjectId}: ${detached.response.status}`,
+    );
+  }
   for (const connectionId of [state.regularConnectionId, state.managedConnectionId]) {
     if (!connectionId) continue;
     const removed = await denApiFetch(`/v1/mcp-connections/${connectionId}`, {

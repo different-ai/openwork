@@ -91,8 +91,11 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       undefined,
       { orgMembershipId: memberId },
     )
+    const registrationContext = context()
+    const registrationClaim = await persistence.clientRegistrations.claimDynamicRegistration(registrationContext)
+    if (registrationClaim.status !== "acquired") throw new Error("Expected to acquire the DCR claim.")
     const saved = await persistence.clientRegistrations.save({
-      context: context(),
+      context: registrationContext,
       clientInformation: {
         client_id: "registered-client",
         client_secret: "encrypted-client-secret",
@@ -100,6 +103,7 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
         token_endpoint_auth_method: "client_secret_post",
       },
       source: "dynamic",
+      claim: registrationClaim.claim,
     })
     expect(saved.clientInformation.client_id).toBe("registered-client")
     const rows = await db
@@ -113,13 +117,26 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
     expect(rows[0]?.clientSecret).toBe("encrypted-client-secret")
     expect(JSON.stringify(rows[0]?.extra)).not.toContain("encrypted-client-secret")
     expect(JSON.stringify(rows[0]?.extra)).not.toContain("must-not-enter-json")
-
-    const loser = await persistence.clientRegistrations.save({
-      context: context(),
-      clientInformation: { client_id: "losing-client" },
-      source: "dynamic",
+    expect(rows[0]?.extra?.clientInformation).toBeUndefined()
+    expect(rows[0]?.extra?.clientInformationV2).toMatchObject({
+      client_id: "registered-client",
+      token_endpoint_auth_method: "client_secret_post",
     })
-    expect(loser.clientInformation.client_id).toBe("registered-client")
+    // A replica from before clientInformationV2 ignores the new metadata key
+    // and therefore reconstructs the complete credential from encrypted
+    // columns instead of returning sanitized JSON without its secret.
+    const oldReplicaRead = rows[0]?.extra?.clientInformation ?? {
+      client_id: rows[0]?.clientId,
+      client_secret: rows[0]?.clientSecret ?? undefined,
+    }
+    expect(oldReplicaRead).toEqual({
+      client_id: "registered-client",
+      client_secret: "encrypted-client-secret",
+    })
+
+    const loser = await persistence.clientRegistrations.claimDynamicRegistration(context())
+    expect(loser.status).toBe("existing")
+    if (loser.status === "existing") expect(loser.registration.clientInformation.client_id).toBe("registered-client")
   })
 
   test("rejects dynamic registration after the initiating shared admin is demoted", async () => {
@@ -142,17 +159,10 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       .set({ role: "member" })
       .where(drizzle.eq(schema.MemberTable.id, memberId))
     try {
-      await expect(persistence.clientRegistrations.save({
-        context: {
+      await expect(persistence.clientRegistrations.claimDynamicRegistration({
           connectionId: registeringConnection.id,
           commitExpiresAt: Date.now() + 30_000,
           signal: new AbortController().signal,
-        },
-        clientInformation: {
-          client_id: "must-not-save-enterprise-client",
-          client_secret: "must-not-save-enterprise-secret",
-        },
-        source: "dynamic",
       })).rejects.toThrow("no longer has authority")
       const clients = await db
         .select({ id: schema.OrgOAuthClientTable.id })
@@ -186,14 +196,10 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       drizzle.eq(schema.ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, registeringConnection.id),
     )
 
-    await expect(persistence.clientRegistrations.save({
-      context: {
+    await expect(persistence.clientRegistrations.claimDynamicRegistration({
         connectionId: registeringConnection.id,
         commitExpiresAt: Date.now() + 30_000,
         signal: new AbortController().signal,
-      },
-      clientInformation: { client_id: "must-not-save-unassigned-enterprise-client" },
-      source: "dynamic",
     })).rejects.toThrow("no longer has authority")
     const clients = await db
       .select({ id: schema.OrgOAuthClientTable.id })
@@ -321,6 +327,123 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
     }])
   })
 
+  test("invalid_client and expiry cleanup rotate only exact dynamic registrations", async () => {
+    async function createRegistrationConnection(name: string, path: string) {
+      return createExternalMcpConnection({
+        organizationId,
+        name,
+        url: `https://mcp.example.test/${path}`,
+        authType: "oauth",
+        credentialMode: "shared",
+        createdByOrgMembershipId: memberId,
+        access: { orgWide: true, memberIds: [], teamIds: [] },
+      })
+    }
+    function registrationContext(connectionId: string) {
+      return {
+        connectionId,
+        commitExpiresAt: Date.now() + 30_000,
+        signal: new AbortController().signal,
+      }
+    }
+
+    const manualConnection = await createRegistrationConnection("Manual enterprise OAuth client", "manual-client")
+    const manualClientId = createDenTypeId("orgOAuthClient")
+    await db.insert(schema.OrgOAuthClientTable).values({
+      id: manualClientId,
+      organizationId,
+      providerId: manualConnection.id,
+      clientId: "administrator-client",
+      clientSecret: "administrator-secret",
+      extra: null,
+      createdByOrgMembershipId: memberId,
+    })
+    const manualPersistence = new DenEnterpriseMcpOAuthPersistence(manualConnection)
+    const manualRegistration = await manualPersistence.clientRegistrations.load(registrationContext(manualConnection.id))
+    if (!manualRegistration) throw new Error("Expected the administrator OAuth client.")
+    expect(manualRegistration.source).toBe("pre-registered")
+    await manualPersistence.clientRegistrations.invalidate({
+      context: registrationContext(manualConnection.id),
+      reason: "provider-rejected",
+      revision: manualRegistration.revision,
+    })
+    expect(await manualPersistence.clientRegistrations.load(registrationContext(manualConnection.id))).toBeDefined()
+
+    const cimdConnection = await createRegistrationConnection("Enterprise CIMD client", "cimd-client")
+    const cimdClientId = createDenTypeId("orgOAuthClient")
+    await db.insert(schema.OrgOAuthClientTable).values({
+      id: cimdClientId,
+      organizationId,
+      providerId: cimdConnection.id,
+      clientId: "https://den.example.test/v1/mcp-connections/cimd/oauth-client-metadata",
+      clientSecret: null,
+      extra: { registrationProvenance: "cimd" },
+      createdByOrgMembershipId: memberId,
+    })
+    const cimdPersistence = new DenEnterpriseMcpOAuthPersistence(cimdConnection)
+    const cimdRegistration = await cimdPersistence.clientRegistrations.load(registrationContext(cimdConnection.id))
+    if (!cimdRegistration) throw new Error("Expected the Client ID Metadata registration.")
+    expect(cimdRegistration.source).toBe("client-metadata")
+    await cimdPersistence.clientRegistrations.invalidate({
+      context: registrationContext(cimdConnection.id),
+      reason: "expired",
+      revision: cimdRegistration.revision,
+    })
+    expect(await cimdPersistence.clientRegistrations.load(registrationContext(cimdConnection.id))).toBeDefined()
+
+    const dynamicConnection = await createRegistrationConnection("Enterprise dynamic OAuth client", "dynamic-client")
+    const dynamicPersistence = new DenEnterpriseMcpOAuthPersistence(
+      dynamicConnection,
+      undefined,
+      { orgMembershipId: memberId },
+    )
+    const dynamicContext = registrationContext(dynamicConnection.id)
+    const dynamicClaim = await dynamicPersistence.clientRegistrations.claimDynamicRegistration(dynamicContext)
+    if (dynamicClaim.status !== "acquired") throw new Error("Expected to acquire the dynamic registration claim.")
+    const dynamicRegistration = await dynamicPersistence.clientRegistrations.save({
+      context: dynamicContext,
+      clientInformation: {
+        client_id: "dynamic-client",
+        client_secret: "dynamic-secret",
+        token_endpoint_auth_method: "client_secret_basic",
+      },
+      source: "dynamic",
+      claim: dynamicClaim.claim,
+    })
+    expect(dynamicRegistration.source).toBe("dynamic")
+    await dynamicPersistence.clientRegistrations.invalidate({
+      context: registrationContext(dynamicConnection.id),
+      reason: "provider-rejected",
+      revision: dynamicRegistration.revision,
+    })
+    expect(await dynamicPersistence.clientRegistrations.load(registrationContext(dynamicConnection.id))).toBeUndefined()
+
+    const legacyDynamicConnection = await createRegistrationConnection("Legacy dynamic OAuth client", "legacy-dynamic-client")
+    await db.insert(schema.OrgOAuthClientTable).values({
+      id: createDenTypeId("orgOAuthClient"),
+      organizationId,
+      providerId: legacyDynamicConnection.id,
+      clientId: "legacy-dynamic-client",
+      clientSecret: null,
+      extra: { clientInformation: { client_id: "legacy-dynamic-client" } },
+      createdByOrgMembershipId: memberId,
+    })
+    const legacyDynamicPersistence = new DenEnterpriseMcpOAuthPersistence(legacyDynamicConnection)
+    const legacyDynamicRegistration = await legacyDynamicPersistence.clientRegistrations.load(
+      registrationContext(legacyDynamicConnection.id),
+    )
+    if (!legacyDynamicRegistration) throw new Error("Expected the legacy OAuth client.")
+    expect(legacyDynamicRegistration.source).toBe("pre-registered")
+    await legacyDynamicPersistence.clientRegistrations.invalidate({
+      context: registrationContext(legacyDynamicConnection.id),
+      reason: "provider-rejected",
+      revision: legacyDynamicRegistration.revision,
+    })
+    expect(
+      await legacyDynamicPersistence.clientRegistrations.load(registrationContext(legacyDynamicConnection.id)),
+    ).toBeDefined()
+  })
+
   test("isolates concurrent signed PKCE transactions and consumes only the callback winner", async () => {
     const persistence = new DenEnterpriseMcpOAuthPersistence(
       connection,
@@ -344,9 +467,7 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       clientRegistrationRevision: registration.revision,
     })
     const first = await persistence.authorizations.load({ context: context(), id: "signed-state-a" })
-    const second = await persistence.authorizations.load({ context: context(), id: "signed-state-b" })
     expect(first?.codeVerifier).toBe("a".repeat(43))
-    expect(second?.codeVerifier).toBe("b".repeat(43))
     const connectionRows = await db
       .select({ pending: schema.ExternalMcpConnectionTable.pendingCodeVerifier })
       .from(schema.ExternalMcpConnectionTable)
@@ -370,7 +491,8 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       clientRegistrationRevision: registration.revision,
     })
     expect(await persistence.authorizations.load({ context: context(), id: "signed-state-a" })).toBeUndefined()
-    expect(await persistence.authorizations.load({ context: context(), id: "signed-state-b" })).toBeDefined()
+    const second = await persistence.authorizations.load({ context: context(), id: "signed-state-b" })
+    expect(second?.codeVerifier).toBe("b".repeat(43))
     expect((await persistence.credentials.load(context()))?.tokens.access_token).toBe("callback-access-token")
 
     await expect(persistence.credentials.save({
@@ -451,10 +573,14 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       { orgMembershipId: memberId },
       { orgMembershipId: memberId },
     )
+    const assignmentContext = persistenceContext()
+    const assignmentClaim = await persistence.clientRegistrations.claimDynamicRegistration(assignmentContext)
+    if (assignmentClaim.status !== "acquired") throw new Error("Expected to acquire the assignment DCR claim.")
     const registration = await persistence.clientRegistrations.save({
-      context: persistenceContext(),
+      context: assignmentContext,
       clientInformation: { client_id: "enterprise-assignment-client" },
       source: "dynamic",
+      claim: assignmentClaim.claim,
     })
     await persistence.authorizations.begin({
       context: persistenceContext(),
@@ -509,10 +635,14 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       undefined,
       { orgMembershipId: memberId },
     )
+    const disconnectContext = persistenceContext()
+    const disconnectClaim = await persistence.clientRegistrations.claimDynamicRegistration(disconnectContext)
+    if (disconnectClaim.status !== "acquired") throw new Error("Expected to acquire the disconnect DCR claim.")
     const registration = await persistence.clientRegistrations.save({
-      context: persistenceContext(),
+      context: disconnectContext,
       clientInformation: { client_id: "enterprise-disconnect-client" },
       source: "dynamic",
+      claim: disconnectClaim.claim,
     })
     await persistence.authorizations.begin({
       context: persistenceContext(),
@@ -588,11 +718,7 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       tokens: { access_token: "late-enterprise-token", token_type: "Bearer" },
       source: "refresh",
     })).rejects.toThrow("identity changed")
-    await expect(persistence.clientRegistrations.save({
-      context: oldContext,
-      clientInformation: { client_id: "late-enterprise-client" },
-      source: "dynamic",
-    })).rejects.toThrow("identity changed")
+    await expect(persistence.clientRegistrations.claimDynamicRegistration(oldContext)).rejects.toThrow("identity changed")
 
     const rows = await db
       .select()
@@ -705,6 +831,7 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
 
   test("completes signed state, PKCE, token commit, and post-callback MCP validation together", async () => {
     let origin = ""
+    let expectedClientId = ""
     const server = Bun.serve({
       port: 0,
       async fetch(request) {
@@ -713,7 +840,6 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
           return Response.json({
             resource: `${origin}/mcp`,
             authorization_servers: [origin],
-            scopes_supported: ["tools.read"],
           })
         }
         if (url.pathname === "/.well-known/oauth-authorization-server") {
@@ -726,28 +852,18 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
             grant_types_supported: ["authorization_code", "refresh_token"],
             token_endpoint_auth_methods_supported: ["none"],
             code_challenge_methods_supported: ["S256"],
+            client_id_metadata_document_supported: true,
           })
         }
         if (url.pathname === "/register") {
-          const metadata: unknown = await request.json()
-          const redirectUris = typeof metadata === "object" && metadata !== null && "redirect_uris" in metadata
-            && Array.isArray(metadata.redirect_uris)
-            && metadata.redirect_uris.every((value) => typeof value === "string")
-            ? metadata.redirect_uris
-            : []
-          return Response.json({
-            client_id: "end-to-end-client",
-            token_endpoint_auth_method: "none",
-            redirect_uris: redirectUris,
-            grant_types: ["authorization_code", "refresh_token"],
-            response_types: ["code"],
-          }, { status: 201 })
+          return Response.json({ error: "unexpected_dynamic_registration" }, { status: 500 })
         }
         if (url.pathname === "/token") {
           const form = new URLSearchParams(await request.text())
           expect(form.get("grant_type")).toBe("authorization_code")
           expect(form.get("code")).toBe("approved-code")
           expect(form.get("code_verifier")?.length).toBeGreaterThanOrEqual(43)
+          expect(form.get("client_id")).toBe(expectedClientId)
           return Response.json({
             access_token: "end-to-end-access-token",
             refresh_token: "end-to-end-refresh-token",
@@ -760,7 +876,7 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
             return new Response(null, {
               status: 401,
               headers: {
-                "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="tools.read"`,
+                "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
               },
             })
           }
@@ -791,11 +907,13 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
         url: `${origin}/mcp`,
         authType: "oauth",
         credentialMode: "shared",
+        requestedOAuthScopes: ["issues:read", "offline_access"],
         createdByOrgMembershipId: memberId,
         access: { orgWide: true, memberIds: [], teamIds: [] },
       })
       const adapter = await import("../src/capability-sources/enterprise-mcp-client-adapter.js")
-      const redirectUri = "https://den.example.test/v1/mcp-connections/callback"
+      const redirectUri = `https://den.example.test/v1/mcp-connections/${endToEndConnection.id}/connect/callback`
+      expectedClientId = `https://den.example.test/v1/mcp-connections/${endToEndConnection.id}/oauth-client-metadata`
       const signedState = "signed-den-state-end-to-end"
       const started = await adapter.connectExternalMcp(
         endToEndConnection,
@@ -807,7 +925,19 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       )
       expect(started.status).toBe("needs_auth")
       if (started.status !== "needs_auth") throw new Error("Expected provider authorization to be required.")
-      expect(new URL(started.authorizeUrl).searchParams.get("state")).toBe(signedState)
+      const authorizeUrl = new URL(started.authorizeUrl)
+      expect(authorizeUrl.searchParams.get("state")).toBe(signedState)
+      expect(authorizeUrl.searchParams.get("scope")).toBe("issues:read offline_access")
+      expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256")
+      expect(authorizeUrl.searchParams.get("client_id")).toBe(expectedClientId)
+
+      const clientRows = await db
+        .select({ clientId: schema.OrgOAuthClientTable.clientId, extra: schema.OrgOAuthClientTable.extra })
+        .from(schema.OrgOAuthClientTable)
+        .where(drizzle.eq(schema.OrgOAuthClientTable.providerId, endToEndConnection.id))
+        .limit(1)
+      expect(clientRows[0]?.clientId).toBe(expectedClientId)
+      expect(clientRows[0]?.extra?.registrationProvenance).toBe("cimd")
 
       const refreshedRows = await db
         .select()

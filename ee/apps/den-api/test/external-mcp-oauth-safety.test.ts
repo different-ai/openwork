@@ -7,6 +7,7 @@ import {
   externalMcpClientTokenEndpointAuthMethod,
   externalMcpClientMetadataUrl,
   externalMcpOAuthClientRegistrationProvenance,
+  externalMcpOAuthClientExtra,
   externalMcpOAuthRegistrationPolicy,
   externalMcpPreRegisteredClientExtra,
   restoreExternalMcpClientInformation,
@@ -16,6 +17,7 @@ import {
 import {
   ExternalMcpOAuthAuthorizationRevokedError,
   isExternalMcpOAuthAuthorizationRevokedError,
+  normalizeExternalMcpIdentityUrl,
   normalizeExternalMcpRequestedOAuthScopes,
 } from "../src/capability-sources/external-mcp-connections.js"
 import type { ExternalMcpConnectionRow } from "../src/capability-sources/external-mcp-connections.js"
@@ -62,6 +64,15 @@ function oauthProvider(): ExternalMcpOAuthProvider {
 }
 
 describe("external MCP OAuth persistence safety", () => {
+  test("keeps a partial runtime identity fail-closed until its persisted URL is available", () => {
+    for (const value of [null, "", "   ", undefined]) {
+      expect(normalizeExternalMcpIdentityUrl(value)).toBe("")
+      expect(normalizeExternalMcpIdentityUrl(value)).not.toBe(
+        normalizeExternalMcpIdentityUrl("https://mcp.example.test/mcp"),
+      )
+    }
+  })
+
   test("recognizes revoked authority through diagnostic error wrappers for safe 403 mapping", () => {
     const revoked = new ExternalMcpOAuthAuthorizationRevokedError()
     expect(isExternalMcpOAuthAuthorizationRevokedError(revoked)).toBe(true)
@@ -87,6 +98,20 @@ describe("external MCP OAuth persistence safety", () => {
     expect(safe.redirect_uris).toEqual(["https://den.example.test/callback"])
     expect(safe.client_secret).toBeUndefined()
     expect(safe.registration_access_token).toBeUndefined()
+
+    const extra = externalMcpOAuthClientExtra({
+      clientInformation: registered,
+      previousExtra: {
+        clientInformation: { client_id: "legacy-reader-trap" },
+        unrelatedMetadata: "preserved",
+      },
+      registrationProvenance: "dcr",
+    })
+    expect(extra.clientInformation).toBeUndefined()
+    expect(extra.clientInformationV2).toEqual(safe)
+    expect(extra.unrelatedMetadata).toBe("preserved")
+    expect(JSON.stringify(extra)).not.toContain("encrypted-column-only")
+    expect(JSON.stringify(extra)).not.toContain("never-persist-this")
   })
 
   test("restores a full SDK client using only the encrypted secret column", () => {
@@ -94,6 +119,11 @@ describe("external MCP OAuth persistence safety", () => {
       clientId: "registered-client",
       clientSecret: "decrypted-at-read-time",
       extra: {
+        clientInformationV2: {
+          client_id: "versioned-stale-client-id",
+          redirect_uris: ["https://den.example.test/versioned-callback"],
+          token_endpoint_auth_method: "client_secret_basic",
+        },
         clientInformation: {
           client_id: "stale-client-id",
           client_secret: "stale-plaintext-secret",
@@ -106,7 +136,7 @@ describe("external MCP OAuth persistence safety", () => {
     expect(restored.client_id).toBe("registered-client")
     expect(restored.client_secret).toBe("decrypted-at-read-time")
     expect("redirect_uris" in restored ? restored.redirect_uris : undefined).toEqual([
-      "https://den.example.test/callback",
+      "https://den.example.test/versioned-callback",
     ])
 
     const minimal = restoreExternalMcpClientInformation({
@@ -192,7 +222,7 @@ describe("external MCP OAuth persistence safety", () => {
     expect(externalMcpOAuthRegistrationPolicy(oauthDiscoveryState({
       clientIdMetadataDocument: true,
       tokenEndpointAuthMethods: ["none", "client_secret_basic"],
-    }))).toEqual({
+    }), "https://den.example.test/api/orgs/org/connections/connection/oauth/client-metadata")).toEqual({
       provenance: "cimd",
       tokenEndpointAuthMethod: "none",
     })

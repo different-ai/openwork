@@ -88,10 +88,13 @@ type ManifestEvidence = {
 
 type McpProbe = {
   bearerChallenge: boolean
+  invalidScope: boolean
   resourceMetadataUrl?: URL
   scope: string[]
   validInitialize: boolean
 }
+
+const OAUTH_SCOPE_TOKEN_PATTERN = /^[\x21\x23-\x5B\x5D-\x7E]+$/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -103,7 +106,7 @@ function readString(value: unknown): string | null {
   return trimmed ? trimmed.slice(0, DISCOVERY_TEXT_LIMIT) : null
 }
 
-function readStringArray(value: unknown): string[] {
+function readStringArray(value: unknown, onInvalidScope?: () => void): string[] {
   const values = typeof value === "string" ? [value] : Array.isArray(value) ? value : []
   const result: string[] = []
   const seen = new Set<string>()
@@ -114,6 +117,10 @@ function readStringArray(value: unknown): string[] {
     for (const candidate of raw.split(/\s+/g)) {
       const scope = candidate.trim()
       if (!scope || scope.length > DISCOVERY_SCOPE_LENGTH_LIMIT || seen.has(scope)) continue
+      if (!OAUTH_SCOPE_TOKEN_PATTERN.test(scope)) {
+        onInvalidScope?.()
+        continue
+      }
       const separatorLength = result.length > 0 ? 1 : 0
       if (totalLength + separatorLength + scope.length > DISCOVERY_SCOPE_TOTAL_LENGTH_LIMIT) continue
       seen.add(scope)
@@ -136,6 +143,7 @@ function boundedOAuthScopes(values: string[]): string[] {
   for (const candidate of values) {
     const scope = candidate.trim()
     if (!scope || scope.length > DISCOVERY_SCOPE_LENGTH_LIMIT || seen.has(scope)) continue
+    if (!OAUTH_SCOPE_TOKEN_PATTERN.test(scope)) continue
     const separatorLength = scopes.length > 0 ? 1 : 0
     if (totalLength + separatorLength + scope.length > DISCOVERY_SCOPE_TOTAL_LENGTH_LIMIT) continue
     seen.add(scope)
@@ -299,13 +307,14 @@ function configurationInput(input: Omit<ExternalMcpDiscoveryInput, "id">): Exter
   }
 }
 
-function manifestScopes(config: Record<string, unknown>): string[] {
+function manifestScopes(config: Record<string, unknown>, warnings: string[]): string[] {
   const oauth = isRecord(config.oauth) ? config.oauth : null
   const auth = isRecord(config.auth) ? config.auth : null
+  const warnInvalidScope = () => warnings.push("The publisher manifest contains an invalid OAuth scope token. OpenWork ignored it.")
   return boundedOAuthScopes([
-    ...readStringArray(config.scopes),
-    ...readStringArray(oauth?.scopes),
-    ...readStringArray(auth?.scopes),
+    ...readStringArray(config.scopes, warnInvalidScope),
+    ...readStringArray(oauth?.scopes, warnInvalidScope),
+    ...readStringArray(auth?.scopes, warnInvalidScope),
   ])
 }
 
@@ -607,7 +616,7 @@ export function inferExternalMcpManifestConfiguration(input: {
     inputs: boundedInputs,
     oauthClientIdDeclared: oauth.clientId || preset?.requiresOAuthClient === true,
     oauthClientSecretDeclared: oauth.clientSecret || preset?.requiresOAuthClient === true,
-    scopes: manifestScopes(config),
+    scopes: manifestScopes(config, warnings),
     transportSupported,
     warnings: unique(warnings.map((warning) => warning.slice(0, DISCOVERY_WARNING_LENGTH_LIMIT))).slice(0, DISCOVERY_WARNING_LIMIT),
   }
@@ -709,10 +718,13 @@ async function probeExternalMcp(url: string, fetchImpl: FetchLike): Promise<McpP
   const bearerChallenge = /(?:^|,)\s*Bearer(?:\s|,|$)/i.test(response.headers.get("www-authenticate") ?? "")
   const validInitialize = response.ok && parseInitializePayload(await boundedResponseText(response))
   if (!response.ok) await response.body?.cancel().catch(() => undefined)
+  let invalidScope = false
+  const scope = readStringArray(challenge.scope, () => { invalidScope = true })
   return {
     bearerChallenge,
+    invalidScope,
     ...(challenge.resourceMetadataUrl ? { resourceMetadataUrl: challenge.resourceMetadataUrl } : {}),
-    scope: readStringArray(challenge.scope),
+    scope,
     validInitialize,
   }
 }
@@ -776,6 +788,7 @@ function supportStatus(input: {
     || input.inputs.some((field) => field.required && !field.supported)
   ) return "unsupported"
   if (input.authKind === "unknown") return "needs_review"
+  if (input.oauth?.pkce === "unknown") return "needs_review"
   // initialize is intentionally public on some otherwise authenticated MCP
   // servers. Until a later authenticated method proves the full server is
   // public, require the admin to confirm rather than claiming no-auth is
@@ -842,8 +855,10 @@ export async function discoverExternalMcpConfiguration(input: {
   const challengeScopes = probe?.scope ?? []
   // Metadata is publisher-controlled too. Apply the same count and length
   // bounds as challenge/manifest scopes before returning or persisting it.
-  const resourceScopes = readStringArray(resourceMetadata?.scopes_supported)
-  const authorizationServerScopes = readStringArray(metadata?.scopes_supported)
+  const warnInvalidMetadataScope = () => warnings.push("The OAuth metadata contains an invalid scope token. OpenWork ignored it.")
+  const resourceScopes = readStringArray(resourceMetadata?.scopes_supported, warnInvalidMetadataScope)
+  const authorizationServerScopes = readStringArray(metadata?.scopes_supported, warnInvalidMetadataScope)
+  if (probe?.invalidScope) warnings.push("The MCP authentication challenge contains an invalid OAuth scope token. OpenWork ignored it.")
   const scopes = challengeScopes.length > 0
     ? challengeScopes
     : resourceScopes.length > 0
@@ -888,6 +903,7 @@ export async function discoverExternalMcpConfiguration(input: {
   )
   const clientSecretRequired = needsPreRegisteredClient && (
     manifest.oauthClientSecretDeclared
+    || !metadata
     || (!supportsPublicClient && supportsSecretClient)
   )
   const registration: ExternalMcpOAuthDiscovery["registration"] = manualClientDeclared

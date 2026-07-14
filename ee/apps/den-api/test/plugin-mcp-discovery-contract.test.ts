@@ -131,38 +131,51 @@ describe("plugin MCP discovery contracts", () => {
 })
 
 describe("GitHub MCP import compatibility", () => {
-  test("keeps import materialization inside a comprehensive rollback saga", () => {
+  test("keeps all import materialization inside one crash-atomic publication transaction", () => {
     const source = readFileSync(new URL("../src/routes/org/plugin-system/store.ts", import.meta.url), "utf8")
-    expect(source).toContain("rollbackGithubPluginMcpImport")
-    expect(source).toContain("oauthClientMutations")
-    expect(source).toContain("compareAndSetExternalMcpOAuthClient")
-    expect(source).toContain("deleteExternalMcpConnectionIfUnused")
-    expect(source).toContain("publishStagedGithubImport")
-    expect(source).toContain('status: "inactive"')
-    expect(source).toContain("githubImportPluginStateStillOwned")
-    expect(source).toContain("expectedOwnedOAuthClient")
-    expect(source).toContain("Importing a plugin must never rotate a reusable connection")
-    expect(source).toContain("Edit and reconnect that connection before importing the plugin")
-    expect(source).toContain("preserved a GitHub import after its staged plugin was modified or adopted concurrently")
-    expect(source).toContain("newlyCreatedConnectionIds")
-    expect(source).toContain("tx.delete(PluginMcpRequirementBindingTable)")
-    expect(source).toContain("tx.delete(ConfigObjectTable)")
-    expect(source).toContain("tx.delete(SkillTable)")
-    expect(source).toContain("tx.delete(MarketplacePluginTable)")
-    expect(source).toContain("await rollbackGithubPluginMcpImport({ context: input.context, state: rollbackState })")
+    const importSource = source.slice(
+      source.indexOf("export async function importGithubPluginMcps"),
+      source.indexOf("function readGithubDiscoveryCache"),
+    )
+    const publicationSource = source.slice(
+      source.indexOf("async function publishGithubImportAtomically"),
+      source.indexOf("async function publishStagedGithubImport"),
+    )
+    expect(importSource).toContain("prepareGithubImportExternalMcpConnection")
+    expect(importSource).toContain("publishGithubImportAtomically")
+    expect(importSource).toContain("claimLegacyGithubImportSource")
+    expect(importSource).not.toContain("createStagedGithubImportPlugin")
+    expect(importSource).not.toContain("rollbackGithubPluginMcpImport")
+    expect(publicationSource).toContain("const publication = await db.transaction(async (tx) =>")
+    expect(publicationSource).toContain("await tx.insert(PluginTable)")
+    expect(publicationSource).toContain("await tx.insert(ExternalMcpConnectionTable)")
+    expect(publicationSource).toContain("await tx.insert(OrgOAuthClientTable)")
+    expect(publicationSource).toContain("await tx.insert(ConfigObjectTable)")
+    expect(publicationSource).toContain("await tx.insert(PluginMcpRequirementBindingTable)")
+    expect(publicationSource).toContain("await tx.insert(MarketplacePluginTable)")
   })
 
-  test("reserves materialization time and publishes grants, marketplace membership, readiness, and activation atomically", () => {
+  test("publishes immutable provenance, assignments, derived grants, and readiness atomically", () => {
     const source = readFileSync(new URL("../src/routes/org/plugin-system/store.ts", import.meta.url), "utf8")
     expect(source).toContain("GITHUB_MCP_IMPORT_MATERIALIZATION_RESERVE_MS")
     expect(source).toContain("GITHUB_MCP_IMPORT_FINAL_COMMIT_RESERVE_MS")
     expect(source).toContain("MAX_GITHUB_MCP_IMPORT_COMPONENTS")
     expect(source).toContain("MAX_GITHUB_MCP_IMPORT_ACCESS_TARGETS")
     expect(source).toContain("githubImportViewerAccessGrantRows")
-    expect(source).toContain("Skill visibility is published atomically with the plugin")
-    expect(source).toContain('set({ shared: "org", updatedAt: publishedAt })')
+    expect(source).toContain("assertGithubImportAccessTargetsForPublication")
+    expect(source).toContain("github_import_authority_changed")
+    expect(source).toContain('memberHasRole(actor.role, "admin")')
+    expect(source).toContain("PluginImportSourceTable")
+    expect(source).toContain("githubPluginImportSourceKey")
+    expect(source).toContain("const oldestLegacyDescription = `Plugin components imported from ${legacySource}.`")
+    expect(source).toContain("const revisionedLegacyPrefix = `Plugin components imported from ${legacySource} at immutable GitHub revision `")
+    expect(source).toContain("if (existingLegacyClaim[0]) return null")
     expect(source).toContain("await tx.insert(MarketplacePluginTable)")
-    expect(source).toContain('set({ status: "active", updatedAt: publishedAt })')
+    expect(source).toContain("derivedAccessRows")
+    expect(source).toContain("assertGithubImportPublicationAvailable")
+    expect(source).toContain("github_plugin_already_imported")
+    expect(source).toContain(".from(OrganizationTable)")
+    expect(source).toContain('.for("update")')
     expect(source).not.toContain("grantImportAccessToPluginArchResource")
   })
 
@@ -193,12 +206,23 @@ describe("GitHub MCP import compatibility", () => {
     expect(source).toContain("trustedPluginMcpRequestedOAuthScopes")
   })
 
+  test("treats fresh live discovery as authoritative over manifest-only auth inference", () => {
+    const source = readFileSync(new URL("../src/routes/org/plugin-system/store.ts", import.meta.url), "utf8")
+    const configurationSource = source.slice(
+      source.indexOf("function githubPluginMcpServerConfiguration"),
+      source.indexOf("type GithubImportOAuthClientMutation"),
+    )
+    expect(configurationSource).not.toContain("input.configured.authType !== discoveredAuthType")
+    expect(source).toContain("assertPluginMcpDiscoveryAllowsConfiguration({")
+    expect(source).toContain("requireVerifiedOauthPkce: configuration.authType === \"oauth\"")
+  })
+
   test("persists the reviewed immutable GitHub revision on every imported artifact", () => {
     const source = readFileSync(new URL("../src/routes/org/plugin-system/store.ts", import.meta.url), "utf8")
 
-    expect(source).toContain("at immutable GitHub revision ${plan.sourceRevisionRef}")
+    expect(source).toContain("githubImportedPluginDescription(input.canonicalGithubUrl)")
     expect(source).toContain("sourceRevisionRef: normalizeOptionalString(input.value.sourceRevisionRef)")
-    expect(source).toContain("sourceRevisionRef: plan.sourceRevisionRef")
+    expect(source).toContain("sourceRevisionRef: input.plan.sourceRevisionRef")
     expect(source).toContain("revision: input.sourceRevisionRef")
     expect(source).toContain("GitHub source: ${input.repositoryFullName}@${input.sourceRevisionRef}:${input.skill.sourcePath}")
     expect(source).toContain("github_source_revision_required")
@@ -208,14 +232,21 @@ describe("GitHub MCP import compatibility", () => {
     const source = readFileSync(new URL("../src/routes/org/plugin-system/store.ts", import.meta.url), "utf8")
     expect(source).toContain("const canonicalGithubUrl = parsePublicGithubPluginUrl(input.githubUrl).canonicalUrl")
     expect(source).toContain("githubUrl: canonicalGithubUrl")
+    expect(source).toContain("canonicalUrl: input.canonicalGithubUrl")
   })
 
   test("only reclaims plugin-owned imported connections after their bindings are gone", () => {
     const source = readFileSync(new URL("../src/routes/org/plugin-system/store.ts", import.meta.url), "utf8")
-    expect(source).toContain("externalMcpConnectionOwnedByPlugin !== true")
+    expect(source).toContain("PluginManagedExternalMcpConnectionTable")
+    expect(source).toContain("managedByPluginImport")
     expect(source).toContain("deleteOwnedImportedExternalMcpConnectionsWithoutBindings")
     expect(source).toContain("deleteExternalMcpConnectionIfUnused")
     expect(source).toContain("allowConnectedAt: true")
+    expect(source).toContain("importedExternalMcpConnectionCleanupSnapshots")
+    expect(source).toContain("expectedConnection: expected?.connection")
+    expect(source).toContain("expectedOwnedOAuthClient: expected?.oauthClient ?? undefined")
+    expect(source).toContain("legacyOwnerPluginIds")
+    expect(source).toContain(".onDuplicateKeyUpdate({ set: { createdByPluginId: legacyOwnerPluginId } })")
   })
 
   test("retains legacy global authentication defaults", () => {

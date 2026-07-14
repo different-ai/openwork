@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import { getMcpConnectionsRoute, getMcpPluginImportRoute } from "../app/(den)/_lib/den-org";
-import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "../app/(den)/dashboard/_components/mcp-connection-display";
+import {
+  effectiveMcpAccess,
+  formatInheritedMcpAccess,
+  formatRequiredBy,
+  sortConnectionsForFocus,
+  trustedConnectionFocusId,
+} from "../app/(den)/dashboard/_components/mcp-connection-display";
 import {
   parseExternalMcpConfigurationDiscovery,
   type ExternalMcpConfigurationDiscovery,
@@ -50,9 +56,12 @@ function connection(input: { id: string; name: string; requiredBy?: ExternalMcpR
     credentialMode: "per_member",
     connected: true,
     connectedAt: null,
+    updatedAt: null,
     connectedForMe: false,
     requiredBy: input.requiredBy ?? [],
+    identityManagedBy: [],
     access: null,
+    inheritedAccess: null,
   };
 }
 
@@ -117,6 +126,55 @@ describe("marketplace MCP readiness parsing", () => {
       expect(source).not.toContain("window.open(safeMcpAuthorizationUrl");
     }
     expect(adminSource).toContain("openMcpAuthorizationWindow(`new-${input.name}`)");
+  });
+
+  test("confirms direct removal and blocks deletion while a plugin still requires the connection", () => {
+    const source = readFileSync(new URL("../app/(den)/dashboard/_components/mcp-connections-screen.tsx", import.meta.url), "utf8");
+
+    expect(source).toContain("window.confirm(`Remove “${connection.name}”?");
+    expect(source).toContain("await deleteConnection.mutateAsync(connection.id)");
+    expect(source).toContain("removeError instanceof Error ? removeError.message");
+    expect(source).toContain("void refetch()");
+    expect(source).toContain("errorMessage={connectionActionError?.connectionId === connection.id");
+    expect(source).toContain("Required by {requiredByNames.join(\", \")}");
+    expect(source).toContain("disabled={requiredByNames.length > 0}");
+    expect(source).toContain("Remove it from the plugin before deleting this connection.");
+  });
+
+  test("keeps direct and inherited assignments separate while summarizing their effective union", () => {
+    expect(effectiveMcpAccess(
+      { orgWide: false, memberIds: ["member_direct"], teamIds: ["team_direct"] },
+      { orgWide: false, memberIds: ["member_inherited", "member_direct"], teamIds: ["team_support"] },
+    )).toEqual({
+      orgWide: false,
+      memberIds: ["member_direct", "member_inherited"],
+      teamIds: ["team_direct", "team_support"],
+    });
+    expect(formatInheritedMcpAccess(
+      { orgWide: false, memberIds: ["member_maya"], teamIds: ["team_support"] },
+      [{ id: "team_support", name: "Support" }],
+      [{ id: "member_maya", name: "Maya" }],
+    )).toBe("Support team and Maya");
+
+    const source = readFileSync(new URL("../app/(den)/dashboard/_components/mcp-connections-screen.tsx", import.meta.url), "utf8");
+    expect(source).toContain("effectiveMcpAccess(connection.access, connection.inheritedAccess)");
+    expect(source).toContain("Inherited plugin access:");
+    expect(source).toContain("Additional direct assignments");
+    expect(source).toContain("never replace plugin access");
+    expect(source).toContain('value: "none", label: marketplaceManaged ? "Inherited only" : "Nobody"');
+  });
+
+  test("guarantees marketplace eval teardown after early failures", () => {
+    const runnerSource = readFileSync(new URL("../../../../evals/runner/run.mjs", import.meta.url), "utf8");
+    const flowSource = readFileSync(new URL("../../../../evals/flows/marketplace-plugin-mcp-auth.flow.mjs", import.meta.url), "utf8");
+
+    expect(runnerSource).toContain('if (typeof flow.teardown === "function")');
+    expect(runnerSource).toContain('name: "Teardown"');
+    expect(runnerSource.indexOf("await flow.teardown(ctx)")).toBeLessThan(runnerSource.indexOf("ctx.client?.close()"));
+    expect(flowSource).toContain("teardown: teardownMarketplacePluginMcpAuth");
+    expect(flowSource).toContain("throw new AggregateError");
+    expect(flowSource).toContain('["managed MCP connections", cleanupConnections]');
+    expect(flowSource).not.toContain('name: "Cleanup"');
   });
 
   test("requires explicit trust review before selecting executable GitHub skills", () => {

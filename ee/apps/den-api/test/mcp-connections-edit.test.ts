@@ -119,6 +119,18 @@ afterAll(async () => {
     schema.OrgOAuthClientTable.organizationId,
     [organizationId, otherOrganizationId],
   ))
+  await db.delete(schema.ConfigObjectVersionTable).where(drizzle.inArray(
+    schema.ConfigObjectVersionTable.organizationId,
+    [organizationId, otherOrganizationId],
+  ))
+  await db.delete(schema.PluginConfigObjectTable).where(drizzle.inArray(
+    schema.PluginConfigObjectTable.organizationId,
+    [organizationId, otherOrganizationId],
+  ))
+  await db.delete(schema.ConfigObjectTable).where(drizzle.inArray(
+    schema.ConfigObjectTable.organizationId,
+    [organizationId, otherOrganizationId],
+  ))
   await db.delete(schema.ExternalMcpConnectionTable).where(drizzle.inArray(
     schema.ExternalMcpConnectionTable.organizationId,
     [organizationId, otherOrganizationId],
@@ -196,6 +208,19 @@ function humanRequest(input: {
       "content-type": "application/json",
     },
     body: JSON.stringify(input.body),
+  }))
+}
+
+function deleteRequest(connectionId: string, token = adminToken) {
+  return app.fetch(new Request(`http://den-api.local/v1/mcp-connections/${connectionId}`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${token}` },
+  }))
+}
+
+function listRequest(token = adminToken) {
+  return app.fetch(new Request("http://den-api.local/v1/mcp-connections?scope=manageable", {
+    headers: { authorization: `Bearer ${token}` },
   }))
 }
 
@@ -534,6 +559,7 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
       name: "Renamed Marketplace MCP",
       identityManagedBy: [{ pluginId, name: "Marketplace Support" }],
       access: { orgWide: false, memberIds: [adminMemberId], teamIds: [] },
+      inheritedAccess: { orgWide: false, memberIds: [memberId], teamIds: [] },
     })
     const grants = await db.select().from(schema.ExternalMcpConnectionAccessGrantTable).where(drizzle.eq(
       schema.ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId,
@@ -541,6 +567,136 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     ))
     expect(grants.some((grant) => grant.pluginMcpRequirementBindingId === bindingId && grant.orgMembershipId === memberId)).toBe(true)
     expect(grants.some((grant) => grant.pluginMcpRequirementBindingId === null && grant.orgMembershipId === adminMemberId)).toBe(true)
+
+    await db.update(schema.PluginTable)
+      .set({ status: "archived", updatedAt: new Date() })
+      .where(drizzle.eq(schema.PluginTable.id, pluginId))
+    const manageableResponse = await listRequest()
+    expect(manageableResponse.status).toBe(200)
+    const manageableBody = await responseRecord(manageableResponse)
+    const manageableConnections = Array.isArray(manageableBody.connections)
+      ? manageableBody.connections.filter(isRecord)
+      : []
+    const manageableConnection = manageableConnections.find((row) => row.id === connection.id)
+    expect(manageableConnection).toMatchObject({
+      requiredBy: [{ pluginId, name: "Marketplace Support" }],
+      identityManagedBy: [],
+      access: { orgWide: false, memberIds: [adminMemberId], teamIds: [] },
+      inheritedAccess: { orgWide: false, memberIds: [memberId], teamIds: [] },
+    })
+
+    const removal = await deleteRequest(connection.id)
+    expect(removal.status).toBe(409)
+    expect(await responseRecord(removal)).toEqual({
+      error: "connection_in_use",
+      message: "Remove this connection from its marketplace plugins before deleting it.",
+    })
+    expect(await currentConnection(connection.id)).toMatchObject({ id: connection.id })
+    expect(await db.select().from(schema.PluginMcpRequirementBindingTable).where(drizzle.eq(
+      schema.PluginMcpRequirementBindingTable.id,
+      bindingId,
+    ))).toHaveLength(1)
+  })
+
+  test("refuses deletion while an active deployed legacy plugin payload still references the connection", async () => {
+    const connection = await createConnection({ name: "Legacy marketplace MCP", authType: "oauth", credentialMode: "per_member" })
+    const pluginId = createDenTypeId("plugin")
+    const configObjectId = createDenTypeId("configObject")
+    const now = new Date()
+    await db.insert(schema.PluginTable).values({
+      id: pluginId,
+      organizationId,
+      name: "Legacy Marketplace Support",
+      description: null,
+      status: "active",
+      createdByOrgMembershipId: adminMemberId,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    })
+    await db.insert(schema.ConfigObjectTable).values({
+      id: configObjectId,
+      organizationId,
+      objectType: "mcp",
+      sourceMode: "import",
+      title: "Legacy Marketplace MCP",
+      description: null,
+      searchText: "Legacy Marketplace MCP",
+      currentFileName: "legacy-marketplace.json",
+      currentFileExtension: ".json",
+      currentRelativePath: "mcp/legacy-marketplace.json",
+      status: "active",
+      createdByOrgMembershipId: adminMemberId,
+      connectorInstanceId: null,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    })
+    await db.insert(schema.ConfigObjectVersionTable).values({
+      id: createDenTypeId("configObjectVersion"),
+      organizationId,
+      configObjectId,
+      normalizedPayloadJson: {
+        mcpServers: {
+          support: {
+            openworkManaged: "den_external_mcp",
+            externalMcpConnectionId: connection.id,
+            url: connection.url,
+          },
+        },
+      },
+      rawSourceText: null,
+      schemaVersion: "openwork.den_external_mcp.v1",
+      createdVia: "import",
+      createdByOrgMembershipId: adminMemberId,
+      connectorSyncEventId: null,
+      sourceRevisionRef: null,
+      isDeletedVersion: false,
+      createdAt: now,
+    })
+    await db.insert(schema.PluginConfigObjectTable).values({
+      id: createDenTypeId("pluginConfigObject"),
+      organizationId,
+      pluginId,
+      configObjectId,
+      membershipSource: "api",
+      connectorMappingId: null,
+      createdByOrgMembershipId: adminMemberId,
+      createdAt: now,
+      removedAt: null,
+    })
+
+    const removal = await deleteRequest(connection.id)
+    expect(removal.status).toBe(409)
+    expect(await responseRecord(removal)).toEqual({
+      error: "connection_in_use",
+      message: "Remove this connection from its marketplace plugins before deleting it.",
+    })
+    expect(await currentConnection(connection.id)).toMatchObject({ id: connection.id })
+  })
+
+  test("removes an unbound direct connection", async () => {
+    const connection = await createConnection({ name: "Disposable direct MCP", authType: "none", credentialMode: "shared" })
+    expect((await deleteRequest(connection.id, memberToken)).status).toBe(403)
+    expect((await deleteRequest(connection.id, otherAdminToken)).status).toBe(404)
+    expect(await currentConnection(connection.id)).toMatchObject({ id: connection.id })
+    const removal = await deleteRequest(connection.id)
+    expect(removal.status).toBe(200)
+    expect(await responseRecord(removal)).toEqual({ ok: true })
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: connection.id })).toBeNull()
+  })
+
+  test("rejects OAuth client writes from runtime identity snapshots with a missing URL", async () => {
+    const connection = await createConnection({ name: "Partial runtime identity", authType: "oauth", credentialMode: "shared" })
+    const partialUrls: Array<string | null | undefined> = [null, "", "   ", undefined]
+    for (const [index, url] of partialUrls.entries()) {
+      expect(await connections.upsertOrgOAuthClientForExternalMcpIdentity({
+        connection: { ...connection, url },
+        clientId: `must-not-persist-${index}`,
+        clientSecret: "must-not-persist",
+      })).toBe(false)
+    }
+    expect(await oauthCredentials.getOrgOAuthClient(organizationId, connection.id)).toBeNull()
   })
 
   test("stale edits conflict, no-op edits stay connected, and old-identity writes are rejected", async () => {

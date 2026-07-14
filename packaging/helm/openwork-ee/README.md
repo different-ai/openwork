@@ -580,7 +580,13 @@ migrations:
     - pnpm --dir /app/ee/packages/den-db run db:bootstrap
 ```
 
-`db:bootstrap` uses `db:migrate` for normal upgrades. On a completely empty database it applies the current schema once, records the committed migrations as the baseline, then runs migrations. On an existing schema without a Drizzle ledger, it records the baseline before migrating.
+`db:bootstrap` uses normal migrations for upgrades. On a completely empty database it first writes a durable fresh-bootstrap marker into Drizzle's ignored ledger, applies the current schema, verifies the latest committed snapshot, records the baseline through `latest`, and clears the marker. If the Job is interrupted after any DDL, the next hook sees the marker and safely resumes the fresh push. An existing no-ledger schema is never versioned from table count: every object in the committed 0037 snapshot must match before bootstrap records that cutoff and resumes migration 0038 statement-by-statement. A mismatch fails the hook before the new application rollout starts.
+
+This release changes the external-MCP OAuth transaction and runtime-pinning
+contract. Use a drained/Recreate Den API rollout: stop new MCP OAuth starts,
+allow the 10-minute authorization window to drain, run the migration hook, and
+replace every Den API replica before re-enabling starts. Do not run mixed Den
+API versions for this upgrade.
 
 For retained-log troubleshooting, temporarily disable hook behavior and reduce
 retries:

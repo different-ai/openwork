@@ -210,6 +210,26 @@ async function runFlow(flow, { cdpBaseUrl, outDir, env }) {
       }
     }
   } finally {
+    // Flow-owned processes and seeded resources must be reclaimed even when a
+    // precondition, setup step, assertion, or voice-over check returns early.
+    // Teardown runs while CDP is still available, is reported separately, and
+    // cannot hide the original failing step.
+    if (typeof flow.teardown === "function") {
+      const teardownResult = { name: "Teardown", status: "passed", durationMs: 0, error: null, evidence: [] };
+      const startedAt = Date.now();
+      ctx.beginStep(teardownResult.name);
+      try {
+        await flow.teardown(ctx);
+      } catch (error) {
+        teardownResult.status = "failed";
+        teardownResult.error = error instanceof Error ? error.message : String(error);
+        result.status = "failed";
+      } finally {
+        teardownResult.evidence = ctx.endStep();
+        teardownResult.durationMs = Date.now() - startedAt;
+        result.steps.push(teardownResult);
+      }
+    }
     result.screenshots = ctx.screenshots;
     result.evidenceFrames = ctx.evidenceFrames;
     result.logs = ctx.logs;

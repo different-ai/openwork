@@ -33,11 +33,24 @@ export type EnterpriseMcpOAuthClientRegistration = {
   revision: string
   /** Absolute client/client-secret expiration, when the provider declares one. */
   expiresAt?: EnterpriseMcpEpochMs
-  source: "pre-registered" | "dynamic"
+  source: "pre-registered" | "dynamic" | "client-metadata"
 }
 
 export interface EnterpriseMcpOAuthClientRegistrationPort {
   load(context: EnterpriseMcpPersistenceContext): Promise<EnterpriseMcpOAuthClientRegistration | undefined>
+  /**
+   * Single-flight the remote side effect of dynamic client registration.
+   * The adapter waits for a current owner or returns an exact lease token;
+   * a concurrently persisted registration may win while it waits.
+   */
+  claimDynamicRegistration(
+    context: EnterpriseMcpPersistenceContext,
+  ): Promise<
+    | { status: "acquired"; claim: string }
+    | { status: "existing"; registration: EnterpriseMcpOAuthClientRegistration }
+  >
+  /** Best-effort release when the provider call fails before save. */
+  releaseDynamicRegistration(claim: string): Promise<void>
   /**
    * First-writer-wins for concurrent dynamic registration. Implementations
    * return the winning record and never silently replace a different client.
@@ -46,7 +59,9 @@ export interface EnterpriseMcpOAuthClientRegistrationPort {
     context: EnterpriseMcpPersistenceContext
     clientInformation: OAuthClientInformationMixed
     expiresAt?: EnterpriseMcpEpochMs
-    source: "dynamic"
+    source: "dynamic" | "client-metadata"
+    /** Required for dynamic registrations; ignored for client metadata. */
+    claim?: string
   }): Promise<EnterpriseMcpOAuthClientRegistration>
   invalidate(input: {
     context: EnterpriseMcpPersistenceContext
@@ -70,6 +85,8 @@ export type EnterpriseMcpOAuthAuthorizationHandle = {
   revision: string
   expiresAt: EnterpriseMcpEpochMs
   clientRegistrationRevision?: string
+  /** Connection authorization fence captured when this state was created. */
+  authorizationEpoch: number
 }
 
 export interface EnterpriseMcpOAuthAuthorizationPort {
@@ -84,7 +101,7 @@ export interface EnterpriseMcpOAuthAuthorizationPort {
     expiresAt: EnterpriseMcpEpochMs
     clientRegistrationRevision?: string
   }): Promise<void>
-  /** Load without consuming; successful token commit consumes atomically. */
+  /** Atomically consume and return an adapter-local one-shot claim. */
   load(input: {
     context: EnterpriseMcpPersistenceContext
     id: string
@@ -99,10 +116,10 @@ export interface EnterpriseMcpOAuthAuthorizationPort {
 export interface EnterpriseMcpOAuthCredentialPort {
   load(context: EnterpriseMcpPersistenceContext): Promise<EnterpriseMcpOAuthCredential | undefined>
   /**
-   * For authorization-code commits, the adapter MUST atomically validate and
-   * consume `authorization`, validate `clientRegistrationRevision`, persist
-   * the tokens, and enforce `context.commitExpiresAt`. Refresh commits enforce
-   * the same lifecycle fence but do not consume an authorization transaction.
+   * Authorization loading has already consumed the public state transaction.
+   * The adapter MUST validate the returned opaque one-shot handle, connection
+   * epoch, and `clientRegistrationRevision`, then persist tokens atomically
+   * with those fences while enforcing `context.commitExpiresAt`.
    */
   save(input: {
     context: EnterpriseMcpPersistenceContext
@@ -163,7 +180,14 @@ export type EnterpriseMcpDiagnosticSink = (event: EnterpriseMcpDiagnosticEvent) 
 export type EnterpriseMcpAuthorization =
   | { type: "none" }
   | { type: "api-key"; token: string }
-  | { type: "oauth"; persistence: EnterpriseMcpOAuthPersistence }
+  | {
+      type: "oauth"
+      persistence: EnterpriseMcpOAuthPersistence
+      /** User-reviewed fallback scopes. Challenge and resource metadata remain authoritative. */
+      requestedScopes?: string[]
+      /** Public SEP-991 Client ID Metadata Document URL, when the deployment can expose one. */
+      clientMetadataUrl?: string
+    }
 
 export type EnterpriseMcpConnection = {
   id: string

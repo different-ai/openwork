@@ -217,6 +217,8 @@ export const ExternalMcpOAuthTransactionTable = mysqlTable(
     orgMembershipId: denTypeIdColumn("member", "org_membership_id").notNull(),
     /** Connection fence captured when this state-bound PKCE transaction starts. */
     connectionAuthorizationEpoch: int("connection_authorization_epoch").notNull().default(0),
+    /** OAuth client revision captured before authorization starts, when one exists. */
+    clientRegistrationRevision: varchar("client_registration_revision", { length: 64 }),
     codeVerifier: encryptedTextColumn("code_verifier").notNull(),
     expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
