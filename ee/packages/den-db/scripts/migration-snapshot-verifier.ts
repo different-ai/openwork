@@ -213,7 +213,7 @@ function normalizedSqlDefault(value: unknown, extra = ""): string | null {
 
 function allowedColumnType(tableName: string, columnName: string, expectedType: string, actualType: string): boolean {
   if (normalizedType(expectedType) === normalizedType(actualType)) return true
-  // Migration 0038 widens this column. A no-ledger database managed by
+  // Migration 0040 widens this column. A no-ledger database managed by
   // db:push may already contain that safe forward shape when bootstrap first
   // adopts it, so accept either side of this one reviewed migration delta.
   return tableName === "external_mcp_connection"

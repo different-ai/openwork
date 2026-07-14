@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test"
 import * as mysql from "mysql2/promise"
 import { parseMySqlConnectionConfig } from "../src/mysql-config.ts"
 import type { Executor } from "./db-executor.ts"
-import { repairMigration0038 } from "./migration-0038-repair.ts"
+import { repairMigration0040 } from "./migration-0040-repair.ts"
 import {
   FRESH_BOOTSTRAP_SENTINEL_CREATED_AT,
   FRESH_BOOTSTRAP_SENTINEL_HASH,
@@ -22,8 +22,8 @@ import {
   type MigrationSnapshot,
 } from "./migration-snapshot-verifier.ts"
 
-const MIGRATION_0038_TAG = "0038_organic_nicolaos"
-const MIGRATION_0039_TAG = "0039_marketplace_plugin_provenance"
+const MIGRATION_0040_TAG = "0040_square_jackpot"
+const MIGRATION_0041_TAG = "0041_public_grim_reaper"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -50,7 +50,7 @@ function journalEntries(): MigrationJournalEntry[] {
 }
 
 const entries = journalEntries()
-const migration0037 = resolveBaselineTarget(entries, LEGACY_BASELINE_THROUGH_TAG)
+const migration0039 = resolveBaselineTarget(entries, LEGACY_BASELINE_THROUGH_TAG)
 
 function requiredMigration(tag: string): MigrationJournalEntry {
   const entry = entries.find((candidate) => candidate.tag === tag)
@@ -58,16 +58,16 @@ function requiredMigration(tag: string): MigrationJournalEntry {
   return entry
 }
 
-const migration0038 = requiredMigration(MIGRATION_0038_TAG)
-const migration0039 = requiredMigration(MIGRATION_0039_TAG)
+const migration0040 = requiredMigration(MIGRATION_0040_TAG)
+const migration0041 = requiredMigration(MIGRATION_0041_TAG)
 
 describe("Den database migration lifecycle policy", () => {
-  test("defaults a legacy no-ledger baseline to 0037 and leaves 0038 plus 0039 pending", () => {
+  test("defaults a legacy no-ledger baseline to 0039 and leaves 0040 plus 0041 pending", () => {
     const target = resolveBaselineTarget(entries)
     const pending = entries.filter((entry) => entry.when > target.when)
 
     expect(target.tag).toBe(LEGACY_BASELINE_THROUGH_TAG)
-    expect(pending.map((entry) => entry.tag)).toEqual([MIGRATION_0038_TAG, MIGRATION_0039_TAG])
+    expect(pending.map((entry) => entry.tag)).toEqual([MIGRATION_0040_TAG, MIGRATION_0041_TAG])
   })
 
   test("requires an explicit latest baseline for a freshly pushed empty database", () => {
@@ -208,7 +208,7 @@ const verifierIndexes: LiveIndexColumn[] = [
 ]
 
 describe("minimum migration snapshot verifier", () => {
-  test("accepts the reviewed 0038 scope widening and equivalent timestamp defaults", () => {
+  test("accepts the reviewed 0040 scope widening and equivalent timestamp defaults", () => {
     expect(minimumMigrationSnapshotProblems({
       snapshot: verifierSnapshot,
       columns: verifierColumns,
@@ -281,11 +281,18 @@ async function createMigrationLedger(executor: Executor, timestamps: number[]) {
   }
 }
 
-async function createPre0038ConnectionTable(executor: Executor, scopeType = "varchar(1024)") {
+async function createPre0040ConnectionTable(executor: Executor, scopeType = "varchar(1024)") {
   await executor.query(`CREATE TABLE \`external_mcp_connection\` (
     \`id\` varchar(64) NOT NULL PRIMARY KEY,
     \`scope\` ${scopeType}
   )`)
+}
+
+async function createPreConflictUpstreamTables(executor: Executor) {
+  await executor.query("CREATE TABLE `user` (`id` varchar(64) NOT NULL PRIMARY KEY, `created_at` timestamp(3) NOT NULL)")
+  await executor.query("CREATE TABLE `invitation` (`id` varchar(64) NOT NULL PRIMARY KEY, `inviter_id` varchar(64) NOT NULL)")
+  await executor.query("CREATE TABLE `organization` (`id` varchar(64) NOT NULL PRIMARY KEY, `created_at` timestamp(3) NOT NULL)")
+  await executor.query("CREATE TABLE `telemetry_event` (`id` varchar(64) NOT NULL PRIMARY KEY, `member_id` varchar(64), `event_timestamp` timestamp(3) NOT NULL)")
 }
 
 async function createOAuthTransactionTable(executor: Executor, createdAtDefault = " DEFAULT (now())") {
@@ -302,7 +309,7 @@ async function createOAuthTransactionTable(executor: Executor, createdAtDefault 
   )`)
 }
 
-async function expectMigration0038Schema(executor: Executor) {
+async function expectMigration0040Schema(executor: Executor) {
   const columns = await executor.query(
     `SELECT table_name AS tableName, column_name AS columnName, data_type AS dataType
      FROM information_schema.COLUMNS
@@ -356,41 +363,63 @@ async function expectMigration0038Schema(executor: Executor) {
   ])
 
   const ledger = await executor.query("SELECT max(created_at) AS latest FROM `__drizzle_migrations`")
-  expect(Number(ledger[0]?.latest)).toBe(migration0038.when)
+  expect(Number(ledger[0]?.latest)).toBe(migration0040.when)
 }
 
-describeMySql("migration 0038 MySQL repair simulations", () => {
+describeMySql("migration 0040 MySQL repair simulations", () => {
   test("empty schema is left for bootstrap's push-and-explicit-latest path", async () => {
     await withTemporaryDatabase(async (executor) => {
-      expect(await repairMigration0038(executor)).toEqual({
+      expect(await repairMigration0040(executor)).toEqual({
         operations: [],
         status: "not_applicable",
       })
     })
   })
 
-  test("pre-0038 schema is applied, verified, recorded, and safely rerun", async () => {
+  test("pre-0040 schema is applied, verified, recorded, and safely rerun", async () => {
     await withTemporaryDatabase(async (executor) => {
-      await createPre0038ConnectionTable(executor)
-      await createMigrationLedger(executor, [migration0037.when])
+      await createPre0040ConnectionTable(executor)
+      await createMigrationLedger(executor, [migration0039.when])
 
-      const first = await repairMigration0038(executor)
+      const first = await repairMigration0040(executor)
       expect(first.status).toBe("recorded")
       expect(first.operations.length).toBeGreaterThan(0)
-      await expectMigration0038Schema(executor)
+      await expectMigration0040Schema(executor)
 
-      expect(await repairMigration0038(executor)).toEqual({
+      expect(await repairMigration0040(executor)).toEqual({
         operations: [],
         status: "already_recorded",
       })
     })
   })
 
-  test("refuses a 0037 ledger with a missing base table before creating any 0038 object", async () => {
-    await withTemporaryDatabase(async (executor) => {
-      await createMigrationLedger(executor, [migration0037.when])
+  test("adopts both deployed legacy marketplace cursors without skipping upstream migrations", async () => {
+    for (const legacyCursor of [1783990757465, 1784037192791]) {
+      await withTemporaryDatabase(async (executor) => {
+        await createPre0040ConnectionTable(executor)
+        await createPreConflictUpstreamTables(executor)
+        await createMigrationLedger(executor, [legacyCursor])
 
-      await expect(repairMigration0038(executor)).rejects.toThrow(
+        const result = await repairMigration0040(executor)
+        expect(result.status).toBe("recorded")
+        await expectMigration0040Schema(executor)
+        const upstreamObjects = await executor.query(
+          `SELECT table_name AS tableName, index_name AS indexName
+           FROM information_schema.STATISTICS
+           WHERE table_schema = DATABASE()
+             AND ((table_name = 'user' AND index_name = 'user_created_at_id')
+               OR (table_name = 'desktop_connect_grant' AND index_name = 'desktop_connect_grant_expires_at'))`,
+        )
+        expect(upstreamObjects).toHaveLength(3)
+      })
+    }
+  })
+
+  test("refuses a 0039 ledger with a missing base table before creating any 0040 object", async () => {
+    await withTemporaryDatabase(async (executor) => {
+      await createMigrationLedger(executor, [migration0039.when])
+
+      await expect(repairMigration0040(executor)).rejects.toThrow(
         "required table external_mcp_connection is missing",
       )
       const table = await executor.query(
@@ -403,45 +432,45 @@ describeMySql("migration 0038 MySQL repair simulations", () => {
 
   test("fully applied but unrecorded schema is verified before recording", async () => {
     await withTemporaryDatabase(async (executor) => {
-      await createPre0038ConnectionTable(executor)
-      await createMigrationLedger(executor, [migration0037.when])
-      await repairMigration0038(executor)
+      await createPre0040ConnectionTable(executor)
+      await createMigrationLedger(executor, [migration0039.when])
+      await repairMigration0040(executor)
       await executor.query(
         "DELETE FROM `__drizzle_migrations` WHERE created_at = ?",
-        [migration0038.when],
+        [migration0040.when],
       )
 
-      expect(await repairMigration0038(executor)).toEqual({
+      expect(await repairMigration0040(executor)).toEqual({
         operations: [],
         status: "recorded",
       })
-      await expectMigration0038Schema(executor)
+      await expectMigration0040Schema(executor)
     })
   })
 
   test("partial implicit-DDL application resumes only missing statements", async () => {
     await withTemporaryDatabase(async (executor) => {
-      await createPre0038ConnectionTable(executor)
-      await createMigrationLedger(executor, [migration0037.when])
+      await createPre0040ConnectionTable(executor)
+      await createMigrationLedger(executor, [migration0039.when])
       await createOAuthTransactionTable(executor)
       await executor.query("ALTER TABLE `external_mcp_connection` MODIFY COLUMN `scope` text")
       await executor.query("ALTER TABLE `external_mcp_connection` ADD `requested_oauth_scopes` json")
 
-      const result = await repairMigration0038(executor)
+      const result = await repairMigration0040(executor)
       expect(result.status).toBe("recorded")
       expect(result.operations).not.toContain("create external_mcp_oauth_transaction")
       expect(result.operations).not.toContain("modify external_mcp_connection.scope")
       expect(result.operations).not.toContain("add external_mcp_connection.requested_oauth_scopes")
       expect(result.operations).toContain("add external_mcp_oauth_transaction.client_registration_revision")
       expect(result.operations).toContain("add external_mcp_connection.oauth_authorization_epoch")
-      await expectMigration0038Schema(executor)
+      await expectMigration0040Schema(executor)
     })
   })
 
   test("re-reads exact schema after an ambiguous create-table response", async () => {
     await withTemporaryDatabase(async (executor) => {
-      await createPre0038ConnectionTable(executor)
-      await createMigrationLedger(executor, [migration0037.when])
+      await createPre0040ConnectionTable(executor)
+      await createMigrationLedger(executor, [migration0039.when])
       let injectedFailure = false
       const ambiguousExecutor: Executor = {
         close: executor.close,
@@ -455,63 +484,63 @@ describeMySql("migration 0038 MySQL repair simulations", () => {
         },
       }
 
-      const result = await repairMigration0038(ambiguousExecutor, {
+      const result = await repairMigration0040(ambiguousExecutor, {
         visibilityAttempts: 2,
         visibilityDelayMs: 0,
       })
       expect(injectedFailure).toBe(true)
       expect(result.status).toBe("recorded")
-      await expectMigration0038Schema(executor)
+      await expectMigration0040Schema(executor)
     })
   })
 
-  test("repairs a schema that an older baseline already marked as 0038", async () => {
+  test("repairs a schema that an older baseline already marked as 0040", async () => {
     await withTemporaryDatabase(async (executor) => {
-      await createPre0038ConnectionTable(executor)
-      await createMigrationLedger(executor, [migration0037.when, migration0038.when])
+      await createPre0040ConnectionTable(executor)
+      await createMigrationLedger(executor, [migration0039.when, migration0040.when])
 
-      const result = await repairMigration0038(executor)
+      const result = await repairMigration0040(executor)
       expect(result.status).toBe("repaired_recorded")
       expect(result.operations.length).toBeGreaterThan(0)
-      await expectMigration0038Schema(executor)
+      await expectMigration0040Schema(executor)
     })
   })
 
-  test("backfills the OAuth client revision fence for an already-recorded 0038 database", async () => {
+  test("backfills the OAuth client revision fence for an already-recorded 0040 database", async () => {
     await withTemporaryDatabase(async (executor) => {
-      await createPre0038ConnectionTable(executor)
-      await createMigrationLedger(executor, [migration0037.when])
-      await repairMigration0038(executor)
+      await createPre0040ConnectionTable(executor)
+      await createMigrationLedger(executor, [migration0039.when])
+      await repairMigration0040(executor)
       await executor.query(
         "ALTER TABLE `external_mcp_oauth_transaction` DROP COLUMN `client_registration_revision`",
       )
 
-      const result = await repairMigration0038(executor)
+      const result = await repairMigration0040(executor)
       expect(result.status).toBe("repaired_recorded")
       expect(result.operations).toContain("add external_mcp_oauth_transaction.client_registration_revision")
-      await expectMigration0038Schema(executor)
+      await expectMigration0040Schema(executor)
     })
   })
 
-  test("does not enforce the 0038 shape after a later migration cursor", async () => {
+  test("does not enforce the 0040 shape after a later migration cursor", async () => {
     await withTemporaryDatabase(async (executor) => {
-      await createMigrationLedger(executor, [migration0037.when, migration0038.when + 1])
+      await createMigrationLedger(executor, [migration0039.when, migration0040.when + 1])
 
-      expect(await repairMigration0038(executor)).toEqual({
+      expect(await repairMigration0040(executor)).toEqual({
         operations: [],
         status: "not_applicable",
       })
     })
   })
 
-  test("does not skip migrations when the ledger is older than 0037", async () => {
+  test("does not skip migrations when the ledger is older than 0039", async () => {
     const migration0036 = entries.find((entry) => entry.tag === "0036_petite_fallen_one")
     if (!migration0036) throw new Error("0036 migration is missing")
     await withTemporaryDatabase(async (executor) => {
-      await createPre0038ConnectionTable(executor)
+      await createPre0040ConnectionTable(executor)
       await createMigrationLedger(executor, [migration0036.when])
 
-      expect(await repairMigration0038(executor)).toEqual({
+      expect(await repairMigration0040(executor)).toEqual({
         operations: [],
         status: "not_applicable",
       })
@@ -525,70 +554,70 @@ describeMySql("migration 0038 MySQL repair simulations", () => {
 
   test("fails closed instead of coercing an unexpected legacy scope type", async () => {
     await withTemporaryDatabase(async (executor) => {
-      await createPre0038ConnectionTable(executor, "int")
-      await createMigrationLedger(executor, [migration0037.when])
+      await createPre0040ConnectionTable(executor, "int")
+      await createMigrationLedger(executor, [migration0039.when])
 
-      await expect(repairMigration0038(executor)).rejects.toThrow(
+      await expect(repairMigration0040(executor)).rejects.toThrow(
         "incompatible external_mcp_connection.scope type int",
       )
       const ledger = await executor.query("SELECT max(created_at) AS latest FROM `__drizzle_migrations`")
-      expect(Number(ledger[0]?.latest)).toBe(migration0037.when)
+      expect(Number(ledger[0]?.latest)).toBe(migration0039.when)
     })
   })
 
   test("rejects a wrongly unique OAuth transaction lookup index", async () => {
     await withTemporaryDatabase(async (executor) => {
-      await createPre0038ConnectionTable(executor)
-      await createMigrationLedger(executor, [migration0037.when])
+      await createPre0040ConnectionTable(executor)
+      await createMigrationLedger(executor, [migration0039.when])
       await createOAuthTransactionTable(executor)
       await executor.query(
         `CREATE UNIQUE INDEX \`external_mcp_oauth_transaction_connection\`
          ON \`external_mcp_oauth_transaction\` (\`external_mcp_connection_id\`)`,
       )
 
-      await expect(repairMigration0038(executor)).rejects.toThrow(
+      await expect(repairMigration0040(executor)).rejects.toThrow(
         "expected non-unique",
       )
       const ledger = await executor.query("SELECT max(created_at) AS latest FROM `__drizzle_migrations`")
-      expect(Number(ledger[0]?.latest)).toBe(migration0037.when)
+      expect(Number(ledger[0]?.latest)).toBe(migration0039.when)
     })
   })
 
   test("rejects a transaction table without the runtime-required created_at default", async () => {
     await withTemporaryDatabase(async (executor) => {
-      await createPre0038ConnectionTable(executor)
-      await createMigrationLedger(executor, [migration0037.when])
+      await createPre0040ConnectionTable(executor)
+      await createMigrationLedger(executor, [migration0039.when])
       await createOAuthTransactionTable(executor, "")
 
-      await expect(repairMigration0038(executor)).rejects.toThrow(
+      await expect(repairMigration0040(executor)).rejects.toThrow(
         "external_mcp_oauth_transaction.created_at",
       )
       const ledger = await executor.query("SELECT max(created_at) AS latest FROM `__drizzle_migrations`")
-      expect(Number(ledger[0]?.latest)).toBe(migration0037.when)
+      expect(Number(ledger[0]?.latest)).toBe(migration0039.when)
     })
   })
 
-  test("rejects a partial no-ledger schema instead of adopting it through 0037", async () => {
+  test("rejects a partial no-ledger schema instead of adopting it through 0039", async () => {
     await withTemporaryDatabase(async (executor) => {
-      await createPre0038ConnectionTable(executor)
+      await createPre0040ConnectionTable(executor)
       await expect(assertMinimumMigrationSnapshot({
         executor,
-        snapshotIndex: migration0037.idx,
-        snapshotTag: migration0037.tag,
+        snapshotIndex: migration0039.idx,
+        snapshotTag: migration0039.tag,
       })).rejects.toThrow("Refusing to baseline an unverified no-ledger schema")
     })
   })
 })
 
-const migration0039Statements = readFileSync(
-  new URL(`../drizzle/${migration0039.tag}.sql`, import.meta.url),
+const migration0041Statements = readFileSync(
+  new URL(`../drizzle/${migration0041.tag}.sql`, import.meta.url),
   "utf8",
 )
   .split("--> statement-breakpoint")
   .map((statement) => statement.trim())
   .filter(Boolean)
 
-describeMySql("migration 0039 MySQL resumability", () => {
+describeMySql("migration 0041 MySQL resumability", () => {
   test("resumes after the first committed table and keeps provenance claims unique", async () => {
     await withTemporaryDatabase(async (executor) => {
       await executor.query(`CREATE TABLE \`plugin\` (
@@ -607,10 +636,10 @@ describeMySql("migration 0039 MySQL resumability", () => {
         ["plugin_1", "organization_1", `Plugin components imported from ${sourceUrl}.`, "member_1"],
       )
 
-      expect(migration0039Statements).toHaveLength(3)
-      await executor.query(migration0039Statements[0]!)
-      for (const statement of migration0039Statements) await executor.query(statement)
-      for (const statement of migration0039Statements) await executor.query(statement)
+      expect(migration0041Statements).toHaveLength(3)
+      await executor.query(migration0041Statements[0]!)
+      for (const statement of migration0041Statements) await executor.query(statement)
+      for (const statement of migration0041Statements) await executor.query(statement)
 
       const imports = await executor.query(
         `SELECT plugin_id AS pluginId, organization_id AS organizationId,

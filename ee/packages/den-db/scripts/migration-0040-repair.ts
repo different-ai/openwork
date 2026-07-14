@@ -8,7 +8,8 @@ import { LEGACY_BASELINE_THROUGH_TAG } from "./migration-policy.ts"
 const MIGRATIONS_TABLE = "__drizzle_migrations"
 const BASE_TABLE = "external_mcp_connection"
 const TRANSACTION_TABLE = "external_mcp_oauth_transaction"
-const MIGRATION_TAG = "0038_organic_nicolaos"
+const MIGRATION_TAG = "0040_square_jackpot"
+const LEGACY_MARKETPLACE_MIGRATION_CURSORS = new Set([1783990757465, 1784037192791])
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
 type ColumnExpectation = {
@@ -30,7 +31,7 @@ type MigrationMetadata = {
   when: number
 }
 
-export type Migration0038RepairResult = {
+export type Migration0040RepairResult = {
   operations: string[]
   status: "already_recorded" | "not_applicable" | "recorded" | "repaired_recorded"
 }
@@ -408,30 +409,138 @@ async function ensureTransactionTable(
   })
 }
 
+async function ensureUpstreamConflictMigrations(
+  executor: Executor,
+  operations: string[],
+  retry: VisibilityRetry,
+): Promise<void> {
+  await ensureIndex({
+    executor,
+    tableName: "user",
+    indexName: "user_created_at_id",
+    columns: ["created_at", "id"],
+    unique: false,
+    createSql: "CREATE INDEX `user_created_at_id` ON `user` (`created_at`,`id`)",
+    operations,
+    retry,
+  })
+  await ensureIndex({
+    executor,
+    tableName: "invitation",
+    indexName: "invitation_inviter_id",
+    columns: ["inviter_id"],
+    unique: false,
+    createSql: "CREATE INDEX `invitation_inviter_id` ON `invitation` (`inviter_id`)",
+    operations,
+    retry,
+  })
+  await ensureIndex({
+    executor,
+    tableName: "organization",
+    indexName: "organization_created_at_id",
+    columns: ["created_at", "id"],
+    unique: false,
+    createSql: "CREATE INDEX `organization_created_at_id` ON `organization` (`created_at`,`id`)",
+    operations,
+    retry,
+  })
+  await ensureIndex({
+    executor,
+    tableName: "telemetry_event",
+    indexName: "telemetry_event_member_ts",
+    columns: ["member_id", "event_timestamp"],
+    unique: false,
+    createSql: "CREATE INDEX `telemetry_event_member_ts` ON `telemetry_event` (`member_id`,`event_timestamp`)",
+    operations,
+    retry,
+  })
+
+  const tableName = "desktop_connect_grant"
+  if (!(await tableExists(executor, tableName))) {
+    await executor.query(`CREATE TABLE \`${tableName}\` (
+      \`code_hash\` varchar(64) NOT NULL,
+      \`install_link_id\` varchar(64) NOT NULL,
+      \`claims\` json NOT NULL,
+      \`expires_at\` timestamp(3) NOT NULL,
+      \`consumed_at\` timestamp(3),
+      \`consumed_nonce\` varchar(64),
+      \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+      CONSTRAINT \`desktop_connect_grant_code_hash\` PRIMARY KEY(\`code_hash\`)
+    )`)
+    operations.push(`create ${tableName}`)
+  }
+  const expectedColumns: Array<[string, ColumnExpectation]> = [
+    ["code_hash", { dataType: "varchar", nullable: false, length: 64 }],
+    ["install_link_id", { dataType: "varchar", nullable: false, length: 64 }],
+    ["claims", { dataType: "json", nullable: false }],
+    ["expires_at", { dataType: "timestamp", nullable: false, precision: 3 }],
+    ["consumed_at", { dataType: "timestamp", nullable: true, precision: 3 }],
+    ["consumed_nonce", { dataType: "varchar", nullable: true, length: 64 }],
+    ["created_at", {
+      dataType: "timestamp",
+      nullable: false,
+      precision: 3,
+      defaultValues: ["now()", "now(3)", "current_timestamp", "current_timestamp(3)"],
+    }],
+  ]
+  for (const [columnName, expected] of expectedColumns) {
+    await waitForColumnShape({ executor, tableName, columnName, expected, retry })
+  }
+  await ensureIndex({
+    executor,
+    tableName,
+    indexName: "PRIMARY",
+    columns: ["code_hash"],
+    unique: true,
+    operations,
+    retry,
+  })
+  await ensureIndex({
+    executor,
+    tableName,
+    indexName: "desktop_connect_grant_install_link_id",
+    columns: ["install_link_id"],
+    unique: false,
+    createSql: "CREATE INDEX `desktop_connect_grant_install_link_id` ON `desktop_connect_grant` (`install_link_id`)",
+    operations,
+    retry,
+  })
+  await ensureIndex({
+    executor,
+    tableName,
+    indexName: "desktop_connect_grant_expires_at",
+    columns: ["expires_at"],
+    unique: false,
+    createSql: "CREATE INDEX `desktop_connect_grant_expires_at` ON `desktop_connect_grant` (`expires_at`)",
+    operations,
+    retry,
+  })
+}
+
 /**
  * MySQL commits DDL statement-by-statement. This repair is deliberately not a
  * transaction: every step inspects the live schema, applies only what is
- * missing, verifies existing objects, and records 0038 only after all objects
+ * missing, verifies existing objects, and records 0040 only after all objects
  * match. A retry after any interrupted statement therefore resumes safely.
  */
-export async function repairMigration0038(
+export async function repairMigration0040(
   executor: Executor,
   options: {
     drizzleDir?: string
     visibilityAttempts?: number
     visibilityDelayMs?: number
   } = {},
-): Promise<Migration0038RepairResult> {
+): Promise<Migration0040RepairResult> {
   const metadata = migrationMetadata(options.drizzleDir)
   const retry = {
     attempts: options.visibilityAttempts ?? DEFAULT_VISIBILITY_RETRY.attempts,
     delayMs: options.visibilityDelayMs ?? DEFAULT_VISIBILITY_RETRY.delayMs,
   }
   if (!Number.isSafeInteger(retry.attempts) || retry.attempts <= 0) {
-    throw new Error("Migration 0038 visibility attempts must be a positive integer.")
+    throw new Error("Migration 0040 visibility attempts must be a positive integer.")
   }
   if (!Number.isFinite(retry.delayMs) || retry.delayMs < 0) {
-    throw new Error("Migration 0038 visibility delay must be a non-negative number.")
+    throw new Error("Migration 0040 visibility delay must be a non-negative number.")
   }
   const ledgerExists = await tableExists(executor, MIGRATIONS_TABLE)
   const baseTableExists = await tableExists(executor, BASE_TABLE)
@@ -439,19 +548,20 @@ export async function repairMigration0038(
   if (!ledgerExists) {
     if (baseTableExists) {
       throw new Error(
-        `Existing schema has no ${MIGRATIONS_TABLE} ledger. Run db:bootstrap so it is baselined safely through 0037 first.`,
+        `Existing schema has no ${MIGRATIONS_TABLE} ledger. Run db:bootstrap so it is baselined safely through 0039 first.`,
       )
     }
     return { operations: [], status: "not_applicable" }
   }
   const latest = await latestRecordedMigration(executor)
+  const operations: string[] = []
   if (latest === 0) {
     throw new Error(
-      `Existing schema has an empty ${MIGRATIONS_TABLE} ledger. Run db:bootstrap so it is baselined safely through 0037 first.`,
+      `Existing schema has an empty ${MIGRATIONS_TABLE} ledger. Run db:bootstrap so it is baselined safely through 0039 first.`,
     )
   }
-  if (latest < metadata.previousWhen) {
-    // Let Drizzle apply every still-pending migration in order. Recording 0038
+  if (latest < metadata.previousWhen && !LEGACY_MARKETPLACE_MIGRATION_CURSORS.has(latest)) {
+    // Let Drizzle apply every still-pending migration in order. Recording 0040
     // here would make its max timestamp skip intervening migrations.
     return { operations: [], status: "not_applicable" }
   }
@@ -460,8 +570,8 @@ export async function repairMigration0038(
       `Migration ledger timestamp ${latest} is between ${LEGACY_BASELINE_THROUGH_TAG} and ${MIGRATION_TAG}; refusing to skip unknown history.`,
     )
   }
-  // A later reviewed migration may intentionally supersede or remove an 0038
-  // object. This transition repair must never make the 0038 shape immortal.
+  // A later reviewed migration may intentionally supersede or remove an 0040
+  // object. This transition repair must never make the 0040 shape immortal.
   if (latest > metadata.when) {
     return { operations: [], status: "not_applicable" }
   }
@@ -471,7 +581,9 @@ export async function repairMigration0038(
     )
   }
 
-  const operations: string[] = []
+  if (LEGACY_MARKETPLACE_MIGRATION_CURSORS.has(latest)) {
+    await ensureUpstreamConflictMigrations(executor, operations, retry)
+  }
   await ensureTransactionTable(executor, operations, retry)
 
   const scope = await columnInfo(executor, BASE_TABLE, "scope")

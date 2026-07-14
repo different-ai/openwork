@@ -135,7 +135,7 @@ async function main() {
     }
     if (plan.baselineThrough) {
       if (plan.verifyLegacySnapshot) {
-        console.log("[den-db] untracked existing schema detected; requiring a complete 0037 snapshot fingerprint")
+        console.log("[den-db] untracked existing schema detected; requiring a complete 0039 snapshot fingerprint")
       }
       console.log(`[den-db] recording migration baseline through ${plan.baselineThrough}`)
       run("node", [
@@ -155,8 +155,8 @@ async function main() {
     await executor.close()
   }
 
-  console.log("[den-db] repairing/verifying resumable migration 0038")
-  run("node", ["--import", "tsx", "scripts/repair-migration-0038.ts"])
+  console.log("[den-db] repairing/verifying resumable migration 0040")
+  run("node", ["--import", "tsx", "scripts/repair-migration-0040.ts"])
 
   console.log("[den-db] running migrations")
   run("node", ["--import", "tsx", "./node_modules/drizzle-kit/bin.cjs", "migrate", "--config", "drizzle.config.ts"])

@@ -61,11 +61,11 @@ A database previously managed with `db:push` has no `__drizzle_migrations`
 table, so the first `db:migrate` would try to replay every migration.
 Record the existing history once (marks migrations as applied without
 executing them). With no `--through` argument, this intentionally stops at
-`0037_futuristic_sage`. Before recording anything, the command fingerprints
+`0039_futuristic_sage`. Before recording anything, the command fingerprints
 the live tables, columns, defaults, primary/unique keys, and indexes against
-the committed 0037 snapshot. It fails closed when the database is older or
+the committed 0039 snapshot. It fails closed when the database is older or
 partially applied. `db:migrate` then inspects, repairs, and records the
-non-idempotent 0038 migration statement-by-statement:
+non-idempotent 0040 migration statement-by-statement:
 
 ```bash
 pnpm --dir ee/packages/den-db db:baseline           # dry run
@@ -96,8 +96,8 @@ pre-deploy gate; do not let an API rollout race the independent workflow.
   into Drizzle's ignored migration ledger. A retry can therefore distinguish
   and resume an interrupted fresh push, verify the latest snapshot, finish the
   baseline, and clear the marker. A non-empty no-ledger database is adopted
-  through 0037 only after the complete 0037 snapshot fingerprint passes; it is
-  never versioned from table count alone. Migration 0038 is then resumed
+  through 0039 only after the complete 0039 snapshot fingerprint passes; it is
+  never versioned from table count alone. Migration 0040 is then resumed
   statement-by-statement. Use `db:push` directly only for development.
 - `db:generate` is the default path for new migration files.
 - `drizzle/meta/` must stay in sync with the SQL migration history so future generation stays incremental.

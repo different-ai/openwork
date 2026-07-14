@@ -6,10 +6,10 @@ export type MigrationJournalEntry = {
 
 /**
  * A non-empty database without a ledger predates reliable migration tracking.
- * Never assume it already contains 0038: that migration must be inspected and
+ * Never assume it already contains 0040: that migration must be inspected and
  * applied by the schema-aware repair step before it is recorded.
  */
-export const LEGACY_BASELINE_THROUGH_TAG = "0037_futuristic_sage"
+export const LEGACY_BASELINE_THROUGH_TAG = "0039_bouncy_chamber"
 export const LATEST_BASELINE_ALIAS = "latest"
 /**
  * Drizzle Kit deliberately ignores its own ledger while introspecting for
@@ -32,7 +32,7 @@ export type BootstrapMigrationPlan = {
  * Decide the only state-based step bootstrap may take before normal
  * migrations. Fresh installs are pushed to the current schema and can be
  * explicitly baselined through latest. Legacy schemas must stop at the last
- * known pre-0038 revision so the schema-aware 0038 repair can inspect them.
+ * known pre-0040 revision so the schema-aware 0040 repair can inspect them.
  */
 export function resolveBootstrapMigrationPlan(input: {
   applicationTableCount: number

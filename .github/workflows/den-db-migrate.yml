@@ -37,7 +37,7 @@ on:
         type: boolean
         default: false
       baseline_through:
-        description: "Baseline through this migration tag (default: safe legacy cutoff 0037; use latest only for a verified current schema)"
+        description: "Baseline through this migration tag (default: safe legacy cutoff 0039; use latest only for a verified current schema)"
         type: string
         required: false
       dry_run:
