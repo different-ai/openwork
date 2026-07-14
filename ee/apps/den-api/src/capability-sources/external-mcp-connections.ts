@@ -55,6 +55,12 @@ function unique<TValue extends string>(values: TValue[]): TValue[] {
   return [...new Set(values)]
 }
 
+function sameStringSet(left: string[], right: string[]): boolean {
+  const leftSet = new Set(left)
+  const rightSet = new Set(right)
+  return leftSet.size === rightSet.size && [...leftSet].every((value) => rightSet.has(value))
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -942,6 +948,7 @@ export type UpdateExternalMcpConnectionInput = {
   url: string
   authType: "oauth" | "apikey" | "none"
   credentialMode: "shared" | "per_member"
+  disabledToolNames: string[]
   apiKey?: string
   oauthClient?: {
     clientId: string
@@ -1067,6 +1074,7 @@ export async function updateExternalMcpConnection(
       ? Boolean(existingClient || input.oauthClient)
       : Boolean(input.oauthClient && (!existingClient || clientIdChanged || clientSecretChanged || clientExtraChanged))
     const apiKeyChanged = input.apiKey !== undefined && existing.apiKey !== input.apiKey
+    const disabledToolsChanged = !sameStringSet(existing.disabledToolNames ?? [], input.disabledToolNames)
     const rowFieldsChanged = existing.name !== input.name
       || existing.url !== input.url
       || existing.authType !== input.authType
@@ -1074,6 +1082,7 @@ export async function updateExternalMcpConnection(
       || apiKeyChanged
       || identityChanged
       || oauthConfigurationChanged
+      || disabledToolsChanged
     const changed = rowFieldsChanged || accessChanged || oauthClientChanged
 
     if (!changed) {
@@ -1105,6 +1114,7 @@ export async function updateExternalMcpConnection(
           authType: input.authType,
           credentialMode: input.credentialMode,
           oauthConfiguration: input.authType === "oauth" ? input.oauthConfiguration ?? null : null,
+          disabledToolNames: unique(input.disabledToolNames),
           apiKey: input.authType === "apikey" ? input.apiKey ?? null : null,
           accessToken: null,
           refreshToken: null,
@@ -1129,6 +1139,7 @@ export async function updateExternalMcpConnection(
           url: input.url,
           authType: input.authType,
           credentialMode: input.credentialMode,
+          disabledToolNames: unique(input.disabledToolNames),
           ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
           ...(input.oauthConfiguration !== undefined ? { oauthConfiguration: input.oauthConfiguration } : {}),
           ...(input.authType === "none" && input.validatedAt ? { connectedAt: input.validatedAt } : {}),

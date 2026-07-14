@@ -282,6 +282,7 @@ test("admin inspects a live Den-managed MCP catalog without calling a tool", asy
   expect(await response.json()).toEqual({
     tools: [{
       name: "search_incidents",
+      disabled: false,
       title: "Search incidents",
       description: "Search incidents by query and optional status.",
       inputSchema: {
@@ -307,6 +308,22 @@ test("admin inspects a live Den-managed MCP catalog without calling a tool", asy
   })
   expect(observedMethods).toContain("tools/list")
   expect(observedMethods).not.toContain("tools/call")
+})
+
+test("tool catalog identifies tools disabled by the organization", async () => {
+  await db.update(schema.ExternalMcpConnectionTable)
+    .set({ disabledToolNames: ["search_incidents"] })
+    .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connectionId))
+  try {
+    const response = await request(connectionId)
+    expect(response.status).toBe(200)
+    const payload = await response.json() as { tools: Array<{ name: string; disabled: boolean }> }
+    expect(payload.tools).toEqual([expect.objectContaining({ name: "search_incidents", disabled: true })])
+  } finally {
+    await db.update(schema.ExternalMcpConnectionTable)
+      .set({ disabledToolNames: null })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connectionId))
+  }
 })
 
 test("a validated no-auth MCP is immediately connected and inspectable", async () => {

@@ -667,6 +667,38 @@ test("external capability execution reports schema guidance but always attempts 
   expect(mutableSchemaServer.toolCalls()).toBe(5)
 })
 
+test("disabled tools are hidden from discovery and rejected before provider execution", async () => {
+  if (!slackServer) throw new Error("Slack MCP server was not started")
+
+  const seed = await seedOrganization("disabled-tool-policy")
+  const connection = await createGrantedConnection(seed, {
+    name: "Slack",
+    authType: "none",
+    credentialMode: "shared",
+    url: slackServer.url,
+  })
+  await db.update(schema.ExternalMcpConnectionTable)
+    .set({ disabledToolNames: ["slack-send-message"] })
+    .where(eq(schema.ExternalMcpConnectionTable.id, connection.id))
+
+  const matches = await search(seed, "slack-send-message")
+  expect(matches.map((match) => match.name)).not.toContain(`mcp:${connection.id}:slack-send-message`)
+
+  const result = await executeExternalCapability({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId: connection.id,
+    toolName: "slack-send-message",
+    args: { text: "must not reach provider" },
+    redirectUriBase,
+  })
+  expect(result).toEqual({
+    ok: false,
+    error: "unknown_capability",
+    message: 'Tool "slack-send-message" is disabled for "Slack" by an organization admin.',
+  })
+})
+
 test("shared-oauth-never-connected: Connections list sees Slack and search returns needs_connection", async () => {
   if (!slackServer) throw new Error("Slack MCP server was not started")
 

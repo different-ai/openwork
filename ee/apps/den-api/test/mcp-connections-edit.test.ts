@@ -353,6 +353,24 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     })
   })
 
+  test("tool policy edit persists a unique deny-list without reconnecting", async () => {
+    const created = await createConnection({ name: "Policy MCP", authType: "none", credentialMode: "shared" })
+    const response = await humanRequest({
+      connectionId: created.id,
+      body: updateBody(created, {
+        disabledToolNames: ["delete_record", "delete_record", "send_message"],
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await responseRecord(response)).toMatchObject({
+      disabledToolNames: ["delete_record", "send_message"],
+      identityChanged: false,
+      reconnectionRequired: false,
+    })
+    expect((await currentConnection(created.id)).disabledToolNames).toEqual(["delete_record", "send_message"])
+  })
+
   test("URL change clears shared and per-member OAuth identity state", async () => {
     const created = await createConnection({ name: "Personal OAuth", authType: "oauth", credentialMode: "per_member" })
     await db.update(schema.ExternalMcpConnectionTable).set({

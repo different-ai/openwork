@@ -263,6 +263,8 @@ const updateConnectionBodySchema = z.object({
   url: externalMcpUrlSchema,
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
+  /** Full replacement of the organization-admin tool deny-list. */
+  disabledToolNames: z.array(z.string().trim().min(1).max(255)).max(500).optional(),
   /** Omitted means preserve only when the connection identity is unchanged. Never returned by any read route. */
   apiKey: z.string().trim().min(1).max(4096).optional(),
   oauthClient: z.object({
@@ -317,6 +319,7 @@ const connectionResponseSchema = z.object({
   url: z.string(),
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
+  disabledToolNames: z.array(z.string()),
   connected: z.boolean(),
   connectedAt: z.string().nullable(),
   /** Safe creator display label for admin/manageable rows. */
@@ -381,6 +384,7 @@ const connectionToolAnnotationsSchema = z.object({
 
 const connectionToolSchema = z.object({
   name: z.string(),
+  disabled: z.boolean(),
   title: z.string().optional(),
   description: z.string().optional(),
   inputSchema: z.record(z.string(), z.unknown()),
@@ -968,6 +972,7 @@ async function toConnectionResponse(
     connected,
     connectedAt: connectedAt ? connectedAt.toISOString() : null,
     ...(options.includeAccess ? { createdByName: options.createdByName ?? null } : {}),
+    disabledToolNames: row.disabledToolNames ?? [],
     updatedAt: row.updatedAt.toISOString(),
     connectedForMe,
     needsReconnect,
@@ -1622,6 +1627,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({
           tools: tools.map((tool) => ({
             name: tool.name,
+            disabled: (connection.disabledToolNames ?? []).includes(tool.name),
             ...(tool.title ? { title: tool.title } : {}),
             ...(tool.description ? { description: tool.description } : {}),
             inputSchema: tool.inputSchema,
@@ -2082,6 +2088,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         url: body.url,
         authType: body.authType,
         credentialMode: body.credentialMode,
+        disabledToolNames: [...new Set(body.disabledToolNames ?? connection.disabledToolNames ?? [])],
         ...(body.apiKey !== undefined ? { apiKey: body.apiKey } : {}),
         ...(body.oauthClient ? {
           oauthClient: {

@@ -1,0 +1,1 @@
+ALTER TABLE `external_mcp_connection` ADD `disabled_tool_names` json;

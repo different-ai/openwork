@@ -734,6 +734,7 @@ async function probeExternalMcpConnection(input: {
   }
 
   for (const tool of tools) {
+    if ((connection.disabledToolNames ?? []).includes(tool.name)) continue
     const summary = tool.description ?? tool.title ?? tool.name
     const nameTokens = tokenize(`${connection.name} ${tool.name}`)
     const summaryTokens = tokenize(summary)
@@ -1003,6 +1004,14 @@ export async function executeExternalCapability(input: {
       error: "needs_connection",
       message,
       connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
+    }
+  }
+
+  if ((connection.disabledToolNames ?? []).includes(input.toolName)) {
+    return {
+      ok: false,
+      error: "unknown_capability",
+      message: `Tool "${input.toolName}" is disabled for "${connection.name}" by an organization admin.`,
     }
   }
 

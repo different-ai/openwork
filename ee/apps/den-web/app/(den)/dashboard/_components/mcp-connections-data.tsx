@@ -43,6 +43,7 @@ export type ExternalMcpConnection = {
   url: string;
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
+  disabledToolNames: string[];
   connected: boolean;
   connectedAt: string | null;
   createdByName?: string | null;
@@ -130,6 +131,7 @@ export type McpIssuerReview = {
 
 export type ExternalMcpTool = {
   name: string;
+  disabled: boolean;
   title?: string;
   description?: string;
   inputSchema: Record<string, unknown>;
@@ -469,6 +471,7 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
     ...connection,
     requiredBy: parseRequiredBy(connection.requiredBy),
     identityManagedBy: parseRequiredBy(connection.identityManagedBy),
+    disabledToolNames: isStringArray(connection.disabledToolNames) ? connection.disabledToolNames : [],
     updatedAt: typeof connection.updatedAt === "string" ? connection.updatedAt : null,
     ...(typeof connection.createdByName === "string" || connection.createdByName === null ? { createdByName: connection.createdByName } : {}),
     ...(typeof connection.needsReconnect === "boolean" ? { needsReconnect: connection.needsReconnect } : {}),
@@ -539,6 +542,7 @@ export type UpdateMcpConnectionInput = {
   url: string;
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
+  disabledToolNames: string[];
   apiKey?: string;
   oauthClient?: {
     clientId: string;

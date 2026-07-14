@@ -178,6 +178,14 @@ export const ExternalMcpConnectionTable = mysqlTable(
      *   trail — right for Notion/Linear-style personal-permission SaaS.
      */
     credentialMode: mysqlEnum("credential_mode", externalMcpCredentialModeValues).notNull().default("shared"),
+    /**
+     * Tool names explicitly blocked by an organization admin. A deny-list
+     * keeps newly discovered provider tools enabled by default while making
+     * the policy durable if a provider temporarily removes and restores a
+     * tool. Enforcement happens in Den before discovery results are exposed
+     * to agents and again immediately before execution.
+     */
+    disabledToolNames: json("disabled_tool_names").$type<string[]>(),
     /** Only set when authType = "apikey". Sent as a Bearer token. */
     apiKey: encryptedTextColumn("api_key"),
     /**
