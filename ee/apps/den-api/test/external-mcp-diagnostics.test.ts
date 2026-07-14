@@ -702,6 +702,26 @@ describe("external MCP diagnostics", () => {
     expect(resetFlags).toEqual([false, false])
   })
 
+  test("allows tool execution to use a longer bounded request timeout", async () => {
+    const {
+      createExternalMcpLifecycleDeadline,
+      runExternalMcpRequestWithinDeadline,
+    } = await import("../src/capability-sources/external-mcp-client.js")
+    const diagnostic = new ExternalMcpDiagnosticTracker("req_tool_timeout")
+    const options = await runExternalMcpRequestWithinDeadline({
+      diagnostic,
+      deadline: createExternalMcpLifecycleDeadline(150_000),
+      phase: "MCP_TOOL_EXECUTION",
+      requestTimeoutMs: 120_000,
+      operation: async (requestOptions) => requestOptions,
+    })
+
+    expect(options.timeout).toBe(120_000)
+    expect(options.maxTotalTimeout).toBeGreaterThanOrEqual(149_000)
+    expect(options.maxTotalTimeout).toBeLessThanOrEqual(150_000)
+    expect(options.resetTimeoutOnProgress).toBe(false)
+  })
+
   test("fails a hung catalog page at the absolute lifecycle deadline", async () => {
     const {
       collectExternalMcpToolPages,

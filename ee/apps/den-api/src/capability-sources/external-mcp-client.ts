@@ -56,6 +56,8 @@ import {
 const CLIENT_NAME = "OpenWork"
 const EXTERNAL_MCP_CALL_TIMEOUT_MS = 30_000
 const EXTERNAL_MCP_LIFECYCLE_TIMEOUT_MS = 45_000
+const EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS = 120_000
+const EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS = 150_000
 const EXTERNAL_MCP_TOOL_PAGE_LIMIT = 20
 const EXTERNAL_MCP_TOOL_ITEM_LIMIT = 2_000
 const EXTERNAL_MCP_TOOL_NAME_LIMIT_BYTES = 512
@@ -119,6 +121,7 @@ export async function runExternalMcpRequestWithinDeadline<T>(input: {
   deadline: ExternalMcpLifecycleDeadline
   diagnostic: ExternalMcpDiagnosticTracker
   phase: ExternalMcpDiagnosticPhase
+  requestTimeoutMs?: number
   operation: (options: RequestOptions) => Promise<T>
 }): Promise<T> {
   input.diagnostic.begin(input.phase)
@@ -128,7 +131,7 @@ export async function runExternalMcpRequestWithinDeadline<T>(input: {
   const controller = new AbortController()
   const options: RequestOptions = {
     signal: AbortSignal.any([controller.signal, input.deadline.signal]),
-    timeout: Math.max(1, Math.min(EXTERNAL_MCP_CALL_TIMEOUT_MS, remaining)),
+    timeout: Math.max(1, Math.min(input.requestTimeoutMs ?? EXTERNAL_MCP_CALL_TIMEOUT_MS, remaining)),
     maxTotalTimeout: remaining,
     resetTimeoutOnProgress: false,
   }
@@ -917,7 +920,7 @@ export async function callExternalMcpTool(input: {
   diagnosticReferenceId?: string
 }) {
   const client = buildClient()
-  const deadline = createExternalMcpLifecycleDeadline()
+  const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
   const { transport, diagnostic } = buildTransport(
     input.connection,
     input.redirectUri,
@@ -940,6 +943,7 @@ export async function callExternalMcpTool(input: {
       deadline,
       diagnostic,
       phase: "MCP_TOOL_EXECUTION",
+      requestTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
       operation: (options) => client.callTool({ name: input.toolName, arguments: input.args }, undefined, options),
     })
     if (result.isError) {
