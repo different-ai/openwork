@@ -41,6 +41,7 @@ import {
 } from "./connect-link.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
+import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import {
   applyWindowsTaskbarIcon,
   windowsBrandAppUserModelId,
@@ -1978,14 +1979,26 @@ const desktopCommandHandlers = {
       const url = String(args[0] ?? "").trim();
       const init = args[1] ?? {};
       if (!url) throw new Error("URL is required.");
-      const timeoutMs = Number(init.timeoutMs);
-      const response = await electronNet.fetch(url, {
+      /** @type {RequestInit} */
+      const requestInit = {
         method: typeof init.method === "string" ? init.method : undefined,
         headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
         body: typeof init.body === "string" ? init.body : undefined,
-        signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
         credentials: "omit",
         cache: "no-store",
+      };
+      if (init.agentContextDiagnostics && typeof init.agentContextDiagnostics === "object") {
+        return fetchAgentContextDiagnosticsResponse(
+          (input, fetchInit) => electronNet.fetch(input, fetchInit),
+          url,
+          requestInit,
+          init.agentContextDiagnostics.deadlineAtMs,
+        );
+      }
+      const timeoutMs = Number(init.timeoutMs);
+      const response = await electronNet.fetch(url, {
+        ...requestInit,
+        signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
       });
       return {
         status: response.status,

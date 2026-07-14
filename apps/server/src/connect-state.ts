@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
@@ -9,16 +9,31 @@ import {
   type CloudMcpServerMetadata,
 } from "./cloud-mcp-health.js";
 import { googleWorkspaceLegacyConfigured } from "./extensions/google-workspace.js";
-import { runtimeStorageDir } from "./runtime-opencode-config-store.js";
+import { readBoundedRegularTextFile } from "./jsonc.js";
+import {
+  inspectRuntimeOpencodeConfigState,
+  runtimeMcpMap,
+  runtimeStorageDir,
+} from "./runtime-opencode-config-store.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
 import { ensureDir } from "./utils.js";
 
 const CONNECT_STATE_FILE = "connect-state.json";
+const CONNECT_STATE_MAX_BYTES = 16 * 1024;
+const CONNECT_SNAPSHOT_MAX_RUNTIME_ROWS = 100;
+const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
 type PersistedConnectState = {
   connectEnabled: boolean;
   updatedAt: number;
+};
+
+export type ConnectStateInspectionStatus = "available" | "missing" | "invalid" | "unreadable";
+
+export type ConnectStateInspection = {
+  status: ConnectStateInspectionStatus;
+  state: PersistedConnectState;
 };
 
 export type ConnectSnapshot = {
@@ -46,6 +61,18 @@ export type ConnectSnapshotOptions = {
   createWorkspaceOpencodeClient?: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
 };
 
+export type ConnectSnapshotInspection = {
+  status: ConnectStateInspectionStatus;
+  snapshot: ConnectSnapshot;
+};
+
+export type ConnectStateInspectionOptions = {
+  maxBytes?: number;
+  maxRuntimeRows?: number;
+  runtimeConfigMaxBytes?: number;
+  signal?: AbortSignal;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -54,13 +81,14 @@ function connectStatePath(config: ServerConfig): string {
   return join(runtimeStorageDir(config), CONNECT_STATE_FILE);
 }
 
-function normalizeConnectState(value: unknown): PersistedConnectState {
-  if (!isRecord(value) || typeof value.connectEnabled !== "boolean") {
-    return { connectEnabled: false, updatedAt: 0 };
-  }
+const DEFAULT_CONNECT_STATE: PersistedConnectState = { connectEnabled: false, updatedAt: 0 };
+
+function normalizeConnectState(value: Record<string, unknown>): PersistedConnectState {
   return {
-    connectEnabled: value.connectEnabled,
-    updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : 0,
+    connectEnabled: value.connectEnabled as boolean,
+    updatedAt: typeof value.updatedAt === "number" && Number.isFinite(value.updatedAt)
+      ? value.updatedAt
+      : 0,
   };
 }
 
@@ -78,11 +106,37 @@ export function googleWorkspaceConnectGuidance(cloudHealthOrReady: CloudMcpHealt
 }
 
 export async function readConnectState(config: ServerConfig): Promise<PersistedConnectState> {
+  return (await inspectConnectState(config)).state;
+}
+
+/**
+ * Read the persisted Connect switch without collapsing corruption or I/O
+ * failures into the legitimate first-run default. Diagnostics use the status
+ * to avoid reporting an unreadable state file as a healthy disabled switch.
+ */
+export async function inspectConnectState(
+  config: ServerConfig,
+  options?: ConnectStateInspectionOptions,
+): Promise<ConnectStateInspection> {
   try {
-    const raw = await readFile(connectStatePath(config), "utf8");
-    return normalizeConnectState(JSON.parse(raw));
-  } catch {
-    return { connectEnabled: false, updatedAt: 0 };
+    const raw = await readBoundedRegularTextFile(connectStatePath(config), {
+      maxBytes: options?.maxBytes ?? CONNECT_STATE_MAX_BYTES,
+      signal: options?.signal,
+    });
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed) || typeof parsed.connectEnabled !== "boolean") {
+      return { status: "invalid", state: DEFAULT_CONNECT_STATE };
+    }
+    return { status: "available", state: normalizeConnectState(parsed) };
+  } catch (error) {
+    options?.signal?.throwIfAborted();
+    if (isRecord(error) && error.code === "ENOENT") {
+      return { status: "missing", state: DEFAULT_CONNECT_STATE };
+    }
+    if (error instanceof SyntaxError) {
+      return { status: "invalid", state: DEFAULT_CONNECT_STATE };
+    }
+    return { status: "unreadable", state: DEFAULT_CONNECT_STATE };
   }
 }
 
@@ -192,6 +246,78 @@ export async function getConnectSnapshot(config: ServerConfig, options: ConnectS
       legacyConfigured: googleWorkspaceLegacyConfigured(),
     },
   };
+}
+
+/**
+ * Inspect Connect state without calling OpenCode or a remote MCP. This passive
+ * path is intentionally separate from getConnectSnapshot's active health
+ * check so diagnostics cannot create an egress attempt while building its
+ * eligibility report.
+ */
+export async function inspectConnectSnapshot(
+  config: ServerConfig,
+  options?: ConnectStateInspectionOptions,
+): Promise<ConnectSnapshotInspection> {
+  const stateInspection = await inspectConnectState(config, options);
+  const runtimeInspection = await inspectConnectRuntime(config, options);
+  return {
+    status: runtimeInspection.complete
+      || stateInspection.status === "invalid"
+      || stateInspection.status === "unreadable"
+      ? stateInspection.status
+      : "unreadable",
+    snapshot: {
+      connectEnabled: stateInspection.state.connectEnabled,
+      connectCatalogEnabled: stateInspection.state.connectEnabled,
+      cloudMcpPresent: runtimeInspection.cloudMcpPresent,
+      cloudHealth: null,
+      workspace: {
+        resolution: "unknown",
+        id: null,
+        directory: null,
+        reason: "Passive diagnostics inspection does not probe OpenCode health",
+      },
+      googleWorkspace: { legacyConfigured: googleWorkspaceLegacyConfigured() },
+    },
+  };
+}
+
+async function inspectConnectRuntime(
+  config: ServerConfig,
+  options?: ConnectStateInspectionOptions,
+): Promise<{ cloudMcpPresent: boolean; complete: boolean }> {
+  const configuredMaxRows = options?.maxRuntimeRows;
+  const maxRuntimeRows = typeof configuredMaxRows === "number"
+    && Number.isSafeInteger(configuredMaxRows)
+    && configuredMaxRows > 0
+    ? configuredMaxRows
+    : CONNECT_SNAPSHOT_MAX_RUNTIME_ROWS;
+  let inspectedRows = 0;
+
+  for (const workspace of config.workspaces) {
+    options?.signal?.throwIfAborted();
+    if (workspace.workspaceType !== "local") continue;
+    if (inspectedRows >= maxRuntimeRows) {
+      return { cloudMcpPresent: false, complete: false };
+    }
+    inspectedRows += 1;
+
+    const inspection = await inspectRuntimeOpencodeConfigState(config, workspace.id, {
+      maxBytes: options?.runtimeConfigMaxBytes,
+      signal: options?.signal,
+    });
+    if (inspection.status === "unreadable" || inspection.status === "invalid-row") {
+      return { cloudMcpPresent: false, complete: false };
+    }
+    if (Object.hasOwn(runtimeMcpMap(inspection.config), OPENWORK_CLOUD_MCP_NAME)) {
+      return { cloudMcpPresent: true, complete: true };
+    }
+    if (inspection.status === "database-missing" || inspection.status === "table-missing") {
+      break;
+    }
+  }
+
+  return { cloudMcpPresent: false, complete: true };
 }
 
 export function shouldGateLegacyGoogleWorkspace(snapshot: ConnectSnapshot): boolean {

@@ -5,6 +5,7 @@ import { evaluateEnablement, type EnablementContext } from "../../../app/enablem
 import type { EnablementResult } from "../../../app/extensions";
 import type { DenExternalMcpConnection, DenOrgMarketplaceResolved, DenOrgPlugin } from "../../../app/lib/den";
 import type { McpServerEntry } from "../../../app/types";
+import { connectionNeedsReconnect } from "../connections/native-provider-connections";
 
 export type ExtensionItemSource = "builtin" | "marketplace" | "org-connection" | "mcp-directory" | "skill";
 export type ExtensionInstallState = "available" | "installed" | "update_available";
@@ -70,20 +71,20 @@ function cloudPluginStatus(imported: CloudImportedPlugin | null, plugin: DenOrgP
   return "installed";
 }
 
-export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect">) {
-  return connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe && connection.needsReconnect !== true;
+export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
+  return connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe && !connectionNeedsReconnect(connection);
 }
 
-export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect">) {
+export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
   if (connection.credentialMode === "shared") return "One org account managed by your organization — the AI acts as it.";
-  if (connection.connectedForMe && connection.needsReconnect === true) return "Reconnect your account to grant newly requested permissions.";
+  if (connection.connectedForMe && connectionNeedsReconnect(connection)) return "Reconnect your account to grant newly requested permissions.";
   if (connection.connectedForMe) return "Connected with your own account.";
   return "Available from your organization. Connect your own account to use it.";
 }
 
-export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect">) {
+export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
   if (connection.credentialMode === "shared") return "Managed by your organization";
-  if (connection.connectedForMe && connection.needsReconnect === true) return "Reconnect";
+  if (connection.connectedForMe && connectionNeedsReconnect(connection)) return "Reconnect";
   if (connection.connectedForMe) return "Connected";
   return "Connect your account";
 }

@@ -1,7 +1,9 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useState } from "react";
-import { ArrowUpRight } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Activity, ArrowUpRight } from "lucide-react";
+import type { AgentContextDiagnosticsReport } from "@openwork/types/agent-context-diagnostics";
 
+import { serializeAgentContextDiagnosticsReport } from "@/app/lib/agent-context-diagnostics";
 import type { DenExternalMcpConnection, DenOrgPlugin } from "@/app/lib/den";
 import { mintCloudControlMcpToken, readDenSettings } from "@/app/lib/den";
 import { openDesktopUrl } from "@/app/lib/desktop";
@@ -13,7 +15,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { t } from "@/i18n";
 import { DenSignInSurface } from "@/react-app/domains/cloud/den-signin-surface";
 import { useDenAuth, type DenAuthStatus } from "@/react-app/domains/cloud/den-auth-provider";
-import { canDisconnectNativeProviderAccount } from "@/react-app/domains/connections/native-provider-connections";
+import {
+  canDisconnectNativeProviderAccount,
+  connectionNeedsReconnect,
+} from "@/react-app/domains/connections/native-provider-connections";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import {
   cloudReadinessConnectableConnectionId,
@@ -33,6 +38,7 @@ import {
   SettingsNotice,
   SettingsSection,
   SettingsSectionHeader,
+  SettingsSectionHeaderActions,
   SettingsSectionHeaderContent,
   SettingsSectionHeaderDescription,
   SettingsSectionHeaderTitle,
@@ -47,6 +53,10 @@ import {
   type CloudMcpOperationContext,
 } from "../../connections/cloud-mcp-reconciler";
 import { readCloudMcpUserState } from "../../connections/cloud-mcp-user-state";
+import {
+  AgentContextDiagnosticsErrorNotice,
+  AgentContextDiagnosticsReportView,
+} from "./agent-context-diagnostics-report";
 
 export type ConnectViewState = "loading" | "signin" | "active" | "pitch";
 
@@ -88,7 +98,72 @@ export type ConnectViewProps = {
   workspaceId: string | null;
   currentModel: OpenworkCloudMcpProviderModelContext | null;
   onCloudMcpHealthChange?: (health: OpenworkCloudMcpHealth | null) => void;
+  diagnosticsScopeKey: object;
+  diagnosticsAvailable: boolean;
+  diagnosticsUnavailableReason: "direct-remote-opencode" | null;
+  orgMcpConnections: ReturnType<typeof useOrgMcpConnections>;
+  onRunAgentDiagnostics: () => Promise<AgentContextDiagnosticsReport>;
 };
+
+export type DiagnosticsScope = {
+  key: object;
+  generation: number;
+};
+
+export type DiagnosticsScopeIdentitySignals = {
+  client: object | null;
+  workspaceCredential: string;
+  workspaceId: string;
+  workspaceType: string;
+  denBaseUrl: string;
+  denCredential: string;
+  denSignedIn: boolean;
+  organizationId: string;
+  principalId: string;
+};
+
+/**
+ * `useMemo` owns the signal comparison. The value crossing into ConnectView is
+ * deliberately an empty identity object so credentials and principal fields
+ * can invalidate stale results without becoming readable report state.
+ */
+export function createOpaqueDiagnosticsScopeKey(
+  _signals: DiagnosticsScopeIdentitySignals,
+): object {
+  return Object.freeze({});
+}
+
+export type ScopedDiagnosticsValue<T> = {
+  scope: DiagnosticsScope;
+  value: T;
+};
+
+export function readDiagnosticsValueForScope<T>(
+  scoped: ScopedDiagnosticsValue<T> | null,
+  scope: DiagnosticsScope,
+): T | null {
+  if (!scoped) return null;
+  if (scoped.scope.key !== scope.key || scoped.scope.generation !== scope.generation) return null;
+  return scoped.value;
+}
+
+type AgentDiagnosticsViewState = {
+  report: AgentContextDiagnosticsReport | null;
+  busy: boolean;
+  copying: boolean;
+  error: string | null;
+  copied: boolean;
+};
+
+function emptyAgentDiagnosticsViewState(): AgentDiagnosticsViewState {
+  return {
+    report: null,
+    busy: false,
+    copying: false,
+    error: null,
+    copied: false,
+  };
+}
 
 type CloudMarketplaceItem = ExtensionItem & { plugin: DenOrgPlugin };
 
@@ -296,7 +371,7 @@ function AgentAccessCard(props: {
   );
 }
 
-function ConnectIntro() {
+function ConnectIntro(props: { busy: boolean; disabled: boolean; onRun: () => void }) {
   return (
     <SettingsSection>
       <SettingsSectionHeader>
@@ -306,7 +381,20 @@ function ConnectIntro() {
             {t("connect.header_description")}
           </SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
+        <SettingsSectionHeaderActions>
+          <Button
+            data-testid="run-agent-diagnostics"
+            size="sm"
+            variant="outline"
+            disabled={props.busy || props.disabled}
+            onClick={props.onRun}
+          >
+            <Activity size={14} />
+            {props.busy ? t("connect.diagnostics_running") : t("connect.diagnostics_run")}
+          </Button>
+        </SettingsSectionHeaderActions>
       </SettingsSectionHeader>
+      <SettingsNotice>{t("connect.diagnostics_preflight_notice")}</SettingsNotice>
     </SettingsSection>
   );
 }
@@ -469,7 +557,9 @@ function ConnectOrganizationRow(props: {
 }) {
   const row = props.row;
   const pluginManifest = row.kind === "plugin" ? row.plugin.extension?.manifest : null;
-  const needsReconnect = row.kind === "connection" && row.connection.connectedForMe && row.connection.needsReconnect === true;
+  const needsReconnect = row.kind === "connection"
+    && row.connection.connectedForMe
+    && connectionNeedsReconnect(row.connection);
   const connectableConnectionId = row.kind === "plugin"
     ? cloudReadinessConnectableConnectionId(row.plugin.cloudReadiness)
     : row.connection.credentialMode === "per_member" && (!row.connection.connectedForMe || needsReconnect)
@@ -681,9 +771,37 @@ export function ConnectView(props: ConnectViewProps) {
   const desktopConfig = useDesktopConfig();
   const connectEnabled = useConnectEnabled();
   const cloudSession = useCloudSession();
-  const orgMcpConnections = useOrgMcpConnections();
+  const orgMcpConnections = props.orgMcpConnections;
   const marketplaceItems = props.marketplaceItems ?? [];
   const refreshMarketplaceItems = props.refreshMarketplaceItems;
+  const diagnosticsRunRef = useRef(0);
+  const diagnosticsInFlightRef = useRef<{ run: number; scope: DiagnosticsScope } | null>(null);
+  const diagnosticsCopyRunRef = useRef(0);
+  const diagnosticsCopyInFlightRef = useRef<{
+    run: number;
+    scope: DiagnosticsScope;
+    report: AgentContextDiagnosticsReport;
+  } | null>(null);
+  const diagnosticsScopeRef = useRef<DiagnosticsScope>({
+    key: props.diagnosticsScopeKey,
+    generation: 0,
+  });
+  if (diagnosticsScopeRef.current.key !== props.diagnosticsScopeKey) {
+    diagnosticsScopeRef.current = {
+      key: props.diagnosticsScopeKey,
+      generation: diagnosticsScopeRef.current.generation + 1,
+    };
+    diagnosticsInFlightRef.current = null;
+    diagnosticsCopyRunRef.current += 1;
+    diagnosticsCopyInFlightRef.current = null;
+  }
+  const diagnosticsScope = diagnosticsScopeRef.current;
+  const [scopedDiagnosticsState, setScopedDiagnosticsState] = useState<ScopedDiagnosticsValue<AgentDiagnosticsViewState>>(() => ({
+    scope: diagnosticsScope,
+    value: emptyAgentDiagnosticsViewState(),
+  }));
+  const diagnosticsState = readDiagnosticsValueForScope(scopedDiagnosticsState, diagnosticsScope)
+    ?? emptyAgentDiagnosticsViewState();
   const connectionsCount = orgMcpConnections.connections.length;
   const activeOrgSelected = Boolean(cloudSession.activeOrganization?.id.trim() || readDenSettings().activeOrgId?.trim());
   const signedInLoading = denAuth.status === "signed_in"
@@ -704,10 +822,166 @@ export function ConnectView(props: ConnectViewProps) {
     void refreshMarketplaceItems?.();
   }, [connectEnabled, refreshMarketplaceItems, state]);
 
+  useEffect(() => {
+    setScopedDiagnosticsState((current) => readDiagnosticsValueForScope(current, diagnosticsScope) !== null
+      ? current
+      : { scope: diagnosticsScope, value: emptyAgentDiagnosticsViewState() });
+  }, [diagnosticsScope]);
+
+  const runAgentDiagnostics = async () => {
+    const inFlight = diagnosticsInFlightRef.current;
+    if (
+      !props.diagnosticsAvailable
+      || (inFlight?.scope.key === diagnosticsScope.key
+        && inFlight.scope.generation === diagnosticsScope.generation)
+    ) return;
+    const run = diagnosticsRunRef.current + 1;
+    diagnosticsRunRef.current = run;
+    const scope = diagnosticsScope;
+    diagnosticsInFlightRef.current = { run, scope };
+    diagnosticsCopyRunRef.current += 1;
+    diagnosticsCopyInFlightRef.current = null;
+    setScopedDiagnosticsState({
+      scope,
+      value: {
+        report: null,
+        busy: true,
+        copying: false,
+        error: null,
+        copied: false,
+      },
+    });
+    const isCurrentRun = () => {
+      const currentScope = diagnosticsScopeRef.current;
+      return diagnosticsRunRef.current === run
+        && currentScope.key === scope.key
+        && currentScope.generation === scope.generation;
+    };
+    try {
+      const report = await props.onRunAgentDiagnostics();
+      if (!isCurrentRun()) return;
+      setScopedDiagnosticsState({
+        scope,
+        value: {
+          report,
+          busy: true,
+          copying: false,
+          error: null,
+          copied: false,
+        },
+      });
+    } catch {
+      if (!isCurrentRun()) return;
+      setScopedDiagnosticsState({
+        scope,
+        value: {
+          report: null,
+          busy: true,
+          copying: false,
+          error: t("connect.diagnostics_run_failed"),
+          copied: false,
+        },
+      });
+    } finally {
+      if (!isCurrentRun()) return;
+      if (diagnosticsInFlightRef.current?.run === run) diagnosticsInFlightRef.current = null;
+      setScopedDiagnosticsState((current) => {
+        const value = readDiagnosticsValueForScope(current, scope);
+        return value ? { scope, value: { ...value, busy: false } } : current;
+      });
+    }
+  };
+
+  const copyDiagnosticsReport = async () => {
+    const scope = diagnosticsScope;
+    const report = diagnosticsState.report;
+    const currentScope = diagnosticsScopeRef.current;
+    const inFlight = diagnosticsCopyInFlightRef.current;
+    if (
+      !report
+      || currentScope.key !== scope.key
+      || currentScope.generation !== scope.generation
+      || (inFlight?.scope.key === scope.key
+        && inFlight.scope.generation === scope.generation
+        && inFlight.report === report)
+    ) return;
+    const run = diagnosticsCopyRunRef.current + 1;
+    diagnosticsCopyRunRef.current = run;
+    diagnosticsCopyInFlightRef.current = { run, scope, report };
+    setScopedDiagnosticsState((current) => {
+      const value = readDiagnosticsValueForScope(current, scope);
+      if (!value || value.report !== report) return current;
+      return {
+        scope,
+        value: {
+          ...value,
+          copying: true,
+          copied: false,
+          error: null,
+        },
+      };
+    });
+    const isCurrentCopy = () => {
+      const latestScope = diagnosticsScopeRef.current;
+      return diagnosticsCopyRunRef.current === run
+        && latestScope.key === scope.key
+        && latestScope.generation === scope.generation;
+    };
+    try {
+      await navigator.clipboard.writeText(serializeAgentContextDiagnosticsReport(report));
+      if (!isCurrentCopy()) return;
+      setScopedDiagnosticsState((current) => {
+        const value = readDiagnosticsValueForScope(current, scope);
+        if (!value || value.report !== report) return current;
+        return { scope, value: { ...value, copied: true, error: null } };
+      });
+    } catch {
+      if (!isCurrentCopy()) return;
+      setScopedDiagnosticsState((current) => {
+        const value = readDiagnosticsValueForScope(current, scope);
+        if (!value || value.report !== report) return current;
+        return {
+          scope,
+          value: {
+            ...value,
+            copied: false,
+            error: t("connect.diagnostics_copy_failed"),
+          },
+        };
+      });
+    } finally {
+      if (!isCurrentCopy()) return;
+      if (diagnosticsCopyInFlightRef.current?.run === run) diagnosticsCopyInFlightRef.current = null;
+      setScopedDiagnosticsState((current) => {
+        const value = readDiagnosticsValueForScope(current, scope);
+        if (!value || value.report !== report) return current;
+        return { scope, value: { ...value, copying: false } };
+      });
+    }
+  };
+
   return (
     <SettingsStack>
       <Separator />
-      <ConnectIntro />
+      <ConnectIntro
+        busy={diagnosticsState.busy}
+        disabled={!props.diagnosticsAvailable}
+        onRun={() => void runAgentDiagnostics()}
+      />
+      {props.diagnosticsUnavailableReason === "direct-remote-opencode" ? (
+        <div data-testid="agent-diagnostics-unavailable-direct-opencode">
+          <SettingsNotice>{t("connect.diagnostics_unavailable_direct_opencode")}</SettingsNotice>
+        </div>
+      ) : null}
+      {diagnosticsState.error ? <AgentContextDiagnosticsErrorNotice message={diagnosticsState.error} /> : null}
+      {diagnosticsState.report ? (
+        <AgentContextDiagnosticsReportView
+          report={diagnosticsState.report}
+          copied={diagnosticsState.copied}
+          copying={diagnosticsState.copying}
+          onCopy={copyDiagnosticsReport}
+        />
+      ) : null}
       {state === "loading" ? <ConnectLoadingPanel /> : null}
       {state === "signin" ? <ConnectSignInPanel {...props} /> : null}
       {state === "active" ? (

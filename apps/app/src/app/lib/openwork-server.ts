@@ -1,5 +1,15 @@
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
-import { desktopFetch } from "./desktop";
+import {
+  agentContextDiagnosticsReportSchema,
+  agentContextDiagnosticsRequestSchema,
+  type AgentContextDiagnosticsReport,
+  type AgentContextDiagnosticsRequest,
+} from "@openwork/types/agent-context-diagnostics";
+import {
+  AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
+  requestAgentContextDiagnosticsPayload,
+} from "./agent-context-diagnostics-transport";
+import { desktopFetch, desktopFetchAgentContextDiagnostics } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
@@ -1174,6 +1184,47 @@ async function requestJson<T>(
   return json as T;
 }
 
+async function requestAgentContextDiagnosticsJson(
+  baseUrl: string,
+  path: string,
+  options: {
+    token?: string;
+    hostToken?: string;
+    body: AgentContextDiagnosticsRequest;
+    timeoutMs: number;
+  },
+): Promise<unknown> {
+  const url = `${baseUrl}${path}`;
+  const result = await requestAgentContextDiagnosticsPayload({
+    url,
+    init: {
+      method: "POST",
+      headers: buildHeaders(options.token, options.hostToken),
+      body: JSON.stringify(options.body),
+    },
+    timeoutMs: options.timeoutMs,
+    fetchImpl: (input, init, deadlineAtMs) => isDesktopRuntime()
+      ? desktopFetchAgentContextDiagnostics(input, init, deadlineAtMs)
+      : globalThis.fetch(input, init),
+  });
+
+  if (!result.response.ok) {
+    const payload = result.payload;
+    const code = payload && typeof payload === "object" && "code" in payload && typeof payload.code === "string"
+      ? payload.code
+      : "request_failed";
+    const message = payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string"
+      ? payload.message
+      : result.response.statusText;
+    const details = payload && typeof payload === "object" && "details" in payload
+      ? payload.details
+      : undefined;
+    throw new OpenworkServerError(result.response.status, code, message, details);
+  }
+
+  return result.payload;
+}
+
 async function requestMultipartRaw(
   baseUrl: string,
   path: string,
@@ -1248,6 +1299,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     deleteSession: 12_000,
     sessionRead: 12_000,
     status: 6_000,
+    diagnostics: AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
     config: 10_000,
     cloudMcpHealth: 12_000,
     cloudMcpReconcile: 60_000,
@@ -1720,6 +1772,23 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           timeoutMs: timeouts.cloudMcpReconcile,
         },
       ),
+    runAgentContextDiagnostics: async (
+      workspaceId: string,
+      input: AgentContextDiagnosticsRequest,
+    ): Promise<AgentContextDiagnosticsReport> => {
+      const body = agentContextDiagnosticsRequestSchema.parse(input);
+      const payload = await requestAgentContextDiagnosticsJson(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/diagnostics/agent-context`,
+        {
+          token,
+          hostToken,
+          body,
+          timeoutMs: timeouts.diagnostics,
+        },
+      );
+      return agentContextDiagnosticsReportSchema.parse(payload);
+    },
     addMcp: (workspaceId: string, payload: { name: string; config: Record<string, unknown> }) =>
       requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, {
         token,

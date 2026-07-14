@@ -1,3 +1,4 @@
+export * from "./agent-context-diagnostics"
 export * from "./den/desktop-policies"
 export * from "./den/egress-diagnostics"
 export * from "./den/inference"

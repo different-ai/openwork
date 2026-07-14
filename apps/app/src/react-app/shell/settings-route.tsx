@@ -20,6 +20,11 @@ import {
 import { resolveWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
 import {
+  collectAgentContextDiagnosticObservations,
+  isAgentContextDiagnosticsWorkspaceAllowed,
+  resolveOrganizationConnectionsProbe,
+} from "@/app/lib/agent-context-diagnostics";
+import {
   getInitialThemeMode,
   setThemeMode as setAppThemeMode,
   type ThemeMode,
@@ -78,7 +83,10 @@ import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
-import { ConnectView } from "@/react-app/domains/settings/pages/connect-view";
+import {
+  ConnectView,
+  createOpaqueDiagnosticsScopeKey,
+} from "@/react-app/domains/settings/pages/connect-view";
 import { CloudMarketplacesView } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
 import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-providers-view";
 import { MemoryView } from "@/react-app/domains/settings/pages/memory-view";
@@ -1741,6 +1749,74 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     () => extensionItems.orgMcpConnectionItems.filter((item) => item.installState === "installed"),
     [extensionItems.orgMcpConnectionItems],
   );
+  const organizationConnectionsProbe = resolveOrganizationConnectionsProbe({
+    signedIn: cloudSession.isSignedIn,
+    activeOrganizationId: cloudSession.activeOrganization?.id,
+    loading: orgMcpConnections.loading,
+    loaded: orgMcpConnections.loaded,
+    error: orgMcpConnections.error,
+  });
+  const diagnosticsClient = selectedWorkspaceEndpoint?.client ?? openworkClient;
+  const diagnosticsWorkspaceAllowed = isAgentContextDiagnosticsWorkspaceAllowed(selectedWorkspace);
+  const diagnosticsAvailable = Boolean(
+    diagnosticsClient
+    && runtimeWorkspaceId?.trim()
+    && diagnosticsWorkspaceAllowed,
+  );
+  const diagnosticsUnavailableReason = selectedWorkspace?.workspaceType === "remote"
+    && selectedWorkspace.remoteType !== "openwork"
+    ? "direct-remote-opencode" as const
+    : null;
+  const diagnosticsWorkspaceType = selectedWorkspace?.workspaceType === "remote"
+    ? selectedWorkspace.remoteType ?? "legacy-opencode"
+    : "local";
+  const diagnosticsScopeKey = useMemo(() => createOpaqueDiagnosticsScopeKey({
+    client: diagnosticsClient,
+    workspaceCredential: selectedWorkspaceEndpoint?.token ?? token,
+    workspaceId: runtimeWorkspaceId?.trim() ?? "",
+    workspaceType: diagnosticsWorkspaceType,
+    denBaseUrl: cloudSession.baseUrl,
+    denCredential: cloudSession.authToken,
+    denSignedIn: cloudSession.isSignedIn,
+    organizationId: cloudSession.activeOrganization?.id ?? "signed-out",
+    principalId: cloudSession.user?.id ?? "signed-out",
+  }), [
+    cloudSession.activeOrganization?.id,
+    cloudSession.authToken,
+    cloudSession.baseUrl,
+    cloudSession.isSignedIn,
+    cloudSession.user?.id,
+    diagnosticsClient,
+    diagnosticsWorkspaceType,
+    runtimeWorkspaceId,
+    selectedWorkspaceEndpoint?.token,
+    token,
+  ]);
+  const runAgentContextDiagnostics = useCallback(async () => {
+    const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
+    const workspaceId = runtimeWorkspaceId?.trim() ?? "";
+    if (
+      !client
+      || !workspaceId
+      || !selectedWorkspace
+      || !isAgentContextDiagnosticsWorkspaceAllowed(selectedWorkspace)
+    ) {
+      throw new Error("Agent diagnostics require a connected workspace.");
+    }
+    const observations = await collectAgentContextDiagnosticObservations({
+      organizationConnections: orgMcpConnections.connections,
+      organizationConnectionsProbe,
+      workspaceType: selectedWorkspace.workspaceType,
+    });
+    return client.runAgentContextDiagnostics(workspaceId, observations);
+  }, [
+    openworkClient,
+    organizationConnectionsProbe,
+    orgMcpConnections.connections,
+    runtimeWorkspaceId,
+    selectedWorkspace,
+    selectedWorkspaceEndpoint,
+  ]);
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
     ? "Workspace was not found. Select a new workspace from the sidebar."
@@ -2241,6 +2317,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             workspaceId={runtimeWorkspaceId}
             currentModel={currentCloudMcpModel}
             onCloudMcpHealthChange={setCloudMcpHealth}
+            diagnosticsAvailable={diagnosticsAvailable}
+            diagnosticsScopeKey={diagnosticsScopeKey}
+            diagnosticsUnavailableReason={diagnosticsUnavailableReason}
+            orgMcpConnections={orgMcpConnections}
+            onRunAgentDiagnostics={runAgentContextDiagnostics}
           />
         );
       case "cloud-marketplaces":

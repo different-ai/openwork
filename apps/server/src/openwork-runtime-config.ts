@@ -30,6 +30,7 @@ import {
   runtimeMcpMap,
   runtimePluginList,
   runtimeStorageDir,
+  type RuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 
 const OPENWORK_AGENT_PROMPT = `You are OpenWork.
@@ -88,6 +89,12 @@ export async function buildOpenworkRuntimeConfigObject(
   workspaceId?: string,
 ): Promise<Record<string, unknown>> {
   const runtimeConfig = config && workspaceId ? await readRuntimeOpencodeConfig(config, workspaceId) : {};
+  return buildOpenworkRuntimeConfigObjectFromSnapshot(runtimeConfig);
+}
+
+export function buildOpenworkRuntimeConfigObjectFromSnapshot(
+  runtimeConfig: RuntimeOpencodeConfig,
+): Record<string, unknown> {
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
   return {
     ...runtimeConfig,

@@ -296,6 +296,9 @@ export type DesktopFetchInit = {
   headers?: Record<string, string>;
   body?: string;
   timeoutMs?: number;
+  agentContextDiagnostics?: {
+    deadlineAtMs: number;
+  };
 };
 
 export type DesktopFetchResult = {

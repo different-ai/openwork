@@ -262,11 +262,16 @@ function isLoopbackUrl(input: RequestInfo | URL): boolean {
   }
 }
 
-export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
-  if (isLoopbackUrl(input)) {
-    return globalThis.fetch(input, init);
-  }
+type DesktopFetchMainOptions = {
+  timeoutMs?: number;
+  agentContextDiagnosticsDeadlineAtMs?: number;
+};
 
+async function desktopFetchThroughMain(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  options: DesktopFetchMainOptions = {},
+): Promise<Response> {
   // Extract method/headers/body from either a Request object or the (input, init)
   // pair. The OpenCode SDK calls fetch(request) (no init), so reading these only
   // from `init` would silently drop the Authorization header and the POST body
@@ -295,7 +300,16 @@ export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
     body = typeof init?.body === "string" ? init.body : undefined;
   }
 
-  const result = await invokeElectronHelper("__fetch", url, { method, headers, body });
+  const diagnosticsDeadlineAtMs = options.agentContextDiagnosticsDeadlineAtMs;
+  const result = await invokeElectronHelper("__fetch", url, {
+    method,
+    headers,
+    body,
+    timeoutMs: options.timeoutMs,
+    agentContextDiagnostics: diagnosticsDeadlineAtMs === undefined
+      ? undefined
+      : { deadlineAtMs: diagnosticsDeadlineAtMs },
+  });
 
   // Response constructor rejects bodies for null-body status codes, so we
   // must pass null instead of an empty string for those.
@@ -307,40 +321,29 @@ export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
     statusText: result.statusText,
     headers: result.headers,
   });
+}
+
+export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
+  if (isLoopbackUrl(input)) {
+    return globalThis.fetch(input, init);
+  }
+  return desktopFetchThroughMain(input, init);
 };
 
 export async function desktopFetchViaMain(input: RequestInfo | URL, init?: RequestInit, timeoutMs?: number): Promise<Response> {
-  let url: string;
-  let method: string | undefined;
-  let headers: Record<string, string> | undefined;
-  let body: string | undefined;
+  return desktopFetchThroughMain(input, init, { timeoutMs });
+}
 
-  if (typeof Request !== "undefined" && input instanceof Request) {
-    url = input.url;
-    method = init?.method ?? input.method;
-    const headersSource = init?.headers ? new Headers(init.headers) : input.headers;
-    headers = Object.fromEntries(headersSource.entries());
-    if (typeof init?.body === "string") {
-      body = init.body;
-    } else if (input.body) {
-      body = await input.clone().text();
-    }
-  } else {
-    url = typeof input === "string" ? input : input.toString();
-    method = init?.method;
-    headers = init?.headers ? Object.fromEntries(new Headers(init.headers).entries()) : undefined;
-    body = typeof init?.body === "string" ? init.body : undefined;
+export async function desktopFetchAgentContextDiagnostics(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  deadlineAtMs: number,
+): Promise<Response> {
+  if (isLoopbackUrl(input)) {
+    return globalThis.fetch(input, init);
   }
-
-  const result = await invokeElectronHelper("__fetch", url, { method, headers, body, timeoutMs });
-
-  const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
-  const responseBody = NULL_BODY_STATUSES.has(result.status) ? null : result.body;
-
-  return new Response(responseBody, {
-    status: result.status,
-    statusText: result.statusText,
-    headers: result.headers,
+  return desktopFetchThroughMain(input, init, {
+    agentContextDiagnosticsDeadlineAtMs: deadlineAtMs,
   });
 }
 

@@ -8,7 +8,12 @@
 import { mkdir } from "node:fs/promises";
 import { resolveServerConfig, type CliArgs } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer, type OpencodeExecutionSnapshot } from "./managed-opencode.js";
-import { startServer, syncAllWorkspacesRuntimeMcpToEngine } from "./server.js";
+import {
+  clearTrustedOpencodeProcess,
+  registerTrustedOpencodeProcess,
+  startServer,
+  syncAllWorkspacesRuntimeMcpToEngine,
+} from "./server.js";
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
@@ -46,6 +51,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
 
   // Spawn managed OpenCode if requested and no explicit base URL was provided.
   let managedOpencode: ManagedOpencodeServer | null = null;
+  let managedOpencodeIdentity: string | null = null;
 
   if (!config.readOnly) {
     await ensureLocalWorkspaceFiles(config.workspaces);
@@ -94,6 +100,16 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         entry.opencodePassword = managedOpencode.password;
         entry.directory = entry.path;
       }
+      managedOpencodeIdentity = [
+        managedOpencode.pid ?? "unknown",
+        managedOpencode.username,
+        managedOpencode.password,
+      ].join(":");
+      registerTrustedOpencodeProcess(config, {
+        baseUrl: managedOpencode.url,
+        identity: managedOpencodeIdentity,
+        isAlive: managedOpencode.isAlive,
+      });
     }
   }
 
@@ -112,6 +128,9 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     config,
     managedOpencodeExecution: managedOpencode?.execution ?? null,
     async stop() {
+      if (managedOpencodeIdentity) {
+        clearTrustedOpencodeProcess(config, managedOpencodeIdentity);
+      }
       await managedOpencode?.close();
       await server.stop();
     },

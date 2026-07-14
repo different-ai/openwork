@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createDenClient, readDenSettings, type DenExternalMcpConnection } from "@/app/lib/den";
+import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isDesktopRuntime } from "@/app/utils";
-import { isNativeProviderConnectionId } from "./native-provider-connections";
+import { connectionNeedsReconnect, isNativeProviderConnectionId } from "./native-provider-connections";
 
 // Mirrors the poll-until-connected pattern used for local MCP OAuth
 // (mcp-auth-modal.tsx) — the external server's redirect completes on a
@@ -37,6 +38,19 @@ export type OrgMcpConnectionCardState = {
     | "mcp.org_connection_connect_action";
 };
 
+export type OrgMcpPollScope = {
+  generation: number;
+  organizationId: string;
+};
+
+export function isOrgMcpPollScopeCurrent(
+  scope: OrgMcpPollScope,
+  currentGeneration: number,
+  activeOrganizationId: string,
+): boolean {
+  return scope.generation === currentGeneration && scope.organizationId === activeOrganizationId;
+}
+
 /**
  * Pure projection from a raw Den connection to what the card should show.
  * A `shared`-credential connection is set up once by an admin — the member
@@ -45,7 +59,7 @@ export type OrgMcpConnectionCardState = {
  * `connectedForMe` rather than the connection-wide `connected` flag.
  */
 export function resolveOrgMcpConnectionCardState(
-  connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect">,
+  connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">,
 ): OrgMcpConnectionCardState {
   if (connection.credentialMode === "shared") {
     return {
@@ -55,7 +69,7 @@ export function resolveOrgMcpConnectionCardState(
     };
   }
 
-  if (connection.connectedForMe && connection.needsReconnect === true) {
+  if (connection.connectedForMe && connectionNeedsReconnect(connection)) {
     return {
       connected: false,
       descriptionKey: "mcp.org_connection_desc_per_member_reconnect",
@@ -87,24 +101,42 @@ export function resolveOrgMcpConnectionCardState(
 export function useOrgMcpConnections() {
   const [connections, setConnections] = useState<DenExternalMcpConnection[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  const pollGenerationRef = useRef(0);
+  const refreshRunRef = useRef(0);
 
   const stopPolling = useCallback(() => {
+    pollGenerationRef.current += 1;
     if (pollRef.current !== null) {
       window.clearInterval(pollRef.current);
       pollRef.current = null;
     }
   }, []);
 
-  const refresh = useCallback(async () => {
+  const isActionScopeCurrent = useCallback((scope: OrgMcpPollScope) => {
+    const activeOrganizationId = readDenSettings().activeOrgId?.trim() ?? "";
+    return isOrgMcpPollScopeCurrent(
+      scope,
+      pollGenerationRef.current,
+      activeOrganizationId,
+    );
+  }, []);
+
+  const refresh = useCallback(async (expectedScope?: OrgMcpPollScope) => {
+    const run = refreshRunRef.current + 1;
+    refreshRunRef.current = run;
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!token || !orgId) {
       setConnections([]);
+      setError(null);
+      setLoading(false);
+      setLoaded(true);
       return;
     }
 
@@ -113,13 +145,27 @@ export function useOrgMcpConnections() {
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       const result = await client.listMcpConnections(orgId, "usable");
+      if (
+        refreshRunRef.current !== run
+        || (expectedScope && !isActionScopeCurrent(expectedScope))
+      ) return;
       setConnections(result);
     } catch (fetchError) {
+      if (
+        refreshRunRef.current !== run
+        || (expectedScope && !isActionScopeCurrent(expectedScope))
+      ) return;
       setError(fetchError instanceof Error ? fetchError.message : "Failed to load organization MCP connections.");
     } finally {
-      setLoading(false);
+      if (
+        refreshRunRef.current === run
+        && (!expectedScope || isActionScopeCurrent(expectedScope))
+      ) {
+        setLoading(false);
+        setLoaded(true);
+      }
     }
-  }, []);
+  }, [isActionScopeCurrent]);
 
   const connect = useCallback(async (connectionId: string) => {
     const settings = readDenSettings();
@@ -127,12 +173,20 @@ export function useOrgMcpConnections() {
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!token || !orgId) return;
 
+    stopPolling();
+    const pollScope: OrgMcpPollScope = {
+      generation: pollGenerationRef.current,
+      organizationId: orgId,
+    };
+    setDisconnectingId(null);
     setConnectingId(connectionId);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       const result = await client.startMcpConnectionConnect(orgId, connectionId);
+      if (!isActionScopeCurrent(pollScope)) return;
       if (result.status === "connected") {
-        await refresh();
+        await refresh(pollScope);
+        if (!isActionScopeCurrent(pollScope)) return;
         setConnectingId(null);
         return;
       }
@@ -143,9 +197,10 @@ export function useOrgMcpConnections() {
 
       await openAuthorizationUrl(result.authorizeUrl);
 
-      stopPolling();
+      if (!isActionScopeCurrent(pollScope)) return;
       const startedAt = Date.now();
       pollRef.current = window.setInterval(async () => {
+        if (!isActionScopeCurrent(pollScope)) return;
         if (Date.now() - startedAt >= CONNECT_TIMEOUT_MS) {
           stopPolling();
           setConnectingId(null);
@@ -154,7 +209,11 @@ export function useOrgMcpConnections() {
         const refreshedSettings = readDenSettings();
         const refreshedToken = refreshedSettings.authToken?.trim() ?? "";
         const refreshedOrgId = refreshedSettings.activeOrgId?.trim() ?? "";
-        if (!refreshedToken || !refreshedOrgId) {
+        if (!refreshedToken || !isOrgMcpPollScopeCurrent(
+          pollScope,
+          pollGenerationRef.current,
+          refreshedOrgId,
+        )) {
           stopPolling();
           setConnectingId(null);
           return;
@@ -164,10 +223,11 @@ export function useOrgMcpConnections() {
             baseUrl: refreshedSettings.baseUrl,
             token: refreshedToken,
           });
-          const polled = await pollClient.listMcpConnections(refreshedOrgId, "usable");
+          const polled = await pollClient.listMcpConnections(pollScope.organizationId, "usable");
+          if (!isActionScopeCurrent(pollScope)) return;
           setConnections(polled);
           const match = polled.find((entry) => entry.id === connectionId);
-          if (match?.connectedForMe && match.needsReconnect !== true) {
+          if (match?.connectedForMe && !connectionNeedsReconnect(match)) {
             stopPolling();
             setConnectingId(null);
           }
@@ -176,10 +236,11 @@ export function useOrgMcpConnections() {
         }
       }, CONNECT_POLL_INTERVAL_MS);
     } catch (connectError) {
+      if (!isActionScopeCurrent(pollScope)) return;
       setError(connectError instanceof Error ? connectError.message : "Failed to start the connection.");
       setConnectingId(null);
     }
-  }, [refresh, stopPolling]);
+  }, [isActionScopeCurrent, refresh, stopPolling]);
 
   const disconnect = useCallback(async (connectionId: string) => {
     if (!isNativeProviderConnectionId(connectionId)) return;
@@ -189,23 +250,46 @@ export function useOrgMcpConnections() {
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!token || !orgId) return;
 
+    stopPolling();
+    const actionScope: OrgMcpPollScope = {
+      generation: pollGenerationRef.current,
+      organizationId: orgId,
+    };
+    setConnectingId(null);
     setDisconnectingId(connectionId);
     setError(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       await client.disconnectOauthProviderAccount(orgId, connectionId);
-      await refresh();
+      if (!isActionScopeCurrent(actionScope)) return;
+      await refresh(actionScope);
+      if (!isActionScopeCurrent(actionScope)) return;
     } catch (disconnectError) {
+      if (!isActionScopeCurrent(actionScope)) return;
       setError(disconnectError instanceof Error ? disconnectError.message : "Failed to disconnect the account.");
     } finally {
-      setDisconnectingId(null);
+      if (isActionScopeCurrent(actionScope)) setDisconnectingId(null);
     }
-  }, [refresh]);
+  }, [isActionScopeCurrent, refresh, stopPolling]);
 
   useEffect(() => {
     void refresh();
-    return () => stopPolling();
+    const handleSettingsChanged = () => {
+      stopPolling();
+      setConnections([]);
+      setError(null);
+      setLoaded(false);
+      setConnectingId(null);
+      setDisconnectingId(null);
+      void refresh();
+    };
+    window.addEventListener(denSettingsChangedEvent, handleSettingsChanged);
+    return () => {
+      refreshRunRef.current += 1;
+      stopPolling();
+      window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged);
+    };
   }, [refresh, stopPolling]);
 
-  return { connections, loading, error, connectingId, disconnectingId, refresh, connect, disconnect };
+  return { connections, loading, loaded, error, connectingId, disconnectingId, refresh, connect, disconnect };
 }

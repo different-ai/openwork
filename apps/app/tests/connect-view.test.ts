@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
 import type { OpenworkCloudMcpHealth } from "../src/app/lib/openwork-server";
-import { readyCloudMcpToolIds, resolveConnectViewState } from "../src/react-app/domains/settings/pages/connect-view";
+import {
+  createOpaqueDiagnosticsScopeKey,
+  readDiagnosticsValueForScope,
+  readyCloudMcpToolIds,
+  resolveConnectViewState,
+} from "../src/react-app/domains/settings/pages/connect-view";
 import {
   formatPluginConnectRowMeta,
   isDesktopInstallableMarketplacePlugin,
+  resolveConnectionRowGroup,
   resolveConnectRowGroup,
 } from "../src/react-app/domains/settings/connect-cloud-readiness";
 
@@ -73,6 +79,79 @@ describe("Agent access card helpers", () => {
   });
 });
 
+describe("Connect diagnostics scope", () => {
+  test("a report from an old workspace or organization cannot render or copy", () => {
+    const originalIdentity = { workspace: "workspace_a", organization: "org_a" };
+    const originalScope = { key: originalIdentity, generation: 0 };
+    const storedReport = { scope: originalScope, value: "report-from-org-a" };
+
+    expect(readDiagnosticsValueForScope(storedReport, {
+      key: { workspace: "workspace_a", organization: "org_b" },
+      generation: 1,
+    })).toBeNull();
+    expect(readDiagnosticsValueForScope(storedReport, {
+      key: { workspace: "workspace_a", organization: "org_a" },
+      generation: 2,
+    })).toBeNull();
+    // A credential or signed-in-principal change creates a new opaque scope
+    // identity even when every public route field remains the same.
+    expect(readDiagnosticsValueForScope(storedReport, {
+      key: { workspace: "workspace_a", organization: "org_a" },
+      generation: 0,
+    })).toBeNull();
+    expect(readDiagnosticsValueForScope(storedReport, originalScope)).toBe("report-from-org-a");
+  });
+
+  test("credential and principal changes create opaque invalidation keys without retaining secrets", () => {
+    const client = {};
+    const commonSignals = {
+      client,
+      workspaceId: "workspace_a",
+      workspaceType: "local",
+      denBaseUrl: "https://api.example.test",
+      denSignedIn: true,
+      organizationId: "org_a",
+    };
+    const credentialAKey = createOpaqueDiagnosticsScopeKey({
+      ...commonSignals,
+      workspaceCredential: "workspace-secret-a",
+      denCredential: "den-secret-a",
+      principalId: "user_a",
+    });
+    const credentialBKey = createOpaqueDiagnosticsScopeKey({
+      ...commonSignals,
+      workspaceCredential: "workspace-secret-b",
+      denCredential: "den-secret-b",
+      principalId: "user_a",
+    });
+    const principalBKey = createOpaqueDiagnosticsScopeKey({
+      ...commonSignals,
+      workspaceCredential: "workspace-secret-b",
+      denCredential: "den-secret-b",
+      principalId: "user_b",
+    });
+    const storedReport = {
+      scope: { key: credentialAKey, generation: 0 },
+      value: "credential-a-report",
+    };
+
+    expect(readDiagnosticsValueForScope(storedReport, {
+      key: credentialBKey,
+      generation: 1,
+    })).toBeNull();
+    expect(readDiagnosticsValueForScope(storedReport, {
+      key: principalBKey,
+      generation: 2,
+    })).toBeNull();
+    expect(Object.keys(credentialAKey)).toEqual([]);
+    const serializedKeys = JSON.stringify([credentialAKey, credentialBKey, principalBKey]);
+    expect(serializedKeys).toBe("[{},{},{}]");
+    expect(serializedKeys).not.toContain("workspace-secret");
+    expect(serializedKeys).not.toContain("den-secret");
+    expect(serializedKeys).not.toContain("user_a");
+  });
+});
+
 describe("Connect cloud-readiness row resolution", () => {
   test("maps plugin readiness states to Connect groups", () => {
     expect(resolveConnectRowGroup({ state: "needs_signin", hasInstructional: false, connections: [] }, "member")).toBe("needs_signin");
@@ -101,6 +180,15 @@ describe("Connect cloud-readiness row resolution", () => {
         connections: [{ id: null, name: "Sales", url: "https://sales.example.test/mcp" }],
       },
     })).toBe("skills ready now · app needs setup · needs Sales");
+  });
+
+  test("never groups a connected account with missing features as ready", () => {
+    expect(resolveConnectionRowGroup({
+      credentialMode: "per_member",
+      connectedForMe: true,
+      needsReconnect: false,
+      missingFeatures: ["gmailDraft"],
+    })).toBe("needs_signin");
   });
 
   test("filters Extensions marketplace rows to desktop-installable plugins in Connect mode", () => {

@@ -9,6 +9,11 @@
       "development": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./agent-context-diagnostics": {
+      "types": "./src/agent-context-diagnostics.ts",
+      "development": "./src/agent-context-diagnostics.ts",
+      "default": "./src/agent-context-diagnostics.ts"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",
