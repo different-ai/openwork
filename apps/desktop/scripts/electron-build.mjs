@@ -10,6 +10,8 @@ const electronSidecarDir = resolve(desktopRoot, "resources", "sidecars");
 const electronHelperDir = resolve(desktopRoot, "resources", "helpers");
 const electronRoot = resolve(desktopRoot, "electron");
 const packagedServerRoot = resolve(desktopRoot, "server");
+const packagedServerNodeModules = resolve(packagedServerRoot, "node_modules");
+const connectRuntimeManifestPath = resolve(repoRoot, "packages", "connect-core", "connect-runtime.manifest.json");
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
@@ -57,6 +59,27 @@ if (patched !== serverJsSrc) {
 rmSync(packagedServerRoot, { recursive: true, force: true });
 cpSync(serverDistDir, resolve(packagedServerRoot, "dist"), { recursive: true });
 copyFileSync(resolve(repoRoot, "apps", "server", "package.json"), resolve(packagedServerRoot, "package.json"));
+const connectRuntimeManifest = JSON.parse(readFileSync(connectRuntimeManifestPath, "utf8"));
+const desktopPackage = JSON.parse(readFileSync(resolve(desktopRoot, "package.json"), "utf8"));
+const desktopDependencies = desktopPackage.dependencies ?? {};
+const connectRuntimePackages = Array.isArray(connectRuntimeManifest.packages)
+  ? connectRuntimeManifest.packages.filter((entry) => entry?.desktopStage === true)
+  : [];
+for (const entry of connectRuntimePackages) {
+  const packagePath = typeof entry?.path === "string" ? entry.path.trim() : "";
+  const packageName = typeof entry?.name === "string" ? entry.name.trim() : "";
+  if (!packagePath || !packageName.startsWith("@openwork/")) {
+    throw new Error(`Invalid desktop package entry in ${connectRuntimeManifestPath}`);
+  }
+  if (typeof desktopDependencies[packageName] !== "string") {
+    throw new Error(`${packageName} is declared by the Connect runtime manifest but missing from desktop dependencies.`);
+  }
+  const source = resolve(repoRoot, packagePath);
+  const destination = resolve(packagedServerNodeModules, ...packageName.split("/"));
+  cpSync(resolve(source, "dist"), resolve(destination, "dist"), { recursive: true });
+  copyFileSync(resolve(source, "package.json"), resolve(destination, "package.json"));
+}
+copyFileSync(connectRuntimeManifestPath, resolve(packagedServerRoot, "connect-runtime.manifest.json"));
 for (const fileName of readdirSync(electronRoot).filter((name) => name.endsWith(".mjs")).sort()) {
   run(nodeCmd, ["--check", resolve(electronRoot, fileName)], repoRoot);
 }

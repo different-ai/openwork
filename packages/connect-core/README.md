@@ -21,3 +21,16 @@ must reject ambiguous ownership rather than selecting an implementation by
 registration order.
 
 This package is MIT licensed as part of the OpenWork repository.
+
+## Portable package closure
+
+`connect-runtime.manifest.json` is the packaging source of truth for the
+runtime alias, MCP endpoint, fixed tool surface, and workspace packages that a
+host must stage. The standalone server build and Electron build both consume
+this manifest, so adding a runtime package is one package declaration rather
+than a second desktop-specific implementation.
+
+The runtime isolates source failures, applies bounded per-source search
+deadlines, produces deterministic results, and rejects ambiguous execution
+ownership. Hosts remain responsible for identity, credential vaults, egress
+policy, and lifecycle/audit ports.

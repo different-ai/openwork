@@ -5,6 +5,7 @@ export default defineConfig({
   dts: true,
   entry: {
     index: "src/index.ts",
+    profile: "src/profile.ts",
   },
   format: ["esm"],
   platform: "neutral",

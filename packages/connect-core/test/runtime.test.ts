@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
 import test from "node:test"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js"
@@ -6,9 +7,24 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
 import {
   createConnectMcpServer,
   createConnectRuntime,
+  createRemoteMcpCapabilitySource,
+  CONNECT_AGENT_PATH,
+  CONNECT_CONTRACT_VERSION,
+  CONNECT_MCP_ALIAS,
+  CONNECT_RUNTIME_VERSION,
+  parseRemoteMcpCapabilityName,
   registerConnectTools,
   type ConnectCapabilitySource,
 } from "../src/index.js"
+
+test("package manifest matches the public portable runtime contract", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../connect-runtime.manifest.json", import.meta.url), "utf8"))
+  assert.equal(manifest.runtimeVersion, CONNECT_RUNTIME_VERSION)
+  assert.equal(manifest.contractVersion, CONNECT_CONTRACT_VERSION)
+  assert.equal(manifest.mcpAlias, CONNECT_MCP_ALIAS)
+  assert.equal(manifest.agentPath, CONNECT_AGENT_PATH)
+  assert.deepEqual([...manifest.tools].sort(), ["execute_capability", "search_capabilities"])
+})
 
 function source(input: {
   id: string
@@ -53,6 +69,44 @@ test("runtime merges, ranks, filters, and bounds package-defined sources", async
   ])
 })
 
+test("runtime isolates failed and timed-out sources with an incomplete coverage hint", async () => {
+  const failed = source({ id: "failed", score: 1 })
+  failed.search = async () => { throw new Error("secret provider response") }
+  const stalled = source({ id: "stalled", score: 1 })
+  stalled.search = () => new Promise(() => undefined)
+  const runtime = createConnectRuntime({
+    sources: [source({ id: "ready", score: 5 }), failed, stalled],
+    searchSourceTimeoutMs: 5,
+  })
+
+  const result = await runtime.search({ query: "search" })
+  assert.deepEqual(result.matches.map((match) => match.name), ["ready:search"])
+  assert.match(result.hint ?? "", /failed/)
+  assert.match(result.hint ?? "", /stalled/)
+  assert.doesNotMatch(result.hint ?? "", /secret provider response/)
+})
+
+test("runtime truncates search results at the serialized response budget", async () => {
+  const large = source({ id: "large", score: 10 })
+  large.search = () => ({
+    matches: [{
+      name: "large:search",
+      method: "MCP",
+      path: "connect://large",
+      score: 10,
+      summary: "x".repeat(1_000),
+      pathParams: [],
+      queryParams: [],
+      hasBody: true,
+    }],
+  })
+  const runtime = createConnectRuntime({ sources: [large], searchResultMaxBytes: 256 })
+  const result = await runtime.search({ query: "search" })
+
+  assert.deepEqual(result.matches, [])
+  assert.match(result.hint ?? "", /serialized response limit/)
+})
+
 test("runtime rejects missing and ambiguous capability ownership", async () => {
   const runtime = createConnectRuntime({
     sources: [
@@ -65,6 +119,17 @@ test("runtime rejects missing and ambiguous capability ownership", async () => {
   const ambiguous = await runtime.execute({ name: "shared" })
   assert.equal(ambiguous.isError, true)
   assert.deepEqual(JSON.parse(ambiguous.content[0]?.text ?? "{}").sources, ["alpha", "beta"])
+})
+
+test("runtime rejects oversized capability results", async () => {
+  const runtime = createConnectRuntime({
+    sources: [source({ id: "large", score: 1 })],
+    executeResultMaxBytes: 128,
+  })
+  const result = await runtime.execute({ name: "large:search", body: { value: "x".repeat(1_000) } })
+
+  assert.equal(result.isError, true)
+  assert.equal(JSON.parse(result.content[0]?.text ?? "{}").error, "capability_result_too_large")
 })
 
 class MemoryTransport implements Transport {
@@ -107,4 +172,35 @@ test("MCP adapter exposes the same fixed two-tool surface for every host", async
 
   await client.close()
   await server.close()
+})
+
+test("remote MCP source namespaces discovery and exact execution consistently", async () => {
+  const remote = createRemoteMcpCapabilitySource({
+    listConnections: async () => [{
+      id: "notion",
+      name: "Notion",
+      serverUrl: "https://mcp.notion.example",
+      status: "connected",
+    }],
+    listTools: async () => [{ name: "search_pages", description: "Search workspace pages" }],
+    callTool: async ({ connection, toolName, arguments: args }) => ({
+      content: [{ type: "text", text: JSON.stringify({ connection: connection.id, toolName, args }) }],
+    }),
+  })
+  const runtime = createConnectRuntime({ sources: [remote] })
+  const search = await runtime.search({ query: "search notion" })
+
+  assert.equal(search.matches[0]?.name, "mcp:notion:search_pages")
+  assert.deepEqual(parseRemoteMcpCapabilityName(search.matches[0]?.name ?? ""), {
+    connectionId: "notion",
+    toolName: "search_pages",
+  })
+  assert.deepEqual(JSON.parse((await runtime.execute({
+    name: "mcp:notion:search_pages",
+    body: { query: "roadmap" },
+  })).content[0]?.text ?? "{}"), {
+    connection: "notion",
+    toolName: "search_pages",
+    args: { query: "roadmap" },
+  })
 })

@@ -64,7 +64,13 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
-import { markOpenworkCloudMcpStale, reconcilePersistedOpenworkCloudMcp } from "./cloud-mcp-health.js";
+import { registerConnectRoutes } from "./routes/connect.js";
+import {
+  OPENWORK_CLOUD_MCP_NAME,
+  markOpenworkCloudMcpStale,
+  reconcileOpenworkCloudMcp,
+  reconcilePersistedOpenworkCloudMcp,
+} from "./cloud-mcp-health.js";
 import { runAgentContextDiagnostics } from "./agent-context-diagnostics.js";
 import { createAgentDiagnosticsEngineFetch } from "./agent-context-engine-inspection.js";
 import {
@@ -1165,6 +1171,11 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     mcp: { read: true, write: writeEnabled },
     commands: { read: true, write: writeEnabled },
     config: { read: true, write: writeEnabled },
+    connect: {
+      profile: true,
+      modes: ["hosted", "local", "disabled"],
+      localRuntime: true,
+    },
 
     approvals: { mode: config.approval.mode, timeoutMs: config.approval.timeoutMs },
     sandbox: { enabled: sandboxEnabled, backend: sandboxBackend },
@@ -1483,6 +1494,54 @@ function createRoutes(
         engineMcpServerState,
       ),
     serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
+  });
+
+  registerConnectRoutes({
+    routes,
+    config,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    reconcileLocalWorkspace: ({ workspace, endpoint, token }) => reconcileOpenworkCloudMcp({
+      config,
+      workspace,
+      directory: resolveOpencodeDirectory(workspace),
+      body: {
+        workspaceId: workspace.id,
+        name: OPENWORK_CLOUD_MCP_NAME,
+        config: {
+          type: "remote",
+          enabled: true,
+          url: endpoint,
+          headers: { Authorization: `Bearer ${token}` },
+          oauth: false,
+        },
+        connectCatalogEnabled: true,
+        trigger: "local-connect",
+      },
+      serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
+      createWorkspaceOpencodeClient,
+      registerRuntimeMcp: (routeConfig, routeWorkspace, onlyNames, options) =>
+        syncRuntimeMcpToOpencodeEngine(
+          routeConfig,
+          routeWorkspace,
+          onlyNames,
+          options,
+          engineMcpServerState,
+        ),
+    }),
+    disableLocalWorkspace: async (workspace) => {
+      await writeRuntimeOpencodeConfig(config, workspace.id, (current) => {
+        const mcp = { ...runtimeMcpMap(current) };
+        delete mcp[OPENWORK_CLOUD_MCP_NAME];
+        return {
+          ...current,
+          ...(Object.keys(mcp).length > 0 ? { mcp } : { mcp: undefined }),
+        };
+      });
+      deleteEngineMcpRegistration(config, engineMcpServerState, workspace, OPENWORK_CLOUD_MCP_NAME);
+      await disconnectMcpFromOpencodeEngine(config, workspace, OPENWORK_CLOUD_MCP_NAME).catch(() => undefined);
+    },
   });
 
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {

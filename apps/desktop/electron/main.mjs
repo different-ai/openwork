@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -17,7 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, net as electronNet, Notification as ElectronNotification, session, shell, systemPreferences } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, net as electronNet, Notification as ElectronNotification, safeStorage, session, shell, systemPreferences } from "electron";
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
@@ -1063,6 +1064,26 @@ const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  getConnectVaultKey: async () => {
+    if (!safeStorage.isEncryptionAvailable()) return null;
+    const vaultPath = path.join(app.getPath("userData"), "connect-vault-key.bin");
+    if (existsSync(vaultPath)) {
+      try {
+        const encrypted = await readFile(vaultPath);
+        const value = safeStorage.decryptString(encrypted).trim();
+        return value || null;
+      } catch {
+        // Never rotate over an unreadable key: doing so would orphan every encrypted credential.
+        return null;
+      }
+    }
+    const key = randomBytes(32).toString("base64url");
+    const temporaryPath = `${vaultPath}.${process.pid}.tmp`;
+    await mkdir(path.dirname(vaultPath), { recursive: true });
+    await writeFile(temporaryPath, safeStorage.encryptString(key), { mode: 0o600 });
+    await rename(temporaryPath, vaultPath);
+    return key;
+  },
 });
 
 let runtimeDisposedForQuit = false;

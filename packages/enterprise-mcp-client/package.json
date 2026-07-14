@@ -1,9 +1,9 @@
 {
   "name": "@openwork/enterprise-mcp-client",
-  "private": true,
   "version": "0.1.0",
-  "description": "Package-first remote MCP client runtime for enterprise Den connections",
+  "description": "Portable remote MCP client, OAuth persistence ports, and guarded egress for OpenWork Connect",
   "type": "module",
+  "license": "MIT",
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -29,5 +29,13 @@
     "tsx": "^4.15.7",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/different-ai/openwork.git",
+    "directory": "packages/enterprise-mcp-client"
   }
 }

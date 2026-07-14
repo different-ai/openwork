@@ -1,13 +1,20 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ArrowUpRight } from "lucide-react";
+import { Activity, ArrowUpRight, Cloud, HardDrive, Plus, Power, Trash2 } from "lucide-react";
 import type { AgentContextDiagnosticsReport } from "@openwork/types/agent-context-diagnostics";
 
 import { serializeAgentContextDiagnosticsReport } from "@/app/lib/agent-context-diagnostics";
 import type { DenExternalMcpConnection, DenOrgPlugin } from "@/app/lib/den";
 import { mintCloudControlMcpToken, readDenSettings } from "@/app/lib/den";
 import { openDesktopUrl } from "@/app/lib/desktop";
-import type { OpenworkCloudMcpHealth, OpenworkCloudMcpProviderModelContext, OpenworkServerClient } from "@/app/lib/openwork-server";
+import type {
+  OpenworkCloudMcpHealth,
+  OpenworkCloudMcpProviderModelContext,
+  OpenworkConnectMode,
+  OpenworkConnectProfile,
+  OpenworkLocalConnectConnection,
+  OpenworkServerClient,
+} from "@/app/lib/openwork-server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -411,6 +418,372 @@ function ConnectLoadingPanel() {
   );
 }
 
+export function ConnectModeSelector(props: {
+  profile: OpenworkConnectProfile | null;
+  busy: boolean;
+  error: string | null;
+  onSelect: (mode: OpenworkConnectMode) => void;
+}) {
+  const mode = props.profile?.mode ?? "hosted";
+  const choices: Array<{
+    mode: OpenworkConnectMode;
+    title: string;
+    description: string;
+    icon: typeof Cloud;
+  }> = [
+    {
+      mode: "hosted",
+      title: "Hosted (recommended)",
+      description: "OpenWork Cloud manages team connections and access.",
+      icon: Cloud,
+    },
+    {
+      mode: "local",
+      title: "Local",
+      description: "The active OpenWork Server keeps connections, credentials, and execution under its owner’s control.",
+      icon: HardDrive,
+    },
+    {
+      mode: "disabled",
+      title: "Off",
+      description: "Do not give agents access to connected services.",
+      icon: Power,
+    },
+  ];
+  return (
+    <SettingsSection>
+      <SettingsSectionHeader>
+        <SettingsSectionHeaderContent>
+          <SettingsSectionHeaderTitle>Where Connect runs</SettingsSectionHeaderTitle>
+          <SettingsSectionHeaderDescription>
+            Hosted and Local use the same agent experience. Only the owner of credentials and runtime changes.
+          </SettingsSectionHeaderDescription>
+        </SettingsSectionHeaderContent>
+        <SettingsStatusBadge
+          label={mode === "hosted" ? "Hosted" : mode === "local" ? "Local" : "Off"}
+          tone={mode === "disabled" ? "neutral" : "ready"}
+        />
+      </SettingsSectionHeader>
+      <div className="grid gap-3 md:grid-cols-3" data-testid="connect-mode-selector">
+        {choices.map((choice) => {
+          const Icon = choice.icon;
+          const selected = mode === choice.mode;
+          const disabled = props.busy || (choice.mode === "local" && props.profile?.localAvailable === false);
+          return (
+            <button
+              key={choice.mode}
+              type="button"
+              disabled={disabled}
+              data-connect-mode={choice.mode}
+              data-selected={selected ? "true" : "false"}
+              className={`rounded-xl border p-4 text-left transition-colors ${selected ? "border-dls-accent bg-dls-hover" : "border-dls-border bg-dls-surface hover:bg-dls-hover"} disabled:cursor-not-allowed disabled:opacity-50`}
+              onClick={() => props.onSelect(choice.mode)}
+            >
+              <Icon size={18} className="mb-3 text-dls-secondary" />
+              <div className="text-sm font-semibold text-dls-text">{choice.title}</div>
+              <div className="mt-1 text-xs leading-5 text-dls-secondary">{choice.description}</div>
+            </button>
+          );
+        })}
+      </div>
+      {props.profile && props.profile.vault.status !== "ready" ? (
+        <SettingsNotice tone="error">{props.profile.vault.message}</SettingsNotice>
+      ) : null}
+      {props.error ? <SettingsNotice tone="error">{props.error}</SettingsNotice> : null}
+    </SettingsSection>
+  );
+}
+
+function localConnectionStatus(connection: OpenworkLocalConnectConnection): { label: string; tone: "ready" | "warning" | "error" | "neutral" } {
+  if (connection.status === "connected") return { label: "Ready", tone: "ready" };
+  if (connection.status === "needs_auth") return { label: "Sign in needed", tone: "warning" };
+  if (connection.status === "error") return { label: "Needs attention", tone: "error" };
+  return { label: "Not connected", tone: "neutral" };
+}
+
+function readLocalAuthType(value: string): OpenworkLocalConnectConnection["authType"] {
+  if (value === "none" || value === "api-key") return value;
+  return "oauth";
+}
+
+export function LocalConnectPanel(props: {
+  client: OpenworkServerClient | null;
+  profile: OpenworkConnectProfile;
+  onProfileChange: (profile: OpenworkConnectProfile) => void;
+}) {
+  const [connections, setConnections] = useState<OpenworkLocalConnectConnection[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [authorizingId, setAuthorizingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [serverUrl, setServerUrl] = useState("");
+  const [authType, setAuthType] = useState<OpenworkLocalConnectConnection["authType"]>("oauth");
+  const [allowPrivateNetwork, setAllowPrivateNetwork] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+
+  const refresh = async () => {
+    if (!props.client) return;
+    const result = await props.client.listLocalConnectConnections();
+    setConnections(result.items);
+    props.onProfileChange({
+      ...props.profile,
+      connectionCount: result.items.length,
+      connectedCount: result.items.filter((connection) => connection.status === "connected").length,
+    });
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void refresh()
+      .catch((nextError) => {
+        if (!cancelled) setError(nextError instanceof Error ? nextError.message : "Could not load local connections.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [props.client]);
+
+  useEffect(() => {
+    if (!authorizingId || !props.client) return;
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      void props.client?.listLocalConnectConnections().then((result) => {
+        setConnections(result.items);
+        const connection = result.items.find((item) => item.id === authorizingId);
+        if (connection?.status === "connected" || Date.now() - startedAt > 120_000) {
+          setAuthorizingId(null);
+          window.clearInterval(timer);
+        }
+      }).catch(() => undefined);
+    }, 1_500);
+    return () => window.clearInterval(timer);
+  }, [authorizingId, props.client]);
+
+  const createConnection = async () => {
+    if (!props.client || !name.trim() || !serverUrl.trim()) return;
+    setBusyId("new");
+    setError(null);
+    try {
+      await props.client.createLocalConnectConnection({
+        name: name.trim(),
+        serverUrl: serverUrl.trim(),
+        authType,
+        allowPrivateNetwork,
+        ...(authType === "api-key" ? { apiKey: apiKey.trim() } : {}),
+        ...(authType === "oauth" && clientId.trim()
+          ? { oauthClient: { clientId: clientId.trim(), ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}) } }
+          : {}),
+      });
+      setName("");
+      setServerUrl("");
+      setApiKey("");
+      setClientId("");
+      setClientSecret("");
+      setAllowPrivateNetwork(false);
+      setFormOpen(false);
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Could not add the connection.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const connect = async (connection: OpenworkLocalConnectConnection) => {
+    if (!props.client) return;
+    setBusyId(connection.id);
+    setError(null);
+    try {
+      const result = await props.client.connectLocalConnectConnection(connection.id);
+      if (result.authorizeUrl) {
+        setAuthorizingId(connection.id);
+        await openDesktopUrl(result.authorizeUrl);
+      }
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Could not connect this service.");
+      await refresh().catch(() => undefined);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const disconnect = async (connection: OpenworkLocalConnectConnection) => {
+    if (!props.client) return;
+    setBusyId(connection.id);
+    setError(null);
+    try {
+      await props.client.disconnectLocalConnectConnection(connection.id);
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Could not disconnect this service.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const remove = async (connection: OpenworkLocalConnectConnection) => {
+    if (!props.client || !window.confirm(`Remove ${connection.name} from Local Connect?`)) return;
+    setBusyId(connection.id);
+    setError(null);
+    try {
+      await props.client.deleteLocalConnectConnection(connection.id);
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Could not remove this connection.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <SettingsSection>
+      <SettingsSectionHeader>
+        <SettingsSectionHeaderContent>
+          <SettingsSectionHeaderTitle>Local connections</SettingsSectionHeaderTitle>
+          <SettingsSectionHeaderDescription>
+            Remote MCP services run through this OpenWork Server. Secrets are encrypted and never returned to the app.
+          </SettingsSectionHeaderDescription>
+        </SettingsSectionHeaderContent>
+        <SettingsSectionHeaderActions>
+          <SettingsStatusBadge label={`${props.profile.connectedCount} ready`} tone={props.profile.connectedCount > 0 ? "ready" : "neutral"} />
+          <Button size="sm" onClick={() => setFormOpen((current) => !current)}>
+            <Plus size={14} />
+            Add connection
+          </Button>
+        </SettingsSectionHeaderActions>
+      </SettingsSectionHeader>
+
+      {formOpen ? (
+        <SettingsInset className="space-y-3 bg-dls-surface" data-testid="local-connect-form">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1 text-xs font-medium text-dls-secondary">
+              Name
+              <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Project knowledge" />
+            </label>
+            <label className="space-y-1 text-xs font-medium text-dls-secondary">
+              Server URL
+              <Input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="https://mcp.example.com/mcp" />
+            </label>
+          </div>
+          <label className="block space-y-1 text-xs font-medium text-dls-secondary">
+            Sign-in method
+            <select
+              value={authType}
+              onChange={(event) => setAuthType(readLocalAuthType(event.target.value))}
+              className="mt-1 h-9 w-full rounded-xl border border-dls-border bg-dls-surface px-3 text-sm text-dls-text"
+            >
+              <option value="oauth">Browser sign-in (OAuth)</option>
+              <option value="api-key">API key</option>
+              <option value="none">No sign-in</option>
+            </select>
+          </label>
+          {authType === "api-key" ? (
+            <label className="block space-y-1 text-xs font-medium text-dls-secondary">
+              API key
+              <Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" />
+            </label>
+          ) : null}
+          {authType === "oauth" ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1 text-xs font-medium text-dls-secondary">
+                Client ID (optional)
+                <Input value={clientId} onChange={(event) => setClientId(event.target.value)} autoComplete="off" />
+              </label>
+              <label className="space-y-1 text-xs font-medium text-dls-secondary">
+                Client secret (optional)
+                <Input type="password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} autoComplete="off" />
+              </label>
+            </div>
+          ) : null}
+          <label className="flex items-start gap-2 rounded-xl border border-dls-border bg-dls-hover p-3 text-xs text-dls-secondary">
+            <input
+              type="checkbox"
+              checked={allowPrivateNetwork}
+              onChange={(event) => setAllowPrivateNetwork(event.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="block font-medium text-dls-text">Allow private-network access</span>
+              Enable only for a trusted MCP server on your device or private network. Public HTTPS is safer and remains the default.
+            </span>
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setFormOpen(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              disabled={busyId === "new" || !name.trim() || !serverUrl.trim() || (authType === "api-key" && !apiKey.trim())}
+              onClick={() => void createConnection()}
+            >
+              {busyId === "new" ? "Adding…" : "Add"}
+            </Button>
+          </div>
+        </SettingsInset>
+      ) : null}
+
+      {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
+      {loading ? <SettingsNotice>Loading local connections…</SettingsNotice> : null}
+      {!loading && connections.length === 0 ? (
+        <SettingsNotice>Add a remote MCP connection to make its capabilities available to agents.</SettingsNotice>
+      ) : null}
+      <div className="space-y-2">
+        {connections.map((connection) => {
+          const status = localConnectionStatus(connection);
+          const busy = busyId === connection.id;
+          return (
+            <div key={connection.id} data-testid="local-connect-row" className="flex flex-col gap-3 rounded-xl border border-dls-border bg-dls-surface p-3 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold text-dls-text">{connection.name}</div>
+                <div className="truncate text-xs text-dls-secondary">{connection.serverUrl}</div>
+                <div className="mt-1 text-xs text-dls-secondary">
+                  {connection.networkPolicy === "private" ? "Private-network access allowed" : "Public network only"}
+                </div>
+                {connection.lastError ? <div className="mt-1 text-xs text-red-10">{connection.lastError}</div> : null}
+              </div>
+              <SettingsStatusBadge label={authorizingId === connection.id ? "Waiting for browser" : status.label} tone={status.tone} />
+              <div className="flex shrink-0 gap-2">
+                {connection.status === "connected" ? (
+                  <Button size="sm" variant="outline" disabled={busy} onClick={() => void disconnect(connection)}>Disconnect</Button>
+                ) : (
+                  <Button size="sm" disabled={busy || authorizingId === connection.id} onClick={() => void connect(connection)}>
+                    {busy ? "Connecting…" : "Connect"}
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" disabled={busy} aria-label={`Remove ${connection.name}`} onClick={() => void remove(connection)}>
+                  <Trash2 size={14} />
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <SettingsInset className="space-y-2 bg-dls-surface">
+        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-dls-secondary">Available in this mode</div>
+        <div className="grid gap-2 text-sm text-dls-secondary sm:grid-cols-2">
+          <div>Remote MCP connections</div>
+          <SettingsStatusBadge label="Included" tone="ready" />
+          <div>Private-network MCP</div>
+          <SettingsStatusBadge label={props.profile.features.privateNetworkSources ? "Per connection" : "Unavailable"} tone="neutral" />
+          <div>Team sharing and per-person credentials</div>
+          <SettingsStatusBadge label="Hosted only" tone="neutral" />
+          <div>Local skills and installed plugins</div>
+          <SettingsStatusBadge label="Not in this release" tone="warning" />
+        </div>
+        <div className="text-xs text-dls-secondary">
+          Runtime {props.profile.runtimeVersion} · Contract {props.profile.contractVersion}
+        </div>
+      </SettingsInset>
+    </SettingsSection>
+  );
+}
+
 function ConnectSignInPanel(props: ConnectViewProps) {
   const { baseUrl, statusMessage } = useCloudSession();
   const [manualAuthOpen, setManualAuthOpen] = useState(false);
@@ -796,6 +1169,9 @@ export function ConnectView(props: ConnectViewProps) {
     diagnosticsCopyInFlightRef.current = null;
   }
   const diagnosticsScope = diagnosticsScopeRef.current;
+  const [connectProfile, setConnectProfile] = useState<OpenworkConnectProfile | null>(null);
+  const [connectProfileBusy, setConnectProfileBusy] = useState(Boolean(props.openworkClient));
+  const [connectProfileError, setConnectProfileError] = useState<string | null>(null);
   const [scopedDiagnosticsState, setScopedDiagnosticsState] = useState<ScopedDiagnosticsValue<AgentDiagnosticsViewState>>(() => ({
     scope: diagnosticsScope,
     value: emptyAgentDiagnosticsViewState(),
@@ -816,6 +1192,32 @@ export function ConnectView(props: ConnectViewProps) {
         connectionsCount,
         activeOrgSelected,
       });
+
+  useEffect(() => {
+    let cancelled = false;
+    const client = props.openworkClient;
+    if (!client) {
+      setConnectProfile(null);
+      setConnectProfileBusy(false);
+      setConnectProfileError(null);
+      return () => { cancelled = true; };
+    }
+    setConnectProfileBusy(true);
+    setConnectProfileError(null);
+    void client.getConnectProfile()
+      .then((profile) => {
+        if (!cancelled) setConnectProfile(profile);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setConnectProfileError(error instanceof Error ? error.message : "Could not read the Connect mode.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setConnectProfileBusy(false);
+      });
+    return () => { cancelled = true; };
+  }, [props.openworkClient]);
 
   useEffect(() => {
     if (state !== "active" || connectEnabled !== true) return;
@@ -960,47 +1362,93 @@ export function ConnectView(props: ConnectViewProps) {
     }
   };
 
+  const selectConnectMode = async (mode: OpenworkConnectMode) => {
+    const client = props.openworkClient;
+    if (!client || connectProfileBusy || connectProfile?.mode === mode) return;
+    const label = mode === "hosted" ? "Hosted Connect" : mode === "local" ? "Local Connect" : "Connect off";
+    if (connectProfile && !window.confirm(`Switch to ${label}? Your existing connections and credentials will stay where they are.`)) return;
+    setConnectProfileBusy(true);
+    setConnectProfileError(null);
+    try {
+      const result = await client.setConnectProfile(mode);
+      setConnectProfile(result.profile);
+      const failed = result.deliveries.filter((delivery) => delivery.status === "failed");
+      if (failed.length > 0) {
+        setConnectProfileError(`Connect changed mode, but ${failed.length} workspace${failed.length === 1 ? "" : "s"} could not be updated.`);
+      }
+    } catch (error) {
+      setConnectProfileError(error instanceof Error ? error.message : "Could not change the Connect mode.");
+    } finally {
+      setConnectProfileBusy(false);
+    }
+  };
+
+  const connectMode = connectProfile?.mode ?? "hosted";
+
   return (
     <SettingsStack>
       <Separator />
-      <ConnectIntro
-        busy={diagnosticsState.busy}
-        disabled={!props.diagnosticsAvailable}
-        onRun={() => void runAgentDiagnostics()}
+      <ConnectModeSelector
+        profile={connectProfile}
+        busy={connectProfileBusy || !props.openworkClient}
+        error={connectProfileError}
+        onSelect={(mode) => void selectConnectMode(mode)}
       />
-      {props.diagnosticsUnavailableReason === "direct-remote-opencode" ? (
-        <div data-testid="agent-diagnostics-unavailable-direct-opencode">
-          <SettingsNotice>{t("connect.diagnostics_unavailable_direct_opencode")}</SettingsNotice>
-        </div>
-      ) : null}
-      {diagnosticsState.error ? <AgentContextDiagnosticsErrorNotice message={diagnosticsState.error} /> : null}
-      {diagnosticsState.report ? (
-        <AgentContextDiagnosticsReportView
-          report={diagnosticsState.report}
-          copied={diagnosticsState.copied}
-          copying={diagnosticsState.copying}
-          onCopy={copyDiagnosticsReport}
+      {connectProfileBusy && !connectProfile ? <ConnectLoadingPanel /> : null}
+      {!connectProfileBusy && connectMode === "local" && connectProfile ? (
+        <LocalConnectPanel
+          client={props.openworkClient}
+          profile={connectProfile}
+          onProfileChange={setConnectProfile}
         />
       ) : null}
-      {state === "loading" ? <ConnectLoadingPanel /> : null}
-      {state === "signin" ? <ConnectSignInPanel {...props} /> : null}
-      {state === "active" ? (
-        <ConnectActivePanel
-          connections={orgMcpConnections.connections}
-          marketplaceItems={marketplaceItems}
-          openworkClient={props.openworkClient}
-          workspaceId={props.workspaceId}
-          currentModel={props.currentModel}
-          onCloudMcpHealthChange={props.onCloudMcpHealthChange}
-          loading={orgMcpConnections.loading}
-          error={orgMcpConnections.error}
-          connectingId={orgMcpConnections.connectingId}
-          disconnectingId={orgMcpConnections.disconnectingId}
-          onConnect={orgMcpConnections.connect}
-          onDisconnect={orgMcpConnections.disconnect}
-        />
+      {!connectProfileBusy && connectMode === "disabled" ? (
+        <SettingsSection>
+          <SettingsNotice>Connect is off. Agents cannot search or use connected services. Your saved hosted and local connections were not deleted.</SettingsNotice>
+        </SettingsSection>
       ) : null}
-      {state === "pitch" ? <ConnectPitchPanel /> : null}
+      {!connectProfileBusy && connectMode === "hosted" ? (
+        <>
+          <ConnectIntro
+            busy={diagnosticsState.busy}
+            disabled={!props.diagnosticsAvailable}
+            onRun={() => void runAgentDiagnostics()}
+          />
+          {props.diagnosticsUnavailableReason === "direct-remote-opencode" ? (
+            <div data-testid="agent-diagnostics-unavailable-direct-opencode">
+              <SettingsNotice>{t("connect.diagnostics_unavailable_direct_opencode")}</SettingsNotice>
+            </div>
+          ) : null}
+          {diagnosticsState.error ? <AgentContextDiagnosticsErrorNotice message={diagnosticsState.error} /> : null}
+          {diagnosticsState.report ? (
+            <AgentContextDiagnosticsReportView
+              report={diagnosticsState.report}
+              copied={diagnosticsState.copied}
+              copying={diagnosticsState.copying}
+              onCopy={copyDiagnosticsReport}
+            />
+          ) : null}
+          {state === "loading" ? <ConnectLoadingPanel /> : null}
+          {state === "signin" ? <ConnectSignInPanel {...props} /> : null}
+          {state === "active" ? (
+            <ConnectActivePanel
+              connections={orgMcpConnections.connections}
+              marketplaceItems={marketplaceItems}
+              openworkClient={props.openworkClient}
+              workspaceId={props.workspaceId}
+              currentModel={props.currentModel}
+              onCloudMcpHealthChange={props.onCloudMcpHealthChange}
+              loading={orgMcpConnections.loading}
+              error={orgMcpConnections.error}
+              connectingId={orgMcpConnections.connectingId}
+              disconnectingId={orgMcpConnections.disconnectingId}
+              onConnect={orgMcpConnections.connect}
+              onDisconnect={orgMcpConnections.disconnect}
+            />
+          ) : null}
+          {state === "pitch" ? <ConnectPitchPanel /> : null}
+        </>
+      ) : null}
     </SettingsStack>
   );
 }

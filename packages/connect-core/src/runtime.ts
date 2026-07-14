@@ -12,6 +12,9 @@ import type {
 
 export const DEFAULT_EXECUTE_CAPABILITY_TIMEOUT_MS = 45_000
 export const DEFAULT_EXECUTE_CAPABILITY_TIMEOUT_MESSAGE = "The capability call exceeded 45s. Retry once; if it times out again, narrow the request and report that the service is slow."
+export const DEFAULT_EXECUTE_RESULT_LIMIT_BYTES = 2 * 1024 * 1024
+export const DEFAULT_SEARCH_SOURCE_TIMEOUT_MS = 10_000
+export const DEFAULT_SEARCH_RESULT_LIMIT_BYTES = 512 * 1024
 
 export function textContent(text: string): ConnectTextContent[] {
   return [{ type: "text", text }]
@@ -69,6 +72,17 @@ function capabilityTimeoutResult(capability: string, message: string): ConnectTo
   }
 }
 
+function capabilityResultLimitResult(capability: string): ConnectToolResult {
+  return {
+    isError: true,
+    content: textContent(JSON.stringify({
+      error: "capability_result_too_large",
+      capability,
+      message: "The capability result exceeded the safe serialized response limit. Narrow the request and try again.",
+    })),
+  }
+}
+
 function isTimeoutError(error: unknown): boolean {
   if (error instanceof McpError && error.code === ErrorCode.RequestTimeout) {
     return true
@@ -83,6 +97,7 @@ export async function executeCapabilityWithBudget<T extends ConnectToolResult>(i
   capability: string
   timeoutMs?: number
   timeoutMessage?: string
+  maxResultBytes?: number
   invoke: () => Promise<T>
 }): Promise<T | ConnectToolResult> {
   const timeoutMessage = input.timeoutMessage ?? DEFAULT_EXECUTE_CAPABILITY_TIMEOUT_MESSAGE
@@ -96,7 +111,12 @@ export async function executeCapabilityWithBudget<T extends ConnectToolResult>(i
   try {
     const invocation = input.invoke()
     void invocation.catch(() => undefined)
-    return await Promise.race([invocation, timeoutResult])
+    const result = await Promise.race([invocation, timeoutResult])
+    const resultBytes = serializedBytes(result)
+    if (resultBytes === null || resultBytes > Math.max(128, input.maxResultBytes ?? DEFAULT_EXECUTE_RESULT_LIMIT_BYTES)) {
+      return capabilityResultLimitResult(input.capability)
+    }
+    return result
   } catch (error) {
     if (isTimeoutError(error)) {
       return capabilityTimeoutResult(input.capability, timeoutMessage)
@@ -115,10 +135,49 @@ function sourceSupportsType(source: ConnectCapabilitySource, type: ConnectSearch
   return type === "all" || source.types.includes(type)
 }
 
+function serializedBytes(value: unknown): number | null {
+  try {
+    const serialized = JSON.stringify(value)
+    return serialized === undefined ? 0 : new TextEncoder().encode(serialized).byteLength
+  } catch {
+    return null
+  }
+}
+
+async function searchSourceWithBudget(input: {
+  source: ConnectCapabilitySource
+  query: string
+  limit: number
+  type: ConnectSearchType
+  timeoutMs: number
+}): Promise<ConnectSearchResult> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const unavailable = () => ({
+    matches: [],
+    hint: `Connect source "${input.source.id}" was unavailable, so search coverage is incomplete.`,
+  })
+  const deadline = new Promise<ConnectSearchResult>((resolve) => {
+    timeout = setTimeout(() => resolve(unavailable()), input.timeoutMs)
+  })
+  try {
+    const search = Promise.resolve(input.source.search({
+      query: input.query,
+      limit: input.limit,
+      type: input.type,
+    })).catch(unavailable)
+    return await Promise.race([search, deadline])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
 export function createConnectRuntime(options: {
   sources: readonly ConnectCapabilitySource[]
+  searchSourceTimeoutMs?: number
+  searchResultMaxBytes?: number
   executeTimeoutMs?: number
   executeTimeoutMessage?: string
+  executeResultMaxBytes?: number
 }): ConnectRuntime {
   const sourceIds = new Set<string>()
   for (const source of options.sources) {
@@ -133,19 +192,34 @@ export function createConnectRuntime(options: {
       const limit = boundedLimit(input.limit)
       const type = input.type ?? "all"
       const selectedSources = options.sources.filter((source) => sourceSupportsType(source, type))
-      const sourceResults = await Promise.all(selectedSources.map((source) => source.search({
+      const sourceResults = await Promise.all(selectedSources.map((source) => searchSourceWithBudget({
+        source,
         query: input.query,
         limit,
         type,
+        timeoutMs: Math.max(1, options.searchSourceTimeoutMs ?? DEFAULT_SEARCH_SOURCE_TIMEOUT_MS),
       })))
-      const matches = sourceResults
+      const rankedMatches = sourceResults
         .flatMap((result) => result.matches)
         .sort(compareCapabilityMatches)
         .slice(0, limit)
-      const hint = sourceResults
+      const maxBytes = Math.max(128, options.searchResultMaxBytes ?? DEFAULT_SEARCH_RESULT_LIMIT_BYTES)
+      const matches: ConnectCapabilityMatch[] = []
+      let byteLimitReached = false
+      for (const match of rankedMatches) {
+        const nextBytes = serializedBytes({ matches: [...matches, match] })
+        if (nextBytes === null || nextBytes > maxBytes) {
+          byteLimitReached = true
+          continue
+        }
+        matches.push(match)
+      }
+      const hint = [
+        ...sourceResults
         .map((result) => result.hint?.trim())
-        .filter((value): value is string => Boolean(value))
-        .join(" ") || undefined
+        .filter((value): value is string => Boolean(value)),
+        ...(byteLimitReached ? ["Connect search results were truncated to the serialized response limit."] : []),
+      ].join(" ") || undefined
       return { matches, ...(hint ? { hint } : {}) }
     },
 
@@ -169,6 +243,7 @@ export function createConnectRuntime(options: {
         capability: input.name,
         timeoutMs: options.executeTimeoutMs,
         timeoutMessage: options.executeTimeoutMessage,
+        maxResultBytes: options.executeResultMaxBytes,
         invoke: () => source.execute(input),
       })
     },

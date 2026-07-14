@@ -9,12 +9,18 @@
       "types": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./profile": {
+      "types": "./src/profile.ts",
+      "development": "./src/profile.ts",
+      "default": "./dist/profile.js"
     }
   },
   "files": [
     "dist",
     "src",
-    "README.md"
+    "README.md",
+    "connect-runtime.manifest.json"
   ],
   "scripts": {
     "build": "tsup",

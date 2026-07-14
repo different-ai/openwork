@@ -1,27 +1,39 @@
 ---
 title: "Connect your services"
-description: "Sign in to OpenWork and connect the accounts your agent can use"
+description: "Choose hosted or local Connect and add services your agent can use"
 ---
 
-Use `Settings` > `Connect` for services your organization makes available,
-including Gmail, Google Calendar, Google Drive, Slack, Notion, and Linear. This
-is the recommended setup for everyday integrations.
+Open `Settings` > `Connect` and first choose where Connect runs:
 
-## Before you start
+- **Hosted** is recommended for cross-device access, organization-managed
+  services, team sharing, and admin policy. Credentials are encrypted in
+  OpenWork Cloud and OpenWork sign-in is required.
+- **Local** needs no OpenWork account. Remote MCP credentials are encrypted by
+  the active OpenWork Server and capability execution happens from that
+  server. Team sharing and native provider catalogs are not included in this
+  release.
+- **Off** removes the managed Connect tools from agents without deleting saved
+  hosted or local connections.
 
-Connect requires signing in to an OpenWork account and joining an organization
-that has Connect enabled. This is separate from signing in to an LLM provider
-such as ChatGPT.
+Hosted and Local both give agents exactly `search_capabilities` and
+`execute_capability`. The agent workflow stays the same while the available
+catalog and credential owner can differ.
+
+## Use Hosted Connect
+
+Hosted Connect requires signing in to an OpenWork account and joining an
+organization that has Connect enabled. This is separate from signing in to an
+LLM provider such as ChatGPT.
 
 1. Open the OpenWork desktop app.
-2. Click `Sign in`, or open `Settings` > `Connect` and choose `Sign in`.
+2. Open `Settings` > `Connect`, choose `Hosted`, and then choose `Sign in`.
 3. Complete sign-in in your browser and return to OpenWork.
 4. Choose the OpenWork organization you want to use if prompted.
 
 If Connect is not available for your organization, ask an organization admin
 to enable it.
 
-## Connect an account
+### Connect a hosted account
 
 1. Open `Settings` > `Connect`.
 2. Find the service under `Needs your sign-in`.
@@ -32,6 +44,24 @@ Some connections are managed by your organization. If a service is not
 listed, ask an organization admin to publish it from the OpenWork Cloud
 `Connections` dashboard and grant you access.
 
+## Use Local Connect
+
+Local Connect works while signed out and does not call OpenWork Cloud for
+connection management or capability execution.
+
+1. Open `Settings` > `Connect` and choose `Local`.
+2. Choose `Add connection` and enter the remote MCP server name and URL.
+3. Choose browser sign-in, API key, or no sign-in. Secrets are write-only and
+   are never returned to the app after saving.
+4. Leave private-network access off for a public HTTPS server. Enable it only
+   for a trusted server on your device or private network.
+5. Choose `Connect`. For browser sign-in, approve access and return to
+   OpenWork when the provider page closes.
+
+Local Connect is owned by the active OpenWork Server. When the desktop uses a
+remote OpenWork Server, the credentials stay on and requests run from that
+remote server—not from the desktop device.
+
 ## Ask your agent to use it
 
 You do not need to know an MCP server name or tool name. Ask for the outcome
@@ -41,22 +71,24 @@ you want, for example:
 - “Find the Q3 launch page in Notion.”
 - “What meetings do I have tomorrow?”
 
-The agent searches the live capabilities available to your signed-in account,
-then executes an exact match. If an account still needs attention, it should
+The agent searches the live capabilities available in the selected Connect
+mode, then executes an exact match. If an account still needs attention, it should
 send you back to `Settings` > `Connect` with the action to take instead of
 telling you to add an MCP server.
 
 ## Connect, Connections, and MCP servers
 
-- **Connect** is the member-facing page in the desktop app for signing in to
-  services and checking connection readiness.
+- **Connect** is the desktop page for choosing Hosted, Local, or Off; managing
+  local remote-MCP connections; signing in to hosted services; and checking
+  readiness.
 - **Connections** is the organization-admin dashboard in OpenWork Cloud for
   publishing a service, choosing whose account it uses, and granting member or
   team access.
 - **OpenWork Connect MCP** is the hosted endpoint that lets external MCP
   clients use capabilities from an OpenWork organization.
-- **Add an MCP server** is the advanced path for a custom or local server that
-  your organization does not provide through Connect.
+- **Add an MCP server** in Extensions is the direct engine path. It is still
+  useful when you do not want Connect's managed credential lifecycle and
+  bounded two-tool search/execute facade.
 
 If you are building a custom integration, continue with
 [Add an MCP server](/start-here/connect-your-stack/add-an-mcp-server). If you

@@ -119,6 +119,11 @@ export interface Capabilities {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+  connect: {
+    profile: true;
+    modes: Array<"hosted" | "local" | "disabled">;
+    localRuntime: true;
+  };
 
   approvals: { mode: ApprovalMode; timeoutMs: number };
   sandbox: { enabled: boolean; backend: SandboxBackend };

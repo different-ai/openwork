@@ -556,7 +556,7 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
   };
 }
 
-export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
+export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, getConnectVaultKey }) {
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
   const orchestratorState = createOrchestratorState();
@@ -1169,7 +1169,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
     // Inject user env vars so the server and managed OpenCode inherit them.
     const serverEnv = await buildChildEnv({});
-    Object.assign(process.env, serverEnv);
+    const configuredConnectVaultKey = String(serverEnv.OPENWORK_CONNECT_VAULT_KEY ?? process.env.OPENWORK_CONNECT_VAULT_KEY ?? "").trim();
+    const connectVaultKey = configuredConnectVaultKey || await getConnectVaultKey?.();
+    Object.assign(process.env, serverEnv, connectVaultKey ? { OPENWORK_CONNECT_VAULT_KEY: connectVaultKey } : {});
 
     // Once the embedded server has a persisted registry, it is the source of
     // truth. Do not pass Electron's legacy workspace list as CLI workspaces or

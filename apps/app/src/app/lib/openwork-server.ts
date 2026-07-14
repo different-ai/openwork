@@ -1,4 +1,11 @@
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
+import type {
+  ConnectConnection,
+  ConnectConnectionInput,
+  ConnectMode,
+  ConnectProfile,
+  ConnectProfileUpdate,
+} from "@openwork/connect-core/profile";
 import {
   agentContextDiagnosticsReportSchema,
   agentContextDiagnosticsRequestSchema,
@@ -28,6 +35,11 @@ export type OpenworkServerCapabilities = {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+  connect?: {
+    profile: boolean;
+    modes: OpenworkConnectMode[];
+    localRuntime: boolean;
+  };
   sandbox?: { enabled: boolean; backend: "none" | "docker" | "container" };
   proxy?: { opencode: boolean };
   toolProviders?: {
@@ -642,6 +654,12 @@ export type OpenworkConnectState = {
   cloudMcpPresent: boolean;
   googleWorkspace: { legacyConfigured: boolean };
 };
+
+export type OpenworkConnectMode = ConnectMode;
+export type OpenworkConnectProfile = ConnectProfile;
+export type OpenworkLocalConnectConnection = ConnectConnection;
+export type OpenworkLocalConnectConnectionInput = ConnectConnectionInput;
+export type OpenworkConnectProfileUpdate = ConnectProfileUpdate;
 
 export type GoogleWorkspaceConnectStart = {
   flowId: string;
@@ -1317,6 +1335,48 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
     status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
+    getConnectProfile: () => requestJson<OpenworkConnectProfile>(baseUrl, "/v1/connect/profile", {
+      token,
+      hostToken,
+      timeoutMs: timeouts.config,
+    }),
+    setConnectProfile: (mode: OpenworkConnectMode) => requestJson<OpenworkConnectProfileUpdate>(baseUrl, "/v1/connect/profile", {
+      token,
+      hostToken,
+      method: "PUT",
+      body: { mode },
+      timeoutMs: timeouts.cloudMcpReconcile,
+    }),
+    listLocalConnectConnections: () => requestJson<{ items: OpenworkLocalConnectConnection[] }>(baseUrl, "/v1/connect/connections", {
+      token,
+      hostToken,
+      timeoutMs: timeouts.config,
+    }),
+    createLocalConnectConnection: (payload: OpenworkLocalConnectConnectionInput) => requestJson<OpenworkLocalConnectConnection>(baseUrl, "/v1/connect/connections", {
+      token,
+      hostToken,
+      method: "POST",
+      body: payload,
+      timeoutMs: timeouts.config,
+    }),
+    deleteLocalConnectConnection: (connectionId: string) => requestJson<{ deleted: true }>(baseUrl, `/v1/connect/connections/${encodeURIComponent(connectionId)}`, {
+      token,
+      hostToken,
+      method: "DELETE",
+      timeoutMs: timeouts.config,
+    }),
+    connectLocalConnectConnection: (connectionId: string) => requestJson<{ status: "connected" | "needs_auth"; authorizeUrl?: string }>(baseUrl, `/v1/connect/connections/${encodeURIComponent(connectionId)}/connect`, {
+      token,
+      hostToken,
+      method: "POST",
+      timeoutMs: timeouts.cloudMcpReconcile,
+    }),
+    disconnectLocalConnectConnection: (connectionId: string) => requestJson<OpenworkLocalConnectConnection>(baseUrl, `/v1/connect/connections/${encodeURIComponent(connectionId)}/disconnect`, {
+      token,
+      hostToken,
+      method: "POST",
+      timeoutMs: timeouts.config,
+    }),
     googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),
     setConnectState: (connectEnabled: boolean) => requestJson<OpenworkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
     googleWorkspaceConnectStart: (options?: { gmailRead?: boolean; features?: string[] }) => requestJson<GoogleWorkspaceConnectStart>(baseUrl, "/experimental/google-workspace/connect/start", { token, hostToken, method: "POST", body: { gmailRead: options?.gmailRead === true, features: options?.features ?? [] }, timeoutMs: timeouts.status }),

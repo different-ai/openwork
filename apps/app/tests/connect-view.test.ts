@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
-import type { OpenworkCloudMcpHealth } from "../src/app/lib/openwork-server";
+import type { OpenworkCloudMcpHealth, OpenworkConnectProfile } from "../src/app/lib/openwork-server";
 import {
+  ConnectModeSelector,
+  LocalConnectPanel,
   createOpaqueDiagnosticsScopeKey,
   readDiagnosticsValueForScope,
   readyCloudMcpToolIds,
@@ -42,6 +46,64 @@ describe("resolveConnectViewState", () => {
 
   test("signed-in users with an active org keep the Agent access card visible without catalog rollout", () => {
     expect(resolveConnectViewState({ authStatus: "signed_in", connectEnabled: false, connectionsCount: 0, activeOrgSelected: true })).toBe("active");
+  });
+});
+
+function localProfile(): OpenworkConnectProfile {
+  return {
+    mode: "local",
+    deployment: "desktop-local",
+    runtimeVersion: "0.1.0",
+    contractVersion: "1.0",
+    localAvailable: true,
+    vault: { status: "ready" },
+    agentEndpoint: "http://127.0.0.1:48000/mcp/agent",
+    connectionCount: 0,
+    connectedCount: 0,
+    features: {
+      organizations: false,
+      teams: false,
+      sharedCredentials: false,
+      perActorCredentials: false,
+      externalMcp: true,
+      localSkills: false,
+      installedPlugins: false,
+      nativeProviders: [],
+      privateNetworkSources: true,
+      externalClients: false,
+      audit: false,
+    },
+  };
+}
+
+describe("Connect deployment mode UI", () => {
+  test("shows Hosted, Local, and Off before any cloud sign-in surface", () => {
+    const html = renderToStaticMarkup(createElement(ConnectModeSelector, {
+      profile: localProfile(),
+      busy: false,
+      error: null,
+      onSelect: () => undefined,
+    }));
+
+    expect(html).toContain('data-connect-mode="hosted"');
+    expect(html).toContain('data-connect-mode="local"');
+    expect(html).toContain('data-connect-mode="disabled"');
+    expect(html).toContain("Hosted (recommended)");
+    expect(html).toContain("active OpenWork Server");
+  });
+
+  test("local mode renders only its honest account-free feature set", () => {
+    const html = renderToStaticMarkup(createElement(LocalConnectPanel, {
+      client: null,
+      profile: localProfile(),
+      onProfileChange: () => undefined,
+    }));
+
+    expect(html).toContain("Remote MCP connections");
+    expect(html).toContain("Team sharing and per-person credentials");
+    expect(html).toContain("Hosted only");
+    expect(html).toContain("Not in this release");
+    expect(html).not.toContain("Sign in to OpenWork");
   });
 });
 

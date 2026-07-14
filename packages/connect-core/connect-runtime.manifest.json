@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "runtime": "openwork-connect",
+  "runtimeVersion": "0.1.0",
+  "contractVersion": "1.0",
+  "mcpAlias": "openwork-cloud",
+  "agentPath": "/mcp/agent",
+  "tools": [
+    "search_capabilities",
+    "execute_capability"
+  ],
+  "packages": [
+    {
+      "name": "@openwork/connect-core",
+      "path": "packages/connect-core",
+      "desktopStage": true
+    },
+    {
+      "name": "@openwork/enterprise-mcp-client",
+      "path": "packages/enterprise-mcp-client",
+      "desktopStage": true
+    }
+  ]
+}

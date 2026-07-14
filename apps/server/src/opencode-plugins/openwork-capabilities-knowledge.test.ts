@@ -28,12 +28,14 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).toContain("30-day inactivity window");
     expect(knowledge).toContain("reference_id");
     expect(knowledge).toContain("OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against ServiceNow, Slack, Notion, Linear, Google Workspace, a marketplace, or another connected service.");
-    expect(knowledge).toContain("require the user to sign in to OpenWork first");
+    expect(knowledge).toContain("Hosted, Local, and Off before cloud sign-in");
+    expect(knowledge).toContain("Local is account-free");
+    expect(knowledge).toContain("same two-tool OpenWork Connect agent experience");
     expect(knowledge).toContain("Runtime steering from the OpenWork extensions plugin is the source of truth");
     expect(knowledge).not.toContain("First call `openwork-cloud_search_capabilities`");
     expect(knowledge).not.toContain("then call `openwork-cloud_execute_capability`");
     expect(knowledge).toContain("Settings > Connect");
-    expect(knowledge).toContain("custom or local MCP server");
+    expect(knowledge).toContain("direct engine MCP path");
     expect(knowledge).not.toContain("Access tokens are opaque");
     expect(knowledge).not.toContain("https://api.openworklabs.com/mcp`");
     expect(knowledge).not.toContain("openwork-ui-mcp");
@@ -73,7 +75,8 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(read).toContain("Settings` > `Connect");
     expect(read).toContain("Needs your sign-in");
     expect(read).toContain("Ready to use");
-    expect(read).toContain("advanced path for a custom or local server");
+    expect(read).toContain("Local Connect works while signed out");
+    expect(read).toContain("direct engine path");
   });
 
   test("reads current Cloud MCP endpoint and proxy guidance from bundled docs", async () => {

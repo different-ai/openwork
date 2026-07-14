@@ -70,6 +70,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.17.11
         version: 1.17.11
+      '@openwork/connect-core':
+        specifier: workspace:*
+        version: link:../../packages/connect-core
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -221,9 +224,18 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
       '@opencode-ai/sdk':
         specifier: ^1.17.11
         version: 1.17.11
+      '@openwork/connect-core':
+        specifier: workspace:*
+        version: link:../../packages/connect-core
+      '@openwork/enterprise-mcp-client':
+        specifier: workspace:*
+        version: link:../../packages/enterprise-mcp-client
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
@@ -319,9 +331,18 @@ importers:
 
   apps/server:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
       '@opencode-ai/sdk':
         specifier: ^1.17.11
         version: 1.17.11
+      '@openwork/connect-core':
+        specifier: workspace:*
+        version: link:../../packages/connect-core
+      '@openwork/enterprise-mcp-client':
+        specifier: workspace:*
+        version: link:../../packages/enterprise-mcp-client
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0

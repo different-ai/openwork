@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch, isPrivateAddress, PrivateUrlError } from "../src/capability-sources/url-guard.js"
+import { assertPublicUrl, assertRealmUrl, createGuardedFetch, createRealmSafeFetch, isPrivateAddress, MCP_OUTBOUND_RESPONSE_LIMIT_BYTES, PrivateUrlError } from "../src/capability-sources/url-guard.js"
 
 describe("isPrivateAddress", () => {
   test.each([
@@ -132,6 +132,16 @@ describe("createGuardedFetch", () => {
     await expect(guardedFetch("https://1.1.1.1/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
     expect(requested).toEqual(["https://1.1.1.1/mcp"])
   })
+
+  test("bounds streamed provider responses", async () => {
+    const guardedFetch = createGuardedFetch(async () => new Response(
+      new Uint8Array(MCP_OUTBOUND_RESPONSE_LIMIT_BYTES + 1),
+      { status: 200 },
+    ))
+    const response = await guardedFetch("https://1.1.1.1/mcp")
+
+    await expect(response.arrayBuffer()).rejects.toThrow("exceeded the byte limit")
+  })
 })
 
 describe("assertPublicUrl", () => {
@@ -167,6 +177,14 @@ describe("assertPublicUrl", () => {
 })
 
 describe("createRealmSafeFetch", () => {
+  test("allows approved private ranges but still blocks metadata and reserved endpoints", async () => {
+    await expect(assertRealmUrl("http://127.0.0.1:3978/mcp")).resolves.toBeUndefined()
+    await expect(assertRealmUrl("http://10.0.0.5/mcp")).resolves.toBeUndefined()
+    await expect(assertRealmUrl("http://169.254.169.254/latest/meta-data/")).rejects.toBeInstanceOf(PrivateUrlError)
+    await expect(assertRealmUrl("http://0.0.0.0/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
+    await expect(assertRealmUrl("http://[fe80::1]/mcp")).rejects.toBeInstanceOf(PrivateUrlError)
+  })
+
   test("allows private HTTP endpoints without forwarding bodies across origins", async () => {
     const requested: string[] = []
     const realmSafeFetch = createRealmSafeFetch(async (url) => {

@@ -7,14 +7,15 @@
     "openwork-server": "bin/openwork-server.mjs"
   },
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 bun src/cli.ts",
-    "test": "bun test",
+    "dev": "pnpm run build:connect-packages && OPENWORK_DEV_MODE=1 bun src/cli.ts",
+    "test": "pnpm run build:connect-packages && bun test",
     "test:artifacts": "bun test src/artifact-files.e2e.test.ts src/workspace-init.test.ts src/server.normalizeWorkspaceRelativePath.test.ts",
-    "build": "tsc -p tsconfig.json && bun build src/opencode-plugins/openwork-extensions-preview.ts src/opencode-plugins/openwork-capabilities-knowledge.ts src/opencode-plugins/openwork-office-attachments.ts src/opencode-plugins/openwork-anthropic-adaptive-thinking.ts src/opencode-plugins/openwork-anthropic-tool-schema.ts --outdir dist/opencode-plugins --target node --format esm",
+    "build": "pnpm run build:connect-packages && tsc -p tsconfig.json && bun build src/opencode-plugins/openwork-extensions-preview.ts src/opencode-plugins/openwork-capabilities-knowledge.ts src/opencode-plugins/openwork-office-attachments.ts src/opencode-plugins/openwork-anthropic-adaptive-thinking.ts src/opencode-plugins/openwork-anthropic-tool-schema.ts --outdir dist/opencode-plugins --target node --format esm",
+    "build:connect-packages": "node script/build-connect-packages.mjs",
     "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
     "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64 --target bun-windows-arm64",
     "start": "bun dist/cli.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm run build:connect-packages && tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "pnpm build:bin"
   },
   "files": [
@@ -46,7 +47,10 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.17.11",
+    "@openwork/connect-core": "workspace:*",
+    "@openwork/enterprise-mcp-client": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "drizzle-orm": "^0.45.1",
     "jsonc-parser": "^3.2.1",

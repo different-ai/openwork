@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { createOpencodeClient, McpStatus, ToolIds, ToolList } from "@opencode-ai/sdk/v2/client";
+import { CONNECT_MCP_ALIAS } from "@openwork/connect-core/profile";
 import { ApiError } from "./errors.js";
 import { diagnoseMcpToolDenies, type McpToolDeny } from "./mcp.js";
 import { sanitizeDiagnosticString, sanitizeDiagnosticValue } from "./diagnostic-sanitizer.js";
@@ -10,7 +11,7 @@ import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig } 
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
 import { validateMcpConfig } from "./validators.js";
 
-export const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
+export const OPENWORK_CLOUD_MCP_NAME = CONNECT_MCP_ALIAS;
 export const OPENWORK_CLOUD_EXPECTED_TOOLS = [
   "openwork-cloud_search_capabilities",
   "openwork-cloud_execute_capability",

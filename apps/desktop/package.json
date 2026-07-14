@@ -23,7 +23,10 @@
     "test": "node --test electron/agent-context-diagnostics-fetch.test.mjs electron/brand-icon-windows.test.mjs electron/connect-link.test.mjs electron/open-external.test.mjs electron/runtime.test.mjs electron/runtime-ca.test.mjs electron/updater.test.mjs electron/remote-workspace.test.mjs electron/workspace-store.test.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.17.11",
+    "@openwork/connect-core": "workspace:*",
+    "@openwork/enterprise-mcp-client": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "drizzle-orm": "^0.45.1",
     "electron-updater": "^6.3.9",
