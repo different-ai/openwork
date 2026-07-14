@@ -46,6 +46,7 @@ export type ExternalMcpConnection = {
   missingFeatures?: string[];
   externalAccountId?: string | null;
   grantedScopes?: string[];
+  requestedOAuthScopes?: string[];
   tenantId?: string | null;
   requiredBy: ExternalMcpRequiredBy[];
   identityManagedBy: ExternalMcpRequiredBy[];
@@ -77,6 +78,56 @@ export type ExternalMcpPreset = {
   requiresOAuthClient?: boolean;
 };
 
+export type ExternalMcpDiscoveryEvidenceSource =
+  | "live_protocol"
+  | "oauth_metadata"
+  | "plugin_manifest"
+  | "openwork_preset"
+  | "unknown";
+
+export type ExternalMcpDiscoveryConfidence = "verified" | "declared" | "curated" | "inferred" | "unknown";
+
+export type ExternalMcpDiscoveryInput = {
+  id: string;
+  label: string;
+  placement: "api_key" | "argument" | "environment" | "header" | "oauth_client_id" | "oauth_client_secret" | "url";
+  required: boolean;
+  secret: boolean;
+  source: ExternalMcpDiscoveryEvidenceSource;
+  supported: boolean;
+  variable: string | null;
+};
+
+export type ExternalMcpOAuthDiscovery = {
+  authorizationServer: string | null;
+  clientIdRequired: boolean;
+  clientSecretRequired: boolean;
+  documentationUrl: string | null;
+  pkce: "s256" | "missing" | "unknown";
+  registration: "dynamic" | "client_metadata_document" | "pre_registered" | "unknown";
+  scopes: string[];
+  scopesSource: "challenge" | "protected_resource" | "plugin_manifest" | "authorization_server" | "none";
+};
+
+export type ExternalMcpConfigurationDiscovery = {
+  auth: {
+    confidence: ExternalMcpDiscoveryConfidence;
+    kind: ExternalMcpAuthType | "unknown";
+    source: ExternalMcpDiscoveryEvidenceSource;
+  };
+  inputs: ExternalMcpDiscoveryInput[];
+  oauth: ExternalMcpOAuthDiscovery | null;
+  support: {
+    status: "auto_configurable" | "needs_manual_oauth_client" | "needs_review" | "needs_values" | "unsupported";
+  };
+  transport: {
+    kind: "remote_http";
+    supported: boolean;
+    url: string;
+  };
+  warnings: string[];
+};
+
 export type CreatedMcpConnection = ExternalMcpConnection & {
   links?: {
     yourConnections?: string;
@@ -88,8 +139,21 @@ export function isNativeProviderConnectionId(id: string): boolean {
   return id === "google-workspace" || id === "microsoft-365";
 }
 
-export function canDisconnectNativeProviderAccount(connection: Pick<ExternalMcpConnection, "id" | "connectedForMe">): boolean {
-  return connection.connectedForMe && isNativeProviderConnectionId(connection.id);
+type DisconnectableMcpAccount = Pick<ExternalMcpConnection, "id" | "connectedForMe" | "credentialMode">;
+
+export function canDisconnectMyMcpAccount(connection: DisconnectableMcpAccount): boolean {
+  return connection.connectedForMe
+    && (isNativeProviderConnectionId(connection.id) || connection.credentialMode === "per_member");
+}
+
+export function myMcpAccountDisconnectPath(connection: Pick<ExternalMcpConnection, "id" | "credentialMode">): string {
+  if (isNativeProviderConnectionId(connection.id)) {
+    return `/v1/oauth-providers/${encodeURIComponent(connection.id)}/disconnect`;
+  }
+  if (connection.credentialMode === "per_member") {
+    return `/v1/mcp-connections/${encodeURIComponent(connection.id)}/my-account/disconnect`;
+  }
+  throw new Error("Only per-member MCP connections have a personal account to disconnect.");
 }
 
 export const mcpConnectionQueryKeys = {
@@ -99,6 +163,7 @@ export const mcpConnectionQueryKeys = {
   presets: () => [...mcpConnectionQueryKeys.all, "presets"] as const,
   tools: (orgId?: string | null, connectionId?: string | null) =>
     [...mcpConnectionQueryKeys.all, "tools", orgId ?? "none", connectionId ?? "none"] as const,
+  discovery: (orgId?: string | null) => [...mcpConnectionQueryKeys.all, "discovery", orgId ?? "none"] as const,
   nativeProviderClient: (orgId?: string | null, providerId?: string | null) =>
     [...mcpConnectionQueryKeys.all, "native-provider-client", orgId ?? "none", providerId ?? "none"],
   telegram: (orgId?: string | null) => [...mcpConnectionQueryKeys.all, "telegram", orgId ?? "none"] as const,
@@ -132,6 +197,132 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function httpUrlOrNull(value: unknown): string | null {
+  const raw = stringOrNull(value);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseDiscoveryEvidenceSource(value: unknown): ExternalMcpDiscoveryEvidenceSource | null {
+  if (value === "live_protocol" || value === "oauth_metadata" || value === "plugin_manifest" || value === "openwork_preset" || value === "unknown") {
+    return value;
+  }
+  return null;
+}
+
+function parseDiscoveryConfidence(value: unknown): ExternalMcpDiscoveryConfidence | null {
+  if (value === "verified" || value === "declared" || value === "curated" || value === "inferred" || value === "unknown") {
+    return value;
+  }
+  return null;
+}
+
+function parseDiscoveryInput(value: unknown): ExternalMcpDiscoveryInput | null {
+  if (!isRecord(value)) return null;
+  const id = stringOrNull(value.id);
+  const label = stringOrNull(value.label);
+  const source = parseDiscoveryEvidenceSource(value.source);
+  const variable = value.variable === null ? null : stringOrNull(value.variable);
+  const placement = value.placement;
+  if (
+    !id
+    || !label
+    || !source
+    || (placement !== "api_key" && placement !== "argument" && placement !== "environment" && placement !== "header" && placement !== "oauth_client_id" && placement !== "oauth_client_secret" && placement !== "url")
+    || typeof value.required !== "boolean"
+    || typeof value.secret !== "boolean"
+    || typeof value.supported !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    id,
+    label,
+    placement,
+    required: value.required,
+    secret: value.secret,
+    source,
+    supported: value.supported,
+    variable,
+  };
+}
+
+function parseOAuthDiscovery(value: unknown): ExternalMcpOAuthDiscovery | null {
+  if (!isRecord(value)) return null;
+  const registration = value.registration;
+  const pkce = value.pkce;
+  const scopesSource = value.scopesSource;
+  if (
+    typeof value.clientIdRequired !== "boolean"
+    || typeof value.clientSecretRequired !== "boolean"
+    || !isStringArray(value.scopes)
+    || (registration !== "dynamic" && registration !== "client_metadata_document" && registration !== "pre_registered" && registration !== "unknown")
+    || (pkce !== "s256" && pkce !== "missing" && pkce !== "unknown")
+    || (scopesSource !== "challenge" && scopesSource !== "protected_resource" && scopesSource !== "plugin_manifest" && scopesSource !== "authorization_server" && scopesSource !== "none")
+  ) {
+    return null;
+  }
+  return {
+    authorizationServer: value.authorizationServer === null ? null : httpUrlOrNull(value.authorizationServer),
+    clientIdRequired: value.clientIdRequired,
+    clientSecretRequired: value.clientSecretRequired,
+    documentationUrl: value.documentationUrl === null ? null : httpUrlOrNull(value.documentationUrl),
+    pkce,
+    registration,
+    scopes: value.scopes,
+    scopesSource,
+  };
+}
+
+export function parseExternalMcpConfigurationDiscovery(value: unknown): ExternalMcpConfigurationDiscovery | null {
+  if (!isRecord(value) || !isRecord(value.auth) || !isRecord(value.support) || !isRecord(value.transport)) return null;
+  const confidence = parseDiscoveryConfidence(value.auth.confidence);
+  const source = parseDiscoveryEvidenceSource(value.auth.source);
+  const kind = value.auth.kind;
+  const status = value.support.status;
+  const url = stringOrNull(value.transport.url);
+  const inputs = Array.isArray(value.inputs) ? value.inputs.map(parseDiscoveryInput) : [];
+  if (
+    !confidence
+    || !source
+    || (kind !== "oauth" && kind !== "apikey" && kind !== "none" && kind !== "unknown")
+    || (status !== "auto_configurable" && status !== "needs_manual_oauth_client" && status !== "needs_review" && status !== "needs_values" && status !== "unsupported")
+    || value.transport.kind !== "remote_http"
+    || typeof value.transport.supported !== "boolean"
+    || !url
+    || !Array.isArray(value.inputs)
+    || inputs.some((input) => input === null)
+    || !isStringArray(value.warnings)
+  ) {
+    return null;
+  }
+  const oauth = value.oauth === null ? null : parseOAuthDiscovery(value.oauth);
+  if (value.oauth !== null && !oauth) return null;
+  return {
+    auth: { confidence, kind, source },
+    inputs: inputs.filter((input): input is ExternalMcpDiscoveryInput => input !== null),
+    oauth,
+    support: { status },
+    transport: { kind: "remote_http", supported: value.transport.supported, url },
+    warnings: value.warnings,
+  };
+}
+
+export function parseExternalMcpDiscoveryPayload(payload: unknown): ExternalMcpConfigurationDiscovery {
+  const discovery = isRecord(payload) ? parseExternalMcpConfigurationDiscovery(payload.discovery) : null;
+  if (!discovery) throw new Error("MCP discovery response was incomplete.");
+  return discovery;
+}
+
 function parseRequiredBy(value: unknown): ExternalMcpRequiredBy[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
@@ -161,6 +352,7 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
       ? { externalAccountId: connection.externalAccountId }
       : {}),
     ...(isStringArray(connection.grantedScopes) ? { grantedScopes: connection.grantedScopes } : {}),
+    ...(isStringArray(connection.requestedOAuthScopes) ? { requestedOAuthScopes: connection.requestedOAuthScopes } : {}),
     ...(typeof connection.tenantId === "string" || connection.tenantId === null ? { tenantId: connection.tenantId } : {}),
   }));
 }
@@ -188,6 +380,34 @@ export function useMcpConnectionPresets() {
   });
 }
 
+export function useDiscoverMcpConnection() {
+  const { orgId, runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationKey: mcpConnectionQueryKeys.discovery(orgId),
+    mutationFn: async (input: { url: string; manifest?: Record<string, unknown> }): Promise<ExternalMcpConfigurationDiscovery> => {
+      let discovery: ExternalMcpConfigurationDiscovery | null = null;
+      await runReauthableAction("discover-mcp-connection", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/mcp-connections/discover",
+          {
+            method: "POST",
+            headers: getOrgScopeHeaders(requireOrgId(orgId)),
+            body: JSON.stringify(input),
+          },
+          20000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to inspect MCP server (${response.status}).`);
+        }
+        discovery = parseExternalMcpDiscoveryPayload(payload);
+      });
+      if (!discovery) throw new Error("MCP discovery response was incomplete.");
+      return discovery;
+    },
+  });
+}
+
 export type McpConnectionAccessInput = {
   orgWide: boolean;
   memberIds: string[];
@@ -204,6 +424,7 @@ export type CreateMcpConnectionInput = {
     clientId: string;
     clientSecret?: string;
   };
+  requestedOAuthScopes?: string[];
   access: McpConnectionAccessInput;
 };
 
@@ -327,21 +548,21 @@ export function useStartMcpConnectionOAuth() {
   });
 }
 
-export function useDisconnectMyProviderAccount() {
+export function useDisconnectMyMcpAccount() {
   const queryClient = useQueryClient();
   const { orgId } = useOrgDashboard();
 
   return useMutation({
-    mutationFn: async (providerId: string): Promise<string> => {
+    mutationFn: async (connection: Pick<ExternalMcpConnection, "id" | "credentialMode">): Promise<string> => {
       const { response, payload } = await requestJson(
-        `/v1/oauth-providers/${encodeURIComponent(providerId)}/disconnect`,
+        myMcpAccountDisconnectPath(connection),
         { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
         15000,
       );
       if (!response.ok) {
         throw getRequestError(payload, response, `Failed to disconnect account (${response.status}).`);
       }
-      return providerId;
+      return connection.id;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });

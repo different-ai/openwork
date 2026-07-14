@@ -400,6 +400,8 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             operationFailed = true
             if (exchangedTokens && credentialPort) {
               try {
+                const revision = session.oauthProvider?.credentialRevision
+                if (!revision) throw new Error("The exchanged OAuth credential revision is unavailable for safe cleanup.")
                 const cleanupController = new AbortController()
                 await credentialPort.invalidate({
                   context: {
@@ -408,6 +410,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
                     signal: cleanupController.signal,
                   },
                   reason: "post-authorization-validation-failed",
+                  revision,
                 })
               } catch {
                 // Credential cleanup must not replace the validation failure.

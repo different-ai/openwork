@@ -26,6 +26,7 @@ import {
 function toEnterpriseConnection(
   connection: ExternalMcpConnectionRow,
   member?: ExternalMcpMemberContext,
+  authorizationActor?: ExternalMcpMemberContext,
 ): EnterpriseMcpConnection {
   if (connection.authType === "oauth") {
     return {
@@ -33,7 +34,7 @@ function toEnterpriseConnection(
       serverUrl: connection.url,
       authorization: {
         type: "oauth",
-        persistence: new DenEnterpriseMcpOAuthPersistence(connection, member),
+        persistence: new DenEnterpriseMcpOAuthPersistence(connection, member, authorizationActor),
       },
     }
   }
@@ -200,12 +201,15 @@ export async function connectExternalMcp(
   signedState?: string,
   member?: ExternalMcpMemberContext,
   diagnosticReferenceId?: string,
+  authorizationActor?: ExternalMcpMemberContext,
+  lifecycleDeadline?: ExternalMcpLifecycleDeadline,
 ): Promise<ExternalMcpConnectResult> {
   return runEnterpriseMcpOperation({
     connection,
     diagnosticReferenceId,
+    lifecycleDeadline,
     operation: (client) => client.connect({
-      connection: toEnterpriseConnection(connection, member),
+      connection: toEnterpriseConnection(connection, member, authorizationActor),
       redirectUri,
       authorizationId: signedState,
     }),
@@ -219,13 +223,14 @@ export async function completeExternalMcpAuth(
   member?: ExternalMcpMemberContext,
   diagnosticReferenceId?: string,
   signedState?: string,
+  authorizationActor?: ExternalMcpMemberContext,
 ): Promise<void> {
   if (!signedState) throw new Error("The enterprise MCP OAuth callback requires its signed state transaction.")
   await runEnterpriseMcpOperation({
     connection,
     diagnosticReferenceId,
     operation: (client) => client.completeAuthorization({
-      connection: toEnterpriseConnection(connection, member),
+      connection: toEnterpriseConnection(connection, member, authorizationActor),
       redirectUri,
       code,
       authorizationId: signedState,
@@ -238,12 +243,13 @@ export async function abandonExternalMcpAuth(
   signedState: string,
   member?: ExternalMcpMemberContext,
   diagnosticReferenceId?: string,
+  authorizationActor?: ExternalMcpMemberContext,
 ): Promise<void> {
   await runEnterpriseMcpOperation({
     connection,
     diagnosticReferenceId,
     operation: (client) => client.abandonAuthorization({
-      connection: toEnterpriseConnection(connection, member),
+      connection: toEnterpriseConnection(connection, member, authorizationActor),
       authorizationId: signedState,
       reason: "provider-rejected",
     }),

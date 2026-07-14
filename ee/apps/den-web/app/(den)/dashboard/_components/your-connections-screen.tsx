@@ -9,12 +9,17 @@ import { getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IntegrationIcon } from "./integration-icon";
 import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "./mcp-connection-display";
-import { safeMcpAuthorizationUrl } from "./mcp-authorization-url";
+import {
+  closeMcpAuthorizationWindow,
+  navigateMcpAuthorizationWindow,
+  openMcpAuthorizationWindow,
+  type McpAuthorizationWindow,
+} from "./mcp-authorization-url";
 import { MICROSOFT_365_DISPLAY_SCOPES } from "./microsoft-365-permissions";
 import {
-  canDisconnectNativeProviderAccount,
+  canDisconnectMyMcpAccount,
   type ExternalMcpConnection,
-  useDisconnectMyProviderAccount,
+  useDisconnectMyMcpAccount,
   useMcpConnections,
   useStartMcpConnectionOAuth,
 } from "./mcp-connections-data";
@@ -41,9 +46,13 @@ export function YourConnectionsScreen() {
     orgContext?.roles,
   );
   const startOAuth = useStartMcpConnectionOAuth();
-  const disconnectProvider = useDisconnectMyProviderAccount();
+  const disconnectAccount = useDisconnectMyMcpAccount();
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
-  const [rowError, setRowError] = useState<{ connectionId: string; message: string } | null>(null);
+  const [rowError, setRowError] = useState<{
+    authorizeUrl?: string;
+    connectionId: string;
+    message: string;
+  } | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const focusedRowRef = useRef<HTMLDivElement | null>(null);
   const focusConnectionId = trustedConnectionFocusId(connections, searchParams.get("connectionId"));
@@ -72,30 +81,70 @@ export function YourConnectionsScreen() {
     setPollingConnectionId(null);
   }
 
-  function pollUntilConnectedForMe(connectionId: string) {
+  function pollUntilConnectedForMe(
+    connectionId: string,
+    authorizationWindow: McpAuthorizationWindow,
+    authorizeUrl: string,
+  ) {
     setPollingConnectionId(connectionId);
     const startedAt = Date.now();
     pollTimer.current = setInterval(async () => {
       const result = await refetch();
       const connection = result.data?.find((entry) => entry.id === connectionId);
-      if ((connection?.connectedForMe && connection.needsReconnect !== true) || Date.now() - startedAt > OAUTH_POLL_TIMEOUT_MS) {
+      if (connection?.connectedForMe && connection.needsReconnect !== true) {
+        closeMcpAuthorizationWindow(authorizationWindow);
         stopPolling();
+        return;
+      }
+      if (authorizationWindow.closed) {
+        stopPolling();
+        setRowError({
+          authorizeUrl,
+          connectionId,
+          message: "The sign-in window was closed before authorization finished.",
+        });
+        return;
+      }
+      if (Date.now() - startedAt > OAUTH_POLL_TIMEOUT_MS) {
+        closeMcpAuthorizationWindow(authorizationWindow);
+        stopPolling();
+        setRowError({
+          authorizeUrl,
+          connectionId,
+          message: "Authorization is taking longer than expected.",
+        });
       }
     }, OAUTH_POLL_INTERVAL_MS);
   }
 
-  async function handleConnectMyAccount(connectionId: string) {
+  async function handleConnectMyAccount(
+    connectionId: string,
+    authorizationWindow: McpAuthorizationWindow | null = openMcpAuthorizationWindow(connectionId),
+  ) {
     setRowError(null);
     try {
       const result = await startOAuth.mutateAsync(connectionId);
       if (result.status === "connected") {
+        closeMcpAuthorizationWindow(authorizationWindow);
         void refetch();
         return;
       }
       if (!result.authorizeUrl) throw new Error("The MCP provider did not return an authorization URL.");
-      window.open(safeMcpAuthorizationUrl(result.authorizeUrl), "_blank", "noopener,noreferrer");
-      pollUntilConnectedForMe(connectionId);
+      const launch = navigateMcpAuthorizationWindow(authorizationWindow, result.authorizeUrl);
+      if (!launch.navigated || !authorizationWindow) {
+        closeMcpAuthorizationWindow(authorizationWindow);
+        setRowError({
+          authorizeUrl: launch.authorizeUrl,
+          connectionId,
+          message: authorizationWindow
+            ? "The sign-in window closed before it could open the provider."
+            : "Your browser blocked the sign-in window.",
+        });
+        return;
+      }
+      pollUntilConnectedForMe(connectionId, authorizationWindow, launch.authorizeUrl);
     } catch (connectError) {
+      closeMcpAuthorizationWindow(authorizationWindow);
       setRowError({
         connectionId,
         message: connectError instanceof Error ? connectError.message : "Failed to connect account.",
@@ -103,14 +152,14 @@ export function YourConnectionsScreen() {
     }
   }
 
-  async function handleDisconnectMyAccount(connectionId: string) {
+  async function handleDisconnectMyAccount(connection: ExternalMcpConnection) {
     setRowError(null);
     try {
-      await disconnectProvider.mutateAsync(connectionId);
+      await disconnectAccount.mutateAsync(connection);
       void refetch();
     } catch (disconnectError) {
       setRowError({
-        connectionId,
+        connectionId: connection.id,
         message: disconnectError instanceof Error ? disconnectError.message : "Failed to disconnect account.",
       });
     }
@@ -149,10 +198,11 @@ export function YourConnectionsScreen() {
               rowRef={focusConnectionId === connection.id ? focusedRowRef : undefined}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
-              disconnecting={disconnectProvider.isPending && disconnectProvider.variables === connection.id}
+              disconnecting={disconnectAccount.isPending && disconnectAccount.variables?.id === connection.id}
               errorMessage={rowError?.connectionId === connection.id ? rowError.message : null}
+              authorizationFallbackUrl={rowError?.connectionId === connection.id ? rowError.authorizeUrl ?? null : null}
               onConnect={() => void handleConnectMyAccount(connection.id)}
-              onDisconnect={() => void handleDisconnectMyAccount(connection.id)}
+              onDisconnect={() => void handleDisconnectMyAccount(connection)}
             />
           ))}
         </div>
@@ -168,6 +218,7 @@ function YourConnectionRow({
   connecting,
   disconnecting,
   errorMessage,
+  authorizationFallbackUrl,
   highlighted,
   rowRef,
   onConnect,
@@ -181,6 +232,7 @@ function YourConnectionRow({
   connecting: boolean;
   disconnecting: boolean;
   errorMessage: string | null;
+  authorizationFallbackUrl: string | null;
   onConnect: () => void;
   onDisconnect: () => void;
 }) {
@@ -188,7 +240,7 @@ function YourConnectionRow({
   const needsReconnect = connection.connectedForMe && connection.needsReconnect === true;
   const needsMyConnect = isPerMember && !connection.connectedForMe;
   const needsAdminConnect = isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
-  const canDisconnect = canDisconnectNativeProviderAccount(connection);
+  const canDisconnect = canDisconnectMyMcpAccount(connection);
   const microsoftScopes = connection.id === "microsoft-365"
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
     : [];
@@ -251,7 +303,16 @@ function YourConnectionRow({
               ))}
             </div>
           ) : null}
-          {errorMessage ? <p className="mt-1 text-[12px] text-red-600">{errorMessage}</p> : null}
+          {errorMessage ? (
+            <p className="mt-1 text-[12px] text-red-600">
+              {errorMessage}{" "}
+              {authorizationFallbackUrl ? (
+                <a href={authorizationFallbackUrl} referrerPolicy="no-referrer" className="font-semibold underline underline-offset-2">
+                  Continue sign-in in this tab
+                </a>
+              ) : null}
+            </p>
+          ) : null}
         </div>
       </div>
 

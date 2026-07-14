@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  appendPublicApiPath,
   normalizeConfiguredPublicApiBaseUrl,
   publicRequestUrl,
 } from "../src/request-url.js"
@@ -22,6 +23,17 @@ describe("public API URL configuration", () => {
     expect(normalizeConfiguredPublicApiBaseUrl("https://openwork.example/api/den/", {
       allowInsecureHttp: false,
     })).toBe("https://openwork.example/api/den")
+  })
+
+  test("appends callback routes after the configured public pathname prefix", () => {
+    expect(appendPublicApiPath(
+      "https://openwork.example/api/den/",
+      "/v1/mcp-connections/externalMcpConnection_123/connect/callback",
+    )).toBe("https://openwork.example/api/den/v1/mcp-connections/externalMcpConnection_123/connect/callback")
+    expect(appendPublicApiPath(
+      "https://openwork.example",
+      "/v1/mcp-connections/externalMcpConnection_123/connect/callback",
+    )).toBe("https://openwork.example/v1/mcp-connections/externalMcpConnection_123/connect/callback")
   })
 
   test("requires HTTPS outside development and localhost", () => {

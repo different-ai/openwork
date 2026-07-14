@@ -15,6 +15,7 @@ type OpenApiDocument = {
 let isMcpOperationAllowed: typeof import("../src/mcp/policy.js")["isMcpOperationAllowed"]
 let isAgentApiKeyConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentApiKeyConnection"]
 let isAgentOAuthClientConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentOAuthClientConnection"]
+let containsExternalMcpManifestCredentialValue: typeof import("../src/routes/org/mcp-connections.js")["containsExternalMcpManifestCredentialValue"]
 let isAgentPluginMcpSecretSetup: typeof import("../src/routes/org/plugin-system/routes.js")["isAgentPluginMcpSecretSetup"]
 let buildMcpCatalog: typeof import("../src/mcp/catalog.js")["buildMcpCatalog"]
 let searchCapabilities: typeof import("../src/mcp/search.js")["searchCapabilities"]
@@ -46,6 +47,7 @@ beforeAll(async () => {
   const mcpConnections = await import("../src/routes/org/mcp-connections.js")
   isAgentApiKeyConnection = mcpConnections.isAgentApiKeyConnection
   isAgentOAuthClientConnection = mcpConnections.isAgentOAuthClientConnection
+  containsExternalMcpManifestCredentialValue = mcpConnections.containsExternalMcpManifestCredentialValue
   isAgentPluginMcpSecretSetup = (await import("../src/routes/org/plugin-system/routes.js")).isAgentPluginMcpSecretSetup
   const app = (await import("../src/app.js")).default
   const response = await app.request("http://127.0.0.1:8790/openapi.json")
@@ -63,6 +65,7 @@ describe("agent-configurable org connections policy", () => {
     expect(allowed("getV1McpConnectionsByConnectionIdConnectCallback")).toBe(false)
     expect(allowed("deleteV1McpConnectionsByConnectionId")).toBe(false)
     expect(allowed("postV1McpConnectionsByConnectionIdDisconnect")).toBe(false)
+    expect(allowed("postV1McpConnectionsByConnectionIdMyAccountDisconnect")).toBe(false)
     expect(allowed("postV1OauthProvidersByProviderIdClient")).toBe(false)
     expect(allowed("postV1OauthProvidersByProviderIdDisconnect")).toBe(false)
   })
@@ -71,6 +74,7 @@ describe("agent-configurable org connections policy", () => {
     expect(allowed("getV1McpConnections")).toBe(true)
     expect(allowed("getV1McpConnectionsPresets")).toBe(true)
     expect(allowed("getV1McpConnectionsByConnectionIdTools")).toBe(true)
+    expect(allowed("postV1McpConnectionsDiscover")).toBe(true)
   })
 
   test("agent catalog search discovers member list and admin create mcp-connection operations", () => {
@@ -96,12 +100,16 @@ describe("agent-configurable org connections policy", () => {
     }))
   })
 
-  test("plugin MCP setup that can carry secrets is excluded from the agent catalog", () => {
+  test("plugin MCP setup stays excluded while read-only discovery is visible", () => {
     expect(allowed("postV1PluginsByPluginIdMcpConnections")).toBe(false)
     expect(document.paths["/v1/plugins/{pluginId}/mcp-requirements/configure"]).toBeUndefined()
     const catalog = buildMcpCatalog(document)
     expect(catalog.some((operation) => operation.path === "/v1/plugins/{pluginId}/mcp-connections")).toBe(false)
-    expect(searchCapabilities(catalog, "configure plugin mcp connection oauth client", 20).some((match) => match.path.includes("/plugins/") && match.path.includes("/mcp-connections"))).toBe(false)
+    expect(catalog).toContainEqual(expect.objectContaining({
+      method: "POST",
+      path: "/v1/plugins/{pluginId}/mcp-connections/discover",
+    }))
+    expect(searchCapabilities(catalog, "configure plugin mcp connection oauth client", 20).some((match) => match.path === "/v1/plugins/{pluginId}/mcp-connections")).toBe(false)
   })
 
   test("agent capability search source filter can restrict searches to skills", () => {
@@ -141,6 +149,32 @@ describe("agent-configurable org connections policy", () => {
     expect(isAgentOAuthClientConnection({ oauthClient: { clientId: "client" }, sessionId: "normal_session" })).toBe(false)
     expect(isAgentOAuthClientConnection({ sessionId: "mcp_internal" })).toBe(false)
     expect(isAgentOAuthClientConnection({ oauthClient: null, sessionId: "mcp_internal" })).toBe(false)
+  })
+
+  test("discovery manifests allow declarations but reject credential values", () => {
+    expect(containsExternalMcpManifestCredentialValue({
+      headers: { Authorization: "Bearer ${MCP_TOKEN}" },
+      oauth: { clientId: "${CLIENT_ID}", clientSecret: "${CLIENT_SECRET}" },
+    })).toBe(false)
+    expect(containsExternalMcpManifestCredentialValue({
+      headers: [
+        { name: "Authorization", value: "Bearer {github_pat}", variables: { github_pat: { isSecret: true } } },
+        { name: "X-API-Key", value: "${API_KEY:-ask-me}" },
+      ],
+      oauth: { clientId: "public-client-id", client: { id: "another-public-client-id" } },
+    })).toBe(false)
+    expect(containsExternalMcpManifestCredentialValue({
+      headers: { Authorization: "Bearer literal-token" },
+    })).toBe(true)
+    expect(containsExternalMcpManifestCredentialValue({
+      oauth: { client: { id: "literal-client", secret: "literal-secret" } },
+    })).toBe(true)
+    expect(containsExternalMcpManifestCredentialValue({
+      args: ["--api-key", "literal-key"],
+    })).toBe(true)
+    expect(containsExternalMcpManifestCredentialValue({
+      url: "https://mcp.example.test/mcp?access_token=literal-token",
+    })).toBe(true)
   })
 
   test("plugin MCP secret setup is blocked for the internal agent principal", () => {

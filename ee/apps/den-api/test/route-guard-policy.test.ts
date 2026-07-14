@@ -53,6 +53,7 @@ const routeGuardExceptions = new Map<string, string>([
   ["GET /v1/orgs/sso/resolve", "public SSO domain discovery"],
   ["POST /v1/bootstrap/workspace", "agent-first provisional workspace bootstrap is rate-limited in-handler"],
   ["GET /v1/oauth-providers/:providerId/connect/callback", "OAuth callback verifies signed state in-handler"],
+  ["GET /v1/mcp-connections/:connectionId/oauth-client-metadata", "public OAuth Client ID Metadata Document contains no tenant or credential data"],
   ["GET /v1/mcp-connections/:connectionId/connect/callback", "external MCP OAuth callback verifies signed state in-handler"],
   ["ALL /v1/orgs/:orgId/*", "legacy proxy forwards to guarded /v1 routes"],
   ["POST /v1/webhooks/connectors/github", "GitHub webhook signature is validated in-handler"],

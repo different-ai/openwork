@@ -95,7 +95,18 @@ export async function signInViaBrowser(ctx, email, password) {
     return true;
   })()`);
   ctx.assert(submitted, "No submit button found on the sign-in card.");
-  await ctx.waitForText("Dashboard", { timeoutMs: 30_000 });
+  await ctx.waitFor(
+    `(() => {
+      const text = document.body?.innerText ?? '';
+      return text.includes('Dashboard') || text.includes(${JSON.stringify(`Signed in as ${email}`)});
+    })()`,
+    { timeoutMs: 30_000, label: "authenticated Den page" },
+  );
+  const onDashboard = await ctx.eval("window.location.pathname.startsWith('/dashboard')");
+  if (!onDashboard) {
+    await ctx.eval(`(() => { window.location.href = ${JSON.stringify(`${denWebUrl()}/dashboard`)}; return true; })()`);
+    await ctx.waitForText("Dashboard", { timeoutMs: 30_000 });
+  }
 }
 
 export async function openAdminConnections(ctx) {

@@ -130,9 +130,16 @@ export default {
             );
             await ctx.fill('input[placeholder="notion"]', CONNECTION_NAME);
             await ctx.fill('input[placeholder="https://mcp.example.com/mcp"]', `${MOCK_SERVER_URL}/mcp`);
+            await ctx.clickText("Inspect", { timeoutMs: 10_000 });
             await ctx.waitFor(
-              "[...document.querySelectorAll('button')].some((button) => button.textContent.trim() === 'One org account')",
-              { timeoutMs: 10_000, label: "One org account button" },
+              `(() => {
+                const text = document.body?.innerText ?? '';
+                return text.includes('Ready to configure')
+                  && text.includes('automatic OAuth app registration')
+                  && text.includes('mcp:read')
+                  && text.includes('mcp:write');
+              })()`,
+              { timeoutMs: 30_000, label: "discovered OAuth registration and scopes" },
             );
             const clicked = await ctx.eval(`(() => {
               const button = [...document.querySelectorAll('button')].find((entry) => entry.textContent.trim() === 'One org account');
@@ -145,14 +152,18 @@ export default {
             const values = await ctx.eval(`(() => ({
               name: document.querySelector('input[placeholder="notion"]')?.value ?? null,
               url: document.querySelector('input[placeholder="https://mcp.example.com/mcp"]')?.value ?? null,
+              discovery: document.body?.innerText ?? '',
             }))()`);
             ctx.assert(values.name === CONNECTION_NAME, `Expected name input "${CONNECTION_NAME}", got "${values.name}"`);
             ctx.assert(values.url === `${MOCK_SERVER_URL}/mcp`, `Expected URL input "${MOCK_SERVER_URL}/mcp", got "${values.url}"`);
+            ctx.assert(values.discovery.includes("OAuth"), "Discovery did not identify OAuth.");
+            ctx.assert(values.discovery.includes("automatic OAuth app registration"), "Discovery did not identify dynamic client registration.");
+            ctx.assert(values.discovery.includes("mcp:read") && values.discovery.includes("mcp:write"), "Discovery did not surface advertised OAuth scopes.");
           },
           screenshot: {
             name: "add-connection-filled",
-            claim: "The Add Custom MCP server dialog is filled with a real name and URL.",
-            requireText: ["Add a custom MCP server", "Server URL"],
+            claim: "The Add Custom MCP server dialog identifies OAuth, automatic client registration, and the server's advertised permissions before saving.",
+            requireText: ["Add a custom MCP server", "Ready to configure", "OAuth", "automatic OAuth app registration", "mcp:read", "mcp:write"],
             rejectText: ["Something went wrong"],
           },
         });

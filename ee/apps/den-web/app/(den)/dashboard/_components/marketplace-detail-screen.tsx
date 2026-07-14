@@ -18,17 +18,27 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   formatMarketplaceTimestamp,
   type ConfiguredPluginMcpConnection,
+  type MarketplacePluginMcpDiscovery,
   type MarketplacePluginCloudReadinessConnection,
   type MarketplacePluginCloudReadinessState,
   type MarketplacePluginSummary,
   useConfigurePluginMcpConnection,
+  useDiscoverPluginMcpConnection,
   useGrantMarketplaceAccess,
   useMarketplace,
   useMarketplaceAccess,
   useRevokeMarketplaceAccess,
 } from "./marketplace-data";
 import { IntegrationIcon } from "./integration-icon";
+import { copyTextToClipboard } from "./mcp-clipboard";
 import { type ExternalMcpAuthType, type ExternalMcpCredentialMode, type ExternalMcpPreset, useMcpConnectionPresets } from "./mcp-connections-data";
+import {
+  discoveryAuthControlCopy,
+  discoveryAuthIsEditable,
+  discoveryHasUnsupportedRequirements,
+  discoveryNeedsInput,
+  McpDiscoverySummary,
+} from "./mcp-discovery-summary";
 import {
   findPresetForRequirement,
   pluginReadinessConnectionAction,
@@ -720,17 +730,29 @@ function PluginMcpSetupDialog({
   onClose: () => void;
 }) {
   const configureConnection = useConfigurePluginMcpConnection();
+  const discoverConnection = useDiscoverPluginMcpConnection();
   const [authType, setAuthType] = useState<ExternalMcpAuthType>("oauth");
   const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("per_member");
   const [apiKey, setApiKey] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [showOAuthClient, setShowOAuthClient] = useState(false);
+  const [inspection, setInspection] = useState<MarketplacePluginMcpDiscovery | null>(null);
   const [result, setResult] = useState<ConfiguredPluginMcpConnection | null>(null);
+  const [copiedCallback, setCopiedCallback] = useState(false);
 
   const preset = target ? findPresetForRequirement(presets, target.connection) : null;
-  const authAssumed = pluginSetupInitialState(preset).authAssumed;
+  const discovery = inspection?.discovery ?? null;
+  const authAssumed = pluginSetupInitialState(preset, discovery).authAssumed;
+  const authEditable = authAssumed || (discovery !== null && discoveryAuthIsEditable(discovery));
   const serviceName = target ? serviceNameForRequirement(target.connection, preset) : "MCP server";
-  const requiresOAuthClient = authType === "oauth" && preset?.requiresOAuthClient === true;
+  const requiresOAuthClientId = authType === "oauth" && (discovery
+    ? discoveryNeedsInput(discovery, "oauth_client_id")
+    : preset?.requiresOAuthClient === true);
+  const requiresOAuthClientSecret = authType === "oauth" && (discovery
+    ? discoveryNeedsInput(discovery, "oauth_client_secret")
+    : preset?.requiresOAuthClient === true);
+  const showOAuthClientFields = authType === "oauth" && (requiresOAuthClientId || showOAuthClient);
   const resolvedCredentialMode = pluginSetupCredentialMode(authType, credentialMode);
   const successCopy = target ? pluginSetupSuccessCopy({
     authType,
@@ -741,13 +763,34 @@ function PluginMcpSetupDialog({
 
   useEffect(() => {
     if (!target) return;
+    let cancelled = false;
     const initialState = pluginSetupInitialState(preset);
     setAuthType(initialState.authType);
     setCredentialMode(initialState.credentialMode);
     setApiKey("");
     setClientId("");
     setClientSecret("");
+    setShowOAuthClient(Boolean(preset?.requiresOAuthClient));
+    setInspection(null);
     setResult(null);
+    setCopiedCallback(false);
+    void discoverConnection.mutateAsync({
+      pluginId: target.plugin.id,
+      configObjectId: target.connection.configObjectId,
+      serverName: target.connection.serverName,
+    }).then((nextInspection) => {
+      if (cancelled) return;
+      const discoveredState = pluginSetupInitialState(preset, nextInspection.discovery);
+      setInspection(nextInspection);
+      setAuthType(discoveredState.authType);
+      setCredentialMode(discoveredState.credentialMode);
+      setShowOAuthClient(discoveryNeedsInput(nextInspection.discovery, "oauth_client_id"));
+    }).catch(() => {
+      // Presets and editable manual fields remain available when inspection fails.
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [preset, target]);
 
   if (!target) return null;
@@ -757,13 +800,16 @@ function PluginMcpSetupDialog({
   const trimmedClientId = clientId.trim();
   const trimmedClientSecret = clientSecret.trim();
   const saveDisabled = configureConnection.isPending
+    || discoverConnection.isPending
+    || discoveryHasUnsupportedRequirements(discovery)
     || (authType === "apikey" && !trimmedApiKey)
-    || (requiresOAuthClient && (!trimmedClientId || !trimmedClientSecret));
+    || (requiresOAuthClientId && !trimmedClientId)
+    || (requiresOAuthClientSecret && !trimmedClientSecret);
 
   async function submit() {
     try {
-      const oauthClient = requiresOAuthClient
-        ? { clientId: trimmedClientId, clientSecret: trimmedClientSecret }
+      const oauthClient = showOAuthClientFields && trimmedClientId
+        ? { clientId: trimmedClientId, ...(trimmedClientSecret ? { clientSecret: trimmedClientSecret } : {}) }
         : undefined;
       const setupRequest = pluginSetupRequest({
         apiKey: trimmedApiKey,
@@ -778,11 +824,17 @@ function PluginMcpSetupDialog({
         ...setupRequest,
       });
       setApiKey("");
+      setClientSecret("");
       setResult(configured);
     } catch {
       setApiKey("");
       // The mutation error is rendered below.
     }
+  }
+
+  async function copyOAuthCallback() {
+    if (!result?.oauthCallback) return;
+    setCopiedCallback(await copyTextToClipboard(result.oauthCallback));
   }
 
   return (
@@ -797,6 +849,16 @@ function PluginMcpSetupDialog({
             <p className="mt-2 text-[13px] leading-6 text-gray-600">
               {successCopy?.body}
             </p>
+            {result.oauthCallback ? (
+              <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                <p className="text-[13px] font-semibold text-gray-900">Add this redirect URL to the provider OAuth app</p>
+                <p className="mt-1 text-[12px] leading-5 text-gray-500">Use this exact URL before anyone signs in. It is derived from this OpenWork deployment.</p>
+                <p className="mt-3 break-all font-mono text-[12px] leading-5 text-gray-800">{result.oauthCallback}</p>
+                <DenButton variant="secondary" className="mt-3" onClick={() => void copyOAuthCallback()}>
+                  {copiedCallback ? "Copied" : "Copy redirect URL"}
+                </DenButton>
+              </div>
+            ) : null}
             {successCopy?.linkLabel && result.yourConnectionsUrl ? (
               <a href={result.yourConnectionsUrl} className="mt-4 block rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3 text-[13px] font-medium text-gray-900 transition hover:border-gray-200">
                 {successCopy.linkLabel}
@@ -810,7 +872,7 @@ function PluginMcpSetupDialog({
           <>
             <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Set up {serviceName}</h2>
             <p className="mt-1 text-[13px] leading-6 text-gray-600">
-              This configures the MCP server declared by {target.plugin.name}. Audience is inherited from the marketplace assignment.
+              This configures the MCP server declared by {target.plugin.name}. OpenWork inspects its declaration and live metadata without sending credentials.
             </p>
 
             <div className="mt-5 space-y-4">
@@ -820,9 +882,21 @@ function PluginMcpSetupDialog({
                 <p className="mt-1 text-[12px] leading-5 text-gray-500">Read-only. The URL comes from the plugin and is verified server-side.</p>
               </div>
 
+              {discoverConnection.isPending ? (
+                <div className="flex items-center gap-2 rounded-2xl border border-gray-100 bg-gray-50 p-4 text-[13px] text-gray-600">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Inspecting authentication and required setup…
+                </div>
+              ) : discovery ? (
+                <McpDiscoverySummary discovery={discovery} />
+              ) : discoverConnection.error ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[12px] leading-5 text-amber-800">
+                  OpenWork could not inspect this server. Review the authentication setting manually. {discoverConnection.error instanceof Error ? discoverConnection.error.message : ""}
+                </div>
+              ) : null}
+
               <div>
                 <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication method</label>
-                {authAssumed ? (
+                {authEditable ? (
                   <>
                     <DenSelect
                       value={authType}
@@ -837,12 +911,15 @@ function PluginMcpSetupDialog({
                       <option value="none">No authentication</option>
                     </DenSelect>
                     <p className="mt-1.5 text-[12px] leading-5 text-gray-500">
-                      No preset matched this plugin URL, so OpenWork assumes OAuth. Change this if the MCP server uses an API key or no auth.
+                      {discovery
+                        ? discoveryAuthControlCopy(discovery)
+                        : "The MCP server did not advertise a reliable setup method, so OpenWork starts with OAuth. Change this if the provider documents an API key or no authentication."}
                     </p>
                   </>
                 ) : (
-                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 text-[13px] text-gray-600">
-                    {pluginSetupAuthLabel(authType)} from the matched {serviceName} preset.
+                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 text-[13px] leading-5 text-gray-600">
+                    <p className="font-medium text-gray-900">{pluginSetupAuthLabel(authType)}</p>
+                    <p className="mt-1">{discovery ? discoveryAuthControlCopy(discovery) : `Matched to the curated ${serviceName} preset and locked for this setup.`}</p>
                   </div>
                 )}
               </div>
@@ -880,10 +957,24 @@ function PluginMcpSetupDialog({
               ) : null}
 
               <p className="text-[12px] leading-5 text-gray-500">
-                Access is not edited here. It follows who can access this marketplace.
+                Effective access is the union of every active config object, plugin, and marketplace assignment that includes this MCP. {inspection
+                  ? inspection.assignment.access.orgWide
+                    ? "Everyone in the organization is currently included."
+                    : `${inspection.assignment.access.teamIds.length} team assignment(s) and ${inspection.assignment.access.memberIds.length} individual assignment(s) are currently included.`
+                  : "OpenWork resolves that combined audience again when you save."}
               </p>
 
-              {requiresOAuthClient ? (
+              {authType === "oauth" && !showOAuthClientFields ? (
+                <button
+                  type="button"
+                  onClick={() => setShowOAuthClient(true)}
+                  className="text-left text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
+                >
+                  This server needs a pre-registered OAuth app
+                </button>
+              ) : null}
+
+              {showOAuthClientFields ? (
                 <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
                   <p className="text-[13px] font-semibold text-gray-900">{serviceName} OAuth app</p>
                   <p className="mt-1 text-[12px] leading-5 text-gray-500">
@@ -895,7 +986,7 @@ function PluginMcpSetupDialog({
                       <DenInput value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="Client ID" />
                     </div>
                     <div>
-                      <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret</label>
+                      <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret{requiresOAuthClientSecret ? "" : " (optional)"}</label>
                       <DenInput type="password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} placeholder="Client secret" />
                     </div>
                   </div>
@@ -909,8 +1000,8 @@ function PluginMcpSetupDialog({
 
             <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <DenButton variant="secondary" onClick={onClose} disabled={configureConnection.isPending}>Cancel</DenButton>
-              <DenButton variant="primary" loading={configureConnection.isPending} disabled={saveDisabled} onClick={() => void submit()}>
-                {pluginSetupActionLabel(preset)}
+              <DenButton variant="primary" loading={configureConnection.isPending || discoverConnection.isPending} disabled={saveDisabled} onClick={() => void submit()}>
+                {pluginSetupActionLabel(preset, discovery)}
               </DenButton>
             </div>
           </>

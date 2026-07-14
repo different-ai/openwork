@@ -89,6 +89,10 @@ type PluginMetadata = {
 
 const KNOWN_COMPONENT_SEGMENTS = ["skills", "commands", "agents"] as const
 
+export const GITHUB_DISCOVERY_LIMITS = {
+  marketplacePlugins: 128,
+} as const
+
 function normalizePath(value: string) {
   return value.trim().replace(/^\.\//, "").replace(/^\/+/, "").replace(/\/+$/, "")
 }
@@ -145,13 +149,7 @@ function hasPath(knownPaths: Set<string>, path: string) {
 
 function hasDescendant(knownPaths: Set<string>, path: string) {
   const normalized = normalizePath(path)
-  if (!normalized) return false
-  for (const candidate of knownPaths) {
-    if (candidate === normalized || candidate.startsWith(`${normalized}/`)) {
-      return true
-    }
-  }
-  return false
+  return normalized.length > 0 && knownPaths.has(normalized)
 }
 
 function readJsonMap(fileTextByPath: Record<string, string | null | undefined>, path: string) {
@@ -404,9 +402,18 @@ export function buildGithubRepoDiscovery(input: {
 
   if (hasPath(knownPaths, ".claude-plugin/marketplace.json")) {
     const marketplaceJson = readJsonMap(input.fileTextByPath, ".claude-plugin/marketplace.json")
-    const marketplaceEntries = isRecord(marketplaceJson) && Array.isArray(marketplaceJson.plugins)
-      ? marketplaceJson.plugins.filter(isRecord) as MarketplaceEntry[]
+    const declaredMarketplaceEntries = isRecord(marketplaceJson) && Array.isArray(marketplaceJson.plugins)
+      ? marketplaceJson.plugins
       : []
+    const marketplaceEntries = declaredMarketplaceEntries
+      .slice(0, GITHUB_DISCOVERY_LIMITS.marketplacePlugins)
+      .filter(isRecord) as MarketplaceEntry[]
+
+    if (declaredMarketplaceEntries.length > GITHUB_DISCOVERY_LIMITS.marketplacePlugins) {
+      warnings.push(
+        `Marketplace declares ${declaredMarketplaceEntries.length} plugin entries. OpenWork inspected the first ${GITHUB_DISCOVERY_LIMITS.marketplacePlugins}; narrow the GitHub URL to a smaller marketplace before importing.`,
+      )
+    }
 
     const marketplaceInfo: GithubMarketplaceInfo = isRecord(marketplaceJson)
       ? {
@@ -462,6 +469,42 @@ export function buildGithubRepoDiscovery(input: {
     } satisfies GithubRepoDiscoveryResult
   }
 
+  const registryServer = hasPath(knownPaths, "server.json")
+    ? readJsonMap(input.fileTextByPath, "server.json")
+    : null
+  if (
+    isRecord(registryServer)
+    && (Array.isArray(registryServer.remotes) || Array.isArray(registryServer.packages))
+  ) {
+    const discoveredPlugin = buildDiscoveredPlugin({
+      componentPathsOverride: {
+        agents: [],
+        commands: [],
+        hooks: [],
+        lspServers: [],
+        mcpServers: ["server.json"],
+        monitors: [],
+        settings: [],
+        skills: [],
+      },
+      description: asString(registryServer.description),
+      displayName: asString(registryServer.title) ?? asString(registryServer.name) ?? "MCP Registry server",
+      fileTextByPath: input.fileTextByPath,
+      key: "mcp-registry:server.json",
+      knownPaths,
+      manifestPath: null,
+      rootPath: "",
+      sourceKind: "folder_inference",
+    })
+
+    return {
+      classification: "folder_inferred_repo",
+      discoveredPlugins: [discoveredPlugin],
+      marketplace: null,
+      warnings,
+    } satisfies GithubRepoDiscoveryResult
+  }
+
   const manifestRoots = [...new Set(pluginRootsFromManifests(input.entries))]
   if (manifestRoots.length > 0) {
     const discoveredPlugins = manifestRoots.map((rootPath) => buildDiscoveredPlugin({
@@ -508,7 +551,7 @@ export function buildGithubRepoDiscovery(input: {
   //   } satisfies GithubRepoDiscoveryResult
   // }
 
-  warnings.push("OpenWork currently only supports Claude-compatible plugins and marketplaces. Add `.claude-plugin/marketplace.json` or `.claude-plugin/plugin.json` to this repository.")
+  warnings.push("OpenWork currently only supports Claude-compatible plugins and marketplaces, plus MCP Registry server manifests. Add `.claude-plugin/marketplace.json`, `.claude-plugin/plugin.json`, or an MCP Registry `server.json` to this repository.")
 
   return {
     classification: "unsupported",

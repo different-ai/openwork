@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { Buffer } from "node:buffer"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { env } from "../env.js"
+import { appendPublicApiPath } from "../request-url.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
 import {
   type OAuthClientProvider,
@@ -9,23 +10,44 @@ import {
 } from "@modelcontextprotocol/sdk/client/auth.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import type {
-  OAuthClientInformationFull,
   OAuthClientInformationMixed,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js"
+import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
+import {
+  OAuthClientInformationFullSchema,
+  OAuthClientInformationSchema,
+} from "@modelcontextprotocol/sdk/shared/auth.js"
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
-import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
+import type {
+  ExternalMcpConnectionRow,
+  ExternalMcpOAuthClientRevision,
+  ExternalMcpTokenRevision,
+} from "./external-mcp-connections.js"
 import {
-  clearExternalMcpTokensForIdentity,
-  deleteOrgOAuthClientForExternalMcpIdentity,
+  clearLegacyExternalMcpPendingCodeVerifierIfMatches,
+  clearExternalMcpMemberTokens,
+  clearExternalMcpTokens,
+  compareAndSetExternalMcpOAuthClient,
+  consumeExternalMcpOAuthTransaction,
+  consumeLegacyExternalMcpPendingCodeVerifier,
+  deleteExternalMcpOAuthTransaction,
+  externalMcpIdentityBinding,
+  externalMcpOAuthClientRevision,
+  externalMcpOAuthClientValue,
+  externalMcpMemberTokenRevision,
+  externalMcpSharedTokenRevision,
+  ExternalMcpOAuthAuthorizationRevokedError,
   getExternalMcpConnection,
+  persistExternalMcpDcrOAuthClientWithLease,
   readConnectedAccountForExternalMcpIdentity,
   readOrgOAuthClientForExternalMcpIdentity,
-  saveExternalMcpPendingCodeVerifierForIdentity,
-  saveExternalMcpTokensForIdentity,
-  upsertConnectedAccountForExternalMcpIdentity,
-  upsertOrgOAuthClientForExternalMcpIdentity,
+  releaseExternalMcpOAuthRegistrationLease,
+  saveExternalMcpAuthorizationCodeTokens,
+  saveExternalMcpOAuthTransaction,
+  saveExternalMcpRefreshTokens,
+  tryAcquireExternalMcpOAuthRegistrationLease,
 } from "./external-mcp-connections.js"
 import {
   ExternalMcpDiagnosticError,
@@ -65,6 +87,10 @@ const EXTERNAL_MCP_TOOL_SCHEMA_LIMIT_BYTES = 512 * 1024
 const EXTERNAL_MCP_TOOL_SCHEMA_DEPTH_LIMIT = 64
 const EXTERNAL_MCP_CURSOR_LIMIT_BYTES = 16 * 1024
 const EXTERNAL_MCP_CATALOG_LIMIT_BYTES = 8 * 1024 * 1024
+// A crashed owner becomes replaceable as soon as its maximum lifecycle could
+// have ended; a retry should not have to fail once merely to outwait the lease.
+const EXTERNAL_MCP_DCR_LEASE_STALE_MS = EXTERNAL_MCP_LIFECYCLE_TIMEOUT_MS
+const EXTERNAL_MCP_DCR_LEASE_POLL_MS = 100
 
 export type ExternalMcpLifecycleDeadline = {
   expiresAt: number
@@ -171,13 +197,202 @@ export type ExternalMcpMemberContext = {
   orgMembershipId: DenTypeId<"member">
 }
 
+export type ExternalMcpOAuthRegistrationProvenance = "pre_registered" | "dcr" | "cimd"
+export type ExternalMcpTokenEndpointAuthMethod = "client_secret_basic" | "client_secret_post" | "none"
+
+type ExternalMcpOAuthRegistrationPolicy = {
+  provenance: "dcr" | "cimd"
+  tokenEndpointAuthMethod: ExternalMcpTokenEndpointAuthMethod
+}
+
+const EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY = "registrationProvenance"
+const EXTERNAL_MCP_TOKEN_ENDPOINT_AUTH_METHODS = [
+  "client_secret_basic",
+  "client_secret_post",
+  "none",
+] satisfies ExternalMcpTokenEndpointAuthMethod[]
+
+function isExternalMcpTokenEndpointAuthMethod(value: unknown): value is ExternalMcpTokenEndpointAuthMethod {
+  return value === "client_secret_basic" || value === "client_secret_post" || value === "none"
+}
+
+function externalMcpTokenEndpointAuthMethods(state: OAuthDiscoveryState): string[] {
+  const advertised = state.authorizationServerMetadata?.token_endpoint_auth_methods_supported
+  // RFC 8414 section 2 defines client_secret_basic as the default when the
+  // authorization-server metadata omits this field. Apply the same default
+  // when discovery falls back to conventional endpoints without metadata.
+  return advertised?.length ? [...new Set(advertised)] : ["client_secret_basic"]
+}
+
+export function externalMcpOAuthRegistrationPolicy(
+  state: OAuthDiscoveryState,
+): ExternalMcpOAuthRegistrationPolicy {
+  const supported = externalMcpTokenEndpointAuthMethods(state)
+  if (
+    state.authorizationServerMetadata?.client_id_metadata_document_supported === true
+    && supported.includes("none")
+  ) {
+    return { provenance: "cimd", tokenEndpointAuthMethod: "none" }
+  }
+
+  const tokenEndpointAuthMethod = EXTERNAL_MCP_TOKEN_ENDPOINT_AUTH_METHODS.find((method) => supported.includes(method))
+  if (!tokenEndpointAuthMethod) {
+    throw new Error("The MCP authorization server does not advertise a supported token endpoint client authentication method.")
+  }
+  return { provenance: "dcr", tokenEndpointAuthMethod }
+}
+
+export function externalMcpClientTokenEndpointAuthMethod(input: {
+  clientInformation: OAuthClientInformationMixed
+  discoveryState: OAuthDiscoveryState
+}): ExternalMcpTokenEndpointAuthMethod {
+  const supported = externalMcpTokenEndpointAuthMethods(input.discoveryState)
+  const candidate = "token_endpoint_auth_method" in input.clientInformation
+    ? input.clientInformation.token_endpoint_auth_method
+    : undefined
+  const hasClientSecret = typeof input.clientInformation.client_secret === "string"
+    && input.clientInformation.client_secret.length > 0
+
+  if (candidate !== undefined) {
+    if (!isExternalMcpTokenEndpointAuthMethod(candidate) || !supported.includes(candidate)) {
+      throw new Error("The saved OAuth client uses a token endpoint client authentication method this authorization server does not support.")
+    }
+    if (candidate === "none" && hasClientSecret) {
+      throw new Error("OAuth token endpoint authentication method none is only valid for a public client without a client secret.")
+    }
+    if (candidate !== "none" && !hasClientSecret) {
+      throw new Error(`OAuth token endpoint authentication method ${candidate} requires a client secret.`)
+    }
+    return candidate
+  }
+
+  if (hasClientSecret) {
+    if (supported.includes("client_secret_basic")) return "client_secret_basic"
+    if (supported.includes("client_secret_post")) return "client_secret_post"
+    throw new Error("The MCP authorization server does not accept a supported confidential OAuth client authentication method.")
+  }
+  if (supported.includes("none")) return "none"
+  throw new Error("This MCP authorization server requires a confidential OAuth client, but no client secret is configured.")
+}
+
+export function externalMcpPreRegisteredClientExtra(): Record<string, unknown> {
+  return { [EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY]: "pre_registered" }
+}
+
+export function externalMcpOAuthClientRegistrationProvenance(input: {
+  clientId: string
+  clientSecret: string | null
+  expectedClientMetadataUrl?: string
+  extra: Record<string, unknown> | null
+}): ExternalMcpOAuthRegistrationProvenance {
+  const explicit = input.extra?.[EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY]
+  if (explicit === "pre_registered" || explicit === "dcr" || explicit === "cimd") return explicit
+
+  // Rows saved before provenance was introduced can be classified without
+  // exposing credentials: SDK-created rows contain clientInformation, while
+  // admin-entered clients historically did not.
+  if (isRecord(input.extra?.clientInformation)) {
+    if (
+      !input.clientSecret
+      && input.expectedClientMetadataUrl
+      && input.clientId === input.expectedClientMetadataUrl
+    ) return "cimd"
+    return "dcr"
+  }
+  return "pre_registered"
+}
+
+export function shouldRotateExternalMcpOAuthClient(
+  provenance: ExternalMcpOAuthRegistrationProvenance,
+): boolean {
+  return provenance === "dcr"
+}
+
+export function safeExternalMcpClientInformation(
+  clientInformation: OAuthClientInformationMixed,
+): Record<string, unknown> {
+  const full = OAuthClientInformationFullSchema.safeParse(clientInformation)
+  const parsed = full.success ? full.data : OAuthClientInformationSchema.parse(clientInformation)
+  const safe: Record<string, unknown> = { ...parsed }
+  const tokenEndpointAuthMethod = "token_endpoint_auth_method" in clientInformation
+    ? clientInformation.token_endpoint_auth_method
+    : undefined
+  delete safe.token_endpoint_auth_method
+  if (isExternalMcpTokenEndpointAuthMethod(tokenEndpointAuthMethod)) {
+    safe.token_endpoint_auth_method = tokenEndpointAuthMethod
+  }
+  delete safe.client_secret
+  delete safe.registration_access_token
+  return safe
+}
+
+export function restoreExternalMcpClientInformation(input: {
+  clientId: string
+  clientSecret: string | null
+  extra: Record<string, unknown> | null
+}): OAuthClientInformationMixed {
+  const candidate = input.extra?.clientInformation
+  const full = OAuthClientInformationFullSchema.safeParse({
+    ...(isRecord(candidate) ? candidate : {}),
+    client_id: input.clientId,
+    client_secret: input.clientSecret ?? undefined,
+  })
+  if (full.success) return full.data
+  const base = OAuthClientInformationSchema.parse({
+    client_id: input.clientId,
+    client_secret: input.clientSecret ?? undefined,
+  })
+  const storedTokenEndpointAuthMethod = isRecord(candidate)
+    ? candidate.token_endpoint_auth_method
+    : undefined
+  if (typeof storedTokenEndpointAuthMethod !== "string") return base
+  return { ...base, token_endpoint_auth_method: storedTokenEndpointAuthMethod }
+}
+
+export function assertExternalMcpPkceDiscovery(state: OAuthDiscoveryState): void {
+  if (state.authorizationServerMetadata?.code_challenge_methods_supported?.includes("S256")) return
+  throw new Error("The MCP authorization server must advertise PKCE code_challenge_methods_supported including S256.")
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+export function externalMcpClientMetadataUrl(input: {
+  connectionId: string
+  redirectUri: string
+}): string | undefined {
+  const redirectUrl = new URL(input.redirectUri)
+  if (redirectUrl.protocol !== "https:") return undefined
+  const connectionPath = `/v1/mcp-connections/${encodeURIComponent(input.connectionId)}`
+  const callbackPath = `${connectionPath}/connect/callback`
+  if (!redirectUrl.pathname.endsWith(callbackPath)) return undefined
+
+  const publicBase = new URL(redirectUrl)
+  publicBase.pathname = redirectUrl.pathname.slice(0, -callbackPath.length) || "/"
+  publicBase.search = ""
+  publicBase.hash = ""
+  return appendPublicApiPath(publicBase.toString(), `${connectionPath}/oauth-client-metadata`)
+}
+
 export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   private connection: ExternalMcpConnectionRow
+  private readonly identityBinding: string
   private readonly redirectUri: string
   private readonly signedState?: string
   private readonly member?: ExternalMcpMemberContext
   private readonly diagnostic: ExternalMcpDiagnosticTracker
   private readonly lifecycleDeadline?: ExternalMcpLifecycleDeadline
+  private readonly authorizationActor?: ExternalMcpMemberContext
+  private readonly allowDynamicClientRegistration: boolean
+  private savedDiscoveryState?: OAuthDiscoveryState
+  private registrationPolicy?: ExternalMcpOAuthRegistrationPolicy
+  private authorizationState?: string
+  private authorizationCodeEpoch?: number
+  private registrationLeaseToken?: string
+  private loadedClientRevision?: ExternalMcpOAuthClientRevision
+  private loadedClientProvenance?: ExternalMcpOAuthRegistrationProvenance
+  private loadedTokenRevision?: ExternalMcpTokenRevision
   /** Captured by redirectToAuthorization so the HTTP route can hand it back to the admin's browser instead of actually redirecting anything server-side. */
   lastAuthorizeUrl: string | null = null
 
@@ -188,13 +403,18 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     member: ExternalMcpMemberContext | undefined,
     diagnostic: ExternalMcpDiagnosticTracker,
     lifecycleDeadline?: ExternalMcpLifecycleDeadline,
+    authorizationActor?: ExternalMcpMemberContext,
+    allowDynamicClientRegistration = false,
   ) {
     this.connection = connection
+    this.identityBinding = externalMcpIdentityBinding(connection)
     this.redirectUri = redirectUri
     this.signedState = signedState
     this.member = member
     this.diagnostic = diagnostic
     this.lifecycleDeadline = lifecycleDeadline
+    this.authorizationActor = authorizationActor
+    this.allowDynamicClientRegistration = allowDynamicClientRegistration
     if (connection.credentialMode === "per_member" && connection.authType === "oauth" && !member) {
       throw new Error(`Connection "${connection.id}" uses per-member credentials; a member context is required.`)
     }
@@ -214,6 +434,29 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     return result.value
   }
 
+  private async orgOAuthClient() {
+    const result = await readOrgOAuthClientForExternalMcpIdentity(this.connection)
+    if (!result.current) throw new Error("The external MCP connection identity changed during authorization.")
+    return result.value
+  }
+
+  private assertCurrentIdentity(connection: ExternalMcpConnectionRow): void {
+    if (externalMcpIdentityBinding(connection) !== this.identityBinding) {
+      throw new Error("The external MCP connection identity changed during authorization.")
+    }
+  }
+
+  private async refreshConnection(): Promise<ExternalMcpConnectionRow> {
+    const refreshed = await getExternalMcpConnection({
+      organizationId: this.connection.organizationId,
+      connectionId: this.connection.id,
+    })
+    if (!refreshed) throw new Error("The external MCP connection no longer exists.")
+    this.assertCurrentIdentity(refreshed)
+    this.connection = refreshed
+    return refreshed
+  }
+
   private assertLifecycleActive(phase: ExternalMcpDiagnosticPhase): void {
     if (!this.lifecycleDeadline) return
     assertExternalMcpLifecycleActive({ deadline: this.lifecycleDeadline, diagnostic: this.diagnostic, phase })
@@ -221,6 +464,21 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
 
   get redirectUrl(): string {
     return this.redirectUri
+  }
+
+  /**
+   * Prefer the MCP 2025-11-25 Client ID Metadata Document flow when an
+   * authorization server advertises it. The public document is scoped to one
+   * connection because OAuth redirect URIs must match exactly. Local HTTP
+   * development deliberately falls back to DCR/pre-registration: CIMD client
+   * identifiers are required to be HTTPS URLs.
+   */
+  get clientMetadataUrl(): string | undefined {
+    if (this.registrationPolicy?.provenance !== "cimd") return undefined
+    return externalMcpClientMetadataUrl({
+      connectionId: this.connection.id,
+      redirectUri: this.redirectUri,
+    })
   }
 
   /**
@@ -237,7 +495,8 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     // connect/start, which always supplies signedState); this fallback only
     // exists to satisfy the type when connect() is attempted opportunistically
     // with an existing valid token and no authorization step is needed.
-    return this.signedState ?? randomUUID()
+    this.authorizationState ??= this.signedState ?? randomUUID()
+    return this.authorizationState
   }
 
   get clientMetadata() {
@@ -246,33 +505,325 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       client_name: CLIENT_NAME,
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
-      token_endpoint_auth_method: "none",
+      token_endpoint_auth_method: this.registrationPolicy?.tokenEndpointAuthMethod ?? "none",
+      ...(this.connection.requestedOAuthScopes?.length
+        ? { scope: this.connection.requestedOAuthScopes.join(" ") }
+        : {}),
+    }
+  }
+
+  private get oauthTransactionState(): string | undefined {
+    return this.authorizationState ?? this.signedState
+  }
+
+  private get oauthTransactionMemberId(): DenTypeId<"member"> {
+    return this.authorizationActor?.orgMembershipId
+      ?? this.member?.orgMembershipId
+      ?? this.connection.createdByOrgMembershipId
+  }
+
+  /**
+   * Wait for the replica currently performing DCR, or atomically take a stale
+   * lease. The client is re-read after lease acquisition so a registration
+   * committed between the optimistic read and the claim is never duplicated.
+   */
+  private async waitForRegisteredClientOrAcquireLease() {
+    const leaseToken = this.registrationLeaseToken ?? randomUUID()
+    while (true) {
+      this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
+      const now = new Date()
+      const lease = await tryAcquireExternalMcpOAuthRegistrationLease({
+        organizationId: this.connection.organizationId,
+        connectionId: this.connection.id,
+        expectedIdentityBinding: this.identityBinding,
+        leaseToken,
+        startedAt: now,
+        staleBefore: new Date(now.getTime() - EXTERNAL_MCP_DCR_LEASE_STALE_MS),
+      })
+      if (lease === "connection_missing") {
+        throw new Error("The external MCP connection no longer exists.")
+      }
+      if (lease === "acquired") {
+        this.registrationLeaseToken = leaseToken
+        const registered = await this.orgOAuthClient()
+        if (!registered) return null
+        await this.releaseOAuthRegistrationLease()
+        return registered
+      }
+
+      const registered = await this.orgOAuthClient()
+      if (registered) return registered
+      this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
+      await new Promise((resolve) => setTimeout(resolve, EXTERNAL_MCP_DCR_LEASE_POLL_MS))
+    }
+  }
+
+  async releaseOAuthRegistrationLease(): Promise<void> {
+    const leaseToken = this.registrationLeaseToken
+    if (!leaseToken) return
+    await releaseExternalMcpOAuthRegistrationLease({
+      organizationId: this.connection.organizationId,
+      connectionId: this.connection.id,
+      expectedIdentityBinding: this.identityBinding,
+      leaseToken,
+    })
+    this.registrationLeaseToken = undefined
+  }
+
+  private async clearMatchingLegacyCodeVerifier(codeVerifier: string): Promise<void> {
+    try {
+      await clearLegacyExternalMcpPendingCodeVerifierIfMatches({
+        organizationId: this.connection.organizationId,
+        connectionId: this.connection.id,
+        expectedIdentityBinding: this.identityBinding,
+        orgMembershipId: this.oauthTransactionMemberId,
+        expectedCodeVerifier: codeVerifier,
+      })
+    } catch {
+      // Expand-release compatibility only. The exact state transaction has
+      // already been consumed, so a transient legacy cleanup failure must not
+      // discard the valid verifier before the token exchange can run.
     }
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
-    this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
-    const result = await readOrgOAuthClientForExternalMcpIdentity(this.connection)
-    if (!result.current) throw new Error("The external MCP connection identity changed during authorization.")
-    const client = result.value
-    this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
-    if (!client) return undefined
-    this.diagnostic.passed("AUTH_CLIENT_REGISTRATION", "reachable")
-    const extra = (client.extra ?? {}) as { clientInformation?: OAuthClientInformationFull }
-    if (extra.clientInformation) return extra.clientInformation
-    return { client_id: client.clientId, client_secret: client.clientSecret ?? undefined }
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
+      let client = await this.orgOAuthClient()
+      this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
+      if (!client) {
+        if (this.registrationPolicy?.provenance !== "dcr") {
+          this.loadedClientRevision = undefined
+          this.loadedClientProvenance = undefined
+          return undefined
+        }
+        if (!this.allowDynamicClientRegistration) {
+          throw new Error("A saved OAuth client is required before this MCP operation can continue.")
+        }
+        client = await this.waitForRegisteredClientOrAcquireLease()
+        this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
+        if (!client) {
+          this.loadedClientRevision = undefined
+          this.loadedClientProvenance = undefined
+          return undefined
+        }
+      }
+      const restored = restoreExternalMcpClientInformation({
+        clientId: client.clientId,
+        clientSecret: client.clientSecret,
+        extra: client.extra,
+      })
+      if (!this.savedDiscoveryState) {
+        throw new Error("OAuth discovery must complete before loading client credentials.")
+      }
+      const tokenEndpointAuthMethod = externalMcpClientTokenEndpointAuthMethod({
+        clientInformation: restored,
+        discoveryState: this.savedDiscoveryState,
+      })
+      const clientInformation = { ...restored, token_endpoint_auth_method: tokenEndpointAuthMethod }
+      const expectedClientMetadataUrl = externalMcpClientMetadataUrl({
+        connectionId: this.connection.id,
+        redirectUri: this.redirectUri,
+      })
+      const registrationProvenance = externalMcpOAuthClientRegistrationProvenance({
+        clientId: client.clientId,
+        clientSecret: client.clientSecret,
+        expectedClientMetadataUrl,
+        extra: client.extra,
+      })
+      const storedProvenance = client.extra?.[EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY]
+      const storedMethod = isRecord(client.extra?.clientInformation)
+        ? client.extra.clientInformation.token_endpoint_auth_method
+        : undefined
+      if (storedProvenance === registrationProvenance && storedMethod === tokenEndpointAuthMethod) {
+        this.loadedClientRevision = externalMcpOAuthClientRevision(client)
+        this.loadedClientProvenance = registrationProvenance
+        this.diagnostic.passed("AUTH_CLIENT_REGISTRATION", "reachable")
+        return clientInformation
+      }
+
+      const persisted = await compareAndSetExternalMcpOAuthClient({
+        organizationId: this.connection.organizationId,
+        connectionId: this.connection.id,
+        expectedIdentityBinding: this.identityBinding,
+        expectedAuthorizationEpoch: this.connection.oauthAuthorizationEpoch,
+        expected: externalMcpOAuthClientRevision(client),
+        next: {
+          ...externalMcpOAuthClientValue(client),
+          extra: {
+            clientInformation: safeExternalMcpClientInformation(clientInformation),
+            [EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY]: registrationProvenance,
+          },
+        },
+      })
+      if (persisted.status === "applied") {
+        this.loadedClientRevision = persisted.revision ?? undefined
+        this.loadedClientProvenance = registrationProvenance
+        this.diagnostic.passed("AUTH_CLIENT_REGISTRATION", "reachable")
+        return clientInformation
+      }
+      if (persisted.status === "connection_missing") {
+        throw new Error("The external MCP connection no longer exists.")
+      }
+      if (persisted.status === "connection_changed") {
+        throw new Error("The external MCP connection was disconnected while OAuth client configuration was in progress. Start authorization again.")
+      }
+      // A concurrent administrator or OAuth flow changed the client. Re-read
+      // it and validate that exact revision rather than returning stale data.
+    }
+    throw new Error("The saved OAuth client changed repeatedly while authorization was starting. Start authorization again with the latest client configuration.")
   }
 
   async saveClientInformation(clientInformation: OAuthClientInformationMixed): Promise<void> {
     this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
-    const saved = await upsertOrgOAuthClientForExternalMcpIdentity({
-      connection: this.connection,
-      clientId: clientInformation.client_id,
-      clientSecret: clientInformation.client_secret ?? null,
-      extra: { clientInformation },
+    if (!this.savedDiscoveryState || !this.registrationPolicy) {
+      throw new Error("OAuth discovery must complete before saving client credentials.")
+    }
+    const tokenEndpointAuthMethod = externalMcpClientTokenEndpointAuthMethod({
+      clientInformation,
+      discoveryState: this.savedDiscoveryState,
     })
-    if (!saved) throw new Error("The external MCP connection identity changed during client registration.")
+    if (tokenEndpointAuthMethod !== this.registrationPolicy.tokenEndpointAuthMethod) {
+      throw new Error("The OAuth registration response changed the requested token endpoint client authentication method.")
+    }
+    const expectedClientMetadataUrl = externalMcpClientMetadataUrl({
+      connectionId: this.connection.id,
+      redirectUri: this.redirectUri,
+    })
+    const registrationProvenance: ExternalMcpOAuthRegistrationProvenance = this.registrationPolicy.provenance === "cimd"
+      && expectedClientMetadataUrl === clientInformation.client_id
+      ? "cimd"
+      : "dcr"
+    const normalizedClientInformation = { ...clientInformation, token_endpoint_auth_method: tokenEndpointAuthMethod }
+    const extra = {
+      clientInformation: safeExternalMcpClientInformation(normalizedClientInformation),
+      [EXTERNAL_MCP_OAUTH_REGISTRATION_PROVENANCE_KEY]: registrationProvenance,
+    }
+    const authorizationActor = this.authorizationActor
+    if (!authorizationActor) {
+      throw new Error("An authorization actor is required before persisting an OAuth client registration.")
+    }
+    if (
+      this.isPerMember
+      && authorizationActor.orgMembershipId !== this.member?.orgMembershipId
+    ) throw new ExternalMcpOAuthAuthorizationRevokedError()
+    if (registrationProvenance === "dcr") {
+      const leaseToken = this.registrationLeaseToken
+      if (!leaseToken) {
+        throw new Error("Dynamic OAuth client registration cannot be persisted without owning its connection lease.")
+      }
+      this.loadedClientRevision = await persistExternalMcpDcrOAuthClientWithLease({
+        organizationId: this.connection.organizationId,
+        connectionId: this.connection.id,
+        expectedIdentityBinding: this.identityBinding,
+        leaseToken,
+        expectedAuthorizationEpoch: this.connection.oauthAuthorizationEpoch,
+        authorizationActor,
+        clientId: clientInformation.client_id,
+        clientSecret: clientInformation.client_secret ?? null,
+        extra,
+      })
+      this.loadedClientProvenance = "dcr"
+      this.registrationLeaseToken = undefined
+    } else {
+      // CIMD uses a deterministic public URL as its client identifier and has
+      // no remote registration side effect to single-flight. It still uses an
+      // insert-only CAS so a late SDK callback cannot overwrite a client an
+      // administrator configured after discovery or recreate one after the
+      // owning connection was deleted/disconnected.
+      const persisted = await compareAndSetExternalMcpOAuthClient({
+        organizationId: this.connection.organizationId,
+        connectionId: this.connection.id,
+        expectedIdentityBinding: this.identityBinding,
+        expectedAuthorizationEpoch: this.connection.oauthAuthorizationEpoch,
+        authorizationActor,
+        expected: null,
+        next: {
+          clientId: clientInformation.client_id,
+          clientSecret: null,
+          extra,
+          createdByOrgMembershipId: authorizationActor.orgMembershipId,
+        },
+      })
+      if (persisted.status === "connection_missing") {
+        throw new Error("The external MCP connection no longer exists.")
+      }
+      if (persisted.status === "connection_changed") {
+        throw new Error("The external MCP connection was disconnected while OAuth client configuration was in progress. Start authorization again.")
+      }
+      if (persisted.status === "client_changed") {
+        const concurrent = await this.orgOAuthClient()
+        let compatible = false
+        if (
+          concurrent
+          && concurrent.clientId === clientInformation.client_id
+          && !concurrent.clientSecret
+        ) {
+          try {
+            compatible = externalMcpClientTokenEndpointAuthMethod({
+              clientInformation: restoreExternalMcpClientInformation({
+                clientId: concurrent.clientId,
+                clientSecret: concurrent.clientSecret,
+                extra: concurrent.extra,
+              }),
+              discoveryState: this.savedDiscoveryState,
+            }) === "none"
+          } catch {
+            compatible = false
+          }
+        }
+        if (!concurrent || !compatible) {
+          throw new Error("An OAuth client was configured while Client ID Metadata persistence was in progress. Start authorization again with the saved client.")
+        }
+
+        // Verify the compatible row and connection fence together. This is a
+        // no-content-change CAS: it preserves the concurrent row's manual/DCR
+        // provenance instead of relabeling it as CIMD.
+        const verified = await compareAndSetExternalMcpOAuthClient({
+          organizationId: this.connection.organizationId,
+          connectionId: this.connection.id,
+          expectedIdentityBinding: this.identityBinding,
+          expectedAuthorizationEpoch: this.connection.oauthAuthorizationEpoch,
+          authorizationActor,
+          expected: externalMcpOAuthClientRevision(concurrent),
+          next: externalMcpOAuthClientValue(concurrent),
+        })
+        if (verified.status === "connection_missing") {
+          throw new Error("The external MCP connection no longer exists.")
+        }
+        if (verified.status === "connection_changed") {
+          throw new Error("The external MCP connection was disconnected while OAuth client configuration was in progress. Start authorization again.")
+        }
+        if (verified.status === "client_changed") {
+          throw new Error("The saved OAuth client changed again while Client ID Metadata persistence was in progress. Start authorization again with the latest client.")
+        }
+        if (verified.status !== "applied") {
+          throw new Error("The OAuth client could not be verified while Client ID Metadata persistence was in progress.")
+        }
+        this.loadedClientRevision = verified.revision ?? undefined
+        this.loadedClientProvenance = externalMcpOAuthClientRegistrationProvenance({
+          clientId: concurrent.clientId,
+          clientSecret: concurrent.clientSecret,
+          expectedClientMetadataUrl,
+          extra: concurrent.extra,
+        })
+      } else if (persisted.status === "applied") {
+        this.loadedClientRevision = persisted.revision ?? undefined
+        this.loadedClientProvenance = "cimd"
+      } else {
+        throw new Error("The OAuth client could not be persisted through Client ID Metadata.")
+      }
+    }
     this.diagnostic.passed("AUTH_CLIENT_REGISTRATION", "reachable")
+  }
+
+  async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
+    assertExternalMcpPkceDiscovery(state)
+    // Enforce the same supported intersection used by preview discovery at
+    // the credential boundary, immediately before CIMD/DCR can run.
+    this.registrationPolicy = externalMcpOAuthRegistrationPolicy(state)
+    this.savedDiscoveryState = state
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
@@ -280,7 +831,11 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     if (this.isPerMember) {
       const account = await this.memberAccount()
       this.assertLifecycleActive("CONTINUITY_REFRESH")
-      if (!account?.accessToken) return undefined
+      if (!account?.accessToken) {
+        this.loadedTokenRevision = undefined
+        return undefined
+      }
+      this.loadedTokenRevision = externalMcpMemberTokenRevision(account)
       return {
         access_token: account.accessToken,
         token_type: account.tokenType ?? "Bearer",
@@ -288,98 +843,122 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
         scope: account.scopes?.join(" ") ?? undefined,
       }
     }
-    if (!this.connection.accessToken) return undefined
+    const refreshed = await this.refreshConnection()
+    if (!refreshed.accessToken) {
+      this.loadedTokenRevision = undefined
+      return undefined
+    }
+    this.loadedTokenRevision = externalMcpSharedTokenRevision(refreshed)
     return {
-      access_token: this.connection.accessToken,
-      token_type: this.connection.tokenType ?? "Bearer",
-      refresh_token: this.connection.refreshToken ?? undefined,
-      scope: this.connection.scope ?? undefined,
+      access_token: refreshed.accessToken,
+      token_type: refreshed.tokenType ?? "Bearer",
+      refresh_token: refreshed.refreshToken ?? undefined,
+      scope: refreshed.scope ?? undefined,
     }
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
     const expiresAt = tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null
-    if (this.isPerMember && this.member) {
-      const existing = await this.memberAccount()
-      this.assertLifecycleActive(this.diagnostic.activePhase === "CONTINUITY_REFRESH" ? "CONTINUITY_REFRESH" : "AUTH_TOKEN_ACQUISITION")
-      const saved = await upsertConnectedAccountForExternalMcpIdentity({
-        connection: this.connection,
-        orgMembershipId: this.member.orgMembershipId,
-        changes: {
-          accessToken: tokens.access_token,
-          // Most providers omit refresh_token on refresh responses; keep the existing one.
-          refreshToken: tokens.refresh_token ?? existing?.refreshToken ?? null,
-          tokenType: tokens.token_type ?? null,
-          scopes: tokens.scope ? tokens.scope.split(" ") : null,
-          expiresAt,
-          pendingCodeVerifier: null,
-        },
-      })
-      if (!saved) throw new Error("The external MCP connection identity changed during token persistence.")
-      this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
-      return
-    }
-    this.assertLifecycleActive(this.diagnostic.activePhase === "CONTINUITY_REFRESH" ? "CONTINUITY_REFRESH" : "AUTH_TOKEN_ACQUISITION")
-    const saved = await saveExternalMcpTokensForIdentity({
-      connection: this.connection,
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token ?? this.connection.refreshToken ?? null,
-      tokenType: tokens.token_type ?? null,
-      scope: tokens.scope ?? null,
-      expiresAt,
-    })
-    if (!saved) throw new Error("The external MCP connection identity changed during token persistence.")
-    // Refresh the in-memory row so a subsequent tokens()/refresh in the same
-    // connection attempt sees the just-saved values.
-    const refreshed = await getExternalMcpConnection({
+    const isAuthorizationCodeCommit = this.authorizationActor !== undefined
+      && this.authorizationCodeEpoch !== undefined
+    const phase = this.diagnostic.activePhase === "CONTINUITY_REFRESH"
+      ? "CONTINUITY_REFRESH"
+      : "AUTH_TOKEN_ACQUISITION"
+    this.assertLifecycleActive(phase)
+    const tokenCommit = {
       organizationId: this.connection.organizationId,
       connectionId: this.connection.id,
-    })
-    if (refreshed) this.connection = refreshed
-    this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
+      expectedIdentityBinding: this.identityBinding,
+      orgMembershipId: this.member?.orgMembershipId,
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      tokenType: tokens.token_type ?? null,
+      scope: tokens.scope,
+      expiresAt,
+    }
+    const committedTokenRevision = isAuthorizationCodeCommit
+      ? await saveExternalMcpAuthorizationCodeTokens({
+        ...tokenCommit,
+        authorizationActor: this.authorizationActor!,
+        expectedAuthorizationEpoch: this.authorizationCodeEpoch!,
+      })
+      : await saveExternalMcpRefreshTokens({
+        ...tokenCommit,
+        expectedAuthorizationEpoch: this.connection.oauthAuthorizationEpoch,
+      })
+    if (isAuthorizationCodeCommit) this.authorizationCodeEpoch = undefined
+    this.loadedTokenRevision = committedTokenRevision
+    // Refresh the in-memory row so a subsequent tokens()/refresh in the same
+    // connection attempt sees the just-saved values.
+    await this.refreshConnection()
+    this.diagnostic.passed(phase)
   }
 
   async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
     if (scope === "all" || scope === "client") {
-      const deleted = await deleteOrgOAuthClientForExternalMcpIdentity(this.connection)
-      if (!deleted) throw new Error("The external MCP connection identity changed during credential invalidation.")
+      const expected = this.loadedClientRevision
+      const provenance = this.loadedClientProvenance
+      if (expected && provenance) {
+        // invalid_client is recoverable only for a client OpenWork registered
+        // dynamically. Never erase credentials an admin must rotate with the
+        // provider, and never "rotate" a deterministic CIMD URL client.
+        if (shouldRotateExternalMcpOAuthClient(provenance)) {
+          // The provider can report invalid_client after an administrator has
+          // already rotated the row. Delete only the exact DCR revision that
+          // produced this failure, while sharing the connection fence with
+          // disconnect/delete and every other OAuth-client writer.
+          const invalidated = await compareAndSetExternalMcpOAuthClient({
+            organizationId: this.connection.organizationId,
+            connectionId: this.connection.id,
+            expectedIdentityBinding: this.identityBinding,
+            expectedAuthorizationEpoch: this.connection.oauthAuthorizationEpoch,
+            expected,
+            next: null,
+          })
+          if (invalidated.status === "connection_missing") {
+            throw new Error("The external MCP connection no longer exists.")
+          }
+          if (invalidated.status === "connection_changed") {
+            throw new Error("The external MCP connection identity changed during credential invalidation.")
+          }
+        }
+      }
+      this.loadedClientRevision = undefined
+      this.loadedClientProvenance = undefined
     }
     if (scope === "all" || scope === "tokens") {
-      if (this.isPerMember && this.member) {
-        const cleared = await upsertConnectedAccountForExternalMcpIdentity({
-          connection: this.connection,
+      const expectedRevision = this.loadedTokenRevision
+      if (expectedRevision && this.isPerMember && this.member) {
+        await clearExternalMcpMemberTokens({
+          organizationId: this.connection.organizationId,
           orgMembershipId: this.member.orgMembershipId,
-          changes: {
-            accessToken: null,
-            refreshToken: null,
-            tokenType: null,
-            scopes: null,
-            expiresAt: null,
-            ...(scope === "all" ? { pendingCodeVerifier: null } : {}),
-          },
+          connectionId: this.connection.id,
+          expectedIdentityBinding: this.identityBinding,
+          expectedRevision,
         })
-        if (!cleared) throw new Error("The external MCP connection identity changed during credential invalidation.")
-      } else {
-        const cleared = await clearExternalMcpTokensForIdentity(this.connection)
-        if (!cleared) throw new Error("The external MCP connection identity changed during credential invalidation.")
-        const refreshed = await getExternalMcpConnection({
+      } else if (expectedRevision && !this.isPerMember) {
+        await clearExternalMcpTokens({
           organizationId: this.connection.organizationId,
           connectionId: this.connection.id,
+          expectedIdentityBinding: this.identityBinding,
+          expectedRevision,
         })
-        if (refreshed) this.connection = refreshed
+        await this.refreshConnection()
       }
+      this.loadedTokenRevision = undefined
     }
-    if ((scope === "all" || scope === "verifier") && !this.isPerMember) {
-      const cleared = await saveExternalMcpPendingCodeVerifierForIdentity({ connection: this.connection, codeVerifier: null })
-      if (!cleared) throw new Error("The external MCP connection identity changed during verifier invalidation.")
-    }
-    if (scope === "verifier" && this.isPerMember && this.member) {
-      const cleared = await upsertConnectedAccountForExternalMcpIdentity({
-        connection: this.connection,
-        orgMembershipId: this.member.orgMembershipId,
-        changes: { pendingCodeVerifier: null },
-      })
-      if (!cleared) throw new Error("The external MCP connection identity changed during verifier invalidation.")
+    if (scope === "all" || scope === "verifier") {
+      const signedState = this.oauthTransactionState
+      if (signedState) {
+        const codeVerifier = await deleteExternalMcpOAuthTransaction({
+          organizationId: this.connection.organizationId,
+          connectionId: this.connection.id,
+          expectedIdentityBinding: this.identityBinding,
+          orgMembershipId: this.oauthTransactionMemberId,
+          signedState,
+        })
+        if (codeVerifier) await this.clearMatchingLegacyCodeVerifier(codeVerifier)
+      }
     }
   }
 
@@ -390,33 +969,49 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
     this.assertLifecycleActive("AUTH_USER_OR_WORKLOAD")
-    if (this.isPerMember && this.member) {
-      const saved = await upsertConnectedAccountForExternalMcpIdentity({
-        connection: this.connection,
-        orgMembershipId: this.member.orgMembershipId,
-        changes: { pendingCodeVerifier: codeVerifier },
-      })
-      if (!saved) throw new Error("The external MCP connection identity changed during verifier persistence.")
-      return
-    }
-    const saved = await saveExternalMcpPendingCodeVerifierForIdentity({ connection: this.connection, codeVerifier })
-    if (!saved) throw new Error("The external MCP connection identity changed during verifier persistence.")
+    const signedState = this.oauthTransactionState
+    if (!signedState) throw new Error("A signed OAuth state is required before saving a PKCE verifier.")
+    const authorizationActor = this.authorizationActor
+    if (!authorizationActor) throw new Error("An authorization actor is required before starting MCP OAuth.")
+    await saveExternalMcpOAuthTransaction({
+      organizationId: this.connection.organizationId,
+      connectionId: this.connection.id,
+      expectedIdentityBinding: this.identityBinding,
+      orgMembershipId: this.oauthTransactionMemberId,
+      authorizationActor,
+      expectedAuthorizationEpoch: this.connection.oauthAuthorizationEpoch,
+      signedState,
+      codeVerifier,
+    })
   }
 
   async codeVerifier(): Promise<string> {
     this.assertLifecycleActive("AUTH_TOKEN_ACQUISITION")
-    if (this.isPerMember) {
-      const account = await this.memberAccount()
+    const signedState = this.oauthTransactionState
+    if (!signedState) throw new Error("The OAuth callback is missing its signed state transaction.")
+    const transactionInput = {
+      organizationId: this.connection.organizationId,
+      connectionId: this.connection.id,
+      expectedIdentityBinding: this.identityBinding,
+      orgMembershipId: this.oauthTransactionMemberId,
+    }
+    const exactTransaction = await consumeExternalMcpOAuthTransaction({
+      ...transactionInput,
+      signedState,
+    })
+    if (exactTransaction) {
+      this.authorizationCodeEpoch = exactTransaction.authorizationEpoch
+      await this.clearMatchingLegacyCodeVerifier(exactTransaction.codeVerifier)
       this.assertLifecycleActive("AUTH_TOKEN_ACQUISITION")
-      if (!account?.pendingCodeVerifier) {
-        throw new Error("No pending PKCE code verifier for this member on this external MCP connection.")
-      }
-      return account.pendingCodeVerifier
+      return exactTransaction.codeVerifier
     }
-    if (!this.connection.pendingCodeVerifier) {
-      throw new Error("No pending PKCE code verifier for this external MCP connection.")
+    const codeVerifier = await consumeLegacyExternalMcpPendingCodeVerifier(transactionInput)
+    this.assertLifecycleActive("AUTH_TOKEN_ACQUISITION")
+    if (!codeVerifier) {
+      throw new Error("The OAuth authorization transaction is missing, expired, or already consumed.")
     }
-    return this.connection.pendingCodeVerifier
+    this.authorizationCodeEpoch = this.connection.oauthAuthorizationEpoch
+    return codeVerifier
   }
 }
 
@@ -427,13 +1022,24 @@ function buildTransport(
   member?: ExternalMcpMemberContext,
   diagnosticReferenceId?: string,
   lifecycleDeadline?: ExternalMcpLifecycleDeadline,
+  authorizationActor?: ExternalMcpMemberContext,
+  allowDynamicClientRegistration = false,
 ) {
   const diagnostic = new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID(), {
     authType: connection.authType,
     credentialMode: connection.credentialMode,
   })
   const provider = connection.authType === "oauth"
-    ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member, diagnostic, lifecycleDeadline)
+    ? new ExternalMcpOAuthProvider(
+        connection,
+        redirectUri,
+        signedState,
+        member,
+        diagnostic,
+        lifecycleDeadline,
+        authorizationActor,
+        allowDynamicClientRegistration,
+      )
     : undefined
   const guardedFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
   const lifecycleFetch = lifecycleDeadline
@@ -740,9 +1346,11 @@ export async function connectExternalMcp(
   signedState?: string,
   member?: ExternalMcpMemberContext,
   diagnosticReferenceId?: string,
+  authorizationActor?: ExternalMcpMemberContext,
+  lifecycleDeadline?: ExternalMcpLifecycleDeadline,
 ): Promise<ExternalMcpConnectResult> {
   const client = buildClient()
-  const deadline = createExternalMcpLifecycleDeadline()
+  const deadline = lifecycleDeadline ?? createExternalMcpLifecycleDeadline()
   const { transport, provider, diagnostic } = buildTransport(
     connection,
     redirectUri,
@@ -750,6 +1358,8 @@ export async function connectExternalMcp(
     member,
     diagnosticReferenceId,
     deadline,
+    authorizationActor,
+    true,
   )
   let result: ExternalMcpConnectResult | undefined
   let primaryError: unknown
@@ -781,6 +1391,13 @@ export async function connectExternalMcp(
       if (!primaryError && result?.status === "connected") {
         primaryError = diagnostic.error(error, "SHUTDOWN")
       }
+    }
+    try {
+      await provider?.releaseOAuthRegistrationLease()
+    } catch (error) {
+      // Preserve an earlier handshake error, but never report a successful
+      // start while this request may still own a distributed DCR lease.
+      if (!primaryError) primaryError = diagnostic.error(error, "AUTH_CLIENT_REGISTRATION")
     }
   }
   if (primaryError) throw diagnostic.error(primaryError)
@@ -842,16 +1459,19 @@ export async function completeExternalMcpAuth(
   redirectUri: string,
   member?: ExternalMcpMemberContext,
   diagnosticReferenceId?: string,
+  signedState?: string,
+  authorizationActor?: ExternalMcpMemberContext,
 ): Promise<void> {
   const client = buildClient()
   const deadline = createExternalMcpLifecycleDeadline()
   const { transport, provider, diagnostic } = buildTransport(
     connection,
     redirectUri,
-    undefined,
+    signedState,
     member,
     diagnosticReferenceId,
     deadline,
+    authorizationActor,
   )
   await runExternalMcpAuthCompletionLifecycle({
     diagnostic,
@@ -863,6 +1483,40 @@ export async function completeExternalMcpAuth(
     close: () => client.close(),
     deadline,
   })
+}
+
+/** Remove only the verifier associated with the denied/abandoned browser tab. */
+export async function abandonExternalMcpAuth(
+  connection: ExternalMcpConnectionRow,
+  signedState: string,
+  member?: ExternalMcpMemberContext,
+  _diagnosticReferenceId?: string,
+  authorizationActor?: ExternalMcpMemberContext,
+): Promise<void> {
+  const expectedIdentityBinding = externalMcpIdentityBinding(connection)
+  const orgMembershipId = authorizationActor?.orgMembershipId
+    ?? member?.orgMembershipId
+    ?? connection.createdByOrgMembershipId
+  const codeVerifier = await deleteExternalMcpOAuthTransaction({
+    organizationId: connection.organizationId,
+    connectionId: connection.id,
+    expectedIdentityBinding,
+    orgMembershipId,
+    signedState,
+  })
+  if (!codeVerifier) return
+  try {
+    await clearLegacyExternalMcpPendingCodeVerifierIfMatches({
+      organizationId: connection.organizationId,
+      connectionId: connection.id,
+      expectedIdentityBinding,
+      orgMembershipId,
+      expectedCodeVerifier: codeVerifier,
+    })
+  } catch {
+    // The state-keyed transaction is already gone; legacy cleanup is only a
+    // rolling-deploy bridge and must stay idempotent/best-effort.
+  }
 }
 
 export async function listExternalMcpTools(

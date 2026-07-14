@@ -55,6 +55,22 @@ export function publicRequestUrl(request: Request, options: PublicRequestUrlOpti
   return url
 }
 
+/**
+ * Appends an API route to a configured public base URL without discarding a
+ * reverse-proxy pathname prefix (for example `/api/den`). `new URL("/v1/...",
+ * base)` is deliberately not used here because a leading slash resets the
+ * pathname to the public origin root.
+ */
+export function appendPublicApiPath(baseUrl: string, routePath: string): string {
+  const url = new URL(baseUrl)
+  const basePath = url.pathname.replace(/\/+$/, "")
+  const normalizedRoutePath = routePath.replace(/^\/+/, "")
+  url.pathname = `${basePath === "/" ? "" : basePath}/${normalizedRoutePath}`
+  url.search = ""
+  url.hash = ""
+  return url.toString()
+}
+
 function isLocalPublicApiHost(hostname: string): boolean {
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "")
   return normalized === "localhost"

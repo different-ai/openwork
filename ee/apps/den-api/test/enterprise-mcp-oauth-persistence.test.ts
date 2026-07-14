@@ -14,6 +14,7 @@ let db: typeof import("../src/db.js").db
 let schema: typeof import("@openwork-ee/den-db/schema")
 let drizzle: typeof import("@openwork-ee/den-db/drizzle")
 let DenEnterpriseMcpOAuthPersistence: typeof import("../src/capability-sources/enterprise-mcp-oauth-persistence.js").DenEnterpriseMcpOAuthPersistence
+let connections: typeof import("../src/capability-sources/external-mcp-connections.js")
 let createExternalMcpConnection: typeof import("../src/capability-sources/external-mcp-connections.js").createExternalMcpConnection
 
 const userId = createDenTypeId("user")
@@ -34,7 +35,8 @@ beforeAll(async () => {
   schema = modules[1]
   drizzle = modules[2]
   DenEnterpriseMcpOAuthPersistence = modules[3].DenEnterpriseMcpOAuthPersistence
-  createExternalMcpConnection = modules[4].createExternalMcpConnection
+  connections = modules[4]
+  createExternalMcpConnection = connections.createExternalMcpConnection
 
   await db.insert(schema.AuthUserTable).values({
     id: userId,
@@ -84,7 +86,11 @@ function context(offsetMs = 30_000) {
 
 describe("Den enterprise MCP OAuth persistence adapter", () => {
   test("stores DCR secrets only in encrypted columns and returns the first registration", async () => {
-    const persistence = new DenEnterpriseMcpOAuthPersistence(connection)
+    const persistence = new DenEnterpriseMcpOAuthPersistence(
+      connection,
+      undefined,
+      { orgMembershipId: memberId },
+    )
     const saved = await persistence.clientRegistrations.save({
       context: context(),
       clientInformation: {
@@ -116,8 +122,211 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
     expect(loser.clientInformation.client_id).toBe("registered-client")
   })
 
+  test("rejects dynamic registration after the initiating shared admin is demoted", async () => {
+    const registeringConnection = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP DCR demotion fence",
+      url: "https://mcp.example.test/enterprise-dcr-demotion",
+      authType: "oauth",
+      credentialMode: "shared",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const persistence = new DenEnterpriseMcpOAuthPersistence(
+      registeringConnection,
+      undefined,
+      { orgMembershipId: memberId },
+    )
+    await db
+      .update(schema.MemberTable)
+      .set({ role: "member" })
+      .where(drizzle.eq(schema.MemberTable.id, memberId))
+    try {
+      await expect(persistence.clientRegistrations.save({
+        context: {
+          connectionId: registeringConnection.id,
+          commitExpiresAt: Date.now() + 30_000,
+          signal: new AbortController().signal,
+        },
+        clientInformation: {
+          client_id: "must-not-save-enterprise-client",
+          client_secret: "must-not-save-enterprise-secret",
+        },
+        source: "dynamic",
+      })).rejects.toThrow("no longer has authority")
+      const clients = await db
+        .select({ id: schema.OrgOAuthClientTable.id })
+        .from(schema.OrgOAuthClientTable)
+        .where(drizzle.eq(schema.OrgOAuthClientTable.providerId, registeringConnection.id))
+      expect(clients).toHaveLength(0)
+    } finally {
+      await db
+        .update(schema.MemberTable)
+        .set({ role: "admin" })
+        .where(drizzle.eq(schema.MemberTable.id, memberId))
+    }
+  })
+
+  test("rejects dynamic registration after the initiating member loses assignment", async () => {
+    const registeringConnection = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP DCR assignment fence",
+      url: "https://mcp.example.test/enterprise-dcr-assignment",
+      authType: "oauth",
+      credentialMode: "per_member",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const persistence = new DenEnterpriseMcpOAuthPersistence(
+      registeringConnection,
+      { orgMembershipId: memberId },
+      { orgMembershipId: memberId },
+    )
+    await db.delete(schema.ExternalMcpConnectionAccessGrantTable).where(
+      drizzle.eq(schema.ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, registeringConnection.id),
+    )
+
+    await expect(persistence.clientRegistrations.save({
+      context: {
+        connectionId: registeringConnection.id,
+        commitExpiresAt: Date.now() + 30_000,
+        signal: new AbortController().signal,
+      },
+      clientInformation: { client_id: "must-not-save-unassigned-enterprise-client" },
+      source: "dynamic",
+    })).rejects.toThrow("no longer has authority")
+    const clients = await db
+      .select({ id: schema.OrgOAuthClientTable.id })
+      .from(schema.OrgOAuthClientTable)
+      .where(drizzle.eq(schema.OrgOAuthClientTable.providerId, registeringConnection.id))
+    expect(clients).toHaveLength(0)
+  })
+
+  test("a delayed T1 rejection cannot clear a newer enterprise T2 credential", async () => {
+    const tokenConnection = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP token revision fence",
+      url: "https://mcp.example.test/enterprise-token-revision",
+      authType: "oauth",
+      credentialMode: "shared",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    await db
+      .update(schema.ExternalMcpConnectionTable)
+      .set({
+        accessToken: "enterprise-access-t1",
+        refreshToken: "enterprise-refresh-t1",
+        tokenType: "Bearer",
+        connectedAt: new Date(),
+      })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, tokenConnection.id))
+    const persistence = new DenEnterpriseMcpOAuthPersistence(tokenConnection)
+    const failed = await persistence.credentials.load({
+      connectionId: tokenConnection.id,
+      commitExpiresAt: Date.now() + 30_000,
+      signal: new AbortController().signal,
+    })
+    if (!failed) throw new Error("Expected the T1 enterprise credential.")
+
+    await db
+      .update(schema.ExternalMcpConnectionTable)
+      .set({
+        accessToken: "enterprise-access-t2",
+        refreshToken: "enterprise-refresh-t2",
+        tokenType: "Bearer",
+        connectedAt: new Date(),
+      })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, tokenConnection.id))
+    await persistence.credentials.invalidate({
+      context: {
+        connectionId: tokenConnection.id,
+        commitExpiresAt: Date.now() + 30_000,
+        signal: new AbortController().signal,
+      },
+      reason: "provider-rejected",
+      revision: failed.revision,
+    })
+
+    const rows = await db
+      .select({
+        accessToken: schema.ExternalMcpConnectionTable.accessToken,
+        refreshToken: schema.ExternalMcpConnectionTable.refreshToken,
+      })
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, tokenConnection.id))
+      .limit(1)
+    expect(rows[0]).toEqual({
+      accessToken: "enterprise-access-t2",
+      refreshToken: "enterprise-refresh-t2",
+    })
+  })
+
+  test("enterprise invalid_client cleanup cannot delete a rotated client revision", async () => {
+    const clientConnection = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP client revision fence",
+      url: "https://mcp.example.test/enterprise-client-revision",
+      authType: "oauth",
+      credentialMode: "shared",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const clientRowId = createDenTypeId("orgOAuthClient")
+    await db.insert(schema.OrgOAuthClientTable).values({
+      id: clientRowId,
+      organizationId,
+      providerId: clientConnection.id,
+      clientId: "enterprise-client-t1",
+      clientSecret: "enterprise-secret-t1",
+      extra: { enterpriseMcpRegistrationSource: "dynamic" },
+      createdByOrgMembershipId: memberId,
+    })
+    const persistence = new DenEnterpriseMcpOAuthPersistence(clientConnection)
+    const failed = await persistence.clientRegistrations.load({
+      connectionId: clientConnection.id,
+      commitExpiresAt: Date.now() + 30_000,
+      signal: new AbortController().signal,
+    })
+    if (!failed) throw new Error("Expected the T1 enterprise OAuth client.")
+
+    await db
+      .update(schema.OrgOAuthClientTable)
+      .set({
+        clientId: "enterprise-client-t2",
+        clientSecret: "enterprise-secret-t2",
+        extra: { administratorRotation: true },
+      })
+      .where(drizzle.eq(schema.OrgOAuthClientTable.id, clientRowId))
+    await persistence.clientRegistrations.invalidate({
+      context: {
+        connectionId: clientConnection.id,
+        commitExpiresAt: Date.now() + 30_000,
+        signal: new AbortController().signal,
+      },
+      reason: "provider-rejected",
+      revision: failed.revision,
+    })
+
+    const clients = await db
+      .select({
+        clientId: schema.OrgOAuthClientTable.clientId,
+        clientSecret: schema.OrgOAuthClientTable.clientSecret,
+      })
+      .from(schema.OrgOAuthClientTable)
+      .where(drizzle.eq(schema.OrgOAuthClientTable.id, clientRowId))
+    expect(clients).toEqual([{
+      clientId: "enterprise-client-t2",
+      clientSecret: "enterprise-secret-t2",
+    }])
+  })
+
   test("isolates concurrent signed PKCE transactions and consumes only the callback winner", async () => {
-    const persistence = new DenEnterpriseMcpOAuthPersistence(connection)
+    const persistence = new DenEnterpriseMcpOAuthPersistence(
+      connection,
+      undefined,
+      { orgMembershipId: memberId },
+    )
     const registration = await persistence.clientRegistrations.load(context())
     if (!registration) throw new Error("Expected the seeded OAuth client registration.")
     await persistence.authorizations.begin({
@@ -174,6 +383,169 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
     expect((await persistence.credentials.load(context()))?.tokens.access_token).toBe("callback-access-token")
   })
 
+  test("rechecks shared admin authority in the same transaction as enterprise token persistence", async () => {
+    const persistence = new DenEnterpriseMcpOAuthPersistence(
+      connection,
+      undefined,
+      { orgMembershipId: memberId },
+    )
+    const registration = await persistence.clientRegistrations.load(context())
+    if (!registration) throw new Error("Expected the seeded OAuth client registration.")
+    await persistence.authorizations.begin({
+      context: context(),
+      id: "signed-state-enterprise-demotion",
+      codeVerifier: "q".repeat(43),
+      expiresAt: Date.now() + 600_000,
+      clientRegistrationRevision: registration.revision,
+    })
+    const authorization = await persistence.authorizations.load({
+      context: context(),
+      id: "signed-state-enterprise-demotion",
+    })
+    if (!authorization) throw new Error("Expected the pending enterprise authorization.")
+    const before = await persistence.credentials.load(context())
+
+    await db
+      .update(schema.MemberTable)
+      .set({ role: "member" })
+      .where(drizzle.eq(schema.MemberTable.id, memberId))
+    try {
+      await expect(persistence.credentials.save({
+        context: context(),
+        tokens: { access_token: "must-not-save-after-enterprise-demotion", token_type: "Bearer" },
+        source: "authorization-code",
+        authorization: authorization.handle,
+        clientRegistrationRevision: registration.revision,
+      })).rejects.toThrow("no longer has authority")
+      expect((await persistence.credentials.load(context()))?.tokens.access_token).toBe(before?.tokens.access_token)
+    } finally {
+      await db
+        .update(schema.MemberTable)
+        .set({ role: "admin" })
+        .where(drizzle.eq(schema.MemberTable.id, memberId))
+      await persistence.authorizations.invalidate({
+        context: context(),
+        id: "signed-state-enterprise-demotion",
+        reason: "abandoned",
+      })
+    }
+  })
+
+  test("rechecks per-member assignment before enterprise token persistence", async () => {
+    const perMemberConnection = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP assignment commit fence",
+      url: "https://mcp.example.test/enterprise-assignment-fence",
+      authType: "oauth",
+      credentialMode: "per_member",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const persistenceContext = () => ({
+      connectionId: perMemberConnection.id,
+      commitExpiresAt: Date.now() + 30_000,
+      signal: new AbortController().signal,
+    })
+    const persistence = new DenEnterpriseMcpOAuthPersistence(
+      perMemberConnection,
+      { orgMembershipId: memberId },
+      { orgMembershipId: memberId },
+    )
+    const registration = await persistence.clientRegistrations.save({
+      context: persistenceContext(),
+      clientInformation: { client_id: "enterprise-assignment-client" },
+      source: "dynamic",
+    })
+    await persistence.authorizations.begin({
+      context: persistenceContext(),
+      id: "signed-state-enterprise-unassignment",
+      codeVerifier: "v".repeat(43),
+      expiresAt: Date.now() + 600_000,
+      clientRegistrationRevision: registration.revision,
+    })
+    const authorization = await persistence.authorizations.load({
+      context: persistenceContext(),
+      id: "signed-state-enterprise-unassignment",
+    })
+    if (!authorization) throw new Error("Expected the pending per-member enterprise authorization.")
+    await db.delete(schema.ExternalMcpConnectionAccessGrantTable).where(
+      drizzle.eq(schema.ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, perMemberConnection.id),
+    )
+
+    await expect(persistence.credentials.save({
+      context: persistenceContext(),
+      tokens: { access_token: "must-not-save-after-enterprise-unassignment", token_type: "Bearer" },
+      source: "authorization-code",
+      authorization: authorization.handle,
+      clientRegistrationRevision: registration.revision,
+    })).rejects.toThrow("no longer has authority")
+    const accounts = await db
+      .select({ accessToken: schema.ConnectedAccountTable.accessToken })
+      .from(schema.ConnectedAccountTable)
+      .where(drizzle.and(
+        drizzle.eq(schema.ConnectedAccountTable.providerId, perMemberConnection.id),
+        drizzle.eq(schema.ConnectedAccountTable.orgMembershipId, memberId),
+      ))
+    expect(accounts[0]?.accessToken).toBeNull()
+  })
+
+  test("enterprise callback cannot restore credentials after disconnect", async () => {
+    const disconnectedConnection = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP disconnect fence",
+      url: "https://mcp.example.test/enterprise-disconnect-fence",
+      authType: "oauth",
+      credentialMode: "shared",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const persistenceContext = () => ({
+      connectionId: disconnectedConnection.id,
+      commitExpiresAt: Date.now() + 30_000,
+      signal: new AbortController().signal,
+    })
+    const persistence = new DenEnterpriseMcpOAuthPersistence(
+      disconnectedConnection,
+      undefined,
+      { orgMembershipId: memberId },
+    )
+    const registration = await persistence.clientRegistrations.save({
+      context: persistenceContext(),
+      clientInformation: { client_id: "enterprise-disconnect-client" },
+      source: "dynamic",
+    })
+    await persistence.authorizations.begin({
+      context: persistenceContext(),
+      id: "signed-state-enterprise-disconnect",
+      codeVerifier: "y".repeat(43),
+      expiresAt: Date.now() + 600_000,
+      clientRegistrationRevision: registration.revision,
+    })
+    const authorization = await persistence.authorizations.load({
+      context: persistenceContext(),
+      id: "signed-state-enterprise-disconnect",
+    })
+    if (!authorization) throw new Error("Expected the pending enterprise authorization.")
+    expect(await connections.disconnectExternalMcpConnection({
+      organizationId,
+      connectionId: disconnectedConnection.id,
+    })).toBe(true)
+
+    await expect(persistence.credentials.save({
+      context: persistenceContext(),
+      tokens: { access_token: "must-not-save-after-enterprise-disconnect", token_type: "Bearer" },
+      source: "authorization-code",
+      authorization: authorization.handle,
+      clientRegistrationRevision: registration.revision,
+    })).rejects.toThrow(/missing, expired, or already consumed|disconnected/)
+    const rows = await db
+      .select({ accessToken: schema.ExternalMcpConnectionTable.accessToken })
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, disconnectedConnection.id))
+      .limit(1)
+    expect(rows[0]?.accessToken).toBeNull()
+  })
+
   test("rejects persistence after its lifecycle deadline without changing credentials", async () => {
     const persistence = new DenEnterpriseMcpOAuthPersistence(connection)
     const before = await persistence.credentials.load(context())
@@ -196,7 +568,11 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       createdByOrgMembershipId: memberId,
       access: { orgWide: true, memberIds: [], teamIds: [] },
     })
-    const persistence = new DenEnterpriseMcpOAuthPersistence(oldIdentity)
+    const persistence = new DenEnterpriseMcpOAuthPersistence(
+      oldIdentity,
+      undefined,
+      { orgMembershipId: memberId },
+    )
     await db
       .update(schema.ExternalMcpConnectionTable)
       .set({ url: "https://replacement-mcp.example.test/mcp", updatedAt: new Date() })
@@ -231,6 +607,54 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
     expect(clients).toEqual([])
   })
 
+  test("enterprise refresh requires the existing per-member account without an authorization actor", async () => {
+    const perMemberConnection = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP refresh account fence",
+      url: "https://mcp.example.test/enterprise-refresh-account-fence",
+      authType: "oauth",
+      credentialMode: "per_member",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const accountId = createDenTypeId("connectedAccount")
+    await db.insert(schema.ConnectedAccountTable).values({
+      id: accountId,
+      organizationId,
+      orgMembershipId: memberId,
+      providerId: perMemberConnection.id,
+      accessToken: "enterprise-refresh-old-access",
+      refreshToken: "enterprise-refresh-old-refresh",
+    })
+    const persistence = new DenEnterpriseMcpOAuthPersistence(
+      perMemberConnection,
+      { orgMembershipId: memberId },
+    )
+    const persistenceContext = {
+      connectionId: perMemberConnection.id,
+      commitExpiresAt: Date.now() + 30_000,
+      signal: new AbortController().signal,
+    }
+    await db.delete(schema.ConnectedAccountTable).where(
+      drizzle.eq(schema.ConnectedAccountTable.id, accountId),
+    )
+
+    await expect(persistence.credentials.save({
+      context: persistenceContext,
+      tokens: {
+        access_token: "must-not-resurrect-refresh-account",
+        refresh_token: "must-not-resurrect-refresh-token",
+        token_type: "Bearer",
+      },
+      source: "refresh",
+    })).rejects.toThrow("disconnected before refreshed credentials")
+    const accounts = await db
+      .select({ id: schema.ConnectedAccountTable.id })
+      .from(schema.ConnectedAccountTable)
+      .where(drizzle.eq(schema.ConnectedAccountTable.providerId, perMemberConnection.id))
+    expect(accounts).toHaveLength(0)
+  })
+
   test("removes a denied per-member authorization and keeps repeated cleanup idempotent", async () => {
     const perMemberConnection = await createExternalMcpConnection({
       organizationId,
@@ -244,6 +668,7 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
     const adapter = await import("../src/capability-sources/enterprise-mcp-client-adapter.js")
     const persistence = new DenEnterpriseMcpOAuthPersistence(
       perMemberConnection,
+      { orgMembershipId: memberId },
       { orgMembershipId: memberId },
     )
     await persistence.authorizations.begin({
@@ -378,6 +803,7 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
         signedState,
         undefined,
         "req_enterprise_e2e_start",
+        { orgMembershipId: memberId },
       )
       expect(started.status).toBe("needs_auth")
       if (started.status !== "needs_auth") throw new Error("Expected provider authorization to be required.")
@@ -397,6 +823,7 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
         undefined,
         "req_enterprise_e2e_callback",
         signedState,
+        { orgMembershipId: memberId },
       )
       const committedRows = await db
         .select()

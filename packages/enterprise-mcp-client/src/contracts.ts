@@ -51,6 +51,8 @@ export interface EnterpriseMcpOAuthClientRegistrationPort {
   invalidate(input: {
     context: EnterpriseMcpPersistenceContext
     reason: "expired" | "provider-rejected"
+    /** Exact registration revision whose provider response triggered cleanup. */
+    revision: string
   }): Promise<void>
 }
 
@@ -109,10 +111,12 @@ export interface EnterpriseMcpOAuthCredentialPort {
     source: "authorization-code" | "refresh"
     authorization?: EnterpriseMcpOAuthAuthorizationHandle
     clientRegistrationRevision?: string
-  }): Promise<void>
+  }): Promise<EnterpriseMcpOAuthCredential>
   invalidate(input: {
     context: EnterpriseMcpPersistenceContext
     reason: "expired" | "provider-rejected" | "post-authorization-validation-failed"
+    /** Exact credential revision whose provider response triggered cleanup. */
+    revision: string
   }): Promise<void>
 }
 

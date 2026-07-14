@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test"
-import { and, eq, inArray, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   ConfigObjectAccessGrantTable,
@@ -87,6 +87,7 @@ beforeAll(async () => {
     env: {
       ...env,
       allowPrivateMcpUrls: true,
+      apiPublicUrl: "https://openwork.example/api/den",
       betterAuthUrl: "http://127.0.0.1:3005",
       betterAuthSecret: "test-secret",
       githubConnectorApp: {},
@@ -613,7 +614,7 @@ describe("marketplace cloud readiness payload", () => {
     expect(memberView.cloudReadiness?.state).toBe("needs_signin")
   })
 
-  test("plugin MCP requirement configuration derives URL, access, stable identity, and OAuth client", async () => {
+  test("plugin MCP requirement configuration uses the request-derived public base for its OAuth callback", async () => {
     const org = await seedOrg()
     const url = "http://slack.local.test/mcp"
     const plugin = await seedPlugin({
@@ -625,6 +626,7 @@ describe("marketplace cloud readiness payload", () => {
     if (!configObjectId) throw new Error("missing config object")
 
     const configured = await store.configureMarketplacePluginMcpRequirement({
+      apiPublicBaseUrl: "https://tenant-gateway.example/api/den",
       authType: "oauth",
       configObjectId,
       context: org.context,
@@ -636,6 +638,9 @@ describe("marketplace cloud readiness payload", () => {
 
     expect(configured.binding).toMatchObject({ configObjectId, pluginId: plugin.pluginId, serverName: "slack" })
     expect(configured.connection).toMatchObject({ authType: "oauth", credentialMode: "per_member", url })
+    expect(configured.links.oauthCallback).toBe(
+      `https://tenant-gateway.example/api/den/v1/mcp-connections/${configured.connection.id}/connect/callback`,
+    )
     const link = new URL(configured.links.yourConnections)
     expect([...link.searchParams.keys()]).toEqual(["connectionId"])
     expect(link.searchParams.get("connectionId")).toBe(configured.connection.id)
@@ -656,6 +661,518 @@ describe("marketplace cloud readiness payload", () => {
       id: configured.connection.id,
       serverName: "slack",
     })
+  })
+
+  test("marketplace MCP setup persists trusted live challenge scopes instead of an authorization-server catalog", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const requestUrl = new URL(request.url)
+        const origin = requestUrl.origin
+        const mcpUrl = `${origin}/mcp`
+        if (request.method === "POST" && requestUrl.pathname === "/mcp") {
+          return new Response(null, {
+            status: 401,
+            headers: {
+              "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource", scope="issues:read issues:write"`,
+            },
+          })
+        }
+        if (requestUrl.pathname.includes("oauth-protected-resource")) {
+          return Response.json({
+            authorization_servers: [origin],
+            resource: mcpUrl,
+            scopes_supported: ["resource:broader"],
+          })
+        }
+        if (requestUrl.pathname.includes("oauth-authorization-server")) {
+          return Response.json({
+            authorization_endpoint: `${origin}/authorize`,
+            code_challenge_methods_supported: ["S256"],
+            issuer: origin,
+            registration_endpoint: `${origin}/register`,
+            response_types_supported: ["code"],
+            scopes_supported: ["catalog:admin", "catalog:profile"],
+            token_endpoint: `${origin}/token`,
+          })
+        }
+        return new Response(null, { status: 404 })
+      },
+    })
+
+    try {
+      const org = await seedOrg()
+      const url = `http://127.0.0.1:${server.port}/mcp`
+      const plugin = await seedPlugin({
+        org,
+        name: "Live Scope Plugin",
+        components: [{
+          objectType: "mcp",
+          title: "Live Scope MCP",
+          normalizedPayloadJson: {
+            mcpServers: {
+              live: {
+                authType: "oauth",
+                scopes: ["manifest:fallback"],
+                url,
+              },
+            },
+          },
+        }],
+      })
+      const configObjectId = plugin.configObjectIds[0]
+      if (!configObjectId) throw new Error("missing config object")
+
+      const configured = await store.configureMarketplacePluginMcpRequirement({
+        authType: "oauth",
+        configObjectId,
+        context: org.context,
+        credentialMode: "per_member",
+        pluginId: plugin.pluginId,
+        serverName: "live",
+      })
+      const connectionId = normalizeDenTypeId("externalMcpConnection", configured.connection.id)
+      const rows = await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, connectionId))
+      expect(rows[0]?.requestedOAuthScopes).toEqual(["issues:read", "issues:write"])
+    } finally {
+      await server.stop(true)
+    }
+  })
+
+  test("marketplace MCP setup rotates a corrected secret for the same pre-registered client", async () => {
+    const org = await seedOrg()
+    const url = "http://oauth-secret-rotation.local.test/mcp"
+    const plugin = await seedPlugin({
+      org,
+      name: "OAuth Secret Rotation Plugin",
+      components: [{ objectType: "mcp", title: "OAuth Secret Rotation", normalizedPayloadJson: { mcpServers: { slack: { url } } } }],
+    })
+    const configObjectId = plugin.configObjectIds[0]
+    if (!configObjectId) throw new Error("missing config object")
+
+    const first = await store.configureMarketplacePluginMcpRequirement({
+      authType: "oauth",
+      configObjectId,
+      context: org.context,
+      credentialMode: "shared",
+      oauthClient: { clientId: "stable-client", clientSecret: "mistyped-secret" },
+      pluginId: plugin.pluginId,
+      serverName: "slack",
+    })
+    const rotated = await store.configureMarketplacePluginMcpRequirement({
+      authType: "oauth",
+      configObjectId,
+      context: org.context,
+      credentialMode: "shared",
+      oauthClient: { clientId: "stable-client", clientSecret: "corrected-secret" },
+      pluginId: plugin.pluginId,
+      serverName: "slack",
+    })
+
+    expect(rotated.connection.id).toBe(first.connection.id)
+    const clients = await db.select().from(OrgOAuthClientTable).where(and(
+      eq(OrgOAuthClientTable.organizationId, org.organizationId),
+      eq(OrgOAuthClientTable.providerId, rotated.connection.id),
+    ))
+    expect(clients).toHaveLength(1)
+    expect(clients[0]).toMatchObject({
+      clientId: "stable-client",
+      clientSecret: "corrected-secret",
+    })
+  })
+
+  test("marketplace MCP setup deletes a newly created connection when its atomic persistence fails", async () => {
+    const org = await seedOrg()
+    const url = "http://atomic-new-connection.local.test/mcp"
+    const plugin = await seedPlugin({
+      org,
+      name: "Atomic New Connection Plugin",
+      components: [{ objectType: "mcp", title: "Atomic New Connection", normalizedPayloadJson: { mcpServers: { slack: { url } } } }],
+    })
+    const configObjectId = plugin.configObjectIds[0]
+    if (!configObjectId) throw new Error("missing config object")
+
+    const triggerName = `ow_pmr_insert_${org.organizationId.slice(-12)}`
+    await db.execute(sql.raw(`DROP TRIGGER IF EXISTS \`${triggerName}\``))
+    await db.execute(sql.raw(`
+      CREATE TRIGGER \`${triggerName}\`
+      BEFORE INSERT ON plugin_mcp_requirement_binding
+      FOR EACH ROW
+      BEGIN
+        IF NEW.organization_id = '${org.organizationId}' THEN
+          SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected marketplace binding failure';
+        END IF;
+      END
+    `))
+    let failed = false
+    try {
+      await store.configureMarketplacePluginMcpRequirement({
+        authType: "oauth",
+        configObjectId,
+        context: org.context,
+        credentialMode: "shared",
+        oauthClient: { clientId: "atomic-client", clientSecret: "atomic-secret" },
+        pluginId: plugin.pluginId,
+        serverName: "slack",
+      })
+    } catch {
+      failed = true
+    } finally {
+      await db.execute(sql.raw(`DROP TRIGGER IF EXISTS \`${triggerName}\``))
+    }
+
+    expect(failed).toBe(true)
+    expect(await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.organizationId, org.organizationId))).toHaveLength(0)
+    expect(await db.select().from(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, org.organizationId))).toHaveLength(0)
+    expect(await db.select().from(PluginMcpRequirementBindingTable).where(eq(PluginMcpRequirementBindingTable.organizationId, org.organizationId))).toHaveLength(0)
+    expect(await db.select().from(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.organizationId, org.organizationId))).toHaveLength(0)
+  })
+
+  test("marketplace MCP setup cannot publish after validation settles beyond its 15 second deadline", async () => {
+    const org = await seedOrg()
+    const url = "http://late-marketplace-validation.local.test/mcp"
+    const plugin = await seedPlugin({
+      org,
+      name: "Late Marketplace Validation Plugin",
+      components: [{
+        objectType: "mcp",
+        title: "Late Marketplace Validation",
+        normalizedPayloadJson: { mcpServers: { public: { authType: "none", url } } },
+      }],
+    })
+    const configObjectId = plugin.configObjectIds[0]
+    if (!configObjectId) throw new Error("missing config object")
+
+    let signalValidationStarted = () => {}
+    const validationStarted = new Promise<void>((resolve) => {
+      signalValidationStarted = resolve
+    })
+    let releaseValidation = () => {}
+    const validationReleased = new Promise<void>((resolve) => {
+      releaseValidation = resolve
+    })
+    connectExternalMcpMock.mockImplementation(async () => {
+      signalValidationStarted()
+      await validationReleased
+      return { status: "connected" }
+    })
+
+    const realNow = Date.now
+    let logicalNow = realNow()
+    Date.now = () => logicalNow
+    let configurationError: unknown
+    try {
+      const configuring = store.configureMarketplacePluginMcpRequirement({
+        authType: "none",
+        configObjectId,
+        context: org.context,
+        credentialMode: "shared",
+        pluginId: plugin.pluginId,
+        serverName: "public",
+      })
+      await validationStarted
+      logicalNow += 15_001
+      releaseValidation()
+      try {
+        await configuring
+      } catch (error) {
+        configurationError = error
+      }
+    } finally {
+      releaseValidation()
+      Date.now = realNow
+    }
+
+    expect(configurationError).toBeInstanceOf(store.PluginArchRouteFailure)
+    if (!(configurationError instanceof store.PluginArchRouteFailure)) {
+      throw new Error("Expected late marketplace validation to fail with a route error.")
+    }
+    expect(configurationError).toMatchObject({
+      error: "marketplace_mcp_configuration_timeout",
+      status: 502,
+    })
+
+    const [connections, clients, bindings, grants] = await Promise.all([
+      db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.organizationId, org.organizationId)),
+      db.select().from(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, org.organizationId)),
+      db.select().from(PluginMcpRequirementBindingTable).where(eq(PluginMcpRequirementBindingTable.organizationId, org.organizationId)),
+      db.select().from(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.organizationId, org.organizationId)),
+    ])
+    expect([connections, clients, bindings, grants]).toEqual([[], [], [], []])
+  })
+
+  test("simultaneous marketplace MCP setup reconciles to one connection and binding", async () => {
+    const org = await seedOrg()
+    const url = "http://concurrent-configuration.local.test/mcp"
+    const plugin = await seedPlugin({
+      org,
+      name: "Concurrent Configuration Plugin",
+      components: [{
+        objectType: "mcp",
+        title: "Concurrent Configuration",
+        normalizedPayloadJson: { mcpServers: { public: { authType: "none", url } } },
+      }],
+    })
+    const configObjectId = plugin.configObjectIds[0]
+    if (!configObjectId) throw new Error("missing config object")
+
+    let releaseValidations = () => {}
+    const validationsArrived = new Promise<void>((resolve) => {
+      releaseValidations = resolve
+    })
+    let validationCalls = 0
+    connectExternalMcpMock.mockImplementation(async () => {
+      validationCalls += 1
+      if (validationCalls === 2) releaseValidations()
+      await validationsArrived
+      return { status: "connected" }
+    })
+    const configure = () => store.configureMarketplacePluginMcpRequirement({
+      authType: "none",
+      configObjectId,
+      context: org.context,
+      credentialMode: "shared",
+      pluginId: plugin.pluginId,
+      serverName: "public",
+    })
+
+    const [first, second] = await Promise.all([configure(), configure()])
+
+    expect(validationCalls).toBe(2)
+    expect(second.connection.id).toBe(first.connection.id)
+    expect(second.binding.id).toBe(first.binding.id)
+    expect(second.links.yourConnections).toBe(first.links.yourConnections)
+    expect(await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.organizationId, org.organizationId))).toHaveLength(1)
+    expect(await db.select().from(PluginMcpRequirementBindingTable).where(eq(PluginMcpRequirementBindingTable.organizationId, org.organizationId))).toHaveLength(1)
+    expect(await db.select().from(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.organizationId, org.organizationId))).toHaveLength(1)
+  })
+
+  test("marketplace MCP setup derives assignment after a pre-commit grant revocation", async () => {
+    const org = await seedOrg()
+    const member = await addMember({ org })
+    const url = "http://revoked-before-commit.local.test/mcp"
+    const plugin = await seedPlugin({
+      org,
+      name: "Revoked Before Commit Plugin",
+      components: [{
+        objectType: "mcp",
+        title: "Revoked Before Commit",
+        normalizedPayloadJson: { mcpServers: { public: { authType: "none", url } } },
+      }],
+    })
+    const configObjectId = plugin.configObjectIds[0]
+    if (!configObjectId) throw new Error("missing config object")
+    const marketplaceGrant = (await db
+      .select()
+      .from(MarketplaceAccessGrantTable)
+      .where(and(
+        eq(MarketplaceAccessGrantTable.organizationId, org.organizationId),
+        eq(MarketplaceAccessGrantTable.marketplaceId, org.marketplaceId),
+        isNull(MarketplaceAccessGrantTable.removedAt),
+      ))
+      .limit(1))[0]
+    if (!marketplaceGrant) throw new Error("missing marketplace grant")
+
+    let signalValidation = () => {}
+    const validationArrived = new Promise<void>((resolve) => {
+      signalValidation = resolve
+    })
+    let releaseValidation = () => {}
+    const validationReleased = new Promise<void>((resolve) => {
+      releaseValidation = resolve
+    })
+    connectExternalMcpMock.mockImplementation(async () => {
+      signalValidation()
+      await validationReleased
+      return { status: "connected" }
+    })
+    const configuring = store.configureMarketplacePluginMcpRequirement({
+      authType: "none",
+      configObjectId,
+      context: org.context,
+      credentialMode: "shared",
+      pluginId: plugin.pluginId,
+      serverName: "public",
+    })
+    await validationArrived
+    try {
+      await store.deleteResourceAccessGrant({
+        context: org.context,
+        grantId: marketplaceGrant.id,
+        resourceId: org.marketplaceId,
+        resourceKind: "marketplace",
+      })
+    } finally {
+      releaseValidation()
+    }
+
+    const configured = await configuring
+    const bindingId = normalizeDenTypeId("pluginMcpRequirementBinding", configured.binding.id)
+    expect(await sourceGrantCount(bindingId)).toBe(0)
+    expect(await listUsableConnectionIds({ memberId: member.memberId, org })).not.toContain(configured.connection.id)
+  })
+
+  test("marketplace MCP setup restores a reused client, binding, grants, and legacy tokens when adoption fails", async () => {
+    const org = await seedOrg()
+    const url = "http://atomic-legacy-adoption.local.test/mcp"
+    const plugin = await seedPlugin({
+      org,
+      name: "Atomic Legacy Adoption Plugin",
+      components: [{ objectType: "mcp", title: "Atomic Legacy Adoption", normalizedPayloadJson: { mcpServers: { slack: { url } } } }],
+    })
+    const configObjectId = plugin.configObjectIds[0]
+    if (!configObjectId) throw new Error("missing config object")
+
+    const configured = await store.configureMarketplacePluginMcpRequirement({
+      authType: "oauth",
+      configObjectId,
+      context: org.context,
+      credentialMode: "per_member",
+      oauthClient: { clientId: "legacy-client", clientSecret: "original-secret" },
+      pluginId: plugin.pluginId,
+      serverName: "slack",
+    })
+    const connectionId = normalizeDenTypeId("externalMcpConnection", configured.connection.id)
+    const bindingId = normalizeDenTypeId("pluginMcpRequirementBinding", configured.binding.id)
+    const connectedAt = new Date("2026-02-03T04:05:06.000Z")
+    const expiresAt = new Date("2026-03-04T05:06:07.000Z")
+    const leaseStartedAt = new Date("2026-02-03T03:04:05.000Z")
+    await db
+      .update(ExternalMcpConnectionTable)
+      .set({
+        accessToken: "legacy-shared-access",
+        connectedAt,
+        expiresAt,
+        oauthAuthorizationEpoch: 7,
+        oauthRegistrationLeaseStartedAt: leaseStartedAt,
+        oauthRegistrationLeaseToken: "legacy-registration-lease",
+        refreshToken: "legacy-shared-refresh",
+        requestedOAuthScopes: null,
+        scope: "legacy:read",
+        tokenType: "Bearer",
+      })
+      .where(eq(ExternalMcpConnectionTable.id, connectionId))
+    await connectMember({ connectionId, memberId: org.memberId, org })
+    await db
+      .update(ConfigObjectVersionTable)
+      .set({
+        normalizedPayloadJson: {
+          mcpServers: {
+            slack: {
+              authType: "oauth",
+              scopes: ["issues:read", "issues:write"],
+              url,
+            },
+          },
+        },
+      })
+      .where(eq(ConfigObjectVersionTable.configObjectId, configObjectId))
+
+    const bindingBefore = (await db.select().from(PluginMcpRequirementBindingTable).where(eq(PluginMcpRequirementBindingTable.id, bindingId)))[0]
+    const grantsBefore = await db.select().from(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId, bindingId))
+    const clientBefore = (await db.select().from(OrgOAuthClientTable).where(and(
+      eq(OrgOAuthClientTable.organizationId, org.organizationId),
+      eq(OrgOAuthClientTable.providerId, connectionId),
+    )))[0]
+    if (!bindingBefore || !clientBefore) throw new Error("missing atomic rollback fixtures")
+
+    const triggerName = `ow_account_delete_${org.organizationId.slice(-12)}`
+    await db.execute(sql.raw(`DROP TRIGGER IF EXISTS \`${triggerName}\``))
+    await db.execute(sql.raw(`
+      CREATE TRIGGER \`${triggerName}\`
+      BEFORE DELETE ON connected_account
+      FOR EACH ROW
+      BEGIN
+        IF OLD.provider_id = '${connectionId}' THEN
+          SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected legacy adoption failure';
+        END IF;
+      END
+    `))
+    let failed = false
+    try {
+      await store.configureMarketplacePluginMcpRequirement({
+        authType: "oauth",
+        configObjectId,
+        context: org.context,
+        credentialMode: "per_member",
+        oauthClient: { clientId: "legacy-client", clientSecret: "rotated-secret" },
+        pluginId: plugin.pluginId,
+        serverName: "slack",
+      })
+    } catch {
+      failed = true
+    } finally {
+      await db.execute(sql.raw(`DROP TRIGGER IF EXISTS \`${triggerName}\``))
+    }
+
+    expect(failed).toBe(true)
+    const connectionAfter = (await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, connectionId)))[0]
+    const bindingAfter = (await db.select().from(PluginMcpRequirementBindingTable).where(eq(PluginMcpRequirementBindingTable.id, bindingId)))[0]
+    const grantsAfter = await db.select().from(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId, bindingId))
+    const clientAfter = (await db.select().from(OrgOAuthClientTable).where(and(
+      eq(OrgOAuthClientTable.organizationId, org.organizationId),
+      eq(OrgOAuthClientTable.providerId, connectionId),
+    )))[0]
+    const accountsAfter = await db.select().from(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, org.organizationId),
+      eq(ConnectedAccountTable.providerId, connectionId),
+    ))
+
+    expect(connectionAfter).toMatchObject({
+      accessToken: "legacy-shared-access",
+      connectedAt,
+      expiresAt,
+      oauthAuthorizationEpoch: 7,
+      oauthRegistrationLeaseStartedAt: leaseStartedAt,
+      oauthRegistrationLeaseToken: "legacy-registration-lease",
+      refreshToken: "legacy-shared-refresh",
+      requestedOAuthScopes: null,
+      scope: "legacy:read",
+      tokenType: "Bearer",
+    })
+    expect(clientAfter).toMatchObject({
+      clientId: clientBefore.clientId,
+      clientSecret: "original-secret",
+      extra: clientBefore.extra,
+    })
+    expect(bindingAfter).toEqual(bindingBefore)
+    expect(grantsAfter).toEqual(grantsBefore)
+    expect(accountsAfter).toHaveLength(1)
+    expect(accountsAfter[0]?.accessToken).toBe("member-token")
+
+    const retried = await store.configureMarketplacePluginMcpRequirement({
+      authType: "oauth",
+      configObjectId,
+      context: org.context,
+      credentialMode: "per_member",
+      oauthClient: { clientId: "legacy-client", clientSecret: "rotated-secret" },
+      pluginId: plugin.pluginId,
+      serverName: "slack",
+    })
+    expect(retried.connection.id).toBe(connectionId)
+    expect(retried.binding.id).toBe(bindingId)
+    const adoptedConnection = (await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, connectionId)))[0]
+    const adoptedClient = (await db.select().from(OrgOAuthClientTable).where(and(
+      eq(OrgOAuthClientTable.organizationId, org.organizationId),
+      eq(OrgOAuthClientTable.providerId, connectionId),
+    )))[0]
+    expect(adoptedConnection).toMatchObject({
+      accessToken: null,
+      connectedAt: null,
+      oauthAuthorizationEpoch: 8,
+      oauthRegistrationLeaseStartedAt: null,
+      oauthRegistrationLeaseToken: null,
+      refreshToken: null,
+      requestedOAuthScopes: ["issues:read", "issues:write"],
+      scope: null,
+      tokenType: null,
+    })
+    expect(adoptedClient?.clientSecret).toBe("rotated-secret")
+    expect(await db.select().from(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, org.organizationId),
+      eq(ConnectedAccountTable.providerId, connectionId),
+    ))).toHaveLength(0)
   })
 
   test("same-key compatible plugin MCP requirements reuse one connection and keep existing grants", async () => {

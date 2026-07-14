@@ -1,5 +1,8 @@
 import { lookup } from "node:dns/promises"
+import type { IncomingMessage } from "node:http"
+import { request as httpsRequest } from "node:https"
 import { isIP } from "node:net"
+import type { LookupFunction } from "node:net"
 
 /**
  * SSRF guard for External MCP Connection URLs.
@@ -13,13 +16,13 @@ import { isIP } from "node:net"
  * the cloud metadata endpoint (169.254.169.254) that can leak our own
  * infrastructure credentials.
  *
- * The check is resolve-then-check, not string matching: an attacker can
+ * The check is resolve/check/connect, not string matching: an attacker can
  * point a legitimate-looking domain's DNS at 127.0.0.1 (DNS rebinding), so
  * we resolve the hostname and reject if ANY resulting address is
- * private/reserved. Because DNS answers can change AFTER a connection is
- * created, callers must also apply createGuardedFetch() at request time
- * (the MCP client threads it into every outbound fetch), not just validate
- * once at create time.
+ * private/reserved, then pin the exact checked address into the HTTPS socket.
+ * Because DNS answers can change AFTER a connection is created, callers must
+ * apply createGuardedFetch() at request time (the MCP client threads it into
+ * every outbound fetch), not just validate once at create time.
  *
  * Self-hosted deployments whose MCP servers legitimately live on a private
  * network disable this with DEN_ALLOW_PRIVATE_MCP_URLS=1 (see env.ts);
@@ -27,11 +30,30 @@ import { isIP } from "node:net"
  */
 
 export class PrivateUrlError extends Error {
-  constructor(url: string, detail: string) {
-    super(`URL "${url}" is not allowed: ${detail}`)
+  constructor(_url: string, detail: string) {
+    // URLs can contain tokens in uncommon publisher-specific query keys. The
+    // safety boundary may receive such a URL before schema validation, so its
+    // exception must never reflect the raw input into an API response or log.
+    super(`MCP URL is not allowed: ${detail}`)
     this.name = "PrivateUrlError"
   }
 }
+
+type PublicAddress = {
+  address: string
+  family: 4 | 6
+}
+
+type ResolveHostname = (hostname: string) => Promise<Array<{ address: string }>>
+type FetchLike = (url: string | URL, init?: RequestInit) => Promise<Response>
+type PinnedFetchLike = (url: URL, init: RequestInit, target: PublicAddress) => Promise<Response>
+
+type GuardedFetchTestOverrides = {
+  resolveHostname?: ResolveHostname
+  fetchPinned?: PinnedFetchLike
+}
+
+const PUBLIC_URL_DNS_TIMEOUT_MS = 5_000
 
 function parseIpv4(address: string): number[] | null {
   const parts = address.split(".")
@@ -51,8 +73,13 @@ function isPrivateIpv4(address: string): boolean {
   if (a === 127) return true // 127.0.0.0/8 loopback
   if (a === 169 && b === 254) return true // 169.254.0.0/16 link-local incl. cloud metadata
   if (a === 172 && b >= 16 && b <= 31) return true // 172.16.0.0/12 private
+  if (a === 192 && b === 0 && octets[2] === 0) return true // 192.0.0.0/24 IETF protocol assignments
+  if (a === 192 && b === 0 && octets[2] === 2) return true // 192.0.2.0/24 TEST-NET-1
   if (a === 192 && b === 168) return true // 192.168.0.0/16 private
+  if (a === 192 && b === 88 && octets[2] === 99) return true // deprecated 6to4 relay anycast
   if (a === 198 && (b === 18 || b === 19)) return true // 198.18.0.0/15 benchmarking
+  if (a === 198 && b === 51 && octets[2] === 100) return true // 198.51.100.0/24 TEST-NET-2
+  if (a === 203 && b === 0 && octets[2] === 113) return true // 203.0.113.0/24 TEST-NET-3
   if (a >= 224) return true // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved + broadcast
   return false
 }
@@ -125,6 +152,7 @@ function isPrivateIpv6(address: string): boolean {
     && words.slice(2, 6).every((word) => word === 0)
     && isPrivateIpv4(embeddedIpv4(words, 6))
   ) return true // well-known NAT64 prefix with a private embedded target
+  if (first === 0x0064 && second === 0xff9b && third === 0x0001) return true // RFC 8215 local-use NAT64 /48
 
   if ((first & 0xfe00) === 0xfc00) return true // fc00::/7 unique-local
   if ((first & 0xffc0) === 0xfe80) return true // fe80::/10 link-local
@@ -165,12 +193,42 @@ function parseHttpUrl(rawUrl: string): URL {
   return url
 }
 
-/**
- * Rejects (throws PrivateUrlError) unless the URL uses HTTPS and its host
- * resolves exclusively to public addresses. Private/self-hosted deployments
- * opt out of this guard as a whole; hosted egress must never use cleartext.
- */
-export async function assertPublicUrl(rawUrl: string): Promise<void> {
+async function systemResolveHostname(hostname: string): Promise<Array<{ address: string }>> {
+  return lookup(hostname, { all: true, verbatim: true })
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error("MCP outbound request was aborted.")
+}
+
+async function resolveHostnameWithSignal(
+  hostname: string,
+  resolveHostname: ResolveHostname,
+  signal?: AbortSignal | null,
+): Promise<Array<{ address: string }>> {
+  if (!signal) return resolveHostname(hostname)
+  if (signal.aborted) throw abortReason(signal)
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal))
+    signal.addEventListener("abort", onAbort, { once: true })
+    void resolveHostname(hostname).then(
+      (addresses) => {
+        signal.removeEventListener("abort", onAbort)
+        resolve(addresses)
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
+async function resolvePublicTargets(
+  rawUrl: string,
+  resolveHostname: ResolveHostname = systemResolveHostname,
+  signal?: AbortSignal | null,
+): Promise<PublicAddress[]> {
   const url = parseHttpUrl(rawUrl)
   if (url.protocol !== "https:") {
     throw new PrivateUrlError(rawUrl, "hosted MCP egress requires HTTPS")
@@ -178,17 +236,19 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
 
   // URL brackets IPv6 literals: strip them for isIP().
   const hostname = url.hostname.replace(/^\[|\]$/g, "")
-  if (isIP(hostname)) {
+  const literalFamily = isIP(hostname)
+  if (literalFamily === 4 || literalFamily === 6) {
     if (isPrivateAddress(hostname)) {
       throw new PrivateUrlError(rawUrl, "the address is private or reserved")
     }
-    return
+    return [{ address: hostname, family: literalFamily }]
   }
 
   let addresses: { address: string }[]
   try {
-    addresses = await lookup(hostname, { all: true, verbatim: true })
-  } catch {
+    addresses = await resolveHostnameWithSignal(hostname, resolveHostname, signal)
+  } catch (error) {
+    if (signal?.aborted) throw abortReason(signal)
     throw new PrivateUrlError(rawUrl, "the hostname does not resolve")
   }
   if (addresses.length === 0) {
@@ -199,9 +259,39 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
       throw new PrivateUrlError(rawUrl, `the hostname resolves to a private or reserved address (${address})`)
     }
   }
+  const targets: PublicAddress[] = []
+  const seen = new Set<string>()
+  for (const target of addresses) {
+    if (seen.has(target.address)) continue
+    const family = isIP(target.address)
+    if (family !== 4 && family !== 6) {
+      throw new PrivateUrlError(rawUrl, "the hostname returned an invalid address")
+    }
+    seen.add(target.address)
+    targets.push({ address: target.address, family })
+  }
+  return targets
 }
 
-type FetchLike = (url: string | URL, init?: RequestInit) => Promise<Response>
+/**
+ * Rejects (throws PrivateUrlError) unless the URL uses HTTPS and its host
+ * resolves exclusively to public addresses. Private/self-hosted deployments
+ * opt out of this guard as a whole; hosted egress must never use cleartext.
+ */
+export async function assertPublicUrl(rawUrl: string, callerSignal?: AbortSignal | null): Promise<void> {
+  if (callerSignal?.aborted) throw abortReason(callerSignal)
+  const dnsTimeoutSignal = AbortSignal.timeout(PUBLIC_URL_DNS_TIMEOUT_MS)
+  const signal = callerSignal
+    ? AbortSignal.any([callerSignal, dnsTimeoutSignal])
+    : dnsTimeoutSignal
+  try {
+    await resolvePublicTargets(rawUrl, systemResolveHostname, signal)
+  } catch (error) {
+    if (callerSignal?.aborted) throw abortReason(callerSignal)
+    if (dnsTimeoutSignal.aborted) throw new PrivateUrlError(rawUrl, "hostname resolution timed out")
+    throw error
+  }
+}
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 const MAX_GUARDED_REDIRECTS = 5
 
@@ -230,11 +320,162 @@ export async function normalizeResponseRealm(res: Response): Promise<Response> {
   })
 }
 
+function createPinnedLookup(target: PublicAddress): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [target])
+      return
+    }
+    callback(null, target.address, target.family)
+  }
+}
+
+function normalizedRequestHeaders(request: Request): Record<string, string> {
+  const headers: Record<string, string> = {}
+  request.headers.forEach((value, name) => {
+    headers[name] = value
+  })
+
+  // The logical URL hostname must remain authoritative for TLS SNI and HTTP
+  // virtual-host routing. A caller-supplied Host header could otherwise make
+  // a public reverse proxy reach a different virtual host than the URL names.
+  delete headers.host
+  if (!headers["accept-encoding"]) headers["accept-encoding"] = "identity"
+  return headers
+}
+
+function responseBody(response: IncomingMessage): ReadableStream<Uint8Array> {
+  let dispose = () => {}
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      let settled = false
+      const cleanup = () => {
+        response.off("data", onData)
+        response.off("end", onEnd)
+        response.off("error", onError)
+        response.off("aborted", onAborted)
+      }
+      const onData = (chunk: Uint8Array) => {
+        controller.enqueue(chunk)
+        if ((controller.desiredSize ?? 1) <= 0) response.pause()
+      }
+      const onEnd = () => {
+        if (settled) return
+        settled = true
+        cleanup()
+        controller.close()
+      }
+      const onError = (error: Error) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        controller.error(error)
+      }
+      const onAborted = () => onError(new Error("MCP outbound response was aborted."))
+      dispose = cleanup
+      response.on("data", onData)
+      response.once("end", onEnd)
+      response.once("error", onError)
+      response.once("aborted", onAborted)
+    },
+    pull() {
+      response.resume()
+    },
+    cancel(reason) {
+      dispose()
+      response.destroy(reason instanceof Error ? reason : undefined)
+    },
+  })
+}
+
+async function writeRequestBody(
+  request: ReturnType<typeof httpsRequest>,
+  body: ReadableStream<Uint8Array> | null,
+): Promise<void> {
+  if (!body) {
+    request.end()
+    return
+  }
+
+  const reader = body.getReader()
+  try {
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      if (!request.write(chunk.value)) {
+        await new Promise<void>((resolve, reject) => {
+          const onDrain = () => {
+            request.off("error", onError)
+            resolve()
+          }
+          const onError = (error: Error) => {
+            request.off("drain", onDrain)
+            reject(error)
+          }
+          request.once("drain", onDrain)
+          request.once("error", onError)
+        })
+      }
+    }
+    request.end()
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 /**
- * A fetch wrapper that re-applies assertPublicUrl to EVERY outbound request
- * — the MCP SDK follows discovery documents to other hosts (authorization
- * servers, token endpoints), and DNS answers can change after create-time
- * validation, so each request is checked at the moment it's made.
+ * Fetch one HTTPS URL through the exact address that passed the SSRF check.
+ * Keeping the original URL on https.request preserves TLS certificate/SNI and
+ * Host semantics, while the custom lookup removes the second DNS resolution
+ * where a rebind could swap a public answer for loopback or cloud metadata.
+ */
+async function fetchPinnedAddress(url: URL, init: RequestInit, target: PublicAddress): Promise<Response> {
+  const normalized = new Request(url, init)
+  return new Promise<Response>((resolve, reject) => {
+    const request = httpsRequest(url, {
+      method: normalized.method,
+      headers: normalizedRequestHeaders(normalized),
+      signal: normalized.signal,
+      lookup: createPinnedLookup(target),
+      // A pooled hostname socket could outlive its DNS answer and bypass the
+      // per-request pin on a later call. Use a one-shot socket for guarded
+      // egress so this request always connects through the checked address.
+      agent: false,
+    }, (response) => {
+      if (response.statusCode === undefined) {
+        response.destroy()
+        reject(new Error("MCP outbound server returned no HTTP status."))
+        return
+      }
+      const headers = new Headers()
+      for (let index = 0; index < response.rawHeaders.length; index += 2) {
+        const name = response.rawHeaders[index]
+        const value = response.rawHeaders[index + 1]
+        if (name && value !== undefined) headers.append(name, value)
+      }
+      const hasBody = normalized.method !== "HEAD"
+        && response.statusCode !== 204
+        && response.statusCode !== 205
+        && response.statusCode !== 304
+      if (!hasBody) response.resume()
+      resolve(new globalThis.Response(hasBody ? responseBody(response) : null, {
+        status: response.statusCode,
+        statusText: response.statusMessage,
+        headers,
+      }))
+    })
+    request.once("error", reject)
+    void writeRequestBody(request, normalized.body).catch((error: unknown) => {
+      request.destroy(error instanceof Error ? error : new Error("Failed to send MCP outbound request body."))
+    })
+  })
+}
+
+/**
+ * A fetch wrapper that resolves, checks, and pins EVERY outbound request. The
+ * MCP SDK follows discovery documents to other hosts (authorization servers,
+ * token endpoints), and DNS answers can change after create-time validation,
+ * so each request and redirect hop is checked at the moment it's made.
  */
 function redirectedRequestInit(init: RequestInit | undefined, status: number, from: URL, to: URL): RequestInit {
   const headers = new Headers(init?.headers)
@@ -275,15 +516,13 @@ function redirectedRequestInit(init: RequestInit | undefined, status: number, fr
 }
 
 function createRedirectSafeFetch(
-  fetchImpl: FetchLike,
-  validateUrl: (url: string) => Promise<void>,
+  fetchRequest: (url: URL, init: RequestInit) => Promise<Response>,
 ): FetchLike {
   return async (input, init) => {
     let current = new URL(String(input))
     let currentInit: RequestInit = { ...init, redirect: "manual" }
     for (let redirectCount = 0; ; redirectCount += 1) {
-      await validateUrl(current.toString())
-      const response = await fetchImpl(current, currentInit)
+      const response = await fetchRequest(current, currentInit)
       const location = response.headers.get("location")
       if (!REDIRECT_STATUSES.has(response.status) || !location) {
         return normalizeResponseRealm(response)
@@ -293,9 +532,6 @@ function createRedirectSafeFetch(
         throw new Error("MCP outbound request exceeded the guarded redirect limit.")
       }
       const next = new URL(location, current)
-      // Validate before issuing the next request. This closes the public URL
-      // -> loopback/link-local redirect SSRF path.
-      await validateUrl(next.toString())
       try {
         currentInit = redirectedRequestInit(currentInit, response.status, current, next)
       } catch (error) {
@@ -308,8 +544,35 @@ function createRedirectSafeFetch(
   }
 }
 
-export function createGuardedFetch(fetchImpl: FetchLike = fetch): FetchLike {
-  return createRedirectSafeFetch(fetchImpl, assertPublicUrl)
+export function createGuardedFetch(
+  fetchImpl?: FetchLike,
+  testOverrides: GuardedFetchTestOverrides = {},
+): FetchLike {
+  const resolveHostname = testOverrides.resolveHostname ?? systemResolveHostname
+  const fetchPinned = testOverrides.fetchPinned ?? fetchPinnedAddress
+  return createRedirectSafeFetch(async (url, init) => {
+    const targets = await resolvePublicTargets(url.toString(), resolveHostname, init.signal)
+    // Explicit fetch implementations are retained as a deterministic unit-test
+    // seam. Hosted runtime callers omit this argument and use the pinned HTTPS
+    // transport above.
+    if (fetchImpl) return fetchImpl(url, init)
+
+    // GET/HEAD requests are safe to retry across the already validated DNS
+    // answer set. Do not replay token exchanges or tool calls: a failed socket
+    // may still have delivered a non-idempotent body to the provider.
+    const method = (init.method ?? "GET").toUpperCase()
+    const mayTryAlternative = (method === "GET" || method === "HEAD") && init.body == null
+    let lastError: unknown
+    for (let index = 0; index < targets.length; index += 1) {
+      try {
+        return await fetchPinned(url, init, targets[index])
+      } catch (error) {
+        lastError = error
+        if (init.signal?.aborted || !mayTryAlternative || index === targets.length - 1) throw error
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("MCP outbound request could not reach a validated address.")
+  })
 }
 
 export function createRealmSafeFetch(fetchImpl: FetchLike = fetch): FetchLike {
@@ -317,7 +580,8 @@ export function createRealmSafeFetch(fetchImpl: FetchLike = fetch): FetchLike {
   // but it must retain protocol, credential, downgrade, and cross-origin body
   // redirect protections. Opting into private networks is not an opt-out from
   // OAuth secret handling.
-  return createRedirectSafeFetch(fetchImpl, async (rawUrl) => {
-    parseHttpUrl(rawUrl)
+  return createRedirectSafeFetch(async (url, init) => {
+    parseHttpUrl(url.toString())
+    return fetchImpl(url, init)
   })
 }

@@ -1,4 +1,5 @@
 import { StreamableHTTPTransport } from "@hono/mcp"
+import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
@@ -487,6 +488,175 @@ test("shared invalid_grant recovery cannot reuse the cleared in-memory refresh t
     organizationId: seed.organizationId,
     connectionId: connection.id,
   })).toMatchObject({ accessToken: null, refreshToken: null })
+})
+
+test("invalid_client preserves admin-managed clients and rotates only DCR registrations", async () => {
+  if (!slackServer) throw new Error("Slack MCP server was not started")
+  const {
+    ExternalMcpOAuthProvider,
+    externalMcpPreRegisteredClientExtra,
+  } = await import("../src/capability-sources/external-mcp-client.js")
+  const { ExternalMcpDiagnosticTracker } = await import("../src/capability-sources/external-mcp-diagnostics.js")
+  const { getOrgOAuthClient, upsertOrgOAuthClient } = await import("../src/capability-sources/oauth-credentials.js")
+  const seed = await seedOrganization("invalid-client-provenance")
+  const connection = await createGrantedConnection(seed, {
+    name: "OAuth registration provenance",
+    authType: "oauth",
+    credentialMode: "shared",
+    url: slackServer.url,
+  })
+  await upsertOrgOAuthClient({
+    organizationId: seed.organizationId,
+    providerId: connection.id,
+    clientId: "admin-managed-client",
+    clientSecret: "admin-managed-secret",
+    extra: externalMcpPreRegisteredClientExtra(),
+    createdByOrgMembershipId: seed.memberId,
+  })
+  const provider = new ExternalMcpOAuthProvider(
+    connection,
+    `${redirectUriBase}/v1/mcp-connections/${connection.id}/connect/callback`,
+    undefined,
+    undefined,
+    new ExternalMcpDiagnosticTracker("req_invalid_client_provenance"),
+  )
+  const discoveryState: OAuthDiscoveryState = {
+    authorizationServerUrl: "https://auth.example.test",
+    authorizationServerMetadata: {
+      issuer: "https://auth.example.test",
+      authorization_endpoint: "https://auth.example.test/authorize",
+      token_endpoint: "https://auth.example.test/token",
+      registration_endpoint: "https://auth.example.test/register",
+      response_types_supported: ["code"],
+      code_challenge_methods_supported: ["S256"],
+      token_endpoint_auth_methods_supported: ["client_secret_basic"],
+    },
+  }
+
+  await provider.saveDiscoveryState(discoveryState)
+  expect((await provider.clientInformation())?.client_id).toBe("admin-managed-client")
+  await provider.invalidateCredentials("client")
+  expect(await getOrgOAuthClient(seed.organizationId, connection.id)).toMatchObject({
+    clientId: "admin-managed-client",
+    clientSecret: "admin-managed-secret",
+    extra: { registrationProvenance: "pre_registered" },
+  })
+
+  await upsertOrgOAuthClient({
+    organizationId: seed.organizationId,
+    providerId: connection.id,
+    clientId: "openwork-dcr-client",
+    clientSecret: "openwork-dcr-secret",
+    extra: {
+      clientInformation: { client_id: "openwork-dcr-client", token_endpoint_auth_method: "client_secret_basic" },
+      registrationProvenance: "dcr",
+    },
+    createdByOrgMembershipId: seed.memberId,
+  })
+  const dcrProvider = new ExternalMcpOAuthProvider(
+    connection,
+    `${redirectUriBase}/v1/mcp-connections/${connection.id}/connect/callback`,
+    undefined,
+    undefined,
+    new ExternalMcpDiagnosticTracker("req_invalid_dcr_client_provenance"),
+  )
+  await dcrProvider.saveDiscoveryState(discoveryState)
+  expect((await dcrProvider.clientInformation())?.client_id).toBe("openwork-dcr-client")
+  await dcrProvider.invalidateCredentials("client")
+  expect(await getOrgOAuthClient(seed.organizationId, connection.id)).toBeNull()
+})
+
+test("shared OAuth refresh preserves granted scopes when the provider omits scope", async () => {
+  if (!slackServer) throw new Error("Slack MCP server was not started")
+  const { ExternalMcpOAuthProvider } = await import("../src/capability-sources/external-mcp-client.js")
+  const { ExternalMcpDiagnosticTracker } = await import("../src/capability-sources/external-mcp-diagnostics.js")
+  const seed = await seedOrganization("shared-refresh-scope")
+  const connection = await createGrantedConnection(seed, {
+    name: "Shared OAuth refresh scope",
+    authType: "oauth",
+    credentialMode: "shared",
+    url: slackServer.url,
+  })
+  await saveExternalMcpTokens({
+    connectionId: connection.id,
+    accessToken: "old-shared-access",
+    refreshToken: "shared-refresh",
+    scope: "issues:read issues:write",
+  })
+  const connected = await getExternalMcpConnection({
+    organizationId: seed.organizationId,
+    connectionId: connection.id,
+  })
+  if (!connected) throw new Error("Shared OAuth connection was not found")
+
+  const provider = new ExternalMcpOAuthProvider(
+    connected,
+    `${redirectUriBase}/callback`,
+    undefined,
+    undefined,
+    new ExternalMcpDiagnosticTracker("req_shared_refresh_scope"),
+  )
+  await provider.saveTokens({ access_token: "new-shared-access", token_type: "Bearer" })
+
+  expect(await getExternalMcpConnection({
+    organizationId: seed.organizationId,
+    connectionId: connection.id,
+  })).toMatchObject({
+    accessToken: "new-shared-access",
+    refreshToken: "shared-refresh",
+    scope: "issues:read issues:write",
+  })
+})
+
+test("per-member OAuth refresh preserves granted scopes when the provider omits scope", async () => {
+  if (!slackServer) throw new Error("Slack MCP server was not started")
+  const { ExternalMcpOAuthProvider } = await import("../src/capability-sources/external-mcp-client.js")
+  const { ExternalMcpDiagnosticTracker } = await import("../src/capability-sources/external-mcp-diagnostics.js")
+  const { getConnectedAccount } = await import("../src/capability-sources/oauth-credentials.js")
+  const seed = await seedOrganization("member-refresh-scope")
+  const connection = await createGrantedConnection(seed, {
+    name: "Per-member OAuth refresh scope",
+    authType: "oauth",
+    credentialMode: "per_member",
+    url: slackServer.url,
+  })
+  await db.insert(schema.ConnectedAccountTable).values({
+    id: createDenTypeId("connectedAccount"),
+    organizationId: seed.organizationId,
+    orgMembershipId: seed.memberId,
+    providerId: connection.id,
+    externalAccountId: seed.memberId,
+    scopes: ["tasks:read", "tasks:write"],
+    accessToken: "old-member-access",
+    refreshToken: "member-refresh",
+    tokenType: "Bearer",
+    expiresAt: null,
+    pendingCodeVerifier: null,
+  })
+  const connected = await getExternalMcpConnection({
+    organizationId: seed.organizationId,
+    connectionId: connection.id,
+  })
+  if (!connected) throw new Error("Per-member OAuth connection was not found")
+
+  const provider = new ExternalMcpOAuthProvider(
+    connected,
+    `${redirectUriBase}/callback`,
+    undefined,
+    { orgMembershipId: seed.memberId },
+    new ExternalMcpDiagnosticTracker("req_member_refresh_scope"),
+  )
+  await provider.saveTokens({ access_token: "new-member-access", token_type: "Bearer" })
+
+  expect(await getConnectedAccount({
+    organizationId: seed.organizationId,
+    orgMembershipId: seed.memberId,
+    providerId: connection.id,
+  })).toMatchObject({
+    accessToken: "new-member-access",
+    refreshToken: "member-refresh",
+    scopes: ["tasks:read", "tasks:write"],
+  })
 })
 
 test("the 16-connection fanout reports incomplete coverage when the only match is connection 17", async () => {

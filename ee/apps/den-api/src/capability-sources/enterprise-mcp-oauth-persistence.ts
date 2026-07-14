@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import {
   type EnterpriseMcpOAuthAuthorizationHandle,
   type EnterpriseMcpOAuthClientRegistration,
+  type EnterpriseMcpOAuthCredential,
   type EnterpriseMcpOAuthPersistence,
   type EnterpriseMcpPersistenceContext,
 } from "@openwork/enterprise-mcp-client"
@@ -22,7 +23,10 @@ import { z } from "zod"
 import { db } from "../db.js"
 import type { ExternalMcpMemberContext } from "./external-mcp-client.js"
 import {
+  assertExternalMcpOAuthAuthorizationActorForCommit,
   externalMcpIdentityBinding,
+  ExternalMcpOAuthAuthorizationRevokedError,
+  type ExternalMcpAuthorizationActor,
   type ExternalMcpConnectionRow,
 } from "./external-mcp-connections.js"
 
@@ -34,6 +38,7 @@ const pendingAuthorizationSchema = z.object({
   codeVerifier: z.string().min(43).max(256),
   expiresAt: z.number().int().positive(),
   clientRegistrationRevision: z.string().min(1).optional(),
+  authorizationEpoch: z.number().int().nonnegative().default(0),
 })
 
 const pendingAuthorizationEnvelopeSchema = z.object({
@@ -77,6 +82,7 @@ function clientRevision(input: {
   updatedAt: Date
   clientId: string
   clientSecret: string | null
+  extra: Record<string, unknown> | null
 }): string {
   return createHash("sha256")
     .update(input.id)
@@ -86,7 +92,89 @@ function clientRevision(input: {
     .update(input.clientId)
     .update("\0")
     .update(input.clientSecret ?? "")
+    .update("\0")
+    .update(JSON.stringify(input.extra))
     .digest("hex")
+}
+
+function credentialRevision(input: {
+  kind: "shared" | "per_member"
+  id: string
+  updatedAt: Date
+  accessToken: string | null
+  refreshToken: string | null
+  tokenType: string | null
+  scope: string | string[] | null
+  expiresAt: Date | null
+  connectedAt: Date | null
+}): string {
+  return createHash("sha256")
+    .update(JSON.stringify([
+      input.kind,
+      input.id,
+      input.accessToken,
+      input.refreshToken,
+      input.tokenType,
+      input.scope,
+      input.expiresAt?.toISOString() ?? null,
+      input.connectedAt?.toISOString() ?? null,
+      input.updatedAt.toISOString(),
+    ]))
+    .digest("hex")
+}
+
+function sharedCredentialRevision(
+  connection: Pick<
+    ExternalMcpConnectionRow,
+    "id" | "updatedAt" | "accessToken" | "refreshToken" | "tokenType" | "scope" | "expiresAt" | "connectedAt"
+  >,
+): string {
+  return credentialRevision({ ...connection, kind: "shared" })
+}
+
+function memberCredentialRevision(input: {
+  id: string
+  updatedAt: Date
+  accessToken: string | null
+  refreshToken: string | null
+  tokenType: string | null
+  scopes: string[] | null
+  expiresAt: Date | null
+  connectedAt: Date
+}): string {
+  return credentialRevision({ ...input, kind: "per_member", scope: input.scopes })
+}
+
+function sharedCredential(
+  connection: ExternalMcpConnectionRow,
+): EnterpriseMcpOAuthCredential | undefined {
+  if (!connection.accessToken) return undefined
+  return {
+    tokens: {
+      access_token: connection.accessToken,
+      token_type: connection.tokenType ?? "Bearer",
+      refresh_token: connection.refreshToken ?? undefined,
+      scope: connection.scope ?? undefined,
+    },
+    expiresAt: connection.expiresAt?.getTime(),
+    revision: sharedCredentialRevision(connection),
+  }
+}
+
+function memberCredential(
+  account: Parameters<typeof memberCredentialRevision>[0],
+): EnterpriseMcpOAuthCredential | undefined {
+  if (!account.accessToken) return undefined
+  return {
+    tokens: {
+      access_token: account.accessToken,
+      token_type: account.tokenType ?? "Bearer",
+      refresh_token: account.refreshToken ?? undefined,
+      scope: account.scopes?.join(" ") ?? undefined,
+    },
+    expiresAt: account.expiresAt?.getTime(),
+    revision: memberCredentialRevision(account),
+  }
 }
 
 function clientExpiration(clientInformation: OAuthClientInformationMixed): number | undefined {
@@ -123,11 +211,17 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
   private connection: ExternalMcpConnectionRow
   private readonly identityBinding: string
   private readonly member?: ExternalMcpMemberContext
+  private readonly authorizationActor?: ExternalMcpAuthorizationActor
 
-  constructor(connection: ExternalMcpConnectionRow, member?: ExternalMcpMemberContext) {
+  constructor(
+    connection: ExternalMcpConnectionRow,
+    member?: ExternalMcpMemberContext,
+    authorizationActor?: ExternalMcpAuthorizationActor,
+  ) {
     this.connection = connection
     this.identityBinding = externalMcpIdentityBinding(connection)
     this.member = member
+    this.authorizationActor = authorizationActor
     if (connection.credentialMode === "per_member" && !member) {
       throw new Error(`Connection "${connection.id}" uses per-member credentials; a member context is required.`)
     }
@@ -171,6 +265,18 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
     return rows[0] ?? null
   }
 
+  private registrationAuthorizationActor(): ExternalMcpAuthorizationActor {
+    const authorizationActor = this.authorizationActor
+    if (!authorizationActor) {
+      throw new Error("An authorization actor is required before persisting an enterprise MCP OAuth client registration.")
+    }
+    if (
+      this.isPerMember
+      && authorizationActor.orgMembershipId !== this.member?.orgMembershipId
+    ) throw new ExternalMcpOAuthAuthorizationRevokedError()
+    return authorizationActor
+  }
+
   readonly clientRegistrations = {
     load: async (context: EnterpriseMcpPersistenceContext): Promise<EnterpriseMcpOAuthClientRegistration | undefined> => {
       assertCommitActive(context)
@@ -200,6 +306,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
       expiresAt?: number
       source: "dynamic"
     }): Promise<EnterpriseMcpOAuthClientRegistration> => {
+      const authorizationActor = this.registrationAuthorizationActor()
       const row = await db.transaction(async (tx) => {
         const connections = await tx
           .select()
@@ -210,9 +317,18 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           ))
           .limit(1)
           .for("update")
-        if (!connections[0]) throw new Error("The enterprise MCP connection no longer exists.")
-        this.assertCurrentIdentity(connections[0])
+        const connection = connections[0]
+        if (!connection) throw new Error("The enterprise MCP connection no longer exists.")
+        this.assertCurrentIdentity(connection)
         assertCommitActive(input.context)
+        if (connection.oauthAuthorizationEpoch !== this.connection.oauthAuthorizationEpoch) {
+          throw new Error("The enterprise MCP connection was disconnected while OAuth client registration was in progress.")
+        }
+        await assertExternalMcpOAuthAuthorizationActorForCommit({
+          tx,
+          connection,
+          authorizationActor,
+        })
         const existing = await tx
           .select()
           .from(OrgOAuthClientTable)
@@ -221,6 +337,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
             eq(OrgOAuthClientTable.providerId, this.connection.id),
           ))
           .limit(1)
+          .for("update")
         if (existing[0]) return existing[0]
         const id = createDenTypeId("orgOAuthClient")
         await tx.insert(OrgOAuthClientTable).values({
@@ -233,7 +350,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
             clientInformation: safeClientInformation(input.clientInformation),
             enterpriseMcpRegistrationSource: "dynamic",
           },
-          createdByOrgMembershipId: this.connection.createdByOrgMembershipId,
+          createdByOrgMembershipId: authorizationActor.orgMembershipId,
         })
         const inserted = await tx
           .select()
@@ -256,6 +373,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
     invalidate: async (input: {
       context: EnterpriseMcpPersistenceContext
       reason: "expired" | "provider-rejected"
+      revision: string
     }): Promise<void> => {
       await db.transaction(async (tx) => {
         const connections = await tx
@@ -270,12 +388,19 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         if (!connections[0]) return
         this.assertCurrentIdentity(connections[0])
         assertCommitActive(input.context)
-        await tx
-          .delete(OrgOAuthClientTable)
+        const clients = await tx
+          .select()
+          .from(OrgOAuthClientTable)
           .where(and(
             eq(OrgOAuthClientTable.organizationId, this.connection.organizationId),
             eq(OrgOAuthClientTable.providerId, this.connection.id),
           ))
+          .limit(1)
+          .for("update")
+        const client = clients[0]
+        if (!client || clientRevision(client) !== input.revision) return
+        await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.id, client.id))
+        assertCommitActive(input.context)
       })
     },
   }
@@ -302,6 +427,22 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         if (!connection) throw new Error("The enterprise MCP connection no longer exists.")
         this.assertCurrentIdentity(connection)
         assertCommitActive(input.context)
+        if (connection.oauthAuthorizationEpoch !== this.connection.oauthAuthorizationEpoch) {
+          throw new Error("The MCP connection was disconnected while authorization was starting.")
+        }
+        const authorizationActor = this.authorizationActor
+        if (!authorizationActor) {
+          throw new Error("An authorization actor is required before starting enterprise MCP OAuth.")
+        }
+        if (
+          this.isPerMember
+          && authorizationActor.orgMembershipId !== this.member?.orgMembershipId
+        ) throw new ExternalMcpOAuthAuthorizationRevokedError()
+        await assertExternalMcpOAuthAuthorizationActorForCommit({
+          tx,
+          connection,
+          authorizationActor,
+        })
         const account = this.member
           ? (await tx
               .select()
@@ -326,6 +467,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           codeVerifier: input.codeVerifier,
           expiresAt: input.expiresAt,
           clientRegistrationRevision: input.clientRegistrationRevision,
+          authorizationEpoch: connection.oauthAuthorizationEpoch,
         })
         const pendingCodeVerifier = serializePendingAuthorizations(transactions)
         if (this.isPerMember && this.member) {
@@ -391,29 +533,9 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
       await this.refreshConnection()
       if (this.isPerMember) {
         const account = await this.memberAccount()
-        if (!account?.accessToken) return undefined
-        return {
-          tokens: {
-            access_token: account.accessToken,
-            token_type: account.tokenType ?? "Bearer",
-            refresh_token: account.refreshToken ?? undefined,
-            scope: account.scopes?.join(" ") ?? undefined,
-          },
-          expiresAt: account.expiresAt?.getTime(),
-          revision: `${account.id}:${account.updatedAt.getTime()}`,
-        }
+        return account ? memberCredential(account) : undefined
       }
-      if (!this.connection.accessToken) return undefined
-      return {
-        tokens: {
-          access_token: this.connection.accessToken,
-          token_type: this.connection.tokenType ?? "Bearer",
-          refresh_token: this.connection.refreshToken ?? undefined,
-          scope: this.connection.scope ?? undefined,
-        },
-        expiresAt: this.connection.expiresAt?.getTime(),
-        revision: `${this.connection.id}:${this.connection.updatedAt.getTime()}`,
-      }
+      return sharedCredential(this.connection)
     },
 
     save: async (input: {
@@ -423,8 +545,8 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
       source: "authorization-code" | "refresh"
       authorization?: EnterpriseMcpOAuthAuthorizationHandle
       clientRegistrationRevision?: string
-    }): Promise<void> => {
-      await db.transaction(async (tx) => {
+    }): Promise<EnterpriseMcpOAuthCredential> => {
+      const saved = await db.transaction(async (tx) => {
         const connections = await tx
           .select()
           .from(ExternalMcpConnectionTable)
@@ -438,6 +560,25 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         if (!connection) throw new Error("The enterprise MCP connection no longer exists.")
         this.assertCurrentIdentity(connection)
         assertCommitActive(input.context)
+        if (
+          input.source === "refresh"
+          && connection.oauthAuthorizationEpoch !== this.connection.oauthAuthorizationEpoch
+        ) throw new Error("The MCP connection was disconnected before refreshed credentials could be saved.")
+        if (input.source === "authorization-code") {
+          const authorizationActor = this.authorizationActor
+          if (!authorizationActor) {
+            throw new Error("An authorization actor is required to commit enterprise MCP OAuth credentials.")
+          }
+          if (
+            this.isPerMember
+            && authorizationActor.orgMembershipId !== this.member?.orgMembershipId
+          ) throw new ExternalMcpOAuthAuthorizationRevokedError()
+          await assertExternalMcpOAuthAuthorizationActorForCommit({
+            tx,
+            connection,
+            authorizationActor,
+          })
+        }
         const account = this.member
           ? (await tx
               .select()
@@ -461,6 +602,9 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
             || transaction.revision !== authorization.revision
             || transaction.expiresAt <= Date.now()
           ) throw new Error("The OAuth authorization is missing, expired, or already consumed.")
+          if (transaction.authorizationEpoch !== connection.oauthAuthorizationEpoch) {
+            throw new Error("The MCP connection was disconnected before OAuth credentials could be saved.")
+          }
           if (transaction.clientRegistrationRevision !== input.clientRegistrationRevision) {
             throw new Error("The OAuth client registration changed after authorization started.")
           }
@@ -494,19 +638,20 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
                 pendingCodeVerifier,
               })
               .where(eq(ConnectedAccountTable.id, account.id))
+            const persistedRows = await tx
+              .select()
+              .from(ConnectedAccountTable)
+              .where(eq(ConnectedAccountTable.id, account.id))
+              .limit(1)
+            const persisted = persistedRows[0]
+            const credential = persisted ? memberCredential(persisted) : undefined
+            if (!credential) throw new Error("The enterprise MCP account disappeared before credentials could commit.")
+            assertCommitActive(input.context)
+            return credential
           } else {
-            await tx.insert(ConnectedAccountTable).values({
-              id: createDenTypeId("connectedAccount"),
-              organizationId: this.connection.organizationId,
-              orgMembershipId: this.member.orgMembershipId,
-              providerId: this.connection.id,
-              accessToken: input.tokens.access_token,
-              refreshToken: input.tokens.refresh_token ?? null,
-              tokenType: input.tokens.token_type ?? null,
-              scopes: input.tokens.scope ? input.tokens.scope.split(" ") : null,
-              expiresAt,
-              pendingCodeVerifier,
-            })
+            throw new Error(input.source === "refresh"
+              ? "The per-member MCP account was disconnected before refreshed credentials could be saved."
+              : "The MCP OAuth account was disconnected before credentials could be saved.")
           }
         } else {
           await tx
@@ -521,16 +666,26 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
               connectedAt: new Date(),
             })
             .where(eq(ExternalMcpConnectionTable.id, connection.id))
+          const persistedRows = await tx
+            .select()
+            .from(ExternalMcpConnectionTable)
+            .where(eq(ExternalMcpConnectionTable.id, connection.id))
+            .limit(1)
+          const persisted = persistedRows[0]
+          const credential = persisted ? sharedCredential(persisted) : undefined
+          if (!credential) throw new Error("The enterprise MCP connection disappeared before credentials could commit.")
+          assertCommitActive(input.context)
+          return credential
         }
-        // Throwing here rolls back the token write and authorization consume.
-        assertCommitActive(input.context)
       })
       await this.refreshConnection()
+      return saved
     },
 
     invalidate: async (input: {
       context: EnterpriseMcpPersistenceContext
       reason: "expired" | "provider-rejected" | "post-authorization-validation-failed"
+      revision: string
     }): Promise<void> => {
       await db.transaction(async (tx) => {
         const connections = await tx
@@ -547,15 +702,24 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         this.assertCurrentIdentity(connection)
         assertCommitActive(input.context)
         if (this.isPerMember && this.member) {
-          await tx
-            .update(ConnectedAccountTable)
-            .set({ accessToken: null, refreshToken: null, tokenType: null, scopes: null, expiresAt: null })
+          const accounts = await tx
+            .select()
+            .from(ConnectedAccountTable)
             .where(and(
               eq(ConnectedAccountTable.organizationId, this.connection.organizationId),
               eq(ConnectedAccountTable.orgMembershipId, this.member.orgMembershipId),
               eq(ConnectedAccountTable.providerId, this.connection.id),
             ))
+            .limit(1)
+            .for("update")
+          const account = accounts[0]
+          if (!account || memberCredentialRevision(account) !== input.revision) return
+          await tx
+            .update(ConnectedAccountTable)
+            .set({ accessToken: null, refreshToken: null, tokenType: null, scopes: null, expiresAt: null })
+            .where(eq(ConnectedAccountTable.id, account.id))
         } else {
+          if (sharedCredentialRevision(connection) !== input.revision) return
           await tx
             .update(ExternalMcpConnectionTable)
             .set({

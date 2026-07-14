@@ -1,8 +1,36 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
+import { getMcpConnectionsRoute, getMcpPluginImportRoute } from "../app/(den)/_lib/den-org";
 import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "../app/(den)/dashboard/_components/mcp-connection-display";
-import type { ExternalMcpConnection, ExternalMcpPreset, ExternalMcpRequiredBy } from "../app/(den)/dashboard/_components/mcp-connections-data";
-import { parseMarketplaceResolvedPayload, type MarketplacePluginCloudReadinessConnection } from "../app/(den)/dashboard/_components/marketplace-data";
+import {
+  parseExternalMcpConfigurationDiscovery,
+  type ExternalMcpConfigurationDiscovery,
+  type ExternalMcpConnection,
+  type ExternalMcpPreset,
+  type ExternalMcpRequiredBy,
+} from "../app/(den)/dashboard/_components/mcp-connections-data";
+import {
+  parseConfiguredPluginMcpConnection,
+  parseMarketplacePluginMcpDiscovery,
+  parseMarketplaceResolvedPayload,
+  type MarketplacePluginCloudReadinessConnection,
+} from "../app/(den)/dashboard/_components/marketplace-data";
+import {
+  discoveredAuthType,
+  discoveryAuthControlCopy,
+  discoveryAuthIsEditable,
+  discoveryDocumentationLabel,
+  discoveryHasUnsupportedRequirements,
+  discoveryNeedsInput,
+  discoveryRegistrationCopy,
+} from "../app/(den)/dashboard/_components/mcp-discovery-summary";
+import {
+  githubImportServerNeedsExplicitReview,
+  githubImportServerSelectedByDefault,
+  parseGithubImportedMcpOAuthCallbacks,
+  parseGithubPluginImportPreview,
+} from "../app/(den)/dashboard/_components/mcp-connections-screen";
 import {
   findPresetForRequirement,
   pluginReadinessConnectionAction,
@@ -38,7 +66,97 @@ function requirement(url: string): MarketplacePluginCloudReadinessConnection {
   };
 }
 
+function oauthDiscovery(overrides: Partial<ExternalMcpConfigurationDiscovery> = {}): ExternalMcpConfigurationDiscovery {
+  return {
+    auth: { confidence: "verified", kind: "oauth", source: "live_protocol" },
+    inputs: [],
+    oauth: {
+      authorizationServer: "https://auth.example.com/",
+      clientIdRequired: false,
+      clientSecretRequired: false,
+      documentationUrl: null,
+      pkce: "s256",
+      registration: "dynamic",
+      scopes: ["read:issues", "write:issues"],
+      scopesSource: "challenge",
+    },
+    support: { status: "auto_configurable" },
+    transport: { kind: "remote_http", supported: true, url: "https://mcp.example.com/mcp" },
+    warnings: [],
+    ...overrides,
+  };
+}
+
 describe("marketplace MCP readiness parsing", () => {
+  test("labels publisher-controlled documentation with its destination host", () => {
+    expect(discoveryDocumentationLabel("https://docs.provider.example/oauth/setup")).toBe(
+      "Publisher-provided setup guide (docs.provider.example)",
+    );
+  });
+  test("routes the legacy GitHub entry point exclusively into the shared Connections importer", () => {
+    const editorSource = readFileSync(new URL("../app/(den)/dashboard/_components/plugin-editor-screen.tsx", import.meta.url), "utf8");
+    const connectionsSource = readFileSync(new URL("../app/(den)/dashboard/_components/mcp-connections-screen.tsx", import.meta.url), "utf8");
+
+    expect(getMcpPluginImportRoute("design")).toBe(`${getMcpConnectionsRoute("design")}?add=plugin`);
+    expect(editorSource).toContain("href={getMcpPluginImportRoute(orgSlug)}");
+    expect(editorSource).not.toContain("/v1/plugins/import-mcps-from-github-url");
+    expect(editorSource).not.toContain("githubImportAuthType");
+    expect(connectionsSource).toContain('searchParams.get("add") === "plugin"');
+  });
+
+  test("pre-opens OAuth windows and exposes a same-tab fallback when popups are blocked", () => {
+    const adminSource = readFileSync(new URL("../app/(den)/dashboard/_components/mcp-connections-screen.tsx", import.meta.url), "utf8");
+    const memberSource = readFileSync(new URL("../app/(den)/dashboard/_components/your-connections-screen.tsx", import.meta.url), "utf8");
+
+    for (const source of [adminSource, memberSource]) {
+      expect(source).toContain("= openMcpAuthorizationWindow(connectionId)");
+      expect(source).toContain("navigateMcpAuthorizationWindow(authorizationWindow, result.authorizeUrl)");
+      expect(source).toContain("Your browser blocked the sign-in window.");
+      expect(source).toContain("Continue sign-in in this tab");
+      expect(source).toContain("if (authorizationWindow.closed)");
+      expect(source).not.toContain("window.open(safeMcpAuthorizationUrl");
+    }
+    expect(adminSource).toContain("openMcpAuthorizationWindow(`new-${input.name}`)");
+  });
+
+  test("requires explicit trust review before selecting executable GitHub skills", () => {
+    const connectionsSource = readFileSync(new URL("../app/(den)/dashboard/_components/mcp-connections-screen.tsx", import.meta.url), "utf8");
+
+    expect(connectionsSource).not.toContain("setSelectedSkillKeys(nextPreview.skills.filter");
+    expect(connectionsSource).toContain("Review skills before importing.");
+    expect(connectionsSource).toContain("Skills can contain executable guidance");
+    expect(connectionsSource).toContain("preview.sourceRevisionRef.slice(0, 12)");
+  });
+
+  test("does not auto-select GitHub MCPs whose authentication still needs review", () => {
+    const inferredNoAuth = parseGithubPluginImportPreview({
+      item: {
+        repositoryFullName: "example/mcp-plugin",
+        rootPath: "",
+        sourceRevisionRef: "a1b2c3d4",
+        servers: [{
+          authType: "none",
+          discovery: oauthDiscovery({
+            auth: { confidence: "inferred", kind: "none", source: "live_protocol" },
+            oauth: null,
+            support: { status: "needs_review" },
+          }),
+          name: "initialize-only",
+          serverKey: "initialize-only:key",
+          skippedReason: null,
+          supported: true,
+          url: "https://mcp.example.com/mcp",
+        }],
+        skills: [],
+        warnings: [],
+      },
+    }).servers[0]!;
+
+    expect(githubImportServerNeedsExplicitReview(inferredNoAuth)).toBe(true);
+    expect(githubImportServerSelectedByDefault(inferredNoAuth)).toBe(false);
+    expect(githubImportServerSelectedByDefault({ ...inferredNoAuth, discovery: oauthDiscovery() })).toBe(true);
+  });
+
   test("preserves cloud readiness connection provenance fields", () => {
     const parsed = parseMarketplaceResolvedPayload({
       item: {
@@ -144,6 +262,189 @@ describe("marketplace MCP readiness parsing", () => {
     expect(pluginSetupCredentialMode("apikey", "per_member")).toBe("shared");
     expect(pluginSetupCredentialMode("none", "per_member")).toBe("shared");
     expect(pluginSetupCredentialMode("oauth", "shared")).toBe("shared");
+  });
+
+  test("uses discovered auth ahead of an unmatched preset fallback", () => {
+    const discovery = oauthDiscovery({
+      auth: { confidence: "verified", kind: "none", source: "live_protocol" },
+      oauth: null,
+    });
+
+    expect(pluginSetupInitialState(null, discovery)).toEqual({ authAssumed: false, authType: "none", credentialMode: "shared" });
+    expect(discoveredAuthType(discovery, "oauth")).toBe("none");
+  });
+
+  test("locks known auth evidence and allows review only for inferred or unknown evidence", () => {
+    const declared = oauthDiscovery({ auth: { confidence: "declared", kind: "oauth", source: "plugin_manifest" } });
+    const curated = oauthDiscovery({ auth: { confidence: "curated", kind: "oauth", source: "openwork_preset" } });
+    const inferred = oauthDiscovery({ auth: { confidence: "inferred", kind: "oauth", source: "oauth_metadata" } });
+    const unknown = oauthDiscovery({ auth: { confidence: "unknown", kind: "unknown", source: "unknown" } });
+
+    expect(discoveryAuthIsEditable(oauthDiscovery())).toBe(false);
+    expect(discoveryAuthIsEditable(declared)).toBe(false);
+    expect(discoveryAuthIsEditable(curated)).toBe(false);
+    expect(discoveryAuthIsEditable(inferred)).toBe(true);
+    expect(discoveryAuthIsEditable(unknown)).toBe(true);
+    expect(discoveryAuthControlCopy(declared)).toContain("Declared by the plugin");
+    expect(discoveryAuthControlCopy(inferred)).toContain("Confirm the choice");
+  });
+
+  test("parses OAuth discovery, requested scopes, and dynamic registration", () => {
+    const discovery = parseExternalMcpConfigurationDiscovery(oauthDiscovery());
+
+    expect(discovery?.oauth?.scopes).toEqual(["read:issues", "write:issues"]);
+    expect(discovery?.oauth?.scopesSource).toBe("challenge");
+    expect(discoveryRegistrationCopy(discovery)).toContain("automatic OAuth app registration");
+    expect(discoveryNeedsInput(discovery, "oauth_client_id")).toBe(false);
+    expect(discoveryHasUnsupportedRequirements(discovery)).toBe(false);
+  });
+
+  test("requires only the OAuth client values advertised by a public client", () => {
+    const discovery = oauthDiscovery({
+      inputs: [{
+        id: "oauth_client_id:value",
+        label: "OAuth client ID",
+        placement: "oauth_client_id",
+        required: true,
+        secret: false,
+        source: "oauth_metadata",
+        supported: true,
+        variable: null,
+      }],
+      oauth: {
+        authorizationServer: "https://auth.example.com/",
+        clientIdRequired: true,
+        clientSecretRequired: false,
+        documentationUrl: null,
+        pkce: "s256",
+        registration: "pre_registered",
+        scopes: [],
+        scopesSource: "none",
+      },
+      support: { status: "needs_manual_oauth_client" },
+    });
+
+    expect(discoveryNeedsInput(discovery, "oauth_client_id")).toBe(true);
+    expect(discoveryNeedsInput(discovery, "oauth_client_secret")).toBe(false);
+    expect(discoveryRegistrationCopy(discovery)).toContain("secret is not required");
+  });
+
+  test("blocks cloud setup when a plugin requires unsupported custom headers", () => {
+    const discovery = oauthDiscovery({
+      inputs: [{
+        id: "header:x-tenant",
+        label: "Tenant header",
+        placement: "header",
+        required: true,
+        secret: false,
+        source: "plugin_manifest",
+        supported: false,
+        variable: "TENANT_ID",
+      }],
+      support: { status: "unsupported" },
+    });
+
+    expect(discoveryHasUnsupportedRequirements(discovery)).toBe(true);
+  });
+
+  test("blocks OAuth setup when the authorization server omits PKCE S256", () => {
+    const discovery = oauthDiscovery({
+      oauth: {
+        authorizationServer: "https://auth.example.com/",
+        clientIdRequired: false,
+        clientSecretRequired: false,
+        documentationUrl: null,
+        pkce: "missing",
+        registration: "dynamic",
+        scopes: [],
+        scopesSource: "none",
+      },
+      warnings: ["The authorization server did not advertise required PKCE S256 support."],
+    });
+
+    expect(discoveryHasUnsupportedRequirements(discovery)).toBe(true);
+  });
+
+  test("parses plugin discovery with effective union assignment", () => {
+    const parsed = parseMarketplacePluginMcpDiscovery({
+      ok: true,
+      item: {
+        assignment: {
+          access: { orgWide: false, memberIds: ["member_1"], teamIds: ["team_1"] },
+          policy: "union_of_active_config_object_plugin_and_marketplace_grants",
+        },
+        configObjectId: "cfg_1",
+        discovery: oauthDiscovery(),
+        pluginId: "plugin_1",
+        serverName: "issues",
+        url: "https://mcp.example.com/mcp",
+      },
+    });
+
+    expect(parsed.assignment.access).toEqual({ orgWide: false, memberIds: ["member_1"], teamIds: ["team_1"] });
+    expect(parsed.discovery.auth.kind).toBe("oauth");
+  });
+
+  test("preserves the deployment-derived OAuth callback after marketplace setup", () => {
+    const parsed = parseConfiguredPluginMcpConnection({
+      item: {
+        connection: { id: "emc_issues" },
+        links: {
+          oauthCallback: "https://api.openwork.example/v1/mcp-connections/emc_issues/connect/callback",
+          yourConnections: "https://app.openwork.example/dashboard/your-connections?connectionId=emc_issues",
+        },
+      },
+    });
+
+    expect(parsed.oauthCallback).toContain("/emc_issues/connect/callback");
+    expect(parsed.yourConnectionsUrl).toContain("connectionId=emc_issues");
+  });
+
+  test("preserves per-server discovery and the reviewed GitHub revision", () => {
+    const parsed = parseGithubPluginImportPreview({
+      item: {
+        repositoryFullName: "example/mcp-plugin",
+        rootPath: "plugins/issues",
+        sourceRevisionRef: "a1b2c3d4",
+        servers: [{
+          authType: "oauth",
+          discovery: oauthDiscovery(),
+          name: "issues",
+          serverKey: "issues:key",
+          skippedReason: null,
+          supported: true,
+          url: "https://mcp.example.com/mcp",
+        }],
+        skills: [],
+        warnings: ["Live discovery was capped."],
+      },
+    });
+
+    expect(parsed.sourceRevisionRef).toBe("a1b2c3d4");
+    expect(parsed.servers[0]?.discovery?.oauth?.scopes).toEqual(["read:issues", "write:issues"]);
+    expect(parsed.warnings).toEqual(["Live discovery was capped."]);
+  });
+
+  test("keeps only complete post-import OAuth callback checklist entries", () => {
+    const callbacks = parseGithubImportedMcpOAuthCallbacks({
+      item: {
+        imported: [
+          {
+            connectionId: "emc_issues",
+            name: "Issues MCP",
+            oauthCallback: "https://api.openwork.example/v1/mcp-connections/emc_issues/connect/callback",
+          },
+          { connectionId: "emc_public", name: "Public MCP", oauthCallback: null },
+          { name: "Incomplete MCP", oauthCallback: "https://example.com/callback" },
+        ],
+      },
+    });
+
+    expect(callbacks).toEqual([{
+      connectionId: "emc_issues",
+      name: "Issues MCP",
+      oauthCallback: "https://api.openwork.example/v1/mcp-connections/emc_issues/connect/callback",
+    }]);
   });
 
   test("success copy matches the credential state", () => {

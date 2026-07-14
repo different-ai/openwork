@@ -1,5 +1,9 @@
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { ExternalMcpConnectionAccessGrantTable, PluginMcpRequirementBindingTable } from "@openwork-ee/den-db/schema"
+import {
+  ExternalMcpConnectionAccessGrantTable,
+  ExternalMcpConnectionTable,
+  PluginMcpRequirementBindingTable,
+} from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 
@@ -10,6 +14,13 @@ type MemberId = DenTypeId<"member">
 type ExternalMcpConnectionId = DenTypeId<"externalMcpConnection">
 
 export type PluginMcpRequirementBindingRow = typeof PluginMcpRequirementBindingTable.$inferSelect
+
+export class PluginMcpRequirementConnectionMissingError extends Error {
+  constructor() {
+    super("The external MCP connection no longer exists.")
+    this.name = "PluginMcpRequirementConnectionMissingError"
+  }
+}
 
 export async function listPluginMcpRequirementBindings(input: {
   configObjectIds: ConfigObjectId[]
@@ -34,46 +45,64 @@ export async function upsertPluginMcpRequirementBinding(input: {
   serverName: string
 }): Promise<PluginMcpRequirementBindingRow> {
   const serverName = input.serverName.trim()
-  const existing = await db
-    .select()
-    .from(PluginMcpRequirementBindingTable)
-    .where(and(
-      eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
-      eq(PluginMcpRequirementBindingTable.pluginId, input.pluginId),
-      eq(PluginMcpRequirementBindingTable.configObjectId, input.configObjectId),
-      eq(PluginMcpRequirementBindingTable.serverName, serverName),
-    ))
-    .limit(1)
+  return db.transaction(async (tx) => {
+    // This lock is shared with connection deletion and conditional saga
+    // cleanup. A delete that wins first makes this write fail; a binding that
+    // wins first becomes visible before cleanup decides whether the row is in
+    // use. That prevents dangling bindings and cross-import data loss.
+    const connection = await tx
+      .select({ id: ExternalMcpConnectionTable.id })
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.externalMcpConnectionId),
+      ))
+      .limit(1)
+      .for("update")
+    if (!connection[0]) throw new PluginMcpRequirementConnectionMissingError()
 
-  const now = new Date()
-  if (existing[0]) {
-    await db
-      .update(PluginMcpRequirementBindingTable)
-      .set({
+    const existing = await tx
+      .select()
+      .from(PluginMcpRequirementBindingTable)
+      .where(and(
+        eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
+        eq(PluginMcpRequirementBindingTable.pluginId, input.pluginId),
+        eq(PluginMcpRequirementBindingTable.configObjectId, input.configObjectId),
+        eq(PluginMcpRequirementBindingTable.serverName, serverName),
+      ))
+      .limit(1)
+      .for("update")
+
+    const now = new Date()
+    if (existing[0]) {
+      await tx
+        .update(PluginMcpRequirementBindingTable)
+        .set({
+          externalMcpConnectionId: input.externalMcpConnectionId,
+          updatedAt: now,
+        })
+        .where(eq(PluginMcpRequirementBindingTable.id, existing[0].id))
+      return {
+        ...existing[0],
         externalMcpConnectionId: input.externalMcpConnectionId,
         updatedAt: now,
-      })
-      .where(eq(PluginMcpRequirementBindingTable.id, existing[0].id))
-    return {
-      ...existing[0],
+      }
+    }
+
+    const row = {
+      id: createDenTypeId("pluginMcpRequirementBinding"),
+      organizationId: input.organizationId,
+      pluginId: input.pluginId,
+      configObjectId: input.configObjectId,
+      serverName,
       externalMcpConnectionId: input.externalMcpConnectionId,
+      createdByOrgMembershipId: input.createdByOrgMembershipId,
+      createdAt: now,
       updatedAt: now,
     }
-  }
-
-  const row = {
-    id: createDenTypeId("pluginMcpRequirementBinding"),
-    organizationId: input.organizationId,
-    pluginId: input.pluginId,
-    configObjectId: input.configObjectId,
-    serverName,
-    externalMcpConnectionId: input.externalMcpConnectionId,
-    createdByOrgMembershipId: input.createdByOrgMembershipId,
-    createdAt: now,
-    updatedAt: now,
-  }
-  await db.insert(PluginMcpRequirementBindingTable).values(row)
-  return row
+    await tx.insert(PluginMcpRequirementBindingTable).values(row)
+    return row
+  })
 }
 
 export async function deletePluginMcpRequirementBindingsByIds(input: {

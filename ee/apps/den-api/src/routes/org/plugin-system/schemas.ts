@@ -400,14 +400,106 @@ export const githubPluginMcpImportPreviewSchema = z.object({
   githubUrl: z.string().trim().url().max(2048),
 })
 
+export const githubPluginMcpImportServerConfigurationSchema = z.object({
+  serverKey: z.string().trim().min(1).max(1024),
+  authType: z.enum(["oauth", "apikey", "none"]),
+  credentialMode: z.enum(["shared", "per_member"]).optional(),
+  apiKey: z.string().trim().min(1).max(4096).optional(),
+  oauthClient: z.object({
+    clientId: z.string().trim().min(1).max(512),
+    clientSecret: z.string().trim().min(1).max(4096).optional(),
+  }).optional(),
+}).superRefine((value, ctx) => {
+  if (value.apiKey && value.authType !== "apikey") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "apiKey is only allowed when authType is apikey.", path: ["apiKey"] })
+  }
+  if (value.authType === "apikey" && !value.apiKey) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "apiKey is required when authType is apikey.", path: ["apiKey"] })
+  }
+  if (value.oauthClient && value.authType !== "oauth") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "oauthClient is only allowed when authType is oauth.", path: ["oauthClient"] })
+  }
+  if (value.credentialMode === "per_member" && value.authType !== "oauth") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "credentialMode per_member requires authType oauth.", path: ["credentialMode"] })
+  }
+})
+
 export const githubPluginMcpImportSchema = githubPluginMcpImportPreviewSchema.extend({
   access: githubPluginMcpImportAccessSchema.optional(),
   authType: z.enum(["oauth", "none"]).optional().default("oauth"),
   credentialMode: z.enum(["shared", "per_member"]).optional().default("per_member"),
   marketplaceId: marketplaceIdSchema,
+  serverConfigurations: z.array(githubPluginMcpImportServerConfigurationSchema).max(200).optional().default([]),
+  sourceRevisionRef: z.string().trim().min(1).max(255).optional(),
   selectedSkillKeys: z.array(z.string().trim().min(1).max(1024)).max(200).optional(),
   selectedServerKeys: z.array(z.string().trim().min(1).max(1024)).max(200).optional(),
   selectedServerNames: z.array(z.string().trim().min(1).max(255)).max(200).optional(),
+}).superRefine((value, ctx) => {
+  const seen = new Set<string>()
+  value.serverConfigurations.forEach((configuration, index) => {
+    if (seen.has(configuration.serverKey)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Each serverKey can be configured only once.",
+        path: ["serverConfigurations", index, "serverKey"],
+      })
+    }
+    seen.add(configuration.serverKey)
+  })
+})
+
+export const externalMcpConfigurationDiscoverySchema = z.object({
+  auth: z.object({
+    confidence: z.enum(["verified", "declared", "curated", "inferred", "unknown"]),
+    kind: z.enum(["apikey", "none", "oauth", "unknown"]),
+    source: z.enum(["live_protocol", "oauth_metadata", "plugin_manifest", "openwork_preset", "unknown"]),
+  }),
+  inputs: z.array(z.object({
+    id: z.string(),
+    label: z.string(),
+    placement: z.enum(["api_key", "argument", "environment", "header", "oauth_client_id", "oauth_client_secret", "url"]),
+    required: z.boolean(),
+    secret: z.boolean(),
+    source: z.enum(["live_protocol", "oauth_metadata", "plugin_manifest", "openwork_preset", "unknown"]),
+    supported: z.boolean(),
+    variable: z.string().nullable(),
+  })),
+  oauth: z.object({
+    authorizationServer: z.string().nullable(),
+    clientIdRequired: z.boolean(),
+    clientSecretRequired: z.boolean(),
+    documentationUrl: z.string().nullable(),
+    pkce: z.enum(["s256", "missing", "unknown"]),
+    registration: z.enum(["dynamic", "client_metadata_document", "pre_registered", "unknown"]),
+    scopes: z.array(z.string()),
+    scopesSource: z.enum(["challenge", "protected_resource", "plugin_manifest", "authorization_server", "none"]),
+  }).nullable(),
+  support: z.object({
+    status: z.enum(["auto_configurable", "needs_manual_oauth_client", "needs_review", "needs_values", "unsupported"]),
+  }),
+  transport: z.object({
+    kind: z.literal("remote_http"),
+    supported: z.boolean(),
+    url: z.string(),
+  }),
+  warnings: z.array(z.string()),
+}).meta({ ref: "ExternalMcpConfigurationDiscovery" })
+
+export const pluginMcpRequirementDiscoverySchema = z.object({
+  configObjectId: configObjectIdSchema,
+  pluginId: pluginIdSchema,
+  serverName: z.string(),
+  url: z.string(),
+  discovery: externalMcpConfigurationDiscoverySchema,
+  assignment: z.object({
+    access: githubPluginMcpImportAccessSchema,
+    policy: z.literal("union_of_active_config_object_plugin_and_marketplace_grants"),
+  }),
+})
+
+export const pluginMcpRequirementDiscoveryRequestSchema = z.object({
+  configObjectId: configObjectIdSchema,
+  serverName: z.string().trim().min(1).max(255),
 })
 
 export const pluginMcpRequirementConfigureSchema = z.object({
@@ -822,13 +914,14 @@ export const marketplaceResolvedResponseSchema = pluginArchMutationResponseSchem
 )
 
 const githubPluginMcpImportServerSchema = z.object({
-  authType: z.literal("oauth"),
+  authType: z.enum(["oauth", "apikey", "none", "unknown"]),
   connectionId: z.string().nullable(),
+  discovery: externalMcpConfigurationDiscoverySchema.nullable(),
   name: z.string(),
   pluginKey: z.string(),
   pluginName: z.string(),
   serverKey: z.string(),
-  skippedReason: z.enum(["missing_url", "local_unsupported", "invalid_url", "unsupported_auth"]).nullable(),
+  skippedReason: z.enum(["missing_url", "local_unsupported", "invalid_url", "unsupported_auth", "unsupported_configuration"]).nullable(),
   sourcePath: z.string(),
   supported: z.boolean(),
   url: z.string().nullable(),
@@ -878,6 +971,7 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
     imported: z.array(z.object({
       connectionId: z.string(),
       name: z.string(),
+      oauthCallback: z.string().optional(),
       url: z.string(),
     })),
     importedSkills: z.array(z.object({
@@ -889,7 +983,7 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
     plugin: pluginSchema,
     skipped: z.array(z.object({
       name: z.string(),
-      reason: z.enum(["missing_url", "local_unsupported", "invalid_url", "unsupported_auth"]),
+      reason: z.enum(["missing_url", "local_unsupported", "invalid_url", "unsupported_auth", "unsupported_configuration"]),
     })),
     skippedSkills: z.array(z.object({
       name: z.string(),
@@ -918,9 +1012,14 @@ export const pluginMcpRequirementConfigureResponseSchema = pluginArchMutationRes
       connectedAt: nullableTimestampSchema,
     }),
     links: z.object({
+      oauthCallback: z.string().optional(),
       yourConnections: z.string(),
     }),
   }),
+)
+export const pluginMcpRequirementDiscoveryResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchPluginMcpRequirementDiscoveryResponse",
+  pluginMcpRequirementDiscoverySchema,
 )
 export const marketplacePluginListResponseSchema = pluginArchListResponseSchema("PluginArchMarketplacePluginListResponse", marketplacePluginSchema)
 export const marketplacePluginMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchMarketplacePluginMutationResponse", marketplacePluginSchema)

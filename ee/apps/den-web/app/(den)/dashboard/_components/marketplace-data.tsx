@@ -3,7 +3,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { mcpConnectionQueryKeys, type ExternalMcpAuthType, type ExternalMcpCredentialMode } from "./mcp-connections-data";
+import {
+  mcpConnectionQueryKeys,
+  parseExternalMcpConfigurationDiscovery,
+  type ExternalMcpAccessSummary,
+  type ExternalMcpAuthType,
+  type ExternalMcpConfigurationDiscovery,
+  type ExternalMcpCredentialMode,
+} from "./mcp-connections-data";
 
 export type DenMarketplace = {
   id: string;
@@ -21,6 +28,7 @@ export const marketplaceQueryKeys = {
   detail: (id: string) => [...marketplaceQueryKeys.all, "detail", id] as const,
   resolved: (id: string) => [...marketplaceQueryKeys.all, "resolved", id] as const,
   access: (id: string) => [...marketplaceQueryKeys.all, "access", id] as const,
+  mcpDiscovery: (pluginId: string) => [...marketplaceQueryKeys.all, "mcp-discovery", pluginId] as const,
 };
 
 export type MarketplaceAccessRole = "viewer" | "editor" | "manager";
@@ -330,10 +338,88 @@ export type ConfigurePluginMcpConnectionInput = {
 
 export type ConfiguredPluginMcpConnection = {
   connectionId: string;
+  oauthCallback: string | null;
   yourConnectionsUrl: string | null;
 };
 
-function parseConfiguredPluginMcpConnection(payload: unknown): ConfiguredPluginMcpConnection {
+export type MarketplacePluginMcpDiscovery = {
+  assignment: {
+    access: ExternalMcpAccessSummary;
+    policy: "union_of_active_config_object_plugin_and_marketplace_grants";
+  };
+  configObjectId: string;
+  discovery: ExternalMcpConfigurationDiscovery;
+  pluginId: string;
+  serverName: string;
+  url: string;
+};
+
+export function parseMarketplacePluginMcpDiscovery(payload: unknown): MarketplacePluginMcpDiscovery {
+  const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
+  const assignment = item && isRecord(item.assignment) ? item.assignment : null;
+  const access = assignment && isRecord(assignment.access) ? assignment.access : null;
+  const discovery = item ? parseExternalMcpConfigurationDiscovery(item.discovery) : null;
+  const configObjectId = item ? asString(item.configObjectId) : null;
+  const pluginId = item ? asString(item.pluginId) : null;
+  const serverName = item ? asString(item.serverName) : null;
+  const url = item ? asString(item.url) : null;
+  if (
+    !item
+    || !assignment
+    || !access
+    || !discovery
+    || !configObjectId
+    || !pluginId
+    || !serverName
+    || !url
+    || typeof access.orgWide !== "boolean"
+    || !Array.isArray(access.memberIds)
+    || !access.memberIds.every((entry) => typeof entry === "string")
+    || !Array.isArray(access.teamIds)
+    || !access.teamIds.every((entry) => typeof entry === "string")
+    || assignment.policy !== "union_of_active_config_object_plugin_and_marketplace_grants"
+  ) {
+    throw new Error("Plugin MCP discovery response was incomplete.");
+  }
+  return {
+    assignment: {
+      access: { orgWide: access.orgWide, memberIds: access.memberIds, teamIds: access.teamIds },
+      policy: assignment.policy,
+    },
+    configObjectId,
+    discovery,
+    pluginId,
+    serverName,
+    url,
+  };
+}
+
+export function useDiscoverPluginMcpConnection() {
+  const { runReauthableAction } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (input: { pluginId: string; configObjectId: string; serverName: string }): Promise<MarketplacePluginMcpDiscovery> => {
+      let discovered: MarketplacePluginMcpDiscovery | null = null;
+      await runReauthableAction("discover-plugin-mcp-connection", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/plugins/${encodeURIComponent(input.pluginId)}/mcp-connections/discover`,
+          {
+            method: "POST",
+            body: JSON.stringify({ configObjectId: input.configObjectId, serverName: input.serverName }),
+          },
+          20000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to inspect plugin connection (${response.status}).`);
+        }
+        discovered = parseMarketplacePluginMcpDiscovery(payload);
+      });
+      if (!discovered) throw new Error("Plugin MCP discovery response was incomplete.");
+      return discovered;
+    },
+  });
+}
+
+export function parseConfiguredPluginMcpConnection(payload: unknown): ConfiguredPluginMcpConnection {
   const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
   const connection = item && isRecord(item.connection) ? item.connection : null;
   const links = item && isRecord(item.links) ? item.links : null;
@@ -343,6 +429,7 @@ function parseConfiguredPluginMcpConnection(payload: unknown): ConfiguredPluginM
   }
   return {
     connectionId,
+    oauthCallback: links ? asString(links.oauthCallback) : null,
     yourConnectionsUrl: links ? asString(links.yourConnections) : null,
   };
 }

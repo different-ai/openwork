@@ -537,6 +537,10 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
 }
 
+export function getMcpPluginImportRoute(orgSlug?: string | null): string {
+  return `${getMcpConnectionsRoute(orgSlug)}?add=plugin`;
+}
+
 export function getYourConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/your-connections`;
 }

@@ -4,22 +4,28 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronRight, Loader2, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
-import { DenButton } from "../../_components/ui/button";
+import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getPluginRoute } from "../../_lib/den-org";
+import { getPluginRoute, getYourConnectionsRoute } from "../../_lib/den-org";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { IntegrationIcon } from "./integration-icon";
 import { Microsoft365Dialog } from "./microsoft-365-dialog";
-import { safeMcpAuthorizationUrl } from "./mcp-authorization-url";
+import {
+  closeMcpAuthorizationWindow,
+  navigateMcpAuthorizationWindow,
+  openMcpAuthorizationWindow,
+  type McpAuthorizationWindow,
+} from "./mcp-authorization-url";
 import {
   editableMcpIdentityChanged,
   marketplaceIdentityOwnerNames,
   mcpAccessMode,
   type McpConnectionAccessMode,
 } from "./mcp-connection-editing";
+import { copyTextToClipboard } from "./mcp-clipboard";
 import { shouldShowMcpConnectionsStagingBanner } from "./mcp-connections-capability";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { marketplaceQueryKeys, useMarketplaces } from "./marketplace-data";
@@ -28,6 +34,7 @@ import {
   type CreateMcpConnectionInput,
   type ExternalMcpAuthType,
   type ExternalMcpConnection,
+  type ExternalMcpConfigurationDiscovery,
   type ExternalMcpCredentialMode,
   type ExternalMcpPreset,
   type ExternalMcpTool,
@@ -36,8 +43,10 @@ import {
   type UpdateMcpConnectionInput,
   formatMcpConnectedTimestamp,
   mcpConnectionQueryKeys,
+  parseExternalMcpConfigurationDiscovery,
   useCreateMcpConnection,
   useDeleteMcpConnection,
+  useDiscoverMcpConnection,
   useMcpConnectionPresets,
   useMcpConnections,
   useMcpConnectionTools,
@@ -47,12 +56,21 @@ import {
   useTelegramConnection,
   useUpdateMcpConnection,
 } from "./mcp-connections-data";
+import {
+  discoveredAuthType,
+  discoveryAuthControlCopy,
+  discoveryAuthIsEditable,
+  discoveryHasUnsupportedRequirements,
+  discoveryNeedsInput,
+  McpDiscoverySummary,
+} from "./mcp-discovery-summary";
 import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
 import { TelegramDialog } from "./telegram-dialog";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
 const MCP_TOOL_PAGE_SIZE = 50;
+const GITHUB_IMPORT_MAX_COMPONENTS = 12;
 
 const GOOGLE_WORKSPACE_DEFAULT_FEATURES = ["calendarRead", "gmailDraft", "driveFile"];
 
@@ -87,39 +105,11 @@ const GOOGLE_WORKSPACE_PERMISSION_GROUPS = [
   },
 ];
 
-async function copyTextToClipboard(text: string): Promise<boolean> {
-  try {
-    const clipboard = navigator.clipboard;
-    if (clipboard) {
-      await clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // Fall through to the textarea fallback.
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  textarea.style.top = "0";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-
-  try {
-    return document.execCommand("copy");
-  } catch {
-    return false;
-  } finally {
-    textarea.remove();
-  }
-}
-
-type GithubPluginImportSkippedReason = "missing_url" | "local_unsupported" | "invalid_url" | "unsupported_auth";
+type GithubPluginImportSkippedReason = "missing_url" | "local_unsupported" | "invalid_url" | "unsupported_auth" | "unsupported_configuration";
 
 type GithubPluginImportServer = {
+  authType: ExternalMcpAuthType | "unknown";
+  discovery: ExternalMcpConfigurationDiscovery | null;
   name: string;
   serverKey: string;
   url: string | null;
@@ -138,9 +128,39 @@ type GithubPluginImportSkill = {
 type GithubPluginImportPreview = {
   repositoryFullName: string;
   rootPath: string;
+  sourceRevisionRef: string;
   servers: GithubPluginImportServer[];
   skills: GithubPluginImportSkill[];
+  warnings: string[];
 };
+
+type GithubMcpServerConfiguration = {
+  apiKey: string;
+  authType: ExternalMcpAuthType;
+  clientId: string;
+  clientSecret: string;
+  credentialMode: ExternalMcpCredentialMode;
+  showOAuthClient: boolean;
+};
+
+export type GithubImportedMcpOAuthCallback = {
+  connectionId: string;
+  name: string;
+  oauthCallback: string;
+};
+
+function initialGithubServerConfiguration(server: GithubPluginImportServer): GithubMcpServerConfiguration {
+  const fallback = server.authType === "unknown" ? "oauth" : server.authType;
+  const authType = discoveredAuthType(server.discovery, fallback);
+  return {
+    apiKey: "",
+    authType,
+    clientId: "",
+    clientSecret: "",
+    credentialMode: authType === "oauth" ? "per_member" : "shared",
+    showOAuthClient: discoveryNeedsInput(server.discovery, "oauth_client_id"),
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -151,19 +171,20 @@ function asString(value: unknown): string | null {
 }
 
 function parseSkippedReason(value: unknown): GithubPluginImportSkippedReason | null {
-  if (value === "missing_url" || value === "local_unsupported" || value === "invalid_url" || value === "unsupported_auth") {
+  if (value === "missing_url" || value === "local_unsupported" || value === "invalid_url" || value === "unsupported_auth" || value === "unsupported_configuration") {
     return value;
   }
   return null;
 }
 
-function parseGithubPluginImportPreview(payload: unknown): GithubPluginImportPreview {
+export function parseGithubPluginImportPreview(payload: unknown): GithubPluginImportPreview {
   const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
   if (!item) throw new Error("GitHub plugin preview response was incomplete.");
 
   return {
     repositoryFullName: asString(item.repositoryFullName) ?? "",
     rootPath: asString(item.rootPath) ?? "",
+    sourceRevisionRef: asString(item.sourceRevisionRef) ?? "",
     servers: Array.isArray(item.servers)
       ? item.servers.flatMap((entry) => {
           if (!isRecord(entry)) return [];
@@ -171,6 +192,8 @@ function parseGithubPluginImportPreview(payload: unknown): GithubPluginImportPre
           const serverKey = asString(entry.serverKey);
           if (!name || !serverKey) return [];
           return [{
+            authType: entry.authType === "oauth" || entry.authType === "apikey" || entry.authType === "none" ? entry.authType : "unknown",
+            discovery: parseExternalMcpConfigurationDiscovery(entry.discovery),
             name,
             serverKey,
             url: asString(entry.url),
@@ -194,12 +217,35 @@ function parseGithubPluginImportPreview(payload: unknown): GithubPluginImportPre
           }];
         })
       : [],
+    warnings: Array.isArray(item.warnings) ? item.warnings.filter((warning): warning is string => typeof warning === "string") : [],
   };
 }
 
+export function parseGithubImportedMcpOAuthCallbacks(payload: unknown): GithubImportedMcpOAuthCallback[] {
+  const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
+  if (!item || !Array.isArray(item.imported)) return [];
+  return item.imported.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const connectionId = asString(entry.connectionId);
+    const name = asString(entry.name);
+    const oauthCallback = asString(entry.oauthCallback);
+    return connectionId && name && oauthCallback ? [{ connectionId, name, oauthCallback }] : [];
+  });
+}
+
+export function githubImportServerNeedsExplicitReview(server: GithubPluginImportServer): boolean {
+  return server.discovery?.support.status === "needs_review";
+}
+
+export function githubImportServerSelectedByDefault(server: GithubPluginImportServer): boolean {
+  return server.supported && !githubImportServerNeedsExplicitReview(server);
+}
+
 function importServerStatus(server: GithubPluginImportServer): string {
+  if (githubImportServerNeedsExplicitReview(server)) return "review required";
   if (server.supported) return "ready";
   if (server.skippedReason === "missing_url") return "missing URL";
+  if (server.skippedReason === "unsupported_configuration") return "manual setup needed";
   return "unsupported";
 }
 
@@ -226,7 +272,11 @@ export function McpConnectionsScreen() {
   const telegramConnection = useTelegramConnection(true);
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
-  const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
+  const [connectionActionError, setConnectionActionError] = useState<{
+    authorizeUrl?: string;
+    connectionId: string;
+    message: string;
+  } | null>(null);
   const [connectionActionNotice, setConnectionActionNotice] = useState<string | null>(null);
   const [toolsConnectionId, setToolsConnectionId] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -237,6 +287,11 @@ export function McpConnectionsScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    if (searchParams.get("add") === "plugin") setPluginDialogOpen(true);
+  }, []);
+
   function stopPolling() {
     if (pollTimer.current) {
       clearInterval(pollTimer.current);
@@ -245,30 +300,70 @@ export function McpConnectionsScreen() {
     setPollingConnectionId(null);
   }
 
-  function pollUntilConnected(connectionId: string) {
+  function pollUntilConnected(
+    connectionId: string,
+    authorizationWindow: McpAuthorizationWindow,
+    authorizeUrl: string,
+  ) {
     setPollingConnectionId(connectionId);
     const startedAt = Date.now();
     pollTimer.current = setInterval(async () => {
       const result = await refetch();
       const connection = result.data?.find((entry) => entry.id === connectionId);
-      if (connection?.connected || Date.now() - startedAt > OAUTH_POLL_TIMEOUT_MS) {
+      if (connection?.connected) {
+        closeMcpAuthorizationWindow(authorizationWindow);
         stopPolling();
+        return;
+      }
+      if (authorizationWindow.closed) {
+        stopPolling();
+        setConnectionActionError({
+          authorizeUrl,
+          connectionId,
+          message: "The sign-in window was closed before authorization finished.",
+        });
+        return;
+      }
+      if (Date.now() - startedAt > OAUTH_POLL_TIMEOUT_MS) {
+        closeMcpAuthorizationWindow(authorizationWindow);
+        stopPolling();
+        setConnectionActionError({
+          authorizeUrl,
+          connectionId,
+          message: "Authorization is taking longer than expected.",
+        });
       }
     }, OAUTH_POLL_INTERVAL_MS);
   }
 
-  async function handleConnectOAuth(connectionId: string) {
+  async function handleConnectOAuth(
+    connectionId: string,
+    authorizationWindow: McpAuthorizationWindow | null = openMcpAuthorizationWindow(connectionId),
+  ) {
     setConnectionActionError(null);
     try {
       const result = await startOAuth.mutateAsync(connectionId);
       if (result.status === "connected") {
+        closeMcpAuthorizationWindow(authorizationWindow);
         void refetch();
         return;
       }
       if (!result.authorizeUrl) throw new Error("The MCP provider did not return an authorization URL.");
-      window.open(safeMcpAuthorizationUrl(result.authorizeUrl), "_blank", "noopener,noreferrer");
-      pollUntilConnected(connectionId);
+      const launch = navigateMcpAuthorizationWindow(authorizationWindow, result.authorizeUrl);
+      if (!launch.navigated || !authorizationWindow) {
+        closeMcpAuthorizationWindow(authorizationWindow);
+        setConnectionActionError({
+          authorizeUrl: launch.authorizeUrl,
+          connectionId,
+          message: authorizationWindow
+            ? "The sign-in window closed before it could open the provider."
+            : "Your browser blocked the sign-in window.",
+        });
+        return;
+      }
+      pollUntilConnected(connectionId, authorizationWindow, launch.authorizeUrl);
     } catch (connectError) {
+      closeMcpAuthorizationWindow(authorizationWindow);
       setConnectionActionError({
         connectionId,
         message: connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.",
@@ -276,8 +371,17 @@ export function McpConnectionsScreen() {
     }
   }
 
-  async function handleCreate(input: CreateMcpConnectionInput): Promise<CreatedMcpConnection> {
-    const created = await createConnection.mutateAsync(input);
+  async function handleCreate(
+    input: CreateMcpConnectionInput,
+    authorizationWindow?: McpAuthorizationWindow | null,
+  ): Promise<CreatedMcpConnection> {
+    let created: CreatedMcpConnection;
+    try {
+      created = await createConnection.mutateAsync(input);
+    } catch (createError) {
+      closeMcpAuthorizationWindow(authorizationWindow);
+      throw createError;
+    }
     if (input.oauthClient) {
       return created;
     }
@@ -287,7 +391,7 @@ export function McpConnectionsScreen() {
     // right now. Per-member: nothing to authorize here — each granted person
     // connects their own account from Your Connections.
     if (input.authType === "oauth" && input.credentialMode === "shared") {
-      await handleConnectOAuth(created.id);
+      await handleConnectOAuth(created.id, authorizationWindow);
     }
     return created;
   }
@@ -310,7 +414,7 @@ export function McpConnectionsScreen() {
       icon={Plug}
       title="Connections"
       badgeLabel="Alpha"
-      description="Connect any MCP server — Notion, Linear, Stripe, or a custom URL — once for the whole org. search_capabilities and execute_capability pick these up automatically."
+      description="Connect remote MCP servers, inspect their setup requirements, and choose who can use them. search_capabilities and execute_capability pick configured connections up automatically."
       colors={["#E2E8F0", "#020617", "#0F172A", "#94A3B8"]}
     >
       {showStagingBanner ? (
@@ -330,7 +434,16 @@ export function McpConnectionsScreen() {
 
       {connectionActionError ? (
         <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700" role="alert">
-          {connectionActionError.message}
+          {connectionActionError.message}{" "}
+          {connectionActionError.authorizeUrl ? (
+            <a
+              href={connectionActionError.authorizeUrl}
+              referrerPolicy="no-referrer"
+              className="font-semibold underline underline-offset-2"
+            >
+              Continue sign-in in this tab
+            </a>
+          ) : null}
         </div>
       ) : null}
 
@@ -484,6 +597,7 @@ export function McpConnectionsScreen() {
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
+              authorizationFallbackUrl={connectionActionError?.connectionId === connection.id ? connectionActionError.authorizeUrl ?? null : null}
               onEdit={() => {
                 updateConnection.reset();
                 setEditingConnection(connection);
@@ -564,16 +678,20 @@ function ImportPluginConnectionDialog({
   onImported: () => void;
 }) {
   const queryClient = useQueryClient();
-  const { orgSlug, runReauthableAction } = useOrgDashboard();
+  const { orgContext, orgSlug, runReauthableAction } = useOrgDashboard();
   const { data: marketplaces = [] } = useMarketplaces();
   const { data: plugins = [], isLoading: pluginsLoading } = usePlugins();
   const [githubUrl, setGithubUrl] = useState("");
   const [marketplaceId, setMarketplaceId] = useState("");
-  const [authType, setAuthType] = useState<"oauth" | "none">("oauth");
-  const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("per_member");
   const [preview, setPreview] = useState<GithubPluginImportPreview | null>(null);
+  const [serverConfigurations, setServerConfigurations] = useState<Record<string, GithubMcpServerConfiguration>>({});
   const [selectedServerKeys, setSelectedServerKeys] = useState<string[]>([]);
   const [selectedSkillKeys, setSelectedSkillKeys] = useState<string[]>([]);
+  const [accessMode, setAccessMode] = useState<AddConnectionAccessMode>("everyone");
+  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [importedCallbacks, setImportedCallbacks] = useState<GithubImportedMcpOAuthCallback[]>([]);
+  const [copiedCallbackId, setCopiedCallbackId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -587,11 +705,15 @@ function ImportPluginConnectionDialog({
   useEffect(() => {
     if (!open) return;
     setGithubUrl("");
-    setAuthType("oauth");
-    setCredentialMode("per_member");
     setPreview(null);
+    setServerConfigurations({});
     setSelectedServerKeys([]);
     setSelectedSkillKeys([]);
+    setAccessMode("everyone");
+    setSelectedTeamIds([]);
+    setSelectedMemberIds([]);
+    setImportedCallbacks([]);
+    setCopiedCallbackId(null);
     setError(null);
   }, [open]);
 
@@ -622,8 +744,17 @@ function ImportPluginConnectionDialog({
       });
       const nextPreview = parseGithubPluginImportPreview(payload);
       setPreview(nextPreview);
-      setSelectedServerKeys(nextPreview.servers.filter((server) => server.supported).map((server) => server.serverKey));
-      setSelectedSkillKeys(nextPreview.skills.filter((skill) => skill.supported).map((skill) => skill.skillKey));
+      setServerConfigurations(Object.fromEntries(nextPreview.servers.map((server) => [server.serverKey, initialGithubServerConfiguration(server)])));
+      // Inferred auth (especially initialize-only no-auth) is useful guidance,
+      // not proof that later tools are public. Leave those servers unchecked
+      // until the admin explicitly reviews and selects them.
+      setSelectedServerKeys(nextPreview.servers
+        .filter(githubImportServerSelectedByDefault)
+        .slice(0, GITHUB_IMPORT_MAX_COMPONENTS)
+        .map((server) => server.serverKey));
+      // Skills contain executable guidance for agents. Require an explicit
+      // post-review selection instead of opting admins into running them.
+      setSelectedSkillKeys([]);
     } catch (previewError) {
       setError(previewError instanceof Error ? previewError.message : "Failed to preview GitHub plugin.");
     } finally {
@@ -644,23 +775,55 @@ function ImportPluginConnectionDialog({
       setError("Select at least one MCP or skill.");
       return;
     }
+    if (selectedServerKeys.length + selectedSkillKeys.length > GITHUB_IMPORT_MAX_COMPONENTS) {
+      setError(`Select at most ${GITHUB_IMPORT_MAX_COMPONENTS} total MCP servers and skills.`);
+      return;
+    }
+
+    const access: McpConnectionAccessInput = accessMode === "everyone"
+      ? { orgWide: true, memberIds: [], teamIds: [] }
+      : {
+          orgWide: false,
+          memberIds: accessMode === "people" ? selectedMemberIds : [],
+          teamIds: accessMode === "teams" ? selectedTeamIds : [],
+        };
+    const selectedServers = preview.servers.filter((server) => selectedServerKeys.includes(server.serverKey));
+    const selectedConfigurations = selectedServers.flatMap((server) => {
+      const configuration = serverConfigurations[server.serverKey];
+      if (!configuration) return [];
+      const clientId = configuration.clientId.trim();
+      const clientSecret = configuration.clientSecret.trim();
+      return [{
+        authType: configuration.authType,
+        credentialMode: configuration.authType === "oauth" ? configuration.credentialMode : "shared",
+        serverKey: server.serverKey,
+        ...(configuration.authType === "apikey" ? { apiKey: configuration.apiKey.trim() } : {}),
+        ...(configuration.authType === "oauth" && configuration.showOAuthClient && clientId
+          ? { oauthClient: { clientId, ...(clientSecret ? { clientSecret } : {}) } }
+          : {}),
+      }];
+    });
+    const legacyConfiguration = selectedConfigurations[0];
 
     setBusy(true);
     setError(null);
     try {
+      let importPayload: unknown = null;
       await runReauthableAction("import-github-connection-plugin", async () => {
         const result = await requestJson(
           "/v1/plugins/import-mcps-from-github-url",
           {
             method: "POST",
             body: JSON.stringify({
-              access: { orgWide: true, memberIds: [], teamIds: [] },
-              authType,
-              credentialMode: authType === "oauth" ? credentialMode : "shared",
+              access,
+              authType: legacyConfiguration?.authType === "none" ? "none" : "oauth",
+              credentialMode: legacyConfiguration?.credentialMode ?? "per_member",
               githubUrl: githubUrl.trim(),
               marketplaceId,
               selectedServerKeys,
               selectedSkillKeys,
+              serverConfigurations: selectedConfigurations,
+              sourceRevisionRef: preview.sourceRevisionRef,
             }),
           },
           30000,
@@ -668,12 +831,23 @@ function ImportPluginConnectionDialog({
         if (!result.response.ok) {
           throw getRequestError(result.payload, result.response, "Failed to import GitHub plugin.");
         }
+        importPayload = result.payload;
       });
       await queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
       await queryClient.invalidateQueries({ queryKey: pluginQueryKeys.all });
       await queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.all });
       onImported();
-      onClose();
+      setServerConfigurations((current) => Object.fromEntries(Object.entries(current).map(([serverKey, configuration]) => [serverKey, {
+        ...configuration,
+        apiKey: "",
+        clientSecret: "",
+      }])));
+      const callbacks = parseGithubImportedMcpOAuthCallbacks(importPayload);
+      if (callbacks.length > 0) {
+        setImportedCallbacks(callbacks);
+      } else {
+        onClose();
+      }
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Failed to import GitHub plugin.");
     } finally {
@@ -682,18 +856,100 @@ function ImportPluginConnectionDialog({
   }
 
   function toggleServer(serverKey: string, checked: boolean) {
+    if (
+      checked
+      && !selectedServerKeys.includes(serverKey)
+      && selectedServerKeys.length + selectedSkillKeys.length >= GITHUB_IMPORT_MAX_COMPONENTS
+    ) {
+      setError(`Select at most ${GITHUB_IMPORT_MAX_COMPONENTS} total MCP servers and skills.`);
+      return;
+    }
     setSelectedServerKeys((current) =>
       checked ? [...new Set([...current, serverKey])] : current.filter((key) => key !== serverKey),
     );
   }
 
   function toggleSkill(skillKey: string, checked: boolean) {
+    if (
+      checked
+      && !selectedSkillKeys.includes(skillKey)
+      && selectedServerKeys.length + selectedSkillKeys.length >= GITHUB_IMPORT_MAX_COMPONENTS
+    ) {
+      setError(`Select at most ${GITHUB_IMPORT_MAX_COMPONENTS} total MCP servers and skills.`);
+      return;
+    }
     setSelectedSkillKeys((current) =>
       checked ? [...new Set([...current, skillKey])] : current.filter((key) => key !== skillKey),
     );
   }
 
+  function updateServerConfiguration(serverKey: string, update: Partial<GithubMcpServerConfiguration>) {
+    setServerConfigurations((current) => {
+      const existing = current[serverKey];
+      if (!existing) return current;
+      return { ...current, [serverKey]: { ...existing, ...update } };
+    });
+  }
+
+  function toggleAccessSelection(list: string[], id: string): string[] {
+    return list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id];
+  }
+
+  const teams = orgContext?.teams ?? [];
+  const members = (orgContext?.members ?? []).filter((member) => Boolean(member.userId));
+  const selectedComponentCount = selectedServerKeys.length + selectedSkillKeys.length;
+  const componentSelectionLimitReached = selectedComponentCount >= GITHUB_IMPORT_MAX_COMPONENTS;
+  const accessIncomplete = accessMode === "teams"
+    ? selectedTeamIds.length === 0
+    : accessMode === "people" && selectedMemberIds.length === 0;
+  const selectedConfigurationIncomplete = preview?.servers.some((server) => {
+    if (!selectedServerKeys.includes(server.serverKey)) return false;
+    const configuration = serverConfigurations[server.serverKey];
+    if (!configuration || discoveryHasUnsupportedRequirements(server.discovery)) return true;
+    if (configuration.authType === "apikey") return !configuration.apiKey.trim();
+    if (configuration.authType !== "oauth") return false;
+    if (discoveryNeedsInput(server.discovery, "oauth_client_id") && !configuration.clientId.trim()) return true;
+    return discoveryNeedsInput(server.discovery, "oauth_client_secret") && !configuration.clientSecret.trim();
+  }) === true;
+
+  async function copyImportedCallback(callback: GithubImportedMcpOAuthCallback) {
+    if (await copyTextToClipboard(callback.oauthCallback)) setCopiedCallbackId(callback.connectionId);
+  }
+
   if (!open) return null;
+
+  if (importedCallbacks.length > 0) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+        <div
+          className="max-h-[88vh] w-full max-w-xl overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Plugin imported — finish OAuth app setup</h2>
+          <p className="mt-2 text-[13px] leading-6 text-gray-600">
+            Add each exact redirect URL to its provider OAuth app before anyone signs in. These URLs are derived from this OpenWork deployment.
+          </p>
+          <div className="mt-5 space-y-3">
+            {importedCallbacks.map((callback) => (
+              <div key={callback.connectionId} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                <p className="text-[13px] font-semibold text-gray-900">{callback.name}</p>
+                <p className="mt-2 break-all font-mono text-[12px] leading-5 text-gray-800">{callback.oauthCallback}</p>
+                <DenButton variant="secondary" className="mt-3" onClick={() => void copyImportedCallback(callback)}>
+                  {copiedCallbackId === callback.connectionId ? "Copied" : "Copy redirect URL"}
+                </DenButton>
+              </div>
+            ))}
+          </div>
+          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Link href={getYourConnectionsRoute(orgSlug)} className={buttonVariants({ variant: "secondary" })} onClick={onClose}>
+              Open Your Connections
+            </Link>
+            <DenButton variant="primary" onClick={onClose}>Done</DenButton>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
@@ -731,8 +987,24 @@ function ImportPluginConnectionDialog({
           <div className="mt-4 space-y-4">
             <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 text-[13px] text-gray-600">
               Found {preview.servers.filter((server) => server.supported).length} MCPs and {preview.skills.filter((skill) => skill.supported).length} skills in{" "}
-              <span className="font-medium text-gray-900">{preview.repositoryFullName}{preview.rootPath ? `/${preview.rootPath}` : ""}</span>.
+              <span className="font-medium text-gray-900">{preview.repositoryFullName}{preview.rootPath ? `/${preview.rootPath}` : ""}</span> at immutable revision{" "}
+              <a
+                href={`https://github.com/${preview.repositoryFullName}/tree/${preview.sourceRevisionRef}${preview.rootPath ? `/${preview.rootPath}` : ""}`}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono font-medium text-gray-900 underline decoration-gray-300 underline-offset-2"
+              >
+                {preview.sourceRevisionRef.slice(0, 12)}
+              </a>.
             </div>
+            {preview.warnings.length > 0 ? (
+              <ul className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] leading-5 text-amber-800">
+                {preview.warnings.map((warning) => <li key={warning}>• {warning}</li>)}
+              </ul>
+            ) : null}
+            <p className="text-[12px] font-medium text-gray-500" role="status">
+              {selectedComponentCount} of {GITHUB_IMPORT_MAX_COMPONENTS} MCP servers and skills selected
+            </p>
 
             {preview.servers.length > 0 ? (
               <div className="overflow-hidden rounded-2xl border border-gray-100">
@@ -752,7 +1024,7 @@ function ImportPluginConnectionDialog({
                           <input
                             type="checkbox"
                             checked={selectedServerKeys.includes(server.serverKey)}
-                            disabled={!server.supported || busy}
+                            disabled={!server.supported || busy || (componentSelectionLimitReached && !selectedServerKeys.includes(server.serverKey))}
                             onChange={(event) => toggleServer(server.serverKey, event.target.checked)}
                           />
                         </td>
@@ -766,8 +1038,19 @@ function ImportPluginConnectionDialog({
               </div>
             ) : null}
 
+            {preview.servers.filter((server) => !server.supported && server.discovery).map((server) => (
+              <div key={`unsupported:${server.serverKey}`} className="space-y-2 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-[13px] font-semibold text-amber-900">{server.name} needs setup OpenWork cannot host yet</p>
+                {server.discovery ? <McpDiscoverySummary discovery={server.discovery} /> : null}
+              </div>
+            ))}
+
             {preview.skills.length > 0 ? (
-              <div className="overflow-hidden rounded-2xl border border-gray-100">
+              <div className="overflow-hidden rounded-2xl border border-amber-200">
+                <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-[12px] leading-5 text-amber-900">
+                  <span className="font-semibold">Review skills before importing.</span>{" "}
+                  Skills can contain executable guidance that tells an agent to use tools or run commands. They are not selected by default; inspect the pinned GitHub revision above, then select only the skills you trust.
+                </div>
                 <table className="w-full text-left text-[13px]">
                   <thead className="bg-gray-50 text-[11px] uppercase tracking-[0.12em] text-gray-400">
                     <tr>
@@ -784,7 +1067,7 @@ function ImportPluginConnectionDialog({
                           <input
                             type="checkbox"
                             checked={selectedSkillKeys.includes(skill.skillKey)}
-                            disabled={!skill.supported || busy}
+                            disabled={!skill.supported || busy || (componentSelectionLimitReached && !selectedSkillKeys.includes(skill.skillKey))}
                             onChange={(event) => toggleSkill(skill.skillKey, event.target.checked)}
                           />
                         </td>
@@ -801,35 +1084,139 @@ function ImportPluginConnectionDialog({
               </div>
             ) : null}
 
-            <div className="grid gap-3 sm:grid-cols-3">
-              <label className="block">
-                <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</span>
-                <DenSelect value={authType} onChange={(event) => setAuthType(event.target.value === "none" ? "none" : "oauth")} disabled={busy}>
-                  <option value="oauth">OAuth</option>
-                  <option value="none">No auth</option>
-                </DenSelect>
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Account mode</span>
-                <DenSelect
-                  value={credentialMode}
-                  onChange={(event) => setCredentialMode(event.target.value === "shared" ? "shared" : "per_member")}
-                  disabled={busy || authType === "none"}
-                >
-                  <option value="per_member">Individual accounts</option>
-                  <option value="shared">Org account</option>
-                </DenSelect>
-              </label>
+            {preview.servers.filter((server) => selectedServerKeys.includes(server.serverKey)).map((server) => {
+              const configuration = serverConfigurations[server.serverKey];
+              if (!configuration) return null;
+              const clientIdRequired = discoveryNeedsInput(server.discovery, "oauth_client_id");
+              const clientSecretRequired = discoveryNeedsInput(server.discovery, "oauth_client_secret");
+              const authEditable = discoveryAuthIsEditable(server.discovery);
+              return (
+                <div key={server.serverKey} className="space-y-3 rounded-2xl border border-gray-100 bg-gray-50 p-4">
+                  <div>
+                    <p className="text-[13px] font-semibold text-gray-900">Configure {server.name}</p>
+                    <p className="mt-0.5 break-all font-mono text-[11px] text-gray-500">{server.url}</p>
+                  </div>
+                  {server.discovery ? <McpDiscoverySummary discovery={server.discovery} /> : (
+                    <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-800">
+                      This preview did not include discoverable setup metadata. Choose the provider&apos;s documented authentication method.
+                    </p>
+                  )}
+                  <label className="block">
+                    <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</span>
+                    <DenSelect
+                      value={configuration.authType}
+                      onChange={(event) => {
+                        const nextAuthType = event.target.value === "apikey" ? "apikey" : event.target.value === "none" ? "none" : "oauth";
+                        updateServerConfiguration(server.serverKey, {
+                          authType: nextAuthType,
+                          credentialMode: nextAuthType === "oauth" ? configuration.credentialMode : "shared",
+                        });
+                      }}
+                      disabled={busy || !authEditable}
+                    >
+                      <option value="oauth">OAuth</option>
+                      <option value="apikey">API key</option>
+                      <option value="none">No authentication</option>
+                    </DenSelect>
+                    <span className="mt-1 block text-[11px] leading-5 text-gray-500">{discoveryAuthControlCopy(server.discovery)}</span>
+                  </label>
+                  {configuration.authType === "apikey" ? (
+                    <label className="block">
+                      <span className="mb-1.5 block text-[12px] font-medium text-gray-700">API key</span>
+                      <DenInput
+                        type="password"
+                        value={configuration.apiKey}
+                        onChange={(event) => updateServerConfiguration(server.serverKey, { apiKey: event.target.value })}
+                        placeholder="API key"
+                        autoComplete="off"
+                      />
+                    </label>
+                  ) : null}
+                  {configuration.authType === "oauth" ? (
+                    <>
+                      <label className="block">
+                        <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Who signs in?</span>
+                        <DenSelect
+                          value={configuration.credentialMode}
+                          onChange={(event) => updateServerConfiguration(server.serverKey, { credentialMode: event.target.value === "shared" ? "shared" : "per_member" })}
+                          disabled={busy}
+                        >
+                          <option value="per_member">Each user connects their own account</option>
+                          <option value="shared">Organization-shared account</option>
+                        </DenSelect>
+                      </label>
+                      {!configuration.showOAuthClient ? (
+                        <button
+                          type="button"
+                          onClick={() => updateServerConfiguration(server.serverKey, { showOAuthClient: true })}
+                          className="text-left text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
+                        >
+                          This server needs a pre-registered OAuth app
+                        </button>
+                      ) : (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="block">
+                            <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID{clientIdRequired ? "" : " (optional)"}</span>
+                            <DenInput value={configuration.clientId} onChange={(event) => updateServerConfiguration(server.serverKey, { clientId: event.target.value })} placeholder="Client ID" />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret{clientSecretRequired ? "" : " (optional)"}</span>
+                            <DenInput type="password" value={configuration.clientSecret} onChange={(event) => updateServerConfiguration(server.serverKey, { clientSecret: event.target.value })} placeholder="Client secret" />
+                          </label>
+                        </div>
+                      )}
+                    </>
+                  ) : null}
+                </div>
+              );
+            })}
+
+            <div className="rounded-2xl border border-gray-100 bg-white p-4">
               <label className="block">
                 <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Marketplace</span>
                 <DenSelect value={marketplaceId} onChange={(event) => setMarketplaceId(event.target.value)} disabled={busy}>
                   {marketplaces.map((marketplace) => (
-                    <option key={marketplace.id} value={marketplace.id}>
-                      {marketplace.name}
-                    </option>
+                    <option key={marketplace.id} value={marketplace.id}>{marketplace.name}</option>
                   ))}
                 </DenSelect>
               </label>
+              <div className="mt-4">
+                <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Who can use this import?</span>
+                <SegmentedControl options={ACCESS_MODE_OPTIONS} value={accessMode} onChange={setAccessMode} />
+                <p className="mt-1.5 text-[12px] leading-5 text-gray-500">
+                  This is the initial plugin, skill, and MCP assignment. Effective MCP access can later expand when another active config, plugin, or marketplace assignment includes the same connection.
+                </p>
+                {accessMode === "teams" ? (
+                  <div className="mt-2 max-h-36 space-y-1 overflow-y-auto rounded-xl border border-gray-100 p-2">
+                    {teams.length === 0 ? <p className="px-2 py-1 text-[12px] text-gray-400">No teams in this organization yet.</p> : teams.map((team) => (
+                      <button
+                        key={team.id}
+                        type="button"
+                        onClick={() => setSelectedTeamIds((current) => toggleAccessSelection(current, team.id))}
+                        className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] ${selectedTeamIds.includes(team.id) ? "bg-gray-100 text-gray-900" : "text-gray-700 hover:bg-gray-50"}`}
+                      >
+                        <span className="truncate">{team.name}</span>
+                        {selectedTeamIds.includes(team.id) ? <Check className="h-3.5 w-3.5" /> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {accessMode === "people" ? (
+                  <div className="mt-2 max-h-36 space-y-1 overflow-y-auto rounded-xl border border-gray-100 p-2">
+                    {members.length === 0 ? <p className="px-2 py-1 text-[12px] text-gray-400">No members in this organization yet.</p> : members.map((member) => (
+                      <button
+                        key={member.id}
+                        type="button"
+                        onClick={() => setSelectedMemberIds((current) => toggleAccessSelection(current, member.id))}
+                        className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] ${selectedMemberIds.includes(member.id) ? "bg-gray-100 text-gray-900" : "text-gray-700 hover:bg-gray-50"}`}
+                      >
+                        <span className="truncate">{member.user.name || member.user.email}</span>
+                        {selectedMemberIds.includes(member.id) ? <Check className="h-3.5 w-3.5" /> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         ) : null}
@@ -873,7 +1260,7 @@ function ImportPluginConnectionDialog({
           <DenButton
             variant="primary"
             loading={busy && Boolean(preview)}
-            disabled={!preview || !marketplaceId || (selectedServerKeys.length === 0 && selectedSkillKeys.length === 0)}
+            disabled={!preview || !marketplaceId || accessIncomplete || selectedConfigurationIncomplete || selectedComponentCount === 0 || selectedComponentCount > GITHUB_IMPORT_MAX_COMPONENTS}
             onClick={() => void importGithubPlugin()}
           >
             Import selected
@@ -1120,6 +1507,7 @@ function ConnectionRow({
   connecting,
   errorMessage,
   onEdit,
+  authorizationFallbackUrl,
   onConnect,
   onRemove,
   removing,
@@ -1131,6 +1519,7 @@ function ConnectionRow({
   connecting: boolean;
   errorMessage: string | null;
   onEdit: () => void;
+  authorizationFallbackUrl: string | null;
   onConnect: () => void;
   onRemove: () => void;
   removing: boolean;
@@ -1179,7 +1568,16 @@ function ConnectionRow({
             <p className="mt-0.5 truncate text-[12px] text-gray-500">
               {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
             </p>
-            {errorMessage ? <p className="mt-1 text-[12px] text-red-600">{errorMessage}</p> : null}
+            {errorMessage ? (
+              <p className="mt-1 text-[12px] text-red-600">
+                {errorMessage}{" "}
+                {authorizationFallbackUrl ? (
+                  <a href={authorizationFallbackUrl} referrerPolicy="no-referrer" className="font-semibold underline underline-offset-2">
+                    Continue sign-in in this tab
+                  </a>
+                ) : null}
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -1476,6 +1874,7 @@ function EditConnectionDialog({
   onSubmit: (input: UpdateMcpConnectionInput) => Promise<UpdatedMcpConnection>;
 }) {
   const { orgContext } = useOrgDashboard();
+  const discoverConnection = useDiscoverMcpConnection();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [authType, setAuthType] = useState<ExternalMcpAuthType>("oauth");
@@ -1488,8 +1887,13 @@ function EditConnectionDialog({
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [confirmingIdentityChange, setConfirmingIdentityChange] = useState(false);
+  const [discovery, setDiscovery] = useState<ExternalMcpConfigurationDiscovery | null>(null);
+  const inspectRequestRef = useRef(0);
 
   useEffect(() => {
+    inspectRequestRef.current += 1;
+    setDiscovery(null);
+    discoverConnection.reset();
     if (!connection) return;
     setName(connection.name);
     setUrl(connection.url);
@@ -1536,6 +1940,29 @@ function EditConnectionDialog({
 
   function toggle(list: string[], id: string): string[] {
     return list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id];
+  }
+
+  async function inspectServer() {
+    const inspectedUrl = url.trim();
+    if (!inspectedUrl || marketplaceManaged) return;
+    const requestId = ++inspectRequestRef.current;
+    setDiscovery(null);
+    try {
+      const nextDiscovery = await discoverConnection.mutateAsync({ url: inspectedUrl });
+      if (inspectRequestRef.current !== requestId) return;
+      const nextAuthType = discoveredAuthType(nextDiscovery, authType);
+      setDiscovery(nextDiscovery);
+      setAuthType(nextAuthType);
+      if (nextAuthType !== "oauth") {
+        setCredentialMode("shared");
+        setShowOAuthClient(false);
+      } else {
+        setShowOAuthClient(Boolean(connection?.oauthClientId) || discoveryNeedsInput(nextDiscovery, "oauth_client_id"));
+      }
+      setConfirmingIdentityChange(false);
+    } catch {
+      // The error is rendered beside the manual configuration controls.
+    }
   }
 
   async function submit() {
@@ -1601,16 +2028,43 @@ function EditConnectionDialog({
           </div>
           <div>
             <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Server URL</label>
-            <DenInput
-              value={url}
-              data-testid="edit-mcp-url"
-              disabled={marketplaceManaged}
-              onChange={(event) => {
-                setUrl(event.target.value);
-                setConfirmingIdentityChange(false);
-              }}
-            />
+            <div className="flex gap-2">
+              <DenInput
+                value={url}
+                data-testid="edit-mcp-url"
+                disabled={marketplaceManaged}
+                onChange={(event) => {
+                  inspectRequestRef.current += 1;
+                  setUrl(event.target.value);
+                  setDiscovery(null);
+                  discoverConnection.reset();
+                  setConfirmingIdentityChange(false);
+                }}
+              />
+              {!marketplaceManaged ? (
+                <DenButton
+                  variant="secondary"
+                  loading={discoverConnection.isPending}
+                  disabled={!url.trim() || discoverConnection.isPending}
+                  onClick={() => void inspectServer()}
+                  data-testid="inspect-edit-mcp-connection"
+                >
+                  Inspect
+                </DenButton>
+              ) : null}
+            </div>
           </div>
+          {discoverConnection.isPending ? (
+            <div className="flex items-center gap-2 rounded-2xl border border-gray-100 bg-gray-50 p-4 text-[13px] text-gray-600">
+              <Loader2 className="h-4 w-4 animate-spin" /> Inspecting authentication and required setup…
+            </div>
+          ) : discovery ? (
+            <McpDiscoverySummary discovery={discovery} />
+          ) : discoverConnection.error ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[12px] leading-5 text-amber-800">
+              OpenWork could not inspect this server. You can still configure it manually. {discoverConnection.error instanceof Error ? discoverConnection.error.message : ""}
+            </div>
+          ) : null}
           <div>
             <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</label>
             <SegmentedControl
@@ -1805,9 +2259,13 @@ function AddConnectionDialog({
   submitting: boolean;
   error: unknown;
   onClose: () => void;
-  onSubmit: (input: CreateMcpConnectionInput) => Promise<CreatedMcpConnection>;
+  onSubmit: (
+    input: CreateMcpConnectionInput,
+    authorizationWindow?: McpAuthorizationWindow | null,
+  ) => Promise<CreatedMcpConnection>;
 }) {
   const { orgContext } = useOrgDashboard();
+  const discoverConnection = useDiscoverMcpConnection();
   const [name, setName] = useState(preset?.displayName ?? "");
   const [url, setUrl] = useState(preset?.url ?? "");
   const [authType, setAuthType] = useState<ExternalMcpAuthType>(preset?.authType ?? "oauth");
@@ -1816,14 +2274,18 @@ function AddConnectionDialog({
   const [showOAuthClient, setShowOAuthClient] = useState(Boolean(preset?.requiresOAuthClient));
   const [oauthClientId, setOAuthClientId] = useState("");
   const [oauthClientSecret, setOAuthClientSecret] = useState("");
+  const [discovery, setDiscovery] = useState<ExternalMcpConfigurationDiscovery | null>(null);
   const [oauthCallback, setOAuthCallback] = useState<string | null>(null);
   const [copiedCallback, setCopiedCallback] = useState(false);
   const [accessMode, setAccessMode] = useState<AddConnectionAccessMode>("everyone");
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const inspectRequestRef = useRef(0);
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
+    const requestId = ++inspectRequestRef.current;
     setName(preset?.displayName ?? "");
     setUrl(preset?.url ?? "");
     setAuthType(preset?.authType ?? "oauth");
@@ -1832,11 +2294,26 @@ function AddConnectionDialog({
     setShowOAuthClient(Boolean(preset?.requiresOAuthClient));
     setOAuthClientId("");
     setOAuthClientSecret("");
+    setDiscovery(null);
+    discoverConnection.reset();
     setOAuthCallback(null);
     setCopiedCallback(false);
     setAccessMode("everyone");
     setSelectedTeamIds([]);
     setSelectedMemberIds([]);
+    if (preset?.url) {
+      void discoverConnection.mutateAsync({ url: preset.url }).then((nextDiscovery) => {
+        if (cancelled || inspectRequestRef.current !== requestId) return;
+        setDiscovery(nextDiscovery);
+        setAuthType(discoveredAuthType(nextDiscovery, preset.authType));
+        setShowOAuthClient(discoveryNeedsInput(nextDiscovery, "oauth_client_id"));
+      }).catch(() => {
+        // The curated preset remains a safe fallback when live inspection is unavailable.
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
   }, [open, preset]);
 
   const teams = useMemo(() => orgContext?.teams ?? [], [orgContext?.teams]);
@@ -1849,13 +2326,35 @@ function AddConnectionDialog({
     return list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id];
   }
 
-  const showOAuthClientFields = authType === "oauth" && (Boolean(preset?.requiresOAuthClient) || showOAuthClient);
-  const oauthClientRequired = authType === "oauth" && Boolean(preset?.requiresOAuthClient);
+  const oauthClientIdRequired = authType === "oauth" && (discovery
+    ? discoveryNeedsInput(discovery, "oauth_client_id")
+    : Boolean(preset?.requiresOAuthClient));
+  const oauthClientSecretRequired = authType === "oauth" && (discovery
+    ? discoveryNeedsInput(discovery, "oauth_client_secret")
+    : Boolean(preset?.requiresOAuthClient));
+  const showOAuthClientFields = authType === "oauth" && (oauthClientIdRequired || showOAuthClient);
   const isSlackPreset = preset?.presetId === "slack";
   const access: McpConnectionAccessInput = accessMode === "everyone"
     ? { orgWide: true, memberIds: [], teamIds: [] }
     : { orgWide: false, memberIds: accessMode === "people" ? selectedMemberIds : [], teamIds: accessMode === "teams" ? selectedTeamIds : [] };
   const accessIncomplete = accessMode === "teams" ? selectedTeamIds.length === 0 : accessMode === "people" ? selectedMemberIds.length === 0 : false;
+
+  async function inspectServer() {
+    const inspectedUrl = url.trim();
+    if (!inspectedUrl) return;
+    const requestId = ++inspectRequestRef.current;
+    setDiscovery(null);
+    try {
+      const nextDiscovery = await discoverConnection.mutateAsync({ url: inspectedUrl });
+      if (inspectRequestRef.current !== requestId) return;
+      setDiscovery(nextDiscovery);
+      setAuthType(discoveredAuthType(nextDiscovery, authType));
+      setCredentialMode((current) => discoveredAuthType(nextDiscovery, authType) === "oauth" ? current : "shared");
+      setShowOAuthClient(discoveryNeedsInput(nextDiscovery, "oauth_client_id"));
+    } catch {
+      // The error is rendered beside the manual fallback fields.
+    }
+  }
 
   async function submit() {
     const trimmedClientId = oauthClientId.trim();
@@ -1872,15 +2371,29 @@ function AddConnectionDialog({
           ...(trimmedClientSecret ? { clientSecret: trimmedClientSecret } : {}),
         }
         : undefined,
+      requestedOAuthScopes: authType === "oauth"
+        && discovery?.oauth
+        && discovery.oauth.scopesSource !== "authorization_server"
+        && discovery.oauth.scopesSource !== "none"
+        ? discovery.oauth.scopes
+        : undefined,
       access,
     };
+    const authorizationWindow = input.authType === "oauth"
+      && input.credentialMode === "shared"
+      && !input.oauthClient
+      ? openMcpAuthorizationWindow(`new-${input.name}`)
+      : undefined;
     try {
-      const created = await onSubmit(input);
+      const created = await onSubmit(input, authorizationWindow);
+      setApiKey("");
+      setOAuthClientSecret("");
       if (input.oauthClient && created.links?.oauthCallback) {
         setOAuthCallback(created.links.oauthCallback);
         setCopiedCallback(false);
       }
     } catch {
+      closeMcpAuthorizationWindow(authorizationWindow);
       // The mutation's typed error is rendered by the dialog's error prop.
       // Consume the rejected promise so a clear validation failure does not
       // also become an opaque browser-level unhandled rejection.
@@ -1899,7 +2412,7 @@ function AddConnectionDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        className="max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
         {oauthCallback ? (
@@ -1934,7 +2447,7 @@ function AddConnectionDialog({
             <>
               Slack MCP needs a pre-registered Slack app — Slack does not support automatic app registration. Paste your Slack app&apos;s OAuth client below.
             </>
-          ) : "Connect an MCP server org-wide. If it requires OAuth, you'll authorize it in a new tab next."}
+          ) : "Inspect a remote MCP server, review what it requires, and choose who can use it. If it uses OAuth, OpenWork guides the right people through sign-in."}
         </p>
 
         <div className="mt-5 space-y-4">
@@ -1944,14 +2457,37 @@ function AddConnectionDialog({
           </div>
           <div>
             <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Server URL</label>
-            <DenInput
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://mcp.example.com/mcp"
-              disabled={Boolean(preset)}
-            />
+            <div className="flex gap-2">
+              <DenInput
+                value={url}
+                onChange={(event) => {
+                  inspectRequestRef.current += 1;
+                  setUrl(event.target.value);
+                  setDiscovery(null);
+                  discoverConnection.reset();
+                }}
+                placeholder="https://mcp.example.com/mcp"
+                disabled={Boolean(preset)}
+              />
+              {!preset ? (
+                <DenButton variant="secondary" loading={discoverConnection.isPending} disabled={!url.trim() || discoverConnection.isPending} onClick={() => void inspectServer()}>
+                  Inspect
+                </DenButton>
+              ) : null}
+            </div>
           </div>
-          {!preset ? (
+          {discoverConnection.isPending ? (
+            <div className="flex items-center gap-2 rounded-2xl border border-gray-100 bg-gray-50 p-4 text-[13px] text-gray-600">
+              <Loader2 className="h-4 w-4 animate-spin" /> Inspecting authentication and required setup…
+            </div>
+          ) : discovery ? (
+            <McpDiscoverySummary discovery={discovery} />
+          ) : discoverConnection.error ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[12px] leading-5 text-amber-800">
+              OpenWork could not inspect this server. You can still configure it manually. {discoverConnection.error instanceof Error ? discoverConnection.error.message : ""}
+            </div>
+          ) : null}
+          {!preset && (!discovery || discovery.auth.kind === "unknown" || discovery.auth.confidence !== "verified") ? (
             <div>
               <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</label>
               <SegmentedControl
@@ -1999,7 +2535,7 @@ function AddConnectionDialog({
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret</label>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret{oauthClientSecretRequired ? "" : " (optional)"}</label>
                   <DenInput
                     type="password"
                     value={oauthClientSecret}
@@ -2082,7 +2618,7 @@ function AddConnectionDialog({
           <DenButton
             variant="primary"
             loading={submitting}
-            disabled={!name.trim() || !url.trim() || (authType === "apikey" && !apiKey.trim()) || (oauthClientRequired && (!oauthClientId.trim() || !oauthClientSecret.trim())) || accessIncomplete}
+            disabled={discoverConnection.isPending || discoveryHasUnsupportedRequirements(discovery) || !name.trim() || !url.trim() || (authType === "apikey" && !apiKey.trim()) || (oauthClientIdRequired && !oauthClientId.trim()) || (oauthClientSecretRequired && !oauthClientSecret.trim()) || accessIncomplete}
             onClick={() => void submit()}
           >
             {showOAuthClientFields ? "Create and show redirect URL" : "Add connection"}

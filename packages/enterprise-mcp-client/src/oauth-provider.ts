@@ -67,6 +67,11 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   private authorizationHandle: EnterpriseMcpOAuthAuthorizationHandle | undefined
   authorizeUrl: string | null = null
 
+  /** Exact credential revision most recently supplied to this transport. */
+  get credentialRevision(): string | undefined {
+    return this.loadedCredential?.revision
+  }
+
   constructor(input: {
     redirectUri: string
     connectionId: string
@@ -144,7 +149,11 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     if (record.expiresAt !== undefined) {
       assertFiniteEpoch(record.expiresAt, "client expiration")
       if (record.expiresAt <= this.clock.now() + this.expirationSkewMs) {
-        await this.persistence.clientRegistrations.invalidate({ context: this.context(), reason: "expired" })
+        await this.persistence.clientRegistrations.invalidate({
+          context: this.context(),
+          reason: "expired",
+          revision: record.revision,
+        })
         throw new EnterpriseMcpOAuthContractError(
           "MCP_OAUTH_CLIENT_EXPIRED",
           "The OAuth client registration or client secret has expired and must be renewed.",
@@ -188,7 +197,11 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     if (record.expiresAt !== undefined) {
       assertFiniteEpoch(record.expiresAt, "token expiration")
       if (record.expiresAt <= this.clock.now() + this.expirationSkewMs && !tokens.refresh_token) {
-        await this.persistence.credentials.invalidate({ context: this.context(), reason: "expired" })
+        await this.persistence.credentials.invalidate({
+          context: this.context(),
+          reason: "expired",
+          revision: record.revision,
+        })
         throw new EnterpriseMcpOAuthContractError(
           "MCP_OAUTH_CREDENTIAL_EXPIRED",
           "The OAuth access token has expired and no refresh token is available.",
@@ -208,7 +221,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     const merged = source === "refresh" && !validated.refresh_token && existing?.tokens.refresh_token
       ? { ...validated, refresh_token: existing.tokens.refresh_token }
       : validated
-    await this.persistence.credentials.save({
+    const saved = await this.persistence.credentials.save({
       context: this.context(),
       tokens: merged,
       expiresAt: tokenExpiration(merged, this.clock.now()),
@@ -216,7 +229,13 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       authorization: this.authorizationHandle,
       clientRegistrationRevision: this.loadedClient?.revision,
     })
-    this.loadedCredential = undefined
+    if (!saved.revision.trim()) {
+      throw new EnterpriseMcpOAuthContractError(
+        "MCP_OAUTH_PERSISTENCE_INVALID",
+        "The saved OAuth credential is missing its persistence revision.",
+      )
+    }
+    this.loadedCredential = saved
   }
 
   redirectToAuthorization(authorizationUrl: URL): void {
@@ -284,16 +303,26 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
 
   async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
     if (scope === "all" || scope === "client") {
-      await this.persistence.clientRegistrations.invalidate({
-        context: this.context(),
-        reason: "provider-rejected",
-      })
+      const revision = this.loadedClient?.revision
+      if (revision) {
+        await this.persistence.clientRegistrations.invalidate({
+          context: this.context(),
+          reason: "provider-rejected",
+          revision,
+        })
+      }
+      this.loadedClient = undefined
     }
     if (scope === "all" || scope === "tokens") {
-      await this.persistence.credentials.invalidate({
-        context: this.context(),
-        reason: "provider-rejected",
-      })
+      const revision = this.loadedCredential?.revision
+      if (revision) {
+        await this.persistence.credentials.invalidate({
+          context: this.context(),
+          reason: "provider-rejected",
+          revision,
+        })
+      }
+      this.loadedCredential = undefined
     }
     if ((scope === "all" || scope === "verifier") && this.flow.kind !== "runtime") {
       const id = this.flow.authorizationId

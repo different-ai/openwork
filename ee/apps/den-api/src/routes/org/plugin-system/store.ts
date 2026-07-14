@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto"
 import { and, asc, count, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
+  ConnectedAccountTable,
   ConnectorAccountTable,
   ConnectorInstanceAccessGrantTable,
   ConnectorInstanceTable,
@@ -13,11 +15,13 @@ import {
   ConnectorTargetTable,
   ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
+  ExternalMcpOAuthTransactionTable,
   MarketplaceAccessGrantTable,
   MarketplacePluginTable,
   MarketplaceTable,
   MemberTable,
   OrganizationTable,
+  OrgOAuthClientTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginMcpRequirementBindingTable,
@@ -70,31 +74,55 @@ import {
 import { db } from "../../../db.js"
 import { env } from "../../../env.js"
 import { appLogger } from "../../../observability/logger.js"
+import { appendPublicApiPath } from "../../../request-url.js"
 import { roleIncludesOwner } from "../../../orgs.js"
 import { memberFacingMcpConnectionsEnabled } from "../../../capability-sources/external-mcp-rollout.js"
+import {
+  discoverExternalMcpConfiguration,
+  inferExternalMcpManifestConfiguration,
+  type ExternalMcpConfigurationDiscovery,
+} from "../../../capability-sources/external-mcp-discovery.js"
+import { isSensitiveExternalMcpCredentialKey } from "../../../capability-sources/external-mcp-input-safety.js"
 import { comparablePluginMcpRequirementUrl, marketplaceMcpServerEntries, resolveMarketplacePluginCloudReadiness } from "../../../mcp/marketplace-capabilities.js"
 import { assertPublicUrl } from "../../../capability-sources/url-guard.js"
 import {
+  compareAndSetExternalMcpOAuthClient,
   createExternalMcpConnection,
   deleteExternalMcpConnection,
+  deleteExternalMcpConnectionIfUnused,
   getExternalMcpConnection,
   listExternalMcpConnections,
+  normalizeExternalMcpRequestedOAuthScopes,
   replaceExternalMcpConnectionAccessForPluginBinding,
+  type ExternalMcpOAuthClientRevision,
+  type ExternalMcpOAuthClientValue,
 } from "../../../capability-sources/external-mcp-connections.js"
 import { connectExternalMcp } from "../../../capability-sources/external-mcp-client-runtime.js"
+import { createExternalMcpLifecycleDeadline, externalMcpPreRegisteredClientExtra } from "../../../capability-sources/external-mcp-client.js"
 import {
   externalMcpDiagnosticForLog,
   externalMcpDiagnosticForResponse,
   safeExternalMcpEndpointForLog,
 } from "../../../capability-sources/external-mcp-diagnostics.js"
-import { getOrgOAuthClient, upsertOrgOAuthClient } from "../../../capability-sources/oauth-credentials.js"
+import { getOrgOAuthClient } from "../../../capability-sources/oauth-credentials.js"
 import {
   deletePluginMcpRequirementBindingsByIds,
   deletePluginMcpRequirementBindingsForPluginConfigObject,
+  PluginMcpRequirementConnectionMissingError,
   upsertPluginMcpRequirementBinding,
   type PluginMcpRequirementBindingRow,
 } from "../../../mcp/plugin-mcp-requirement-bindings.js"
 import { openworkYourConnectionsUrl } from "../../../mcp/connection-navigation.js"
+import {
+  assertPublicGithubTreeWithinLimits,
+  createPublicGithubRequestBudget,
+  decodePublicGithubBase64File,
+  PUBLIC_GITHUB_IMPORT_LIMITS,
+  PublicGithubRequestError,
+  requestPublicGithubJson as requestBoundedPublicGithubJson,
+  resolvePublicGithubRefAndPath,
+  type PublicGithubRequestBudget,
+} from "./public-github.js"
 
 type OrganizationId = PluginArchActorContext["organizationContext"]["organization"]["id"]
 const logger = appLogger.child({ component: "plugin_system_store" })
@@ -186,19 +214,20 @@ type GithubDiscoverySnapshot = GithubDiscoveryCacheEntry & {
 }
 
 type PublicGithubPluginTarget = {
-  branch: string | null
+  canonicalUrl: string
+  refAndPathSegments: string[] | null
   repositoryFullName: string
-  rootPath: string
 }
 
 type PublicGithubTreeSnapshot = {
   branch: string
+  budget: PublicGithubRequestBudget
   fullPathByDiscoveryPath: Map<string, string>
   headSha: string
   repositoryFullName: string
   rootPath: string
+  textByDiscoveryPath: Map<string, string | null>
   treeEntries: GithubDiscoveryTreeEntry[]
-  truncated: boolean
 }
 
 type GithubPluginMcpImportAccess = {
@@ -220,16 +249,25 @@ type PluginMcpRequirementServer = {
 }
 
 type GithubPluginMcpImportServer = {
-  authType: "oauth"
+  authType: "apikey" | "none" | "oauth" | "unknown"
   connectionId: string | null
+  discovery: ExternalMcpConfigurationDiscovery | null
   name: string
   pluginKey: string
   pluginName: string
   serverKey: string
-  skippedReason: "missing_url" | "local_unsupported" | "invalid_url" | "unsupported_auth" | null
+  skippedReason: "missing_url" | "local_unsupported" | "invalid_url" | "unsupported_auth" | "unsupported_configuration" | null
   sourcePath: string
   supported: boolean
   url: string | null
+}
+
+type GithubPluginMcpImportServerConfiguration = {
+  apiKey?: string
+  authType: PluginMcpRequirementAuthType
+  credentialMode?: PluginMcpRequirementCredentialMode
+  oauthClient?: { clientId: string; clientSecret?: string }
+  serverKey: string
 }
 
 type GithubPluginMcpImportPlugin = {
@@ -271,6 +309,7 @@ type ConfigObjectInput = {
   parserMode?: string
   rawSourceText?: string
   schemaVersion?: string
+  sourceRevisionRef?: string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -358,38 +397,94 @@ function stripLineDecorators(value: string) {
     .trim()
 }
 
+const MAX_PUBLIC_GITHUB_SOURCE_PATH_LENGTH = 2_048
+const MAX_PUBLISHER_NAME_LENGTH = 255
+const MAX_IMPORTED_MCP_URL_LENGTH = 2_048
+
 function normalizeGithubPath(value: string) {
   return value.trim().replace(/^\.\//, "").replace(/^\/+/, "").replace(/\/+$/, "")
 }
 
-function parsePublicGithubPluginUrl(rawUrl: string): PublicGithubPluginTarget {
+function safePublicGithubPath(value: string): string | null {
+  const normalized = normalizeGithubPath(value)
+  if (!normalized || normalized.length > MAX_PUBLIC_GITHUB_SOURCE_PATH_LENGTH) return null
+  const segments = normalized.split("/")
+  if (segments.some((segment) => !segment
+    || segment === "."
+    || segment === ".."
+    || segment.includes("\\")
+    || /[\u0000-\u001f\u007f]/.test(segment))) return null
+  return normalized
+}
+
+function decodeSafeGithubUrlSegment(value: string): string | null {
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(value)
+  } catch {
+    return null
+  }
+  if (!decoded
+    || decoded === "."
+    || decoded === ".."
+    || decoded.includes("/")
+    || decoded.includes("\\")
+    || /[\u0000-\u001f\u007f]/.test(decoded)) return null
+  return decoded
+}
+
+function boundedPublisherName(value: string | null | undefined, fallback: string) {
+  const bounded = (value ?? "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_PUBLISHER_NAME_LENGTH)
+  return bounded || fallback.slice(0, MAX_PUBLISHER_NAME_LENGTH)
+}
+
+export function parsePublicGithubPluginUrl(rawUrl: string): PublicGithubPluginTarget {
+  const normalizedRawUrl = rawUrl.trim()
   let url: URL
   try {
-    url = new URL(rawUrl)
+    url = new URL(normalizedRawUrl)
   } catch {
     throw new PluginArchRouteFailure(400, "invalid_github_url", "Enter a valid GitHub URL.")
   }
 
-  if (url.hostname !== "github.com" && url.hostname !== "www.github.com") {
-    throw new PluginArchRouteFailure(400, "invalid_github_url", "Only github.com plugin URLs are supported.")
+  const authority = normalizedRawUrl.match(/^https:\/\/([^/?#]*)/i)?.[1]?.toLowerCase()
+  if (url.protocol !== "https:" || (authority !== "github.com" && authority !== "www.github.com")) {
+    throw new PluginArchRouteFailure(400, "invalid_github_url", "Use an HTTPS github.com URL without a port or embedded credentials.")
+  }
+  if (url.search || url.hash || normalizedRawUrl.includes("?") || normalizedRawUrl.includes("#")) {
+    throw new PluginArchRouteFailure(400, "invalid_github_url", "GitHub plugin URLs must not contain query parameters or fragments.")
   }
 
-  const segments = url.pathname.split("/").filter(Boolean)
-  const [owner, rawRepo] = segments
+  const encodedSegments = url.pathname.split("/").filter(Boolean)
+  const segments = encodedSegments.map(decodeSafeGithubUrlSegment)
+  if (segments.some((segment) => segment === null)) {
+    throw new PluginArchRouteFailure(400, "invalid_github_url", "GitHub plugin URLs contain an unsupported path segment.")
+  }
+  const [rawOwner, rawRepoWithSuffix] = segments as string[]
+  const owner = rawOwner?.toLowerCase()
+  const rawRepo = rawRepoWithSuffix?.toLowerCase()
   if (!owner || !rawRepo) {
     throw new PluginArchRouteFailure(400, "invalid_github_url", "GitHub URL must include an owner and repository.")
   }
 
   const repo = rawRepo.replace(/\.git$/i, "")
-  if (!repo) {
+  if (!repo
+    || owner.length > 39
+    || repo.length > 100
+    || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(owner)
+    || !/^[a-z0-9._-]+$/.test(repo)) {
     throw new PluginArchRouteFailure(400, "invalid_github_url", "GitHub URL must include a repository.")
   }
 
   if (segments.length === 2) {
     return {
-      branch: null,
+      canonicalUrl: `https://github.com/${owner}/${repo}`,
+      refAndPathSegments: null,
       repositoryFullName: `${owner}/${repo}`,
-      rootPath: "",
     }
   }
 
@@ -397,35 +492,33 @@ function parsePublicGithubPluginUrl(rawUrl: string): PublicGithubPluginTarget {
     throw new PluginArchRouteFailure(400, "invalid_github_url", "Use a GitHub repository or tree URL, for example /tree/main/sales.")
   }
 
-  const branch = segments[3]
-  if (!branch) {
+  const refAndPathSegments = (segments as string[]).slice(3)
+  if (refAndPathSegments.length === 0) {
     throw new PluginArchRouteFailure(400, "invalid_github_url", "GitHub tree URL must include a branch.")
   }
+  const canonicalSuffix = refAndPathSegments.map(encodeURIComponent).join("/")
 
   return {
-    branch,
+    canonicalUrl: `https://github.com/${owner}/${repo}/tree/${canonicalSuffix}`,
+    refAndPathSegments,
     repositoryFullName: `${owner}/${repo}`,
-    rootPath: normalizeGithubPath(segments.slice(4).join("/")),
   }
 }
 
-async function requestPublicGithubJson(input: { path: string; allowStatuses?: number[] }) {
-  const response = await fetch(`https://api.github.com${input.path}`, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "User-Agent": "openwork-den-api",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  })
-  const text = await response.text()
-  const body: unknown = text ? JSON.parse(text) : null
-  if (!response.ok && !(input.allowStatuses ?? []).includes(response.status)) {
-    const message = isRecord(body) && typeof body.message === "string"
-      ? body.message
-      : `GitHub request failed with status ${response.status}.`
-    throw new PluginArchRouteFailure(response.status === 404 ? 404 : 502, "github_request_failed", message)
+async function requestPublicGithubJson(input: {
+  allowStatuses?: number[]
+  budget: PublicGithubRequestBudget
+  maxResponseBytes?: number
+  path: string
+}) {
+  try {
+    return await requestBoundedPublicGithubJson(input)
+  } catch (error) {
+    if (error instanceof PublicGithubRequestError) {
+      throw new PluginArchRouteFailure(error.status, error.code, error.message)
+    }
+    throw error
   }
-  return { body, ok: response.ok, status: response.status }
 }
 
 function publicGithubRepoParts(repositoryFullName: string) {
@@ -436,9 +529,10 @@ function publicGithubRepoParts(repositoryFullName: string) {
   return { owner, repo }
 }
 
-async function getPublicGithubDefaultBranch(repositoryFullName: string) {
+async function getPublicGithubRepositoryInfo(repositoryFullName: string, budget: PublicGithubRequestBudget) {
   const { owner, repo } = publicGithubRepoParts(repositoryFullName)
   const response = await requestPublicGithubJson({
+    budget,
     path: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
   })
   if (!isRecord(response.body) || typeof response.body.default_branch !== "string" || !response.body.default_branch.trim()) {
@@ -447,45 +541,139 @@ async function getPublicGithubDefaultBranch(repositoryFullName: string) {
   if (response.body.private === true) {
     throw new PluginArchRouteFailure(400, "private_github_repo", "Private GitHub repositories must be imported through the GitHub connector.")
   }
-  return response.body.default_branch.trim()
+  return { defaultBranch: response.body.default_branch.trim() }
 }
 
-async function getPublicGithubRepositoryTree(target: PublicGithubPluginTarget): Promise<PublicGithubTreeSnapshot> {
-  const { owner, repo } = publicGithubRepoParts(target.repositoryFullName)
-  const branch = target.branch ?? await getPublicGithubDefaultBranch(target.repositoryFullName)
-  const commitResponse = await requestPublicGithubJson({
-    path: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(branch)}`,
-  })
-  if (!isRecord(commitResponse.body)) {
-    throw new PluginArchRouteFailure(502, "github_response_incomplete", "GitHub commit response was invalid.")
+type ResolvedPublicGithubTreeTarget = {
+  branch: string
+  commitBody: Record<string, unknown>
+  rootPath: string
+}
+
+async function resolvePublicGithubTreeTarget(input: {
+  budget: PublicGithubRequestBudget
+  defaultBranch: string
+  owner: string
+  refAndPathSegments: string[] | null
+  repo: string
+}): Promise<ResolvedPublicGithubTreeTarget> {
+  try {
+    const resolved = await resolvePublicGithubRefAndPath({
+      defaultRef: input.defaultBranch,
+      refAndPathSegments: input.refAndPathSegments,
+      resolveRef: async (branch) => {
+        const response = await requestPublicGithubJson({
+          allowStatuses: [404, 422],
+          budget: input.budget,
+          path: `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/commits/${encodeURIComponent(branch)}`,
+        })
+        if (!response.ok) return null
+        if (!isRecord(response.body)) {
+          throw new PluginArchRouteFailure(502, "github_response_incomplete", "GitHub commit response was invalid.")
+        }
+        return response.body
+      },
+    })
+    return {
+      branch: resolved.ref,
+      commitBody: resolved.resolved,
+      rootPath: normalizeGithubPath(resolved.rootPath),
+    }
+  } catch (error) {
+    if (error instanceof PublicGithubRequestError) {
+      throw new PluginArchRouteFailure(error.status, error.code, error.message)
+    }
+    throw error
   }
-  const headSha = typeof commitResponse.body.sha === "string" ? commitResponse.body.sha : ""
-  const commit = isRecord(commitResponse.body.commit) ? commitResponse.body.commit : null
+}
+
+async function resolvePublicGithubSubtreeSha(input: {
+  budget: PublicGithubRequestBudget
+  owner: string
+  repo: string
+  rootPath: string
+  treeSha: string
+}) {
+  let currentTreeSha = input.treeSha
+  for (const segment of input.rootPath.split("/").filter(Boolean)) {
+    const response = await requestPublicGithubJson({
+      budget: input.budget,
+      path: `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/git/trees/${encodeURIComponent(currentTreeSha)}`,
+    })
+    if (!isRecord(response.body) || !Array.isArray(response.body.tree)) {
+      throw new PluginArchRouteFailure(502, "github_response_incomplete", "GitHub subtree response was invalid.")
+    }
+    const entry = response.body.tree.find((candidate) => isRecord(candidate)
+      && candidate.type === "tree"
+      && candidate.path === segment
+      && typeof candidate.sha === "string")
+    if (!isRecord(entry) || typeof entry.sha !== "string") {
+      throw new PluginArchRouteFailure(404, "github_plugin_root_not_found", "No directory was found at that GitHub plugin path.")
+    }
+    currentTreeSha = entry.sha
+  }
+  return currentTreeSha
+}
+
+async function getPublicGithubRepositoryTree(
+  target: PublicGithubPluginTarget,
+  operationDeadlineAt?: number,
+): Promise<PublicGithubTreeSnapshot> {
+  const { owner, repo } = publicGithubRepoParts(target.repositoryFullName)
+  const operationTimeoutMs = operationDeadlineAt === undefined
+    ? undefined
+    : githubMcpRemainingTimeoutMs(operationDeadlineAt, PUBLIC_GITHUB_IMPORT_LIMITS.operationTimeoutMs)
+  const budget = createPublicGithubRequestBudget(
+    operationTimeoutMs === undefined ? undefined : { operationTimeoutMs },
+  )
+  const repository = await getPublicGithubRepositoryInfo(target.repositoryFullName, budget)
+  const resolvedTarget = await resolvePublicGithubTreeTarget({
+    budget,
+    defaultBranch: repository.defaultBranch,
+    owner,
+    refAndPathSegments: target.refAndPathSegments,
+    repo,
+  })
+  const { branch, commitBody, rootPath } = resolvedTarget
+  const headSha = typeof commitBody.sha === "string" ? commitBody.sha : ""
+  const commit = isRecord(commitBody.commit) ? commitBody.commit : null
   const tree = commit && isRecord(commit.tree) ? commit.tree : null
   const treeSha = tree && typeof tree.sha === "string" ? tree.sha : ""
   if (!headSha || !treeSha) {
     throw new PluginArchRouteFailure(502, "github_response_incomplete", "GitHub commit response was missing the head or tree sha.")
   }
 
+  const discoveryTreeSha = rootPath
+    ? await resolvePublicGithubSubtreeSha({ budget, owner, repo, rootPath, treeSha })
+    : treeSha
   const treeResponse = await requestPublicGithubJson({
-    path: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${encodeURIComponent(treeSha)}?recursive=1`,
+    budget,
+    maxResponseBytes: PUBLIC_GITHUB_IMPORT_LIMITS.treeResponseBytes,
+    path: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${encodeURIComponent(discoveryTreeSha)}?recursive=1`,
   })
   if (!isRecord(treeResponse.body) || !Array.isArray(treeResponse.body.tree)) {
     throw new PluginArchRouteFailure(502, "github_response_incomplete", "GitHub tree response was invalid.")
   }
+  try {
+    assertPublicGithubTreeWithinLimits({
+      entryCount: treeResponse.body.tree.length,
+      truncated: treeResponse.body.truncated === true,
+    })
+  } catch (error) {
+    if (error instanceof PublicGithubRequestError) {
+      throw new PluginArchRouteFailure(error.status, error.code, error.message)
+    }
+    throw error
+  }
 
-  const rootPath = normalizeGithubPath(target.rootPath)
   const fullPathByDiscoveryPath = new Map<string, string>()
   const treeEntries = treeResponse.body.tree.flatMap((entry): GithubDiscoveryTreeEntry[] => {
     if (!isRecord(entry)) return []
-    const fullPath = typeof entry.path === "string" ? normalizeGithubPath(entry.path) : ""
+    const relativePath = typeof entry.path === "string" ? safePublicGithubPath(entry.path) : null
     const kind = entry.type === "blob" || entry.type === "tree" ? entry.type : null
-    if (!fullPath || !kind) return []
-    if (rootPath && fullPath !== rootPath && !fullPath.startsWith(`${rootPath}/`)) return []
-    const discoveryPath = rootPath
-      ? (fullPath === rootPath ? "" : fullPath.slice(rootPath.length + 1))
-      : fullPath
-    if (!discoveryPath) return []
+    if (!relativePath || !kind) return []
+    const discoveryPath = relativePath
+    const fullPath = rootPath ? `${rootPath}/${relativePath}` : relativePath
     fullPathByDiscoveryPath.set(discoveryPath, fullPath)
     return [{
       id: entry.sha === null || typeof entry.sha === "string" ? entry.sha ?? discoveryPath : discoveryPath,
@@ -502,27 +690,58 @@ async function getPublicGithubRepositoryTree(target: PublicGithubPluginTarget): 
 
   return {
     branch,
+    budget,
     fullPathByDiscoveryPath,
     headSha,
     repositoryFullName: target.repositoryFullName,
     rootPath,
+    textByDiscoveryPath: new Map(),
     treeEntries,
-    truncated: isRecord(treeResponse.body) && treeResponse.body.truncated === true,
   }
 }
 
-async function getPublicGithubTextFile(input: { branch: string; discoveryPath: string; snapshot: PublicGithubTreeSnapshot }) {
+async function getPublicGithubTextFile(input: { discoveryPath: string; snapshot: PublicGithubTreeSnapshot }) {
+  const cached = input.snapshot.textByDiscoveryPath.get(input.discoveryPath)
+  if (cached !== undefined || input.snapshot.textByDiscoveryPath.has(input.discoveryPath)) return cached ?? null
   const fullPath = input.snapshot.fullPathByDiscoveryPath.get(input.discoveryPath) ?? input.discoveryPath
+  const declaredSize = input.snapshot.treeEntries.find((entry) => entry.path === input.discoveryPath)?.size
+  if (declaredSize !== null && declaredSize !== undefined && declaredSize > PUBLIC_GITHUB_IMPORT_LIMITS.fileBytes) {
+    throw new PluginArchRouteFailure(
+      400,
+      "github_import_limit_exceeded",
+      `GitHub file "${input.discoveryPath}" is larger than ${PUBLIC_GITHUB_IMPORT_LIMITS.fileBytes} bytes.`,
+    )
+  }
   const { owner, repo } = publicGithubRepoParts(input.snapshot.repositoryFullName)
   const response = await requestPublicGithubJson({
     allowStatuses: [404],
-    path: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${fullPath.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(input.branch)}`,
+    budget: input.snapshot.budget,
+    // Always read from the immutable commit captured with the tree. Reading
+    // from the branch here would allow it to move between the revision check
+    // and file fetch, producing a mixed or attacker-swapped import.
+    path: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${fullPath.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(input.snapshot.headSha)}`,
   })
-  if (!response.ok) return null
+  if (!response.ok) {
+    input.snapshot.textByDiscoveryPath.set(input.discoveryPath, null)
+    return null
+  }
   if (!isRecord(response.body) || response.body.encoding !== "base64" || typeof response.body.content !== "string") {
     throw new PluginArchRouteFailure(502, "github_response_incomplete", "GitHub file response was incomplete.")
   }
-  return Buffer.from(response.body.content.replace(/\n/g, ""), "base64").toString("utf8")
+  try {
+    const text = decodePublicGithubBase64File({
+      base64: response.body.content,
+      budget: input.snapshot.budget,
+      path: input.discoveryPath,
+    })
+    input.snapshot.textByDiscoveryPath.set(input.discoveryPath, text)
+    return text
+  } catch (error) {
+    if (error instanceof PublicGithubRequestError) {
+      throw new PluginArchRouteFailure(error.status, error.code, error.message)
+    }
+    throw error
+  }
 }
 
 async function getPublicGithubDiscoveryFileTexts(snapshot: PublicGithubTreeSnapshot) {
@@ -531,16 +750,26 @@ async function getPublicGithubDiscoveryFileTexts(snapshot: PublicGithubTreeSnaps
   if (knownPaths.has(".claude-plugin/marketplace.json")) {
     interestingPaths.add(".claude-plugin/marketplace.json")
   }
+  if (knownPaths.has("server.json")) {
+    interestingPaths.add("server.json")
+  }
   for (const entry of snapshot.treeEntries) {
     if (entry.path.endsWith(".claude-plugin/plugin.json") || entry.path.endsWith("/plugin.json") || entry.path === "plugin.json") {
       interestingPaths.add(entry.path)
     }
   }
 
+  if (interestingPaths.size > PUBLIC_GITHUB_IMPORT_LIMITS.files) {
+    throw new PluginArchRouteFailure(
+      400,
+      "github_import_limit_exceeded",
+      `GitHub plugin discovery is limited to ${PUBLIC_GITHUB_IMPORT_LIMITS.files} manifest and component files. Narrow the GitHub URL to a plugin subdirectory.`,
+    )
+  }
+
   const fileTextByPath: Record<string, string | null> = {}
   for (const path of interestingPaths) {
     fileTextByPath[path] = await getPublicGithubTextFile({
-      branch: snapshot.branch,
       discoveryPath: path,
       snapshot,
     })
@@ -1561,9 +1790,9 @@ export async function createConfigObject(input: {
         isDeletedVersion: false,
         normalizedPayloadJson: input.value.normalizedPayloadJson ?? null,
         organizationId,
-        rawSourceText: normalizeOptionalString(input.value.rawSourceText),
+      rawSourceText: normalizeOptionalString(input.value.rawSourceText),
       schemaVersion: normalizeOptionalString(input.value.schemaVersion),
-      sourceRevisionRef: null,
+      sourceRevisionRef: normalizeOptionalString(input.value.sourceRevisionRef),
     })
 
       await tx.insert(ConfigObjectAccessGrantTable).values({
@@ -1655,6 +1884,7 @@ export async function createConfigObjectVersion(input: { context: PluginArchActo
   await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "config_object", role: "editor" })
 
   const now = new Date()
+  const previousVersion = (await getLatestVersions([row.id])).get(row.id) ?? null
   const projection = deriveProjection({ objectType: row.objectType, value: input.value })
   await db.transaction(async (tx) => {
     await tx.insert(ConfigObjectVersionTable).values({
@@ -1681,6 +1911,7 @@ export async function createConfigObjectVersion(input: { context: PluginArchActo
   })
   await deleteStalePluginMcpRequirementBindingsForConfigObject({
     configObject: row,
+    previousVersion,
     spec: parseConfigObjectInputSpec(input.value),
   })
 
@@ -1761,7 +1992,7 @@ export async function attachConfigObjectToPlugin(input: { context: PluginArchAct
 }
 
 export async function removeConfigObjectFromPlugin(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; pluginId: PluginId }) {
-  await ensureVisibleConfigObject(input.context, input.configObjectId)
+  const configObject = await ensureVisibleConfigObject(input.context, input.configObjectId)
   await ensureEditablePlugin(input.context, input.pluginId)
   const rows = await db
     .select()
@@ -1771,11 +2002,32 @@ export async function removeConfigObjectFromPlugin(input: { context: PluginArchA
   if (!rows[0]) {
     throw new PluginArchRouteFailure(404, "plugin_membership_not_found", "Plugin membership not found.")
   }
+  const [latestVersions, bindings] = await Promise.all([
+    getLatestVersions([configObject.id]),
+    db
+      .select({ externalMcpConnectionId: PluginMcpRequirementBindingTable.externalMcpConnectionId })
+      .from(PluginMcpRequirementBindingTable)
+      .where(and(
+        eq(PluginMcpRequirementBindingTable.organizationId, input.context.organizationContext.organization.id),
+        eq(PluginMcpRequirementBindingTable.pluginId, input.pluginId),
+        eq(PluginMcpRequirementBindingTable.configObjectId, input.configObjectId),
+      )),
+  ])
+  const latestVersion = latestVersions.get(configObject.id)
+  const ownedConnectionId = latestVersion
+    ? ownedImportedExternalMcpConnectionId(parseConfigObjectVersionSpec(latestVersion))
+    : null
   await db.update(PluginConfigObjectTable).set({ removedAt: new Date() }).where(eq(PluginConfigObjectTable.id, rows[0].id))
   await deletePluginMcpRequirementBindingsForPluginConfigObject({
     configObjectId: input.configObjectId,
     organizationId: input.context.organizationContext.organization.id,
     pluginId: input.pluginId,
+  })
+  await deleteOwnedImportedExternalMcpConnectionsWithoutBindings({
+    connectionIds: bindings.flatMap((binding) => binding.externalMcpConnectionId === ownedConnectionId
+      ? [binding.externalMcpConnectionId]
+      : []),
+    organizationId: input.context.organizationContext.organization.id,
   })
 }
 
@@ -3426,25 +3678,56 @@ function slugifyPluginMcpName(value: string) {
 }
 
 function externalMcpConnectionName(input: { pluginName: string; serverName: string }) {
-  const serverName = input.serverName.trim()
-  const pluginName = input.pluginName.trim()
+  const serverName = boundedPublisherName(input.serverName, "")
+  const pluginName = boundedPublisherName(input.pluginName, "")
   if (!pluginName) return serverName || "Imported MCP"
   if (!serverName) return pluginName
-  return `${pluginName} / ${serverName}`
+  return boundedPublisherName(`${pluginName} / ${serverName}`, "Imported MCP")
 }
 
 function githubPluginMcpServerKey(input: { name: string; pluginKey: string; sourcePath: string; url: string | null }) {
-  return [input.pluginKey, input.sourcePath, input.name, input.url ?? ""].map(encodeURIComponent).join(":")
+  const digest = createHash("sha256")
+    .update(JSON.stringify([input.pluginKey, input.sourcePath, input.name, input.url ?? ""]))
+    .digest("base64url")
+  return `github-mcp:${digest}`
 }
 
-function githubPluginMcpImportServer(input: Omit<GithubPluginMcpImportServer, "serverKey">): GithubPluginMcpImportServer {
-  return {
-    ...input,
-    serverKey: githubPluginMcpServerKey(input),
+const githubPluginMcpManifestByServer = new WeakMap<GithubPluginMcpImportServer, Record<string, unknown>>()
+
+function githubPluginMcpImportServer(
+  input: Omit<GithubPluginMcpImportServer, "authType" | "discovery" | "serverKey">,
+  manifestConfig?: Record<string, unknown>,
+): GithubPluginMcpImportServer {
+  const sourcePath = safePublicGithubPath(input.sourcePath)
+  if (!sourcePath) {
+    throw new PluginArchRouteFailure(400, "invalid_github_path", "GitHub MCP declarations must come from a safe repository path.")
   }
+  const normalizedInput = {
+    ...input,
+    name: boundedPublisherName(input.name, "MCP server"),
+    pluginName: boundedPublisherName(input.pluginName, "GitHub plugin"),
+    sourcePath,
+  }
+  const server: GithubPluginMcpImportServer = {
+    ...normalizedInput,
+    authType: "unknown",
+    discovery: null,
+    serverKey: githubPluginMcpServerKey(normalizedInput),
+  }
+  if (manifestConfig) githubPluginMcpManifestByServer.set(server, manifestConfig)
+  return server
 }
 
-function mcpServerEntriesFromPayload(input: {
+function declaredGithubMcpLimitFailure(): never {
+  throw new PluginArchRouteFailure(
+    400,
+    "github_import_limit_exceeded",
+    `GitHub plugin imports are limited to ${PUBLIC_GITHUB_IMPORT_LIMITS.declaredMcpServers} declared MCP servers. Narrow the GitHub URL to a plugin subdirectory.`,
+  )
+}
+
+export function mcpServerEntriesFromPayload(input: {
+  declarationLimit?: number
   plugin: GithubDiscoveredPlugin
   rawSourceText: string
   sourcePath: string
@@ -3454,7 +3737,6 @@ function mcpServerEntriesFromPayload(input: {
     parsed = JSON.parse(input.rawSourceText)
   } catch {
     return [githubPluginMcpImportServer({
-      authType: "oauth",
       connectionId: null,
       name: input.sourcePath,
       pluginKey: input.plugin.key,
@@ -3467,16 +3749,68 @@ function mcpServerEntriesFromPayload(input: {
   }
 
   const root = isRecord(parsed) ? parsed : {}
+  const declarationLimit = Math.max(0, Math.min(
+    input.declarationLimit ?? PUBLIC_GITHUB_IMPORT_LIMITS.declaredMcpServers,
+    PUBLIC_GITHUB_IMPORT_LIMITS.declaredMcpServers,
+  ))
+  type DeclaredMcpEntry = { forcedLocal: boolean; rawConfig: unknown; rawName: string }
+  const entries: DeclaredMcpEntry[] = []
+  const pushEntry = (entry: DeclaredMcpEntry) => {
+    if (entries.length >= declarationLimit) declaredGithubMcpLimitFailure()
+    entries.push(entry)
+  }
   const containers = [
     isRecord(root.mcpServers) ? root.mcpServers : null,
     isRecord(root.mcp) ? root.mcp : null,
   ].filter((entry): entry is Record<string, unknown> => Boolean(entry))
-  const entries = containers.flatMap((container) => Object.entries(container))
-  const fallbackEntries: Array<[string, unknown]> = entries.length > 0 ? entries : [[input.plugin.displayName, root]]
+  for (const container of containers) {
+    for (const rawName in container) {
+      if (!Object.prototype.hasOwnProperty.call(container, rawName)) continue
+      pushEntry({ forcedLocal: false, rawConfig: container[rawName], rawName })
+    }
+  }
+  const pluginDisplayName = boundedPublisherName(input.plugin.displayName, "GitHub plugin")
+  const registryTitle = boundedPublisherName(typeof root.title === "string" ? root.title : null, "")
+  const registryDeclaredName = boundedPublisherName(typeof root.name === "string" ? root.name : null, "")
+  const registryName = registryTitle || registryDeclaredName || pluginDisplayName
+  if (entries.length === 0) {
+    const registryRemoteValues = Array.isArray(root.remotes) ? root.remotes : []
+    const registryPackageValues = Array.isArray(root.packages) ? root.packages : []
+    if (registryRemoteValues.length + registryPackageValues.length > declarationLimit) {
+      declaredGithubMcpLimitFailure()
+    }
+    for (let index = 0; index < registryRemoteValues.length; index += 1) {
+      const rawConfig = registryRemoteValues[index]
+      if (!isRecord(rawConfig)) continue
+      pushEntry({
+        forcedLocal: false,
+        rawConfig,
+        rawName: boundedPublisherName(
+          typeof rawConfig.name === "string" ? rawConfig.name : null,
+          registryRemoteValues.length === 1 ? registryName : `${registryName} remote ${index + 1}`,
+        ),
+      })
+    }
+    for (let index = 0; index < registryPackageValues.length; index += 1) {
+      const rawConfig = registryPackageValues[index]
+      if (!isRecord(rawConfig)) continue
+      pushEntry({
+        forcedLocal: true,
+        rawConfig,
+        rawName: boundedPublisherName(
+          typeof rawConfig.name === "string" ? rawConfig.name : null,
+          `${registryName} package ${index + 1}`,
+        ),
+      })
+    }
+  }
+  if (entries.length === 0) {
+    pushEntry({ forcedLocal: false, rawConfig: root, rawName: pluginDisplayName })
+  }
 
-  return fallbackEntries.map(([rawName, rawConfig]) => {
+  return entries.map(({ forcedLocal, rawName, rawConfig }) => {
     const config = isRecord(rawConfig) ? rawConfig : {}
-    const name = rawName.trim() || input.plugin.displayName
+    const name = boundedPublisherName(rawName, pluginDisplayName)
     const url = typeof config.url === "string" ? config.url.trim() : ""
     const type = typeof config.type === "string" ? config.type.trim().toLowerCase() : ""
     const command = typeof config.command === "string"
@@ -3485,9 +3819,21 @@ function mcpServerEntriesFromPayload(input: {
         ? "local command"
         : ""
 
+    if (forcedLocal) {
+      return githubPluginMcpImportServer({
+        connectionId: null,
+        name,
+        pluginKey: input.plugin.key,
+        pluginName: input.plugin.displayName,
+        skippedReason: "local_unsupported",
+        sourcePath: input.sourcePath,
+        supported: false,
+        url: null,
+      })
+    }
+
     if (!url) {
       return githubPluginMcpImportServer({
-        authType: "oauth",
         connectionId: null,
         name,
         pluginKey: input.plugin.key,
@@ -3499,12 +3845,24 @@ function mcpServerEntriesFromPayload(input: {
       })
     }
 
+    if (url.length > MAX_IMPORTED_MCP_URL_LENGTH) {
+      return githubPluginMcpImportServer({
+        connectionId: null,
+        name,
+        pluginKey: input.plugin.key,
+        pluginName: input.plugin.displayName,
+        skippedReason: "invalid_url",
+        sourcePath: input.sourcePath,
+        supported: false,
+        url: null,
+      })
+    }
+
     let parsedUrl: URL
     try {
       parsedUrl = new URL(url)
     } catch {
       return githubPluginMcpImportServer({
-        authType: "oauth",
         connectionId: null,
         name,
         pluginKey: input.plugin.key,
@@ -3512,13 +3870,33 @@ function mcpServerEntriesFromPayload(input: {
         skippedReason: "invalid_url",
         sourcePath: input.sourcePath,
         supported: false,
-        url,
+        // Do not reflect an unparseable publisher-controlled value. It may
+        // contain a credential-like substring that URLSearchParams cannot
+        // safely classify.
+        url: null,
+      })
+    }
+
+    if (
+      parsedUrl.hash
+      || parsedUrl.username
+      || parsedUrl.password
+      || [...parsedUrl.searchParams.keys()].some(isSensitiveExternalMcpCredentialKey)
+    ) {
+      return githubPluginMcpImportServer({
+        connectionId: null,
+        name,
+        pluginKey: input.plugin.key,
+        pluginName: input.plugin.displayName,
+        skippedReason: "invalid_url",
+        sourcePath: input.sourcePath,
+        supported: false,
+        url: null,
       })
     }
 
     if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
       return githubPluginMcpImportServer({
-        authType: "oauth",
         connectionId: null,
         name,
         pluginKey: input.plugin.key,
@@ -3526,13 +3904,26 @@ function mcpServerEntriesFromPayload(input: {
         skippedReason: "invalid_url",
         sourcePath: input.sourcePath,
         supported: false,
-        url,
+        url: null,
+      })
+    }
+
+    const normalizedUrl = parsedUrl.toString()
+    if (normalizedUrl.length > MAX_IMPORTED_MCP_URL_LENGTH) {
+      return githubPluginMcpImportServer({
+        connectionId: null,
+        name,
+        pluginKey: input.plugin.key,
+        pluginName: input.plugin.displayName,
+        skippedReason: "invalid_url",
+        sourcePath: input.sourcePath,
+        supported: false,
+        url: null,
       })
     }
 
     if (type && type !== "http" && type !== "remote" && type !== "streamable-http" && type !== "sse") {
       return githubPluginMcpImportServer({
-        authType: "oauth",
         connectionId: null,
         name,
         pluginKey: input.plugin.key,
@@ -3540,12 +3931,11 @@ function mcpServerEntriesFromPayload(input: {
         skippedReason: "local_unsupported",
         sourcePath: input.sourcePath,
         supported: false,
-        url,
+        url: normalizedUrl,
       })
     }
 
     return githubPluginMcpImportServer({
-      authType: "oauth",
       connectionId: null,
       name,
       pluginKey: input.plugin.key,
@@ -3553,8 +3943,8 @@ function mcpServerEntriesFromPayload(input: {
       skippedReason: null,
       sourcePath: input.sourcePath,
       supported: true,
-      url,
-    })
+      url: normalizedUrl,
+    }, config)
   })
 }
 
@@ -3624,9 +4014,122 @@ function skillEntryFromSource(input: {
   }
 }
 
-async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; includeSkillText?: boolean }): Promise<GithubPluginMcpImportPlan> {
+const MAX_GITHUB_MCP_LIVE_DISCOVERIES = 12
+const MAX_GITHUB_MCP_IMPORT_SELECTIONS = 12
+const GITHUB_MCP_DISCOVERY_CONCURRENCY = 4
+const GITHUB_MCP_DISCOVERY_TIMEOUT_MS = 4_000
+const GITHUB_MCP_PREVIEW_OPERATION_TIMEOUT_MS = 18_000
+const MARKETPLACE_MCP_CONFIGURE_OPERATION_TIMEOUT_MS = 15_000
+// Stay comfortably below the dashboard's 30s request timeout so a client
+// never retries while the first import can still materialize state.
+const GITHUB_MCP_IMPORT_OPERATION_TIMEOUT_MS = 24_000
+// GitHub/network inspection must leave a deterministic database window. The
+// import still has a 24s server ceiling, while the dashboard retains another
+// 6s to receive the response (or a completed rollback) before its own timeout.
+const GITHUB_MCP_IMPORT_MATERIALIZATION_RESERVE_MS = 6_000
+const GITHUB_MCP_IMPORT_FINAL_COMMIT_RESERVE_MS = 1_500
+const MAX_GITHUB_MCP_IMPORT_COMPONENTS = 12
+const MAX_GITHUB_MCP_IMPORT_ACCESS_TARGETS = 100
+
+function marketplaceMcpRemainingTimeoutMs(deadlineAt: number, maximumMs: number) {
+  const remainingMs = deadlineAt - Date.now()
+  if (remainingMs <= 0) {
+    throw new PluginArchRouteFailure(
+      502,
+      "marketplace_mcp_configuration_timeout",
+      "MCP inspection and validation exceeded its total time limit. Retry the configuration.",
+    )
+  }
+  return Math.max(1, Math.min(maximumMs, remainingMs))
+}
+
+function githubMcpRemainingTimeoutMs(deadlineAt: number, maximumMs: number) {
+  const remainingMs = deadlineAt - Date.now()
+  if (remainingMs <= 0) {
+    throw new PluginArchRouteFailure(
+      502,
+      "github_import_timeout",
+      "GitHub plugin inspection and MCP validation exceeded its total time limit. Retry or select fewer servers.",
+    )
+  }
+  return Math.max(1, Math.min(maximumMs, remainingMs))
+}
+
+function requireGithubImportTime(deadlineAt: number, minimumRemainingMs = 1) {
+  const remainingMs = deadlineAt - Date.now()
+  if (remainingMs < minimumRemainingMs) {
+    throw new PluginArchRouteFailure(
+      502,
+      "github_import_timeout",
+      "GitHub plugin import exceeded its bounded server time. Retry or select fewer components.",
+    )
+  }
+  return remainingMs
+}
+
+async function mapWithConcurrency<TInput, TOutput>(input: {
+  concurrency: number
+  items: TInput[]
+  map: (item: TInput, index: number) => Promise<TOutput>
+}): Promise<TOutput[]> {
+  const output = new Array<TOutput>(input.items.length)
+  let nextIndex = 0
+  const workers = Array.from({ length: Math.min(input.concurrency, input.items.length) }, async () => {
+    while (nextIndex < input.items.length) {
+      const index = nextIndex++
+      output[index] = await input.map(input.items[index] as TInput, index)
+    }
+  })
+  await Promise.all(workers)
+  return output
+}
+
+async function discoverGithubPluginMcpImportServers(input: {
+  deadlineAt: number
+  live: boolean
+  servers: GithubPluginMcpImportServer[]
+}) {
+  const liveServerIndexes = new Set(input.live ? input.servers
+    .flatMap((server, index) => server.supported && server.url ? [index] : [])
+    .slice(0, MAX_GITHUB_MCP_LIVE_DISCOVERIES) : [])
+  const unavailableFetch = async (): Promise<Response> => {
+    throw new Error("Live MCP discovery was not scheduled for this preview item.")
+  }
+
+  return mapWithConcurrency({
+    concurrency: GITHUB_MCP_DISCOVERY_CONCURRENCY,
+    items: input.servers,
+    map: async (server, index) => {
+      if (!server.supported || !server.url) return server
+      const manifestConfig = githubPluginMcpManifestByServer.get(server)
+      const discovery = await discoverExternalMcpConfiguration({
+        config: manifestConfig,
+        ...(liveServerIndexes.has(index) ? {} : { fetch: unavailableFetch }),
+        timeoutMs: githubMcpRemainingTimeoutMs(input.deadlineAt, GITHUB_MCP_DISCOVERY_TIMEOUT_MS),
+        url: server.url,
+      })
+      const discoveredServer: GithubPluginMcpImportServer = discovery.support.status === "unsupported"
+        ? { ...server, authType: discovery.auth.kind, discovery, skippedReason: "unsupported_configuration" as const, supported: false }
+        : { ...server, authType: discovery.auth.kind, discovery }
+      // Spreading creates a new object identity. Rebind the internal-only
+      // manifest so import-time scope/config validation sees the exact source
+      // that produced this preview without serializing secret placeholders.
+      if (manifestConfig) githubPluginMcpManifestByServer.set(discoveredServer, manifestConfig)
+      return discoveredServer
+    },
+  })
+}
+
+async function computeGithubPluginMcpImportPlan(input: {
+  githubUrl: string
+  includeDiscovery?: boolean
+  includeSkillText?: boolean
+  operationDeadlineAt?: number
+}): Promise<GithubPluginMcpImportPlan> {
+  const operationDeadlineAt = input.operationDeadlineAt
+    ?? Date.now() + GITHUB_MCP_PREVIEW_OPERATION_TIMEOUT_MS
   const target = parsePublicGithubPluginUrl(input.githubUrl)
-  const snapshot = await getPublicGithubRepositoryTree(target)
+  const snapshot = await getPublicGithubRepositoryTree(target, operationDeadlineAt)
   const fileTextByPath = await getPublicGithubDiscoveryFileTexts(snapshot)
   const discovery = buildGithubRepoDiscovery({
     entries: snapshot.treeEntries,
@@ -3644,22 +4147,25 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
     for (const plan of componentPlans.filter((entry) => entry.objectType === "mcp")) {
       for (const path of plan.paths) {
         const rawSourceText = await getPublicGithubTextFile({
-          branch: snapshot.branch,
           discoveryPath: path,
           snapshot,
         })
         if (!rawSourceText) continue
-        servers.push(...mcpServerEntriesFromPayload({
+        const declaredServers = mcpServerEntriesFromPayload({
+          declarationLimit: PUBLIC_GITHUB_IMPORT_LIMITS.declaredMcpServers - servers.length,
           plugin,
           rawSourceText,
           sourcePath: path,
-        }))
+        })
+        for (const server of declaredServers) {
+          if (servers.length >= PUBLIC_GITHUB_IMPORT_LIMITS.declaredMcpServers) declaredGithubMcpLimitFailure()
+          servers.push(server)
+        }
       }
     }
     for (const plan of componentPlans.filter((entry) => entry.objectType === "skill")) {
       for (const path of plan.paths) {
         const rawSourceText = await getPublicGithubTextFile({
-          branch: snapshot.branch,
           discoveryPath: path,
           snapshot,
         })
@@ -3674,13 +4180,26 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
     }
   }
 
+  const serverByKey = new Map<string, GithubPluginMcpImportServer>()
+  for (const server of servers) {
+    if (!serverByKey.has(server.serverKey)) serverByKey.set(server.serverKey, server)
+  }
+  const uniqueServers = [...serverByKey.values()]
+  const duplicateServerCount = servers.length - uniqueServers.length
+  const discoveredServerCount = uniqueServers.filter((server) => server.supported && server.url).length
+  const serversWithDiscovery = await discoverGithubPluginMcpImportServers({
+    deadlineAt: operationDeadlineAt,
+    live: input.includeDiscovery !== false,
+    servers: uniqueServers,
+  })
+
   const plugins = discovery.discoveredPlugins
     .filter((plugin) => plugin.supported)
     .map((plugin) => ({
       description: plugin.description,
       key: plugin.key,
-      mcpCount: servers.filter((server) => server.pluginKey === plugin.key && server.supported).length,
-      name: plugin.displayName,
+      mcpCount: serversWithDiscovery.filter((server) => server.pluginKey === plugin.key && server.supported).length,
+      name: boundedPublisherName(plugin.displayName, "GitHub plugin"),
       skillCount: skills.filter((skill) => skill.pluginKey === plugin.key && skill.supported).length,
     } satisfies GithubPluginMcpImportPlugin))
     .filter((plugin) => plugin.mcpCount > 0 || plugin.skillCount > 0)
@@ -3692,12 +4211,15 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
     plugins,
     repositoryFullName: snapshot.repositoryFullName,
     rootPath: snapshot.rootPath,
-    servers,
+    servers: serversWithDiscovery,
     skills,
     sourceRevisionRef: snapshot.headSha,
     warnings: [
       ...discovery.warnings,
-      ...(snapshot.truncated ? ["GitHub truncated the repository tree; some MCP files may be missing."] : []),
+      ...(duplicateServerCount > 0 ? [`Ignored ${duplicateServerCount} duplicate MCP server declaration${duplicateServerCount === 1 ? "" : "s"} with the same stable key.`] : []),
+      ...(input.includeDiscovery !== false && discoveredServerCount > MAX_GITHUB_MCP_LIVE_DISCOVERIES
+        ? [`Live MCP discovery is capped at ${MAX_GITHUB_MCP_LIVE_DISCOVERIES} servers per preview. Remaining servers use manifest-only configuration guidance.`]
+        : []),
     ],
   }
 }
@@ -3756,8 +4278,33 @@ function parseConfigObjectInputSpec(input: ConfigObjectInput): Record<string, un
   }
 }
 
+function ownedImportedExternalMcpConnectionId(spec: Record<string, unknown>) {
+  if (spec.externalMcpConnectionOwnedByPlugin !== true) return null
+  return readRecordString(spec, "externalMcpConnectionId") || null
+}
+
+async function deleteOwnedImportedExternalMcpConnectionsWithoutBindings(input: {
+  connectionIds: string[]
+  organizationId: OrganizationId
+}) {
+  for (const rawConnectionId of new Set(input.connectionIds)) {
+    let connectionId: ExternalMcpConnectionRow["id"]
+    try {
+      connectionId = normalizeDenTypeId("externalMcpConnection", rawConnectionId)
+    } catch {
+      continue
+    }
+    await deleteExternalMcpConnectionIfUnused({
+      allowConnectedAt: true,
+      connectionId,
+      organizationId: input.organizationId,
+    })
+  }
+}
+
 async function deleteStalePluginMcpRequirementBindingsForConfigObject(input: {
   configObject: ConfigObjectRow
+  previousVersion: ConfigObjectVersionRow | null
   spec: Record<string, unknown>
 }) {
   if (input.configObject.objectType !== "mcp") return
@@ -3780,7 +4327,20 @@ async function deleteStalePluginMcpRequirementBindingsForConfigObject(input: {
       ? []
       : [row.binding.id]
   })
+  const previouslyOwnedConnectionId = input.previousVersion
+    ? ownedImportedExternalMcpConnectionId(parseConfigObjectVersionSpec(input.previousVersion))
+    : null
+  const ownedConnectionIds = bindings.flatMap((row) => previouslyOwnedConnectionId === row.connection.id
+    ? [row.connection.id]
+    : [])
   await deletePluginMcpRequirementBindingsByIds({ bindingIds: staleBindingIds })
+  const staleBindingIdSet = new Set(staleBindingIds)
+  await deleteOwnedImportedExternalMcpConnectionsWithoutBindings({
+    connectionIds: bindings.flatMap((row) => staleBindingIdSet.has(row.binding.id) && ownedConnectionIds.includes(row.connection.id)
+      ? [row.connection.id]
+      : []),
+    organizationId: input.configObject.organizationId,
+  })
 }
 
 function mcpRequirementServerFromVersion(input: {
@@ -3824,9 +4384,8 @@ async function assertRemotePluginMcpUrl(url: string) {
     throw new PluginArchRouteFailure(400, "invalid_mcp_url", "MCP URLs must not contain embedded credentials.")
   }
 
-  const sensitiveParameters = new Set(["access_token", "api_key", "client_secret", "token", "refresh_token", "id_token", "code_verifier"])
   for (const parameter of parsed.searchParams.keys()) {
-    if (sensitiveParameters.has(parameter.toLowerCase())) {
+    if (isSensitiveExternalMcpCredentialKey(parameter)) {
       throw new PluginArchRouteFailure(400, "invalid_mcp_url", `MCP URL query parameter "${parameter}" must not contain credentials.`)
     }
   }
@@ -3909,6 +4468,100 @@ async function derivePluginMcpRequirementAccess(input: {
         inArray(MarketplaceAccessGrantTable.marketplaceId, marketplaceIds),
         isNull(MarketplaceAccessGrantTable.removedAt),
       ))
+    : []
+  const grants = [...configObjectGrants, ...pluginGrants, ...marketplaceGrants]
+  return {
+    orgWide: grants.some((grant) => grant.orgWide),
+    memberIds: sortedUnique(grants.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : [])),
+    teamIds: sortedUnique(grants.flatMap((grant) => grant.teamId ? [grant.teamId] : [])),
+  }
+}
+
+async function derivePluginMcpRequirementAccessForCommit(input: {
+  configObjectId: ConfigObjectId
+  organizationId: OrganizationId
+  pluginId: PluginId
+  tx: DbTransaction
+}): Promise<PluginMcpRequirementAccess> {
+  // This active membership row is the stable per-requirement mutex. It also
+  // orders concurrent configure calls before either can publish a connection.
+  const activeRows = await input.tx
+    .select({ id: PluginConfigObjectTable.id })
+    .from(PluginConfigObjectTable)
+    .innerJoin(PluginTable, eq(PluginConfigObjectTable.pluginId, PluginTable.id))
+    .innerJoin(ConfigObjectTable, eq(PluginConfigObjectTable.configObjectId, ConfigObjectTable.id))
+    .where(and(
+      eq(PluginConfigObjectTable.organizationId, input.organizationId),
+      eq(PluginConfigObjectTable.pluginId, input.pluginId),
+      eq(PluginConfigObjectTable.configObjectId, input.configObjectId),
+      isNull(PluginConfigObjectTable.removedAt),
+      eq(PluginTable.organizationId, input.organizationId),
+      eq(PluginTable.status, "active"),
+      isNull(PluginTable.deletedAt),
+      eq(ConfigObjectTable.organizationId, input.organizationId),
+      eq(ConfigObjectTable.status, "active"),
+      isNull(ConfigObjectTable.deletedAt),
+    ))
+    .limit(1)
+    .for("update")
+  if (!activeRows[0]) {
+    throw new PluginArchRouteFailure(409, "mcp_requirement_changed", "The plugin MCP requirement changed while it was being configured. Inspect it again and retry.")
+  }
+
+  const marketplaceRows = await input.tx
+    .select({ marketplaceId: MarketplacePluginTable.marketplaceId })
+    .from(MarketplacePluginTable)
+    .innerJoin(MarketplaceTable, eq(MarketplacePluginTable.marketplaceId, MarketplaceTable.id))
+    .where(and(
+      eq(MarketplacePluginTable.organizationId, input.organizationId),
+      eq(MarketplacePluginTable.pluginId, input.pluginId),
+      isNull(MarketplacePluginTable.removedAt),
+      eq(MarketplaceTable.organizationId, input.organizationId),
+      eq(MarketplaceTable.status, "active"),
+      isNull(MarketplaceTable.deletedAt),
+    ))
+    .for("update")
+  const marketplaceIds = marketplaceRows.map((row) => row.marketplaceId)
+  const configObjectGrants = await input.tx
+    .select({
+      orgMembershipId: ConfigObjectAccessGrantTable.orgMembershipId,
+      orgWide: ConfigObjectAccessGrantTable.orgWide,
+      teamId: ConfigObjectAccessGrantTable.teamId,
+    })
+    .from(ConfigObjectAccessGrantTable)
+    .where(and(
+      eq(ConfigObjectAccessGrantTable.organizationId, input.organizationId),
+      eq(ConfigObjectAccessGrantTable.configObjectId, input.configObjectId),
+      isNull(ConfigObjectAccessGrantTable.removedAt),
+    ))
+    .for("update")
+  const pluginGrants = await input.tx
+    .select({
+      orgMembershipId: PluginAccessGrantTable.orgMembershipId,
+      orgWide: PluginAccessGrantTable.orgWide,
+      teamId: PluginAccessGrantTable.teamId,
+    })
+    .from(PluginAccessGrantTable)
+    .where(and(
+      eq(PluginAccessGrantTable.organizationId, input.organizationId),
+      eq(PluginAccessGrantTable.pluginId, input.pluginId),
+      isNull(PluginAccessGrantTable.removedAt),
+    ))
+    .for("update")
+  const marketplaceGrants = marketplaceIds.length > 0
+    ? await input.tx
+      .select({
+        orgMembershipId: MarketplaceAccessGrantTable.orgMembershipId,
+        orgWide: MarketplaceAccessGrantTable.orgWide,
+        teamId: MarketplaceAccessGrantTable.teamId,
+      })
+      .from(MarketplaceAccessGrantTable)
+      .where(and(
+        eq(MarketplaceAccessGrantTable.organizationId, input.organizationId),
+        inArray(MarketplaceAccessGrantTable.marketplaceId, marketplaceIds),
+        isNull(MarketplaceAccessGrantTable.removedAt),
+      ))
+      .for("update")
     : []
   const grants = [...configObjectGrants, ...pluginGrants, ...marketplaceGrants]
   return {
@@ -4026,6 +4679,16 @@ function normalizedPluginMcpApiKey(apiKey?: string) {
   return trimmed ? trimmed : null
 }
 
+function sameRequestedOAuthScopes(
+  left: readonly string[] | null | undefined,
+  right: readonly string[] | null | undefined,
+) {
+  const normalizedLeft = normalizeExternalMcpRequestedOAuthScopes(left)?.slice().sort() ?? []
+  const normalizedRight = normalizeExternalMcpRequestedOAuthScopes(right)?.slice().sort() ?? []
+  return normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((scope, index) => scope === normalizedRight[index])
+}
+
 function validatePluginMcpRequirementAuth(input: {
   apiKey?: string
   authType: PluginMcpRequirementAuthType
@@ -4050,6 +4713,84 @@ function validatePluginMcpRequirementAuth(input: {
   }
 }
 
+function assertPluginMcpDiscoveryAllowsConfiguration(input: {
+  authType: PluginMcpRequirementAuthType
+  discovery: ExternalMcpConfigurationDiscovery
+  oauthClient?: { clientId: string; clientSecret?: string }
+  requireVerifiedOauthPkce?: boolean
+}) {
+  if (input.discovery.support.status === "unsupported"
+    || input.discovery.inputs.some((field) => field.required && !field.supported)) {
+    throw new PluginArchRouteFailure(
+      409,
+      "unsupported_mcp_configuration",
+      "This MCP declaration requires transport or configuration values OpenWork Cloud cannot apply safely.",
+    )
+  }
+  if (input.discovery.auth.kind !== "unknown" && input.discovery.auth.kind !== input.authType) {
+    throw new PluginArchRouteFailure(
+      409,
+      "mcp_auth_discovery_mismatch",
+      `The MCP server advertises ${input.discovery.auth.kind} authentication, not ${input.authType}. Inspect it again before configuring the connection.`,
+    )
+  }
+  if (input.authType !== "oauth" || !input.discovery.oauth) return
+  if (input.requireVerifiedOauthPkce && (
+    input.discovery.oauth.pkce !== "s256"
+    || (input.discovery.auth.source !== "live_protocol" && input.discovery.auth.source !== "oauth_metadata")
+  )) {
+    throw new PluginArchRouteFailure(
+      409,
+      "mcp_oauth_pkce_unverified",
+      "OpenWork could not verify this MCP server's live OAuth metadata and PKCE S256 support. Retry after the provider endpoint is available.",
+    )
+  }
+  if (input.discovery.oauth.pkce === "missing") {
+    throw new PluginArchRouteFailure(
+      409,
+      "mcp_oauth_pkce_unsupported",
+      "The MCP authorization server does not advertise required PKCE S256 support.",
+    )
+  }
+  if (input.discovery.oauth.clientIdRequired && !input.oauthClient?.clientId) {
+    throw new PluginArchRouteFailure(
+      400,
+      "mcp_oauth_client_required",
+      "This MCP server requires a pre-registered OAuth client ID.",
+    )
+  }
+  if (input.discovery.oauth.clientSecretRequired && !input.oauthClient?.clientSecret) {
+    throw new PluginArchRouteFailure(
+      400,
+      "mcp_oauth_client_secret_required",
+      "This MCP server requires a pre-registered OAuth client secret.",
+    )
+  }
+}
+
+function trustedPluginMcpRequestedOAuthScopes(input: {
+  discovery: ExternalMcpConfigurationDiscovery
+  server: PluginMcpRequirementServer
+}) {
+  const scopesSource = input.discovery.oauth?.scopesSource
+  if (scopesSource === "challenge"
+    || scopesSource === "protected_resource"
+    || scopesSource === "plugin_manifest") {
+    return normalizeExternalMcpRequestedOAuthScopes(input.discovery.oauth?.scopes) ?? []
+  }
+  // A manually selected OAuth flow can still carry publisher-declared scopes
+  // even when live probing could not establish enough metadata to build an
+  // OAuth descriptor. Never substitute the authorization server's broad
+  // scopes_supported catalog for resource requirements.
+  if (!input.discovery.oauth) {
+    return normalizeExternalMcpRequestedOAuthScopes(inferExternalMcpManifestConfiguration({
+      config: input.server.config,
+      url: input.server.url,
+    }).scopes) ?? []
+  }
+  return []
+}
+
 async function connectionCompatibleWithRequirement(input: {
   apiKey?: string | null
   authType: PluginMcpRequirementAuthType
@@ -4057,12 +4798,16 @@ async function connectionCompatibleWithRequirement(input: {
   credentialMode: PluginMcpRequirementCredentialMode
   oauthClient?: { clientId: string; clientSecret?: string }
   organizationId: OrganizationId
+  requestedOAuthScopes?: string[]
   url: string
 }) {
   const baseCompatible = comparablePluginMcpRequirementUrl(input.connection.url) === comparablePluginMcpRequirementUrl(input.url)
     && input.connection.authType === input.authType
     && input.connection.credentialMode === input.credentialMode
   if (!baseCompatible) return false
+  if (input.authType === "oauth"
+    && input.connection.requestedOAuthScopes?.length
+    && !sameRequestedOAuthScopes(input.connection.requestedOAuthScopes, input.requestedOAuthScopes)) return false
   if (input.authType === "apikey") {
     const apiKey = normalizedPluginMcpApiKey(input.apiKey ?? undefined)
     return Boolean(apiKey) && input.connection.apiKey === apiKey
@@ -4073,16 +4818,22 @@ async function connectionCompatibleWithRequirement(input: {
 }
 
 async function createOrReusePluginMcpRequirementConnection(input: {
-  access: PluginMcpRequirementAccess
   apiKey?: string | null
   authType: PluginMcpRequirementAuthType
   context: PluginArchActorContext
   credentialMode: PluginMcpRequirementCredentialMode
   oauthClient?: { clientId: string; clientSecret?: string }
   plugin: PluginRow
+  requestedOAuthScopes: string[]
   server: PluginMcpRequirementServer
-}): Promise<{ connection: ExternalMcpConnectionRow; created: boolean }> {
+}): Promise<{
+  connection: ExternalMcpConnectionRow
+  created: boolean
+  requestedOAuthScopes: string[]
+  shouldAdoptRequestedOAuthScopes: boolean
+}> {
   const organizationId = input.context.organizationContext.organization.id
+  const requestedOAuthScopes = input.authType === "oauth" ? input.requestedOAuthScopes : []
   const connections = await listExternalMcpConnections(organizationId)
   let compatible: ExternalMcpConnectionRow | null = null
   for (const connection of connections) {
@@ -4093,6 +4844,7 @@ async function createOrReusePluginMcpRequirementConnection(input: {
       credentialMode: input.credentialMode,
       oauthClient: input.oauthClient,
       organizationId,
+      requestedOAuthScopes,
       url: input.server.url,
     })) {
       compatible = connection
@@ -4101,39 +4853,402 @@ async function createOrReusePluginMcpRequirementConnection(input: {
   }
 
   if (compatible) {
-    return { connection: compatible, created: false }
+    return {
+      connection: compatible,
+      created: false,
+      requestedOAuthScopes,
+      shouldAdoptRequestedOAuthScopes: input.authType === "oauth"
+        && !compatible.requestedOAuthScopes?.length
+        && requestedOAuthScopes.length > 0,
+    }
   }
 
-  const created = await createExternalMcpConnection({
-    access: { memberIds: [], orgWide: false, teamIds: [] },
-    apiKey: input.authType === "apikey" ? input.apiKey : null,
+  const now = new Date()
+  const created: ExternalMcpConnectionRow = {
+    id: createDenTypeId("externalMcpConnection"),
+    accessToken: null,
+    apiKey: input.authType === "apikey" ? input.apiKey ?? null : null,
     authType: input.authType,
+    connectedAt: null,
+    createdAt: now,
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
     credentialMode: input.credentialMode,
+    expiresAt: null,
     name: externalMcpConnectionName({ pluginName: input.plugin.name, serverName: input.server.name }),
+    oauthAuthorizationEpoch: 0,
+    oauthRegistrationLeaseStartedAt: null,
+    oauthRegistrationLeaseToken: null,
     organizationId,
+    pendingCodeVerifier: null,
+    refreshToken: null,
+    requestedOAuthScopes: input.authType === "oauth"
+      ? normalizeExternalMcpRequestedOAuthScopes(requestedOAuthScopes)
+      : null,
+    scope: null,
+    tokenType: null,
+    updatedAt: now,
     url: input.server.url,
-  })
-  return { connection: created, created: true }
+  }
+  return {
+    connection: created,
+    created: true,
+    requestedOAuthScopes,
+    shouldAdoptRequestedOAuthScopes: false,
+  }
 }
 
-function pluginMcpValidationRedirectUri(connectionId: string) {
-  const baseUrl = env.apiPublicUrl ?? env.betterAuthUrl
-  return new URL(`/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/callback`, baseUrl).toString()
+function pluginMcpRequirementAccessGrantRows(input: {
+  access: PluginMcpRequirementAccess
+  bindingId: PluginMcpRequirementBindingId
+  connectionId: ExternalMcpConnectionRow["id"]
+  createdByOrgMembershipId: MemberId
+  organizationId: OrganizationId
+}): (typeof ExternalMcpConnectionAccessGrantTable.$inferInsert)[] {
+  const common = {
+    organizationId: input.organizationId,
+    externalMcpConnectionId: input.connectionId,
+    pluginMcpRequirementBindingId: input.bindingId,
+    sourceKey: input.bindingId,
+    createdByOrgMembershipId: input.createdByOrgMembershipId,
+  }
+  if (input.access.orgWide) {
+    return [{
+      ...common,
+      id: createDenTypeId("externalMcpConnectionAccessGrant"),
+      orgWide: true,
+    }]
+  }
+  const rows: (typeof ExternalMcpConnectionAccessGrantTable.$inferInsert)[] = []
+  for (const orgMembershipId of new Set(input.access.memberIds)) {
+    rows.push({
+      ...common,
+      id: createDenTypeId("externalMcpConnectionAccessGrant"),
+      orgMembershipId,
+    })
+  }
+  for (const teamId of new Set(input.access.teamIds)) {
+    rows.push({
+      ...common,
+      id: createDenTypeId("externalMcpConnectionAccessGrant"),
+      teamId,
+    })
+  }
+  return rows
+}
+
+async function commitPluginMcpRequirementConfiguration(input: {
+  apiPublicBaseUrl?: string
+  apiKey: string | null
+  authType: PluginMcpRequirementAuthType
+  configObjectId: ConfigObjectId
+  connectionResult: Awaited<ReturnType<typeof createOrReusePluginMcpRequirementConnection>>
+  context: PluginArchActorContext
+  credentialMode: PluginMcpRequirementCredentialMode
+  inspectedBinding: PluginMcpRequirementBindingRow | null
+  oauthClient?: { clientId: string; clientSecret?: string }
+  operationDeadlineAt?: number
+  pluginId: PluginId
+  serverName: string
+}) {
+  const organizationId = input.context.organizationContext.organization.id
+  const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
+  return db.transaction(async (tx) => {
+    const access = await derivePluginMcpRequirementAccessForCommit({
+      configObjectId: input.configObjectId,
+      organizationId,
+      pluginId: input.pluginId,
+      tx,
+    })
+    // Read the binding identity after acquiring the requirement mutex, then
+    // lock the destination connection before the binding. Connection edits
+    // use the same connection -> binding order, avoiding a deadlock between
+    // marketplace setup and an administrator editing that connection.
+    const observedBindingRows = await tx
+      .select()
+      .from(PluginMcpRequirementBindingTable)
+      .where(and(
+        eq(PluginMcpRequirementBindingTable.organizationId, organizationId),
+        eq(PluginMcpRequirementBindingTable.pluginId, input.pluginId),
+        eq(PluginMcpRequirementBindingTable.configObjectId, input.configObjectId),
+        eq(PluginMcpRequirementBindingTable.serverName, input.serverName),
+      ))
+      .limit(1)
+    const observedBinding = observedBindingRows[0] ?? null
+    if (input.inspectedBinding
+      && (!observedBinding
+        || observedBinding.id !== input.inspectedBinding.id
+        || observedBinding.externalMcpConnectionId !== input.inspectedBinding.externalMcpConnectionId)) {
+      throw new PluginArchRouteFailure(
+        409,
+        "mcp_requirement_binding_changed",
+        "The plugin MCP binding changed while it was being configured. Inspect it again and retry.",
+      )
+    }
+
+    let connection: ExternalMcpConnectionRow | undefined
+    if (!input.inspectedBinding && observedBinding) {
+      // Another configure request won the requirement mutex after this one
+      // inspected an empty binding. Reconcile to its connection instead of
+      // publishing a second row and orphaning the winner.
+      const connectionRows = await tx
+        .select()
+        .from(ExternalMcpConnectionTable)
+        .where(and(
+          eq(ExternalMcpConnectionTable.organizationId, organizationId),
+          eq(ExternalMcpConnectionTable.id, observedBinding.externalMcpConnectionId),
+        ))
+        .limit(1)
+        .for("update")
+      connection = connectionRows[0]
+    } else if (input.connectionResult.created) {
+      // New rows remain invisible until the entire configuration commits.
+      // Validation already ran against this in-memory row, so no orphan can
+      // escape if a later client, binding, access, or adoption write fails.
+      await tx.insert(ExternalMcpConnectionTable).values(input.connectionResult.connection)
+      connection = input.connectionResult.connection
+    } else {
+      const connectionRows = await tx
+        .select()
+        .from(ExternalMcpConnectionTable)
+        .where(and(
+          eq(ExternalMcpConnectionTable.organizationId, organizationId),
+          eq(ExternalMcpConnectionTable.id, input.connectionResult.connection.id),
+        ))
+        .limit(1)
+        .for("update")
+      connection = connectionRows[0]
+    }
+
+    const bindingRows = await tx
+      .select()
+      .from(PluginMcpRequirementBindingTable)
+      .where(and(
+        eq(PluginMcpRequirementBindingTable.organizationId, organizationId),
+        eq(PluginMcpRequirementBindingTable.pluginId, input.pluginId),
+        eq(PluginMcpRequirementBindingTable.configObjectId, input.configObjectId),
+        eq(PluginMcpRequirementBindingTable.serverName, input.serverName),
+      ))
+      .limit(1)
+      .for("update")
+    const currentBinding = bindingRows[0] ?? null
+    if ((observedBinding === null) !== (currentBinding === null)
+      || (observedBinding && currentBinding && (
+        observedBinding.id !== currentBinding.id
+        || observedBinding.externalMcpConnectionId !== currentBinding.externalMcpConnectionId
+      ))) {
+      throw new PluginArchRouteFailure(
+        409,
+        "mcp_requirement_binding_changed",
+        "The plugin MCP binding changed while it was being configured. Inspect it again and retry.",
+      )
+    }
+    if (!connection
+      || comparablePluginMcpRequirementUrl(connection.url) !== comparablePluginMcpRequirementUrl(input.connectionResult.connection.url)
+      || connection.authType !== input.authType
+      || connection.credentialMode !== input.credentialMode
+      || (input.authType === "apikey" && connection.apiKey !== input.apiKey)) {
+      throw new PluginArchRouteFailure(
+        409,
+        "external_mcp_connection_changed",
+        "The MCP connection changed while this plugin was being configured. Inspect it again and retry.",
+      )
+    }
+    if (input.authType === "oauth") {
+      const liveScopes = connection.requestedOAuthScopes
+      const inspectedScopes = input.connectionResult.connection.requestedOAuthScopes
+      const liveScopesConflict = liveScopes?.length
+        ? !sameRequestedOAuthScopes(liveScopes, input.connectionResult.requestedOAuthScopes)
+        : Boolean(inspectedScopes?.length)
+      if (liveScopesConflict) {
+        throw new PluginArchRouteFailure(
+          409,
+          "external_mcp_connection_changed",
+          "The MCP connection scopes changed while this plugin was being configured. Inspect it again and retry.",
+        )
+      }
+    }
+
+    if (input.operationDeadlineAt !== undefined) {
+      marketplaceMcpRemainingTimeoutMs(input.operationDeadlineAt, MARKETPLACE_MCP_CONFIGURE_OPERATION_TIMEOUT_MS)
+    }
+
+    if (input.oauthClient) {
+      const clientRows = await tx
+        .select()
+        .from(OrgOAuthClientTable)
+        .where(and(
+          eq(OrgOAuthClientTable.organizationId, organizationId),
+          eq(OrgOAuthClientTable.providerId, connection.id),
+        ))
+        .limit(1)
+        .for("update")
+      const existingClient = clientRows[0]
+      if (existingClient && existingClient.clientId !== input.oauthClient.clientId) {
+        throw new PluginArchRouteFailure(
+          409,
+          "external_mcp_connection_oauth_client_mismatch",
+          "The MCP OAuth client changed while this plugin was being configured. Inspect it again and retry.",
+        )
+      }
+      if (existingClient) {
+        await tx
+          .update(OrgOAuthClientTable)
+          .set({
+            clientId: input.oauthClient.clientId,
+            ...(input.oauthClient.clientSecret !== undefined
+              ? { clientSecret: input.oauthClient.clientSecret }
+              : {}),
+            extra: externalMcpPreRegisteredClientExtra(),
+          })
+          .where(eq(OrgOAuthClientTable.id, existingClient.id))
+      } else {
+        await tx.insert(OrgOAuthClientTable).values({
+          id: createDenTypeId("orgOAuthClient"),
+          organizationId,
+          providerId: connection.id,
+          clientId: input.oauthClient.clientId,
+          clientSecret: input.oauthClient.clientSecret ?? null,
+          extra: externalMcpPreRegisteredClientExtra(),
+          createdByOrgMembershipId,
+        })
+      }
+    }
+
+    const now = new Date()
+    let binding: PluginMcpRequirementBindingRow
+    if (currentBinding) {
+      await tx
+        .update(PluginMcpRequirementBindingTable)
+        .set({ externalMcpConnectionId: connection.id, updatedAt: now })
+        .where(eq(PluginMcpRequirementBindingTable.id, currentBinding.id))
+      binding = {
+        ...currentBinding,
+        externalMcpConnectionId: connection.id,
+        updatedAt: now,
+      }
+    } else {
+      binding = {
+        id: createDenTypeId("pluginMcpRequirementBinding"),
+        organizationId,
+        pluginId: input.pluginId,
+        configObjectId: input.configObjectId,
+        serverName: input.serverName,
+        externalMcpConnectionId: connection.id,
+        createdByOrgMembershipId,
+        createdAt: now,
+        updatedAt: now,
+      }
+      await tx.insert(PluginMcpRequirementBindingTable).values(binding)
+    }
+
+    await tx
+      .delete(ExternalMcpConnectionAccessGrantTable)
+      .where(eq(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId, binding.id))
+    const accessRows = pluginMcpRequirementAccessGrantRows({
+      access,
+      bindingId: binding.id,
+      connectionId: connection.id,
+      createdByOrgMembershipId,
+      organizationId,
+    })
+    if (accessRows.length > 0) {
+      await tx.insert(ExternalMcpConnectionAccessGrantTable).values(accessRows)
+    }
+
+    let committedConnection = connection
+    if (input.authType === "none") {
+      await tx
+        .update(ExternalMcpConnectionTable)
+        .set({ connectedAt: now })
+        .where(eq(ExternalMcpConnectionTable.id, connection.id))
+      committedConnection = { ...committedConnection, connectedAt: now }
+    }
+
+    // Scope adoption is deliberately the final database mutation group. It
+    // revokes legacy tokens/accounts, so it must share this transaction with
+    // the client, binding, and sourced-grant writes and leave no later
+    // fallible persistence step that could commit a half-configured request.
+    if (input.connectionResult.shouldAdoptRequestedOAuthScopes
+      && !connection.requestedOAuthScopes?.length) {
+      const requestedOAuthScopes = normalizeExternalMcpRequestedOAuthScopes(input.connectionResult.requestedOAuthScopes)
+      if (!requestedOAuthScopes?.length) {
+        throw new PluginArchRouteFailure(409, "external_mcp_connection_changed", "The MCP connection scopes could not be adopted. Inspect it again and retry.")
+      }
+      await tx
+        .update(ExternalMcpConnectionTable)
+        .set({
+          accessToken: null,
+          connectedAt: null,
+          expiresAt: null,
+          oauthAuthorizationEpoch: connection.oauthAuthorizationEpoch + 1,
+          oauthRegistrationLeaseStartedAt: null,
+          oauthRegistrationLeaseToken: null,
+          pendingCodeVerifier: null,
+          refreshToken: null,
+          requestedOAuthScopes,
+          scope: null,
+          tokenType: null,
+        })
+        .where(eq(ExternalMcpConnectionTable.id, connection.id))
+      await tx.delete(ConnectedAccountTable).where(and(
+        eq(ConnectedAccountTable.organizationId, organizationId),
+        eq(ConnectedAccountTable.providerId, connection.id),
+      ))
+      await tx.delete(ExternalMcpOAuthTransactionTable).where(and(
+        eq(ExternalMcpOAuthTransactionTable.organizationId, organizationId),
+        eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, connection.id),
+      ))
+      committedConnection = {
+        ...committedConnection,
+        accessToken: null,
+        connectedAt: null,
+        expiresAt: null,
+        oauthAuthorizationEpoch: connection.oauthAuthorizationEpoch + 1,
+        oauthRegistrationLeaseStartedAt: null,
+        oauthRegistrationLeaseToken: null,
+        pendingCodeVerifier: null,
+        refreshToken: null,
+        requestedOAuthScopes,
+        scope: null,
+        tokenType: null,
+      }
+    }
+
+    return {
+      binding: serializePluginMcpRequirementBinding(binding),
+      connection: serializePluginMcpRequirementConnection(committedConnection),
+      links: {
+        ...(input.authType === "oauth" && input.oauthClient
+          ? { oauthCallback: pluginMcpValidationRedirectUri(connection.id, input.apiPublicBaseUrl) }
+          : {}),
+        yourConnections: openworkYourConnectionsUrl(connection.id),
+      },
+    }
+  })
+}
+
+function pluginMcpValidationRedirectUri(connectionId: string, apiPublicBaseUrl?: string) {
+  const baseUrl = apiPublicBaseUrl ?? env.apiPublicUrl ?? env.betterAuthUrl
+  return appendPublicApiPath(baseUrl, `/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/callback`)
 }
 
 async function validateConfiguredPluginMcpConnection(input: {
   authType: PluginMcpRequirementAuthType
+  apiPublicBaseUrl?: string
   connection: ExternalMcpConnectionRow
+  lifecycleDeadline?: ReturnType<typeof createExternalMcpLifecycleDeadline>
+  markConnected?: boolean
 }) {
   if (input.authType === "oauth") return
   try {
     await connectExternalMcp(
       input.connection,
-      pluginMcpValidationRedirectUri(input.connection.id),
+      pluginMcpValidationRedirectUri(input.connection.id, input.apiPublicBaseUrl),
       undefined,
       undefined,
       input.connection.id,
+      undefined,
+      input.lifecycleDeadline,
     )
   } catch (error) {
     const diagnostic = externalMcpDiagnosticForResponse(error, input.connection.id, "MCP_INITIALIZE")
@@ -4150,7 +5265,7 @@ async function validateConfiguredPluginMcpConnection(input: {
     )
   }
 
-  if (input.authType === "none") {
+  if (input.authType === "none" && input.markConnected !== false) {
     await markImportedExternalMcpConnectionConnected(input.connection.id)
   }
 }
@@ -4160,12 +5275,16 @@ function sortedUnique<TValue extends string>(values: TValue[]): TValue[] {
 }
 
 async function requireExistingExternalMcpConnectionMatchesImport(input: {
-  authType: "none" | "oauth"
-  credentialMode: "per_member" | "shared"
+  apiKey?: string | null
+  authType: PluginMcpRequirementAuthType
+  credentialMode: PluginMcpRequirementCredentialMode
+  existingApiKey?: string | null
   existingAuthType: "apikey" | "none" | "oauth"
   existingCredentialMode: "per_member" | "shared"
+  existingRequestedOAuthScopes?: string[] | null
+  requestedOAuthScopes?: string[]
 }) {
-  const expectedCredentialMode = input.authType === "none" ? "shared" : input.credentialMode
+  const expectedCredentialMode = expectedMcpRequirementCredentialMode(input)
   if (input.existingAuthType !== input.authType || input.existingCredentialMode !== expectedCredentialMode) {
     throw new PluginArchRouteFailure(
       409,
@@ -4173,50 +5292,97 @@ async function requireExistingExternalMcpConnectionMatchesImport(input: {
       "An External MCP Connection already exists for this URL with different authentication or credential mode. Edit the existing connection or import with matching settings.",
     )
   }
+  if (input.authType === "apikey" && input.existingApiKey !== input.apiKey) {
+    throw new PluginArchRouteFailure(
+      409,
+      "external_mcp_connection_config_mismatch",
+      "An External MCP Connection already exists for this URL with a different API key. Edit the existing connection or import with matching settings.",
+    )
+  }
+  if (input.authType === "oauth"
+    && input.existingRequestedOAuthScopes?.length
+    && !sameRequestedOAuthScopes(input.existingRequestedOAuthScopes, input.requestedOAuthScopes)) {
+    throw new PluginArchRouteFailure(
+      409,
+      "external_mcp_connection_scope_mismatch",
+      "An External MCP Connection already exists for this URL with different requested OAuth scopes. Review the existing connection before importing this server.",
+    )
+  }
 }
 
 async function ensureImportedExternalMcpConnection(input: {
   access: GithubPluginMcpImportAccess
-  authType: "none" | "oauth"
+  apiKey?: string | null
+  authType: PluginMcpRequirementAuthType
   context: PluginArchActorContext
-  credentialMode: "per_member" | "shared"
+  credentialMode: PluginMcpRequirementCredentialMode
+  oauthClient?: { clientId: string; clientSecret?: string }
+  requestedOAuthScopes?: string[]
   server: GithubPluginMcpImportServer
-}): Promise<{ connection: Awaited<ReturnType<typeof createExternalMcpConnection>>; ownedByImportedPlugin: boolean }> {
+}): Promise<{
+  connection: Awaited<ReturnType<typeof createExternalMcpConnection>>
+  ownedByImportedPlugin: boolean
+}> {
   if (!input.server.url) {
     throw new PluginArchRouteFailure(400, "invalid_mcp_import", "MCP server URL is required.")
   }
   const serverUrl = input.server.url
 
-  await assertPublicUrl(serverUrl)
+  await assertRemotePluginMcpUrl(serverUrl)
   const organizationId = input.context.organizationContext.organization.id
+  const requestedOAuthScopes = input.authType === "oauth"
+    ? normalizeExternalMcpRequestedOAuthScopes(input.requestedOAuthScopes) ?? []
+    : []
   const existing = (await listExternalMcpConnections(organizationId))
     .find((connection) => comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(serverUrl))
 
   if (existing) {
     await requireExistingExternalMcpConnectionMatchesImport({
+      apiKey: input.apiKey,
       authType: input.authType,
       credentialMode: input.credentialMode,
+      existingApiKey: existing.apiKey,
       existingAuthType: existing.authType,
       existingCredentialMode: existing.credentialMode,
+      existingRequestedOAuthScopes: existing.requestedOAuthScopes,
+      requestedOAuthScopes,
     })
-    if (input.authType === "none") {
-      await markImportedExternalMcpConnectionConnected(existing.id)
+    if (input.oauthClient && input.authType === "oauth") {
+      const existingClient = await getOrgOAuthClient(organizationId, existing.id)
+      if (!existingClient
+        || existingClient.clientId !== input.oauthClient.clientId
+        || (input.oauthClient.clientSecret !== undefined
+          && existingClient.clientSecret !== input.oauthClient.clientSecret)) {
+        throw new PluginArchRouteFailure(
+          409,
+          "external_mcp_connection_oauth_client_mismatch",
+          "An External MCP Connection already exists for this URL without this exact OAuth client. Edit and reconnect the existing connection before importing the plugin.",
+        )
+      }
+    }
+    if (input.authType === "oauth"
+      && !existing.requestedOAuthScopes?.length
+      && requestedOAuthScopes.length > 0) {
+      throw new PluginArchRouteFailure(
+        409,
+        "external_mcp_connection_scope_review_required",
+        "An existing MCP connection for this URL predates requested-scope tracking. Review or recreate that connection before importing a plugin that advertises OAuth scopes.",
+      )
     }
     return { connection: existing, ownedByImportedPlugin: false }
   }
 
   const created = await createExternalMcpConnection({
     access: { memberIds: [], orgWide: false, teamIds: [] },
+    apiKey: input.authType === "apikey" ? input.apiKey : null,
     authType: input.authType,
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
-    credentialMode: input.authType === "none" ? "shared" : input.credentialMode,
+    credentialMode: expectedMcpRequirementCredentialMode(input),
     name: externalMcpConnectionName({ pluginName: input.server.pluginName, serverName: input.server.name }),
     organizationId,
+    requestedOAuthScopes,
     url: serverUrl,
   })
-  if (input.authType === "none") {
-    await markImportedExternalMcpConnectionConnected(created.id)
-  }
   return { connection: created, ownedByImportedPlugin: true }
 }
 
@@ -4230,7 +5396,9 @@ async function markImportedExternalMcpConnectionConnected(connectionId: typeof E
 function importedConnectionBackedMcpPayload(input: {
   connectionId: string
   ownedByImportedPlugin: boolean
+  repositoryFullName: string
   server: GithubPluginMcpImportServer
+  sourceRevisionRef: string
 }) {
   const serverName = slugifyPluginMcpName(input.server.name)
   return {
@@ -4246,13 +5414,32 @@ function importedConnectionBackedMcpPayload(input: {
     openworkManaged: "den_external_mcp",
     externalMcpConnectionId: input.connectionId,
     externalMcpConnectionOwnedByPlugin: input.ownedByImportedPlugin,
+    source: {
+      provider: "github",
+      repositoryFullName: input.repositoryFullName,
+      revision: input.sourceRevisionRef,
+      path: input.server.sourcePath,
+    },
+    sourceRevisionRef: input.sourceRevisionRef,
   }
 }
 
-function importedDenSkillPayload(skillId: SkillId) {
+function importedDenSkillPayload(input: {
+  repositoryFullName: string
+  skillId: SkillId
+  sourcePath: string
+  sourceRevisionRef: string
+}) {
   return {
-    denSkillId: skillId,
+    denSkillId: input.skillId,
     openworkManaged: "den_skill",
+    source: {
+      provider: "github",
+      repositoryFullName: input.repositoryFullName,
+      revision: input.sourceRevisionRef,
+      path: input.sourcePath,
+    },
+    sourceRevisionRef: input.sourceRevisionRef,
   }
 }
 
@@ -4286,53 +5473,58 @@ async function createSkillHubForImportedSkills(input: {
     })
   }
 
-  await db.transaction(async (tx) => {
-    await tx.insert(SkillHubTable).values({
-      id: skillHubId,
-      organizationId,
-      createdByOrgMembershipId,
-      name: input.name,
-      description: "Skills imported from a GitHub plugin.",
-      createdAt: now,
-      updatedAt: now,
-    })
-    if (accessRows.length > 0) {
-      await tx.insert(SkillHubMemberTable).values(accessRows)
-    }
-  })
-  return skillHubId
+  const row: typeof SkillHubTable.$inferSelect = {
+    id: skillHubId,
+    organizationId,
+    createdByOrgMembershipId,
+    name: input.name,
+    description: "Skills imported from a GitHub plugin.",
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  await db.insert(SkillHubTable).values(row)
+  return { memberRows: accessRows, row }
 }
 
 async function createImportedSkill(input: {
-  access: GithubPluginMcpImportAccess
   context: PluginArchActorContext
+  repositoryFullName: string
   skill: GithubPluginSkillImportSkill
   skillHubId: typeof SkillHubTable.$inferSelect.id | null
+  sourceRevisionRef: string
 }) {
   const skillText = input.skill.rawSourceText
   if (!skillText) {
     throw new PluginArchRouteFailure(400, "invalid_skill_import", "Selected skill content was unavailable.")
   }
   const metadata = skillMetadataFromText(skillText)
+  const sourceAudit = `GitHub source: ${input.repositoryFullName}@${input.sourceRevisionRef}:${input.skill.sourcePath}`
+  const auditedDescription = [sourceAudit, metadata.description].filter(Boolean).join("\n\n").slice(0, 65_535)
   const now = new Date()
   const skillId = createDenTypeId("skill")
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
   const organizationId = input.context.organizationContext.organization.id
+  const row: typeof SkillTable.$inferSelect = {
+    id: skillId,
+    organizationId,
+    createdByOrgMembershipId,
+    title: metadata.title,
+    description: auditedDescription,
+    skillText,
+    // Skill visibility is published atomically with the plugin. Until then,
+    // only the importing administrator can reach this staged row.
+    shared: null,
+    createdAt: now,
+    updatedAt: now,
+  }
+  let skillHubSkillId: typeof SkillHubSkillTable.$inferSelect.id | null = null
   await db.transaction(async (tx) => {
-    await tx.insert(SkillTable).values({
-      id: skillId,
-      organizationId,
-      createdByOrgMembershipId,
-      title: metadata.title,
-      description: metadata.description,
-      skillText,
-      shared: input.access.orgWide ? "org" : null,
-      createdAt: now,
-      updatedAt: now,
-    })
+    await tx.insert(SkillTable).values(row)
     if (input.skillHubId) {
+      skillHubSkillId = createDenTypeId("skillHubSkill")
       await tx.insert(SkillHubSkillTable).values({
-        id: createDenTypeId("skillHubSkill"),
+        id: skillHubSkillId,
         skillHubId: input.skillHubId,
         skillId,
         addedByOrgMembershipId: createdByOrgMembershipId,
@@ -4340,24 +5532,70 @@ async function createImportedSkill(input: {
       })
     }
   })
-  return {
-    description: metadata.description,
-    id: skillId,
-    skillText,
-    title: metadata.title,
-  }
+  return { row, skillHubSkillId }
 }
 
 function importedPluginName(plan: GithubPluginMcpImportPlan) {
-  if (plan.plugins.length === 1) return plan.plugins[0].name
-  return plan.marketplace?.name?.trim() || plan.rootPath.split("/").filter(Boolean).at(-1) || plan.repositoryFullName.split("/").at(-1) || "GitHub MCP Plugin"
+  const candidate = plan.plugins.length === 1
+    ? plan.plugins[0].name
+    : plan.marketplace?.name
+      || plan.rootPath.split("/").filter(Boolean).at(-1)
+      || plan.repositoryFullName.split("/").at(-1)
+  return boundedPublisherName(candidate, "GitHub MCP Plugin")
 }
 
 export async function previewGithubPluginMcpImport(input: { githubUrl: string }) {
   return computeGithubPluginMcpImportPlan({ githubUrl: input.githubUrl })
 }
 
+export async function discoverMarketplacePluginMcpRequirement(input: {
+  configObjectId: ConfigObjectId
+  context: PluginArchActorContext
+  pluginId: PluginId
+  serverName: string
+}) {
+  const organizationId = input.context.organizationContext.organization.id
+  const requirement = await activePluginMcpRequirement({
+    configObjectId: input.configObjectId,
+    organizationId,
+    pluginId: input.pluginId,
+  })
+  const versions = await getLatestVersions([requirement.configObject.id])
+  const version = versions.get(requirement.configObject.id)
+  if (!version) {
+    throw new PluginArchRouteFailure(409, "mcp_requirement_not_synced", "MCP config object has no active version to inspect.")
+  }
+
+  const server = mcpRequirementServerFromVersion({
+    configObject: requirement.configObject,
+    serverName: input.serverName,
+    version,
+  })
+  await assertRemotePluginMcpUrl(server.url)
+  const [discovery, access] = await Promise.all([
+    discoverExternalMcpConfiguration({ config: server.config, url: server.url }),
+    derivePluginMcpRequirementAccess({
+      configObjectId: requirement.configObject.id,
+      organizationId,
+      pluginId: requirement.plugin.id,
+    }),
+  ])
+
+  return {
+    assignment: {
+      access,
+      policy: "union_of_active_config_object_plugin_and_marketplace_grants" as const,
+    },
+    configObjectId: requirement.configObject.id,
+    discovery,
+    pluginId: requirement.plugin.id,
+    serverName: server.name,
+    url: server.url,
+  }
+}
+
 export async function configureMarketplacePluginMcpRequirement(input: {
+  apiPublicBaseUrl?: string
   apiKey?: string
   authType: PluginMcpRequirementAuthType
   configObjectId: ConfigObjectId
@@ -4367,6 +5605,8 @@ export async function configureMarketplacePluginMcpRequirement(input: {
   pluginId: PluginId
   serverName: string
 }) {
+  const operationDeadlineAt = Date.now() + MARKETPLACE_MCP_CONFIGURE_OPERATION_TIMEOUT_MS
+  const lifecycleDeadline = createExternalMcpLifecycleDeadline(MARKETPLACE_MCP_CONFIGURE_OPERATION_TIMEOUT_MS)
   validatePluginMcpRequirementAuth(input)
   const organizationId = input.context.organizationContext.organization.id
   const requirement = await activePluginMcpRequirement({
@@ -4386,271 +5626,1234 @@ export async function configureMarketplacePluginMcpRequirement(input: {
     version,
   })
   await assertRemotePluginMcpUrl(server.url)
+  const discovery = await discoverExternalMcpConfiguration({
+    config: server.config,
+    timeoutMs: marketplaceMcpRemainingTimeoutMs(operationDeadlineAt, GITHUB_MCP_DISCOVERY_TIMEOUT_MS),
+    url: server.url,
+  })
+  assertPluginMcpDiscoveryAllowsConfiguration({
+    authType: input.authType,
+    discovery,
+    oauthClient: input.oauthClient,
+  })
   const credentialMode = expectedMcpRequirementCredentialMode(input)
   const apiKey = normalizedPluginMcpApiKey(input.apiKey)
-  const access = await derivePluginMcpRequirementAccess({
-    configObjectId: requirement.configObject.id,
-    organizationId,
-    pluginId: requirement.plugin.id,
-  })
+  const inspectedBinding = (await db
+    .select()
+    .from(PluginMcpRequirementBindingTable)
+    .where(and(
+      eq(PluginMcpRequirementBindingTable.organizationId, organizationId),
+      eq(PluginMcpRequirementBindingTable.pluginId, requirement.plugin.id),
+      eq(PluginMcpRequirementBindingTable.configObjectId, requirement.configObject.id),
+      eq(PluginMcpRequirementBindingTable.serverName, server.name),
+    ))
+    .limit(1))[0] ?? null
   const connectionResult = await createOrReusePluginMcpRequirementConnection({
-    access,
     apiKey,
     authType: input.authType,
     context: input.context,
     credentialMode,
     oauthClient: input.oauthClient,
     plugin: requirement.plugin,
+    requestedOAuthScopes: input.authType === "oauth"
+      ? trustedPluginMcpRequestedOAuthScopes({ discovery, server })
+      : [],
     server,
   })
   const connection = connectionResult.connection
 
   try {
-    await validateConfiguredPluginMcpConnection({ authType: input.authType, connection })
+    await validateConfiguredPluginMcpConnection({
+      apiPublicBaseUrl: input.apiPublicBaseUrl,
+      authType: input.authType,
+      connection,
+      lifecycleDeadline,
+      markConnected: false,
+    })
+    marketplaceMcpRemainingTimeoutMs(operationDeadlineAt, MARKETPLACE_MCP_CONFIGURE_OPERATION_TIMEOUT_MS)
+    return await commitPluginMcpRequirementConfiguration({
+      apiPublicBaseUrl: input.apiPublicBaseUrl,
+      apiKey,
+      authType: input.authType,
+      configObjectId: requirement.configObject.id,
+      connectionResult,
+      context: input.context,
+      credentialMode,
+      inspectedBinding,
+      oauthClient: input.oauthClient,
+      operationDeadlineAt,
+      pluginId: requirement.plugin.id,
+      serverName: server.name,
+    })
   } catch (error) {
     if (connectionResult.created) {
-      await deleteExternalMcpConnection({ connectionId: connection.id, organizationId })
+      try {
+        await deleteExternalMcpConnectionIfUnused({ connectionId: connection.id, organizationId })
+      } catch (cleanupError) {
+        logger.error("plugin MCP configuration rollback failed", {
+          cleanupError,
+          connectionId: connection.id,
+          organizationId,
+        })
+      }
     }
     throw error
   }
+}
 
-  if (input.oauthClient) {
-    const existingClient = await getOrgOAuthClient(organizationId, connection.id)
-    if (!existingClient) {
-      await upsertOrgOAuthClient({
-        organizationId,
-        providerId: connection.id,
-        clientId: input.oauthClient.clientId,
-        clientSecret: input.oauthClient.clientSecret ?? null,
-        createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
-      })
-    }
+async function validateGithubImportAccess(input: {
+  access: GithubPluginMcpImportAccess
+  context: PluginArchActorContext
+}): Promise<GithubPluginMcpImportAccess> {
+  const organizationId = input.context.organizationContext.organization.id
+  const access = input.access.orgWide
+    ? { memberIds: [], orgWide: true, teamIds: [] }
+    : {
+        memberIds: sortedUnique(input.access.memberIds),
+        orgWide: false,
+        teamIds: sortedUnique(input.access.teamIds),
+      }
+  if (access.memberIds.length + access.teamIds.length > MAX_GITHUB_MCP_IMPORT_ACCESS_TARGETS) {
+    throw new PluginArchRouteFailure(
+      400,
+      "github_import_access_limit_exceeded",
+      `Choose at most ${MAX_GITHUB_MCP_IMPORT_ACCESS_TARGETS} people and teams for one GitHub import.`,
+    )
   }
 
-  const binding = await upsertPluginMcpRequirementBinding({
-    configObjectId: requirement.configObject.id,
-    createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
-    externalMcpConnectionId: connection.id,
-    organizationId,
-    pluginId: requirement.plugin.id,
-    serverName: server.name,
-  })
-  await syncPluginMcpRequirementBindingAccess(binding)
-  const refreshedConnection = await getExternalMcpConnection({ connectionId: connection.id, organizationId })
+  const [members, teams] = await Promise.all([
+    access.memberIds.length === 0
+      ? []
+      : db
+        .select({ id: MemberTable.id })
+        .from(MemberTable)
+        .where(and(
+          eq(MemberTable.organizationId, organizationId),
+          inArray(MemberTable.id, access.memberIds),
+        )),
+    access.teamIds.length === 0
+      ? []
+      : db
+        .select({ id: TeamTable.id })
+        .from(TeamTable)
+        .where(and(
+          eq(TeamTable.organizationId, organizationId),
+          inArray(TeamTable.id, access.teamIds),
+        )),
+  ])
+  if (members.length !== access.memberIds.length) {
+    throw new PluginArchRouteFailure(404, "member_not_found", "One or more selected members no longer belong to this organization.")
+  }
+  if (teams.length !== access.teamIds.length) {
+    throw new PluginArchRouteFailure(404, "team_not_found", "One or more selected teams no longer belong to this organization.")
+  }
+  return access
+}
 
+function githubPluginMcpServerConfiguration(input: {
+  discoveredAuthType: GithubPluginMcpImportServer["authType"]
+  fallbackAuthType: "none" | "oauth"
+  fallbackCredentialMode: PluginMcpRequirementCredentialMode
+  configured?: GithubPluginMcpImportServerConfiguration
+}) {
+  const discoveredAuthType = input.discoveredAuthType === "unknown" ? null : input.discoveredAuthType
+  if (input.configured && discoveredAuthType && input.configured.authType !== discoveredAuthType) {
+    throw new PluginArchRouteFailure(
+      409,
+      "mcp_auth_discovery_mismatch",
+      `The MCP manifest advertises ${discoveredAuthType} authentication, not ${input.configured.authType}. Preview and configure that server again.`,
+    )
+  }
+  const authType = input.configured?.authType ?? discoveredAuthType ?? input.fallbackAuthType
+  const credentialMode = input.configured?.credentialMode
+    ?? (input.configured && authType !== "oauth" ? "shared" : input.fallbackCredentialMode)
+  const value = {
+    apiKey: input.configured?.apiKey,
+    authType,
+    credentialMode,
+    oauthClient: input.configured?.oauthClient,
+  }
+  validatePluginMcpRequirementAuth(value)
   return {
-    binding: serializePluginMcpRequirementBinding(binding),
-    connection: serializePluginMcpRequirementConnection(refreshedConnection ?? connection),
-    links: {
-      yourConnections: openworkYourConnectionsUrl(connection.id),
-    },
+    ...value,
+    apiKey: normalizedPluginMcpApiKey(value.apiKey),
+    credentialMode: expectedMcpRequirementCredentialMode({ authType, credentialMode }),
   }
 }
 
-async function grantImportAccessToPluginArchResource(input: {
-  access: GithubPluginMcpImportAccess
-  context: PluginArchActorContext
-} & (
-  | { resourceId: ConfigObjectId; resourceKind: "config_object" }
-  | { resourceId: PluginId; resourceKind: "plugin" }
-)) {
-  const grant = async (value: AccessGrantWrite) => {
-    if (input.resourceKind === "plugin") {
-      await createResourceAccessGrant({
-        context: input.context,
-        resourceId: input.resourceId,
-        resourceKind: "plugin",
-        value,
-      })
-      return
-    }
-    await createResourceAccessGrant({
-      context: input.context,
-      resourceId: input.resourceId,
-      resourceKind: "config_object",
-      value,
-    })
-  }
+type GithubImportOAuthClientMutation = {
+  appliedRevision: ExternalMcpOAuthClientRevision
+  appliedValue: ExternalMcpOAuthClientValue
+}
 
-  if (input.access.orgWide) {
-    await grant({ orgWide: true, role: "viewer" })
+type GithubImportRollbackState = {
+  access: GithubPluginMcpImportAccess
+  bindingIds: Set<PluginMcpRequirementBindingId>
+  bindings: Map<PluginMcpRequirementBindingId, PluginMcpRequirementBindingRow>
+  configObjectIds: Set<ConfigObjectId>
+  configObjects: Map<ConfigObjectId, ConfigObjectRow>
+  newlyCreatedConnectionIds: Set<ExternalMcpConnectionRow["id"]>
+  newlyCreatedConnections: Map<ExternalMcpConnectionRow["id"], ExternalMcpConnectionRow>
+  oauthClientMutations: Map<ExternalMcpConnectionRow["id"], GithubImportOAuthClientMutation>
+  pluginId: PluginId | null
+  pluginManagerGrantId: PluginAccessGrantId | null
+  pluginSnapshot: PluginRow | null
+  skillHubId: typeof SkillHubTable.$inferSelect.id | null
+  skillHubMembers: (typeof SkillHubMemberTable.$inferInsert)[]
+  skillHubSnapshot: typeof SkillHubTable.$inferSelect | null
+  skillHubSkillIds: Set<typeof SkillHubSkillTable.$inferSelect.id>
+  skillIds: Set<SkillId>
+  skills: Map<SkillId, typeof SkillTable.$inferSelect>
+  validatedConnections: Map<ExternalMcpConnectionRow["id"], ExternalMcpConnectionRow>
+}
+
+function createGithubImportRollbackState(access: GithubPluginMcpImportAccess): GithubImportRollbackState {
+  return {
+    access,
+    bindingIds: new Set(),
+    bindings: new Map(),
+    configObjectIds: new Set(),
+    configObjects: new Map(),
+    newlyCreatedConnectionIds: new Set(),
+    newlyCreatedConnections: new Map(),
+    oauthClientMutations: new Map(),
+    pluginId: null,
+    pluginManagerGrantId: null,
+    pluginSnapshot: null,
+    skillHubId: null,
+    skillHubMembers: [],
+    skillHubSnapshot: null,
+    skillHubSkillIds: new Set(),
+    skillIds: new Set(),
+    skills: new Map(),
+    validatedConnections: new Map(),
+  }
+}
+
+async function createStagedGithubImportPlugin(input: {
+  context: PluginArchActorContext
+  description: string
+  name: string
+}) {
+  const now = new Date()
+  const managerGrantId = createDenTypeId("pluginAccessGrant")
+  const row: PluginRow = {
+    createdAt: now,
+    createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
+    deletedAt: null,
+    description: input.description,
+    id: createDenTypeId("plugin"),
+    name: input.name,
+    organizationId: input.context.organizationContext.organization.id,
+    // Staged imports are intentionally absent from active marketplace
+    // resolution until the final publication transaction commits.
+    status: "inactive",
+    updatedAt: now,
+  }
+  await db.transaction(async (tx) => {
+    await tx.insert(PluginTable).values(row)
+    await tx.insert(PluginAccessGrantTable).values({
+      createdAt: now,
+      createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
+      id: managerGrantId,
+      organizationId: input.context.organizationContext.organization.id,
+      orgMembershipId: input.context.organizationContext.currentMember.id,
+      orgWide: false,
+      pluginId: row.id,
+      role: "manager",
+      teamId: null,
+    })
+  })
+  return { managerGrantId, row }
+}
+
+function rememberGithubImportConnection(
+  state: GithubImportRollbackState,
+  importedConnection: Awaited<ReturnType<typeof ensureImportedExternalMcpConnection>>,
+) {
+  const connection = importedConnection.connection
+  state.validatedConnections.set(connection.id, connection)
+  if (importedConnection.ownedByImportedPlugin) {
+    state.newlyCreatedConnectionIds.add(connection.id)
+    state.newlyCreatedConnections.set(connection.id, connection)
+  }
+}
+
+async function persistGithubImportOAuthClient(input: {
+  client: { clientId: string; clientSecret?: string }
+  connection: ExternalMcpConnectionRow
+  context: PluginArchActorContext
+  ownedByImportedPlugin: boolean
+  state: GithubImportRollbackState
+}) {
+  const organizationId = input.context.organizationContext.organization.id
+  const existingMutation = input.state.oauthClientMutations.get(input.connection.id)
+  if (existingMutation) {
+    if (existingMutation.appliedValue.clientId !== input.client.clientId
+      || (input.client.clientSecret !== undefined
+        && existingMutation.appliedValue.clientSecret !== input.client.clientSecret)) {
+      throw new PluginArchRouteFailure(
+        409,
+        "external_mcp_connection_oauth_client_mismatch",
+        "Two selected MCP declarations require different OAuth clients for the same connection. Configure one client on the connection and retry.",
+      )
+    }
     return
   }
 
-  for (const memberId of input.access.memberIds) {
-    await grant({ orgMembershipId: memberId, role: "viewer" })
+  const observedClient = await getOrgOAuthClient(organizationId, input.connection.id)
+  if (!input.ownedByImportedPlugin) {
+    // Importing a plugin must never rotate a reusable connection as a side
+    // effect. Rotation belongs to the connection editor, where reconnect and
+    // authorization-epoch semantics can be reviewed explicitly.
+    if (!observedClient
+      || observedClient.clientId !== input.client.clientId
+      || (input.client.clientSecret !== undefined && observedClient.clientSecret !== input.client.clientSecret)) {
+      throw new PluginArchRouteFailure(
+        409,
+        "external_mcp_connection_oauth_client_mismatch",
+        "The existing MCP connection does not already use this exact OAuth client. Edit and reconnect that connection before importing the plugin.",
+      )
+    }
+    return
   }
-  for (const teamId of input.access.teamIds) {
-    await grant({ role: "viewer", teamId })
+
+  // A client appearing on a saga-created connection means a concurrent DCR,
+  // OAuth start, or administrator adopted it. Never overwrite that actor.
+  if (observedClient) {
+    throw new PluginArchRouteFailure(
+      409,
+      "external_mcp_connection_changed",
+      "The MCP connection acquired an OAuth client while the GitHub plugin was being imported. Inspect it again and retry.",
+    )
   }
+  const next: ExternalMcpOAuthClientValue = {
+    clientId: input.client.clientId,
+    clientSecret: input.client.clientSecret ?? null,
+    createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
+    extra: externalMcpPreRegisteredClientExtra(),
+  }
+  const result = await compareAndSetExternalMcpOAuthClient({
+    organizationId,
+    connectionId: input.connection.id,
+    expectedAuthorizationEpoch: input.connection.oauthAuthorizationEpoch,
+    expectedConnection: input.connection,
+    expected: null,
+    next,
+    requireNoDependentState: true,
+  })
+  if (result.status !== "applied" || !result.revision) {
+    throw new PluginArchRouteFailure(
+      409,
+      "external_mcp_connection_changed",
+      "The MCP connection or OAuth client changed while the GitHub plugin was being imported. Inspect it again and retry.",
+    )
+  }
+  input.state.oauthClientMutations.set(input.connection.id, {
+    appliedRevision: result.revision,
+    appliedValue: next,
+  })
+}
+
+function githubImportDatesMatch(left: Date | null, right: Date | null) {
+  return left === null || right === null
+    ? left === right
+    : left.getTime() === right.getTime()
+}
+
+function githubImportConnectionSnapshotMatches(
+  current: ExternalMcpConnectionRow,
+  expected: ExternalMcpConnectionRow,
+) {
+  return current.id === expected.id
+    && current.organizationId === expected.organizationId
+    && current.name === expected.name
+    && current.url === expected.url
+    && current.authType === expected.authType
+    && current.credentialMode === expected.credentialMode
+    && current.apiKey === expected.apiKey
+    && current.createdByOrgMembershipId === expected.createdByOrgMembershipId
+    && current.oauthAuthorizationEpoch === expected.oauthAuthorizationEpoch
+    && JSON.stringify(current.requestedOAuthScopes) === JSON.stringify(expected.requestedOAuthScopes)
+    && githubImportDatesMatch(current.createdAt, expected.createdAt)
+    && githubImportDatesMatch(current.updatedAt, expected.updatedAt)
+}
+
+async function githubImportPluginStateStillOwned(input: {
+  organizationId: OrganizationId
+  state: GithubImportRollbackState
+  tx: DbTransaction
+}) {
+  const pluginSnapshot = input.state.pluginSnapshot
+  if (!pluginSnapshot || !input.state.pluginId || !input.state.pluginManagerGrantId) {
+    return input.state.pluginId === null
+      && input.state.configObjectIds.size === 0
+      && input.state.bindingIds.size === 0
+      && input.state.skillIds.size === 0
+      && input.state.skillHubId === null
+  }
+  const actorId = pluginSnapshot.createdByOrgMembershipId
+  const pluginRows = await input.tx
+    .select()
+    .from(PluginTable)
+    .where(and(
+      eq(PluginTable.organizationId, input.organizationId),
+      eq(PluginTable.id, pluginSnapshot.id),
+    ))
+    .limit(1)
+    .for("update")
+  const plugin = pluginRows[0]
+  if (!plugin
+    || plugin.status !== "inactive"
+    || plugin.deletedAt !== null
+    || plugin.name !== pluginSnapshot.name
+    || plugin.description !== pluginSnapshot.description
+    || plugin.createdByOrgMembershipId !== actorId
+    || !githubImportDatesMatch(plugin.createdAt, pluginSnapshot.createdAt)
+    || !githubImportDatesMatch(plugin.updatedAt, pluginSnapshot.updatedAt)) return false
+
+  const pluginGrants = await input.tx
+    .select()
+    .from(PluginAccessGrantTable)
+    .where(and(
+      eq(PluginAccessGrantTable.organizationId, input.organizationId),
+      eq(PluginAccessGrantTable.pluginId, plugin.id),
+    ))
+    .for("update")
+  if (pluginGrants.length !== 1) return false
+  const managerGrant = pluginGrants[0]
+  if (managerGrant.id !== input.state.pluginManagerGrantId
+    || managerGrant.createdByOrgMembershipId !== actorId
+    || managerGrant.orgMembershipId !== actorId
+    || managerGrant.teamId !== null
+    || managerGrant.orgWide
+    || managerGrant.role !== "manager"
+    || managerGrant.removedAt !== null) return false
+
+  const marketplaceMemberships = await input.tx
+    .select({ id: MarketplacePluginTable.id })
+    .from(MarketplacePluginTable)
+    .where(and(
+      eq(MarketplacePluginTable.organizationId, input.organizationId),
+      eq(MarketplacePluginTable.pluginId, plugin.id),
+    ))
+    .for("update")
+  if (marketplaceMemberships.length > 0) return false
+
+  const configObjectIds = [...input.state.configObjectIds]
+  if (configObjectIds.length !== input.state.configObjects.size) return false
+  if (configObjectIds.length > 0) {
+    const configObjects = await input.tx.select().from(ConfigObjectTable).where(and(
+      eq(ConfigObjectTable.organizationId, input.organizationId),
+      inArray(ConfigObjectTable.id, configObjectIds),
+    )).for("update")
+    const versions = await input.tx.select().from(ConfigObjectVersionTable).where(and(
+      eq(ConfigObjectVersionTable.organizationId, input.organizationId),
+      inArray(ConfigObjectVersionTable.configObjectId, configObjectIds),
+    )).for("update")
+    const membershipsByConfig = await input.tx.select().from(PluginConfigObjectTable).where(and(
+      eq(PluginConfigObjectTable.organizationId, input.organizationId),
+      inArray(PluginConfigObjectTable.configObjectId, configObjectIds),
+    )).for("update")
+    const membershipsByPlugin = await input.tx.select().from(PluginConfigObjectTable).where(and(
+      eq(PluginConfigObjectTable.organizationId, input.organizationId),
+      eq(PluginConfigObjectTable.pluginId, plugin.id),
+    )).for("update")
+    const configGrants = await input.tx.select().from(ConfigObjectAccessGrantTable).where(and(
+      eq(ConfigObjectAccessGrantTable.organizationId, input.organizationId),
+      inArray(ConfigObjectAccessGrantTable.configObjectId, configObjectIds),
+    )).for("update")
+    if (configObjects.length !== configObjectIds.length
+      || versions.length !== configObjectIds.length
+      || membershipsByConfig.length !== configObjectIds.length
+      || membershipsByPlugin.length !== configObjectIds.length
+      || configGrants.length !== configObjectIds.length) return false
+    for (const row of configObjects) {
+      const snapshot = input.state.configObjects.get(row.id)
+      if (!snapshot
+        || row.createdByOrgMembershipId !== actorId
+        || row.sourceMode !== "import"
+        || row.status !== "active"
+        || row.deletedAt !== null
+        || !githubImportDatesMatch(row.createdAt, snapshot.createdAt)
+        || !githubImportDatesMatch(row.updatedAt, snapshot.updatedAt)) return false
+    }
+    if (versions.some((row) => row.createdByOrgMembershipId !== actorId)) return false
+    if ([...membershipsByConfig, ...membershipsByPlugin].some((row) =>
+      row.pluginId !== plugin.id
+      || !input.state.configObjectIds.has(row.configObjectId)
+      || row.createdByOrgMembershipId !== actorId
+      || row.membershipSource !== "manual"
+      || row.removedAt !== null)) return false
+    if (configGrants.some((row) =>
+      row.createdByOrgMembershipId !== actorId
+      || row.orgMembershipId !== actorId
+      || row.teamId !== null
+      || row.orgWide
+      || row.role !== "manager"
+      || row.removedAt !== null)) return false
+  }
+
+  const bindings = await input.tx
+    .select()
+    .from(PluginMcpRequirementBindingTable)
+    .where(and(
+      eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
+      eq(PluginMcpRequirementBindingTable.pluginId, plugin.id),
+    ))
+    .for("update")
+  if (bindings.length !== input.state.bindings.size) return false
+  for (const row of bindings) {
+    const expected = input.state.bindings.get(row.id)
+    if (!expected
+      || row.configObjectId !== expected.configObjectId
+      || row.externalMcpConnectionId !== expected.externalMcpConnectionId
+      || row.serverName !== expected.serverName
+      || row.createdByOrgMembershipId !== expected.createdByOrgMembershipId
+      || !githubImportDatesMatch(row.createdAt, expected.createdAt)
+      || !githubImportDatesMatch(row.updatedAt, expected.updatedAt)) return false
+  }
+
+  const skillIds = [...input.state.skillIds]
+  if (skillIds.length !== input.state.skills.size) return false
+  const skills = skillIds.length === 0
+    ? []
+    : await input.tx.select().from(SkillTable).where(and(
+      eq(SkillTable.organizationId, input.organizationId),
+      inArray(SkillTable.id, skillIds),
+    )).for("update")
+  if (skills.length !== skillIds.length) return false
+  for (const row of skills) {
+    const expected = input.state.skills.get(row.id)
+    if (!expected
+      || row.createdByOrgMembershipId !== actorId
+      || row.title !== expected.title
+      || row.description !== expected.description
+      || row.skillText !== expected.skillText
+      || row.shared !== expected.shared
+      || !githubImportDatesMatch(row.createdAt, expected.createdAt)
+      || !githubImportDatesMatch(row.updatedAt, expected.updatedAt)) return false
+  }
+
+  const skillLinks = skillIds.length === 0
+    ? []
+    : await input.tx.select().from(SkillHubSkillTable).where(inArray(SkillHubSkillTable.skillId, skillIds)).for("update")
+  if (skillLinks.length !== input.state.skillHubSkillIds.size
+    || skillLinks.some((row) => !input.state.skillHubSkillIds.has(row.id)
+      || row.skillHubId !== input.state.skillHubId
+      || !input.state.skillIds.has(row.skillId))) return false
+
+  if (input.state.skillHubId) {
+    const hubRows = await input.tx.select().from(SkillHubTable).where(and(
+      eq(SkillHubTable.organizationId, input.organizationId),
+      eq(SkillHubTable.id, input.state.skillHubId),
+    )).limit(1).for("update")
+    const hub = hubRows[0]
+    const expected = input.state.skillHubSnapshot
+    if (!hub || !expected
+      || hub.createdByOrgMembershipId !== actorId
+      || hub.name !== expected.name
+      || hub.description !== expected.description
+      || !githubImportDatesMatch(hub.createdAt, expected.createdAt)
+      || !githubImportDatesMatch(hub.updatedAt, expected.updatedAt)) return false
+    const hubMembers = await input.tx.select().from(SkillHubMemberTable)
+      .where(eq(SkillHubMemberTable.skillHubId, hub.id)).for("update")
+    // Audience rows are intentionally deferred to the final publication
+    // transaction; any row here was added by another actor.
+    if (hubMembers.length > 0) return false
+  } else if (input.state.skillHubSnapshot || input.state.skillHubMembers.length > 0) {
+    return false
+  }
+
+  return true
+}
+
+async function rollbackGithubPluginMcpImport(input: {
+  context: PluginArchActorContext
+  state: GithubImportRollbackState
+}) {
+  const organizationId = input.context.organizationContext.organization.id
+  const bindingIds = [...input.state.bindingIds]
+  const configObjectIds = [...input.state.configObjectIds]
+  const skillIds = [...input.state.skillIds]
+
+  let removedOwnedPluginState = false
+  try {
+    removedOwnedPluginState = await db.transaction(async (tx) => {
+      if (!await githubImportPluginStateStillOwned({ organizationId, state: input.state, tx })) {
+        return false
+      }
+      if (bindingIds.length > 0) {
+        await tx.delete(ExternalMcpConnectionAccessGrantTable).where(inArray(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId, bindingIds))
+        await tx.delete(PluginMcpRequirementBindingTable).where(inArray(PluginMcpRequirementBindingTable.id, bindingIds))
+      }
+      if (input.state.pluginId) {
+        await tx.delete(MarketplacePluginTable).where(and(
+          eq(MarketplacePluginTable.organizationId, organizationId),
+          eq(MarketplacePluginTable.pluginId, input.state.pluginId),
+        ))
+      }
+      if (configObjectIds.length > 0) {
+        await tx.delete(PluginConfigObjectTable).where(and(
+          eq(PluginConfigObjectTable.organizationId, organizationId),
+          inArray(PluginConfigObjectTable.configObjectId, configObjectIds),
+        ))
+        await tx.delete(ConfigObjectAccessGrantTable).where(and(
+          eq(ConfigObjectAccessGrantTable.organizationId, organizationId),
+          inArray(ConfigObjectAccessGrantTable.configObjectId, configObjectIds),
+        ))
+        await tx.delete(ConfigObjectVersionTable).where(and(
+          eq(ConfigObjectVersionTable.organizationId, organizationId),
+          inArray(ConfigObjectVersionTable.configObjectId, configObjectIds),
+        ))
+        await tx.delete(ConfigObjectTable).where(and(
+          eq(ConfigObjectTable.organizationId, organizationId),
+          inArray(ConfigObjectTable.id, configObjectIds),
+        ))
+      }
+      if (skillIds.length > 0) {
+        await tx.delete(SkillHubSkillTable).where(inArray(SkillHubSkillTable.skillId, skillIds))
+        await tx.delete(SkillTable).where(and(
+          eq(SkillTable.organizationId, organizationId),
+          inArray(SkillTable.id, skillIds),
+        ))
+      }
+      if (input.state.skillHubId) {
+        await tx.delete(SkillHubMemberTable).where(eq(SkillHubMemberTable.skillHubId, input.state.skillHubId))
+        await tx.delete(SkillHubSkillTable).where(eq(SkillHubSkillTable.skillHubId, input.state.skillHubId))
+        await tx.delete(SkillHubTable).where(and(
+          eq(SkillHubTable.organizationId, organizationId),
+          eq(SkillHubTable.id, input.state.skillHubId),
+        ))
+      }
+      if (input.state.pluginId) {
+        await tx.delete(PluginAccessGrantTable).where(and(
+          eq(PluginAccessGrantTable.organizationId, organizationId),
+          eq(PluginAccessGrantTable.pluginId, input.state.pluginId),
+        ))
+        await tx.delete(PluginTable).where(and(
+          eq(PluginTable.organizationId, organizationId),
+          eq(PluginTable.id, input.state.pluginId),
+        ))
+      }
+      return true
+    })
+  } catch (error) {
+    logger.error("failed to roll back GitHub-import plugin objects", {
+      error: error instanceof Error ? error.message : String(error),
+      organizationId,
+      pluginId: input.state.pluginId,
+    })
+    return
+  }
+
+  if (!removedOwnedPluginState) {
+    logger.warn("preserved a GitHub import after its staged plugin was modified or adopted concurrently", {
+      organizationId,
+      pluginId: input.state.pluginId,
+    })
+    return
+  }
+
+  for (const [connectionId, connection] of input.state.newlyCreatedConnections) {
+    try {
+      const cleanup = await deleteExternalMcpConnectionIfUnused({
+        connectionId,
+        expectedConnection: connection,
+        expectedOwnedOAuthClient: input.state.oauthClientMutations.get(connectionId)?.appliedRevision,
+        organizationId,
+      })
+      if (cleanup === "in_use") {
+        logger.info("kept a GitHub-import MCP connection or OAuth client that became used or changed concurrently", {
+          connectionId,
+          organizationId,
+        })
+      }
+    } catch (error) {
+      logger.error("failed to delete a new MCP connection after GitHub import rollback", {
+        connectionId,
+        error: error instanceof Error ? error.message : String(error),
+        organizationId,
+      })
+    }
+  }
+}
+
+function githubImportViewerAccessGrantRows(input: {
+  access: GithubPluginMcpImportAccess
+  configObjectIds: ConfigObjectId[]
+  context: PluginArchActorContext
+  pluginId: PluginId
+  publishedAt: Date
+}) {
+  const actorId = input.context.organizationContext.currentMember.id
+  const organizationId = input.context.organizationContext.organization.id
+  const targets = input.access.orgWide
+    ? [{ orgMembershipId: null, orgWide: true, teamId: null }]
+    : [
+        ...input.access.memberIds
+          .filter((orgMembershipId) => orgMembershipId !== actorId)
+          .map((orgMembershipId) => ({ orgMembershipId, orgWide: false, teamId: null })),
+        ...input.access.teamIds
+          .map((teamId) => ({ orgMembershipId: null, orgWide: false, teamId })),
+      ]
+  const pluginRows: (typeof PluginAccessGrantTable.$inferInsert)[] = targets.map((target) => ({
+    ...target,
+    createdAt: input.publishedAt,
+    createdByOrgMembershipId: actorId,
+    id: createDenTypeId("pluginAccessGrant"),
+    organizationId,
+    pluginId: input.pluginId,
+    role: "viewer",
+  }))
+  const configObjectRows: (typeof ConfigObjectAccessGrantTable.$inferInsert)[] = input.configObjectIds.flatMap((configObjectId) =>
+    targets.map((target) => ({
+      ...target,
+      configObjectId,
+      createdAt: input.publishedAt,
+      createdByOrgMembershipId: actorId,
+      id: createDenTypeId("configObjectAccessGrant"),
+      organizationId,
+      role: "viewer" as const,
+    })))
+  return { configObjectRows, pluginRows }
+}
+
+async function publishStagedGithubImport(input: {
+  context: PluginArchActorContext
+  marketplaceId: MarketplaceId
+  noAuthConnectionIds: ExternalMcpConnectionRow["id"][]
+  operationDeadlineAt: number
+  state: GithubImportRollbackState
+}) {
+  requireGithubImportTime(input.operationDeadlineAt, GITHUB_MCP_IMPORT_FINAL_COMMIT_RESERVE_MS)
+  const organizationId = input.context.organizationContext.organization.id
+  const actorId = input.context.organizationContext.currentMember.id
+  return db.transaction(async (tx) => {
+    // Connection-first ordering matches binding creation/deletion and OAuth
+    // lifecycle writers. Do not take a binding lock before these rows.
+    const connectionIds = [...input.state.validatedConnections.keys()]
+    const connections = connectionIds.length === 0
+      ? []
+      : await tx.select().from(ExternalMcpConnectionTable).where(and(
+        eq(ExternalMcpConnectionTable.organizationId, organizationId),
+        inArray(ExternalMcpConnectionTable.id, connectionIds),
+      )).for("update")
+    if (connections.length !== connectionIds.length
+      || connections.some((connection) => {
+        const expected = input.state.validatedConnections.get(connection.id)
+        return !expected || !githubImportConnectionSnapshotMatches(connection, expected)
+      })) {
+      throw new PluginArchRouteFailure(
+        409,
+        "external_mcp_connection_changed",
+        "An MCP connection changed after validation. Inspect the GitHub plugin again and retry.",
+      )
+    }
+    if (!await githubImportPluginStateStillOwned({ organizationId, state: input.state, tx })) {
+      throw new PluginArchRouteFailure(
+        409,
+        "github_import_adopted",
+        "The staged plugin was modified while GitHub import was running. OpenWork preserved it instead of overwriting or deleting another administrator's work.",
+      )
+    }
+    const plugin = input.state.pluginSnapshot
+    if (!plugin) throw new PluginArchRouteFailure(409, "github_import_changed", "The staged GitHub plugin is no longer available.")
+    const marketplaceRows = await tx.select().from(MarketplaceTable).where(and(
+      eq(MarketplaceTable.organizationId, organizationId),
+      eq(MarketplaceTable.id, input.marketplaceId),
+    )).limit(1).for("update")
+    const marketplace = marketplaceRows[0]
+    if (!marketplace || marketplace.status !== "active" || marketplace.deletedAt !== null) {
+      throw new PluginArchRouteFailure(409, "marketplace_changed", "The target marketplace changed while the GitHub plugin was importing. Retry the import.")
+    }
+
+    requireGithubImportTime(input.operationDeadlineAt, 500)
+    const publishedAt = new Date()
+    const configObjectIds = [...input.state.configObjectIds]
+    const viewerRows = githubImportViewerAccessGrantRows({
+      access: input.state.access,
+      configObjectIds,
+      context: input.context,
+      pluginId: plugin.id,
+      publishedAt,
+    })
+    if (viewerRows.pluginRows.length > 0) await tx.insert(PluginAccessGrantTable).values(viewerRows.pluginRows)
+    if (viewerRows.configObjectRows.length > 0) await tx.insert(ConfigObjectAccessGrantTable).values(viewerRows.configObjectRows)
+    if (input.state.skillHubMembers.length > 0) {
+      await tx.insert(SkillHubMemberTable).values(input.state.skillHubMembers)
+    }
+    if (input.state.access.orgWide && input.state.skillIds.size > 0) {
+      await tx.update(SkillTable).set({ shared: "org", updatedAt: publishedAt }).where(and(
+        eq(SkillTable.organizationId, organizationId),
+        inArray(SkillTable.id, [...input.state.skillIds]),
+      ))
+    }
+
+    await tx.insert(MarketplacePluginTable).values({
+      createdAt: publishedAt,
+      createdByOrgMembershipId: actorId,
+      id: createDenTypeId("marketplacePlugin"),
+      marketplaceId: marketplace.id,
+      membershipSource: "api",
+      organizationId,
+      pluginId: plugin.id,
+      removedAt: null,
+    })
+
+    const marketplaceGrants = await tx.select({
+      orgMembershipId: MarketplaceAccessGrantTable.orgMembershipId,
+      orgWide: MarketplaceAccessGrantTable.orgWide,
+      teamId: MarketplaceAccessGrantTable.teamId,
+    }).from(MarketplaceAccessGrantTable).where(and(
+      eq(MarketplaceAccessGrantTable.organizationId, organizationId),
+      eq(MarketplaceAccessGrantTable.marketplaceId, marketplace.id),
+      isNull(MarketplaceAccessGrantTable.removedAt),
+    )).for("update")
+    const effectiveAccess: PluginMcpRequirementAccess = {
+      memberIds: sortedUnique([
+        actorId,
+        ...input.state.access.memberIds,
+        ...marketplaceGrants.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : []),
+      ]),
+      orgWide: input.state.access.orgWide || marketplaceGrants.some((grant) => grant.orgWide),
+      teamIds: sortedUnique([
+        ...input.state.access.teamIds,
+        ...marketplaceGrants.flatMap((grant) => grant.teamId ? [grant.teamId] : []),
+      ]),
+    }
+    const bindings = [...input.state.bindings.values()]
+    if (bindings.length > 0) {
+      await tx.delete(ExternalMcpConnectionAccessGrantTable).where(inArray(
+        ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId,
+        bindings.map((binding) => binding.id),
+      ))
+      const accessRows = bindings.flatMap((binding) => pluginMcpRequirementAccessGrantRows({
+        access: effectiveAccess,
+        bindingId: binding.id,
+        connectionId: binding.externalMcpConnectionId,
+        createdByOrgMembershipId: binding.createdByOrgMembershipId,
+        organizationId,
+      }))
+      if (accessRows.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(accessRows)
+    }
+
+    const noAuthConnectionIds = sortedUnique(input.noAuthConnectionIds)
+    if (noAuthConnectionIds.length > 0) {
+      await tx.update(ExternalMcpConnectionTable)
+        .set({ connectedAt: publishedAt })
+        .where(and(
+          eq(ExternalMcpConnectionTable.organizationId, organizationId),
+          inArray(ExternalMcpConnectionTable.id, noAuthConnectionIds),
+        ))
+    }
+    await tx.update(PluginTable).set({ status: "active", updatedAt: publishedAt }).where(and(
+      eq(PluginTable.organizationId, organizationId),
+      eq(PluginTable.id, plugin.id),
+    ))
+    return { marketplaceName: marketplace.name, publishedAt }
+  })
 }
 
 export async function importGithubPluginMcps(input: {
   access?: GithubPluginMcpImportAccess
+  apiPublicBaseUrl?: string
   authType: "none" | "oauth"
   context: PluginArchActorContext
   credentialMode: "per_member" | "shared"
   githubUrl: string
   marketplaceId: MarketplaceId
+  serverConfigurations?: GithubPluginMcpImportServerConfiguration[]
+  sourceRevisionRef?: string
   selectedSkillKeys?: string[]
   selectedServerKeys?: string[]
   selectedServerNames?: string[]
 }) {
-  await ensureEditableMarketplace(input.context, input.marketplaceId)
-  const plan = await computeGithubPluginMcpImportPlan({ githubUrl: input.githubUrl, includeSkillText: true })
+  const operationDeadlineAt = Date.now() + GITHUB_MCP_IMPORT_OPERATION_TIMEOUT_MS
+  const inspectionDeadlineAt = operationDeadlineAt - GITHUB_MCP_IMPORT_MATERIALIZATION_RESERVE_MS
+  const marketplace = await ensureEditableMarketplace(input.context, input.marketplaceId)
+  const canonicalGithubUrl = parsePublicGithubPluginUrl(input.githubUrl).canonicalUrl
+  const sourceRevisionRef = normalizeOptionalString(input.sourceRevisionRef)
+  const requiresReviewedRevision = (input.selectedSkillKeys?.length ?? 0) > 0
+    || (input.selectedServerKeys !== undefined && input.selectedServerKeys.length > 0)
+    || (input.selectedServerNames?.length ?? 0) > 0
+  if (requiresReviewedRevision && !sourceRevisionRef) {
+    throw new PluginArchRouteFailure(
+      400,
+      "github_source_revision_required",
+      "Preview and review the pinned GitHub revision before importing selected plugin components.",
+    )
+  }
+  const plan = await computeGithubPluginMcpImportPlan({
+    githubUrl: canonicalGithubUrl,
+    includeDiscovery: false,
+    includeSkillText: true,
+    operationDeadlineAt: inspectionDeadlineAt,
+  })
+  if (sourceRevisionRef && sourceRevisionRef !== plan.sourceRevisionRef) {
+    throw new PluginArchRouteFailure(
+      409,
+      "github_source_revision_changed",
+      "The GitHub plugin changed after the preview. Preview it again before importing.",
+    )
+  }
   const selectedSkillKeys = new Set(input.selectedSkillKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const selectedServerKeys = new Set(input.selectedServerKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const selectedServerNames = new Set(input.selectedServerNames?.map((name) => name.trim()).filter(Boolean) ?? [])
-  const consideredServers = selectedServerKeys.size > 0
+  const legacyNameSelectedServers = selectedServerNames.size > 0
+    ? plan.servers.filter((server) => selectedServerNames.has(server.name))
+    : []
+  if (legacyNameSelectedServers.some((server) => server.discovery?.support.status === "needs_review")) {
+    throw new PluginArchRouteFailure(
+      400,
+      "github_server_review_required",
+      "This MCP server requires explicit review. Preview it again and select its stable server key before importing.",
+    )
+  }
+  // `undefined` is the legacy "import every server" contract. An explicit
+  // empty key list means the admin selected skills only and must never fall
+  // through to importing MCP servers they unchecked in the preview.
+  const consideredServers = input.selectedServerKeys !== undefined
     ? plan.servers.filter((server) => selectedServerKeys.has(server.serverKey))
     : selectedServerNames.size > 0
-    ? plan.servers.filter((server) => selectedServerNames.has(server.name))
-    : plan.servers
+    ? legacyNameSelectedServers
+    : plan.servers.filter((server) => server.discovery?.support.status !== "needs_review")
   const consideredSkills = selectedSkillKeys.size > 0
     ? plan.skills.filter((skill) => selectedSkillKeys.has(skill.skillKey))
     : []
+  const serverConfigurations = new Map<string, GithubPluginMcpImportServerConfiguration>()
+  for (const configuration of input.serverConfigurations ?? []) {
+    if (serverConfigurations.has(configuration.serverKey)) {
+      throw new PluginArchRouteFailure(400, "duplicate_server_configuration", `MCP server "${configuration.serverKey}" was configured more than once.`)
+    }
+    serverConfigurations.set(configuration.serverKey, configuration)
+  }
+  const planServerKeys = new Set(plan.servers.map((server) => server.serverKey))
+  const consideredServerKeys = new Set(consideredServers.map((server) => server.serverKey))
+  for (const serverKey of serverConfigurations.keys()) {
+    if (!planServerKeys.has(serverKey)) {
+      throw new PluginArchRouteFailure(400, "unknown_server_configuration", `MCP server configuration key "${serverKey}" is not present in the current GitHub revision.`)
+    }
+    if (!consideredServerKeys.has(serverKey)) {
+      throw new PluginArchRouteFailure(400, "unselected_server_configuration", `MCP server configuration key "${serverKey}" was not selected for import.`)
+    }
+  }
   const supportedServers = consideredServers.filter((server) => server.supported && server.url)
   const supportedSkills = consideredSkills.filter((skill) => skill.supported && skill.rawSourceText)
+  if (supportedServers.length > MAX_GITHUB_MCP_IMPORT_SELECTIONS) {
+    throw new PluginArchRouteFailure(
+      400,
+      "github_import_limit_exceeded",
+      `Select at most ${MAX_GITHUB_MCP_IMPORT_SELECTIONS} MCP servers per import so OpenWork can validate them within one bounded request.`,
+    )
+  }
+  if (supportedServers.length + supportedSkills.length > MAX_GITHUB_MCP_IMPORT_COMPONENTS) {
+    throw new PluginArchRouteFailure(
+      400,
+      "github_import_limit_exceeded",
+      `Select at most ${MAX_GITHUB_MCP_IMPORT_COMPONENTS} total MCP servers and skills per import so publication remains atomic and bounded.`,
+    )
+  }
   if (supportedServers.length === 0 && supportedSkills.length === 0) {
     throw new PluginArchRouteFailure(400, "no_supported_plugin_components", "No supported remote MCP servers or skills were selected from that plugin.")
   }
+  const resolvedServerConfigurations = new Map(supportedServers.map((server) => [
+    server.serverKey,
+    githubPluginMcpServerConfiguration({
+      configured: serverConfigurations.get(server.serverKey),
+      discoveredAuthType: server.authType,
+      fallbackAuthType: input.authType,
+      fallbackCredentialMode: input.credentialMode,
+    }),
+  ]))
 
-  const access = input.access ?? {
+  const requestedAccess = input.access ?? {
     memberIds: [],
     orgWide: true,
     teamIds: [],
   }
-  if (!access.orgWide && access.memberIds.length === 0 && access.teamIds.length === 0) {
+  if (!requestedAccess.orgWide && requestedAccess.memberIds.length === 0 && requestedAccess.teamIds.length === 0) {
     throw new PluginArchRouteFailure(400, "missing_import_access", "Choose who can use the imported MCP connections.")
   }
+  const access = await validateGithubImportAccess({ access: requestedAccess, context: input.context })
 
-  const plugin = await createPlugin({
-    context: input.context,
-    description: `Plugin components imported from ${plan.repositoryFullName}${plan.rootPath ? `/${plan.rootPath}` : ""}.`,
-    name: importedPluginName(plan),
+  // Re-check the selected declarations server-side. Preview guidance is not a
+  // trust boundary: older clients may omit per-server configuration, and a
+  // crafted request must not bypass unsupported inputs or missing PKCE. Every
+  // selected OAuth server receives a live metadata probe within the shared
+  // request budget; manifest declarations alone cannot authorize an import.
+  const liveOAuthServerKeys = new Set(supportedServers
+    .filter((server) => resolvedServerConfigurations.get(server.serverKey)?.authType === "oauth")
+    .map((server) => server.serverKey))
+  const unavailableValidationFetch = async (): Promise<Response> => {
+    throw new Error("Live MCP validation was not scheduled for this import item.")
+  }
+  const validatedDiscoveries = new Map<string, ExternalMcpConfigurationDiscovery>()
+  await mapWithConcurrency({
+    concurrency: GITHUB_MCP_DISCOVERY_CONCURRENCY,
+    items: supportedServers,
+    map: async (server) => {
+      const configuration = resolvedServerConfigurations.get(server.serverKey)
+      if (!configuration || !server.url) return
+      const discovery = await discoverExternalMcpConfiguration({
+        config: githubPluginMcpManifestByServer.get(server),
+        ...(liveOAuthServerKeys.has(server.serverKey) ? {} : { fetch: unavailableValidationFetch }),
+        timeoutMs: githubMcpRemainingTimeoutMs(inspectionDeadlineAt, GITHUB_MCP_DISCOVERY_TIMEOUT_MS),
+        url: server.url,
+      })
+      assertPluginMcpDiscoveryAllowsConfiguration({
+        authType: configuration.authType,
+        discovery,
+        oauthClient: configuration.oauthClient,
+        requireVerifiedOauthPkce: configuration.authType === "oauth",
+      })
+      validatedDiscoveries.set(server.serverKey, discovery)
+    },
   })
 
-  await grantImportAccessToPluginArchResource({
-    access,
-    context: input.context,
-    resourceId: plugin.id,
-    resourceKind: "plugin",
-  })
+  const preparedConnections: Array<{
+    configuration: ReturnType<typeof githubPluginMcpServerConfiguration>
+    importedConnection: Awaited<ReturnType<typeof ensureImportedExternalMcpConnection>>
+    server: GithubPluginMcpImportServer
+  }> = []
+  const rollbackState = createGithubImportRollbackState(access)
+  const validationLifecycleDeadline = createExternalMcpLifecycleDeadline(
+    githubMcpRemainingTimeoutMs(inspectionDeadlineAt, GITHUB_MCP_IMPORT_OPERATION_TIMEOUT_MS),
+  )
+  try {
+    for (const server of supportedServers) {
+      requireGithubImportTime(inspectionDeadlineAt)
+      const configuration = resolvedServerConfigurations.get(server.serverKey)
+      if (!configuration) throw new PluginArchRouteFailure(400, "missing_server_configuration", `MCP server "${server.name}" configuration is missing.`)
+      const discovery = validatedDiscoveries.get(server.serverKey)
+      if (!discovery || !server.url) {
+        throw new PluginArchRouteFailure(409, "mcp_discovery_stale", `MCP server "${server.name}" must be inspected again before import.`)
+      }
+      const ensuredConnection = await ensureImportedExternalMcpConnection({
+        access,
+        apiKey: configuration.apiKey,
+        authType: configuration.authType,
+        context: input.context,
+        credentialMode: configuration.credentialMode,
+        oauthClient: configuration.oauthClient,
+        requestedOAuthScopes: configuration.authType === "oauth"
+          ? trustedPluginMcpRequestedOAuthScopes({
+              discovery,
+              server: {
+                config: githubPluginMcpManifestByServer.get(server) ?? {},
+                name: server.name,
+                url: server.url,
+              },
+            })
+          : [],
+        server,
+      })
+      // Multiple declarations in one import can intentionally share a URL.
+      // Once this saga created that row, every config object in the same saga
+      // must retain plugin ownership so removing the last binding can reclaim
+      // it later.
+      const importedConnection = rollbackState.newlyCreatedConnectionIds.has(ensuredConnection.connection.id)
+        ? { ...ensuredConnection, ownedByImportedPlugin: true }
+        : ensuredConnection
+      rememberGithubImportConnection(rollbackState, importedConnection)
+      await validateConfiguredPluginMcpConnection({
+        apiPublicBaseUrl: input.apiPublicBaseUrl,
+        authType: configuration.authType,
+        connection: importedConnection.connection,
+        lifecycleDeadline: validationLifecycleDeadline,
+        markConnected: false,
+      })
+      preparedConnections.push({ configuration, importedConnection, server })
+    }
+    requireGithubImportTime(operationDeadlineAt, GITHUB_MCP_IMPORT_MATERIALIZATION_RESERVE_MS - 1_000)
+    const stagedPlugin = await createStagedGithubImportPlugin({
+      context: input.context,
+      description: `Plugin components imported from ${plan.repositoryFullName}${plan.rootPath ? `/${plan.rootPath}` : ""} at immutable GitHub revision ${plan.sourceRevisionRef}.`,
+      name: importedPluginName(plan),
+    })
+    const plugin = stagedPlugin.row
+    rollbackState.pluginId = plugin.id
+    rollbackState.pluginManagerGrantId = stagedPlugin.managerGrantId
+    rollbackState.pluginSnapshot = plugin
 
-  const imported: Array<{ connectionId: string; name: string; url: string }> = []
-  const importedSkills: Array<{ name: string; skillId: SkillId; sourcePath: string }> = []
-  for (const server of supportedServers) {
-    const importedConnection = await ensureImportedExternalMcpConnection({
-      access,
-      authType: input.authType,
-      context: input.context,
-      credentialMode: input.credentialMode,
-      server,
-    })
-    const connection = importedConnection.connection
-    const payload = importedConnectionBackedMcpPayload({
-      connectionId: connection.id,
-      ownedByImportedPlugin: importedConnection.ownedByImportedPlugin,
-      server,
-    })
-    const configObject = await createConfigObject({
-      context: input.context,
-      objectType: "mcp",
-      pluginIds: [plugin.id],
-      sourceMode: "import",
-      value: {
-        metadata: {
-          description: `Den-hosted MCP connection imported from ${server.sourcePath}.`,
+    const imported: Array<{ connectionId: string; name: string; oauthCallback?: string; url: string }> = []
+    const importedSkills: Array<{ name: string; skillId: SkillId; sourcePath: string }> = []
+    for (const { configuration, importedConnection, server } of preparedConnections) {
+      requireGithubImportTime(operationDeadlineAt)
+      const connection = importedConnection.connection
+      if (configuration.oauthClient && configuration.authType === "oauth") {
+        await persistGithubImportOAuthClient({
+          client: configuration.oauthClient,
+          connection,
+          context: input.context,
+          ownedByImportedPlugin: importedConnection.ownedByImportedPlugin,
+          state: rollbackState,
+        })
+      }
+      const payload = importedConnectionBackedMcpPayload({
+        connectionId: connection.id,
+        ownedByImportedPlugin: importedConnection.ownedByImportedPlugin,
+        repositoryFullName: plan.repositoryFullName,
+        server,
+        sourceRevisionRef: plan.sourceRevisionRef,
+      })
+      const configObject = await createConfigObject({
+        context: input.context,
+        objectType: "mcp",
+        pluginIds: [plugin.id],
+        sourceMode: "import",
+        value: {
+          metadata: {
+            description: `Den-hosted MCP connection imported from ${server.sourcePath}.`,
+            externalMcpConnectionId: connection.id,
+            externalMcpConnectionOwnedByPlugin: importedConnection.ownedByImportedPlugin,
+            githubUrl: canonicalGithubUrl,
+            name: externalMcpConnectionName({ pluginName: server.pluginName, serverName: server.name }),
+            openworkManaged: "den_external_mcp",
+            repositoryFullName: plan.repositoryFullName,
+            sourcePath: server.sourcePath,
+            sourceRevisionRef: plan.sourceRevisionRef,
+          },
+          normalizedPayloadJson: payload,
+          schemaVersion: "openwork.den_external_mcp.v1",
+          sourceRevisionRef: plan.sourceRevisionRef,
+        },
+      })
+      rollbackState.configObjectIds.add(configObject.id)
+      const configObjectSnapshot = await getConfigObjectRow(
+        input.context.organizationContext.organization.id,
+        configObject.id,
+      )
+      if (!configObjectSnapshot) {
+        throw new PluginArchRouteFailure(409, "github_import_changed", "An imported config object disappeared before publication.")
+      }
+      rollbackState.configObjects.set(configObject.id, configObjectSnapshot)
+      let binding: PluginMcpRequirementBindingRow
+      try {
+        binding = await upsertPluginMcpRequirementBinding({
+          configObjectId: configObject.id,
+          createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
           externalMcpConnectionId: connection.id,
-          externalMcpConnectionOwnedByPlugin: importedConnection.ownedByImportedPlugin,
-          githubUrl: input.githubUrl,
-          name: externalMcpConnectionName({ pluginName: server.pluginName, serverName: server.name }),
-          openworkManaged: "den_external_mcp",
-          repositoryFullName: plan.repositoryFullName,
-          sourcePath: server.sourcePath,
+          organizationId: input.context.organizationContext.organization.id,
+          pluginId: plugin.id,
+          serverName: slugifyPluginMcpName(server.name),
+        })
+      } catch (error) {
+        if (error instanceof PluginMcpRequirementConnectionMissingError) {
+          throw new PluginArchRouteFailure(
+            409,
+            "external_mcp_connection_changed",
+            "The MCP connection was removed while the GitHub plugin was being imported. Inspect it again and retry.",
+          )
+        }
+        throw error
+      }
+      rollbackState.bindingIds.add(binding.id)
+      rollbackState.bindings.set(binding.id, binding)
+      imported.push({
+        connectionId: connection.id,
+        name: server.name,
+        ...(configuration.authType === "oauth" && configuration.oauthClient
+          ? { oauthCallback: pluginMcpValidationRedirectUri(connection.id, input.apiPublicBaseUrl) }
+          : {}),
+        url: server.url ?? "",
+      })
+    }
+
+    requireGithubImportTime(operationDeadlineAt)
+    const createdSkillHub = supportedSkills.length > 0
+      ? await createSkillHubForImportedSkills({
+        access,
+        context: input.context,
+        name: boundedPublisherName(`${plugin.name} skills`, "GitHub plugin skills"),
+      })
+      : null
+    rollbackState.skillHubId = createdSkillHub?.row.id ?? null
+    rollbackState.skillHubSnapshot = createdSkillHub?.row ?? null
+    rollbackState.skillHubMembers = createdSkillHub?.memberRows ?? []
+    for (const skill of supportedSkills) {
+      requireGithubImportTime(operationDeadlineAt)
+      const createdSkill = await createImportedSkill({
+        context: input.context,
+        repositoryFullName: plan.repositoryFullName,
+        skill,
+        skillHubId: rollbackState.skillHubId,
+        sourceRevisionRef: plan.sourceRevisionRef,
+      })
+      rollbackState.skillIds.add(createdSkill.row.id)
+      rollbackState.skills.set(createdSkill.row.id, createdSkill.row)
+      if (createdSkill.skillHubSkillId) rollbackState.skillHubSkillIds.add(createdSkill.skillHubSkillId)
+      const configObject = await createConfigObject({
+        context: input.context,
+        objectType: "skill",
+        pluginIds: [plugin.id],
+        sourceMode: "import",
+        value: {
+          metadata: {
+            description: createdSkill.row.description ?? `Den skill imported from ${skill.sourcePath}.`,
+            denSkillId: createdSkill.row.id,
+            githubUrl: canonicalGithubUrl,
+            name: createdSkill.row.title,
+            openworkManaged: "den_skill",
+            repositoryFullName: plan.repositoryFullName,
+            sourcePath: skill.sourcePath,
+            sourceRevisionRef: plan.sourceRevisionRef,
+          },
+          normalizedPayloadJson: importedDenSkillPayload({
+            repositoryFullName: plan.repositoryFullName,
+            skillId: createdSkill.row.id,
+            sourcePath: skill.sourcePath,
+            sourceRevisionRef: plan.sourceRevisionRef,
+          }),
+          schemaVersion: "openwork.den_skill.v1",
+          sourceRevisionRef: plan.sourceRevisionRef,
         },
-        normalizedPayloadJson: payload,
-        schemaVersion: "openwork.den_external_mcp.v1",
+      })
+      rollbackState.configObjectIds.add(configObject.id)
+      const configObjectSnapshot = await getConfigObjectRow(
+        input.context.organizationContext.organization.id,
+        configObject.id,
+      )
+      if (!configObjectSnapshot) {
+        throw new PluginArchRouteFailure(409, "github_import_changed", "An imported skill config object disappeared before publication.")
+      }
+      rollbackState.configObjects.set(configObject.id, configObjectSnapshot)
+      importedSkills.push({ name: createdSkill.row.title, skillId: createdSkill.row.id, sourcePath: skill.sourcePath })
+    }
+
+    const skipped = consideredServers.flatMap((server) =>
+      server.supported || !server.skippedReason ? [] : [{ name: server.name, reason: server.skippedReason }])
+    const skippedSkills = consideredSkills.flatMap((skill) =>
+      skill.supported || !skill.skippedReason ? [] : [{ name: skill.name, reason: skill.skippedReason, sourcePath: skill.sourcePath }])
+    const stagedPluginDetail = await getPluginDetail(input.context, plugin.id)
+    // Re-check route-level authority immediately before the commit fence. The
+    // transaction below separately locks and verifies the live marketplace.
+    await ensureEditableMarketplace(input.context, input.marketplaceId)
+    const published = await publishStagedGithubImport({
+      context: input.context,
+      marketplaceId: input.marketplaceId,
+      noAuthConnectionIds: preparedConnections.flatMap(({ configuration, importedConnection }) =>
+        configuration.authType === "none" ? [importedConnection.connection.id] : []),
+      operationDeadlineAt,
+      state: rollbackState,
+    })
+
+    return {
+      imported,
+      importedSkills,
+      marketplaceId: input.marketplaceId,
+      plugin: {
+        ...stagedPluginDetail,
+        marketplaces: [{ id: marketplace.id, name: published.marketplaceName }],
+        status: "active" as const,
+        updatedAt: published.publishedAt.toISOString(),
       },
-    })
-    await upsertPluginMcpRequirementBinding({
-      configObjectId: configObject.id,
-      createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
-      externalMcpConnectionId: connection.id,
-      organizationId: input.context.organizationContext.organization.id,
-      pluginId: plugin.id,
-      serverName: slugifyPluginMcpName(server.name),
-    })
-    await grantImportAccessToPluginArchResource({
-      access,
-      context: input.context,
-      resourceId: configObject.id,
-      resourceKind: "config_object",
-    })
-    imported.push({ connectionId: connection.id, name: server.name, url: server.url ?? "" })
-  }
-
-  const skillHubId = supportedSkills.length > 0
-    ? await createSkillHubForImportedSkills({
-      access,
-      context: input.context,
-      name: `${plugin.name} skills`,
-    })
-    : null
-  for (const skill of supportedSkills) {
-    const createdSkill = await createImportedSkill({
-      access,
-      context: input.context,
-      skill,
-      skillHubId,
-    })
-    const configObject = await createConfigObject({
-      context: input.context,
-      objectType: "skill",
-      pluginIds: [plugin.id],
-      sourceMode: "import",
-      value: {
-        metadata: {
-          description: createdSkill.description ?? `Den skill imported from ${skill.sourcePath}.`,
-          denSkillId: createdSkill.id,
-          githubUrl: input.githubUrl,
-          name: createdSkill.title,
-          openworkManaged: "den_skill",
-          repositoryFullName: plan.repositoryFullName,
-          sourcePath: skill.sourcePath,
-        },
-        normalizedPayloadJson: importedDenSkillPayload(createdSkill.id),
-        schemaVersion: "openwork.den_skill.v1",
-      },
-    })
-    await grantImportAccessToPluginArchResource({
-      access,
-      context: input.context,
-      resourceId: configObject.id,
-      resourceKind: "config_object",
-    })
-    importedSkills.push({ name: createdSkill.title, skillId: createdSkill.id, sourcePath: skill.sourcePath })
-  }
-
-  await attachPluginToMarketplace({
-    context: input.context,
-    marketplaceId: input.marketplaceId,
-    membershipSource: "api",
-    pluginId: plugin.id,
-  })
-
-  const skipped = consideredServers.flatMap((server) =>
-    server.supported || !server.skippedReason ? [] : [{ name: server.name, reason: server.skippedReason }])
-  const skippedSkills = consideredSkills.flatMap((skill) =>
-    skill.supported || !skill.skippedReason ? [] : [{ name: skill.name, reason: skill.skippedReason, sourcePath: skill.sourcePath }])
-
-  return {
-    imported,
-    importedSkills,
-    marketplaceId: input.marketplaceId,
-    plugin: await getPluginDetail(input.context, plugin.id),
-    skipped,
-    skippedSkills,
+      skipped,
+      skippedSkills,
+    }
+  } catch (error) {
+    await rollbackGithubPluginMcpImport({ context: input.context, state: rollbackState })
+    throw error
   }
 }
 

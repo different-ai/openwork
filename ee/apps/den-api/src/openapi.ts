@@ -51,10 +51,26 @@ const validationIssueSchema = z.object({
   path: z.array(z.union([z.string(), z.number()])).optional(),
 }).passthrough()
 
-export const invalidRequestSchema = z.object({
-  error: z.literal("invalid_request"),
-  details: z.array(validationIssueSchema),
-}).meta({ ref: "InvalidRequestError" })
+const invalidRequestDetailsSchema = z.union([
+  z.array(validationIssueSchema),
+  z.object({
+    name: z.string().optional(),
+    message: z.string(),
+  }).passthrough(),
+])
+
+export const invalidRequestSchema = z.union([
+  z.object({
+    error: z.literal("invalid_request"),
+    details: invalidRequestDetailsSchema,
+    message: z.string().optional(),
+  }),
+  z.object({
+    error: z.literal("invalid_request"),
+    message: z.string(),
+    details: invalidRequestDetailsSchema.optional(),
+  }),
+]).meta({ ref: "InvalidRequestError" })
 
 export const unauthorizedSchema = z.object({
   error: z.literal("unauthorized"),
@@ -101,6 +117,16 @@ export function htmlResponse(description: string) {
       "text/html": {
         schema: resolver(z.string()),
       },
+    },
+  }
+}
+
+export function jsonOrHtmlResponse(description: string, schema: z.ZodTypeAny) {
+  return {
+    description,
+    content: {
+      "application/json": { schema: resolver(schema) },
+      "text/html": { schema: resolver(z.string()) },
     },
   }
 }

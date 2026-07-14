@@ -2,9 +2,11 @@ import { relations, sql } from "drizzle-orm"
 import {
   boolean,
   index,
+  int,
   json,
   mysqlEnum,
   mysqlTable,
+  text,
   timestamp,
   uniqueIndex,
   varchar,
@@ -39,11 +41,11 @@ export const OrgOAuthClientTable = mysqlTable(
     clientSecret: encryptedTextColumn("client_secret"),
     /**
      * Free-form provider-specific extras: for MCP-SDK-driven external
-     * connections this holds the dynamically-registered client metadata
-     * (client_id_issued_at, registration_access_token, etc.) and cached
-     * discovery state (authorization server URLs) so the SDK's `auth()`
-     * doesn't have to re-discover on every call. For native providers this
-     * is typically empty.
+     * connections this may hold non-secret dynamically-registered client
+     * metadata (for example client_id_issued_at). Client secrets belong only
+     * in the encrypted clientSecret column; registration access tokens are
+     * deliberately not retained. For native providers this is typically
+     * empty or contains non-secret provider selections.
      */
     extra: json("extra").$type<Record<string, unknown>>(),
     createdByOrgMembershipId: denTypeIdColumn(
@@ -87,9 +89,10 @@ export const ConnectedAccountTable = mysqlTable(
     tokenType: varchar("token_type", { length: 64 }),
     expiresAt: timestamp("expires_at", { fsp: 3 }),
     /**
-     * Transient PKCE code verifier, present only between connect/start and
-     * connect/callback for a given (org, member, provider). Cleared once
-     * tokens are saved.
+     * Expand-release compatibility slot for OAuth starts/callbacks that cross
+     * old and new Den replicas. New code also writes the state-keyed
+     * transaction table; remove this dual-write only in a later contract
+     * release after old replicas and pending callbacks have drained.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
     connectedAt: timestamp("connected_at", { fsp: 3 }).notNull().defaultNow(),
@@ -147,21 +150,42 @@ export const ExternalMcpConnectionTable = mysqlTable(
     /** Only set when authType = "apikey". Sent as a Bearer token. */
     apiKey: encryptedTextColumn("api_key"),
     /**
-     * OAuth tokens for authType = "oauth". Unlike ConnectedAccountTable,
-     * this is deliberately org-level, not per-member: an external MCP
-     * connection (Notion, Linear, ...) is a shared org integration, like an
-     * LLM provider key, not one person's personal grant. Populated by the
-     * MCP SDK's own OAuthClientProvider machinery (client/auth.ts), which
-     * also handles silent refresh via StreamableHTTPClientTransport.
+     * OAuth tokens for a shared-credential connection. Per-member connection
+     * tokens live in ConnectedAccountTable instead, keyed by membership and
+     * this connection id. Both paths are populated through the MCP SDK OAuth
+     * provider and refreshed by StreamableHTTPClientTransport.
      */
     accessToken: encryptedTextColumn("access_token"),
     refreshToken: encryptedTextColumn("refresh_token"),
     tokenType: varchar("token_type", { length: 64 }),
-    scope: varchar("scope", { length: 1024 }),
+    /**
+     * OAuth scopes OpenWork should request when the MCP challenge and
+     * protected-resource metadata do not declare a narrower authoritative
+     * set. Kept separate from `scope`, which records scopes actually granted
+     * in the token response.
+     */
+    requestedOAuthScopes: json("requested_oauth_scopes").$type<string[]>(),
+    // Provider token responses may echo a large advertised scope set. Keep
+    // granted scope storage at the same bounded response size as discovery so
+    // a successful callback cannot fail merely because the old varchar(1024)
+    // ceiling was smaller than the provider's response.
+    scope: text("scope"),
+    /** Short distributed lease used to single-flight dynamic client registration across Den replicas. */
+    oauthRegistrationLeaseToken: varchar("oauth_registration_lease_token", { length: 64 }),
+    oauthRegistrationLeaseStartedAt: timestamp("oauth_registration_lease_started_at", { fsp: 3 }),
+    /**
+     * Fences browser OAuth work from disconnects that happen while the
+     * provider is exchanging an authorization code. Starts capture this
+     * value; disconnect increments it; credential commits require an exact
+     * match while holding the connection row lock.
+     */
+    oauthAuthorizationEpoch: int("oauth_authorization_epoch").notNull().default(0),
     expiresAt: timestamp("expires_at", { fsp: 3 }),
     /**
-     * Transient PKCE code verifier, present only between connect/start and
-     * connect/callback. Cleared once tokens are saved.
+     * Expand-release compatibility slot for OAuth starts/callbacks that cross
+     * old and new Den replicas. New code also writes
+     * ExternalMcpOAuthTransactionTable, which is authoritative for concurrent
+     * tabs; remove the legacy dual-write in a later contract release.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
     connectedAt: timestamp("connected_at", { fsp: 3 }),
@@ -176,6 +200,30 @@ export const ExternalMcpConnectionTable = mysqlTable(
   },
   (table) => [
     index("external_mcp_connection_organization_id").on(table.organizationId),
+  ],
+)
+
+/**
+ * One pending PKCE verifier per signed OAuth state. Keeping this separate from
+ * the connection/account token rows allows two browser tabs to complete in
+ * either order and makes callback consumption single-use across Den replicas.
+ */
+export const ExternalMcpOAuthTransactionTable = mysqlTable(
+  "external_mcp_oauth_transaction",
+  {
+    stateKey: varchar("state_key", { length: 64 }).notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    externalMcpConnectionId: denTypeIdColumn("externalMcpConnection", "external_mcp_connection_id").notNull(),
+    orgMembershipId: denTypeIdColumn("member", "org_membership_id").notNull(),
+    /** Connection fence captured when this state-bound PKCE transaction starts. */
+    connectionAuthorizationEpoch: int("connection_authorization_epoch").notNull().default(0),
+    codeVerifier: encryptedTextColumn("code_verifier").notNull(),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("external_mcp_oauth_transaction_connection").on(table.externalMcpConnectionId),
+    index("external_mcp_oauth_transaction_expires_at").on(table.expiresAt),
   ],
 )
 

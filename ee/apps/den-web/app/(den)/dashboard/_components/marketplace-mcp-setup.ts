@@ -1,4 +1,9 @@
-import type { ExternalMcpAuthType, ExternalMcpCredentialMode, ExternalMcpPreset } from "./mcp-connections-data";
+import type {
+  ExternalMcpAuthType,
+  ExternalMcpConfigurationDiscovery,
+  ExternalMcpCredentialMode,
+  ExternalMcpPreset,
+} from "./mcp-connections-data";
 import type { MarketplacePluginCloudReadinessConnection } from "./marketplace-data";
 
 function normalizeMcpUrl(value: string): string | null {
@@ -34,14 +39,18 @@ export function pluginSetupAuthType(preset: ExternalMcpPreset | null): ExternalM
   return preset?.authType ?? "oauth";
 }
 
-export function pluginSetupInitialState(preset: ExternalMcpPreset | null): {
+export function pluginSetupInitialState(
+  preset: ExternalMcpPreset | null,
+  discovery: ExternalMcpConfigurationDiscovery | null = null,
+): {
   authAssumed: boolean;
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
 } {
-  const authType = pluginSetupAuthType(preset);
+  const discoveredAuthType = discovery?.auth.kind;
+  const authType = discoveredAuthType && discoveredAuthType !== "unknown" ? discoveredAuthType : pluginSetupAuthType(preset);
   return {
-    authAssumed: !preset,
+    authAssumed: !preset && (!discoveredAuthType || discoveredAuthType === "unknown"),
     authType,
     credentialMode: pluginSetupCredentialMode(authType, "per_member"),
   };
@@ -137,6 +146,9 @@ export function pluginReadinessConnectionAction(
   return null;
 }
 
-export function pluginSetupActionLabel(preset: ExternalMcpPreset | null): string {
-  return preset ? "Quick connect" : "Configure connection";
+export function pluginSetupActionLabel(
+  preset: ExternalMcpPreset | null,
+  discovery: ExternalMcpConfigurationDiscovery | null = null,
+): string {
+  return preset || (discovery && discovery.auth.kind !== "unknown") ? "Quick connect" : "Configure connection";
 }

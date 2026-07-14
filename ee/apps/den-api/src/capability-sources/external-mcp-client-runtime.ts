@@ -1,5 +1,6 @@
 import { env } from "../env.js"
 import {
+  abandonExternalMcpAuth as abandonWithCurrentClient,
   callExternalMcpTool as callWithCurrentClient,
   completeExternalMcpAuth as completeWithCurrentClient,
   connectExternalMcp as connectWithCurrentClient,
@@ -15,20 +16,16 @@ import {
 
 export type ExternalMcpClientRuntime = {
   connectExternalMcp: typeof connectWithCurrentClient
-  completeExternalMcpAuth: (
-    ...input: [...Parameters<typeof completeWithCurrentClient>, signedState?: string]
-  ) => ReturnType<typeof completeWithCurrentClient>
-  abandonExternalMcpAuth: typeof abandonWithEnterpriseClient
+  completeExternalMcpAuth: typeof completeWithCurrentClient
+  abandonExternalMcpAuth: typeof abandonWithCurrentClient
   listExternalMcpTools: typeof listWithCurrentClient
   callExternalMcpTool: typeof callWithCurrentClient
 }
 
 const currentDenMcpClient: ExternalMcpClientRuntime = {
   connectExternalMcp: connectWithCurrentClient,
-  completeExternalMcpAuth: (connection, code, redirectUri, member, diagnosticReferenceId) => (
-    completeWithCurrentClient(connection, code, redirectUri, member, diagnosticReferenceId)
-  ),
-  abandonExternalMcpAuth: async () => undefined,
+  completeExternalMcpAuth: completeWithCurrentClient,
+  abandonExternalMcpAuth: abandonWithCurrentClient,
   listExternalMcpTools: listWithCurrentClient,
   callExternalMcpTool: callWithCurrentClient,
 }

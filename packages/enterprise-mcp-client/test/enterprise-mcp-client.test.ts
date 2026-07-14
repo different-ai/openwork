@@ -455,8 +455,8 @@ class MemoryOAuthPersistence implements EnterpriseMcpOAuthPersistence {
       }
       return this.registration
     },
-    invalidate: async () => {
-      this.registration = undefined
+    invalidate: async (input: { revision: string }) => {
+      if (this.registration?.revision === input.revision) this.registration = undefined
     },
   }
 
@@ -510,8 +510,10 @@ class MemoryOAuthPersistence implements EnterpriseMcpOAuthPersistence {
         revision: this.nextRevision(),
       }
       this.assertActive(input.context)
+      return this.credential
     },
-    invalidate: async () => {
+    invalidate: async (input: { revision: string }) => {
+      if (this.credential?.revision !== input.revision) return
       this.credential = undefined
       this.invalidationCount += 1
     },
@@ -807,6 +809,28 @@ describe("enterprise MCP OAuth persistence contract", () => {
         && error.code === "MCP_OAUTH_CREDENTIAL_EXPIRED",
     )
     assert.equal(persistence.credential, undefined)
+  })
+
+  it("does not let a delayed token rejection invalidate a newer credential revision", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedCredential({ access_token: "token-t1", token_type: "Bearer" })
+    const delayed = oauthProvider({ persistence, flow: { kind: "runtime" } })
+    assert.equal((await delayed.tokens())?.access_token, "token-t1")
+
+    persistence.seedCredential({ access_token: "token-t2", token_type: "Bearer" })
+    await delayed.invalidateCredentials("tokens")
+    assert.equal(persistence.credential?.tokens.access_token, "token-t2")
+  })
+
+  it("does not let delayed invalid_client cleanup remove a rotated client revision", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedRegistration({ client_id: "client-t1" })
+    const delayed = oauthProvider({ persistence, flow: { kind: "runtime" } })
+    assert.equal((await delayed.clientInformation())?.client_id, "client-t1")
+
+    persistence.seedRegistration({ client_id: "client-t2" })
+    await delayed.invalidateCredentials("client")
+    assert.equal(persistence.registration?.clientInformation.client_id, "client-t2")
   })
 
   it("fails a losing concurrent dynamic registration instead of using the wrong client", async () => {

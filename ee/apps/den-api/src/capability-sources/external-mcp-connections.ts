@@ -1,23 +1,29 @@
 import { createHash } from "node:crypto"
-import { and, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
   ExternalMcpConnectionAccessGrantTable,
+  ExternalMcpOAuthTransactionTable,
   ExternalMcpConnectionTable,
   MarketplaceAccessGrantTable,
   MarketplacePluginTable,
   MarketplaceTable,
+  MemberTable,
   OrgOAuthClientTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginMcpRequirementBindingTable,
   PluginTable,
+  TeamMemberTable,
+  TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
+import { roleIncludesPrivileged } from "../organization-member-guards.js"
+import { ExternalMcpLifecycleDeadlineError } from "./external-mcp-diagnostics.js"
 
 /**
  * CRUD for ExternalMcpConnectionTable and its access grants — the "add any
@@ -33,6 +39,27 @@ export type ActiveExternalMcpConnectionBinding = {
   pluginId: DenTypeId<"plugin">
   pluginName: string
 }
+export type ExternalMcpOAuthTransactionRow = typeof ExternalMcpOAuthTransactionTable.$inferSelect
+type OrgOAuthClientRow = typeof OrgOAuthClientTable.$inferSelect
+type ConnectedAccountRow = typeof ConnectedAccountTable.$inferSelect
+
+export type ExternalMcpOAuthClientRevision = Pick<
+  OrgOAuthClientRow,
+  "id" | "clientId" | "clientSecret" | "extra" | "updatedAt"
+>
+
+export type ExternalMcpOAuthClientValue = Pick<
+  OrgOAuthClientRow,
+  "clientId" | "clientSecret" | "extra" | "createdByOrgMembershipId"
+>
+
+export type ExternalMcpOAuthClientCasResult =
+  | { status: "applied"; revision: ExternalMcpOAuthClientRevision | null }
+  | { status: "client_changed" | "connection_changed" | "connection_missing" }
+
+export type ExternalMcpConditionalCleanupResult = "missing" | "in_use" | "deleted"
+
+export type ExternalMcpTokenRevision = string
 
 type OrganizationId = DenTypeId<"organization">
 type OrgMembershipId = DenTypeId<"member">
@@ -41,6 +68,45 @@ type ExternalMcpConnectionId = DenTypeId<"externalMcpConnection">
 type PluginMcpRequirementBindingId = DenTypeId<"pluginMcpRequirementBinding">
 type PluginId = DenTypeId<"plugin">
 type ConfigObjectId = DenTypeId<"configObject">
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+
+export type ExternalMcpAuthorizationActor = {
+  orgMembershipId: OrgMembershipId
+}
+
+const EXTERNAL_MCP_OAUTH_AUTHORITY_CHANGED = "The initiating member no longer has authority to complete this MCP authorization."
+
+export class ExternalMcpOAuthAuthorizationRevokedError extends Error {
+  readonly code = "external_mcp_oauth_authorization_revoked"
+
+  constructor() {
+    super(EXTERNAL_MCP_OAUTH_AUTHORITY_CHANGED)
+    this.name = "ExternalMcpOAuthAuthorizationRevokedError"
+  }
+}
+
+export class ExternalMcpAccessTargetInvalidError extends Error {
+  readonly code = "external_mcp_access_target_invalid"
+
+  constructor() {
+    super("External MCP access can only target active members and teams in the same organization.")
+    this.name = "ExternalMcpAccessTargetInvalidError"
+  }
+}
+
+export function isExternalMcpOAuthAuthorizationRevokedError(error: unknown): boolean {
+  let current = error
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (current instanceof ExternalMcpOAuthAuthorizationRevokedError) return true
+    if (typeof current !== "object" || current === null || !("cause" in current)) return false
+    current = current.cause
+  }
+  return false
+}
+
+function oauthAuthorizationRevoked(): never {
+  throw new ExternalMcpOAuthAuthorizationRevokedError()
+}
 
 function unique<TValue extends string>(values: TValue[]): TValue[] {
   return [...new Set(values)]
@@ -48,6 +114,128 @@ function unique<TValue extends string>(values: TValue[]): TValue[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson)
+  if (!isRecord(value)) return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonicalJson(entry)]),
+  )
+}
+
+function sameExternalMcpOAuthClientRevision(
+  current: ExternalMcpOAuthClientRevision,
+  expected: ExternalMcpOAuthClientRevision,
+): boolean {
+  return current.id === expected.id
+    && current.clientId === expected.clientId
+    && current.clientSecret === expected.clientSecret
+    && current.updatedAt.getTime() === expected.updatedAt.getTime()
+    && JSON.stringify(canonicalJson(current.extra)) === JSON.stringify(canonicalJson(expected.extra))
+}
+
+function sameExternalMcpConnectionSnapshot(
+  current: ExternalMcpConnectionRow,
+  expected: ExternalMcpConnectionRow,
+): boolean {
+  return current.id === expected.id
+    && current.organizationId === expected.organizationId
+    && current.name === expected.name
+    && current.url === expected.url
+    && current.authType === expected.authType
+    && current.credentialMode === expected.credentialMode
+    && current.apiKey === expected.apiKey
+    && current.accessToken === expected.accessToken
+    && current.refreshToken === expected.refreshToken
+    && current.tokenType === expected.tokenType
+    && current.scope === expected.scope
+    && current.pendingCodeVerifier === expected.pendingCodeVerifier
+    && current.oauthRegistrationLeaseToken === expected.oauthRegistrationLeaseToken
+    && current.oauthAuthorizationEpoch === expected.oauthAuthorizationEpoch
+    && current.connectedAt?.getTime() === expected.connectedAt?.getTime()
+    && current.expiresAt?.getTime() === expected.expiresAt?.getTime()
+    && current.oauthRegistrationLeaseStartedAt?.getTime() === expected.oauthRegistrationLeaseStartedAt?.getTime()
+    && current.createdByOrgMembershipId === expected.createdByOrgMembershipId
+    && current.createdAt.getTime() === expected.createdAt.getTime()
+    && current.updatedAt.getTime() === expected.updatedAt.getTime()
+    && JSON.stringify(current.requestedOAuthScopes) === JSON.stringify(expected.requestedOAuthScopes)
+}
+
+export function externalMcpOAuthClientRevision(
+  client: ExternalMcpOAuthClientRevision,
+): ExternalMcpOAuthClientRevision {
+  return {
+    id: client.id,
+    clientId: client.clientId,
+    clientSecret: client.clientSecret,
+    extra: client.extra,
+    updatedAt: client.updatedAt,
+  }
+}
+
+export function externalMcpOAuthClientValue(
+  client: ExternalMcpOAuthClientValue,
+): ExternalMcpOAuthClientValue {
+  return {
+    clientId: client.clientId,
+    clientSecret: client.clientSecret,
+    extra: client.extra,
+    createdByOrgMembershipId: client.createdByOrgMembershipId,
+  }
+}
+
+function externalMcpTokenRevision(
+  kind: "shared" | "per_member",
+  input: {
+    id: string
+    accessToken: string | null
+    refreshToken: string | null
+    tokenType: string | null
+    expiresAt: Date | null
+    updatedAt: Date
+    scope: string | string[] | null
+    connectedAt: Date | null
+  },
+): ExternalMcpTokenRevision {
+  return createHash("sha256")
+    .update(JSON.stringify([
+      kind,
+      input.id,
+      input.accessToken,
+      input.refreshToken,
+      input.tokenType,
+      input.scope,
+      input.expiresAt?.toISOString() ?? null,
+      input.connectedAt?.toISOString() ?? null,
+      input.updatedAt.toISOString(),
+    ]))
+    .digest("hex")
+}
+
+/** Opaque revision for the exact shared token set handed to an MCP request. */
+export function externalMcpSharedTokenRevision(
+  connection: Pick<
+    ExternalMcpConnectionRow,
+    "id" | "accessToken" | "refreshToken" | "tokenType" | "scope" | "expiresAt" | "connectedAt" | "updatedAt"
+  >,
+): ExternalMcpTokenRevision {
+  return externalMcpTokenRevision("shared", connection)
+}
+
+/** Opaque revision for the exact per-member token set handed to an MCP request. */
+export function externalMcpMemberTokenRevision(
+  account: Pick<
+    ConnectedAccountRow,
+    "id" | "accessToken" | "refreshToken" | "tokenType" | "scopes" | "expiresAt" | "connectedAt" | "updatedAt"
+  >,
+): ExternalMcpTokenRevision {
+  return externalMcpTokenRevision("per_member", {
+    ...account,
+    scope: account.scopes,
+  })
 }
 
 function readString(value: unknown) {
@@ -105,6 +293,22 @@ export function externalMcpIdentityBinding(
       connection.credentialMode,
     ]))
     .digest("base64url")
+}
+
+function externalMcpIdentityMatches(
+  connection: Pick<ExternalMcpConnectionRow, "url" | "authType" | "credentialMode">,
+  expectedIdentityBinding: string,
+): boolean {
+  return externalMcpIdentityBinding(connection) === expectedIdentityBinding
+}
+
+function assertExternalMcpIdentityBinding(
+  connection: Pick<ExternalMcpConnectionRow, "url" | "authType" | "credentialMode">,
+  expectedIdentityBinding: string,
+): void {
+  if (!externalMcpIdentityMatches(connection, expectedIdentityBinding)) {
+    throw new Error("The external MCP connection identity changed while the operation was in progress.")
+  }
 }
 
 async function latestConfigObjectVersions(input: {
@@ -389,55 +593,160 @@ export async function listActiveExternalMcpConnectionBindings(input: {
     ))
 }
 
+/**
+ * Public OAuth Client ID Metadata Documents are fetched by an authorization
+ * server without an organization session. Keep this narrowly scoped lookup
+ * separate from every organization-authorized connection read.
+ */
+export async function getExternalMcpConnectionForClientMetadata(
+  connectionId: ExternalMcpConnectionId,
+): Promise<Pick<ExternalMcpConnectionRow, "id" | "requestedOAuthScopes"> | null> {
+  const rows = await db
+    .select({
+      id: ExternalMcpConnectionTable.id,
+      requestedOAuthScopes: ExternalMcpConnectionTable.requestedOAuthScopes,
+    })
+    .from(ExternalMcpConnectionTable)
+    .where(and(
+      eq(ExternalMcpConnectionTable.id, connectionId),
+      eq(ExternalMcpConnectionTable.authType, "oauth"),
+    ))
+    .limit(1)
+  return rows[0] ?? null
+}
+
 export type ExternalMcpAccessInput = {
   orgWide: boolean
   memberIds: OrgMembershipId[]
   teamIds: TeamId[]
 }
 
-export async function createExternalMcpConnection(input: {
+const MAX_EXTERNAL_MCP_REQUESTED_SCOPES = 100
+const MAX_EXTERNAL_MCP_SCOPE_LENGTH = 512
+const MAX_EXTERNAL_MCP_SCOPE_TOTAL_LENGTH = 8_192
+
+/**
+ * Scope values can originate in publisher manifests, so keep the persisted
+ * OAuth fallback deliberately small and tokenized. The live challenge and
+ * protected-resource metadata still take precedence in the MCP SDK.
+ */
+export function normalizeExternalMcpRequestedOAuthScopes(
+  values: readonly string[] | null | undefined,
+): string[] | null {
+  if (!values?.length) return null
+  const scopes: string[] = []
+  const seen = new Set<string>()
+  let totalLength = 0
+  for (const value of values) {
+    for (const candidate of value.split(/\s+/g)) {
+      const scope = candidate.trim()
+      if (!scope || seen.has(scope)) continue
+      if (scope.length > MAX_EXTERNAL_MCP_SCOPE_LENGTH) {
+        throw new Error(`OAuth scope values must be at most ${MAX_EXTERNAL_MCP_SCOPE_LENGTH} characters.`)
+      }
+      if (scopes.length >= MAX_EXTERNAL_MCP_REQUESTED_SCOPES) {
+        throw new Error(`At most ${MAX_EXTERNAL_MCP_REQUESTED_SCOPES} OAuth scopes may be requested.`)
+      }
+      const separatorLength = scopes.length > 0 ? 1 : 0
+      if (totalLength + separatorLength + scope.length > MAX_EXTERNAL_MCP_SCOPE_TOTAL_LENGTH) {
+        throw new Error(`Requested OAuth scopes must total at most ${MAX_EXTERNAL_MCP_SCOPE_TOTAL_LENGTH} characters.`)
+      }
+      seen.add(scope)
+      scopes.push(scope)
+      totalLength += separatorLength + scope.length
+    }
+  }
+  return scopes.length > 0 ? scopes : null
+}
+
+function externalMcpRequestedOAuthScopeSetsMatch(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  const normalizedLeft = normalizeExternalMcpRequestedOAuthScopes(left) ?? []
+  const normalizedRight = normalizeExternalMcpRequestedOAuthScopes(right) ?? []
+  if (normalizedLeft.length !== normalizedRight.length) return false
+  const rightSet = new Set(normalizedRight)
+  return normalizedLeft.every((scope) => rightSet.has(scope))
+}
+
+export type ExternalMcpConnectionCreateInput = {
   organizationId: OrganizationId
   name: string
   url: string
   authType: "oauth" | "apikey" | "none"
   credentialMode: "shared" | "per_member"
   apiKey?: string | null
+  requestedOAuthScopes?: string[] | null
   createdByOrgMembershipId: OrgMembershipId
   access: ExternalMcpAccessInput
-}): Promise<ExternalMcpConnectionRow> {
+}
+
+export type PreparedExternalMcpConnection = {
+  connection: ExternalMcpConnectionRow
+  access: ExternalMcpAccessInput
+}
+
+export type PreparedExternalMcpOAuthClient = {
+  clientId: string
+  clientSecret: string | null
+  extra: Record<string, unknown>
+}
+
+/**
+ * Allocate the final connection identity without making it visible. Direct
+ * create routes can use this complete in-memory row for live validation, then
+ * publish it only after the remote server has proved it can initialize.
+ */
+export function prepareExternalMcpConnection(
+  input: ExternalMcpConnectionCreateInput,
+): PreparedExternalMcpConnection {
   const id = createDenTypeId("externalMcpConnection")
-  await db.insert(ExternalMcpConnectionTable).values({
-    id,
-    organizationId: input.organizationId,
-    name: input.name,
-    url: input.url,
-    authType: input.authType,
-    credentialMode: input.credentialMode,
-    apiKey: input.apiKey ?? null,
-    createdByOrgMembershipId: input.createdByOrgMembershipId,
-  })
-  await replaceExternalMcpConnectionAccess({
-    organizationId: input.organizationId,
-    connectionId: id,
+  const now = new Date()
+  return {
+    connection: {
+      id,
+      organizationId: input.organizationId,
+      name: input.name,
+      url: input.url,
+      authType: input.authType,
+      credentialMode: input.credentialMode,
+      apiKey: input.apiKey ?? null,
+      accessToken: null,
+      refreshToken: null,
+      tokenType: null,
+      requestedOAuthScopes: input.authType === "oauth"
+        ? normalizeExternalMcpRequestedOAuthScopes(input.requestedOAuthScopes)
+        : null,
+      scope: null,
+      oauthRegistrationLeaseToken: null,
+      oauthRegistrationLeaseStartedAt: null,
+      oauthAuthorizationEpoch: 0,
+      expiresAt: null,
+      pendingCodeVerifier: null,
+      connectedAt: null,
+      createdByOrgMembershipId: input.createdByOrgMembershipId,
+      createdAt: now,
+      updatedAt: now,
+    },
     access: input.access,
-    createdByOrgMembershipId: input.createdByOrgMembershipId,
-  })
-  const created = await getExternalMcpConnection({ organizationId: input.organizationId, connectionId: id })
-  if (!created) throw new Error("Failed to create external MCP connection.")
-  return created
+  }
 }
 
 export async function listExternalMcpConnectionAccess(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
-}): Promise<ExternalMcpConnectionAccessGrantRow[]> {
+} | ExternalMcpConnectionId): Promise<ExternalMcpConnectionAccessGrantRow[]> {
+  const connectionId = typeof input === "string" ? input : input.connectionId
   return db
     .select()
     .from(ExternalMcpConnectionAccessGrantTable)
-    .where(and(
-      eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
-      eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionId),
-    ))
+    .where(typeof input === "string"
+      ? eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, connectionId)
+      : and(
+          eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
+          eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, connectionId),
+        ))
 }
 
 export async function listDirectExternalMcpConnectionAccess(input: {
@@ -501,6 +810,141 @@ function accessGrantRows(input: {
   return rows
 }
 
+/**
+ * Resolve every assignment target while holding the same transaction fence as
+ * grant replacement. This closes the stale-member/cross-tenant window between
+ * route validation and delete+insert, while using the same connection ->
+ * member -> team -> grant lock order as OAuth callback credential commits.
+ */
+async function assertExternalMcpAccessTargetsForUpdate(input: {
+  access: ExternalMcpAccessInput
+  organizationId: OrganizationId
+  tx: DbTransaction
+}): Promise<void> {
+  if (input.access.orgWide) return
+  const memberIds = unique(input.access.memberIds)
+  const teamIds = unique(input.access.teamIds)
+  const members = memberIds.length === 0
+    ? []
+    : await input.tx
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(
+        eq(MemberTable.organizationId, input.organizationId),
+        inArray(MemberTable.id, memberIds),
+        isNull(MemberTable.removedAt),
+        isNotNull(MemberTable.userId),
+      ))
+      .for("update")
+  const teams = teamIds.length === 0
+    ? []
+    : await input.tx
+      .select({ id: TeamTable.id })
+      .from(TeamTable)
+      .where(and(
+        eq(TeamTable.organizationId, input.organizationId),
+        inArray(TeamTable.id, teamIds),
+      ))
+      .for("update")
+
+  if (members.length !== memberIds.length || teams.length !== teamIds.length) {
+    throw new ExternalMcpAccessTargetInvalidError()
+  }
+}
+
+/**
+ * Publish a prepared connection, its direct assignment, and an optional
+ * administrator-supplied OAuth client as one database fact. Nothing is
+ * observable if any insert fails, and the client can never outlive a failed
+ * connection create.
+ */
+export async function commitPreparedExternalMcpConnection(input: {
+  commitExpiresAt?: number
+  prepared: PreparedExternalMcpConnection
+  oauthClient?: PreparedExternalMcpOAuthClient
+}): Promise<ExternalMcpConnectionRow> {
+  const connection = input.prepared.connection
+  if (input.oauthClient && connection.authType !== "oauth") {
+    throw new Error("OAuth client metadata is only valid for an OAuth MCP connection.")
+  }
+
+  return db.transaction(async (tx) => {
+    if (input.commitExpiresAt !== undefined && Date.now() >= input.commitExpiresAt) {
+      throw new ExternalMcpLifecycleDeadlineError()
+    }
+    await tx.insert(ExternalMcpConnectionTable).values({
+      id: connection.id,
+      organizationId: connection.organizationId,
+      name: connection.name,
+      url: connection.url,
+      authType: connection.authType,
+      credentialMode: connection.credentialMode,
+      apiKey: connection.apiKey,
+      requestedOAuthScopes: connection.requestedOAuthScopes,
+      connectedAt: connection.connectedAt,
+      createdByOrgMembershipId: connection.createdByOrgMembershipId,
+    })
+
+    // Establish the same row fence used by delete and every credential writer
+    // before publishing dependent rows. This is deliberately an insert (not
+    // an upsert): a collision or concurrent mutation aborts the whole create.
+    const persistedRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, connection.organizationId),
+        eq(ExternalMcpConnectionTable.id, connection.id),
+      ))
+      .limit(1)
+      .for("update")
+    const persisted = persistedRows[0]
+    if (!persisted) throw new Error("Failed to prepare the external MCP connection for commit.")
+
+    await assertExternalMcpAccessTargetsForUpdate({
+      access: input.prepared.access,
+      organizationId: connection.organizationId,
+      tx,
+    })
+
+    const grants = accessGrantRows({
+      organizationId: connection.organizationId,
+      connectionId: connection.id,
+      access: input.prepared.access,
+      createdByOrgMembershipId: connection.createdByOrgMembershipId,
+    })
+    if (grants.length > 0) {
+      await tx.insert(ExternalMcpConnectionAccessGrantTable).values(grants)
+    }
+
+    if (input.oauthClient) {
+      await tx.insert(OrgOAuthClientTable).values({
+        id: createDenTypeId("orgOAuthClient"),
+        organizationId: connection.organizationId,
+        providerId: connection.id,
+        clientId: input.oauthClient.clientId,
+        clientSecret: input.oauthClient.clientSecret,
+        extra: input.oauthClient.extra,
+        createdByOrgMembershipId: connection.createdByOrgMembershipId,
+      })
+    }
+    // Returning from this callback commits the transaction. Recheck after all
+    // dependent writes so elapsed work rolls the entire graph back instead of
+    // becoming visible after the caller's bounded request lifecycle.
+    if (input.commitExpiresAt !== undefined && Date.now() >= input.commitExpiresAt) {
+      throw new ExternalMcpLifecycleDeadlineError()
+    }
+    return persisted
+  })
+}
+
+export async function createExternalMcpConnection(
+  input: ExternalMcpConnectionCreateInput,
+): Promise<ExternalMcpConnectionRow> {
+  return commitPreparedExternalMcpConnection({
+    prepared: prepareExternalMcpConnection(input),
+  })
+}
+
 /** Full-replace semantics (mirrors the LLM-provider access pattern): the caller sends the complete desired access set. */
 export async function replaceExternalMcpConnectionAccess(input: {
   organizationId: OrganizationId
@@ -508,17 +952,31 @@ export async function replaceExternalMcpConnectionAccess(input: {
   access: ExternalMcpAccessInput
   createdByOrgMembershipId: OrgMembershipId
 }): Promise<void> {
-  await db
-    .delete(ExternalMcpConnectionAccessGrantTable)
-    .where(and(
-      eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionId),
-      isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
-    ))
+  await db.transaction(async (tx) => {
+    const connection = await tx.select({ id: ExternalMcpConnectionTable.id })
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    if (!connection[0]) throw new Error("The external MCP connection no longer exists.")
+    await assertExternalMcpAccessTargetsForUpdate({
+      access: input.access,
+      organizationId: input.organizationId,
+      tx,
+    })
+    await tx
+      .delete(ExternalMcpConnectionAccessGrantTable)
+      .where(and(
+        eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionId),
+        isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
+      ))
 
-  const rows = accessGrantRows(input)
-  if (rows.length > 0) {
-    await db.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
-  }
+    const rows = accessGrantRows(input)
+    if (rows.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
+  })
 }
 
 export async function replaceExternalMcpConnectionAccessForPluginBinding(input: {
@@ -528,14 +986,38 @@ export async function replaceExternalMcpConnectionAccessForPluginBinding(input: 
   access: ExternalMcpAccessInput
   createdByOrgMembershipId: OrgMembershipId
 }): Promise<void> {
-  await db
-    .delete(ExternalMcpConnectionAccessGrantTable)
-    .where(eq(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId, input.bindingId))
+  await db.transaction(async (tx) => {
+    const connection = await tx.select({ id: ExternalMcpConnectionTable.id })
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    if (!connection[0]) throw new Error("The external MCP connection no longer exists.")
+    const binding = await tx.select({ id: PluginMcpRequirementBindingTable.id })
+      .from(PluginMcpRequirementBindingTable)
+      .where(and(
+        eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
+        eq(PluginMcpRequirementBindingTable.id, input.bindingId),
+        eq(PluginMcpRequirementBindingTable.externalMcpConnectionId, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    if (!binding[0]) throw new Error("The plugin MCP requirement binding no longer exists.")
+    await assertExternalMcpAccessTargetsForUpdate({
+      access: input.access,
+      organizationId: input.organizationId,
+      tx,
+    })
+    await tx
+      .delete(ExternalMcpConnectionAccessGrantTable)
+      .where(eq(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId, input.bindingId))
 
-  const rows = accessGrantRows(input)
-  if (rows.length > 0) {
-    await db.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
-  }
+    const rows = accessGrantRows(input)
+    if (rows.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
+  })
 }
 
 export async function mergeExternalMcpConnectionAccess(input: {
@@ -544,47 +1026,68 @@ export async function mergeExternalMcpConnectionAccess(input: {
   access: ExternalMcpAccessInput
   createdByOrgMembershipId: OrgMembershipId
 }): Promise<void> {
-  const existing = await listDirectExternalMcpConnectionAccess(input)
-  const rows: (typeof ExternalMcpConnectionAccessGrantTable.$inferInsert)[] = []
+  await db.transaction(async (tx) => {
+    const connection = await tx.select({ id: ExternalMcpConnectionTable.id })
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    if (!connection[0]) throw new Error("The external MCP connection no longer exists.")
+    await assertExternalMcpAccessTargetsForUpdate({
+      access: input.access,
+      organizationId: input.organizationId,
+      tx,
+    })
+    const existing = await tx
+      .select()
+      .from(ExternalMcpConnectionAccessGrantTable)
+      .where(and(
+        eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionId),
+        isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
+      ))
+      .for("update")
+    const rows: (typeof ExternalMcpConnectionAccessGrantTable.$inferInsert)[] = []
 
-  if (input.access.orgWide) {
-    if (!existing.some((grant) => grant.orgWide)) {
-      rows.push({
-        id: createDenTypeId("externalMcpConnectionAccessGrant"),
-        organizationId: input.organizationId,
-        externalMcpConnectionId: input.connectionId,
-        orgWide: true,
-        createdByOrgMembershipId: input.createdByOrgMembershipId,
-      })
+    if (input.access.orgWide) {
+      if (!existing.some((grant) => grant.orgWide)) {
+        rows.push({
+          id: createDenTypeId("externalMcpConnectionAccessGrant"),
+          organizationId: input.organizationId,
+          externalMcpConnectionId: input.connectionId,
+          orgWide: true,
+          createdByOrgMembershipId: input.createdByOrgMembershipId,
+        })
+      }
+    } else {
+      const existingMemberIds = new Set(existing.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : []))
+      const existingTeamIds = new Set(existing.flatMap((grant) => grant.teamId ? [grant.teamId] : []))
+      for (const memberId of new Set(input.access.memberIds)) {
+        if (existingMemberIds.has(memberId)) continue
+        rows.push({
+          id: createDenTypeId("externalMcpConnectionAccessGrant"),
+          organizationId: input.organizationId,
+          externalMcpConnectionId: input.connectionId,
+          orgMembershipId: memberId,
+          createdByOrgMembershipId: input.createdByOrgMembershipId,
+        })
+      }
+      for (const teamId of new Set(input.access.teamIds)) {
+        if (existingTeamIds.has(teamId)) continue
+        rows.push({
+          id: createDenTypeId("externalMcpConnectionAccessGrant"),
+          organizationId: input.organizationId,
+          externalMcpConnectionId: input.connectionId,
+          teamId,
+          createdByOrgMembershipId: input.createdByOrgMembershipId,
+        })
+      }
     }
-  } else {
-    const existingMemberIds = new Set(existing.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : []))
-    const existingTeamIds = new Set(existing.flatMap((grant) => grant.teamId ? [grant.teamId] : []))
-    for (const memberId of new Set(input.access.memberIds)) {
-      if (existingMemberIds.has(memberId)) continue
-      rows.push({
-        id: createDenTypeId("externalMcpConnectionAccessGrant"),
-        organizationId: input.organizationId,
-        externalMcpConnectionId: input.connectionId,
-        orgMembershipId: memberId,
-        createdByOrgMembershipId: input.createdByOrgMembershipId,
-      })
-    }
-    for (const teamId of new Set(input.access.teamIds)) {
-      if (existingTeamIds.has(teamId)) continue
-      rows.push({
-        id: createDenTypeId("externalMcpConnectionAccessGrant"),
-        organizationId: input.organizationId,
-        externalMcpConnectionId: input.connectionId,
-        teamId,
-        createdByOrgMembershipId: input.createdByOrgMembershipId,
-      })
-    }
-  }
 
-  if (rows.length > 0) {
-    await db.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
-  }
+    if (rows.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
+  })
 }
 
 function directAccessKeys(rows: ExternalMcpConnectionAccessGrantRow[]): Set<string> {
@@ -625,6 +1128,7 @@ export type UpdateExternalMcpConnectionInput = {
     clientId: string
     clientSecret?: string
   }
+  requestedOAuthScopes?: string[]
   access: ExternalMcpAccessInput
   updatedByOrgMembershipId: OrgMembershipId
   validatedAt?: Date
@@ -665,6 +1169,23 @@ export async function updateExternalMcpConnection(
     if (existing.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) {
       return { status: "conflict" }
     }
+    await assertExternalMcpAccessTargetsForUpdate({
+      access: input.access,
+      organizationId: input.organizationId,
+      tx,
+    })
+
+    const requestedOAuthScopes = input.authType === "oauth"
+      ? input.requestedOAuthScopes !== undefined
+        ? normalizeExternalMcpRequestedOAuthScopes(input.requestedOAuthScopes)
+        : existing.authType === "oauth"
+          ? existing.requestedOAuthScopes
+          : null
+      : null
+    const requestedScopesChanged = !externalMcpRequestedOAuthScopeSetsMatch(
+      existing.requestedOAuthScopes ?? [],
+      requestedOAuthScopes ?? [],
+    )
 
     const activeBindings = await tx
       .select({ id: PluginMcpRequirementBindingTable.id })
@@ -683,6 +1204,7 @@ export async function updateExternalMcpConnection(
       || existing.credentialMode !== input.credentialMode
       || input.apiKey !== undefined
       || input.oauthClient !== undefined
+      || requestedScopesChanged
     if (activeBindings.length > 0 && marketplaceOwnedFieldsChanged) {
       return { status: "marketplace_managed" }
     }
@@ -690,6 +1212,7 @@ export async function updateExternalMcpConnection(
     const identityChanged = normalizeExternalMcpIdentityUrl(existing.url) !== normalizeExternalMcpIdentityUrl(input.url)
       || existing.authType !== input.authType
       || existing.credentialMode !== input.credentialMode
+    const authorizationChanged = identityChanged || requestedScopesChanged
     const directGrants = await tx
       .select()
       .from(ExternalMcpConnectionAccessGrantTable)
@@ -725,7 +1248,7 @@ export async function updateExternalMcpConnection(
       || existing.authType !== input.authType
       || existing.credentialMode !== input.credentialMode
       || apiKeyChanged
-      || identityChanged
+      || requestedScopesChanged
     const changed = rowFieldsChanged || accessChanged || oauthClientChanged
 
     if (!changed) {
@@ -738,15 +1261,21 @@ export async function updateExternalMcpConnection(
     }
 
     const changedAt = new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1))
-    if (identityChanged) {
+    if (authorizationChanged) {
       await tx.delete(ConnectedAccountTable).where(and(
         eq(ConnectedAccountTable.organizationId, input.organizationId),
         eq(ConnectedAccountTable.providerId, input.connectionId),
       ))
-      await tx.delete(OrgOAuthClientTable).where(and(
-        eq(OrgOAuthClientTable.organizationId, input.organizationId),
-        eq(OrgOAuthClientTable.providerId, input.connectionId),
+      await tx.delete(ExternalMcpOAuthTransactionTable).where(and(
+        eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+        eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, input.connectionId),
       ))
+      if (identityChanged) {
+        await tx.delete(OrgOAuthClientTable).where(and(
+          eq(OrgOAuthClientTable.organizationId, input.organizationId),
+          eq(OrgOAuthClientTable.providerId, input.connectionId),
+        ))
+      }
       await tx
         .update(ExternalMcpConnectionTable)
         .set({
@@ -755,12 +1284,16 @@ export async function updateExternalMcpConnection(
           authType: input.authType,
           credentialMode: input.credentialMode,
           apiKey: input.authType === "apikey" ? input.apiKey ?? null : null,
+          requestedOAuthScopes,
           accessToken: null,
           refreshToken: null,
           tokenType: null,
           scope: null,
           expiresAt: null,
           pendingCodeVerifier: null,
+          oauthRegistrationLeaseToken: null,
+          oauthRegistrationLeaseStartedAt: null,
+          oauthAuthorizationEpoch: sql`${ExternalMcpConnectionTable.oauthAuthorizationEpoch} + 1`,
           connectedAt: input.authType === "none" ? input.validatedAt ?? changedAt : null,
           updatedAt: changedAt,
         })
@@ -847,7 +1380,7 @@ export async function updateExternalMcpConnection(
       status: "updated",
       connection: updated,
       identityChanged,
-      reconnectionRequired: identityChanged && input.authType === "oauth",
+      reconnectionRequired: authorizationChanged && input.authType === "oauth",
     }
   })
 }
@@ -890,6 +1423,77 @@ export async function memberCanUseExternalMcpConnection(input: {
   return usable.some((row) => row.id === input.connectionId)
 }
 
+/**
+ * Revalidates the browser authorization actor at the credential commit
+ * boundary. Every row that can make the result true is read FOR UPDATE, so a
+ * concurrent role, team-membership, or assignment revocation has one clear
+ * ordering with the token write: either it commits first and this fails, or
+ * this commits first and the later revocation takes effect afterwards.
+ *
+ * Keep this exported for the package-first enterprise MCP persistence path;
+ * both OAuth runtimes must enforce the same Den authority policy.
+ */
+export async function assertExternalMcpOAuthAuthorizationActorForCommit(input: {
+  tx: DbTransaction
+  connection: Pick<ExternalMcpConnectionRow, "id" | "organizationId" | "credentialMode">
+  authorizationActor: ExternalMcpAuthorizationActor
+}): Promise<void> {
+  const memberRows = await input.tx
+    .select({
+      id: MemberTable.id,
+      role: MemberTable.role,
+      userId: MemberTable.userId,
+    })
+    .from(MemberTable)
+    .where(and(
+      eq(MemberTable.id, input.authorizationActor.orgMembershipId),
+      eq(MemberTable.organizationId, input.connection.organizationId),
+      isNull(MemberTable.removedAt),
+    ))
+    .limit(1)
+    .for("update")
+  const member = memberRows[0]
+  if (!member?.userId) oauthAuthorizationRevoked()
+
+  if (input.connection.credentialMode === "shared") {
+    if (!roleIncludesPrivileged(member.role)) {
+      oauthAuthorizationRevoked()
+    }
+    return
+  }
+
+  const teamRows = await input.tx
+    .select({ id: TeamTable.id })
+    .from(TeamMemberTable)
+    .innerJoin(TeamTable, eq(TeamMemberTable.teamId, TeamTable.id))
+    .where(and(
+      eq(TeamMemberTable.orgMembershipId, member.id),
+      eq(TeamTable.organizationId, input.connection.organizationId),
+    ))
+    .for("update")
+  const teamIds = teamRows.map((team) => team.id)
+  const assignment = teamIds.length > 0
+    ? or(
+        eq(ExternalMcpConnectionAccessGrantTable.orgWide, true),
+        eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, member.id),
+        inArray(ExternalMcpConnectionAccessGrantTable.teamId, teamIds),
+      )
+    : or(
+        eq(ExternalMcpConnectionAccessGrantTable.orgWide, true),
+        eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, member.id),
+      )
+  const grantRows = await input.tx
+    .select({ id: ExternalMcpConnectionAccessGrantTable.id })
+    .from(ExternalMcpConnectionAccessGrantTable)
+    .where(and(
+      eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.connection.organizationId),
+      eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connection.id),
+      assignment,
+    ))
+    .for("update")
+  if (grantRows.length === 0) oauthAuthorizationRevoked()
+}
+
 export async function deleteExternalMcpConnection(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
@@ -916,6 +1520,10 @@ export async function deleteExternalMcpConnection(input: {
     await tx.delete(ConnectedAccountTable).where(and(
       eq(ConnectedAccountTable.organizationId, input.organizationId),
       eq(ConnectedAccountTable.providerId, existing.id),
+    ))
+    await tx.delete(ExternalMcpOAuthTransactionTable).where(and(
+      eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+      eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, existing.id),
     ))
     await tx.delete(OrgOAuthClientTable).where(and(
       eq(OrgOAuthClientTable.organizationId, input.organizationId),
@@ -1188,14 +1796,829 @@ export async function clearExternalMcpTokensForIdentity(
   })
 }
 
-export async function saveExternalMcpPendingCodeVerifier(input: {
+/**
+ * Remove a newly-created connection during a multi-step import rollback, but
+ * only while it is still an unused shell.
+ *
+ * Every credential/binding writer takes the same connection-row lock before
+ * committing. This makes the decision atomic with concurrent plugin imports,
+ * OAuth starts/completions, DCR, and client rotation: a writer that wins first
+ * makes cleanup return `in_use`; cleanup that wins first makes the writer see
+ * a missing connection. The API key is intentionally not a blocker because
+ * it is part of the import-created shell itself, whereas tokens and OAuth
+ * state can only appear through a later connection lifecycle.
+ *
+ * A saga may also supply the exact shell snapshot and OAuth-client revision
+ * it created. In that mode the client and connection are reclaimed together
+ * under the connection lock; any rename, rotation, OAuth start, binding, or
+ * other adoption signal makes cleanup preserve both rows.
+ */
+export async function deleteExternalMcpConnectionIfUnused(input: {
+  allowConnectedAt?: boolean
+  expectedConnection?: ExternalMcpConnectionRow
+  expectedOwnedOAuthClient?: ExternalMcpOAuthClientRevision
+  organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
-  codeVerifier: string | null
+}): Promise<ExternalMcpConditionalCleanupResult> {
+  return db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connectionRows[0]
+    if (!connection) return "missing"
+
+    if (
+      (input.expectedConnection !== undefined && !sameExternalMcpConnectionSnapshot(connection, input.expectedConnection))
+      || (!input.allowConnectedAt && connection.connectedAt !== null)
+      || connection.accessToken !== null
+      || connection.refreshToken !== null
+      || connection.tokenType !== null
+      || connection.scope !== null
+      || connection.expiresAt !== null
+      || connection.pendingCodeVerifier !== null
+      || connection.oauthRegistrationLeaseToken !== null
+      || connection.oauthRegistrationLeaseStartedAt !== null
+    ) return "in_use"
+
+    const bindingRows = await tx
+      .select({ id: PluginMcpRequirementBindingTable.id })
+      .from(PluginMcpRequirementBindingTable)
+      .where(and(
+        eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
+        eq(PluginMcpRequirementBindingTable.externalMcpConnectionId, connection.id),
+      ))
+      .limit(1)
+      .for("update")
+    if (bindingRows[0]) return "in_use"
+
+    const accessRows = await tx
+      .select({ id: ExternalMcpConnectionAccessGrantTable.id })
+      .from(ExternalMcpConnectionAccessGrantTable)
+      .where(and(
+        eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, connection.id),
+      ))
+      .limit(1)
+      .for("update")
+    if (accessRows[0]) return "in_use"
+
+    const accountRows = await tx
+      .select({ id: ConnectedAccountTable.id })
+      .from(ConnectedAccountTable)
+      .where(and(
+        eq(ConnectedAccountTable.organizationId, input.organizationId),
+        eq(ConnectedAccountTable.providerId, connection.id),
+      ))
+      .limit(1)
+      .for("update")
+    if (accountRows[0]) return "in_use"
+
+    const transactionRows = await tx
+      .select({ stateKey: ExternalMcpOAuthTransactionTable.stateKey })
+      .from(ExternalMcpOAuthTransactionTable)
+      .where(and(
+        eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+        eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, connection.id),
+      ))
+      .limit(1)
+      .for("update")
+    if (transactionRows[0]) return "in_use"
+
+    const clientRows = await tx
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(and(
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, connection.id),
+      ))
+      .limit(1)
+      .for("update")
+    const client = clientRows[0]
+    if (input.expectedOwnedOAuthClient) {
+      if (!client || !sameExternalMcpOAuthClientRevision(client, input.expectedOwnedOAuthClient)) return "in_use"
+      await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.id, client.id))
+    } else if (client) {
+      return "in_use"
+    }
+
+    await tx
+      .delete(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, connection.id),
+      ))
+    return "deleted"
+  })
+}
+
+const EXTERNAL_MCP_OAUTH_TRANSACTION_TTL_MS = 10 * 60 * 1_000
+const MAX_EXTERNAL_MCP_PENDING_OAUTH_TRANSACTIONS_PER_MEMBER = 8
+const MAX_EXTERNAL_MCP_EXPIRED_OAUTH_TRANSACTION_CLEANUP = 32
+
+/**
+ * OAuth state is signed but still bearer data. Persist only a fixed-length,
+ * one-way lookup key so a database read cannot disclose a live callback URL.
+ */
+export function externalMcpOAuthStateKey(signedState: string): string {
+  return createHash("sha256").update(signedState).digest("hex")
+}
+
+export async function saveExternalMcpOAuthTransaction(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId
+  authorizationActor: ExternalMcpAuthorizationActor
+  expectedAuthorizationEpoch: number
+  expectedIdentityBinding: string
+  signedState: string
+  codeVerifier: string
+  expiresAt?: Date
 }): Promise<void> {
-  await db
-    .update(ExternalMcpConnectionTable)
-    .set({ pendingCodeVerifier: input.codeVerifier })
-    .where(eq(ExternalMcpConnectionTable.id, input.connectionId))
+  const now = new Date()
+  const stateKey = externalMcpOAuthStateKey(input.signedState)
+  await db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connectionRows[0]
+    if (!connection) throw new Error("The external MCP connection no longer exists.")
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(connection, input.expectedIdentityBinding)
+    }
+    if (connection.oauthAuthorizationEpoch !== input.expectedAuthorizationEpoch) {
+      throw new Error("The MCP connection was disconnected while authorization was starting.")
+    }
+    await assertExternalMcpOAuthAuthorizationActorForCommit({
+      tx,
+      connection,
+      authorizationActor: input.authorizationActor,
+    })
+    if (
+      connection.credentialMode === "per_member"
+      && input.authorizationActor.orgMembershipId !== input.orgMembershipId
+    ) {
+      oauthAuthorizationRevoked()
+    }
+
+    // Keep cleanup work bounded even if an old deployment accumulated a large
+    // backlog. The connection row lock serializes starts for this connection;
+    // row locks here also give concurrent callback consumption one ordering.
+    const expiredTransactions = await tx
+      .select({ stateKey: ExternalMcpOAuthTransactionTable.stateKey })
+      .from(ExternalMcpOAuthTransactionTable)
+      .where(and(
+        eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+        eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, input.connectionId),
+        lte(ExternalMcpOAuthTransactionTable.expiresAt, now),
+      ))
+      .orderBy(
+        ExternalMcpOAuthTransactionTable.expiresAt,
+        ExternalMcpOAuthTransactionTable.stateKey,
+      )
+      .limit(MAX_EXTERNAL_MCP_EXPIRED_OAUTH_TRANSACTION_CLEANUP)
+      .for("update")
+    if (expiredTransactions.length > 0) {
+      await tx.delete(ExternalMcpOAuthTransactionTable).where(inArray(
+        ExternalMcpOAuthTransactionTable.stateKey,
+        expiredTransactions.map((transaction) => transaction.stateKey),
+      ))
+    }
+
+    const pendingTransactions = await tx
+      .select({ stateKey: ExternalMcpOAuthTransactionTable.stateKey })
+      .from(ExternalMcpOAuthTransactionTable)
+      .where(and(
+        eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+        eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, input.connectionId),
+        eq(ExternalMcpOAuthTransactionTable.orgMembershipId, input.orgMembershipId),
+        gt(ExternalMcpOAuthTransactionTable.expiresAt, now),
+      ))
+      .limit(MAX_EXTERNAL_MCP_PENDING_OAUTH_TRANSACTIONS_PER_MEMBER)
+      .for("update")
+    if (pendingTransactions.length >= MAX_EXTERNAL_MCP_PENDING_OAUTH_TRANSACTIONS_PER_MEMBER) {
+      throw new Error(
+        `At most ${MAX_EXTERNAL_MCP_PENDING_OAUTH_TRANSACTIONS_PER_MEMBER} pending OAuth authorizations are allowed per connection identity.`,
+      )
+    }
+
+    // Expand-release bridge for callbacks that still land on an old replica.
+    // Old code has one slot, so only the latest start is compatible there;
+    // state-keyed rows remain authoritative on new replicas.
+    if (connection.credentialMode === "per_member") {
+      const accountRows = await tx
+        .select({ id: ConnectedAccountTable.id })
+        .from(ConnectedAccountTable)
+        .where(and(
+          eq(ConnectedAccountTable.organizationId, input.organizationId),
+          eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+          eq(ConnectedAccountTable.providerId, input.connectionId),
+        ))
+        .limit(1)
+        .for("update")
+      const account = accountRows[0]
+      if (account) {
+        await tx
+          .update(ConnectedAccountTable)
+          .set({ pendingCodeVerifier: input.codeVerifier })
+          .where(eq(ConnectedAccountTable.id, account.id))
+      } else {
+        await tx.insert(ConnectedAccountTable).values({
+          id: createDenTypeId("connectedAccount"),
+          organizationId: input.organizationId,
+          orgMembershipId: input.orgMembershipId,
+          providerId: input.connectionId,
+          pendingCodeVerifier: input.codeVerifier,
+        })
+      }
+    } else {
+      await tx
+        .update(ExternalMcpConnectionTable)
+        .set({ pendingCodeVerifier: input.codeVerifier })
+        .where(eq(ExternalMcpConnectionTable.id, connection.id))
+    }
+
+    await tx.insert(ExternalMcpOAuthTransactionTable).values({
+      stateKey,
+      organizationId: input.organizationId,
+      externalMcpConnectionId: input.connectionId,
+      orgMembershipId: input.orgMembershipId,
+      connectionAuthorizationEpoch: connection.oauthAuthorizationEpoch,
+      codeVerifier: input.codeVerifier,
+      expiresAt: input.expiresAt ?? new Date(now.getTime() + EXTERNAL_MCP_OAUTH_TRANSACTION_TTL_MS),
+    })
+  })
+}
+
+/**
+ * Reads and deletes one verifier under the same row lock. A concurrent or
+ * replayed callback therefore observes no transaction and cannot exchange a
+ * second authorization code with the same state.
+ */
+export async function consumeExternalMcpOAuthTransaction(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId
+  expectedIdentityBinding: string
+  signedState: string
+  now?: Date
+}): Promise<{ codeVerifier: string; authorizationEpoch: number } | null> {
+  const stateKey = externalMcpOAuthStateKey(input.signedState)
+  const now = input.now ?? new Date()
+  return db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connectionRows[0]
+    if (!connection) return null
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(connection, input.expectedIdentityBinding)
+    }
+
+    const rows = await tx
+      .select()
+      .from(ExternalMcpOAuthTransactionTable)
+      .where(and(
+        eq(ExternalMcpOAuthTransactionTable.stateKey, stateKey),
+        eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+        eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, input.connectionId),
+        eq(ExternalMcpOAuthTransactionTable.orgMembershipId, input.orgMembershipId),
+      ))
+      .limit(1)
+      .for("update")
+    const transaction = rows[0]
+    if (!transaction) return null
+    await tx.delete(ExternalMcpOAuthTransactionTable).where(
+      eq(ExternalMcpOAuthTransactionTable.stateKey, stateKey),
+    )
+    return transaction.expiresAt > now
+      ? {
+          codeVerifier: transaction.codeVerifier,
+          authorizationEpoch: transaction.connectionAuthorizationEpoch,
+        }
+      : null
+  })
+}
+
+const LEGACY_PKCE_CODE_VERIFIER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/
+
+/**
+ * Expand-phase compatibility for an authorization started by a pre-migration
+ * Den replica. Legacy rows cannot bind a verifier to state, so this path is
+ * used only when the exact state-keyed transaction is absent. The row lock
+ * and clear make even that fallback single-use.
+ */
+export async function consumeLegacyExternalMcpPendingCodeVerifier(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId
+  expectedIdentityBinding: string
+}): Promise<string | null> {
+  return db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connectionRows[0]
+    if (!connection) return null
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(connection, input.expectedIdentityBinding)
+    }
+
+    const activeMembers = await tx
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(
+        eq(MemberTable.id, input.orgMembershipId),
+        eq(MemberTable.organizationId, input.organizationId),
+        isNull(MemberTable.removedAt),
+      ))
+      .limit(1)
+      .for("update")
+    if (!activeMembers[0]) return null
+
+    if (connection.credentialMode === "per_member") {
+      const accountRows = await tx
+        .select({
+          id: ConnectedAccountTable.id,
+          pendingCodeVerifier: ConnectedAccountTable.pendingCodeVerifier,
+        })
+        .from(ConnectedAccountTable)
+        .where(and(
+          eq(ConnectedAccountTable.organizationId, input.organizationId),
+          eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+          eq(ConnectedAccountTable.providerId, input.connectionId),
+        ))
+        .limit(1)
+        .for("update")
+      const account = accountRows[0]
+      const verifier = account?.pendingCodeVerifier
+      if (!account || !verifier || !LEGACY_PKCE_CODE_VERIFIER_PATTERN.test(verifier)) return null
+      await tx
+        .update(ConnectedAccountTable)
+        .set({ pendingCodeVerifier: null })
+        .where(eq(ConnectedAccountTable.id, account.id))
+      return verifier
+    }
+
+    const verifier = connection.pendingCodeVerifier
+    if (!verifier || !LEGACY_PKCE_CODE_VERIFIER_PATTERN.test(verifier)) return null
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({ pendingCodeVerifier: null })
+      .where(eq(ExternalMcpConnectionTable.id, connection.id))
+    return verifier
+  })
+}
+
+/**
+ * Best-effort compare-and-clear for the expand-release dual-write slot. The
+ * encrypted value is compared in memory under a row lock; a newer tab's
+ * verifier is never erased by an older callback.
+ */
+export async function clearLegacyExternalMcpPendingCodeVerifierIfMatches(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId
+  expectedCodeVerifier: string
+  expectedIdentityBinding: string
+}): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connectionRows[0]
+    if (!connection) return false
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(connection, input.expectedIdentityBinding)
+    }
+
+    if (connection.credentialMode === "per_member") {
+      const accountRows = await tx
+        .select({
+          id: ConnectedAccountTable.id,
+          pendingCodeVerifier: ConnectedAccountTable.pendingCodeVerifier,
+        })
+        .from(ConnectedAccountTable)
+        .where(and(
+          eq(ConnectedAccountTable.organizationId, input.organizationId),
+          eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+          eq(ConnectedAccountTable.providerId, input.connectionId),
+        ))
+        .limit(1)
+        .for("update")
+      const account = accountRows[0]
+      if (!account || account.pendingCodeVerifier !== input.expectedCodeVerifier) return false
+      await tx
+        .update(ConnectedAccountTable)
+        .set({ pendingCodeVerifier: null })
+        .where(eq(ConnectedAccountTable.id, account.id))
+      return true
+    }
+
+    if (connection.pendingCodeVerifier !== input.expectedCodeVerifier) return false
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({ pendingCodeVerifier: null })
+      .where(eq(ExternalMcpConnectionTable.id, connection.id))
+    return true
+  })
+}
+
+/** Remove exactly one abandoned authorization without disturbing other tabs. */
+export async function deleteExternalMcpOAuthTransaction(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId
+  expectedIdentityBinding: string
+  signedState: string
+}): Promise<string | null> {
+  const stateKey = externalMcpOAuthStateKey(input.signedState)
+  return db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connectionRows[0]
+    if (!connection) return null
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(connection, input.expectedIdentityBinding)
+    }
+
+    const rows = await tx
+      .select({ codeVerifier: ExternalMcpOAuthTransactionTable.codeVerifier })
+      .from(ExternalMcpOAuthTransactionTable)
+      .where(and(
+        eq(ExternalMcpOAuthTransactionTable.stateKey, stateKey),
+        eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+        eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, input.connectionId),
+        eq(ExternalMcpOAuthTransactionTable.orgMembershipId, input.orgMembershipId),
+      ))
+      .limit(1)
+      .for("update")
+    const transaction = rows[0]
+    if (!transaction) return null
+    await tx.delete(ExternalMcpOAuthTransactionTable).where(
+      eq(ExternalMcpOAuthTransactionTable.stateKey, stateKey),
+    )
+    return transaction.codeVerifier
+  })
+}
+
+export async function deleteExternalMcpOAuthTransactionsForConnection(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+}): Promise<void> {
+  await db.delete(ExternalMcpOAuthTransactionTable).where(and(
+    eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+    eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, input.connectionId),
+  ))
+}
+
+/**
+ * Change one external-MCP OAuth client only while both its owning connection
+ * and the exact client revision observed by the caller are still current.
+ *
+ * Connection deletion/disconnect and client persistence share the connection
+ * row lock, so a late async writer cannot recreate credentials after either
+ * authority boundary moves. Returning the post-write revision from inside the
+ * transaction lets multi-step callers perform a later rollback without a
+ * separate read that could accidentally capture an administrator's rotation.
+ * `createdByOrgMembershipId` is used for inserts; updates preserve the
+ * original creator, matching the existing org OAuth client update semantics.
+ * Import sagas can additionally require an exact connection snapshot with no
+ * dependent binding, grant, account, or OAuth transaction before installing
+ * their first client.
+ */
+export async function compareAndSetExternalMcpOAuthClient(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  expectedIdentityBinding?: string
+  expectedAuthorizationEpoch?: number
+  expectedConnection?: ExternalMcpConnectionRow
+  requireNoDependentState?: boolean
+  authorizationActor?: ExternalMcpAuthorizationActor
+  expected: ExternalMcpOAuthClientRevision | null
+  next: ExternalMcpOAuthClientValue | null
+}): Promise<ExternalMcpOAuthClientCasResult> {
+  return db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connectionRows[0]
+    if (!connection) return { status: "connection_missing" }
+    if (
+      input.expectedIdentityBinding !== undefined
+      && !externalMcpIdentityMatches(connection, input.expectedIdentityBinding)
+    ) return { status: "connection_changed" }
+    if (
+      input.expectedAuthorizationEpoch !== undefined
+      && connection.oauthAuthorizationEpoch !== input.expectedAuthorizationEpoch
+    ) return { status: "connection_changed" }
+    if (input.expectedConnection && !sameExternalMcpConnectionSnapshot(connection, input.expectedConnection)) {
+      return { status: "connection_changed" }
+    }
+    if (input.authorizationActor) {
+      await assertExternalMcpOAuthAuthorizationActorForCommit({
+        tx,
+        connection,
+        authorizationActor: input.authorizationActor,
+      })
+    }
+    if (input.requireNoDependentState) {
+      const bindings = await tx.select({ id: PluginMcpRequirementBindingTable.id })
+        .from(PluginMcpRequirementBindingTable)
+        .where(and(
+          eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
+          eq(PluginMcpRequirementBindingTable.externalMcpConnectionId, input.connectionId),
+        )).limit(1).for("update")
+      const access = await tx.select({ id: ExternalMcpConnectionAccessGrantTable.id })
+        .from(ExternalMcpConnectionAccessGrantTable)
+        .where(and(
+          eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
+          eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionId),
+        )).limit(1).for("update")
+      const accounts = await tx.select({ id: ConnectedAccountTable.id })
+        .from(ConnectedAccountTable)
+        .where(and(
+          eq(ConnectedAccountTable.organizationId, input.organizationId),
+          eq(ConnectedAccountTable.providerId, input.connectionId),
+        )).limit(1).for("update")
+      const transactions = await tx.select({ stateKey: ExternalMcpOAuthTransactionTable.stateKey })
+        .from(ExternalMcpOAuthTransactionTable)
+        .where(and(
+          eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+          eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, input.connectionId),
+        )).limit(1).for("update")
+      if (bindings[0] || access[0] || accounts[0] || transactions[0]) {
+        return { status: "connection_changed" }
+      }
+    }
+
+    const clientRows = await tx
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(and(
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const client = clientRows[0]
+    if (
+      (input.expected === null && client !== undefined)
+      || (input.expected !== null && client === undefined)
+      || (
+        input.expected !== null
+        && client !== undefined
+        && !sameExternalMcpOAuthClientRevision(client, input.expected)
+      )
+    ) return { status: "client_changed" }
+
+    if (!input.next) {
+      if (client) {
+        await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.id, client.id))
+      }
+      return { status: "applied", revision: null }
+    }
+
+    let clientId = client?.id
+    if (client) {
+      await tx
+        .update(OrgOAuthClientTable)
+        .set({
+          clientId: input.next.clientId,
+          clientSecret: input.next.clientSecret,
+          extra: input.next.extra,
+        })
+        .where(eq(OrgOAuthClientTable.id, client.id))
+    } else {
+      clientId = createDenTypeId("orgOAuthClient")
+      await tx.insert(OrgOAuthClientTable).values({
+        id: clientId,
+        organizationId: input.organizationId,
+        providerId: input.connectionId,
+        clientId: input.next.clientId,
+        clientSecret: input.next.clientSecret,
+        extra: input.next.extra,
+        createdByOrgMembershipId: input.next.createdByOrgMembershipId,
+      })
+    }
+
+    const persistedRows = await tx
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(eq(OrgOAuthClientTable.id, clientId!))
+      .limit(1)
+    const persisted = persistedRows[0]
+    if (!persisted) throw new Error("The OAuth client disappeared before its write could commit.")
+    return { status: "applied", revision: externalMcpOAuthClientRevision(persisted) }
+  })
+}
+
+export type ExternalMcpOAuthRegistrationLeaseResult = "acquired" | "busy" | "connection_missing"
+
+/**
+ * Claim the connection row as the sole DCR writer. A crashed replica's lease
+ * becomes claimable after `staleBefore`; a live lease cannot be stolen.
+ */
+export async function tryAcquireExternalMcpOAuthRegistrationLease(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  leaseToken: string
+  startedAt: Date
+  staleBefore: Date
+  expectedIdentityBinding: string
+}): Promise<ExternalMcpOAuthRegistrationLeaseResult> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = rows[0]
+    if (!connection) return "connection_missing"
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(connection, input.expectedIdentityBinding)
+    }
+    if (
+      connection.oauthRegistrationLeaseToken
+      && connection.oauthRegistrationLeaseToken !== input.leaseToken
+      && connection.oauthRegistrationLeaseStartedAt
+      && connection.oauthRegistrationLeaseStartedAt >= input.staleBefore
+    ) return "busy"
+
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        oauthRegistrationLeaseToken: input.leaseToken,
+        oauthRegistrationLeaseStartedAt: input.startedAt,
+      })
+      .where(eq(ExternalMcpConnectionTable.id, connection.id))
+    return "acquired"
+  })
+}
+
+export async function releaseExternalMcpOAuthRegistrationLease(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  leaseToken: string
+  expectedIdentityBinding: string
+}): Promise<void> {
+  await db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = rows[0]
+    if (!connection) return
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(connection, input.expectedIdentityBinding)
+    }
+    if (connection.oauthRegistrationLeaseToken !== input.leaseToken) return
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        oauthRegistrationLeaseToken: null,
+        oauthRegistrationLeaseStartedAt: null,
+      })
+      .where(eq(ExternalMcpConnectionTable.id, connection.id))
+  })
+}
+
+/**
+ * The DCR response and lease release commit together. The insert is rejected
+ * if this worker lost the lease or another client appeared while it was
+ * talking to the registration endpoint.
+ */
+export async function persistExternalMcpDcrOAuthClientWithLease(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  leaseToken: string
+  expectedAuthorizationEpoch: number
+  expectedIdentityBinding: string
+  authorizationActor: ExternalMcpAuthorizationActor
+  clientId: string
+  clientSecret: string | null
+  extra: Record<string, unknown>
+}): Promise<ExternalMcpOAuthClientRevision> {
+  return db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connectionRows[0]
+    if (!connection) throw new Error("The external MCP connection no longer exists.")
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(connection, input.expectedIdentityBinding)
+    }
+    if (connection.oauthAuthorizationEpoch !== input.expectedAuthorizationEpoch) {
+      throw new Error("The external MCP connection was disconnected while OAuth client registration was in progress.")
+    }
+    if (connection.oauthRegistrationLeaseToken !== input.leaseToken) {
+      throw new Error("The dynamic OAuth client registration lease is no longer owned by this request.")
+    }
+    await assertExternalMcpOAuthAuthorizationActorForCommit({
+      tx,
+      connection,
+      authorizationActor: input.authorizationActor,
+    })
+
+    const existingClients = await tx
+      .select({ id: OrgOAuthClientTable.id })
+      .from(OrgOAuthClientTable)
+      .where(and(
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    if (existingClients[0]) {
+      throw new Error("An OAuth client was configured while dynamic registration was in progress. Start authorization again with the saved client.")
+    }
+
+    const clientRowId = createDenTypeId("orgOAuthClient")
+    await tx.insert(OrgOAuthClientTable).values({
+      id: clientRowId,
+      organizationId: input.organizationId,
+      providerId: input.connectionId,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      extra: input.extra,
+      createdByOrgMembershipId: input.authorizationActor.orgMembershipId,
+    })
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        oauthRegistrationLeaseToken: null,
+        oauthRegistrationLeaseStartedAt: null,
+      })
+      .where(and(
+        eq(ExternalMcpConnectionTable.id, connection.id),
+        eq(ExternalMcpConnectionTable.oauthRegistrationLeaseToken, input.leaseToken),
+      ))
+    const persistedRows = await tx
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(eq(OrgOAuthClientTable.id, clientRowId))
+      .limit(1)
+    const persisted = persistedRows[0]
+    if (!persisted) throw new Error("The dynamically registered OAuth client was not persisted.")
+    return externalMcpOAuthClientRevision(persisted)
+  })
 }
 
 export async function markExternalMcpConnectionConnected(connectionId: ExternalMcpConnectionId): Promise<void> {
@@ -1208,21 +2631,364 @@ export async function markExternalMcpConnectionConnected(connectionId: ExternalM
 export async function clearExternalMcpTokens(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
+  expectedRevision: ExternalMcpTokenRevision
+  expectedIdentityBinding: string
 }): Promise<boolean> {
-  const existing = await getExternalMcpConnection(input)
-  if (!existing) return false
-  await db
-    .update(ExternalMcpConnectionTable)
-    .set({
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const existing = rows[0]
+    if (!existing) return false
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(existing, input.expectedIdentityBinding)
+    }
+    if (externalMcpSharedTokenRevision(existing) !== input.expectedRevision) return false
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        accessToken: null,
+        refreshToken: null,
+        tokenType: null,
+        scope: null,
+        expiresAt: null,
+        connectedAt: null,
+      })
+      .where(eq(ExternalMcpConnectionTable.id, existing.id))
+    return true
+  })
+}
+
+/** Update-only per-member cleanup; never recreate an account after delete. */
+export async function clearExternalMcpMemberTokens(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId
+  expectedRevision: ExternalMcpTokenRevision
+  expectedIdentityBinding: string
+}): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connectionRows[0]
+    if (!connection) return false
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(connection, input.expectedIdentityBinding)
+    }
+    const accountRows = await tx
+      .select()
+      .from(ConnectedAccountTable)
+      .where(and(
+        eq(ConnectedAccountTable.organizationId, input.organizationId),
+        eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+        eq(ConnectedAccountTable.providerId, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const account = accountRows[0]
+    if (!account || externalMcpMemberTokenRevision(account) !== input.expectedRevision) return false
+    await tx
+      .update(ConnectedAccountTable)
+      .set({
+        accessToken: null,
+        refreshToken: null,
+        tokenType: null,
+        scopes: null,
+        expiresAt: null,
+      })
+      .where(eq(ConnectedAccountTable.id, account.id))
+    return true
+  })
+}
+
+/**
+ * Adopt publisher-declared fallback scopes onto a pre-migration OAuth row.
+ * Existing tokens were authorized without a durable record of that fallback,
+ * so clear both shared and per-member grants and require explicit re-consent.
+ * This avoids creating a duplicate connection while never silently widening a
+ * deployed user's authorization.
+ */
+export async function adoptLegacyExternalMcpRequestedOAuthScopes(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  requestedOAuthScopes: readonly string[]
+  expectedIdentityBinding: string
+}): Promise<ExternalMcpConnectionRow | null> {
+  const requestedOAuthScopes = normalizeExternalMcpRequestedOAuthScopes(input.requestedOAuthScopes)
+  if (!requestedOAuthScopes?.length) return getExternalMcpConnection(input)
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const existing = rows[0]
+    if (!existing || existing.authType !== "oauth") return null
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(existing, input.expectedIdentityBinding)
+    }
+    if (existing.requestedOAuthScopes?.length) {
+      return externalMcpRequestedOAuthScopeSetsMatch(existing.requestedOAuthScopes, requestedOAuthScopes)
+        ? existing
+        : null
+    }
+
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        accessToken: null,
+        connectedAt: null,
+        expiresAt: null,
+        pendingCodeVerifier: null,
+        refreshToken: null,
+        requestedOAuthScopes,
+        scope: null,
+        tokenType: null,
+        oauthRegistrationLeaseToken: null,
+        oauthRegistrationLeaseStartedAt: null,
+        oauthAuthorizationEpoch: sql`${ExternalMcpConnectionTable.oauthAuthorizationEpoch} + 1`,
+      })
+      .where(eq(ExternalMcpConnectionTable.id, existing.id))
+    await tx.delete(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.providerId, existing.id),
+    ))
+    await tx.delete(ExternalMcpOAuthTransactionTable).where(and(
+      eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+      eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, existing.id),
+    ))
+    return {
+      ...existing,
       accessToken: null,
-      refreshToken: null,
-      tokenType: null,
-      scope: null,
-      expiresAt: null,
       connectedAt: null,
+      expiresAt: null,
+      pendingCodeVerifier: null,
+      refreshToken: null,
+      requestedOAuthScopes,
+      scope: null,
+      tokenType: null,
+      oauthRegistrationLeaseToken: null,
+      oauthRegistrationLeaseStartedAt: null,
+      oauthAuthorizationEpoch: existing.oauthAuthorizationEpoch + 1,
+    }
+  })
+}
+
+type ExternalMcpTokenCommit = {
+  accessToken: string
+  refreshToken?: string | null
+  tokenType?: string | null
+  scope?: string | null
+  expiresAt?: Date | null
+}
+
+/**
+ * Commits an authorization-code result only while the initiating actor still
+ * has authority. The live connection, actor, assignment, and target account
+ * are locked in the same transaction as the encrypted credential write.
+ */
+export async function saveExternalMcpAuthorizationCodeTokens(input: ExternalMcpTokenCommit & {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  authorizationActor: ExternalMcpAuthorizationActor
+  expectedAuthorizationEpoch: number
+  expectedIdentityBinding: string
+  orgMembershipId?: OrgMembershipId
+}): Promise<ExternalMcpTokenRevision> {
+  return db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connectionRows[0]
+    if (!connection) throw new Error("The external MCP connection no longer exists.")
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(connection, input.expectedIdentityBinding)
+    }
+    if (connection.authType !== "oauth") throw new Error("The external MCP connection is not configured for OAuth.")
+    if (connection.oauthAuthorizationEpoch !== input.expectedAuthorizationEpoch) {
+      throw new Error("The MCP connection was disconnected before OAuth credentials could be saved.")
+    }
+    await assertExternalMcpOAuthAuthorizationActorForCommit({
+      tx,
+      connection,
+      authorizationActor: input.authorizationActor,
     })
-    .where(eq(ExternalMcpConnectionTable.id, existing.id))
-  return true
+
+    if (connection.credentialMode === "per_member") {
+      if (
+        !input.orgMembershipId
+        || input.orgMembershipId !== input.authorizationActor.orgMembershipId
+      ) oauthAuthorizationRevoked()
+      const accountRows = await tx
+        .select()
+        .from(ConnectedAccountTable)
+        .where(and(
+          eq(ConnectedAccountTable.organizationId, input.organizationId),
+          eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+          eq(ConnectedAccountTable.providerId, input.connectionId),
+        ))
+        .limit(1)
+        .for("update")
+      const account = accountRows[0]
+      // A start always creates the pending account row. Its absence means a
+      // disconnect/member-removal won while the provider exchanged the code.
+      if (!account) throw new Error("The MCP OAuth account was disconnected before credentials could be saved.")
+      await tx
+        .update(ConnectedAccountTable)
+        .set({
+          accessToken: input.accessToken,
+          refreshToken: input.refreshToken ?? account.refreshToken ?? null,
+          tokenType: input.tokenType ?? null,
+          scopes: input.scope !== undefined
+            ? input.scope?.split(/\s+/).filter(Boolean) ?? null
+            : account.scopes,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+        })
+        .where(eq(ConnectedAccountTable.id, account.id))
+      const persistedRows = await tx
+        .select()
+        .from(ConnectedAccountTable)
+        .where(eq(ConnectedAccountTable.id, account.id))
+        .limit(1)
+      const persisted = persistedRows[0]
+      if (!persisted) throw new Error("The MCP OAuth account disappeared before credentials could commit.")
+      return externalMcpMemberTokenRevision(persisted)
+    }
+
+    if (input.orgMembershipId) oauthAuthorizationRevoked()
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        accessToken: input.accessToken,
+        refreshToken: input.refreshToken ?? connection.refreshToken ?? null,
+        tokenType: input.tokenType ?? null,
+        scope: input.scope !== undefined ? input.scope : connection.scope,
+        ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+        connectedAt: new Date(),
+      })
+      .where(eq(ExternalMcpConnectionTable.id, connection.id))
+    const persistedRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(eq(ExternalMcpConnectionTable.id, connection.id))
+      .limit(1)
+    const persisted = persistedRows[0]
+    if (!persisted) throw new Error("The external MCP connection disappeared before credentials could commit.")
+    return externalMcpSharedTokenRevision(persisted)
+  })
+}
+
+/**
+ * Refreshes do not have a browser authorization actor. They still lock and
+ * require the live connection/account and the disconnect fence so a late
+ * provider response cannot recreate credentials after revocation.
+ */
+export async function saveExternalMcpRefreshTokens(input: ExternalMcpTokenCommit & {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  expectedAuthorizationEpoch: number
+  expectedIdentityBinding: string
+  orgMembershipId?: OrgMembershipId
+}): Promise<ExternalMcpTokenRevision> {
+  return db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = connectionRows[0]
+    if (!connection) throw new Error("The external MCP connection no longer exists.")
+    if (input.expectedIdentityBinding !== undefined) {
+      assertExternalMcpIdentityBinding(connection, input.expectedIdentityBinding)
+    }
+    if (connection.oauthAuthorizationEpoch !== input.expectedAuthorizationEpoch) {
+      throw new Error("The MCP connection was disconnected before refreshed credentials could be saved.")
+    }
+
+    if (connection.credentialMode === "per_member") {
+      if (!input.orgMembershipId) throw new Error("A per-member MCP refresh requires its member context.")
+      const accountRows = await tx
+        .select()
+        .from(ConnectedAccountTable)
+        .where(and(
+          eq(ConnectedAccountTable.organizationId, input.organizationId),
+          eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+          eq(ConnectedAccountTable.providerId, input.connectionId),
+        ))
+        .limit(1)
+        .for("update")
+      const account = accountRows[0]
+      if (!account) throw new Error("The per-member MCP account was disconnected before refreshed credentials could be saved.")
+      await tx
+        .update(ConnectedAccountTable)
+        .set({
+          accessToken: input.accessToken,
+          refreshToken: input.refreshToken ?? account.refreshToken ?? null,
+          tokenType: input.tokenType ?? null,
+          scopes: input.scope !== undefined
+            ? input.scope?.split(/\s+/).filter(Boolean) ?? null
+            : account.scopes,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+        })
+        .where(eq(ConnectedAccountTable.id, account.id))
+      const persistedRows = await tx
+        .select()
+        .from(ConnectedAccountTable)
+        .where(eq(ConnectedAccountTable.id, account.id))
+        .limit(1)
+      const persisted = persistedRows[0]
+      if (!persisted) throw new Error("The per-member MCP account disappeared before refreshed credentials could commit.")
+      return externalMcpMemberTokenRevision(persisted)
+    }
+
+    if (input.orgMembershipId) throw new Error("A shared MCP refresh cannot target a member account.")
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        accessToken: input.accessToken,
+        refreshToken: input.refreshToken ?? connection.refreshToken ?? null,
+        tokenType: input.tokenType ?? null,
+        scope: input.scope !== undefined ? input.scope : connection.scope,
+        ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+        connectedAt: new Date(),
+      })
+      .where(eq(ExternalMcpConnectionTable.id, connection.id))
+    const persistedRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(eq(ExternalMcpConnectionTable.id, connection.id))
+      .limit(1)
+    const persisted = persistedRows[0]
+    if (!persisted) throw new Error("The external MCP connection disappeared before refreshed credentials could commit.")
+    return externalMcpSharedTokenRevision(persisted)
+  })
 }
 
 export async function saveExternalMcpTokens(input: {
@@ -1241,7 +3007,6 @@ export async function saveExternalMcpTokens(input: {
       ...(input.tokenType !== undefined ? { tokenType: input.tokenType } : {}),
       ...(input.scope !== undefined ? { scope: input.scope } : {}),
       ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-      pendingCodeVerifier: null,
       connectedAt: new Date(),
     })
     .where(eq(ExternalMcpConnectionTable.id, input.connectionId))
@@ -1251,14 +3016,91 @@ export async function disconnectExternalMcpConnection(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
 }): Promise<boolean> {
-  const existing = await getExternalMcpConnection(input)
-  if (!existing) return false
-  await clearExternalMcpTokens(input)
-  await db
-    .update(ExternalMcpConnectionTable)
-    .set({
-      pendingCodeVerifier: null,
-    })
-    .where(eq(ExternalMcpConnectionTable.id, existing.id))
-  return true
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: ExternalMcpConnectionTable.id })
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const existing = rows[0]
+    if (!existing) return false
+
+    // Incrementing the fence invalidates a callback or refresh that already
+    // consumed its PKCE transaction and is waiting on the provider. Clearing
+    // the DCR lease also prevents a stale start from committing registration
+    // state after this disconnect.
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        accessToken: null,
+        refreshToken: null,
+        tokenType: null,
+        scope: null,
+        expiresAt: null,
+        connectedAt: null,
+        pendingCodeVerifier: null,
+        oauthRegistrationLeaseToken: null,
+        oauthRegistrationLeaseStartedAt: null,
+        oauthAuthorizationEpoch: sql`${ExternalMcpConnectionTable.oauthAuthorizationEpoch} + 1`,
+      })
+      .where(eq(ExternalMcpConnectionTable.id, existing.id))
+    await tx.delete(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.providerId, existing.id),
+    ))
+    await tx.delete(ExternalMcpOAuthTransactionTable).where(and(
+      eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+      eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, existing.id),
+    ))
+    return true
+  })
+}
+
+export type ExternalMcpMemberDisconnectResult = "disconnected" | "connection_not_found" | "not_per_member"
+
+/**
+ * Revoke only one member's external MCP account. The connection row is the
+ * common lock taken by OAuth starts, callback commits, refreshes, and the
+ * administrator-wide disconnect, so each concurrent operation has one clear
+ * ordering. Deleting the member account also fences update-only callback and
+ * refresh commits without invalidating another member's authorization epoch.
+ */
+export async function disconnectExternalMcpMemberAccount(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId
+}): Promise<ExternalMcpMemberDisconnectResult> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({
+        id: ExternalMcpConnectionTable.id,
+        credentialMode: ExternalMcpConnectionTable.credentialMode,
+      })
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = rows[0]
+    if (!connection) return "connection_not_found"
+    if (connection.credentialMode !== "per_member") return "not_per_member"
+
+    await tx.delete(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+      eq(ConnectedAccountTable.providerId, connection.id),
+    ))
+    await tx.delete(ExternalMcpOAuthTransactionTable).where(and(
+      eq(ExternalMcpOAuthTransactionTable.organizationId, input.organizationId),
+      eq(ExternalMcpOAuthTransactionTable.externalMcpConnectionId, connection.id),
+      eq(ExternalMcpOAuthTransactionTable.orgMembershipId, input.orgMembershipId),
+    ))
+    return "disconnected"
+  })
 }
