@@ -29,6 +29,7 @@ import {
   abandonExternalMcpAuth,
   connectExternalMcp,
   completeExternalMcpAuth,
+  listExternalMcpTools,
 } from "../../capability-sources/external-mcp-client-runtime.js"
 import {
   createExternalMcpConnection,
@@ -38,6 +39,7 @@ import {
   listExternalMcpConnectionAccess,
   listExternalMcpConnections,
   listUsableExternalMcpConnections,
+  markExternalMcpConnectionConnected,
   memberCanUseExternalMcpConnection,
   replaceExternalMcpConnectionAccess,
   type ExternalMcpConnectionRow,
@@ -170,6 +172,32 @@ const connectionListResponseSchema = z.object({
   connections: z.array(connectionResponseSchema),
 }).meta({ ref: "ExternalMcpConnectionListResponse" })
 
+const connectionToolAnnotationsSchema = z.object({
+  title: z.string().optional(),
+  readOnlyHint: z.boolean().optional(),
+  destructiveHint: z.boolean().optional(),
+  idempotentHint: z.boolean().optional(),
+  openWorldHint: z.boolean().optional(),
+}).meta({ ref: "ExternalMcpConnectionToolAnnotations" })
+
+const connectionToolSchema = z.object({
+  name: z.string(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  inputSchema: z.record(z.string(), z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()).optional(),
+  annotations: connectionToolAnnotationsSchema.optional(),
+}).meta({ ref: "ExternalMcpConnectionTool" })
+
+const connectionToolListResponseSchema = z.object({
+  tools: z.array(connectionToolSchema),
+}).meta({ ref: "ExternalMcpConnectionToolListResponse" })
+
+const connectionNotReadySchema = z.object({
+  error: z.literal("connection_not_ready"),
+  message: z.string(),
+}).meta({ ref: "ExternalMcpConnectionNotReadyError" })
+
 const connectionCreatedResponseSchema = connectionResponseSchema.extend({
   links: z.object({
     /** Where members connect their own account for per_member connections. Share this with the team. */
@@ -243,6 +271,12 @@ const externalMcpDiagnosticSchema = z.object({
   providerRequestId: z.string().optional(),
   jsonRpcCode: z.number().int().optional(),
 }).meta({ ref: "ExternalMcpDiagnostic" })
+
+const connectionToolListFailedSchema = z.object({
+  error: z.literal("tool_catalog_failed"),
+  message: z.string(),
+  diagnostic: externalMcpDiagnosticSchema,
+}).meta({ ref: "ExternalMcpConnectionToolListFailedError" })
 
 const connectStartFailedSchema = z.object({
   error: z.literal("oauth_handshake_failed"),
@@ -577,6 +611,102 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     },
   )
 
+  app.get(
+    "/v1/mcp-connections/:connectionId/tools",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "List tools exposed by an External MCP Connection",
+      description: "Admin-only. Uses the connection credential owned by Den to read its live MCP tools/list catalog. Credentials and tool calls are never returned.",
+      responses: {
+        200: jsonResponse("External MCP tool catalog.", connectionToolListResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can inspect MCP tools.", forbiddenSchema),
+        404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
+        409: jsonResponse("The connection has no usable credential for this member.", connectionNotReadySchema),
+        502: jsonResponse("The upstream MCP tool catalog could not be read.", connectionToolListFailedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(connectionParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can inspect MCP tools.")
+      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+
+      const { connectionId } = c.req.valid("param")
+      const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
+      const connection = await getExternalMcpConnection({
+        organizationId: payload.organization.id,
+        connectionId: externalMcpConnectionId,
+      })
+      if (!connection) {
+        return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+      }
+
+      const member = connection.credentialMode === "per_member"
+        ? { orgMembershipId: payload.currentMember.id }
+        : undefined
+      if (connection.credentialMode === "per_member") {
+        const account = await getConnectedAccount({
+          organizationId: payload.organization.id,
+          orgMembershipId: payload.currentMember.id,
+          providerId: connection.id,
+        })
+        if (!account?.accessToken) {
+          return c.json({
+            error: "connection_not_ready",
+            message: "Connect your account before inspecting this MCP's tools.",
+          }, 409)
+        }
+      } else if (!isConnectionConnected(connection)) {
+        return c.json({
+          error: "connection_not_ready",
+          message: "Connect this MCP before inspecting its tools.",
+        }, 409)
+      }
+
+      try {
+        const tools = await listExternalMcpTools(
+          connection,
+          callbackRedirectUri(c.req.raw, connectionId),
+          member,
+          c.get("requestId"),
+        )
+        return c.json({
+          tools: tools.map((tool) => ({
+            name: tool.name,
+            ...(tool.title ? { title: tool.title } : {}),
+            ...(tool.description ? { description: tool.description } : {}),
+            inputSchema: tool.inputSchema,
+            ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
+            ...(tool.annotations ? {
+              annotations: {
+                ...(tool.annotations.title ? { title: tool.annotations.title } : {}),
+                ...(tool.annotations.readOnlyHint !== undefined ? { readOnlyHint: tool.annotations.readOnlyHint } : {}),
+                ...(tool.annotations.destructiveHint !== undefined ? { destructiveHint: tool.annotations.destructiveHint } : {}),
+                ...(tool.annotations.idempotentHint !== undefined ? { idempotentHint: tool.annotations.idempotentHint } : {}),
+                ...(tool.annotations.openWorldHint !== undefined ? { openWorldHint: tool.annotations.openWorldHint } : {}),
+              },
+            } : {}),
+          })),
+        })
+      } catch (error) {
+        const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "MCP_TOOL_DISCOVERY")
+        logger.error("external_mcp_tool_catalog_failed", {
+          connection_id: connection.id,
+          organization_id: payload.organization.id,
+          connection_endpoint: safeExternalMcpEndpointForLog(connection.url),
+          ...externalMcpDiagnosticForLog(error, c.get("requestId"), "MCP_TOOL_DISCOVERY"),
+        })
+        return c.json({
+          error: "tool_catalog_failed",
+          message: `Could not inspect "${connection.name}": ${diagnostic.message} Reference: ${diagnostic.referenceId}.`,
+          diagnostic,
+        }, 502)
+      }
+    },
+  )
+
   app.post(
     "/v1/mcp-connections",
     describeRoute({
@@ -660,6 +790,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         // No OAuth dance needed — validate the server is real and reachable now.
         try {
           await connectExternalMcp(created, callbackRedirectUri(c.req.raw, created.id), undefined, undefined, c.get("requestId"))
+          // OAuth records a successful connection while persisting tokens.
+          // A no-auth server has no token write, so retain the successful
+          // initialize probe explicitly for readiness and catalog discovery.
+          if (body.authType === "none") {
+            await markExternalMcpConnectionConnected(created.id)
+          }
         } catch (error) {
           const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "MCP_INITIALIZE")
           logger.error("external_mcp_connection_validation_failed", {

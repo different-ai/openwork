@@ -70,12 +70,14 @@ describe("agent-configurable org connections policy", () => {
   test("discovery surfaces the agent needs are readable", () => {
     expect(allowed("getV1McpConnections")).toBe(true)
     expect(allowed("getV1McpConnectionsPresets")).toBe(true)
+    expect(allowed("getV1McpConnectionsByConnectionIdTools")).toBe(true)
   })
 
   test("agent catalog search discovers member list and admin create mcp-connection operations", () => {
     const catalog = buildMcpCatalog(document)
     const memberMatches = searchCapabilities(catalog, "list external mcp connections", 10)
     const adminMatches = searchCapabilities(catalog, "register external mcp connection", 10)
+    const toolCatalogMatches = searchCapabilities(catalog, "inspect tools exposed by an external mcp connection", 10)
 
     expect(memberMatches).toContainEqual(expect.objectContaining({
       name: "getMcpConnections",
@@ -87,6 +89,10 @@ describe("agent-configurable org connections policy", () => {
       method: "POST",
       path: "/v1/mcp-connections",
       hasBody: true,
+    }))
+    expect(toolCatalogMatches).toContainEqual(expect.objectContaining({
+      method: "GET",
+      path: "/v1/mcp-connections/{connectionId}/tools",
     }))
   })
 
