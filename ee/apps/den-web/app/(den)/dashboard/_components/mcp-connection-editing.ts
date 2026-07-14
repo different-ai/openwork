@@ -5,7 +5,7 @@ import type {
   ExternalMcpRequiredBy,
 } from "./mcp-connections-data";
 
-export type McpConnectionAccessMode = "everyone" | "teams" | "people" | "none";
+export type McpConnectionAccessMode = "everyone" | "teams" | "people" | "marketplaces" | "none";
 
 export function normalizeEditableMcpIdentityUrl(value: string): string {
   try {
@@ -32,6 +32,7 @@ export function mcpAccessMode(access: ExternalMcpAccessSummary | null): McpConne
   if (access.orgWide) return "everyone";
   if (access.teamIds.length > 0) return "teams";
   if (access.memberIds.length > 0) return "people";
+  if ((access.marketplaceIds?.length ?? 0) > 0) return "marketplaces";
   return "none";
 }
 

@@ -3250,6 +3250,10 @@ async function deleteConnectorImportedResources(input: {
   if (marketplaceIdsToDelete.length > 0) {
     await input.tx.delete(MarketplacePluginTable).where(and(inArray(MarketplacePluginTable.marketplaceId, marketplaceIdsToDelete), eq(MarketplacePluginTable.organizationId, input.organizationId)))
     await input.tx.delete(MarketplaceAccessGrantTable).where(and(inArray(MarketplaceAccessGrantTable.marketplaceId, marketplaceIdsToDelete), eq(MarketplaceAccessGrantTable.organizationId, input.organizationId)))
+    await input.tx.delete(ExternalMcpConnectionAccessGrantTable).where(and(
+      inArray(ExternalMcpConnectionAccessGrantTable.marketplaceId, marketplaceIdsToDelete),
+      eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
+    ))
     await input.tx.delete(MarketplaceTable).where(and(inArray(MarketplaceTable.id, marketplaceIdsToDelete), eq(MarketplaceTable.organizationId, input.organizationId)))
   }
 }

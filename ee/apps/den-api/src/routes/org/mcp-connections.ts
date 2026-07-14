@@ -137,6 +137,7 @@ const accessInputSchema = z.object({
   orgWide: z.boolean().optional().default(false),
   memberIds: z.array(z.string().trim().min(1)).max(200).optional().default([]),
   teamIds: z.array(z.string().trim().min(1)).max(200).optional().default([]),
+  marketplaceIds: z.array(z.string().trim().min(1)).max(200).optional().default([]),
 }).meta({ ref: "ExternalMcpConnectionAccessInput" })
 
 const externalMcpUrlSchema = z.string().trim().url().max(2048).superRefine((value, context) => {
@@ -207,7 +208,7 @@ const createConnectionBodySchema = z.object({
     .refine((scopes) => scopes.join(" ").length <= 8_192, "Requested OAuth scopes must total at most 8192 characters.")
     .optional(),
   /** Who can USE the connection. Defaults to org-wide so the naive quick-add path matches expectations, but it's an explicit, editable choice. */
-  access: accessInputSchema.optional().default({ orgWide: true, memberIds: [], teamIds: [] }),
+  access: accessInputSchema.optional().default({ orgWide: true, memberIds: [], teamIds: [], marketplaceIds: [] }),
 })
 
 const updateConnectionBodySchema = z.object({
@@ -270,6 +271,7 @@ const accessSummarySchema = z.object({
   orgWide: z.boolean(),
   memberIds: z.array(z.string()),
   teamIds: z.array(z.string()),
+  marketplaceIds: z.array(z.string()),
 }).meta({ ref: "ExternalMcpConnectionAccessSummary" })
 
 const requiredBySchema = z.object({
@@ -625,8 +627,8 @@ async function toConnectionResponse(
       : undefined
   }
 
-  let access: { orgWide: boolean; memberIds: string[]; teamIds: string[] } | null = null
-  let inheritedAccess: { orgWide: boolean; memberIds: string[]; teamIds: string[] } | null = null
+  let access: { orgWide: boolean; memberIds: string[]; teamIds: string[]; marketplaceIds: string[] } | null = null
+  let inheritedAccess: { orgWide: boolean; memberIds: string[]; teamIds: string[]; marketplaceIds: string[] } | null = null
   if (options.includeAccess) {
     const grants = await listExternalMcpConnectionAccess({
       organizationId: row.organizationId,
@@ -638,6 +640,7 @@ async function toConnectionResponse(
       orgWide: selectedGrants.some((grant) => grant.orgWide),
       memberIds: [...new Set(selectedGrants.flatMap((grant) => (grant.orgMembershipId ? [grant.orgMembershipId] : [])))],
       teamIds: [...new Set(selectedGrants.flatMap((grant) => (grant.teamId ? [grant.teamId] : [])))],
+      marketplaceIds: [...new Set(selectedGrants.flatMap((grant) => (grant.marketplaceId ? [grant.marketplaceId] : [])))],
     })
     access = summarize(directGrants)
     inheritedAccess = summarize(inheritedGrants)
@@ -754,7 +757,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List External MCP Connections",
-      description: "scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. scope=manageable: every org connection with access summaries — workspace owners and admins only.",
+      description: "scope=usable (default): connections the calling member has been granted org-wide, directly, through a team, or through an accessible marketplace, with per-member connection status. scope=manageable: every org connection with access summaries — workspace owners and admins only.",
       responses: {
         200: jsonResponse("Connections.", connectionListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -1009,6 +1012,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           orgWide: body.access.orgWide,
           memberIds: body.access.memberIds.map((id) => normalizeDenTypeId("member", id)),
           teamIds: body.access.teamIds.map((id) => normalizeDenTypeId("team", id)),
+          marketplaceIds: body.access.marketplaceIds.map((id) => normalizeDenTypeId("marketplace", id)),
         },
       })
 
@@ -1245,6 +1249,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             orgWide: body.access.orgWide,
             memberIds: body.access.memberIds.map((id) => normalizeDenTypeId("member", id)),
             teamIds: body.access.teamIds.map((id) => normalizeDenTypeId("team", id)),
+            marketplaceIds: body.access.marketplaceIds.map((id) => normalizeDenTypeId("marketplace", id)),
           },
           updatedByOrgMembershipId: payload.currentMember.id,
           ...(validatedAt ? { validatedAt } : {}),
@@ -1296,7 +1301,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       // credentials involved — lets an admin reshape access from chat.
       tags: ["Capability Sources"],
       summary: "Replace who can use an External MCP Connection",
-      description: "Admin-only. Full-replace semantics: send the complete desired access set (orgWide, or memberIds + teamIds). Team and member ids come from GET /v1/org.",
+      description: "Admin-only. Full-replace semantics: send the complete desired access set (orgWide, or memberIds + teamIds + marketplaceIds). Team, member, and marketplace ids must belong to the active organization.",
       responses: {
         200: jsonResponse("Access updated.", connectionResponseSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
@@ -1329,6 +1334,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             orgWide: body.access.orgWide,
             memberIds: body.access.memberIds.map((id) => normalizeDenTypeId("member", id)),
             teamIds: body.access.teamIds.map((id) => normalizeDenTypeId("team", id)),
+            marketplaceIds: body.access.marketplaceIds.map((id) => normalizeDenTypeId("marketplace", id)),
           },
           createdByOrgMembershipId: payload.currentMember.id,
         })

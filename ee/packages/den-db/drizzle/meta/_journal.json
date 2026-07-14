@@ -288,6 +288,13 @@
       "when": 1784041074762,
       "tag": "0041_public_grim_reaper",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "5",
+      "when": 1784048794991,
+      "tag": "0042_hard_blue_shield",
+      "breakpoints": true
     }
   ]
 }

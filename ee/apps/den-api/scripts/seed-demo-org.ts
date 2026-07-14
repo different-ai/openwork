@@ -4,6 +4,7 @@ import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
+  ExternalMcpConnectionAccessGrantTable,
   InvitationTable,
   MarketplaceAccessGrantTable,
   MarketplacePluginTable,
@@ -948,6 +949,7 @@ async function resetDemoOrg() {
     await db.delete(PluginTable).where(inArray(PluginTable.id, pluginIds))
   }
   if (marketplaceIds.length > 0) {
+    await db.delete(ExternalMcpConnectionAccessGrantTable).where(inArray(ExternalMcpConnectionAccessGrantTable.marketplaceId, marketplaceIds))
     await db.delete(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, marketplaceIds))
     await db.delete(MarketplaceTable).where(inArray(MarketplaceTable.id, marketplaceIds))
   }

@@ -10,6 +10,7 @@ export function effectiveMcpAccess(
     orgWide: sources.some((source) => source.orgWide),
     memberIds: [...new Set(sources.flatMap((source) => source.memberIds))],
     teamIds: [...new Set(sources.flatMap((source) => source.teamIds))],
+    marketplaceIds: [...new Set(sources.flatMap((source) => source.marketplaceIds ?? []))],
   };
 }
 

@@ -69,6 +69,7 @@ export type ExternalMcpTokenRevision = string
 type OrganizationId = DenTypeId<"organization">
 type OrgMembershipId = DenTypeId<"member">
 type TeamId = DenTypeId<"team">
+type MarketplaceId = DenTypeId<"marketplace">
 type ExternalMcpConnectionId = DenTypeId<"externalMcpConnection">
 type PluginMcpRequirementBindingId = DenTypeId<"pluginMcpRequirementBinding">
 type PluginId = DenTypeId<"plugin">
@@ -94,7 +95,7 @@ export class ExternalMcpAccessTargetInvalidError extends Error {
   readonly code = "external_mcp_access_target_invalid"
 
   constructor() {
-    super("External MCP access can only target active members and teams in the same organization.")
+    super("External MCP access can only target active members, teams, and marketplaces in the same organization.")
     this.name = "ExternalMcpAccessTargetInvalidError"
   }
 }
@@ -390,17 +391,67 @@ async function latestConfigObjectVersions(input: {
   return versions
 }
 
-function grantFilter(input: { orgMembershipId: OrgMembershipId; teamIds: TeamId[] }) {
-  return input.teamIds.length > 0
+function grantFilter(input: {
+  marketplaceIds: MarketplaceId[]
+  orgMembershipId: OrgMembershipId
+  teamIds: TeamId[]
+}) {
+  if (input.teamIds.length > 0 && input.marketplaceIds.length > 0) {
+    return or(
+      eq(ExternalMcpConnectionAccessGrantTable.orgWide, true),
+      eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, input.orgMembershipId),
+      inArray(ExternalMcpConnectionAccessGrantTable.teamId, input.teamIds),
+      inArray(ExternalMcpConnectionAccessGrantTable.marketplaceId, input.marketplaceIds),
+    )
+  }
+  if (input.teamIds.length > 0) {
+    return or(
+      eq(ExternalMcpConnectionAccessGrantTable.orgWide, true),
+      eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, input.orgMembershipId),
+      inArray(ExternalMcpConnectionAccessGrantTable.teamId, input.teamIds),
+    )
+  }
+  if (input.marketplaceIds.length > 0) {
+    return or(
+      eq(ExternalMcpConnectionAccessGrantTable.orgWide, true),
+      eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, input.orgMembershipId),
+      inArray(ExternalMcpConnectionAccessGrantTable.marketplaceId, input.marketplaceIds),
+    )
+  }
+  return or(
+    eq(ExternalMcpConnectionAccessGrantTable.orgWide, true),
+    eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, input.orgMembershipId),
+  )
+}
+
+async function directlyAccessibleMarketplaceIds(input: {
+  organizationId: OrganizationId
+  orgMembershipId: OrgMembershipId
+  teamIds: TeamId[]
+}): Promise<MarketplaceId[]> {
+  const accessFilter = input.teamIds.length > 0
     ? or(
-        eq(ExternalMcpConnectionAccessGrantTable.orgWide, true),
-        eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, input.orgMembershipId),
-        inArray(ExternalMcpConnectionAccessGrantTable.teamId, input.teamIds),
+        eq(MarketplaceAccessGrantTable.orgWide, true),
+        eq(MarketplaceAccessGrantTable.orgMembershipId, input.orgMembershipId),
+        inArray(MarketplaceAccessGrantTable.teamId, input.teamIds),
       )
     : or(
-        eq(ExternalMcpConnectionAccessGrantTable.orgWide, true),
-        eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, input.orgMembershipId),
+        eq(MarketplaceAccessGrantTable.orgWide, true),
+        eq(MarketplaceAccessGrantTable.orgMembershipId, input.orgMembershipId),
       )
+  const rows = await db
+    .selectDistinct({ id: MarketplaceTable.id })
+    .from(MarketplaceTable)
+    .innerJoin(MarketplaceAccessGrantTable, eq(MarketplaceAccessGrantTable.marketplaceId, MarketplaceTable.id))
+    .where(and(
+      eq(MarketplaceTable.organizationId, input.organizationId),
+      eq(MarketplaceTable.status, "active"),
+      isNull(MarketplaceTable.deletedAt),
+      eq(MarketplaceAccessGrantTable.organizationId, input.organizationId),
+      isNull(MarketplaceAccessGrantTable.removedAt),
+      accessFilter,
+    ))
+  return rows.map((row) => row.id)
 }
 
 async function directlyUsableExternalMcpConnections(input: {
@@ -408,6 +459,7 @@ async function directlyUsableExternalMcpConnections(input: {
   orgMembershipId: OrgMembershipId
   teamIds: TeamId[]
 }) {
+  const marketplaceIds = await directlyAccessibleMarketplaceIds(input)
   const rows = await db
     .selectDistinct({ connection: ExternalMcpConnectionTable })
     .from(ExternalMcpConnectionTable)
@@ -418,7 +470,7 @@ async function directlyUsableExternalMcpConnections(input: {
     .where(and(
       eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
       isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
-      grantFilter(input),
+      grantFilter({ ...input, marketplaceIds }),
     ))
   return rows.map((row) => row.connection)
 }
@@ -565,7 +617,7 @@ async function sourcedUsableExternalMcpConnections(input: {
     ))
     .where(and(
       eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
-      grantFilter(input),
+      grantFilter({ ...input, marketplaceIds: [] }),
       eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
       eq(PluginTable.organizationId, input.organizationId),
       eq(PluginTable.status, "active"),
@@ -783,6 +835,7 @@ export type ExternalMcpAccessInput = {
   orgWide: boolean
   memberIds: OrgMembershipId[]
   teamIds: TeamId[]
+  marketplaceIds?: MarketplaceId[]
 }
 
 const MAX_EXTERNAL_MCP_REQUESTED_SCOPES = 100
@@ -975,6 +1028,17 @@ function accessGrantRows(input: {
       createdByOrgMembershipId: input.createdByOrgMembershipId,
     })
   }
+  for (const marketplaceId of new Set(input.access.marketplaceIds ?? [])) {
+    rows.push({
+      id: createDenTypeId("externalMcpConnectionAccessGrant"),
+      organizationId: input.organizationId,
+      externalMcpConnectionId: input.connectionId,
+      pluginMcpRequirementBindingId: input.bindingId ?? null,
+      sourceKey,
+      marketplaceId,
+      createdByOrgMembershipId: input.createdByOrgMembershipId,
+    })
+  }
   return rows
 }
 
@@ -992,6 +1056,7 @@ async function assertExternalMcpAccessTargetsForUpdate(input: {
   if (input.access.orgWide) return
   const memberIds = unique(input.access.memberIds)
   const teamIds = unique(input.access.teamIds)
+  const marketplaceIds = unique(input.access.marketplaceIds ?? [])
   const members = memberIds.length === 0
     ? []
     : await input.tx
@@ -1014,8 +1079,24 @@ async function assertExternalMcpAccessTargetsForUpdate(input: {
         inArray(TeamTable.id, teamIds),
       ))
       .for("update")
+  const marketplaces = marketplaceIds.length === 0
+    ? []
+    : await input.tx
+      .select({ id: MarketplaceTable.id })
+      .from(MarketplaceTable)
+      .where(and(
+        eq(MarketplaceTable.organizationId, input.organizationId),
+        inArray(MarketplaceTable.id, marketplaceIds),
+        eq(MarketplaceTable.status, "active"),
+        isNull(MarketplaceTable.deletedAt),
+      ))
+      .for("update")
 
-  if (members.length !== memberIds.length || teams.length !== teamIds.length) {
+  if (
+    members.length !== memberIds.length
+    || teams.length !== teamIds.length
+    || marketplaces.length !== marketplaceIds.length
+  ) {
     throw new ExternalMcpAccessTargetInvalidError()
   }
 }
@@ -1232,6 +1313,7 @@ export async function mergeExternalMcpConnectionAccess(input: {
     } else {
       const existingMemberIds = new Set(existing.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : []))
       const existingTeamIds = new Set(existing.flatMap((grant) => grant.teamId ? [grant.teamId] : []))
+      const existingMarketplaceIds = new Set(existing.flatMap((grant) => grant.marketplaceId ? [grant.marketplaceId] : []))
       for (const memberId of new Set(input.access.memberIds)) {
         if (existingMemberIds.has(memberId)) continue
         rows.push({
@@ -1252,6 +1334,16 @@ export async function mergeExternalMcpConnectionAccess(input: {
           createdByOrgMembershipId: input.createdByOrgMembershipId,
         })
       }
+      for (const marketplaceId of new Set(input.access.marketplaceIds ?? [])) {
+        if (existingMarketplaceIds.has(marketplaceId)) continue
+        rows.push({
+          id: createDenTypeId("externalMcpConnectionAccessGrant"),
+          organizationId: input.organizationId,
+          externalMcpConnectionId: input.connectionId,
+          marketplaceId,
+          createdByOrgMembershipId: input.createdByOrgMembershipId,
+        })
+      }
     }
 
     if (rows.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
@@ -1263,6 +1355,7 @@ function directAccessKeys(rows: ExternalMcpConnectionAccessGrantRow[]): Set<stri
     if (row.orgWide) return ["org"]
     if (row.orgMembershipId) return [`member:${row.orgMembershipId}`]
     if (row.teamId) return [`team:${row.teamId}`]
+    if (row.marketplaceId) return [`marketplace:${row.marketplaceId}`]
     return []
   }))
 }
@@ -1272,6 +1365,7 @@ function requestedAccessKeys(access: ExternalMcpAccessInput): Set<string> {
   return new Set([
     ...access.memberIds.map((id) => `member:${id}`),
     ...access.teamIds.map((id) => `team:${id}`),
+    ...(access.marketplaceIds ?? []).map((id) => `marketplace:${id}`),
   ])
 }
 
@@ -1568,7 +1662,8 @@ export async function updateExternalMcpConnection(
 
 /**
  * The one access predicate: a member can USE a connection when a grant is
- * org-wide, names them directly, or names one of their teams. Access is
+ * org-wide, names them directly, names one of their teams, or targets a
+ * marketplace they can access. Access is
  * never implicit — zero grants means zero non-admin access.
  */
 export async function listUsableExternalMcpConnections(input: {
@@ -1777,16 +1872,48 @@ export async function assertExternalMcpOAuthAuthorizationActorForCommit(input: {
     ))
     .for("update")
   const teamIds = teamRows.map((team) => team.id)
-  const assignment = teamIds.length > 0
+  const marketplaceTargetRows = await input.tx
+    .select({ id: ExternalMcpConnectionAccessGrantTable.marketplaceId })
+    .from(ExternalMcpConnectionAccessGrantTable)
+    .where(and(
+      eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.connection.organizationId),
+      eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connection.id),
+      isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
+      isNotNull(ExternalMcpConnectionAccessGrantTable.marketplaceId),
+    ))
+    .for("update")
+  const marketplaceTargetIds = unique(marketplaceTargetRows.flatMap((row) => row.id ? [row.id] : []))
+  const marketplaceAccessFilter = teamIds.length > 0
     ? or(
-        eq(ExternalMcpConnectionAccessGrantTable.orgWide, true),
-        eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, member.id),
-        inArray(ExternalMcpConnectionAccessGrantTable.teamId, teamIds),
+        eq(MarketplaceAccessGrantTable.orgWide, true),
+        eq(MarketplaceAccessGrantTable.orgMembershipId, member.id),
+        inArray(MarketplaceAccessGrantTable.teamId, teamIds),
       )
     : or(
-        eq(ExternalMcpConnectionAccessGrantTable.orgWide, true),
-        eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, member.id),
+        eq(MarketplaceAccessGrantTable.orgWide, true),
+        eq(MarketplaceAccessGrantTable.orgMembershipId, member.id),
       )
+  const marketplaceRows = marketplaceTargetIds.length === 0
+    ? []
+    : await input.tx
+      .selectDistinct({ id: MarketplaceTable.id })
+      .from(MarketplaceTable)
+      .innerJoin(MarketplaceAccessGrantTable, eq(MarketplaceAccessGrantTable.marketplaceId, MarketplaceTable.id))
+      .where(and(
+        eq(MarketplaceTable.organizationId, input.connection.organizationId),
+        inArray(MarketplaceTable.id, marketplaceTargetIds),
+        eq(MarketplaceTable.status, "active"),
+        isNull(MarketplaceTable.deletedAt),
+        eq(MarketplaceAccessGrantTable.organizationId, input.connection.organizationId),
+        isNull(MarketplaceAccessGrantTable.removedAt),
+        marketplaceAccessFilter,
+      ))
+      .for("update")
+  const assignment = grantFilter({
+    marketplaceIds: marketplaceRows.map((row) => row.id),
+    orgMembershipId: member.id,
+    teamIds,
+  })
   const grantRows = await input.tx
     .select({
       bindingId: ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId,

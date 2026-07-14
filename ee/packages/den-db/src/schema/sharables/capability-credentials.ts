@@ -13,7 +13,7 @@ import {
 } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, encryptedTextColumn } from "../../columns"
 import { MemberTable, OrganizationTable } from "../org"
-import { ConfigObjectTable, PluginTable } from "./plugin-arch"
+import { ConfigObjectTable, MarketplaceTable, PluginTable } from "./plugin-arch"
 
 /**
  * Generic credential layer for "bring your own OAuth client" integrations.
@@ -232,8 +232,8 @@ export const ExternalMcpOAuthTransactionTable = mysqlTable(
 /**
  * Who in the org can USE a connection (see it in search_capabilities and
  * call it via execute_capability). One row = one grant to a member, a team,
- * or the whole org (exactly one of orgMembershipId / teamId / orgWide per
- * row). Deliberately naive vs the plugin-arch grant tables: no role column
+ * a marketplace audience, or the whole org (exactly one target per row).
+ * Deliberately naive vs the plugin-arch grant tables: no role column
  * (use = use; managing connections stays admin-only) and hard-delete
  * (mirrors LlmProviderAccessTable). Access is never implicit: zero rows
  * means nobody (but org admins) can use the connection.
@@ -254,6 +254,7 @@ export const ExternalMcpConnectionAccessGrantTable = mysqlTable(
     sourceKey: varchar("source_key", { length: 64 }).notNull().default("direct"),
     orgMembershipId: denTypeIdColumn("member", "org_membership_id"),
     teamId: denTypeIdColumn("team", "team_id"),
+    marketplaceId: denTypeIdColumn("marketplace", "marketplace_id"),
     orgWide: boolean("org_wide").notNull().default(false),
     createdByOrgMembershipId: denTypeIdColumn(
       "member",
@@ -267,6 +268,7 @@ export const ExternalMcpConnectionAccessGrantTable = mysqlTable(
     index("emc_access_grant_plugin_mcp_binding_id").on(table.pluginMcpRequirementBindingId),
     index("emc_access_grant_org_membership_id").on(table.orgMembershipId),
     index("emc_access_grant_team_id").on(table.teamId),
+    index("emc_access_grant_marketplace_id").on(table.marketplaceId),
     uniqueIndex("emc_access_grant_connection_member").on(
       table.externalMcpConnectionId,
       table.orgMembershipId,
@@ -275,6 +277,11 @@ export const ExternalMcpConnectionAccessGrantTable = mysqlTable(
     uniqueIndex("emc_access_grant_connection_team").on(
       table.externalMcpConnectionId,
       table.teamId,
+      table.sourceKey,
+    ),
+    uniqueIndex("emc_access_grant_connection_marketplace").on(
+      table.externalMcpConnectionId,
+      table.marketplaceId,
       table.sourceKey,
     ),
   ],
@@ -349,6 +356,10 @@ export const externalMcpConnectionAccessGrantRelations = relations(ExternalMcpCo
   orgMembership: one(MemberTable, {
     fields: [ExternalMcpConnectionAccessGrantTable.orgMembershipId],
     references: [MemberTable.id],
+  }),
+  marketplace: one(MarketplaceTable, {
+    fields: [ExternalMcpConnectionAccessGrantTable.marketplaceId],
+    references: [MarketplaceTable.id],
   }),
   createdByOrgMembership: one(MemberTable, {
     fields: [ExternalMcpConnectionAccessGrantTable.createdByOrgMembershipId],

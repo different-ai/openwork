@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ArrowLeft, Check, GitBranch, Github, Globe, Loader2, Plus, Puzzle, Users, X } from "lucide-react";
+import { ArrowLeft, Check, GitBranch, Github, Globe, Loader2, Plus, Puzzle, Server, Users, X } from "lucide-react";
 import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -10,6 +10,7 @@ import { DenSelect } from "../../_components/ui/select";
 import {
   getGithubIntegrationSetupRoute,
   getMarketplacesRoute,
+  getMcpConnectionsRoute,
   getOrgAccessFlags,
   getPluginRoute,
   getYourConnectionsRoute,
@@ -31,7 +32,23 @@ import {
 } from "./marketplace-data";
 import { IntegrationIcon } from "./integration-icon";
 import { copyTextToClipboard } from "./mcp-clipboard";
-import { type ExternalMcpAuthType, type ExternalMcpCredentialMode, type ExternalMcpPreset, useMcpConnectionPresets } from "./mcp-connections-data";
+import {
+  closeMcpAuthorizationWindow,
+  navigateMcpAuthorizationWindow,
+  type McpAuthorizationWindow,
+} from "./mcp-authorization-url";
+import {
+  type CreatedMcpConnection,
+  type CreateMcpConnectionInput,
+  type ExternalMcpAuthType,
+  type ExternalMcpCredentialMode,
+  type ExternalMcpPreset,
+  useCreateMcpConnection,
+  useMcpConnectionPresets,
+  useMcpConnections,
+  useStartMcpConnectionOAuth,
+} from "./mcp-connections-data";
+import { AddConnectionDialog } from "./mcp-connections-screen";
 import {
   discoveryAuthControlCopy,
   discoveryAuthIsEditable,
@@ -202,6 +219,10 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
 
         <MarketplaceAccessSection marketplaceId={marketplace.id} />
 
+        {access.isAdmin ? (
+          <MarketplaceConnectionsSection marketplaceId={marketplace.id} marketplaceName={marketplace.name} />
+        ) : null}
+
         <section>
           <div className="mb-3 flex items-baseline justify-between gap-3">
             <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
@@ -244,6 +265,133 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         onClose={() => setSetupTarget(null)}
       />
     </div>
+  );
+}
+
+function MarketplaceConnectionsSection({
+  marketplaceId,
+  marketplaceName,
+}: {
+  marketplaceId: string;
+  marketplaceName: string;
+}) {
+  const { orgSlug } = useOrgDashboard();
+  const connectionsQuery = useMcpConnections();
+  const createConnection = useCreateMcpConnection();
+  const startOAuth = useStartMcpConnectionOAuth();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const connections = (connectionsQuery.data ?? []).filter((connection) =>
+    connection.access?.marketplaceIds?.includes(marketplaceId),
+  );
+
+  async function createMarketplaceConnection(
+    input: CreateMcpConnectionInput,
+    authorizationWindow?: McpAuthorizationWindow | null,
+  ): Promise<CreatedMcpConnection> {
+    setActionError(null);
+    setActionNotice(null);
+    let created: CreatedMcpConnection;
+    try {
+      created = await createConnection.mutateAsync(input);
+    } catch (error) {
+      closeMcpAuthorizationWindow(authorizationWindow);
+      throw error;
+    }
+
+    if (input.oauthClient) return created;
+    setDialogOpen(false);
+    if (input.authType !== "oauth" || input.credentialMode !== "shared") {
+      setActionNotice(`${created.name} is now available to members of ${marketplaceName}.`);
+      return created;
+    }
+
+    try {
+      const result = await startOAuth.mutateAsync(created.id);
+      if (result.status === "connected") {
+        closeMcpAuthorizationWindow(authorizationWindow);
+        setActionNotice(`${created.name} is connected and available to members of ${marketplaceName}.`);
+        return created;
+      }
+      if (!result.authorizeUrl) throw new Error("The MCP provider did not return an authorization URL.");
+      const launch = navigateMcpAuthorizationWindow(authorizationWindow ?? null, result.authorizeUrl);
+      if (!launch.navigated) {
+        throw new Error("Your browser blocked the sign-in window. Open Connections to finish authorization.");
+      }
+      setActionNotice(`Finish authorizing ${created.name} in the opened tab.`);
+    } catch (error) {
+      closeMcpAuthorizationWindow(authorizationWindow);
+      setActionError(error instanceof Error ? error.message : "Failed to start MCP authorization.");
+    }
+    return created;
+  }
+
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Connections</h2>
+          <p className="mt-1 text-[12px] text-gray-500">
+            Available automatically to everyone who can access this marketplace.
+          </p>
+        </div>
+        <DenButton size="sm" icon={Plus} onClick={() => setDialogOpen(true)}>
+          Add connection
+        </DenButton>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+        {connectionsQuery.isLoading ? (
+          <div className="flex items-center gap-2 px-5 py-4 text-[13px] text-gray-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading connections…
+          </div>
+        ) : connections.length === 0 ? (
+          <div className="px-5 py-6 text-center">
+            <Server className="mx-auto h-5 w-5 text-gray-300" />
+            <p className="mt-2 text-[13px] font-medium text-gray-700">No marketplace connections yet</p>
+            <p className="mt-1 text-[12px] text-gray-500">Add a custom MCP server for this marketplace audience.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {connections.map((connection) => (
+              <div key={connection.id} className="flex items-center justify-between gap-3 px-5 py-4">
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-semibold text-gray-900">{connection.name}</p>
+                  <p className="mt-0.5 truncate text-[12px] text-gray-500">{connection.url}</p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                  connection.connected ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                }`}>
+                  {connection.connected ? "Connected" : "Setup needed"}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {connectionsQuery.error ? (
+        <p className="mt-2 text-[12px] text-red-600">
+          {connectionsQuery.error instanceof Error ? connectionsQuery.error.message : "Failed to load marketplace connections."}
+        </p>
+      ) : null}
+      {actionError ? <p className="mt-2 text-[12px] text-red-600">{actionError}</p> : null}
+      {actionNotice ? <p className="mt-2 text-[12px] text-emerald-700">{actionNotice}</p> : null}
+      <Link href={getMcpConnectionsRoute(orgSlug)} className="mt-2 inline-flex text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 hover:text-gray-900">
+        Manage all connections
+      </Link>
+
+      <AddConnectionDialog
+        open={dialogOpen}
+        preset={null}
+        marketplaceAccess={{ id: marketplaceId, name: marketplaceName }}
+        submitting={createConnection.isPending}
+        error={createConnection.error}
+        onClose={() => setDialogOpen(false)}
+        onSubmit={createMarketplaceConnection}
+      />
+    </section>
   );
 }
 

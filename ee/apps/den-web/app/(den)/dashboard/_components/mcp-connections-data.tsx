@@ -25,6 +25,7 @@ export type ExternalMcpAccessSummary = {
   orgWide: boolean;
   memberIds: string[];
   teamIds: string[];
+  marketplaceIds?: string[];
 };
 
 export type ExternalMcpRequiredBy = {
@@ -338,11 +339,13 @@ function parseAccessSummary(value: unknown): ExternalMcpAccessSummary | null {
   if (!isRecord(value)
     || typeof value.orgWide !== "boolean"
     || !isStringArray(value.memberIds)
-    || !isStringArray(value.teamIds)) return null;
+    || !isStringArray(value.teamIds)
+    || !(value.marketplaceIds === undefined || isStringArray(value.marketplaceIds))) return null;
   return {
     orgWide: value.orgWide,
     memberIds: [...new Set(value.memberIds)],
     teamIds: [...new Set(value.teamIds)],
+    marketplaceIds: [...new Set(value.marketplaceIds ?? [])],
   };
 }
 
@@ -429,6 +432,7 @@ export type McpConnectionAccessInput = {
   orgWide: boolean;
   memberIds: string[];
   teamIds: string[];
+  marketplaceIds?: string[];
 };
 
 export type CreateMcpConnectionInput = {

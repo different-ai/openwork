@@ -1,0 +1,3 @@
+ALTER TABLE `external_mcp_connection_access_grant` ADD `marketplace_id` varchar(64);--> statement-breakpoint
+ALTER TABLE `external_mcp_connection_access_grant` ADD CONSTRAINT `emc_access_grant_connection_marketplace` UNIQUE(`external_mcp_connection_id`,`marketplace_id`,`source_key`);--> statement-breakpoint
+CREATE INDEX `emc_access_grant_marketplace_id` ON `external_mcp_connection_access_grant` (`marketplace_id`);

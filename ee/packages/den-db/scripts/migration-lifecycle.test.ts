@@ -24,6 +24,7 @@ import {
 
 const MIGRATION_0040_TAG = "0040_square_jackpot"
 const MIGRATION_0041_TAG = "0041_public_grim_reaper"
+const MIGRATION_0042_TAG = "0042_hard_blue_shield"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -62,12 +63,16 @@ const migration0040 = requiredMigration(MIGRATION_0040_TAG)
 const migration0041 = requiredMigration(MIGRATION_0041_TAG)
 
 describe("Den database migration lifecycle policy", () => {
-  test("defaults a legacy no-ledger baseline to 0039 and leaves 0040 plus 0041 pending", () => {
+  test("defaults a legacy no-ledger baseline to 0039 and leaves later migrations pending", () => {
     const target = resolveBaselineTarget(entries)
     const pending = entries.filter((entry) => entry.when > target.when)
 
     expect(target.tag).toBe(LEGACY_BASELINE_THROUGH_TAG)
-    expect(pending.map((entry) => entry.tag)).toEqual([MIGRATION_0040_TAG, MIGRATION_0041_TAG])
+    expect(pending.map((entry) => entry.tag)).toEqual([
+      MIGRATION_0040_TAG,
+      MIGRATION_0041_TAG,
+      MIGRATION_0042_TAG,
+    ])
   })
 
   test("requires an explicit latest baseline for a freshly pushed empty database", () => {

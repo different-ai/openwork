@@ -1514,8 +1514,10 @@ function accessSummaryLabel(connection: ExternalMcpConnection): string {
   if (!access) return "";
   if (access.orgWide) return "Everyone in the org";
   const parts: string[] = [];
+  const marketplaceCount = access.marketplaceIds?.length ?? 0;
   if (access.teamIds.length > 0) parts.push(`${access.teamIds.length} ${access.teamIds.length === 1 ? "team" : "teams"}`);
   if (access.memberIds.length > 0) parts.push(`${access.memberIds.length} ${access.memberIds.length === 1 ? "person" : "people"}`);
+  if (marketplaceCount > 0) parts.push(`${marketplaceCount} ${marketplaceCount === 1 ? "marketplace" : "marketplaces"}`);
   return parts.length > 0 ? parts.join(", ") : "Nobody yet";
 }
 
@@ -1847,7 +1849,9 @@ function SegmentedControl<TValue extends string>({
     ? "grid-cols-2"
     : options.length === 4
       ? "grid-cols-2 sm:grid-cols-4"
-      : "grid-cols-3";
+      : options.length === 5
+        ? "grid-cols-2 sm:grid-cols-5"
+        : "grid-cols-3";
 
   return (
     <div className={`grid ${gridColumns} gap-1 rounded-full border border-gray-200 bg-gray-50 p-1`} role="group">
@@ -1888,6 +1892,7 @@ const ACCESS_MODE_OPTIONS: SegmentedControlOption<AddConnectionAccessMode>[] = [
   { value: "everyone", label: "Everyone" },
   { value: "teams", label: "Specific teams" },
   { value: "people", label: "Specific people" },
+  { value: "marketplaces", label: "Marketplaces" },
 ];
 
 function EditConnectionDialog({
@@ -1916,6 +1921,7 @@ function EditConnectionDialog({
   const [accessMode, setAccessMode] = useState<McpConnectionAccessMode>("everyone");
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [selectedMarketplaceIds, setSelectedMarketplaceIds] = useState<string[]>([]);
   const [confirmingIdentityChange, setConfirmingIdentityChange] = useState(false);
   const [discovery, setDiscovery] = useState<ExternalMcpConfigurationDiscovery | null>(null);
   const inspectRequestRef = useRef(0);
@@ -1936,6 +1942,7 @@ function EditConnectionDialog({
     setAccessMode(mcpAccessMode(connection.access));
     setSelectedTeamIds(connection.access?.teamIds ?? []);
     setSelectedMemberIds(connection.access?.memberIds ?? []);
+    setSelectedMarketplaceIds(connection.access?.marketplaceIds ?? []);
     setConfirmingIdentityChange(false);
   }, [connection]);
 
@@ -1944,6 +1951,7 @@ function EditConnectionDialog({
     () => (orgContext?.members ?? []).filter((member) => Boolean(member.userId)),
     [orgContext?.members],
   );
+  const { data: marketplaces = [] } = useMarketplaces();
   const marketplaceOwners = connection?.identityManagedBy ?? [];
   const marketplaceManaged = marketplaceOwners.length > 0;
   const editAccessModeOptions = useMemo<SegmentedControlOption<McpConnectionAccessMode>[]>(() => [
@@ -1969,12 +1977,15 @@ function EditConnectionDialog({
       // Choosing a different mode below explicitly clears the hidden set.
       memberIds: selectedMemberIds,
       teamIds: selectedTeamIds,
+      marketplaceIds: selectedMarketplaceIds,
     };
   const accessIncomplete = accessMode === "teams"
     ? selectedTeamIds.length === 0
     : accessMode === "people"
       ? selectedMemberIds.length === 0
-      : false;
+      : accessMode === "marketplaces"
+        ? selectedMarketplaceIds.length === 0
+        : false;
   const replacementApiKeyRequired = authType === "apikey" && identityChanged && !apiKey.trim();
 
   function toggle(list: string[], id: string): string[] {
@@ -2216,9 +2227,15 @@ function EditConnectionDialog({
                 if (option !== accessMode) {
                   if (option === "teams") setSelectedMemberIds([]);
                   if (option === "people") setSelectedTeamIds([]);
+                  if (option !== "marketplaces") setSelectedMarketplaceIds([]);
+                  if (option === "marketplaces") {
+                    setSelectedMemberIds([]);
+                    setSelectedTeamIds([]);
+                  }
                   if (option === "none") {
                     setSelectedMemberIds([]);
                     setSelectedTeamIds([]);
+                    setSelectedMarketplaceIds([]);
                   }
                 }
                 setAccessMode(option);
@@ -2254,6 +2271,23 @@ function EditConnectionDialog({
                   >
                     <span className="truncate">{member.user.name || member.user.email}</span>
                     {selectedMemberIds.includes(member.id) ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {accessMode === "marketplaces" ? (
+              <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-xl border border-gray-100 p-2">
+                {marketplaces.length === 0 ? (
+                  <p className="px-2 py-1 text-[12px] text-gray-400">No marketplaces in this org yet.</p>
+                ) : marketplaces.map((marketplace) => (
+                  <button
+                    key={marketplace.id}
+                    type="button"
+                    onClick={() => setSelectedMarketplaceIds((current) => toggle(current, marketplace.id))}
+                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] transition ${selectedMarketplaceIds.includes(marketplace.id) ? "bg-gray-100 text-gray-900" : "text-gray-700 hover:bg-gray-50"}`}
+                  >
+                    <span className="truncate">{marketplace.name}</span>
+                    {selectedMarketplaceIds.includes(marketplace.id) ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
                   </button>
                 ))}
               </div>
@@ -2295,9 +2329,10 @@ function EditConnectionDialog({
   );
 }
 
-function AddConnectionDialog({
+export function AddConnectionDialog({
   open,
   preset,
+  marketplaceAccess,
   submitting,
   error,
   onClose,
@@ -2305,6 +2340,7 @@ function AddConnectionDialog({
 }: {
   open: boolean;
   preset: ExternalMcpPreset | null;
+  marketplaceAccess?: { id: string; name: string };
   submitting: boolean;
   error: unknown;
   onClose: () => void;
@@ -2329,6 +2365,7 @@ function AddConnectionDialog({
   const [accessMode, setAccessMode] = useState<AddConnectionAccessMode>("everyone");
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [selectedMarketplaceIds, setSelectedMarketplaceIds] = useState<string[]>([]);
   const inspectRequestRef = useRef(0);
 
   useEffect(() => {
@@ -2347,9 +2384,10 @@ function AddConnectionDialog({
     discoverConnection.reset();
     setOAuthCallback(null);
     setCopiedCallback(false);
-    setAccessMode("everyone");
+    setAccessMode(marketplaceAccess ? "marketplaces" : "everyone");
     setSelectedTeamIds([]);
     setSelectedMemberIds([]);
+    setSelectedMarketplaceIds(marketplaceAccess ? [marketplaceAccess.id] : []);
     if (preset?.url) {
       void discoverConnection.mutateAsync({ url: preset.url }).then((nextDiscovery) => {
         if (cancelled || inspectRequestRef.current !== requestId) return;
@@ -2363,13 +2401,14 @@ function AddConnectionDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, preset]);
+  }, [open, preset, marketplaceAccess?.id]);
 
   const teams = useMemo(() => orgContext?.teams ?? [], [orgContext?.teams]);
   const members = useMemo(
     () => (orgContext?.members ?? []).filter((member) => Boolean(member.userId)),
     [orgContext?.members],
   );
+  const { data: marketplaces = [] } = useMarketplaces();
 
   function toggle(list: string[], id: string): string[] {
     return list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id];
@@ -2384,9 +2423,20 @@ function AddConnectionDialog({
   const showOAuthClientFields = authType === "oauth" && (oauthClientIdRequired || showOAuthClient);
   const isSlackPreset = preset?.presetId === "slack";
   const access: McpConnectionAccessInput = accessMode === "everyone"
-    ? { orgWide: true, memberIds: [], teamIds: [] }
-    : { orgWide: false, memberIds: accessMode === "people" ? selectedMemberIds : [], teamIds: accessMode === "teams" ? selectedTeamIds : [] };
-  const accessIncomplete = accessMode === "teams" ? selectedTeamIds.length === 0 : accessMode === "people" ? selectedMemberIds.length === 0 : false;
+    ? { orgWide: true, memberIds: [], teamIds: [], marketplaceIds: [] }
+    : {
+      orgWide: false,
+      memberIds: accessMode === "people" ? selectedMemberIds : [],
+      teamIds: accessMode === "teams" ? selectedTeamIds : [],
+      marketplaceIds: accessMode === "marketplaces" ? selectedMarketplaceIds : [],
+    };
+  const accessIncomplete = accessMode === "teams"
+    ? selectedTeamIds.length === 0
+    : accessMode === "people"
+      ? selectedMemberIds.length === 0
+      : accessMode === "marketplaces"
+        ? selectedMarketplaceIds.length === 0
+        : false;
 
   async function inspectServer() {
     const inspectedUrl = url.trim();
@@ -2489,7 +2539,11 @@ function AddConnectionDialog({
         ) : (
           <>
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-          {preset ? `Add ${preset.displayName}` : "Add a custom MCP server"}
+          {preset
+            ? `Add ${preset.displayName}`
+            : marketplaceAccess
+              ? `Add a connection to ${marketplaceAccess.name}`
+              : "Add a custom MCP server"}
         </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
           {isSlackPreset ? (
@@ -2610,7 +2664,16 @@ function AddConnectionDialog({
 
           <div>
             <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Who can use this?</label>
-            <SegmentedControl options={ACCESS_MODE_OPTIONS} value={accessMode} onChange={setAccessMode} />
+            {marketplaceAccess ? (
+              <div className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3">
+                <p className="text-[13px] font-semibold text-gray-900">Members of {marketplaceAccess.name}</p>
+                <p className="mt-1 text-[12px] leading-5 text-gray-500">
+                  This connection follows marketplace access automatically, including everyone, teams, and people assigned to it.
+                </p>
+              </div>
+            ) : (
+              <SegmentedControl options={ACCESS_MODE_OPTIONS} value={accessMode} onChange={setAccessMode} />
+            )}
             {accessMode === "teams" ? (
               <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-xl border border-gray-100 p-2">
                 {teams.length === 0 ? (
@@ -2648,6 +2711,27 @@ function AddConnectionDialog({
                     >
                       <span className="truncate">{member.user.name || member.user.email}</span>
                       {selectedMemberIds.includes(member.id) ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+            {accessMode === "marketplaces" && !marketplaceAccess ? (
+              <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-xl border border-gray-100 p-2">
+                {marketplaces.length === 0 ? (
+                  <p className="px-2 py-1 text-[12px] text-gray-400">No marketplaces in this org yet.</p>
+                ) : (
+                  marketplaces.map((marketplace) => (
+                    <button
+                      key={marketplace.id}
+                      type="button"
+                      onClick={() => setSelectedMarketplaceIds((current) => toggle(current, marketplace.id))}
+                      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] transition ${
+                        selectedMarketplaceIds.includes(marketplace.id) ? "bg-gray-100 text-gray-900" : "text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                      <span className="truncate">{marketplace.name}</span>
+                      {selectedMarketplaceIds.includes(marketplace.id) ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
                     </button>
                   ))
                 )}
