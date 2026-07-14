@@ -50,6 +50,8 @@ beforeAll(async () => {
 })
 
 test("executeCapabilityWithBudget returns a structured timeout result", async () => {
+  expect(agentModule.EXECUTE_CAPABILITY_TIMEOUT_MS).toBeGreaterThan(150_000)
+
   const result = await agentModule.executeCapabilityWithBudget({
     capability: "gmail_search",
     timeoutMs: 1,
@@ -60,7 +62,7 @@ test("executeCapabilityWithBudget returns a structured timeout result", async ()
   expect(result.content[0]?.text).toBe(JSON.stringify({
     error: "capability_timeout",
     capability: "gmail_search",
-    message: "The capability call exceeded 45s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.",
+    message: "The capability call exceeded 180s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.",
   }))
 })
 
@@ -84,7 +86,7 @@ test("executeCapabilityWithBudget swallows late rejections after timeout", async
     expect(result.content[0]?.text).toBe(JSON.stringify({
       error: "capability_timeout",
       capability: "slow_google_workspace",
-      message: "The capability call exceeded 45s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.",
+      message: "The capability call exceeded 180s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.",
     }))
 
     await new Promise((resolve) => setTimeout(resolve, 25))
