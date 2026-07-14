@@ -27,6 +27,7 @@
               "start-here/connect-your-stack/sign-in-with-chatgpt",
               "start-here/connect-your-stack/add-anthropic-api-key",
               "start-here/connect-your-stack/add-a-custom-llm",
+              "start-here/connect-your-stack/connect-services",
               "start-here/connect-your-stack/add-an-mcp-server",
               "start-here/connect-your-stack/connect-slack-mcp",
               "start-here/connect-your-stack/enable-exa-search"

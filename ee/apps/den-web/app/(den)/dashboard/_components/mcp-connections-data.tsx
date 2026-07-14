@@ -50,6 +50,21 @@ export type ExternalMcpConnection = {
   access: ExternalMcpAccessSummary | null;
 };
 
+export type ExternalMcpTool = {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  annotations?: {
+    title?: string;
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
+};
+
 export type ExternalMcpPreset = {
   presetId: string;
   displayName: string;
@@ -79,10 +94,32 @@ export const mcpConnectionQueryKeys = {
   list: (orgId?: string | null, scope?: ExternalMcpConnectionScope) =>
     [...mcpConnectionQueryKeys.all, "list", orgId ?? "none", scope ?? "usable"] as const,
   presets: () => [...mcpConnectionQueryKeys.all, "presets"] as const,
+  tools: (orgId?: string | null, connectionId?: string | null) =>
+    [...mcpConnectionQueryKeys.all, "tools", orgId ?? "none", connectionId ?? "none"] as const,
   nativeProviderClient: (orgId?: string | null, providerId?: string | null) =>
     [...mcpConnectionQueryKeys.all, "native-provider-client", orgId ?? "none", providerId ?? "none"],
   telegram: (orgId?: string | null) => [...mcpConnectionQueryKeys.all, "telegram", orgId ?? "none"] as const,
 };
+
+export function useMcpConnectionTools(connectionId: string, enabled: boolean) {
+  const { orgId } = useOrgDashboard();
+  return useQuery({
+    enabled: enabled && Boolean(orgId),
+    queryKey: mcpConnectionQueryKeys.tools(orgId, connectionId),
+    queryFn: async (): Promise<ExternalMcpTool[]> => {
+      const { response, payload } = await requestJson(
+        `/v1/mcp-connections/${encodeURIComponent(connectionId)}/tools`,
+        { headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+        30000,
+      );
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to inspect MCP tools (${response.status}).`);
+      }
+      const record = payload as { tools?: ExternalMcpTool[] };
+      return record.tools ?? [];
+    },
+  });
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

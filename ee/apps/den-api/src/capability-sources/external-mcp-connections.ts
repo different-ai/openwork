@@ -624,6 +624,13 @@ export async function saveExternalMcpPendingCodeVerifier(input: {
     .where(eq(ExternalMcpConnectionTable.id, input.connectionId))
 }
 
+export async function markExternalMcpConnectionConnected(connectionId: ExternalMcpConnectionId): Promise<void> {
+  await db
+    .update(ExternalMcpConnectionTable)
+    .set({ connectedAt: new Date() })
+    .where(eq(ExternalMcpConnectionTable.id, connectionId))
+}
+
 export async function clearExternalMcpTokens(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId

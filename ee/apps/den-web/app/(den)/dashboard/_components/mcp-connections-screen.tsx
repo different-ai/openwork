@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, Plug, Puzzle, Server, Trash2, Users } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
@@ -23,6 +23,7 @@ import {
   type ExternalMcpConnection,
   type ExternalMcpCredentialMode,
   type ExternalMcpPreset,
+  type ExternalMcpTool,
   type McpConnectionAccessInput,
   formatMcpConnectedTimestamp,
   mcpConnectionQueryKeys,
@@ -30,6 +31,7 @@ import {
   useDeleteMcpConnection,
   useMcpConnectionPresets,
   useMcpConnections,
+  useMcpConnectionTools,
   useNativeProviderClient,
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
@@ -40,6 +42,7 @@ import { TelegramDialog } from "./telegram-dialog";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
+const MCP_TOOL_PAGE_SIZE = 50;
 
 const GOOGLE_WORKSPACE_DEFAULT_FEATURES = ["calendarRead", "gmailDraft", "driveFile"];
 
@@ -212,6 +215,7 @@ export function McpConnectionsScreen() {
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
   const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
+  const [toolsConnectionId, setToolsConnectionId] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -451,6 +455,8 @@ export function McpConnectionsScreen() {
               onConnect={() => void handleConnectOAuth(connection.id)}
               onRemove={() => deleteConnection.mutate(connection.id)}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
+              toolsOpen={toolsConnectionId === connection.id}
+              onToggleTools={() => setToolsConnectionId((current) => current === connection.id ? null : connection.id)}
             />
           ))}
         </div>
@@ -1069,6 +1075,8 @@ function ConnectionRow({
   onConnect,
   onRemove,
   removing,
+  toolsOpen,
+  onToggleTools,
 }: {
   connection: ExternalMcpConnection;
   polling: boolean;
@@ -1077,67 +1085,260 @@ function ConnectionRow({
   onConnect: () => void;
   onRemove: () => void;
   removing: boolean;
+  toolsOpen: boolean;
+  onToggleTools: () => void;
 }) {
   const isPerMember = connection.credentialMode === "per_member";
   const needsOAuthConnect = !isPerMember && connection.authType === "oauth" && !connection.connected;
 
+  const canInspectTools = connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe;
+
   return (
-    <div className="flex items-center justify-between gap-4 px-6 py-4">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
-            {isPerMember ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-gray-900 px-2 py-0.5 text-[11px] font-medium text-white">
-                <Users className="h-3 w-3" />
-                Individual accounts
-              </span>
-            ) : connection.connected ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                <Check className="h-3 w-3" />
-                Connected
-              </span>
-            ) : polling ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Waiting for authorization…
-              </span>
-            ) : (
-              <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                Not connected
-              </span>
-            )}
-            {connection.access ? (
-              <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                {accessSummaryLabel(connection)}
-              </span>
-            ) : null}
+    <div>
+      <div className="flex flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
+              {isPerMember ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-gray-900 px-2 py-0.5 text-[11px] font-medium text-white">
+                  <Users className="h-3 w-3" />
+                  Individual accounts
+                </span>
+              ) : connection.connected ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                  <Check className="h-3 w-3" />
+                  Connected
+                </span>
+              ) : polling ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Waiting for authorization…
+                </span>
+              ) : (
+                <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                  Not connected
+                </span>
+              )}
+              {connection.access ? (
+                <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                  {accessSummaryLabel(connection)}
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-0.5 truncate text-[12px] text-gray-500">
+              {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
+            </p>
+            {errorMessage ? <p className="mt-1 text-[12px] text-red-600">{errorMessage}</p> : null}
           </div>
-          <p className="mt-0.5 truncate text-[12px] text-gray-500">
-            {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
-          </p>
-          {errorMessage ? <p className="mt-1 text-[12px] text-red-600">{errorMessage}</p> : null}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
+          <DenButton
+            variant="secondary"
+            size="sm"
+            disabled={!canInspectTools}
+            onClick={onToggleTools}
+            title={canInspectTools ? "Inspect the tools this MCP exposes" : "Connect this account before inspecting tools"}
+          >
+            {toolsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            View tools
+          </DenButton>
+          {needsOAuthConnect ? (
+            <DenButton variant="secondary" size="sm" loading={connecting || polling} onClick={onConnect}>
+              Connect
+            </DenButton>
+          ) : null}
+          <DenButton
+            variant="destructive"
+            size="sm"
+            icon={Trash2}
+            loading={removing}
+            onClick={onRemove}
+            aria-label={`Remove ${connection.name}`}
+          >
+            Remove
+          </DenButton>
         </div>
       </div>
+      {toolsOpen && canInspectTools ? <McpToolCatalog connection={connection} /> : null}
+    </div>
+  );
+}
 
-      <div className="flex shrink-0 items-center gap-2">
-        {needsOAuthConnect ? (
-          <DenButton variant="secondary" size="sm" loading={connecting || polling} onClick={onConnect}>
-            Connect
-          </DenButton>
-        ) : null}
-        <DenButton
-          variant="destructive"
-          size="sm"
-          icon={Trash2}
-          loading={removing}
-          onClick={onRemove}
-          aria-label={`Remove ${connection.name}`}
-        >
-          Remove
+function schemaInputs(schema: Record<string, unknown>): Array<{ name: string; required: boolean; type: string | null }> {
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  const required = new Set(Array.isArray(schema.required) ? schema.required.filter((item): item is string => typeof item === "string") : []);
+  return Object.entries(properties).map(([name, definition]) => ({
+    name,
+    required: required.has(name),
+    type: isRecord(definition) && typeof definition.type === "string" ? definition.type : null,
+  }));
+}
+
+function toolHints(tool: ExternalMcpTool): Array<{ label: string; className: string }> {
+  const annotations = tool.annotations;
+  if (!annotations) return [];
+  return [
+    annotations.readOnlyHint ? { label: "Read-only hint", className: "bg-blue-50 text-blue-700" } : null,
+    annotations.destructiveHint ? { label: "Destructive hint", className: "bg-red-50 text-red-700" } : null,
+    annotations.idempotentHint ? { label: "Idempotent hint", className: "bg-emerald-50 text-emerald-700" } : null,
+    annotations.openWorldHint ? { label: "External access hint", className: "bg-amber-50 text-amber-700" } : null,
+  ].filter((hint): hint is { label: string; className: string } => hint !== null);
+}
+
+function McpToolCatalog({ connection }: { connection: ExternalMcpConnection }) {
+  const catalog = useMcpConnectionTools(connection.id, true);
+  const [toolSearch, setToolSearch] = useState("");
+  const [visibleToolLimit, setVisibleToolLimit] = useState(MCP_TOOL_PAGE_SIZE);
+  const filteredTools = useMemo(() => {
+    const needle = toolSearch.trim().toLowerCase();
+    if (!needle) return catalog.data ?? [];
+    return (catalog.data ?? []).filter((tool) =>
+      [tool.name, tool.title, tool.annotations?.title, tool.description]
+        .some((value) => value?.toLowerCase().includes(needle)),
+    );
+  }, [catalog.data, toolSearch]);
+  const visibleTools = filteredTools.slice(0, visibleToolLimit);
+  const remainingToolCount = filteredTools.length - visibleTools.length;
+
+  return (
+    <div className="border-t border-gray-100 bg-gray-50/70 px-6 py-5" data-mcp-tool-catalog={connection.id}>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <Wrench className="h-4 w-4 text-gray-500" />
+            <p className="text-[13px] font-semibold text-gray-900">Tools available to your agents</p>
+          </div>
+          <p className="mt-1 text-[12px] leading-5 text-gray-500">
+            Live from {connection.name}. Inspecting this list does not run a tool. Provider annotations are hints, not guarantees.
+          </p>
+        </div>
+        <DenButton variant="secondary" size="sm" loading={catalog.isFetching} onClick={() => void catalog.refetch()}>
+          <RefreshCw className="h-3.5 w-3.5" />
+          Refresh
         </DenButton>
       </div>
+
+      {catalog.data && catalog.data.length > 0 ? (
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="w-full sm:max-w-sm">
+            <DenInput
+              aria-label="Search MCP tools"
+              icon={Search}
+              value={toolSearch}
+              onChange={(event) => {
+                setToolSearch(event.target.value);
+                setVisibleToolLimit(MCP_TOOL_PAGE_SIZE);
+              }}
+              placeholder="Search tools by name or description"
+            />
+          </div>
+          <p className="shrink-0 text-[11px] font-medium text-gray-500" role="status">
+            {toolSearch.trim()
+              ? `${filteredTools.length} of ${catalog.data.length} tools`
+              : `${catalog.data.length} ${catalog.data.length === 1 ? "tool" : "tools"} exposed`}
+          </p>
+        </div>
+      ) : null}
+
+      {catalog.isLoading ? (
+        <div className="mt-4 flex items-center gap-2 text-[12px] text-gray-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Reading the MCP tool catalog…
+        </div>
+      ) : catalog.error ? (
+        <div className="mt-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-[12px] leading-5 text-red-700">
+          {catalog.error instanceof Error ? catalog.error.message : "Could not read this MCP's tools."}
+        </div>
+      ) : catalog.data?.length === 0 ? (
+        <div className="mt-4 rounded-xl border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-500">
+          This MCP is connected but does not currently expose any tools.
+        </div>
+      ) : filteredTools.length === 0 ? (
+        <div className="mt-4 rounded-xl border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-500">
+          No tools match “{toolSearch.trim()}”.
+        </div>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {visibleTools.map((tool) => {
+              const inputs = schemaInputs(tool.inputSchema);
+              const hints = toolHints(tool);
+              const displayTitle = tool.title || tool.annotations?.title;
+              return (
+                <details key={tool.name} className="group rounded-2xl border border-gray-200 bg-white p-4">
+                  <summary className="cursor-pointer list-none">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        {displayTitle ? (
+                          <>
+                            <p className="break-words text-[12px] font-semibold text-gray-900">{displayTitle}</p>
+                            <p className="mt-0.5 break-words font-mono text-[10px] text-gray-500">{tool.name}</p>
+                          </>
+                        ) : (
+                          <p className="break-words font-mono text-[12px] font-semibold text-gray-900">{tool.name}</p>
+                        )}
+                        <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-gray-500">
+                          {tool.description || "No description provided by this MCP."}
+                        </p>
+                      </div>
+                      <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition group-open:rotate-90" />
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <p className="text-[11px] font-medium text-gray-500">
+                        {inputs.length === 0 ? "No inputs" : `${inputs.length} ${inputs.length === 1 ? "input" : "inputs"}`}
+                      </p>
+                      {hints.map((hint) => (
+                        <span
+                          key={hint.label}
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${hint.className}`}
+                          title="Provider-supplied MCP annotation; treat as a hint."
+                        >
+                          {hint.label}
+                        </span>
+                      ))}
+                    </div>
+                  </summary>
+                  <div className="mt-4 border-t border-gray-100 pt-4">
+                    {inputs.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {inputs.map((input) => (
+                          <span key={input.name} className="rounded-full bg-gray-100 px-2.5 py-1 font-mono text-[11px] text-gray-700">
+                            {input.name}{input.type ? `: ${input.type}` : ""}{input.required ? " · required" : ""}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    <details className="mt-3">
+                      <summary className="cursor-pointer text-[11px] font-medium text-gray-500">View input schema</summary>
+                      <pre className="mt-2 max-h-64 overflow-auto rounded-xl bg-gray-950 p-3 text-[10px] leading-4 text-gray-100">{JSON.stringify(tool.inputSchema, null, 2)}</pre>
+                    </details>
+                    {tool.outputSchema ? (
+                      <details className="mt-3">
+                        <summary className="cursor-pointer text-[11px] font-medium text-gray-500">View output schema</summary>
+                        <pre className="mt-2 max-h-64 overflow-auto rounded-xl bg-gray-950 p-3 text-[10px] leading-4 text-gray-100">{JSON.stringify(tool.outputSchema, null, 2)}</pre>
+                      </details>
+                    ) : null}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+          {remainingToolCount > 0 ? (
+            <div className="mt-4 flex justify-center">
+              <DenButton
+                variant="secondary"
+                size="sm"
+                onClick={() => setVisibleToolLimit((current) => current + MCP_TOOL_PAGE_SIZE)}
+              >
+                Show {Math.min(MCP_TOOL_PAGE_SIZE, remainingToolCount)} more
+              </DenButton>
+            </div>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }
