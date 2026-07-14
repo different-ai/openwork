@@ -84,6 +84,7 @@ export const idTypesMapNameToPrefix = {
   connectedAccount: "cta",
   externalMcpConnection: "emc",
   externalMcpConnectionAccessGrant: "emg",
+  pluginMcpRequirementBinding: "pmr",
   telegramConnection: "tgc",
   telegramPairing: "tgp",
   telegramChatBinding: "tgb",

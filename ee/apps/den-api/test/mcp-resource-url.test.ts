@@ -19,6 +19,8 @@ type ProbeOptions = {
   expectedAuthorizationServer?: string
   authMetadataUrl?: string
   expectedAuthIssuer?: string
+  route?: "mcp" | "agent" | "admin"
+  expectedMetadataUrl?: string
 }
 
 function runMcpResourceProbe(options: ProbeOptions) {
@@ -29,12 +31,23 @@ if (!requestUrl || !expectedResource) {
   throw new Error("Missing MCP resource probe inputs")
 }
 
-const { getMcpResourceUrl } = await import("./src/mcp/auth.js")
+const { DEN_MCP_OAUTH_VALID_AUDIENCES } = await import("./src/auth.js")
+const { getMcpResourceContext, getMcpResourceUrl } = await import("./src/mcp/auth.js")
 const requestHeaders = JSON.parse(process.env.TEST_REQUEST_HEADERS ?? "{}")
 const requestInit = { headers: requestHeaders }
-const resource = getMcpResourceUrl(new Request(requestUrl, requestInit))
+const route = process.env.TEST_MCP_ROUTE
+const request = new Request(requestUrl, requestInit)
+const context = route ? getMcpResourceContext(request, route) : null
+const resource = context ? context.resourceUrl : getMcpResourceUrl(request)
 if (resource !== expectedResource) {
   throw new Error(\`Expected resource \${expectedResource}, got \${resource}\`)
+}
+if (route === "agent" && (DEN_MCP_OAUTH_VALID_AUDIENCES.length !== 1 || DEN_MCP_OAUTH_VALID_AUDIENCES[0] !== expectedResource)) {
+  throw new Error(\`Expected single OAuth audience \${expectedResource}, got \${DEN_MCP_OAUTH_VALID_AUDIENCES.join(",")}\`)
+}
+const expectedMetadataUrl = process.env.EXPECTED_METADATA_URL
+if (expectedMetadataUrl && context?.metadataUrl !== expectedMetadataUrl) {
+  throw new Error(\`Expected metadata URL \${expectedMetadataUrl}, got \${context?.metadataUrl}\`)
 }
 
 const metadataUrl = process.env.TEST_METADATA_URL
@@ -46,7 +59,7 @@ if (metadataUrl) {
   }
 
   const { protectedResourceMetadata } = await import("./src/mcp/index.js")
-  const metadata = protectedResourceMetadata(new Request(metadataUrl, requestInit))
+  const metadata = protectedResourceMetadata(new Request(metadataUrl, requestInit), route || "mcp")
   const authorizationServer = metadata.authorization_servers[0]
   if (metadata.resource !== expectedMetadataResource) {
     throw new Error(\`Expected metadata resource \${expectedMetadataResource}, got \${metadata.resource}\`)
@@ -116,6 +129,8 @@ console.log("ok")
       EXPECTED_AUTHORIZATION_SERVER: options.expectedAuthorizationServer ?? "",
       TEST_AUTH_METADATA_URL: options.authMetadataUrl ?? "",
       EXPECTED_AUTH_ISSUER: options.expectedAuthIssuer ?? "",
+      TEST_MCP_ROUTE: options.route ?? "",
+      EXPECTED_METADATA_URL: options.expectedMetadataUrl ?? "",
     },
   })
 
@@ -136,10 +151,26 @@ describe("getMcpResourceUrl", () => {
     runMcpResourceProbe({
       betterAuthUrl: "https://app.example.com",
       apiPublicUrl: "https://api.example.com",
+      route: "agent",
       requestUrl: "https://api.example.com/mcp/agent",
-      expectedResource: "https://api.example.com/mcp",
+      expectedResource: "https://api.example.com/mcp/agent",
+      expectedMetadataUrl: "https://api.example.com/.well-known/oauth-protected-resource/mcp/agent",
       metadataUrl: "https://api.example.com/mcp/agent",
-      expectedMetadataResource: "https://api.example.com/mcp",
+      expectedMetadataResource: "https://api.example.com/mcp/agent",
+      expectedAuthorizationServer: "https://app.example.com/api/auth",
+    })
+  })
+
+  test("does not derive the agent OAuth resource from a spoofed request host", () => {
+    runMcpResourceProbe({
+      betterAuthUrl: "https://app.example.com",
+      apiPublicUrl: "https://api.example.com",
+      route: "agent",
+      requestUrl: "https://attacker.example/mcp/agent",
+      expectedResource: "https://api.example.com/mcp/agent",
+      expectedMetadataUrl: "https://api.example.com/.well-known/oauth-protected-resource/mcp/agent",
+      metadataUrl: "https://attacker.example/mcp/agent",
+      expectedMetadataResource: "https://api.example.com/mcp/agent",
       expectedAuthorizationServer: "https://app.example.com/api/auth",
     })
   })
@@ -148,10 +179,12 @@ describe("getMcpResourceUrl", () => {
     runMcpResourceProbe({
       betterAuthUrl: "https://app.example.com",
       apiPublicUrl: "https://openwork.example/api/den",
+      route: "agent",
       requestUrl: "https://openwork.example/api/den/mcp/agent",
-      expectedResource: "https://openwork.example/api/den/mcp",
+      expectedResource: "https://openwork.example/api/den/mcp/agent",
+      expectedMetadataUrl: "https://openwork.example/.well-known/oauth-protected-resource/api/den/mcp/agent",
       metadataUrl: "https://openwork.example/api/den/mcp/agent",
-      expectedMetadataResource: "https://openwork.example/api/den/mcp",
+      expectedMetadataResource: "https://openwork.example/api/den/mcp/agent",
       expectedAuthorizationServer: "https://app.example.com/api/auth",
     })
   })
@@ -160,23 +193,26 @@ describe("getMcpResourceUrl", () => {
     runMcpResourceProbe({
       betterAuthUrl: "https://app.example.com",
       apiPublicUrl: "https://api.example.com",
+      route: "agent",
       headers: { "x-forwarded-proto": "https, http" },
       requestUrl: "http://api.example.com/mcp/agent",
-      expectedResource: "https://api.example.com/mcp",
+      expectedResource: "https://api.example.com/mcp/agent",
+      expectedMetadataUrl: "https://api.example.com/.well-known/oauth-protected-resource/mcp/agent",
       metadataUrl: "http://api.example.com/mcp/agent",
-      expectedMetadataResource: "https://api.example.com/mcp",
+      expectedMetadataResource: "https://api.example.com/mcp/agent",
       expectedAuthorizationServer: "https://app.example.com/api/auth",
       authMetadataUrl: "http://api.example.com/api/auth/.well-known/oauth-authorization-server",
       expectedAuthIssuer: "https://app.example.com/api/auth",
     })
   })
 
-  test("keeps plain-http origins when no forwarded proto", () => {
+  test("uses the configured public API agent resource instead of the incoming plain-http origin", () => {
     runMcpResourceProbe({
       betterAuthUrl: "https://app.example.com",
       apiPublicUrl: "https://api.example.com",
+      route: "agent",
       requestUrl: "http://api.example.com/mcp/agent",
-      expectedResource: "https://app.example.com/api/den/mcp",
+      expectedResource: "https://api.example.com/mcp/agent",
     })
   })
 
@@ -195,8 +231,9 @@ describe("getMcpResourceUrl", () => {
   test("falls back to the configured resource when the request origin is not allowlisted", () => {
     runMcpResourceProbe({
       betterAuthUrl: "https://app.openworklabs.com",
+      route: "agent",
       requestUrl: "https://api.openworklabs.com/mcp/agent",
-      expectedResource: "https://app.openworklabs.com/api/den/mcp",
+      expectedResource: "https://app.openworklabs.com/api/den/mcp/agent",
     })
   })
 
@@ -204,8 +241,9 @@ describe("getMcpResourceUrl", () => {
     runMcpResourceProbe({
       betterAuthUrl: "https://app.example.com",
       apiPublicUrl: "",
+      route: "agent",
       requestUrl: "https://api.example.com/mcp/agent",
-      expectedResource: "https://app.example.com/api/den/mcp",
+      expectedResource: "https://app.example.com/api/den/mcp/agent",
     })
   })
 

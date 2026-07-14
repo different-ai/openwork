@@ -32,6 +32,7 @@ import type {
 import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, saveSessionDraft } from "./draft-store";
 import { firstLineLocalFileParts } from "./prompt-file-parts";
+import { composerAttachmentToFilePart } from "./attachment-file-part";
 import { appMentionInstruction } from "../surface/composer/app-mentions";
 
 type SessionModelConfig = {
@@ -50,26 +51,6 @@ type SessionActionsSnapshot = {
 };
 
 const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
-
-const fileToDataUrl = (file: File, mimeType: string) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Failed to read attachment: ${file.name}`));
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      resolve(result);
-    };
-    reader.readAsDataURL(new Blob([file], { type: mimeType }));
-  });
-
-function attachmentMime(attachment: ComposerAttachment) {
-  if (attachment.kind === "image") return attachment.mimeType;
-  if (attachment.mimeType === "application/pdf") return attachment.mimeType;
-  // Everything else is sent as text. Unsupported binary mimes (e.g. Keynote)
-  // poison the server-side session history: every later prompt replays the
-  // provider's UnsupportedFunctionalityError and the session cannot recover.
-  return "text/plain";
-}
 
 export function createSessionActionsStore(options: {
   client: () => Client | null;
@@ -156,16 +137,6 @@ export function createSessionActionsStore(options: {
 
   type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
 
-  const attachmentToFilePart = async (attachment: ComposerAttachment): Promise<FilePartInput> => {
-    const mime = attachmentMime(attachment);
-    return {
-      type: "file",
-      url: await fileToDataUrl(attachment.file, mime),
-      filename: attachment.name,
-      mime,
-    };
-  };
-
   const buildPromptParts = async (draft: ComposerDraft): Promise<PartInput[]> => {
     const parts: PartInput[] = [];
     const text = draft.resolvedText ?? draft.text;
@@ -208,7 +179,7 @@ export function createSessionActionsStore(options: {
     }
 
     parts.push(...firstLineLocalFileParts(text, root));
-    parts.push(...(await Promise.all(draft.attachments.map(attachmentToFilePart))));
+    parts.push(...(await Promise.all(draft.attachments.map(composerAttachmentToFilePart))));
     return parts;
   };
 
@@ -243,7 +214,7 @@ export function createSessionActionsStore(options: {
       } as FilePartInput);
     }
 
-    parts.push(...(await Promise.all(draft.attachments.map(attachmentToFilePart))));
+    parts.push(...(await Promise.all(draft.attachments.map(composerAttachmentToFilePart))));
     return parts;
   };
 

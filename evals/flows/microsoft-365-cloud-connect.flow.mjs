@@ -31,7 +31,24 @@ const MOCK_SERVER_URL = (process.env.OPENWORK_EVAL_CLOUD_CONNECT_MOCK_URL ?? "ht
 const TENANT_ID = "11111111-2222-3333-4444-555555555555";
 const CLIENT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const CLIENT_SECRET = "openwork-microsoft-mock-secret";
+const MICROSOFT_DEFAULT_FEATURES = ["mailRead", "calendarRead", "filesRead"];
 const MICROSOFT_SCOPES = ["Mail.Read", "Calendars.Read", "Files.Read"];
+const MICROSOFT_EXTENDED_FEATURES = [
+  ...MICROSOFT_DEFAULT_FEATURES,
+  "mailDraft",
+  "calendarWrite",
+  "filesWrite",
+  "teamsChatRead",
+  "teamsChatSend",
+];
+const MICROSOFT_EXTENDED_SCOPES = [
+  ...MICROSOFT_SCOPES,
+  "Mail.ReadWrite",
+  "Calendars.ReadWrite",
+  "Files.ReadWrite",
+  "Chat.Read",
+  "ChatMessage.Send",
+];
 const MAIL_PATH = "/v1/capabilities/microsoft-365/mail-messages";
 const CALENDAR_PATH = "/v1/capabilities/microsoft-365/calendar-events";
 const DRIVE_SEARCH_PATH = "/v1/capabilities/microsoft-365/drive-files";
@@ -203,7 +220,7 @@ function summarizeMail(messages) {
 
 export default {
   id: "microsoft-365-cloud-connect",
-  title: "Members connect delegated Microsoft 365 read access, use mail/calendar/OneDrive capabilities, and disconnect safely",
+  title: "Admins choose delegated Microsoft 365 capabilities; members connect, use them, reconnect for changes, and disconnect safely",
   kind: "user-facing",
   preserveTheme: true,
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
@@ -236,12 +253,26 @@ export default {
           "The calling member starts without a stored Microsoft 365 access token.",
           { status: disconnected.response.status },
         );
+
+        const existingConfig = await authenticatedApi("/v1/oauth-providers/microsoft-365/client");
+        if (existingConfig.response.ok && existingConfig.body.configured === true) {
+          const resetPermissions = await authenticatedApi("/v1/oauth-providers/microsoft-365/client", {
+            method: "POST",
+            body: JSON.stringify({ features: MICROSOFT_DEFAULT_FEATURES }),
+          });
+          witness(
+            ctx,
+            resetPermissions.response.ok,
+            "A repeated proof resets the saved organization to the safe Microsoft 365 read defaults without replacing credentials.",
+            { status: resetPermissions.response.status, features: resetPermissions.body.features },
+          );
+        }
       },
     },
     {
-      name: "Frame 1 — Admin configures delegated, read-only Microsoft 365 access",
+      name: "Frame 1 — Admin sees the full permission picker with safe read defaults",
       run: async (ctx) => {
-        await ctx.prove("An admin is guided through Entra setup and chooses only the three read capabilities", {
+        await ctx.prove("An admin sees Google-style permission groups while only the three existing read capabilities start selected", {
           voiceover: vo[0],
           action: async () => {
             await signInViaBrowser(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
@@ -260,7 +291,7 @@ export default {
           },
           assert: async () => {
             await ctx.expectText("Set up the Entra app");
-            await ctx.expectText("Read-only access");
+            await ctx.expectText("Permissions");
             await ctx.expectText("Directory (tenant) ID");
             await ctx.expectText("Application (client) ID");
             await ctx.expectText("Client secret value");
@@ -278,8 +309,10 @@ export default {
             });
             witness(
               ctx,
-              form.permissions.length === 3 && form.permissions.every((permission) => permission.checked),
-              "Only Outlook mail, calendar, and OneDrive read features are selected.",
+              form.permissions.length === 10
+                && form.permissions.filter((permission) => permission.checked).length === 3
+                && MICROSOFT_DEFAULT_FEATURES.every((feature) => form.permissions.some((permission) => permission.feature === feature && permission.checked)),
+              "All ten Microsoft 365 options are available while only Outlook mail, calendar, and OneDrive read features are selected by default.",
               form.permissions,
             );
             witness(ctx, String(form.redirectUri).includes("/v1/oauth-providers/microsoft-365/connect/callback"), "The dialog shows the exact self-host-safe OAuth callback URI.", {
@@ -288,10 +321,10 @@ export default {
             witness(ctx, form.saveEnabled === true, "The setup is ready to save after all three Entra credentials are present.");
           },
           screenshot: {
-            name: "microsoft-365-entra-read-only-setup",
-            claim: "The setup dialog exposes the tenant, client, and secret fields alongside the exact callback and read-only Microsoft Graph permissions.",
-            requireText: ["Set up the Entra app", "Read-only access", "Mail.Read", "Calendars.Read", "Files.Read", "Directory (tenant) ID", "Client secret value"],
-            rejectText: ["Mail.ReadWrite", "Calendars.ReadWrite", "Files.ReadWrite", "Something went wrong"],
+            name: "microsoft-365-entra-permission-picker",
+            claim: "The setup dialog exposes grouped Calendar, Outlook, OneDrive, and Teams choices with exact Graph scopes and safe read defaults.",
+            requireText: ["Set up the Entra app", "Permissions", "Calendar", "Outlook", "OneDrive", "Teams", "Mail.Read", "Calendars.ReadWrite", "Files.ReadWrite.All", "ChatMessage.Send", "Directory (tenant) ID", "Client secret value"],
+            rejectText: ["Something went wrong"],
           },
         });
 
@@ -447,7 +480,7 @@ export default {
               card?.click();
               return Boolean(card);
             })()`);
-            witness(ctx, clicked, "The configured Microsoft 365 card opens its current read-only setup.", { clicked });
+            witness(ctx, clicked, "The configured Microsoft 365 card opens its current permission setup.", { clicked });
             await ctx.waitForText("Credentials saved", { timeoutMs: 20_000 });
             await ctx.eval(`(() => {
               const dialog = document.querySelector('[data-testid="microsoft-365-dialog"]');
@@ -510,19 +543,183 @@ export default {
             }, null, 2));
           },
           screenshot: {
-            name: "microsoft-365-read-only-capabilities",
-            claim: "The configured provider still shows encrypted credentials and only mail, calendar, and file read permissions while the capability proof returns calendar and OneDrive data.",
-            requireText: ["Update Microsoft 365", "Credentials saved", "Read-only access", "Mail.Read", "Calendars.Read", "Files.Read"],
-            rejectText: ["Mail.ReadWrite", "Calendars.ReadWrite", "Files.ReadWrite", "Something went wrong"],
+            name: "microsoft-365-default-read-capabilities",
+            claim: "The configured provider preserves encrypted credentials and the safe read defaults while making broader permissions available as explicit opt-ins.",
+            requireText: ["Update Microsoft 365", "Credentials saved", "Permissions", "Mail.Read", "Calendars.Read", "Files.Read", "Mail.ReadWrite", "Calendars.ReadWrite", "Files.ReadWrite", "ChatMessage.Send"],
+            rejectText: ["Something went wrong"],
           },
         });
       },
     },
     {
-      name: "Frame 5 — Disconnect removes only the calling member's grant and fails closed",
+      name: "Frame 5 — Permission changes persist and require member reconnection",
+      run: async (ctx) => {
+        await ctx.prove("An admin enables broader capabilities without replacing credentials and connected members are clearly asked to reconnect", {
+          voiceover: vo[4],
+          action: async () => {
+            const dialogOpen = await ctx.eval("Boolean(document.querySelector('[data-testid=\"microsoft-365-dialog\"]'))");
+            witness(ctx, dialogOpen, "The existing Microsoft 365 setup remains open for a permission-only update.", { dialogOpen });
+            const selection = await ctx.eval(`(() => {
+              const selected = ${JSON.stringify(MICROSOFT_EXTENDED_FEATURES)};
+              const inputs = [...document.querySelectorAll('[data-testid="microsoft-365-dialog"] input[data-feature]')];
+              for (const input of inputs) {
+                if (selected.includes(input.dataset.feature) && !input.checked) input.click();
+              }
+              const dialog = document.querySelector('[data-testid="microsoft-365-dialog"]');
+              if (dialog) dialog.scrollTop = dialog.scrollHeight;
+              return inputs.map((input) => ({ feature: input.dataset.feature, checked: input.checked }));
+            })()`);
+            witness(
+              ctx,
+              MICROSOFT_EXTENDED_FEATURES.every((feature) => selection.some((permission) => permission.feature === feature && permission.checked)),
+              "Calendar event creation, Outlook drafts, OneDrive writes, and Teams chat capabilities can be selected together.",
+              selection,
+            );
+            await saveMicrosoftSetup(ctx);
+          },
+          assert: async () => {
+            const config = await authenticatedApi("/v1/oauth-providers/microsoft-365/client");
+            witness(ctx, config.response.ok, "The permission-only update succeeds without resubmitting the tenant, client ID, or client secret.", {
+              status: config.response.status,
+              tenantId: config.body.tenantId,
+              clientId: config.body.clientId,
+            });
+            witness(
+              ctx,
+              MICROSOFT_EXTENDED_FEATURES.every((feature) => config.body.features.includes(feature)),
+              "Every selected Microsoft 365 feature persists in the organization configuration.",
+              config.body.features,
+            );
+            witness(
+              ctx,
+              MICROSOFT_EXTENDED_SCOPES.every((scope) => config.body.scopes.includes(scope)),
+              "The persisted configuration resolves every selected feature to its exact delegated Microsoft Graph scope.",
+              config.body.scopes,
+            );
+
+            const start = await authenticatedApi("/v1/oauth-providers/microsoft-365/connect/start");
+            const requestedScopes = new URL(start.body.authorizeUrl).searchParams.get("scope")?.split(" ") ?? [];
+            witness(
+              ctx,
+              start.response.ok && MICROSOFT_EXTENDED_SCOPES.every((scope) => requestedScopes.includes(scope)),
+              "The next member authorization request asks for the newly selected scopes.",
+              requestedScopes,
+            );
+
+            await openYourConnections(ctx);
+            await ctx.waitFor(microsoftRowScript("Reconnect to grant new permissions"), { timeoutMs: 30_000, label: "Microsoft 365 reconnect warning" });
+            await ctx.expectText("Reconnect to grant new permissions");
+            await ctx.expectText("Reconnect");
+
+            const scheduled = await ctx.eval(scheduleMicrosoftRowButtonScript("Reconnect"));
+            witness(ctx, scheduled, "The member uses the explicit Reconnect action to approve the expanded permission set.", { scheduled });
+            const oauthTab = await ctx.switchToNewTab({ timeoutMs: 20_000, label: "Microsoft 365 reconnect OAuth popup" });
+            await ctx.waitForText("Connected", { timeoutMs: 30_000 });
+            await ctx.expectText("Microsoft 365 is connected");
+            ctx.switchBack();
+            const closed = await fetch(`${ctx.cdpBaseUrl.replace(/\/$/, "")}/json/close/${encodeURIComponent(oauthTab.id)}`).catch(() => null);
+            witness(ctx, Boolean(closed?.ok), "The reconnect OAuth popup closes after the expanded grant is stored.", {
+              status: closed?.status ?? null,
+            });
+            await ctx.waitFor(microsoftRowScript("Connected as you"), { timeoutMs: 60_000, label: "Microsoft 365 reconnected with expanded scopes" });
+
+            const draft = await authenticatedApi("/v1/capabilities/microsoft-365/mail-drafts", {
+              method: "POST",
+              body: JSON.stringify({ to: ["ada@example.test"], subject: "Permission parity", body: "Draft only; do not send." }),
+            });
+            const event = await authenticatedApi("/v1/capabilities/microsoft-365/calendar-events", {
+              method: "POST",
+              body: JSON.stringify({
+                subject: "Permission parity review",
+                start: "2026-07-13T10:00:00.000Z",
+                end: "2026-07-13T10:30:00.000Z",
+                timeZone: "UTC",
+              }),
+            });
+            const file = await authenticatedApi("/v1/capabilities/microsoft-365/drive-files", {
+              method: "PUT",
+              body: JSON.stringify({ path: "OpenWork/permission-parity.txt", content: "Microsoft 365 permission parity verified." }),
+            });
+            const chats = await authenticatedApi("/v1/capabilities/microsoft-365/teams-chats?maxResults=5");
+            const chatId = chats.body.chats?.[0]?.id;
+            const messages = await authenticatedApi(`/v1/capabilities/microsoft-365/teams-chats/${encodeURIComponent(chatId)}/messages?maxResults=5`);
+            const sent = await authenticatedApi(`/v1/capabilities/microsoft-365/teams-chats/${encodeURIComponent(chatId)}/messages`, {
+              method: "POST",
+              body: JSON.stringify({ content: "Permission parity verified." }),
+            });
+            witness(
+              ctx,
+              draft.response.ok && draft.body.draft?.id === "draft-openwork-test"
+                && event.response.ok && event.body.event?.id === "event-openwork-test"
+                && file.response.ok && file.body.file?.id === "file-permission-parity",
+              "The reconnected member can create an Outlook draft and calendar event and write a bounded OneDrive text file.",
+              {
+                draft: { status: draft.response.status, id: draft.body.draft?.id },
+                event: { status: event.response.status, id: event.body.event?.id },
+                file: { status: file.response.status, id: file.body.file?.id },
+              },
+            );
+            witness(
+              ctx,
+              chats.response.ok && chatId === "chat-openwork-test"
+                && messages.response.ok && messages.body.messages?.[0]?.id === "teams-message-existing"
+                && sent.response.ok && sent.body.message?.id === "teams-message-sent",
+              "The reconnected member can find an existing Teams chat, read it, and send one message without creating a chat.",
+              {
+                chats: { status: chats.response.status, chatId },
+                messages: { status: messages.response.status, id: messages.body.messages?.[0]?.id },
+                sent: { status: sent.response.status, id: sent.body.message?.id },
+              },
+            );
+
+            const requests = graphRequests(await mockRequests());
+            witness(
+              ctx,
+              requests.some((request) => request.path === "/graph/v1.0/me/messages" && request.method === "POST")
+                && requests.some((request) => request.path === "/graph/v1.0/me/events" && request.method === "POST")
+                && requests.some((request) => request.path === "/graph/v1.0/me/drive/root:/OpenWork/permission-parity.txt:/content" && request.method === "PUT")
+                && requests.some((request) => request.path === "/graph/v1.0/chats/chat-openwork-test/messages" && request.method === "POST"),
+              "The end-to-end proof reaches the deterministic Microsoft Graph mutation endpoints with the expected HTTP methods.",
+              requests.map((request) => ({ method: request.method, path: request.path })),
+            );
+            state.graphRequestCount = requests.length;
+
+            await openAdminConnections(ctx);
+            const clicked = await ctx.eval(`(() => {
+              const card = document.querySelector('[data-testid="quick-add-microsoft-365"]');
+              card?.click();
+              return Boolean(card);
+            })()`);
+            witness(ctx, clicked, "The admin can reopen the saved Microsoft 365 configuration.", { clicked });
+            await ctx.waitForText("Credentials saved", { timeoutMs: 20_000 });
+            const persisted = await ctx.eval(`(() => [...document.querySelectorAll('[data-testid="microsoft-365-dialog"] input[data-feature]')]
+              .map((input) => ({ feature: input.dataset.feature, checked: input.checked })))()`);
+            witness(
+              ctx,
+              MICROSOFT_EXTENDED_FEATURES.every((feature) => persisted.some((permission) => permission.feature === feature && permission.checked)),
+              "Reopening the dialog shows every selected permission still checked.",
+              persisted,
+            );
+            await ctx.eval(`(() => {
+              const dialog = document.querySelector('[data-testid="microsoft-365-dialog"]');
+              if (dialog) dialog.scrollTop = dialog.scrollHeight;
+              return true;
+            })()`);
+          },
+          screenshot: {
+            name: "microsoft-365-expanded-permissions-persisted",
+            claim: "Broader Microsoft 365 capabilities persist without credential replacement, and the organization remains configured with exact delegated scopes.",
+            requireText: ["Update Microsoft 365", "Credentials saved", "Permissions", "Mail.ReadWrite", "Calendars.ReadWrite", "Files.ReadWrite", "Chat.Read", "ChatMessage.Send"],
+            rejectText: ["Client secret value", "Connection failed", "Something went wrong"],
+          },
+        });
+      },
+    },
+    {
+      name: "Frame 6 — Disconnect removes only the calling member's grant and fails closed",
       run: async (ctx) => {
         await ctx.prove("After disconnect, the same capability returns needs_connection and never falls back to another member's token", {
-          voiceover: vo[4],
+          voiceover: vo[5],
           action: async () => {
             const dialogOpen = await ctx.eval("Boolean(document.querySelector('[data-testid=\"microsoft-365-dialog\"]'))");
             if (dialogOpen) await ctx.clickText("Cancel", { timeoutMs: 10_000 });

@@ -1,4 +1,5 @@
 const path = require("path");
+const { withObservabilityNextConfig } = require("./observability/next-config-observability.cjs");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -19,4 +20,4 @@ if (allowedDevOrigins.length > 0) {
   nextConfig.allowedDevOrigins = allowedDevOrigins;
 }
 
-module.exports = nextConfig;
+module.exports = withObservabilityNextConfig(nextConfig);

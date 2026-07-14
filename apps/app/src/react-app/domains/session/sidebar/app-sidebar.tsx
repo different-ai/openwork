@@ -38,7 +38,7 @@ import {
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
-import { useBrandAppName, useBrandLogoUrl } from "../../cloud/brand-theme";
+import { useBrandLogoUrl } from "../../cloud/brand-theme";
 
 import {
   Sidebar,
@@ -730,8 +730,6 @@ export function AppSidebar(props: AppSidebarProps) {
   };
 
   const brandLogoUrl = useBrandLogoUrl();
-  const brandAppName = useBrandAppName();
-  const hasManagedBrand = brandLogoUrl || brandAppName !== "OpenWork";
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -740,20 +738,16 @@ export function AppSidebar(props: AppSidebarProps) {
         className="mac:**:data-[sidebar=sidebar]:bg-transparent"
       >
         <div className="hidden h-14 mac:block mac:titlebar-drag"/>
-        {hasManagedBrand ? (
+        {brandLogoUrl ? (
           <div
             data-testid="brand-logo"
             className="flex h-14 shrink-0 items-center px-3 pb-3 pt-2 mac:pt-0"
           >
-            {brandLogoUrl ? (
-              <img
-                src={brandLogoUrl}
-                alt={`${brandAppName} logo`}
-                className="max-h-9 w-auto max-w-[140px] object-contain object-left"
-              />
-            ) : (
-              <span className="truncate text-sm font-semibold" data-testid="brand-app-name">{brandAppName}</span>
-            )}
+            <img
+              src={brandLogoUrl}
+              alt="Organization logo"
+              className="max-h-9 w-auto max-w-[140px] object-contain object-left"
+            />
           </div>
         ) : null}
         {props.onOpenSessionSearch ? (

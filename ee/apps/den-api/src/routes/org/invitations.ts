@@ -6,9 +6,9 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { db } from "../../db.js"
-import { resolveInvitationDownloadUrl } from "../../install-links.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
+import { appLogger } from "../../observability/logger.js"
 import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
 import { resolveOrganizationPermissionRecord, validateAssignableOrganizationPermissionRecord } from "../../organization-access.js"
 import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
@@ -21,6 +21,7 @@ const inviteMemberSchema = z.object({
   email: z.string().email(),
   role: z.string().trim().min(1).max(64),
 })
+const logger = appLogger.child({ component: "invitations" })
 
 const invitationResponseSchema = z.object({
   invitationId: denTypeIdSchema("invitation"),
@@ -245,12 +246,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       },
     })
 
-    const downloadUrl = await resolveInvitationDownloadUrl({
-      organizationId: payload.organization.id,
-      createdByUserId: payload.currentMember.userId,
-      metadata: payload.organization.metadata,
-    })
-
     try {
       await sendEmail({
         to: email,
@@ -261,7 +256,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           invitedByEmail: user.email ?? "",
           organizationName: payload.organization.name,
           role,
-          downloadUrl,
         },
       })
     } catch (error) {
@@ -270,9 +264,12 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         // level so operators can grep, and return a 502 so the caller can
         // render a real failure instead of a silent success. The invitation
         // id is included so the UI can correlate and offer a direct retry.
-        console.error(
-          `[auth][invite_email_failed] organization=${payload.organization.id} invitation=${invitationId} email=${email} reason=${error.reason}${error.detail ? ` detail=${error.detail}` : ""}`,
-        )
+        logger.error("invite email failed", {
+          organization_id: payload.organization.id,
+          invitation_id: invitationId,
+          reason: error.reason,
+          detail: error.detail,
+        })
 
         return c.json({
           error: "invitation_email_failed" as const,

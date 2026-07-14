@@ -6,6 +6,7 @@ import { z } from "zod"
 import { auth } from "../../auth.js"
 import { deleteScimProvisionedAccessForProvider, recordScimSyncFailure, recordScimSyncFailureFromBearerToken, resolveScimProviderFromBearerToken, syncExternalIdentityFromScimResource, syncExternalIdentityFromScimUserId } from "../../scim.js"
 import { authenticatedRoute, publicRoute, tokenRoute } from "../../middleware/index.js"
+import { appLogger } from "../../observability/logger.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const scimErrorSchema = z.object({
@@ -16,6 +17,7 @@ const scimManagementForbiddenSchema = z.object({
   error: z.literal("forbidden"),
   message: z.string(),
 }).meta({ ref: "ScimManagementForbiddenError" })
+const logger = appLogger.child({ component: "scim_auth_routes" })
 
 function readBearerToken(headers: Headers) {
   const header = headers.get("authorization")?.trim() ?? ""
@@ -24,8 +26,7 @@ function readBearerToken(headers: Headers) {
 }
 
 function logScimSyncWarning(action: string, error: unknown) {
-  const message = error instanceof Error ? error.message : String(error)
-  console.warn(`[scim][external_identity_sync_failed] action=${action} reason=${message}`)
+  logger.warn("external identity sync failed", { action, error })
 }
 
 export type ScimSyncAction = "sync_resource" | "sync_user_id" | "delete_user"
@@ -64,8 +65,7 @@ async function recordScimFailureSafely(recordFailure: () => Promise<unknown>) {
   try {
     await recordFailure()
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.error(`[scim][sync_failure_record_failed] reason=${message}`)
+    logger.error("sync failure record failed", { error })
   }
 }
 

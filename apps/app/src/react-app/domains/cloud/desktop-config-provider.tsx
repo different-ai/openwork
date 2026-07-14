@@ -60,6 +60,7 @@ const DESKTOP_CONFIG_ITEMS = [
   "brandIconUrl",
   "brandAccentColor",
   "connectEnabled",
+  "onboardingPrompts",
 ] as const satisfies readonly (keyof DenDesktopConfig)[];
 
 type DesktopConfigItem = (typeof DESKTOP_CONFIG_ITEMS)[number];
@@ -173,26 +174,24 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
     if (actions.length === 0) return false;
 
-    const brandAppNameAction = actions.find((action) => action.item === "brandAppName");
-    const brandAppNamePromise = brandAppNameAction
-      ? (() => {
-          const appName = typeof brandAppNameAction.nextValue === "string" ? brandAppNameAction.nextValue : null;
-          document.title = appName ?? "OpenWork";
-          return applyBrandAppName(appName).then(() => undefined).catch(() => undefined);
-        })()
-      : Promise.resolve();
-
     const brandIconAction = actions.find((action) => action.item === "brandIconUrl");
     if (brandIconAction) {
-      void brandAppNamePromise.then(() => applyBrandIcon(
+      void applyBrandIcon(
         typeof brandIconAction.nextValue === "string" ? brandIconAction.nextValue : null,
-      )).then((result) => {
+      ).then((result) => {
         if (!result.ok) {
           console.warn(`[brand-icon] Desktop icon was not applied: ${result.reason ?? "unknown failure"}`);
         }
       }).catch((error: unknown) => {
         console.warn("[brand-icon] Desktop icon apply request failed", error);
       });
+    }
+
+    const brandAppNameAction = actions.find((action) => action.item === "brandAppName");
+    if (brandAppNameAction) {
+      const appName = typeof brandAppNameAction.nextValue === "string" ? brandAppNameAction.nextValue : null;
+      document.title = appName ?? "OpenWork";
+      void applyBrandAppName(appName).catch(() => null);
     }
 
     currentDesktopConfigRef.current = normalizedConfig;

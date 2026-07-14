@@ -3,12 +3,14 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sql } from "@openwork-ee/den-db/drizzle";
+import { sentry } from "@sentry/hono/node";
 import { cors } from "hono/cors";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { z } from "zod";
 import { db } from "./db.js";
 import { env } from "./env.js";
+import { isSentryEnabled } from "./instrumentation.js";
 import { registerProxyRoutes } from "./proxy.js";
 import { registerVoiceRoutes } from "./voice.js";
 import { registerWebhookRoutes } from "./webhooks.js";
@@ -19,6 +21,10 @@ const isVercelRuntime = Boolean(process.env.VERCEL || process.env.VERCEL_ENV || 
 const shouldServeLocalModelCatalog = !isVercelRuntime && (process.env.NODE_ENV !== "production" || process.env.OPENWORK_DEV_MODE === "1");
 
 const app = new Hono();
+
+if (isSentryEnabled) {
+  app.use("*", sentry(app));
+}
 
 const requestLogger = logger((message, ...rest) => {
   if (/-->\s+\S+\s+\S+\s+[45]\d\d\b/.test(message)) {

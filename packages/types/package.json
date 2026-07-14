@@ -19,10 +19,20 @@
       "development": "./src/den/desktop-policies.ts",
       "default": "./src/den/desktop-policies.ts"
     },
+    "./den/egress-diagnostics": {
+      "types": "./src/den/egress-diagnostics.ts",
+      "development": "./src/den/egress-diagnostics.ts",
+      "default": "./src/den/egress-diagnostics.ts"
+    },
     "./den/inference": {
       "types": "./src/den/inference.ts",
       "development": "./src/den/inference.ts",
       "default": "./src/den/inference.ts"
+    },
+    "./den/microsoft-365": {
+      "types": "./src/den/microsoft-365.ts",
+      "development": "./src/den/microsoft-365.ts",
+      "default": "./src/den/microsoft-365.ts"
     },
     "./workspace": {
       "types": "./src/workspace.ts",

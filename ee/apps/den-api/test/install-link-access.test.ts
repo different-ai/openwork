@@ -5,7 +5,6 @@ import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { createStoredZip } from "../src/utils/zip-append.js"
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -21,8 +20,6 @@ const organizationId = createDenTypeId("organization")
 const insertedRows: unknown[] = []
 const revokedRows: unknown[] = []
 const officialWindowsInstallerUrl = "https://github.com/different-ai/openwork/releases/download/v9.9.9/openwork-win-x64-9.9.9.exe"
-const brandLogoUrl = "https://den.acme.test/assets/wordmark.png"
-const brandIconUrl = "https://den.acme.test/assets/icon.png"
 
 let role = "member"
 let isOwner = false
@@ -52,9 +49,7 @@ mock.module("../src/db.js", () => ({
               logo: null,
               metadata: {
                 capabilities: { installLinks: true },
-                brandAppName: "Acme Work",
-                brandLogoUrl,
-                brandIconUrl,
+                brandIconUrl: "https://assets.blueyonder.test/icon.png",
               },
             },
           }]
@@ -144,7 +139,7 @@ beforeEach(() => {
   sessionCreatedAt = new Date()
 })
 
-function createApp(options: { installerFallbackUrl?: string; installerArtifacts?: Record<string, Buffer> } = {}) {
+function createApp(options: { installerFallbackUrl?: string; installerArtifact?: Buffer } = {}) {
   const app = new Hono()
   const installerFallbackUrl = options.installerFallbackUrl
   app.use("*", async (c, next) => {
@@ -166,9 +161,9 @@ function createApp(options: { installerFallbackUrl?: string; installerArtifacts?
   })
   installLinkModule.registerOrgInstallLinkRoutes(
     app,
-    installerFallbackUrl || options.installerArtifacts
+    installerFallbackUrl || options.installerArtifact
       ? {
-          resolveArtifact: (fileName) => Promise.resolve(options.installerArtifacts?.[fileName] ?? null),
+          resolveArtifact: () => Promise.resolve(options.installerArtifact ?? null),
           resolveFallbackUrl: () => Promise.resolve(installerFallbackUrl ?? officialWindowsInstallerUrl),
         }
       : undefined,
@@ -305,24 +300,15 @@ test("missing server-side artifacts redirect the browser to the official release
 })
 
 test.each([
-  ["mac-arm64", "openwork-mac-arm64-9.9.9.dmg", "openwork-installer-mac-arm64.zip"],
-  ["win-x64", "openwork-win-x64-9.9.9.exe", "openwork-installer-win-x64.exe"],
-])("organization %s downloads contain the generic installer, untouched standard app, and explicit config", async (platform, desktopFileName, genericFileName) => {
-  envModule.env.installerReleaseTag = "v9.9.9"
-  const desktopArtifact = Buffer.from(`signed-standard-${platform}-bytes`, "utf8")
-  const genericInstallerArtifact = platform.startsWith("mac-")
-    ? Buffer.from(createStoredZip([{ name: "OpenWork Installer.app/binary", content: Buffer.from("signed-generic-mac", "utf8") }]))
-    : Buffer.from("signed-generic-windows", "utf8")
-  const response = await createApp({
-    installerArtifacts: {
-      [desktopFileName]: desktopArtifact,
-      [genericFileName]: genericInstallerArtifact,
-    },
-  }).request(`http://den.local/v1/install/${platform}?token=opaque-token`)
+  ["mac-arm64", ".dmg"],
+  ["win-x64", ".exe"],
+])("organization %s downloads contain the untouched standard installer and desktop bootstrap", async (platform, extension) => {
+  const installerArtifact = Buffer.from(`signed-standard-${platform}-bytes`, "utf8")
+  const response = await createApp({ installerArtifact }).request(`http://den.local/v1/install/${platform}?token=opaque-token`)
 
   expect(response.status).toBe(200)
   expect(response.headers.get("content-type")).toBe("application/zip")
-  expect(response.headers.get("content-disposition")).toContain(`OpenWork-Installer-acme-robotics-${platform}.zip`)
+  expect(response.headers.get("content-disposition")).toContain(`OpenWork-acme-robotics-${platform}.zip`)
 
   const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-org-download-"))
   try {
@@ -336,22 +322,22 @@ test.each([
     }
 
     const entries = readdirSync(outputDir)
-    expect(entries).toContain(desktopFileName)
-    expect(entries).toContain("openwork-installer.json")
-    expect(entries).toContain(platform.startsWith("mac-") ? "OpenWork Installer.app" : "OpenWork Installer.exe")
-    expect(readFileSync(path.join(outputDir, desktopFileName))).toEqual(desktopArtifact)
+    const installerName = entries.find((entry) => entry.endsWith(extension))
+    expect(installerName).toBeTruthy()
+    expect(entries).toContain("desktop-bootstrap.json")
+    expect(entries.some((entry) => entry.includes("openwork-installer"))).toBe(false)
+    expect(readFileSync(path.join(outputDir, installerName ?? "missing"))).toEqual(installerArtifact)
 
-    const config = JSON.parse(readFileSync(path.join(outputDir, "openwork-installer.json"), "utf8"))
-    expect(config).toMatchObject({
-      appName: "Acme Work",
-      appVersion: "9.9.9",
-      webUrl: process.env.BETTER_AUTH_URL,
+    const bootstrap = JSON.parse(readFileSync(path.join(outputDir, "desktop-bootstrap.json"), "utf8"))
+    expect(bootstrap).toMatchObject({
+      baseUrl: process.env.BETTER_AUTH_URL,
       requireSignin: true,
-      logoUrl: brandLogoUrl,
-      iconUrl: brandIconUrl,
+      brandAppName: "OpenWork",
+      brandIconUrl: "https://assets.blueyonder.test/icon.png",
     })
-    expect(config.apiUrl).toBe("http://den.local")
-    expect(JSON.stringify(config)).not.toContain("opaque-token")
+    expect(bootstrap.apiBaseUrl).toBe("http://den.local")
+    expect(Number.isFinite(Date.parse(bootstrap.writtenAt))).toBe(true)
+    expect(JSON.stringify(bootstrap)).not.toContain("opaque-token")
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

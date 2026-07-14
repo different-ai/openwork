@@ -11,6 +11,7 @@ import {
 } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, encryptedTextColumn } from "../../columns"
 import { MemberTable, OrganizationTable } from "../org"
+import { ConfigObjectTable, PluginTable } from "./plugin-arch"
 
 /**
  * Generic credential layer for "bring your own OAuth client" integrations.
@@ -199,6 +200,8 @@ export const ExternalMcpConnectionAccessGrantTable = mysqlTable(
       "externalMcpConnection",
       "external_mcp_connection_id",
     ).notNull(),
+    pluginMcpRequirementBindingId: denTypeIdColumn("pluginMcpRequirementBinding", "plugin_mcp_requirement_binding_id"),
+    sourceKey: varchar("source_key", { length: 64 }).notNull().default("direct"),
     orgMembershipId: denTypeIdColumn("member", "org_membership_id"),
     teamId: denTypeIdColumn("team", "team_id"),
     orgWide: boolean("org_wide").notNull().default(false),
@@ -211,16 +214,41 @@ export const ExternalMcpConnectionAccessGrantTable = mysqlTable(
   (table) => [
     index("emc_access_grant_organization_id").on(table.organizationId),
     index("emc_access_grant_connection_id").on(table.externalMcpConnectionId),
+    index("emc_access_grant_plugin_mcp_binding_id").on(table.pluginMcpRequirementBindingId),
     index("emc_access_grant_org_membership_id").on(table.orgMembershipId),
     index("emc_access_grant_team_id").on(table.teamId),
     uniqueIndex("emc_access_grant_connection_member").on(
       table.externalMcpConnectionId,
       table.orgMembershipId,
+      table.sourceKey,
     ),
     uniqueIndex("emc_access_grant_connection_team").on(
       table.externalMcpConnectionId,
       table.teamId,
+      table.sourceKey,
     ),
+  ],
+)
+
+export const PluginMcpRequirementBindingTable = mysqlTable(
+  "plugin_mcp_requirement_binding",
+  {
+    id: denTypeIdColumn("pluginMcpRequirementBinding", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    pluginId: denTypeIdColumn("plugin", "plugin_id").notNull(),
+    configObjectId: denTypeIdColumn("configObject", "config_object_id").notNull(),
+    serverName: varchar("server_name", { length: 255 }).notNull(),
+    externalMcpConnectionId: denTypeIdColumn("externalMcpConnection", "external_mcp_connection_id").notNull(),
+    createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("plugin_mcp_req_binding_organization_id").on(table.organizationId),
+    index("plugin_mcp_req_binding_plugin_id").on(table.pluginId),
+    index("plugin_mcp_req_binding_config_object_id").on(table.configObjectId),
+    index("plugin_mcp_req_binding_connection_id").on(table.externalMcpConnectionId),
+    uniqueIndex("plugin_mcp_req_binding_org_plugin_object_server").on(table.organizationId, table.pluginId, table.configObjectId, table.serverName),
   ],
 )
 
@@ -256,6 +284,7 @@ export const externalMcpConnectionRelations = relations(ExternalMcpConnectionTab
     references: [MemberTable.id],
   }),
   accessGrants: many(ExternalMcpConnectionAccessGrantTable),
+  pluginMcpRequirementBindings: many(PluginMcpRequirementBindingTable),
 }))
 
 export const externalMcpConnectionAccessGrantRelations = relations(ExternalMcpConnectionAccessGrantTable, ({ one }) => ({
@@ -273,6 +302,33 @@ export const externalMcpConnectionAccessGrantRelations = relations(ExternalMcpCo
   }),
   createdByOrgMembership: one(MemberTable, {
     fields: [ExternalMcpConnectionAccessGrantTable.createdByOrgMembershipId],
+    references: [MemberTable.id],
+  }),
+  pluginMcpRequirementBinding: one(PluginMcpRequirementBindingTable, {
+    fields: [ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId],
+    references: [PluginMcpRequirementBindingTable.id],
+  }),
+}))
+
+export const pluginMcpRequirementBindingRelations = relations(PluginMcpRequirementBindingTable, ({ one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [PluginMcpRequirementBindingTable.organizationId],
+    references: [OrganizationTable.id],
+  }),
+  plugin: one(PluginTable, {
+    fields: [PluginMcpRequirementBindingTable.pluginId],
+    references: [PluginTable.id],
+  }),
+  configObject: one(ConfigObjectTable, {
+    fields: [PluginMcpRequirementBindingTable.configObjectId],
+    references: [ConfigObjectTable.id],
+  }),
+  connection: one(ExternalMcpConnectionTable, {
+    fields: [PluginMcpRequirementBindingTable.externalMcpConnectionId],
+    references: [ExternalMcpConnectionTable.id],
+  }),
+  createdByOrgMembership: one(MemberTable, {
+    fields: [PluginMcpRequirementBindingTable.createdByOrgMembershipId],
     references: [MemberTable.id],
   }),
 }))

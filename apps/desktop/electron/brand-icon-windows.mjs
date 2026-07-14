@@ -96,7 +96,7 @@ export function windowsBrandShortcutDetails({ target, appId, appIconPath, appNam
   return {
     target,
     cwd: target.replace(/[\\/][^\\/]+$/, ""),
-    description: `${appName} desktop`,
+    description: `${appName} organization desktop`,
     icon: appIconPath,
     iconIndex: 0,
     appUserModelId: appId,

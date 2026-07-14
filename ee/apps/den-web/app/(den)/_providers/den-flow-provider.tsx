@@ -1108,33 +1108,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       const token = getToken(payload);
 
       if (authMode === "sign-up" && !token) {
-        const signInResult = await requestJson("/api/auth/sign-in/email", {
-          method: "POST",
-          body: JSON.stringify({
-            email: trimmedEmail,
-            password,
-          })
-        });
-
-        if (signInResult.response.ok) {
-          return await finalizeEmailPasswordSignIn(authMode, trimmedEmail, signInResult.payload);
-        }
-
-        if (signInResult.response.status !== 403) {
-          setAuthError(getErrorMessage(signInResult.payload, `Authentication failed with ${signInResult.response.status}.`));
-          trackPosthogEvent("den_auth_failed", {
-            mode: authMode,
-            method: "email",
-            status: signInResult.response.status
-          });
-          return null;
-        }
-
-        if (isSingleOrgMode) {
-          setAuthError(getErrorMessage(signInResult.payload, "Account created, but the server did not start a session. Try signing in again."));
-          return null;
-        }
-
         setUser(null);
         openVerificationStep(trimmedEmail, `We emailed a 6-digit verification code to ${trimmedEmail}. Enter it below to finish creating your account.`);
         appendEvent("info", "Verification code sent", trimmedEmail);

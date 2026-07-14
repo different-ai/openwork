@@ -1,5 +1,6 @@
 export * from "./auth"
 export * from "./desktop-policies"
+export * from "./diagnostics"
 export * from "./inference"
 export * from "./memory"
 export * from "./org"

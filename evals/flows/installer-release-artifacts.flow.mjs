@@ -256,11 +256,11 @@ export default {
               },
               assert: async () => {
                 await ctx.expectText("This sets up OpenWork for Acme Robotics");
-                await ctx.expectText("Configured via organization setup file");
+                await ctx.expectText("Configured via install link");
               },
               screenshot: {
                 name: "downloaded-installer-announces-acme",
-                requireText: ["This sets up OpenWork for Acme Robotics", "Configured via organization setup file"],
+                requireText: ["This sets up OpenWork for Acme Robotics", "Configured via install link"],
               },
             });
           });

@@ -15,6 +15,8 @@ const KEY_ID = (process.env.DEN_CONNECT_LINK_KEY_ID ?? "").trim();
 const BOOTSTRAP_PATH = (
   process.env.OPENWORK_EVAL_CONNECT_BOOTSTRAP_PATH ?? ""
 ).trim();
+const TEST_ICON_URL =
+  "https://upload.wikimedia.org/wikipedia/commons/6/6a/JavaScript-logo.png";
 const RECIPIENT = `maya.connect+${Date.now().toString(36)}@acme.test`;
 
 const state = {
@@ -56,7 +58,11 @@ async function denFetch(path, options = {}) {
 }
 
 async function navigateTo(ctx, url) {
-  await ctx.eval(`location.assign(${JSON.stringify(url)}); true`);
+  if (url.startsWith("file://")) {
+    await ctx.client.send("Page.navigate", { url });
+  } else {
+    await ctx.eval(`location.assign(${JSON.stringify(url)}); true`);
+  }
   await ctx.waitFor("document.readyState === 'complete'", {
     timeoutMs: 30_000,
     label: `load ${url}`,
@@ -214,6 +220,7 @@ export default {
                 body: JSON.stringify({
                   name: "Acme Robotics",
                   brandAppName: "Acme Work",
+                  brandIconUrl: TEST_ICON_URL,
                 }),
               });
               witness(
@@ -225,6 +232,7 @@ export default {
                   status: branded.response.status,
                   name: branded.body?.organization?.name,
                   brandAppName: branded.body?.organization?.metadata?.brandAppName,
+                  brandIconUrl: branded.body?.organization?.metadata?.brandIconUrl,
                 },
               );
               const organizationId = org.body?.organization?.id;
@@ -348,6 +356,7 @@ export default {
                 verified?.ok === true &&
                   verified.claims?.org?.name === "Acme Robotics" &&
                   verified.claims?.brand?.appName === "Acme Work" &&
+                  verified.claims?.brand?.iconUrl === TEST_ICON_URL &&
                   verified.kid === KEY_ID,
                 "Electron accepts the signature with the public key embedded for this key id",
                 verified?.ok
@@ -356,6 +365,7 @@ export default {
                       kid: verified.kid,
                       org: verified.claims.org.name,
                       appName: verified.claims.brand.appName,
+                      iconUrl: verified.claims.brand.iconUrl,
                       audience: verified.claims.aud,
                     }
                   : verified,
@@ -368,6 +378,7 @@ export default {
                     kid: verified.kid,
                     organization: verified.claims.org.name,
                     appName: verified.claims.brand.appName,
+                    iconUrl: verified.claims.brand.iconUrl,
                     token: "[redacted]",
                   },
                   null,
@@ -378,24 +389,14 @@ export default {
                 '[data-testid="connect-link-paste-input"]',
                 state.connectUrl,
               );
-              await ctx.eval(
-                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                { awaitPromise: true },
-              );
+              await new Promise((resolve) => setTimeout(resolve, 100));
               await ctx.eval(
                 'document.querySelector("[data-testid=connect-link-paste-submit]").click()',
               );
               await ctx.waitForText("Set up Acme Work for Acme Robotics?", {
                 timeoutMs: 30_000,
               });
-              await ctx.waitFor(
-                "document.getAnimations().every((animation) => animation.playState === 'finished')",
-                { label: "connect confirmation animation to finish" },
-              );
-              await ctx.eval(
-                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                { awaitPromise: true },
-              );
+              await new Promise((resolve) => setTimeout(resolve, 250));
               // Electron's compositor can return a partially black first
               // capture after this modal transition. Prime it once so the
               // evidence capture below reflects the fully painted dialog.
@@ -515,8 +516,9 @@ export default {
               witness(
                 ctx,
                 bootstrap.requireSignin === true &&
-                  bootstrap.brandAppName === "Acme Work",
-                "The persisted JSON keeps SSO required and applies Acme's managed app name",
+                  bootstrap.brandAppName === "Acme Work" &&
+                  bootstrap.brandIconUrl === TEST_ICON_URL,
+                "The persisted JSON keeps SSO required and applies Acme's managed name and icon",
                 bootstrap,
               );
               witness(
@@ -526,6 +528,17 @@ export default {
                 bootstrap,
               );
               state.persistedBootstrap = persisted;
+              const iconState = await ctx.eval(
+                "window.__OPENWORK_ELECTRON__?.brandIcon?.getState?.()",
+                { awaitPromise: true },
+              );
+              witness(
+                ctx,
+                iconState?.applied === true &&
+                  iconState?.sourceUrl === TEST_ICON_URL,
+                "The packaged macOS app applies the signed HTTPS native icon immediately",
+                iconState,
+              );
               const buildInfo = await ctx.eval(
                 'window.__OPENWORK_ELECTRON__.invokeDesktop("appBuildInfo")',
                 { awaitPromise: true },

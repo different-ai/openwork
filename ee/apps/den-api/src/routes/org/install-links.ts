@@ -1,5 +1,6 @@
 import {
-  INSTALL_SIDECAR_FILENAME,
+  DESKTOP_BOOTSTRAP_FILENAME,
+  desktopBootstrapConfigSchema,
   installConfigSchema,
 } from "@openwork/install-config"
 import { and, eq, gt, isNull, or } from "@openwork-ee/den-db/drizzle"
@@ -19,8 +20,8 @@ import { jsonValidator, orgRoleRoute, publicRoute, queryValidator } from "../../
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import { organizationCapabilityKeySchema } from "../../organization-capabilities.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
-import { desktopReleaseAssetName, genericInstallerAssetName, resolveInstallerArtifact, resolveInstallerFallbackUrl } from "../../utils/installer-artifacts.js"
-import { appendStoredEntriesToZipStream, createStoredZipStream } from "../../utils/zip-append.js"
+import { desktopReleaseAssetName, resolveInstallerArtifact, resolveInstallerFallbackUrl } from "../../utils/installer-artifacts.js"
+import { createStoredZipStream } from "../../utils/zip-append.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
 
@@ -123,7 +124,6 @@ function buildInstallConfig(input: { organization: { name: string; logo: string 
   const metadata = normalizeOrganizationMetadata(organizationMetadataInput(input.organization.metadata)).metadata
   return installConfigSchema.parse({
     appName: typeof metadata.brandAppName === "string" ? metadata.brandAppName : "OpenWork",
-    appVersion: env.installerReleaseTag.replace(/^v/i, ""),
     clientName: input.organization.name,
     webUrl: env.betterAuthUrl,
     apiUrl: resolvePublicOrigin(input.request, env.apiPublicUrl),
@@ -171,7 +171,7 @@ function contentDisposition(filename: string) {
   return `attachment; filename="${filename.replace(/["\\]/g, "-")}"`
 }
 
-function desktopArtifactFileName(platform: InstallPlatform) {
+function artifactFileName(platform: InstallPlatform) {
   return desktopReleaseAssetName(platform, env.installerReleaseTag)
 }
 
@@ -345,7 +345,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["Organizations"],
       summary: "Download stamped installer",
-      description: "Packages the generic signed OpenWork installer, the unchanged standard desktop artifact, and this organization's explicit installer configuration, or redirects to the verified standard download when Den cannot prepare the bundle.",
+      description: "Packages the standard signed OpenWork desktop installer with this organization's bootstrap configuration, or redirects to the verified standard download when Den cannot prepare the bundle.",
       responses: {
         200: textResponse("Installer artifact returned successfully."),
         302: emptyResponse("Den redirected the browser to a verified normal desktop download."),
@@ -385,37 +385,35 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         })
       }
 
-      const desktopFileName = desktopArtifactFileName(platform)
-      const genericFileName = genericInstallerAssetName(platform)
-      if (!desktopFileName || !genericFileName) {
+      const fileName = artifactFileName(platform)
+      if (!fileName) {
         return c.json({ error: "invalid_request", details: [{ message: "Unsupported installer platform." }] }, 400)
       }
 
-      const [desktopArtifact, genericInstallerArtifact] = await Promise.all([
-        installer.resolveArtifact(desktopFileName),
-        installer.resolveArtifact(genericFileName),
-      ])
-      if (!desktopArtifact || !genericInstallerArtifact) {
+      const artifact = await installer.resolveArtifact(fileName)
+      if (!artifact) {
         return c.redirect(await installer.resolveFallbackUrl(platform), 302)
       }
 
-      const sidecar = Buffer.from(`${JSON.stringify(resolved.config, null, 2)}\n`, "utf8")
-      const bundle = platform.startsWith("mac-")
-        ? appendStoredEntriesToZipStream(genericInstallerArtifact, [
-            { name: INSTALL_SIDECAR_FILENAME, content: sidecar },
-            { name: desktopFileName, content: desktopArtifact },
-          ])
-        : createStoredZipStream([
-            { name: "OpenWork Installer.exe", content: genericInstallerArtifact },
-            { name: INSTALL_SIDECAR_FILENAME, content: sidecar },
-            { name: desktopFileName, content: desktopArtifact },
-          ])
+      const bootstrap = desktopBootstrapConfigSchema.parse({
+        baseUrl: resolved.config.webUrl,
+        apiBaseUrl: resolved.config.apiUrl,
+        requireSignin: resolved.config.requireSignin,
+        brandAppName: resolved.config.appName,
+        brandLogoUrl: resolved.config.logoUrl ?? undefined,
+        brandIconUrl: resolved.config.iconUrl ?? undefined,
+        writtenAt: new Date().toISOString(),
+      })
+      const bundle = createStoredZipStream([
+        { name: fileName, content: artifact },
+        { name: DESKTOP_BOOTSTRAP_FILENAME, content: Buffer.from(`${JSON.stringify(bootstrap, null, 2)}\n`, "utf8") },
+      ])
 
       return new Response(bundle.body, {
         headers: {
           "content-type": "application/zip",
           "content-length": String(bundle.byteLength),
-          "content-disposition": contentDisposition(`OpenWork-Installer-${safeAttachmentSlug(resolved.organizationSlug)}-${platform}.zip`),
+          "content-disposition": contentDisposition(`OpenWork-${safeAttachmentSlug(resolved.organizationSlug)}-${platform}.zip`),
           "cache-control": "no-store",
         },
       })

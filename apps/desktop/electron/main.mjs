@@ -918,6 +918,7 @@ const workspaceStore = createWorkspaceStore({
   defaultDenBaseUrl: DEFAULT_DEN_BASE_URL,
   defaultRequireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
+  allowDefaultWorkspace: !ENTERPRISE_BUILD,
 });
 
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
@@ -2388,6 +2389,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     installMediaPermissionHandlers(session, () => mainWindow);
+    await workspaceStore.importBundledDesktopBootstrapConfigIfPreferred();
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
     enterpriseConnectionGuard.setConfigured(bootstrapConfig.configured === true);
     enterpriseConnectionGuard.install(session.defaultSession);

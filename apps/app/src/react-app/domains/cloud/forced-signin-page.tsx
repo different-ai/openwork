@@ -21,7 +21,7 @@ import { usePlatform } from "../../kernel/platform";
 import { useBootState } from "../../shell/boot-state";
 import { useDenAuth } from "./den-auth-provider";
 import { useDesktopConfig } from "./desktop-config-provider";
-import { applyBrandAppName, applyBrandIcon } from "../../../app/lib/desktop";
+import { applyBrandAppName } from "../../../app/lib/desktop";
 import { DenSignInSurface } from "./den-signin-surface";
 import { tryOpenBrowserAuthUrl } from "./open-browser-auth";
 import { saveControlPlaneUrl } from "../settings/cloud/control-plane-url";
@@ -83,7 +83,6 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   const initial = readDenSettings();
   const bootstrap = readDenBootstrapConfig();
   const appName = bootstrap.brandAppName?.trim() || "OpenWork";
-  const iconUrl = bootstrap.brandIconUrl?.trim() || null;
   const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
 
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
@@ -99,10 +98,8 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   useEffect(() => {
     document.title = appName;
-    void applyBrandAppName(appName)
-      .then(() => applyBrandIcon(iconUrl))
-      .catch(() => null);
-  }, [appName, iconUrl]);
+    void applyBrandAppName(appName).catch(() => null);
+  }, [appName]);
 
   const openControlPlane = useCallback(() => {
     platform.openLink(resolveDenBaseUrls(baseUrl).baseUrl);

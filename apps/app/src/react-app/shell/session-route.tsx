@@ -49,7 +49,6 @@ import {
   type WorkspaceList,
 } from "@/app/lib/desktop";
 import type {
-  ComposerAttachment,
   ComposerDraft,
   ComposerPart,
   ModelOption,
@@ -103,6 +102,7 @@ import {
   applySessionRevert,
 } from "@/react-app/domains/session/sync/session-sync";
 import { firstLineLocalFileParts } from "@/react-app/domains/session/sync/prompt-file-parts";
+import { composerAttachmentToFilePart } from "@/react-app/domains/session/sync/attachment-file-part";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
@@ -134,11 +134,11 @@ import {
   testRemoteWorkspaceConnection,
 } from "@/react-app/domains/workspace/remote-workspace-diagnostics";
 import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
-import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
-import { CommandPalette, type PaletteItem, type SessionGroupOption, type SessionOption as PaletteSessionOption } from "./command-palette";
+import { ModelPickerModal, MODEL_PICKER_UNAVAILABLE_SUBTITLE } from "@/react-app/domains/session/modals/model-picker-modal";
+import { CommandPalette, type PaletteItem, type SessionGroupOption } from "./command-palette";
+import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { SessionSearchDialog } from "./session-search-dialog";
 import type { SessionMessageFetcher } from "@/react-app/domains/session/search/session-search";
-import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { useBootState } from "./boot-state";
 import {
   forgetWorkspaceMemory,
@@ -232,26 +232,20 @@ function focusPromptSoon() {
   [0, 80, 240, 600].forEach((delay) => window.setTimeout(focus, delay));
 }
 
+const EVAL_UNAVAILABLE_PROVIDER_ID = "eval-unavailable-provider";
+
+function nextEvalUnavailableModel(current: ModelRef | null | undefined) {
+  return {
+    providerID: EVAL_UNAVAILABLE_PROVIDER_ID,
+    modelID: current?.providerID === EVAL_UNAVAILABLE_PROVIDER_ID && current.modelID === "eval-unavailable-model-a"
+      ? "eval-unavailable-model-b"
+      : "eval-unavailable-model-a",
+  } satisfies ModelRef;
+}
+
 // All workspace-scoped server URLs/clients/tokens come from
 // `resolveWorkspaceEndpoint` in apps/app/src/app/lib/workspace-endpoint.ts.
 // Don't compose `<baseUrl>/workspace/<id>` here.
-
-async function fileToDataUrl(file: File, mimeType: string) {
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Failed to read attachment: ${file.name}`));
-    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
-    reader.readAsDataURL(new Blob([file], { type: mimeType }));
-  });
-}
-
-function attachmentMime(attachment: ComposerAttachment) {
-  if (attachment.kind === "image") return attachment.mimeType;
-  if (attachment.mimeType === "application/pdf") return attachment.mimeType;
-  // Everything else is sent as text; unsupported binary mimes poison
-  // server-side session history (see sync/attachment-support.ts).
-  return "text/plain";
-}
 
 async function draftToParts(draft: ComposerDraft, workspaceRoot: string) {
   const parts: Array<TextPartInput | FilePartInput | AgentPartInput> = [];
@@ -307,19 +301,7 @@ async function draftToParts(draft: ComposerDraft, workspaceRoot: string) {
 
   parts.push(...firstLineLocalFileParts(draft.resolvedText ?? draft.text, root));
 
-  parts.push(
-    ...(await Promise.all(
-      draft.attachments.map(async (attachment) => {
-        const mime = attachmentMime(attachment);
-        return {
-          type: "file" as const,
-          url: await fileToDataUrl(attachment.file, mime),
-          filename: attachment.name,
-          mime,
-        };
-      }),
-    )),
-  );
+  parts.push(...(await Promise.all(draft.attachments.map(composerAttachmentToFilePart))));
 
   return parts;
 }
@@ -644,6 +626,25 @@ export function SessionRoute() {
         )
       ),
   );
+  const selectedModelUnavailableKey = selectedModelUnavailable && local.prefs.defaultModel
+    ? `${local.prefs.defaultModel.providerID}:${local.prefs.defaultModel.modelID}`
+    : null;
+  const autoOpenedUnavailableModelRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedModelUnavailableKey) {
+      autoOpenedUnavailableModelRef.current = null;
+      return;
+    }
+    if (autoOpenedUnavailableModelRef.current === selectedModelUnavailableKey) return;
+
+    autoOpenedUnavailableModelRef.current = selectedModelUnavailableKey;
+    modelPicker.setQuery("");
+    modelPicker.setRecentProviderIds(new Set());
+    modelPicker.setCompactOpen(false);
+    modelPicker.setOpen(true);
+  }, [modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, selectedModelUnavailableKey]);
+
   const hasUsableModel = Boolean(local.prefs.defaultModel && !selectedModelUnavailable);
   const canCreateTask = Boolean(
     opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError && !selectedModelUnavailable,
@@ -1422,6 +1423,64 @@ export function SessionRoute() {
     refreshRouteState,
   });
 
+  const seedUnavailableModelControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+    return {
+      id: "eval.model_not_available.seed",
+      label: "Seed an unavailable selected model",
+      description: "Dev-only eval hook that selects a missing model and returns an available model to recover with.",
+      sideEffect: "mutation",
+      disabled: !opencodeClient,
+      execute: async () => {
+        if (!opencodeClient) return { ok: false, error: "OpenCode client is not connected." };
+
+        const providerList = await ensureProviderListQuery(getReactQueryClient(), {
+          client: opencodeClient,
+          baseUrl: opencodeBaseUrl,
+          directory: selectedWorkspaceRoot || undefined,
+          force: true,
+        });
+        const filteredProviderList = filterProviderList(providerList, disabledProviderIds);
+        const availableProvider = getConnectedProviderItems(filteredProviderList)
+          .filter((provider) => !isDesktopProviderBlocked({
+            providerId: provider.id,
+            checkRestriction: checkDesktopRestriction,
+          }))
+          .find((provider) => Object.keys(provider.models ?? {}).length > 0);
+        const availableModelId = availableProvider ? Object.keys(availableProvider.models ?? {})[0] : undefined;
+        const availableModel = availableProvider && availableModelId
+          ? availableProvider.models[availableModelId]
+          : undefined;
+
+        if (!availableProvider || !availableModelId || !availableModel) {
+          return { ok: false, error: "No available connected model found for eval recovery." };
+        }
+
+        const unavailableModel = nextEvalUnavailableModel(local.prefs.defaultModel);
+        modelPicker.setQuery("");
+        modelPicker.setRecentProviderIds(new Set());
+        local.setPrefs((previous) => ({
+          ...previous,
+          defaultModel: unavailableModel,
+          modelVariant: null,
+        }));
+
+        return {
+          unavailableModel,
+          availableModel: {
+            providerID: availableProvider.id,
+            providerName: availableProvider.name || availableProvider.id,
+            modelID: availableModelId,
+            title: availableModel.name || availableModelId,
+          },
+          sessionId: selectedSessionId,
+          workspaceId: selectedWorkspaceId,
+        };
+      },
+    };
+  }, [checkDesktopRestriction, disabledProviderIds, local, modelPicker.setQuery, modelPicker.setRecentProviderIds, opencodeBaseUrl, opencodeClient, selectedSessionId, selectedWorkspaceId, selectedWorkspaceRoot]);
+  useControlAction(seedUnavailableModelControlAction);
+
   const commandPaletteControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "command_palette.open",
     label: "Open the command palette",
@@ -1456,44 +1515,10 @@ export function SessionRoute() {
   }), [checkDesktopRestriction, sessionProviderAuthStore]);
   useControlAction(addProviderControlAction);
 
-  const paletteSessionOptions = useMemo<PaletteSessionOption[]>(() => {
-    const out: PaletteSessionOption[] = [];
-    for (const workspace of workspaces) {
-      const workspaceTitle =
-        workspace.displayName?.trim() ||
-        workspace.name?.trim() ||
-        workspace.path?.trim() ||
-        t("session.workspace_fallback");
-      const list = sessionsByWorkspaceId[workspace.id] ?? [];
-      for (const session of list) {
-        const sessionId = (session as { id?: string }).id?.trim() ?? "";
-        if (!sessionId) continue;
-        const title = getDisplaySessionTitle(
-          (session as { title?: string }).title ?? "",
-        );
-        const updatedAt =
-          (session as { time?: { updated?: number; created?: number } }).time
-            ?.updated ??
-          (session as { time?: { updated?: number; created?: number } }).time
-            ?.created ??
-          0;
-        out.push({
-          workspaceId: workspace.id,
-          sessionId,
-          title,
-          workspaceTitle,
-          updatedAt,
-          searchText: `${title} ${workspaceTitle}`.toLowerCase(),
-          isActive: workspace.id === selectedWorkspaceId,
-        });
-      }
-    }
-    out.sort((a, b) => {
-      if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
-      return b.updatedAt - a.updatedAt;
-    });
-    return out;
-  }, [sessionsByWorkspaceId, selectedWorkspaceId, workspaces]);
+  const paletteSessionOptions = useMemo(
+    () => buildCommandPaletteSessions(workspaces, sessionsByWorkspaceId, selectedWorkspaceId),
+    [sessionsByWorkspaceId, selectedWorkspaceId, workspaces],
+  );
 
   // Refresh the non-tab fields of the nav ref during render. The `options`
   // field is maintained by the `onSessionTabsChange` callback from SessionPage.
@@ -2309,6 +2334,7 @@ export function SessionRoute() {
 
       query={modelPicker.query}
       setQuery={modelPicker.setQuery}
+      subtitle={selectedModelUnavailable ? MODEL_PICKER_UNAVAILABLE_SUBTITLE : undefined}
       target="default"
       current={local.prefs.defaultModel ?? ({ providerID: "", modelID: "" } satisfies ModelRef)}
       onSelect={(next: ModelRef) => {

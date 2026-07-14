@@ -4,10 +4,13 @@ import {
   setTelegramUpdateStatus,
   type TelegramUpdateRow,
 } from "./telegram-store.js"
+import { appLogger } from "../observability/logger.js"
+import { captureException } from "../observability/runtime.js"
 
 const DISPATCH_INTERVAL_MS = 2_000
 const MAX_UPDATES_PER_DRAIN = 20
 const DISPATCH_CONCURRENCY = 4
+const logger = appLogger.child({ component: "telegram_dispatcher" })
 
 type TelegramUpdateProcessor = (update: TelegramUpdateRow) => Promise<void>
 
@@ -70,13 +73,21 @@ export function triggerTelegramUpdateDispatcher() {
     drainPromise = null
   })
   void drainPromise.catch((error) => {
-    console.error("[telegram] update dispatcher failed", error)
+    logger.error("telegram update dispatcher failed", { error })
+    captureException(error, { component: "telegram_dispatcher" })
   })
 }
 
 export function startTelegramUpdateDispatcher() {
-  if (interval) return
+  if (interval) return async () => undefined
   triggerTelegramUpdateDispatcher()
   interval = setInterval(triggerTelegramUpdateDispatcher, DISPATCH_INTERVAL_MS)
   interval.unref()
+  return async () => {
+    if (interval) {
+      clearInterval(interval)
+      interval = null
+    }
+    await drainPromise
+  }
 }

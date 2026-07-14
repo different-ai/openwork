@@ -92,10 +92,16 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.denApi.containerPort | quote }}
+            - name: NODE_OPTIONS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "openwork-ee.configName" . }}
+                  key: DEN_API_NODE_OPTIONS
             {{- if .Values.installerArtifacts.enabled }}
             - name: OPENWORK_INSTALLER_ARTIFACTS_DIR
               value: {{ .Values.installerArtifacts.mountPath | quote }}
             {{- end }}
+            {{- include "openwork-ee.observabilityEnv" (dict "root" . "serviceName" .Values.observability.serviceNames.denApi) | nindent 12 }}
             {{- range $key, $value := .Values.denApi.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

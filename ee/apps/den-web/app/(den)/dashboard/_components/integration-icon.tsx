@@ -33,6 +33,14 @@ const BUNDLED_ICONS_BY_APEX: Record<string, string> = {
   "google.com": "/integrations/google.svg",
 };
 
+const SIMPLE_ICON_SLUG_BY_APEX: Record<string, string> = {
+  "slack.com": "slack",
+  "granola.ai": "granola",
+  "polar.sh": "polar",
+  "exa.ai": "exa",
+  "render.com": "render",
+};
+
 /**
  * Ordered icon candidates: explicit URL first, then a bundled brand icon
  * matched from the service URL (never flaky), then the Simple Icons CDN,
@@ -49,8 +57,9 @@ function iconCandidates(input: {
   if (input.iconUrl) candidates.push(input.iconUrl);
   const apex = apexDomain(input.serviceUrl);
   const bundled = apex ? BUNDLED_ICONS_BY_APEX[apex] : undefined;
+  const simpleIconSlug = input.simpleIconSlug ?? (apex ? SIMPLE_ICON_SLUG_BY_APEX[apex] : undefined);
   if (bundled) candidates.push(bundled);
-  if (input.simpleIconSlug) candidates.push(`https://cdn.simpleicons.org/${input.simpleIconSlug}`);
+  if (simpleIconSlug) candidates.push(`https://cdn.simpleicons.org/${simpleIconSlug}`);
   if (apex) candidates.push(`https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(apex)}`);
   return candidates;
 }

@@ -3,8 +3,9 @@ import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
-import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
+import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { protectedResourceMetadata } from "./index.js"
+import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { DEN_ADMIN_MCP_VERSION, registerAdminMcpTools } from "./admin-tools.js"
 
 /**
@@ -26,16 +27,22 @@ export function registerAdminMcpRoutes<T extends { Variables: Record<string, unk
   // metadata URL (RFC 9728) instead of following the 401 WWW-Authenticate
   // header — the SDK requests `/.well-known/oauth-protected-resource/mcp/admin`
   // first. Serve the same metadata there so discovery resolves either way.
-  // The metadata declares `resource: <origin>/mcp` (admin reuses the canonical
-  // /mcp resource), which the SDK's checkResourceAllowed accepts as a parent
-  // path of /mcp/admin, so the minted token's audience matches.
+  // The metadata still declares the route's parent resource for first-party
+  // desktop and legacy discovery. Public OAuth JWTs are scoped to /mcp/agent
+  // only, so this route relies on first-party opaque MCP tokens and still
+  // requires the platform-admin allowlist below.
   app.get("/.well-known/oauth-protected-resource/mcp/admin", publicRoute, (c) =>
-    c.json(protectedResourceMetadata(c.req.raw)))
+    c.json(protectedResourceMetadata(c.req.raw, "admin")))
   app.get("/mcp/admin/.well-known/oauth-protected-resource", publicRoute, (c) =>
-    c.json(protectedResourceMetadata(c.req.raw)))
+    c.json(protectedResourceMetadata(c.req.raw, "admin")))
 
   app.all("/mcp/admin", tokenRoute, async (c) => {
-    const principal = await verifyMcpRequest(c.req.raw.headers, getMcpResourceUrl(c.req.raw))
+    const requestIdValue = c.get("requestId")
+    const requestId = typeof requestIdValue === "string" ? requestIdValue : "unknown"
+    const principal = await verifyMcpRequest(
+      c.req.raw.headers,
+      getMcpResourceContext(c.req.raw, "admin", requestId),
+    )
     if (principal instanceof Response) {
       return principal
     }
@@ -45,6 +52,11 @@ export function registerAdminMcpRoutes<T extends { Variables: Record<string, unk
         error: "admin_required",
         message: "The den-admin MCP is restricted to allowlisted platform admins.",
       }, 403)
+    }
+
+    const preflightResponse = await preflightMcpJsonRpcRequest(c.req.raw, requestId)
+    if (preflightResponse) {
+      return preflightResponse
     }
 
     const server = new McpServer({

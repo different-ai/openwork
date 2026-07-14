@@ -33,12 +33,15 @@ const DEN_API_INTERNAL_PORT = DEN_API_PORT + 1;
 const DEN_API_URL = `http://127.0.0.1:${DEN_API_PORT}`;
 const DEN_API_INTERNAL_URL = `http://127.0.0.1:${DEN_API_INTERNAL_PORT}`;
 const DEN_BASE_URL = `http://localhost:${DEN_API_PORT}`;
+const DEN_PUBLIC_ORIGIN = (
+  process.env.OPENWORK_EVAL_DEN_PUBLIC_URL ?? DEN_BASE_URL
+).replace(/\/+$/, "");
 const DEMO_EMAIL = process.env.DEN_DEMO_OWNER_EMAIL ?? "alex@acme.test";
 const DEMO_PASSWORD = process.env.DEN_DEMO_OWNER_PASSWORD ?? "OpenWorkDemo123!";
 const MYSQL_CONTAINER = "openwork-web-local-mysql";
 const COMPOSE_ARGS = ["compose", "-p", "openwork-den-local", "-f", "packaging/docker/docker-compose.web-local.yml"];
 const DEN_WEB_ORIGIN = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "http://localhost:3005").replace(/\/+$/, "");
-const DEN_TRUSTED_ORIGINS = `${DEN_BASE_URL},${DEN_WEB_ORIGIN},http://localhost:5173,http://127.0.0.1:5173`;
+const DEN_TRUSTED_ORIGINS = `${DEN_PUBLIC_ORIGIN},${DEN_BASE_URL},${DEN_WEB_ORIGIN},http://localhost:5173,http://127.0.0.1:5173`;
 
 const DEN_ENV = {
   OPENWORK_DEV_MODE: "1",
@@ -46,7 +49,7 @@ const DEN_ENV = {
   DATABASE_URL: "mysql://root:password@127.0.0.1:3306/openwork_den",
   DEN_DB_ENCRYPTION_KEY: "local-dev-db-encryption-key-please-change-1234567890",
   BETTER_AUTH_SECRET: "local-dev-secret-not-for-production-use!!",
-  BETTER_AUTH_URL: DEN_BASE_URL,
+  BETTER_AUTH_URL: DEN_PUBLIC_ORIGIN,
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: DEN_TRUSTED_ORIGINS,
   CORS_ORIGINS: DEN_TRUSTED_ORIGINS,
   PROVISIONER_MODE: "stub",
@@ -190,7 +193,7 @@ async function ensureDenApi(log) {
   }
 
   log(`Starting den-api on internal :${DEN_API_INTERNAL_PORT} (proxied on :${DEN_API_PORT})...`);
-  const pid = spawnDetached("npx", ["tsx", "src/server.ts"], {
+  const pid = spawnDetached("npx", ["tsx", "src/main.ts"], {
     logName: "den-api",
     cwd: join(REPO_ROOT, "ee", "apps", "den-api"),
     env: DEN_ENV,

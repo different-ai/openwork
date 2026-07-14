@@ -12,6 +12,7 @@ import { DenTextarea } from "../../_components/ui/textarea";
 import { DenNotice } from "../../_components/ui/notice";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
+import { EgressDiagnosticsCard } from "./egress-diagnostics-card";
 
 function normalizeAllowedEmailDomainsInput(value: string): string[] | null {
   const domains = [
@@ -178,6 +179,10 @@ export function OrgSettingsScreen() {
   const currentAllowedDomains =
     orgContext?.organization.allowedEmailDomains ?? null;
   const isOwner = orgContext?.currentMember.isOwner ?? false;
+  const canRunEgressDiagnostics = isOwner || (orgContext?.currentMember.role ?? "")
+    .split(",")
+    .map((role) => role.trim())
+    .includes("admin");
   const draftAllowedDomains = useMemo(
     () => normalizeAllowedEmailDomainsInput(allowedDomainsDraft),
     [allowedDomainsDraft],
@@ -656,6 +661,8 @@ export function OrgSettingsScreen() {
             </div>
           ) : null}
         </DenCard>
+
+        <EgressDiagnosticsCard canRun={canRunEgressDiagnostics} />
 
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
           <p className="text-[13px] text-gray-500">

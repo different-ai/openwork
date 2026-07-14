@@ -233,18 +233,14 @@ export function createStoredZip(entries: Array<{ name: string; content: Buffer }
 
 export function createStoredZipStream(entries: Array<{ name: string; content: Buffer }>) {
   const archive = createStoredZipChunks(entries)
-  return streamZipChunks(archive.chunks, archive.byteLength)
-}
-
-function streamZipChunks(chunks: Buffer[], byteLength: number) {
   const maxChunkSize = 1024 * 1024
   let chunkIndex = 0
   let chunkOffset = 0
 
   const body = new ReadableStream<Uint8Array>({
     pull(controller) {
-      while (chunkIndex < chunks.length) {
-        const chunk = chunks[chunkIndex]
+      while (chunkIndex < archive.chunks.length) {
+        const chunk = archive.chunks[chunkIndex]
         if (chunkOffset >= chunk.length) {
           chunkIndex += 1
           chunkOffset = 0
@@ -259,51 +255,7 @@ function streamZipChunks(chunks: Buffer[], byteLength: number) {
     },
   })
 
-  return { body, byteLength }
-}
-
-export function appendStoredEntriesToZipStream(
-  sourceZip: Buffer,
-  entries: Array<{ name: string; content: Buffer }>,
-) {
-  if (entries.length === 0) {
-    return streamZipChunks([sourceZip], sourceZip.length)
-  }
-
-  const eocd = findEndOfCentralDirectory(sourceZip)
-  const prefix = sourceZip.subarray(0, eocd.centralDirectoryOffset)
-  const originalCentralDirectory = sourceZip.subarray(
-    eocd.centralDirectoryOffset,
-    eocd.centralDirectoryOffset + eocd.centralDirectorySize,
-  )
-  const localChunks: Buffer[] = []
-  const centralDirectoryChunks: Buffer[] = []
-  const { time, date } = dosTimestamp()
-  let localHeaderOffset = eocd.centralDirectoryOffset
-
-  for (const entry of entries) {
-    const entryName = Buffer.from(entry.name, "utf8")
-    const checksum = crc32(entry.content)
-    const localHeader = createLocalHeader(entryName, entry.content, time, date, checksum)
-    localChunks.push(localHeader, entry.content)
-    centralDirectoryChunks.push(
-      createCentralDirectoryHeader(entryName, entry.content, localHeaderOffset, time, date, checksum),
-    )
-    localHeaderOffset += localHeader.length + entry.content.length
-  }
-
-  const addedCentralDirectorySize = centralDirectoryChunks.reduce((total, chunk) => total + chunk.length, 0)
-  const centralDirectorySize = eocd.centralDirectorySize + addedCentralDirectorySize
-  const centralDirectoryOffset = localHeaderOffset
-  const nextEocd = createEndOfCentralDirectory(
-    eocd.entryCount + entries.length,
-    centralDirectorySize,
-    centralDirectoryOffset,
-    eocd.comment,
-  )
-  const chunks = [prefix, ...localChunks, originalCentralDirectory, ...centralDirectoryChunks, nextEocd]
-  const byteLength = chunks.reduce((total, chunk) => total + chunk.length, 0)
-  return streamZipChunks(chunks, byteLength)
+  return { body, byteLength: archive.byteLength }
 }
 
 export function appendStoredEntryToZip(sourceZip: Buffer, entryNameInput: string, contentInput: Buffer): ArrayBuffer {

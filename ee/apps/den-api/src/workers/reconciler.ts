@@ -2,11 +2,15 @@ import { and, asc, eq, isNull, lt } from "@openwork-ee/den-db/drizzle"
 import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { appLogger } from "../observability/logger.js"
+import { captureException } from "../observability/runtime.js"
 import { continueCloudProvisioning } from "../routes/workers/shared.js"
 
 type ProvisioningWorker = typeof WorkerTable.$inferSelect
+const logger = appLogger.child({ component: "worker_reconciler" })
 
 let workerProvisioningReconcileRunning = false
+let workerProvisioningReconcilePromise: Promise<void> | null = null
 
 function tokenByScope(
   tokens: Array<typeof WorkerTokenTable.$inferSelect>,
@@ -30,7 +34,7 @@ async function reconcileWorker(worker: ProvisioningWorker) {
       .update(WorkerTable)
       .set({ status: "failed" })
       .where(and(eq(WorkerTable.id, worker.id), eq(WorkerTable.status, "provisioning")))
-    console.error(`[workers] provisioning reconcile failed for ${worker.id}: missing worker tokens`)
+    logger.error("provisioning reconcile failed", { worker_id: worker.id, reason: "missing_worker_tokens" })
     return
   }
 
@@ -57,7 +61,7 @@ export async function reconcileStaleProvisioningWorkers() {
     .limit(env.workerProvisioningReconcileBatchSize)
 
   for (const worker of workers) {
-    console.info(`[workers] reconciling stale provisioning worker ${worker.id}`)
+    logger.info("reconciling stale provisioning worker", { worker_id: worker.id })
     await reconcileWorker(worker)
   }
 
@@ -77,18 +81,24 @@ export function startWorkerProvisioningReconcileLoop(
     }
 
     workerProvisioningReconcileRunning = true
-    void reconcileStaleProvisioningWorkers()
+    workerProvisioningReconcilePromise = reconcileStaleProvisioningWorkers()
+      .then(() => undefined)
       .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error)
-        console.error(`[workers][provisioning_reconcile_failed] reason=${message}`)
+        logger.error("provisioning reconcile loop failed", { error })
+        captureException(error, { component: "worker_reconciler" })
       })
       .finally(() => {
         workerProvisioningReconcileRunning = false
+        workerProvisioningReconcilePromise = null
       })
+    void workerProvisioningReconcilePromise
   }
 
   const timer = setInterval(run, intervalMs)
   timer.unref()
   run()
-  return () => clearInterval(timer)
+  return async () => {
+    clearInterval(timer)
+    await workerProvisioningReconcilePromise
+  }
 }

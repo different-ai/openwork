@@ -27,7 +27,8 @@ import { useMarketplaces } from "./marketplace-data";
 import { useHasAnyIntegration } from "./integration-data";
 
 const ANTHROPIC_KNOWLEDGE_WORK_REPO = "https://github.com/anthropics/knowledge-work-plugins";
-const OPENWORK_MCP_DOCS = "https://github.com/different-ai/openwork/blob/dev/docs/mcp-ui-control-profile.md";
+const OPENWORK_MCP_DOCS = "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp";
+const OPENWORK_MCP_ENDPOINT = "https://api.openworklabs.com/mcp/agent";
 const DOWNLOAD_URL = "https://github.com/different-ai/openwork/releases";
 
 const APP_INSTALLED_KEY = "openwork:onboarding:app-installed";
@@ -200,9 +201,9 @@ export function MarketplaceOnboardingScreen() {
 
   const marketplacePluginTotal = marketplaces.reduce((sum, m) => sum + m.pluginCount, 0);
 
-  async function copyMcpCommand() {
+  async function copyMcpEndpoint() {
     try {
-      await navigator.clipboard.writeText("npx openwork-ui-mcp");
+      await navigator.clipboard.writeText(OPENWORK_MCP_ENDPOINT);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -329,18 +330,22 @@ export function MarketplaceOnboardingScreen() {
             done={mcpAdded}
             required={false}
             icon={<Plug className="h-4 w-4" />}
-            title="Use OpenWork in Claude, Cursor, or any MCP app"
-            helper="Add the OpenWork MCP server so your other AI tools can use your team's skills and agents."
+            title="Use OpenWork in OpenCode, Codex, or any MCP app"
+            helper="Copy the public OpenWork Connect endpoint. OpenCode is verified; Codex, Cursor Web/Agents, ChatGPT Desktop, Claude Code, VS Code, and other clients have setup guides."
           >
             <div className="space-y-2.5">
               <button
                 type="button"
-                onClick={copyMcpCommand}
-                className="inline-flex w-full items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[12px] font-mono text-[#07192C] transition hover:bg-gray-100 sm:w-auto"
+                aria-label={`Copy OpenWork MCP endpoint ${OPENWORK_MCP_ENDPOINT}`}
+                onClick={copyMcpEndpoint}
+                className="inline-flex max-w-full items-center justify-between gap-2 whitespace-normal rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left text-[12px] font-mono text-[#07192C] transition hover:bg-gray-100"
               >
-                <span>npx openwork-ui-mcp</span>
-                {copied ? <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : <Copy className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
+                <span className="min-w-0 break-all">{OPENWORK_MCP_ENDPOINT}</span>
+                {copied ? <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden="true" />}
               </button>
+              <p aria-live="polite" className="min-h-5 text-[12px] font-medium text-emerald-600">
+                {copied ? "OpenWork MCP endpoint copied." : ""}
+              </p>
               <div className="flex flex-wrap items-center gap-3">
                 <a
                   href={OPENWORK_MCP_DOCS}

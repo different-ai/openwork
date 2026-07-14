@@ -35,12 +35,20 @@ import {
   openWorkModelsPromoChangedEvent,
 } from "../../cloud/openwork-models-promo";
 
+export const MODEL_PICKER_DEFAULT_SUBTITLE = "Select a model for this session.";
+export const MODEL_PICKER_UNAVAILABLE_SUBTITLE = "The model you were using is no longer available, please select a different model for this session.";
+
+export function resolveModelPickerSubtitle(subtitle: string | undefined) {
+  return subtitle ?? MODEL_PICKER_DEFAULT_SUBTITLE;
+}
+
 export type ModelPickerModalProps = {
   open: boolean;
   options: ModelOption[];
   disabledProviders?: string[];
   query: string;
   setQuery: (value: string) => void;
+  subtitle?: string;
   target: "default" | "session";
   current: ModelRef;
   onSelect: (model: ModelRef) => void;
@@ -215,7 +223,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         <DialogHeader>
           <DialogTitle>Models</DialogTitle>
           <DialogDescription>
-            Select a model for this session.
+            {resolveModelPickerSubtitle(props.subtitle)}
           </DialogDescription>
         </DialogHeader>
 
