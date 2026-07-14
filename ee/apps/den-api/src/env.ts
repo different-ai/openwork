@@ -97,6 +97,7 @@ const EnvSchema = z.object({
   VERCEL_DNS_DOMAIN: z.string().optional(),
   DEN_PLAN_GATING_ENABLED: z.string().optional(),
   DEN_INSTALL_LINKS_GATING_ENABLED: z.string().optional(),
+  DEN_CONNECT_LINK_MODE: z.enum(["exchange", "signed"]).optional(),
   DEN_CONNECT_LINK_PRIVATE_KEY: z.string().optional(),
   DEN_CONNECT_LINK_KEY_ID: z.string().max(64).optional(),
   DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
@@ -294,18 +295,17 @@ const planGatingEnabled =
 const installLinksGatingEnabled =
   (parsed.DEN_INSTALL_LINKS_GATING_ENABLED ?? String(planGatingEnabled)).toLowerCase() === "true"
 
-// The connect-link signing key is a dedicated Ed25519 keypair owned by the
-// deployment operator (for OpenWork Cloud: the vendor). It is deliberately
-// NOT the better-auth JWKS: those keys rotate every 24h, which would
-// invalidate emailed links, and they carry a different audience/purpose.
+// Exchange mode is the zero-config default. Signed mode is an explicit v2
+// opt-in because its public key must already be trusted by the desktop build.
+const connectLinkMode = parsed.DEN_CONNECT_LINK_MODE ?? "exchange"
 const connectLinkPrivateKeyPem = optionalString(parsed.DEN_CONNECT_LINK_PRIVATE_KEY)
 const connectLinkKid = optionalString(parsed.DEN_CONNECT_LINK_KEY_ID)
-if (Boolean(connectLinkPrivateKeyPem) !== Boolean(connectLinkKid)) {
+if (connectLinkMode === "signed" && (!connectLinkPrivateKeyPem || !connectLinkKid)) {
   throw new Error(
-    "DEN_CONNECT_LINK_PRIVATE_KEY and DEN_CONNECT_LINK_KEY_ID must be set together (or both left unset).",
+    "DEN_CONNECT_LINK_MODE=signed requires DEN_CONNECT_LINK_PRIVATE_KEY and DEN_CONNECT_LINK_KEY_ID.",
   )
 }
-const connectLink = connectLinkPrivateKeyPem && connectLinkKid
+const connectLink = connectLinkMode === "signed" && connectLinkPrivateKeyPem && connectLinkKid
   ? { privateKeyPem: connectLinkPrivateKeyPem, kid: connectLinkKid }
   : null
 

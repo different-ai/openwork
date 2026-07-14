@@ -10,6 +10,7 @@ export {
   CONNECT_LINK_ALGORITHM,
   CONNECT_LINK_AUDIENCE,
   CONNECT_LINK_DEFAULT_TTL_HOURS,
+  CONNECT_LINK_EXCHANGE_TTL_MINUTES,
   CONNECT_LINK_MAX_TTL_HOURS,
   CONNECT_LINK_ROUTE,
   CONNECT_LINK_VERSION,
@@ -19,6 +20,7 @@ export type {
   ConnectLinkClaims,
   ConnectLinkDenTarget,
   ConnectLinkOrg,
+  ConnectLinkTransport,
   ConnectLinkVerifyErrorCode,
   ConnectLinkVerifyFailure,
   ConnectLinkVerifyResult,
@@ -90,4 +92,11 @@ export function findInsecureConnectLinkUrl(claims: ConnectLinkClaims): string | 
 
 export function buildConnectDeepLink(token: string, scheme = "openwork"): string {
   return `${scheme}://${CONNECT_LINK_ROUTE}?token=${encodeURIComponent(token)}`
+}
+
+export function buildConnectExchangeDeepLink(code: string, apiBaseUrl: string, scheme = "openwork"): string {
+  const url = new URL(`${scheme}://${CONNECT_LINK_ROUTE}`)
+  url.searchParams.set("code", code)
+  url.searchParams.set("apiBaseUrl", apiBaseUrl)
+  return url.toString()
 }

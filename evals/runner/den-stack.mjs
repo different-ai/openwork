@@ -47,6 +47,7 @@ const DEN_ENV = {
   DEN_DB_ENCRYPTION_KEY: "local-dev-db-encryption-key-please-change-1234567890",
   BETTER_AUTH_SECRET: "local-dev-secret-not-for-production-use!!",
   BETTER_AUTH_URL: DEN_BASE_URL,
+  DEN_API_PUBLIC_URL: DEN_API_URL,
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: DEN_TRUSTED_ORIGINS,
   CORS_ORIGINS: DEN_TRUSTED_ORIGINS,
   PROVISIONER_MODE: "stub",
@@ -157,8 +158,9 @@ async function mysqlQuery(sql) {
 
 async function ensureSchema(log) {
   try {
-    const tables = await mysqlQuery("SHOW TABLES LIKE 'organization';");
-    if (tables.includes("organization")) {
+    const organizationTable = await mysqlQuery("SHOW TABLES LIKE 'organization';");
+    const connectGrantTable = await mysqlQuery("SHOW TABLES LIKE 'desktop_connect_grant';");
+    if (organizationTable.includes("organization") && connectGrantTable.includes("desktop_connect_grant")) {
       log("Schema present");
       return;
     }

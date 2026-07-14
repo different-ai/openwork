@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm"
 import { index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import type { DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
+import type { ConnectLinkClaims } from "@openwork/types/connect-link"
 import { denTypeIdColumn, mediumBlobColumn } from "../columns"
 
 export const DesktopHandoffGrantTable = mysqlTable(
@@ -16,6 +17,23 @@ export const DesktopHandoffGrantTable = mysqlTable(
   (table) => [
     index("desktop_handoff_grant_user_id").on(table.user_id),
     index("desktop_handoff_grant_expires_at").on(table.expires_at),
+  ],
+)
+
+export const DesktopConnectGrantTable = mysqlTable(
+  "desktop_connect_grant",
+  {
+    codeHash: varchar("code_hash", { length: 64 }).notNull().primaryKey(),
+    installLinkId: denTypeIdColumn("installLink", "install_link_id").notNull(),
+    claims: json("claims").$type<ConnectLinkClaims>().notNull(),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    consumedAt: timestamp("consumed_at", { fsp: 3 }),
+    consumedNonce: varchar("consumed_nonce", { length: 64 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("desktop_connect_grant_install_link_id").on(table.installLinkId),
+    index("desktop_connect_grant_expires_at").on(table.expiresAt),
   ],
 )
 

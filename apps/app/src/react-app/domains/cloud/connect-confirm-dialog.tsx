@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 
-import type { ConnectLinkClaims, ConnectLinkVerifyErrorCode } from "@openwork/types/connect-link";
+import type { ConnectLinkClaims, ConnectLinkTransport, ConnectLinkVerifyErrorCode } from "@openwork/types/connect-link";
 
 import { t } from "../../../i18n";
 import { Button } from "../../../components/ui/button";
@@ -20,6 +20,7 @@ export type ConnectConfirmDialogProps = {
   open: boolean;
   phase: ConnectConfirmPhase;
   claims: ConnectLinkClaims | null;
+  transport: ConnectLinkTransport | null;
   /** Host currently configured, when the app is already connected somewhere. */
   currentHost: string | null;
   error: { code: ConnectLinkVerifyErrorCode; message: string } | null;
@@ -37,6 +38,8 @@ function errorCopy(code: ConnectLinkVerifyErrorCode): string {
       return t("connect.error_replayed");
     case "insecure_url":
       return t("connect.error_insecure_url");
+    case "unavailable":
+      return t("connect.error_unavailable");
     case "bad_signature":
     case "wrong_audience":
     case "wrong_version":
@@ -64,6 +67,7 @@ export function ConnectConfirmDialog({
   open,
   phase,
   claims,
+  transport,
   currentHost,
   error,
   onConfirm,
@@ -71,7 +75,8 @@ export function ConnectConfirmDialog({
 }: ConnectConfirmDialogProps) {
   const targetHost = claims ? formatControlPlaneHost(claims.den.baseUrl) : null;
   const switching = Boolean(currentHost && targetHost && currentHost !== targetHost);
-  const logoUrl = claims?.brand.logoUrl && isHttpsUrl(claims.brand.logoUrl) ? claims.brand.logoUrl : null;
+  const trustedBrandUrl = transport === "signed" ? claims?.brand.iconUrl ?? claims?.brand.logoUrl : null;
+  const logoUrl = trustedBrandUrl && isHttpsUrl(trustedBrandUrl) ? trustedBrandUrl : null;
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onDismiss(); }}>

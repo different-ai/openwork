@@ -39,6 +39,21 @@ function isUrl(value: string) {
   }
 }
 
+function isConnectUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const route = (url.hostname || url.pathname.replace(/^\/+|\/+$/g, "")).toLowerCase();
+    if (url.protocol !== "openwork:" || route !== "connect") return false;
+    const token = url.searchParams.get("token")?.trim() ?? "";
+    const code = url.searchParams.get("code")?.trim() ?? "";
+    const apiBaseUrl = url.searchParams.get("apiBaseUrl")?.trim() ?? "";
+    return (Boolean(token) && !code && !apiBaseUrl)
+      || (!token && /^[A-Za-z0-9_-]{24,128}$/.test(code) && isUrl(apiBaseUrl));
+  } catch {
+    return false;
+  }
+}
+
 function parseInstallConfig(value: unknown): InstallConfig | null {
   if (!isRecord(value)) {
     return null;
@@ -59,7 +74,7 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   if (logoUrl !== null && (typeof logoUrl !== "string" || !isUrl(logoUrl))) {
     return null;
   }
-  if (connectUrl !== null && (typeof connectUrl !== "string" || !connectUrl.startsWith("openwork://connect?token="))) {
+  if (connectUrl !== null && (typeof connectUrl !== "string" || !isConnectUrl(connectUrl))) {
     return null;
   }
   if (connectExpiresAt !== null && (typeof connectExpiresAt !== "string" || Number.isNaN(Date.parse(connectExpiresAt)))) {
@@ -76,6 +91,22 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
     connectUrl,
     connectExpiresAt,
   };
+}
+
+async function fetchInstallConfig(token: string) {
+  const { response, payload } = await requestJson(
+    `/v1/install-config?token=${encodeURIComponent(token)}`,
+    { method: "GET" },
+    12000,
+  );
+  if (!response.ok) {
+    throw new Error(getInstallConfigErrorMessage(payload, response.status));
+  }
+  const parsed = parseInstallConfig(payload);
+  if (!parsed) {
+    throw new Error("This install link returned incomplete setup details.");
+  }
+  return parsed;
 }
 
 function detectPlatform(): InstallPlatform {
@@ -110,6 +141,8 @@ export function InstallScreen() {
   const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "started">("idle");
   const [downloadLabel, setDownloadLabel] = useState("");
   const [downloadHref, setDownloadHref] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const [guideStep, setGuideStep] = useState<1 | 2 | 3>(() => {
     const requestedStep = searchParams.get("step");
     return requestedStep === "3" ? 3 : requestedStep === "2" ? 2 : 1;
@@ -134,19 +167,8 @@ export function InstallScreen() {
       setBusy(true);
       setError(null);
       try {
-        const { response, payload } = await requestJson(`/v1/install-config?token=${encodeURIComponent(token)}`, { method: "GET" }, 12000);
+        const parsed = await fetchInstallConfig(token);
         if (cancelled) {
-          return;
-        }
-        if (!response.ok) {
-          setError(getInstallConfigErrorMessage(payload, response.status));
-          setConfig(null);
-          return;
-        }
-        const parsed = parseInstallConfig(payload);
-        if (!parsed) {
-          setError("This install link returned incomplete setup details.");
-          setConfig(null);
           return;
         }
         setConfig(parsed);
@@ -206,8 +228,26 @@ export function InstallScreen() {
     advanceGuide(2);
   }
 
-  function beginConnect() {
-    advanceGuide(3);
+  async function beginConnect() {
+    setConnecting(true);
+    setConnectError(null);
+    try {
+      // Mint immediately before opening the app. The default exchange link is
+      // intentionally short lived, while installing can take several minutes.
+      const freshConfig = await fetchInstallConfig(token);
+      if (!freshConfig.connectUrl) {
+        throw new Error("This deployment could not create a desktop connection link.");
+      }
+      setConfig(freshConfig);
+      advanceGuide(3);
+      window.location.href = freshConfig.connectUrl;
+    } catch (connectFailure) {
+      setConnectError(connectFailure instanceof Error
+        ? connectFailure.message
+        : "Could not create a fresh desktop connection. Try again.");
+    } finally {
+      setConnecting(false);
+    }
   }
 
   if (busy) {
@@ -332,22 +372,20 @@ export function InstallScreen() {
                 </div>
                 {guideStep >= 2 ? (
                   <div className="grid gap-2">
-                    <a
-                      className="den-button-primary w-full justify-center sm:w-fit"
-                      href={config.connectUrl}
-                      data-testid="install-connect-open"
-                      onClick={beginConnect}
-                    >
-                      Open {config.appName}
-                    </a>
                     <button
                       type="button"
-                      className="w-fit text-sm text-[var(--dls-text-secondary)] underline underline-offset-4"
-                      onClick={() => window.location.reload()}
-                      data-testid="install-connect-refresh"
+                      className="den-button-primary w-full justify-center sm:w-fit"
+                      data-testid="install-connect-open"
+                      disabled={connecting}
+                      onClick={() => void beginConnect()}
                     >
-                      Refresh an expired connection link
+                      {connecting ? "Preparing connection…" : `Open ${config.appName}`}
                     </button>
+                    {connectError ? (
+                      <p className="m-0 text-sm text-red-600" role="alert" data-testid="install-connect-error">
+                        {connectError}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

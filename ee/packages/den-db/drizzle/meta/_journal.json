@@ -267,6 +267,13 @@
       "when": 1784006584482,
       "tag": "0038_clear_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "5",
+      "when": 1784037786637,
+      "tag": "0039_bouncy_chamber",
+      "breakpoints": true
     }
   ]
 }

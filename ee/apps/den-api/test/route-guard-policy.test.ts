@@ -46,6 +46,8 @@ const routeGuardExceptions = new Map<string, string>([
   ["DELETE /api/auth/scim/v2/Users/:userId", "SCIM bearer token is validated before forwarding"],
   ["GET /v1/install-config", "public install-link config; the install-link token is validated in-handler and rate-limited"],
   ["GET /v1/install/:platform", "public stamped installer download; the install-link token is validated in-handler and rate-limited"],
+  ["POST /v1/install-connect/preview", "short-lived install connection code preview is validated and rate-limited in-handler"],
+  ["POST /v1/install-connect/exchange", "short-lived install connection code exchange is one-time and rate-limited in-handler"],
   ["GET /v1/orgs/invitations/preview", "public invitation preview by invitation id"],
   ["GET /v1/orgs/sso/singleton", "public singleton SSO status for auth UI"],
   ["GET /v1/orgs/sso/resolve", "public SSO domain discovery"],

@@ -599,7 +599,11 @@ without redacting secrets.
 
 ## Install links
 
-The migration Job creates the `install_link` table automatically when `migrations.enabled=true`. Install links remain dark until a platform admin opens `/admin` and enables the `Install links` capability for an org. See the [operator guide](../../../docs/org-install-links.md).
+The migration Job creates the `install_link` and `desktop_connect_grant` tables
+automatically when `migrations.enabled=true`. Hosted deployments that enable
+install-link gating must opt organizations in through `/admin`; self-hosted
+deployments default to enabled. See the
+[operator guide](../../../docs/org-install-links.md).
 
 Optional installer artifact values:
 
@@ -615,17 +619,37 @@ installerArtifacts:
   mountPath: /var/lib/openwork/installer-artifacts
 ```
 
-Use either `installerArtifacts.existingClaim` or `installerArtifacts.hostPath`, not both. The required filenames depend on whether guided desktop setup is enabled, as described below.
+Use either `installerArtifacts.existingClaim` or `installerArtifacts.hostPath`,
+not both.
 
 ### Guided desktop setup
 
-The organization download page can hand the normal OpenWork app its Den
-configuration in an explicit second step. Configure a dedicated Ed25519
-signing key whose public key is already trusted by the desktop build:
+The organization download page hands the normal OpenWork app its Den
+configuration in an explicit second step. The default is a short-lived,
+single-use HTTPS exchange and needs no key configuration:
 
 ```yaml
 config:
   public:
+    connectLinkMode: exchange
+```
+
+Den validates the install token and then either:
+
+- streams the standard installer already mounted at
+  `installerArtifacts.mountPath`; or
+- redirects the browser directly to the exact configured GitHub release asset.
+
+Den does not download, cache, wrap, or ZIP GitHub artifacts. The organization
+setup stays in the **Open OpenWork** deep-link step after installation.
+
+For an optional signed handoff, explicitly select signed mode and configure a
+dedicated Ed25519 key whose public key is already trusted by the desktop build:
+
+```yaml
+config:
+  public:
+    connectLinkMode: signed
     connectLinkKeyId: "owc-2026-07"
 
 secret:
@@ -641,13 +665,6 @@ For an existing Secret, put the private key under the key named by
 `scripts/generate-connect-link-keypair.mjs` can generate a pair, but a standard
 desktop build will reject it until the matching public key ships in that build.
 
-With signed handoffs enabled, Den validates the install token and then either:
-
-- returns the standard installer already mounted at
-  `installerArtifacts.mountPath`; or
-- redirects the browser directly to the exact configured GitHub release asset.
-
-Den does not download, cache, wrap, or stream GitHub artifacts on this path.
 For a semi-air-gapped deployment, mount these normal release filenames (where
 `<version>` is `installerReleaseTag` without its leading `v`):
 
@@ -659,9 +676,10 @@ For a semi-air-gapped deployment, mount these normal release filenames (where
 
 Without mounted artifacts, client networks must permit the configured GitHub
 release URL and GitHub's redirected release-asset host. With mounted artifacts,
-the browser only talks to Den. Use a shared PVC when `denApi.replicaCount` is
-greater than one. If no connect-link signing key is configured, Den retains the
-older bundled-bootstrap download as a compatibility fallback.
+the browser only talks to Den. Use a shared read-only PVC when
+`denApi.replicaCount` is greater than one. Connection grants are stored and
+consumed in MySQL, so the guided flow is safe when preview and acceptance land
+on different API replicas.
 
 ## Health Probes
 

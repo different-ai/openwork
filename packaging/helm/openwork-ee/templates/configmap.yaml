@@ -31,6 +31,7 @@ data:
   DEN_WEB_APP_HOSTS: {{ .Values.config.public.webAppHosts | quote }}
   DEN_BOOTSTRAP_ADMIN_EMAILS: {{ .Values.config.public.bootstrapAdminEmails | quote }}
   DEN_INSTALL_LINKS_GATING_ENABLED: {{ .Values.config.public.installLinksGatingEnabled | quote }}
+  DEN_CONNECT_LINK_MODE: {{ .Values.config.public.connectLinkMode | quote }}
   {{ if .Values.config.public.connectLinkKeyId }}
   DEN_CONNECT_LINK_KEY_ID: {{ .Values.config.public.connectLinkKeyId | quote }}
   {{ end }}

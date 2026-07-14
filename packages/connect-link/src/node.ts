@@ -175,5 +175,5 @@ export function verifyConnectLinkToken(input: VerifyConnectLinkTokenInput): Conn
     return { ok: false, code: "insecure_url", message: `Token target is not https: ${refusedUrl}` }
   }
 
-  return { ok: true, claims, kid }
+  return { ok: true, claims, transport: "signed", kid }
 }

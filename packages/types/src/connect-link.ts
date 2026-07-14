@@ -1,7 +1,7 @@
-// Shared contract for signed connect links (`openwork://connect?token=<JWT>`).
-// The token is an EdDSA (Ed25519) compact JWS minted by a Den deployment and
-// verified by the desktop app against vendor public keys embedded in the
-// build. It carries configuration provenance only — never authentication.
+// Shared contract for organization connect links. The default transport is a
+// short-lived HTTPS exchange; an optional Ed25519 JWS transport is available
+// when its public key ships in the desktop build. Both carry configuration
+// provenance only — never authentication.
 
 export const CONNECT_LINK_ROUTE = "connect";
 export const CONNECT_LINK_AUDIENCE = "openwork-desktop-connect";
@@ -9,6 +9,7 @@ export const CONNECT_LINK_VERSION = 1;
 export const CONNECT_LINK_ALGORITHM = "EdDSA";
 export const CONNECT_LINK_DEFAULT_TTL_HOURS = 72;
 export const CONNECT_LINK_MAX_TTL_HOURS = 168;
+export const CONNECT_LINK_EXCHANGE_TTL_MINUTES = 5;
 
 export type ConnectLinkOrg = {
   name: string;
@@ -49,12 +50,16 @@ export type ConnectLinkVerifyErrorCode =
   | "wrong_version"
   | "insecure_url"
   | "malformed_claims"
-  | "replayed";
+  | "replayed"
+  | "unavailable";
+
+export type ConnectLinkTransport = "signed" | "exchange";
 
 export type ConnectLinkVerifySuccess = {
   ok: true;
   claims: ConnectLinkClaims;
-  kid: string;
+  transport: ConnectLinkTransport;
+  kid: string | null;
 };
 
 export type ConnectLinkVerifyFailure = {

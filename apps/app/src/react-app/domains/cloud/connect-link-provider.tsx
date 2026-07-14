@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 
-import type { ConnectLinkClaims, ConnectLinkVerifyErrorCode } from "@openwork/types/connect-link";
+import type { ConnectLinkClaims, ConnectLinkTransport, ConnectLinkVerifyErrorCode } from "@openwork/types/connect-link";
 
 import { refreshDenBootstrapConfigFromShell } from "../../../app/lib/den";
 import { connectLinkAccept, connectLinkVerify } from "../../../app/lib/desktop";
@@ -24,8 +24,9 @@ type ConnectLinkError = { code: ConnectLinkVerifyErrorCode; message: string };
 
 type PendingConnectLink = {
   rawUrl: string;
-  token: string;
+  key: string;
   claims: ConnectLinkClaims;
+  transport: ConnectLinkTransport;
 };
 
 type ConnectLinkProviderProps = {
@@ -33,9 +34,9 @@ type ConnectLinkProviderProps = {
 };
 
 /**
- * Global consumer for `openwork://connect?token=<JWT>` deep links in the
- * normal desktop app. Relays the raw URL to the Electron main process for verification
- * against the embedded vendor keys, walks the user through an explicit
+ * Global consumer for signed and short-lived exchange connect links in the
+ * normal desktop app. Relays the raw URL to the Electron main process for validation,
+ * walks the user through an explicit
  * confirmation, and only then lets the main process persist the new desktop
  * bootstrap config. Mirrors the den-auth-provider deep-link listener pattern.
  */
@@ -43,11 +44,11 @@ export function ConnectLinkProvider({ children }: ConnectLinkProviderProps) {
   const [phase, setPhase] = useState<ConnectConfirmPhase | "idle">("idle");
   const [pending, setPending] = useState<PendingConnectLink | null>(null);
   const [error, setError] = useState<ConnectLinkError | null>(null);
-  const handledTokensRef = useRef<Set<string>>(new Set());
+  const handledLinksRef = useRef<Set<string>>(new Set());
   const pendingRef = useRef<PendingConnectLink | null>(null);
 
-  const beginVerify = useCallback((rawUrl: string, token: string) => {
-    handledTokensRef.current.add(token);
+  const beginVerify = useCallback((rawUrl: string, key: string) => {
+    handledLinksRef.current.add(key);
     setError(null);
     setPending(null);
     pendingRef.current = null;
@@ -55,13 +56,13 @@ export function ConnectLinkProvider({ children }: ConnectLinkProviderProps) {
 
     void connectLinkVerify(rawUrl).then((result) => {
       if (result.ok) {
-        const next = { rawUrl, token, claims: result.claims };
+        const next = { rawUrl, key, claims: result.claims, transport: result.transport };
         pendingRef.current = next;
         setPending(next);
         setPhase("confirm");
         return;
       }
-      // Leave failed tokens handled — the same broken link should not
+      // Leave failed links handled — the same broken link should not
       // re-prompt every time the queue replays it.
       setError({ code: result.code, message: result.message });
       setPhase("error");
@@ -74,8 +75,8 @@ export function ConnectLinkProvider({ children }: ConnectLinkProviderProps) {
   const handleUrls = useCallback((urls: readonly string[]) => {
     for (const rawUrl of urls) {
       const parsed = parseConnectDeepLink(rawUrl);
-      if (!parsed || handledTokensRef.current.has(parsed.token)) continue;
-      beginVerify(parsed.rawUrl, parsed.token);
+      if (!parsed || handledLinksRef.current.has(parsed.key)) continue;
+      beginVerify(parsed.rawUrl, parsed.key);
       // One prompt at a time; later links can arrive again as new deep-link
       // events after the current prompt is resolved.
       break;
@@ -129,6 +130,7 @@ export function ConnectLinkProvider({ children }: ConnectLinkProviderProps) {
         open={phase !== "idle"}
         phase={phase === "idle" ? "verifying" : phase}
         claims={pending?.claims ?? null}
+        transport={pending?.transport ?? null}
         currentHost={null}
         error={error}
         onConfirm={confirm}

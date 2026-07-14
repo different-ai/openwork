@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer"
 import { createPrivateKey, sign } from "node:crypto"
 import {
   buildConnectDeepLink,
+  buildConnectExchangeDeepLink,
   CONNECT_LINK_AUDIENCE,
   type ConnectLinkClaims,
 } from "../src/index"
@@ -56,6 +57,7 @@ describe("signed desktop connect links", () => {
     if (!result.ok) throw new Error("expected valid token")
     expect(result.claims).toEqual(expected)
     expect(result.kid).toBe(KID)
+    expect(result.transport).toBe("signed")
   })
 
   test("rejects tampered payloads", () => {
@@ -114,5 +116,7 @@ describe("signed desktop connect links", () => {
 
   test("builds only the dedicated connect route", () => {
     expect(buildConnectDeepLink("abc.def.ghi")).toBe("openwork://connect?token=abc.def.ghi")
+    expect(buildConnectExchangeDeepLink("abcdefghijklmnopqrstuvwxyz123456", "https://den.example.com/api/den"))
+      .toBe("openwork://connect?code=abcdefghijklmnopqrstuvwxyz123456&apiBaseUrl=https%3A%2F%2Fden.example.com%2Fapi%2Fden")
   })
 })

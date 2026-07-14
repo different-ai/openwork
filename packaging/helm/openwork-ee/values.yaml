@@ -37,6 +37,7 @@ config:
     webAppHosts: openwork.example.com
     bootstrapAdminEmails: ""
     installLinksGatingEnabled: "false"
+    connectLinkMode: exchange
     connectLinkKeyId: ""
     openworkAppConnectUrl: ""
     installerReleaseTag: ""

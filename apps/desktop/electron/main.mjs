@@ -32,7 +32,13 @@ import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
-import { createConnectLinkReplayGuard, verifyConnectLinkUrl } from "./connect-link.mjs";
+import {
+  createConnectLinkReplayGuard,
+  desktopBootstrapFromConnectClaims,
+  extractConnectExchange,
+  resolveConnectExchangeUrl,
+  verifyConnectLinkUrl,
+} from "./connect-link.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import {
@@ -913,6 +919,32 @@ function verifyConnectLink(rawUrl) {
   });
 }
 
+async function previewConnectLink(rawUrl) {
+  if (extractConnectExchange(rawUrl)) {
+    return resolveConnectExchangeUrl(rawUrl, {
+      mode: "preview",
+      fetcher: electronNet.fetch,
+      allowInsecureLoopback: isDevMode,
+    });
+  }
+  return verifyConnectLink(rawUrl);
+}
+
+async function acceptConnectLink(rawUrl) {
+  if (extractConnectExchange(rawUrl)) {
+    return resolveConnectExchangeUrl(rawUrl, {
+      mode: "exchange",
+      fetcher: electronNet.fetch,
+      allowInsecureLoopback: isDevMode,
+    });
+  }
+  return verifyConnectLink(rawUrl);
+}
+
+async function persistConnectLinkClaims(claims) {
+  return workspaceStore.setDesktopBootstrapConfig(desktopBootstrapFromConnectClaims(claims));
+}
+
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
   if (value === "win32") return "windows";
@@ -1618,9 +1650,9 @@ const desktopCommandHandlers = {
       // Read-only check — parses + verifies the deep link, writes nothing.
       // Replay is surfaced here too so an already-used link gets its refusal
       // before the user is ever shown a confirmation.
-      const verified = verifyConnectLink(String(args[0] ?? ""));
+      const verified = await previewConnectLink(String(args[0] ?? ""));
       if (verified.ok === false) return verified;
-      if (await connectLinkReplayGuard.has(verified.claims.jti)) {
+      if (verified.transport === "signed" && await connectLinkReplayGuard.has(verified.claims.jti)) {
         return { ok: false, code: "replayed", message: "This connect link was already used on this machine." };
       }
       return verified;
@@ -1628,8 +1660,12 @@ const desktopCommandHandlers = {
   "connectLinkAccept": async (event, ...args) => {
       // The renderer passes the raw URL back after the user confirmed; claims
       // shaped in the renderer are never trusted (desktop-ipc trust boundary).
-      const verified = verifyConnectLink(String(args[0] ?? ""));
+      const verified = await acceptConnectLink(String(args[0] ?? ""));
       if (verified.ok === false) return verified;
+      if (verified.transport === "exchange") {
+        const config = await persistConnectLinkClaims(verified.claims);
+        return { ok: true, config };
+      }
       if (await connectLinkReplayGuard.has(verified.claims.jti)) {
         return { ok: false, code: "replayed", message: "This connect link was already used on this machine." };
       }
@@ -1638,14 +1674,7 @@ const desktopCommandHandlers = {
       if (!(await connectLinkReplayGuard.remember(verified.claims.jti))) {
         return { ok: false, code: "replayed", message: "This connect link was already used on this machine." };
       }
-      const config = await workspaceStore.setDesktopBootstrapConfig({
-        baseUrl: verified.claims.den.baseUrl,
-        ...(verified.claims.den.apiBaseUrl ? { apiBaseUrl: verified.claims.den.apiBaseUrl } : {}),
-        requireSignin: verified.claims.requireSignin,
-        brandAppName: verified.claims.brand.appName,
-        ...(verified.claims.brand.logoUrl ? { brandLogoUrl: verified.claims.brand.logoUrl } : {}),
-        ...(verified.claims.brand.iconUrl ? { brandIconUrl: verified.claims.brand.iconUrl } : {}),
-      });
+      const config = await persistConnectLinkClaims(verified.claims);
       return { ok: true, config };
   },
   "nukeOpenworkAndOpencodeConfigAndExit": async (event, ...args) => {

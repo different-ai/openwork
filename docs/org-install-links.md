@@ -1,170 +1,191 @@
 # Organization Install Links
 
 Status: self-host operator guide
+
 Owner: platform/self-host
-Related: `ee/apps/den-api/src/install-links.ts`, `ee/apps/den-api/src/routes/org/install-links.ts`, `ee/apps/den-api/src/utils/installer-artifacts.ts`, `packaging/helm/openwork-ee/README.md`
+Related: `ee/apps/den-api/src/install-links.ts`, `ee/apps/den-api/src/routes/org/install-links.ts`, `ee/apps/den-api/src/desktop-connect-grants.ts`, `packaging/helm/openwork-ee/README.md`
 
-## What it is
+## What users get
 
-Organization install links let workspace members mint shareable desktop install
-links for their workspace. When the capability is enabled, invitation emails
-automatically use the same organization-specific install page as the dashboard.
-Den packages the normal signed OpenWork DMG or EXE with an organization-specific
-`desktop-bootstrap.json`. The standard desktop app imports that file on first
-launch. There is no second installer application to build, sign, publish, or
-deploy. The installed app still requires sign-in against your deployment, so
-possession of an install link does not grant workspace access.
+An organization install link opens a three-step Den page:
+
+1. Download and run the standard OpenWork installer.
+2. Return to Den and click **Open OpenWork**.
+3. Confirm the exact organization and server in the app, then complete normal
+   organization sign-in.
+
+This flow does not build a customer-specific installer or ZIP. Branding and
+server configuration are applied only after the user confirms the deep link.
+Possession of the install link never signs a user in or grants workspace
+access.
+
+The guided flow is scoped to Den organization install links. The public
+`/desktop` and landing-page downloads keep their existing behavior.
 
 ## Upgrade checklist
 
-> **Self-host default:** Install links are active by default when deployment
-> gating is off. Hosted installations can set
-> `DEN_INSTALL_LINKS_GATING_ENABLED=true` to keep per-organization opt-in.
+> **Self-host default:** Install links are active when deployment gating is
+> off. Hosted installations can set `DEN_INSTALL_LINKS_GATING_ENABLED=true` to
+> retain per-organization opt-in.
 
 ### Helm
 
 1. Keep `migrations.enabled=true` for the upgrade. The migration Job creates
-   the `install_link` table automatically; see the
-   [Helm migration Job docs](../packaging/helm/openwork-ee/README.md#migrations).
-2. Restart/roll the deployment with the new values. No install-link capability
-   toggle is required for normal self-hosted installations.
-3. If you intentionally want hosted-style rollout, set
+   both `install_link` and `desktop_connect_grant`.
+2. Keep `config.public.connectLinkMode: exchange` (the default). No key is
+   required.
+3. Restart or roll the deployment. No install-link capability toggle is
+   required for a normal self-hosted installation.
+4. For hosted-style rollout only, set
    `DEN_INSTALL_LINKS_GATING_ENABLED=true`, configure
-   `config.public.bootstrapAdminEmails`, then enable `Install links` per org in
-   `/admin`.
+   `config.public.bootstrapAdminEmails`, then enable **Install links** per org
+   in `/admin`.
 
 ### Docker Compose
 
-1. Run the migration once from the repo root:
+Run the migration once, then restart Den:
 
-   ```bash
-   docker compose -f packaging/docker/docker-compose.den-dev.yml exec den sh -lc "pnpm --dir /app/ee/packages/den-db run db:bootstrap"
-   ```
+```bash
+docker compose -f packaging/docker/docker-compose.den-dev.yml exec den sh -lc \
+  "pnpm --dir /app/ee/packages/den-db run db:bootstrap"
+```
 
-   If your stack was launched with a custom Compose project name, include the
-   same `-p <project>` flag.
-2. Restart Den. Install links are active by default.
-3. For hosted-style rollout only, set
-   `DEN_INSTALL_LINKS_GATING_ENABLED=true` and `DEN_BOOTSTRAP_ADMIN_EMAILS`,
-   then enable `Install links` per org in `/admin`.
+If the stack has a custom Compose project name, include the same `-p <project>`
+flag.
 
-## Public origins requirement
+## Public origins
 
-> **Hard requirement:** Set `BETTER_AUTH_URL` to the externally reachable
-> den-web origin (for example, `https://openwork.example.com`). Dashboard and
-> invitation-email install links are built from this value. Set
-> `DEN_API_PUBLIC_URL` to the Den API origin that invitees' computers can reach.
+Set `BETTER_AUTH_URL` to the externally reachable Den web origin, for example
+`https://openwork.example.com`. Set `DEN_API_PUBLIC_URL` to the externally
+reachable Den API origin. The desktop must be able to reach both origins.
 
 Invitation acceptance links use the first non-wildcard entry of
-`DEN_BETTER_AUTH_TRUSTED_ORIGINS`, falling back to `BETTER_AUTH_URL`. In the
-normal single-origin setup, put the same den-web origin in both settings.
+`DEN_BETTER_AUTH_TRUSTED_ORIGINS`, falling back to `BETTER_AUTH_URL`. In a
+single-origin setup, use the Den web origin for both.
 
-## Installer artifacts
+## Installer delivery
 
-Den resolves the standard signed Mac and Windows desktop artifacts in this order:
+Den first validates the organization install token. It then chooses exactly
+one of these paths:
 
-1. `OPENWORK_INSTALLER_ARTIFACTS_DIR`, when set and the file exists.
-2. `OPENWORK_INSTALLER_CACHE_DIR/<tag>/<file>`, defaulting to the OS temp dir.
-3. The GitHub release asset for `OPENWORK_INSTALLER_RELEASE_REPO` and
-   `OPENWORK_INSTALLER_RELEASE_TAG`.
-4. If the artifact is unavailable, a verified direct normal desktop download.
-   If that is also unavailable, the stable OpenWork download page.
-
-| Mode | Configure | Behavior |
+| Deployment | Download behavior | Required client access |
 |---|---|---|
-| Internet-connected | Default. `OPENWORK_INSTALLER_RELEASE_TAG` resolves to `v<pinned app version>`; override it when needed. | Den downloads the normal public DMG/EXE on the first organization download, caches it, and creates the ZIP at request time. If Den cannot fetch it, the browser is redirected to the verified normal DMG/EXE without including the organization token. |
-| Fork/mirror | Set `OPENWORK_INSTALLER_RELEASE_REPO`, for example `your-org/openwork`. | Den downloads assets from your fork or mirror release instead of `different-ai/openwork`. |
-| Air-gapped | Mount a volume at `OPENWORK_INSTALLER_ARTIFACTS_DIR` containing the normal versioned assets, for example `openwork-mac-arm64-0.18.0.dmg`, `openwork-mac-x64-0.18.0.dmg`, and `openwork-win-x64-0.18.0.exe`, matching `OPENWORK_INSTALLER_RELEASE_TAG=v0.18.0`. | The mounted artifact directory takes precedence. Den adds `desktop-bootstrap.json` without modifying the signed installer bytes and requires zero egress. |
+| Internet-connected | Immediate `302` to the exact standard asset under `OPENWORK_INSTALLER_RELEASE_REPO` and `OPENWORK_INSTALLER_RELEASE_TAG`. The organization token is not forwarded. | Den web/API, `github.com`, and the GitHub release-asset redirect/CDN host. |
+| Semi-air-gapped | Stream the matching standard installer from `OPENWORK_INSTALLER_ARTIFACTS_DIR`. There is no ZIP or in-memory whole-file buffer. | Den web/API only. |
+| Fully air-gapped | Same mounted-artifact path, with Den web/API and the installer artifact available entirely inside the isolated network. | Internal Den web/API only. |
 
-## Egress
+The standard filenames use the release tag without a leading `v`:
 
-`den-api` makes outbound HTTPS requests to `github.com` only when serving a Mac
-or Windows organization download and the standard artifact is not already
-cached, or when it verifies a normal release fallback. The Linux setup script
-and every other install-link feature need no egress.
+- `openwork-mac-arm64-<version>.dmg`
+- `openwork-mac-x64-<version>.dmg`
+- `openwork-win-x64-<version>.exe`
+- `openwork-linux-x86_64-<version>.AppImage`
+- `openwork-linux-arm64-<version>.AppImage`
 
-## ZIP and first-launch behavior
+There is no first-request GitHub download inside Den, artifact lookup API call,
+ZIP creation, per-pod cold cache, or different repeated-download path. Every
+internet-connected request redirects immediately. Every mounted request streams
+the same provisioned file. With more than one Den API replica, mount the same
+read-only PVC on every replica.
 
-The Mac and Windows download contains exactly two top-level files:
+## Default connection handoff (no key)
 
-1. The normal versioned OpenWork DMG or EXE published with the release.
-2. `desktop-bootstrap.json`, containing the web/API origins, sign-in policy,
-   display name, logo URL, and a `writtenAt` timestamp.
+`DEN_CONNECT_LINK_MODE=exchange` is the default. When the user clicks **Open
+OpenWork**, Den mints a fresh five-minute bearer code and stores only its
+SHA-256 hash. The app:
 
-Extract the ZIP and keep both files in the same folder while running the normal
-installer. On first launch, OpenWork searches the Downloads and Desktop folders
-(and one extracted folder level below them) for `desktop-bootstrap.json` beside
-a normally named OpenWork release artifact. A valid bundle is copied to the
-canonical per-user path before the runtime boots. A bundle never replaces a
-canonical or legacy config with a newer `writtenAt` value.
+1. posts the code back to the exact HTTPS API origin carried in the deep link
+   to preview the organization and server;
+2. shows an explicit confirmation without changing local configuration; and
+3. posts the code to the exchange endpoint after confirmation, consuming it
+   exactly once before writing `desktop-bootstrap.json`.
 
-`OPENWORK_BOOTSTRAP_BUNDLE_DIR` can point the desktop at one specific extracted
-bundle directory for managed rollouts and deterministic validation.
+The grant is stored in MySQL, not pod memory, so preview and consumption can
+land on different Kubernetes replicas. A conditional database update makes
+concurrent exchange attempts single-use. Expired rows are removed while new
+grants are minted.
 
-## Distribute configuration with MDM (no custom installer)
+The web page fetches a new code at the moment the user clicks **Open**, rather
+than relying on the code loaded before a potentially long installer run. If a
+code expires or was already used, the user can return to the same Den page and
+click **Open** again.
 
-You can deploy the standard public OpenWork desktop installer and point it at
-your self-hosted control plane by managing one JSON file. No custom installer is
-required.
+## Optional signed handoff
 
-OpenWork reads `desktop-bootstrap.json` from the same canonical path used by the
-installer and bootstrap CLI:
+Signed handoffs remain an explicit upgrade path. They are disabled unless all
+of the following are true:
+
+- `DEN_CONNECT_LINK_MODE=signed`;
+- `DEN_CONNECT_LINK_KEY_ID` is configured;
+- `DEN_CONNECT_LINK_PRIVATE_KEY` contains the dedicated Ed25519 private key;
+- the matching public key is already embedded in the desktop build.
+
+For Helm:
+
+```yaml
+config:
+  public:
+    connectLinkMode: signed
+    connectLinkKeyId: "owc-2026-07"
+
+secret:
+  values:
+    connectLinkPrivateKey: |-
+      -----BEGIN PRIVATE KEY-----
+      ...
+      -----END PRIVATE KEY-----
+```
+
+Generate a pair with `scripts/generate-connect-link-keypair.mjs`. Do not enable
+signed mode until the production release embeds the corresponding public key.
+This optional mode changes only the configuration handoff; it still downloads
+the same standard installer through the same direct or mounted route.
+
+## MDM alternative
+
+Managed deployments can skip the deep-link handoff by deploying the public
+installer and writing `desktop-bootstrap.json` directly:
 
 | OS | Canonical path |
 |---|---|
-| Windows | `%LOCALAPPDATA%\openwork\desktop-bootstrap.json` (`%XDG_CONFIG_HOME%\openwork\desktop-bootstrap.json` wins first if your environment sets it) |
+| Windows | `%LOCALAPPDATA%\openwork\desktop-bootstrap.json` (`%XDG_CONFIG_HOME%\openwork\desktop-bootstrap.json` wins if set) |
 | macOS/Linux | `$XDG_CONFIG_HOME/openwork/desktop-bootstrap.json`, falling back to `~/.config/openwork/desktop-bootstrap.json` |
-
-Older desktop builds also wrote `~/.config/openwork/desktop-bootstrap.json` on
-every OS. Current builds still read that legacy file for compatibility; when
-both files exist and parse, the config with the newest `writtenAt` timestamp
-wins. If `writtenAt` is missing or invalid, OpenWork falls back to the file
-mtime for that file. When the legacy file wins, OpenWork migrates it to the
-canonical path. The installer also cleans up a stale legacy twin after writing
-the canonical file.
-
-Schema:
 
 ```json
 {
   "baseUrl": "https://openwork.example.com",
   "apiBaseUrl": "https://api.openwork.example.com",
   "requireSignin": true,
-  "writtenAt": "2026-07-07T12:00:00.000Z"
+  "writtenAt": "2026-07-14T12:00:00.000Z"
 }
 ```
 
-- `baseUrl` is required and should be your den-web origin.
-- `apiBaseUrl` is optional when your web origin proxies Den API traffic, but is
-  recommended for split web/API deployments.
-- `requireSignin` should be `true` for organization-managed installs.
-- `writtenAt` should be an ISO timestamp; use a fresh value whenever MDM rolls
-  out a replacement config so the newest file wins deterministically.
+Current builds still read the older `~/.config/openwork` path for
+compatibility. When both files exist, the valid configuration with the newest
+`writtenAt` wins.
 
-For MDM tools such as ManageEngine, deploy the public installer, then write this
-file to the canonical path for each user profile. The public installer plus this
-managed file is enough for a fully self-hosted desktop rollout.
+## Security properties
 
-## Security notes
-
-- Install-link tokens are stored SHA-256 hashed.
-- Minting a new link does not revoke older links, so previously distributed
-  invitation emails and dashboard links keep working. An owner or admin can
-  explicitly rotate links to revoke every older active link for the workspace.
-- A leaked link reveals the org name and server URLs only; users still must
-  sign in to access the workspace.
-- Public install-link endpoints are rate-limited.
-- The signed DMG/EXE bytes are copied into the ZIP unchanged, so Gatekeeper and
-  Windows signature verification still apply to the standard release artifact.
-- The desktop only imports a downloaded bootstrap when it is beside a standard
-  versioned OpenWork installer filename, and only when it is newer than the
-  current canonical or legacy configuration.
+- Install-link tokens and exchange codes are stored only as SHA-256 hashes.
+- Connection codes expire after five minutes and are consumed exactly once in
+  MySQL across all Den API replicas.
+- The desktop requires HTTPS outside explicit development loopback mode and
+  refuses redirects during preview and exchange.
+- Returned claims must identify the same API origin carried by the deep link.
+- The app displays the exact organization and server before changing local
+  configuration; cancel and every validation failure leave it untouched.
+- Branding URLs from the keyless exchange are not loaded before confirmation.
+- The standard release installer bytes are never modified, preserving normal
+  macOS and Windows signature verification.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| A download goes directly to the normal OpenWork installer instead of returning a ZIP | Den could not obtain the standard versioned asset. Internet-connected deployments should verify the release tag/repository; air-gapped deployments should mount the matching DMG/EXE files through `OPENWORK_INSTALLER_ARTIFACTS_DIR`. The direct download is an intentional fallback and contains no organization token. |
-| OpenWork does not import the setup file | Extract the ZIP so `desktop-bootstrap.json` remains beside the versioned DMG/EXE, then launch the installed app. Check whether a newer canonical bootstrap already exists. Managed deployments can set `OPENWORK_BOOTSTRAP_BUNDLE_DIR` explicitly. |
-| Install links point at the wrong host | Set `BETTER_AUTH_URL` to the externally reachable den-web origin, then restart `den-api`. For invitation acceptance links, also put that origin first in `DEN_BETTER_AUTH_TRUSTED_ORIGINS`. |
-| Re-uploaded assets under the same tag keep serving old bytes | Clear the installer cache directory or bump the tag. The cache key is `<cacheDir>/<tag>/<file>`. |
+| Download redirects to GitHub | Expected for internet-connected deployments. Allow `github.com` and its release-asset redirect/CDN host on the user's network. |
+| Download returns `404` | The install token is invalid, expired, or revoked. Ask an org member for the current install page link. |
+| Mounted download fails | Verify the filename exactly matches the configured release tag and every Den replica mounts the same readable PVC path. |
+| **Open OpenWork** cannot prepare a connection | Verify the browser can reach Den API and `DEN_API_PUBLIC_URL` is the correct public HTTPS origin. |
+| The app refuses an expired or used link | Return to the same Den install page and click **Open OpenWork** again to mint a fresh code. |
+| Signed mode reports an unknown key | Return to `exchange` mode, or ship a desktop build containing the matching public key before re-enabling `signed`. |
+| Install links point at the wrong web host | Correct `BETTER_AUTH_URL` and `DEN_BETTER_AUTH_TRUSTED_ORIGINS`, then restart Den. |

@@ -17,7 +17,7 @@ export type DenAuthDeepLink = {
 export type ConnectDeepLink = {
   /** The full deep link, relayed verbatim to the main process for verification. */
   rawUrl: string;
-  token: string;
+  key: string;
 };
 
 function isSupportedDeepLinkProtocol(protocol: string): boolean {
@@ -146,9 +146,8 @@ export function parseConnectDeepLink(rawUrl: string): ConnectDeepLink | null {
     return null;
   }
 
-  // Unlike the sibling parsers, connect links are only ever minted as
-  // openwork:// deep links (the signed token should not ride ordinary web
-  // URLs), so http(s) forms are deliberately not recognized here.
+  // Unlike sibling parsers, organization connect credentials only ride the
+  // dedicated desktop scheme, never ordinary web URLs.
   const protocol = url.protocol.toLowerCase();
   if (protocol !== "openwork:" && protocol !== "openwork-dev:") {
     return null;
@@ -163,11 +162,15 @@ export function parseConnectDeepLink(rawUrl: string): ConnectDeepLink | null {
   }
 
   const token = url.searchParams.get("token")?.trim() ?? "";
-  if (!token) {
+  const code = url.searchParams.get("code")?.trim() ?? "";
+  const apiBaseUrl = url.searchParams.get("apiBaseUrl")?.trim() ?? "";
+  const signed = Boolean(token) && !code && !apiBaseUrl;
+  const exchange = !token && /^[A-Za-z0-9_-]{24,128}$/.test(code) && Boolean(apiBaseUrl);
+  if (!signed && !exchange) {
     return null;
   }
 
-  return { rawUrl, token };
+  return { rawUrl, key: signed ? `signed:${token}` : `exchange:${apiBaseUrl}:${code}` };
 }
 
 function normalizeDebugDeepLinkInput(rawValue: string): string {

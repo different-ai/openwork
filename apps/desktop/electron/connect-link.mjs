@@ -1,11 +1,9 @@
-// Verification for connect links (openwork://connect?token=<JWT>) in the
-// Electron main process. The renderer only ever hands us the raw deep-link
-// URL; every security decision happens on this side of the trust boundary,
-// against public keys embedded in the build (connect-link-keys.mjs).
+// Resolution for short-lived exchange and optional signed connect links in
+// the Electron main process. The renderer only hands us the raw deep-link URL;
+// every security decision happens on this side of the trust boundary.
 //
-// Dependency-free mirror of packages/connect-link/src/node.ts
-// (verifyConnectLinkToken) — the package tests hold the two in lockstep via
-// the shared claim fixtures. Compact JWS, EdDSA/Ed25519 via node:crypto.
+// Signed-token verification is a dependency-free mirror of
+// packages/connect-link/src/node.ts. Compact JWS, EdDSA/Ed25519 via node:crypto.
 
 import { Buffer } from "node:buffer";
 import { createPublicKey, verify } from "node:crypto";
@@ -18,6 +16,7 @@ const CONNECT_LINK_VERSION = 1;
 const CONNECT_LINK_ROUTE = "connect";
 const DEFAULT_CLOCK_SKEW_SECONDS = 60;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+const CONNECT_EXCHANGE_CODE_PATTERN = /^[A-Za-z0-9_-]{24,128}$/;
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 const REPLAY_GUARD_MAX_ENTRIES = 512;
 
@@ -163,8 +162,30 @@ export function extractConnectLinkToken(rawUrl) {
   if (parsed.protocol !== "openwork:" && parsed.protocol !== "openwork-dev:") return null;
   const route = (parsed.hostname || parsed.pathname.replace(/^\/+|\/+$/g, "")).toLowerCase();
   if (route !== CONNECT_LINK_ROUTE) return null;
+  if (parsed.searchParams.has("code") || parsed.searchParams.has("apiBaseUrl")) return null;
   const token = parsed.searchParams.get("token")?.trim();
   return token || null;
+}
+
+/**
+ * @param {string} rawUrl
+ * @returns {{ code: string, apiBaseUrl: string } | null}
+ */
+export function extractConnectExchange(rawUrl) {
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) return null;
+  let parsed;
+  try {
+    parsed = new URL(rawUrl.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "openwork:" && parsed.protocol !== "openwork-dev:") return null;
+  const route = (parsed.hostname || parsed.pathname.replace(/^\/+|\/+$/g, "")).toLowerCase();
+  if (route !== CONNECT_LINK_ROUTE || parsed.searchParams.has("token")) return null;
+  const code = parsed.searchParams.get("code")?.trim() ?? "";
+  const apiBaseUrl = parsed.searchParams.get("apiBaseUrl")?.trim() ?? "";
+  if (!CONNECT_EXCHANGE_CODE_PATTERN.test(code) || !apiBaseUrl) return null;
+  return { code, apiBaseUrl };
 }
 
 /**
@@ -271,7 +292,7 @@ export function verifyConnectLinkToken(input) {
     return { ok: false, code: "insecure_url", message: `Token target is not https: ${refusedUrl}` };
   }
 
-  return { ok: true, claims, kid };
+  return { ok: true, claims, transport: "signed", kid };
 }
 
 /**
@@ -296,6 +317,130 @@ export function verifyConnectLinkUrl(rawUrl, options) {
     nowEpochSeconds: options.nowEpochSeconds,
     allowInsecureLoopback: options.allowInsecureLoopback,
   });
+}
+
+/**
+ * @param {string} rawUrl
+ * @param {{
+ *   mode: "preview" | "exchange",
+ *   fetcher: (url: string, init: object) => Promise<Response>,
+ *   nowEpochSeconds?: number,
+ *   allowInsecureLoopback?: boolean,
+ * }} options
+ * @returns {Promise<import("@openwork/types/connect-link").ConnectLinkVerifyResult>}
+ */
+export async function resolveConnectExchangeUrl(rawUrl, options) {
+  const exchange = extractConnectExchange(rawUrl);
+  if (!exchange) {
+    return { ok: false, code: "invalid_token", message: "Not a keyless connect deep link." };
+  }
+
+  const apiBaseUrl = normalizeExchangeApiBaseUrl(exchange.apiBaseUrl, options.allowInsecureLoopback === true);
+  if (!apiBaseUrl) {
+    return { ok: false, code: "insecure_url", message: "Connection server must use HTTPS." };
+  }
+
+  const endpoint = new URL(apiBaseUrl);
+  endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, "")}/v1/install-connect/${options.mode}`.replace(/\/{2,}/g, "/");
+  endpoint.search = "";
+  endpoint.hash = "";
+
+  let response;
+  try {
+    response = await options.fetcher(endpoint.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ code: exchange.code }),
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return { ok: false, code: "unavailable", message: "The organization server could not be reached." };
+  }
+
+  if (response.status === 409) {
+    return { ok: false, code: "replayed", message: "This connect link was already used." };
+  }
+  if (response.status === 410) {
+    return { ok: false, code: "expired", message: "This connect link expired." };
+  }
+  if (!response.ok) {
+    return response.status === 404
+      ? { ok: false, code: "invalid_token", message: "This connect link is not valid." }
+      : { ok: false, code: "unavailable", message: "The organization server refused the connection." };
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, code: "malformed_claims", message: "The organization server returned invalid data." };
+  }
+  if (typeof payload !== "object" || payload === null || !("claims" in payload)) {
+    return { ok: false, code: "malformed_claims", message: "The organization server returned invalid data." };
+  }
+  const claims = normalizeClaims(payload.claims);
+  if (!claims) {
+    return { ok: false, code: "malformed_claims", message: "Connection claims failed validation." };
+  }
+
+  const claimsApiBaseUrl = claims.den.apiBaseUrl
+    ? normalizeExchangeApiBaseUrl(claims.den.apiBaseUrl, options.allowInsecureLoopback === true)
+    : null;
+  const claimsIssuer = normalizeExchangeApiBaseUrl(claims.iss, options.allowInsecureLoopback === true);
+  if (claimsApiBaseUrl !== apiBaseUrl || claimsIssuer !== apiBaseUrl) {
+    return { ok: false, code: "malformed_claims", message: "Connection server identity did not match the link." };
+  }
+
+  const now = options.nowEpochSeconds ?? Math.floor(Date.now() / 1000);
+  if (claims.iat > now + DEFAULT_CLOCK_SKEW_SECONDS) {
+    return { ok: false, code: "not_yet_valid", message: "Connection link is not valid yet." };
+  }
+  if (claims.exp <= now - DEFAULT_CLOCK_SKEW_SECONDS) {
+    return { ok: false, code: "expired", message: "Connection link expired." };
+  }
+  const refusedUrl = findRefusedClaimUrl(claims, options.allowInsecureLoopback === true);
+  if (refusedUrl) {
+    return { ok: false, code: "insecure_url", message: `Connection target is not https: ${refusedUrl}` };
+  }
+
+  return { ok: true, claims, transport: "exchange", kid: null };
+}
+
+/**
+ * Maps verified claims to the only local fields the connection handoff may
+ * change. Kept here so both transports share an independently tested boundary.
+ *
+ * @param {import("@openwork/types/connect-link").ConnectLinkClaims} claims
+ */
+export function desktopBootstrapFromConnectClaims(claims) {
+  return {
+    baseUrl: claims.den.baseUrl,
+    ...(claims.den.apiBaseUrl ? { apiBaseUrl: claims.den.apiBaseUrl } : {}),
+    requireSignin: claims.requireSignin,
+    brandAppName: claims.brand.appName,
+    ...(claims.brand.logoUrl ? { brandLogoUrl: claims.brand.logoUrl } : {}),
+    ...(claims.brand.iconUrl ? { brandIconUrl: claims.brand.iconUrl } : {}),
+  };
+}
+
+/**
+ * @param {string} rawUrl
+ * @param {boolean} allowInsecureLoopback
+ */
+function normalizeExchangeApiBaseUrl(rawUrl, allowInsecureLoopback) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return null;
+  if (parsed.protocol !== "https:" && !(allowInsecureLoopback && parsed.protocol === "http:" && isLoopbackUrl(rawUrl))) {
+    return null;
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.toString().replace(/\/$/, "");
 }
 
 /**

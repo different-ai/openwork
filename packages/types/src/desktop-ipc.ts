@@ -444,11 +444,10 @@ export type DesktopCommandMap = {
     result: DesktopBootstrapConfig;
   };
 
-  // Connect links (openwork://connect?token=<JWT>). Verification happens in
-  // the main process against embedded vendor public keys; the renderer only
-  // relays the raw deep-link URL. `connectLinkAccept` re-verifies the URL —
-  // renderer-shaped claims are never trusted — enforces one-time use (jti),
-  // and persists the target as the new desktop bootstrap config.
+  // Connect links use a short-lived HTTPS exchange by default and can use an
+  // embedded-key signed token when explicitly enabled. The renderer relays
+  // only the raw URL. `connectLinkAccept` resolves it again after confirmation,
+  // enforces one-time use, and persists the target as desktop bootstrap config.
   connectLinkVerify: { args: [rawUrl: string]; result: ConnectLinkVerifyResult };
   connectLinkAccept: {
     args: [rawUrl: string];

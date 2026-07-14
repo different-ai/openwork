@@ -1,13 +1,14 @@
 import {
-  DESKTOP_BOOTSTRAP_FILENAME,
-  desktopBootstrapConfigSchema,
   installConfigSchema,
 } from "@openwork/install-config"
+import { connectLinkClaimsSchema } from "@openwork/connect-link"
 import { and, eq, gt, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { InstallLinkTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createReadStream } from "node:fs"
 import type { MiddlewareHandler } from "hono"
 import type { Hono } from "hono"
+import { stream } from "hono/streaming"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { OPENWORK_DOWNLOAD_URL } from "../../CONSTS.js"
@@ -15,6 +16,11 @@ import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
 import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
 import { db } from "../../db.js"
 import { mintDesktopConnectLink } from "../../desktop-connect-link.js"
+import {
+  consumeDesktopConnectGrant,
+  mintDesktopConnectGrant,
+  previewDesktopConnectGrant,
+} from "../../desktop-connect-grants.js"
 import { env } from "../../env.js"
 import { hashInstallLinkToken, mintOrganizationInstallLink } from "../../install-links.js"
 import { jsonValidator, orgRoleRoute, publicRoute, queryValidator } from "../../middleware/index.js"
@@ -25,10 +31,7 @@ import {
   desktopReleaseAssetName,
   installerReleaseAssetUrl,
   resolveConfiguredInstallerArtifact,
-  resolveInstallerArtifact,
-  resolveInstallerFallbackUrl,
 } from "../../utils/installer-artifacts.js"
-import { createStoredZipStream } from "../../utils/zip-append.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
 
@@ -37,6 +40,7 @@ const INSTALL_LINK_MINT_RATE_LIMIT_MAX = 30
 const INSTALL_CONFIG_RATE_LIMIT_MAX = 60
 const INSTALL_ARTIFACT_RATE_LIMIT_MAX = 20
 const INSTALL_LINK_TOKEN_PATTERN = /^[A-Za-z0-9_-]{8,}$/
+const CONNECT_GRANT_CODE_PATTERN = /^[A-Za-z0-9_-]{24,128}$/
 
 const createInstallLinkBodySchema = z.object({
   rotate: z.boolean().optional().default(false),
@@ -51,6 +55,18 @@ const installLinkQuerySchema = z.object({
   token: z.string().trim().regex(INSTALL_LINK_TOKEN_PATTERN).max(255),
 })
 
+const connectGrantBodySchema = z.object({
+  code: z.string().trim().regex(CONNECT_GRANT_CODE_PATTERN),
+})
+
+const connectGrantResponseSchema = z.object({
+  claims: connectLinkClaimsSchema,
+}).meta({ ref: "DesktopConnectGrantResponse" })
+
+const connectGrantFailureSchema = z.object({
+  error: z.enum(["connect_grant_invalid", "connect_grant_expired", "connect_grant_replayed"]),
+}).meta({ ref: "DesktopConnectGrantFailure" })
+
 const installPlatformSchema = z.enum(["mac-arm64", "mac-x64", "win-x64", "linux-x64", "linux-arm64"])
 
 const installPlatformParamSchema = z.object({
@@ -62,8 +78,8 @@ const installLinkNotFoundSchema = z.object({
 }).meta({ ref: "InstallLinkNotFoundError" })
 
 const installExperienceConfigSchema = installConfigSchema.extend({
-  connectUrl: z.string().nullable(),
-  connectExpiresAt: z.string().datetime().nullable(),
+  connectUrl: z.string(),
+  connectExpiresAt: z.string().datetime(),
 }).meta({ ref: "InstallExperienceConfig" })
 
 const capabilityDisabledSchema = z.object({
@@ -78,21 +94,23 @@ const rateLimitedSchema = z.object({
 
 type InstallPlatform = z.infer<typeof installPlatformSchema>
 
-type InstallerDependencies = {
-  resolveArtifact: typeof resolveInstallerArtifact
+export type InstallExperienceDependencies = {
   resolveConfiguredArtifact: typeof resolveConfiguredInstallerArtifact
   resolveDirectUrl: (platform: InstallPlatform) => string
-  resolveFallbackUrl: (platform: string) => Promise<string>
+  mintConnectGrant: typeof mintDesktopConnectGrant
+  previewConnectGrant: typeof previewDesktopConnectGrant
+  consumeConnectGrant: typeof consumeDesktopConnectGrant
 }
 
-const defaultInstallerDependencies: InstallerDependencies = {
-  resolveArtifact: resolveInstallerArtifact,
+const defaultInstallerDependencies: InstallExperienceDependencies = {
   resolveConfiguredArtifact: resolveConfiguredInstallerArtifact,
   resolveDirectUrl: (platform) => {
     const fileName = desktopReleaseAssetName(platform, env.installerReleaseTag)
     return fileName ? installerReleaseAssetUrl(fileName) : OPENWORK_DOWNLOAD_URL
   },
-  resolveFallbackUrl: (platform) => resolveInstallerFallbackUrl(platform, OPENWORK_DOWNLOAD_URL),
+  mintConnectGrant: mintDesktopConnectGrant,
+  previewConnectGrant: previewDesktopConnectGrant,
+  consumeConnectGrant: consumeDesktopConnectGrant,
 }
 
 function requestAddress(headers: Headers) {
@@ -174,16 +192,8 @@ async function resolveInstallConfigForToken(token: string, request: Request) {
 
   return {
     config: buildInstallConfig({ organization: row.organization, request }),
-    organizationSlug: row.organization.slug,
+    installLinkId: row.installLink.id,
   }
-}
-
-function safeAttachmentSlug(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "workspace"
 }
 
 function contentDisposition(filename: string) {
@@ -200,64 +210,6 @@ function installerContentType(platform: InstallPlatform) {
   return "application/vnd.appimage"
 }
 
-function shellQuote(value: string) {
-  return `'${value.replace(/'/g, "'\\''")}'`
-}
-
-function installConfigEndpoint(apiUrl: string, token: string) {
-  return new URL(`/v1/install-config?token=${encodeURIComponent(token)}`, new URL(apiUrl).origin).toString()
-}
-
-function linuxInstallScript(input: { token: string; config: z.infer<typeof installConfigSchema> }) {
-  const configUrl = installConfigEndpoint(input.config.apiUrl, input.token)
-  return `#!/usr/bin/env sh
-# OpenWork Linux setup for ${input.config.clientName}.
-# Downloads no code. It writes the desktop bootstrap config, then tells you
-# where to download the current OpenWork AppImage.
-set -eu
-
-CONFIG_URL=${shellQuote(configUrl)}
-CLIENT_NAME=${shellQuote(input.config.clientName)}
-WEB_URL=${shellQuote(input.config.webUrl)}
-API_URL=${shellQuote(input.config.apiUrl)}
-DOWNLOAD_URL=${shellQuote(OPENWORK_DOWNLOAD_URL)}
-
-if command -v curl >/dev/null 2>&1; then
-  FETCH="curl -fsSL"
-elif command -v wget >/dev/null 2>&1; then
-  FETCH="wget -qO-"
-else
-  echo "OpenWork setup requires curl or wget." >&2
-  exit 1
-fi
-
-echo "Checking your OpenWork install link..."
-# shellcheck disable=SC2086
-$FETCH "$CONFIG_URL" >/dev/null
-
-CONFIG_HOME="\${XDG_CONFIG_HOME:-$HOME/.config}"
-BOOTSTRAP_DIR="$CONFIG_HOME/openwork"
-BOOTSTRAP_PATH="$BOOTSTRAP_DIR/desktop-bootstrap.json"
-mkdir -p "$BOOTSTRAP_DIR"
-
-cat > "$BOOTSTRAP_PATH" <<EOF
-{
-  "baseUrl": "$WEB_URL",
-  "apiBaseUrl": "$API_URL",
-  "requireSignin": true
-}
-EOF
-
-echo
-echo "This sets up OpenWork for $CLIENT_NAME."
-echo "Wrote $BOOTSTRAP_PATH"
-echo
-echo "Download the OpenWork AppImage here:"
-echo "  $DOWNLOAD_URL"
-echo
-echo "Run the AppImage, then sign in — your team's workspace is preconfigured."
-`
-}
 
 const setActiveOrganizationFromParam: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
   const parsed = denTypeIdSchema("organization").safeParse(c.req.param("organizationId"))
@@ -271,9 +223,9 @@ const setActiveOrganizationFromParam: MiddlewareHandler<{ Variables: OrgRouteVar
 
 export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVariables }>(
   app: Hono<T>,
-  installerOverrides: Partial<InstallerDependencies> = {},
+  installerOverrides: Partial<InstallExperienceDependencies> = {},
 ) {
-  const installer: InstallerDependencies = { ...defaultInstallerDependencies, ...installerOverrides }
+  const installer: InstallExperienceDependencies = { ...defaultInstallerDependencies, ...installerOverrides }
   app.post(
     "/v1/orgs/:organizationId/install-links",
     describeRoute({
@@ -339,7 +291,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["Organizations"],
       summary: "Resolve install-link configuration",
-      description: "Returns the organization-specific desktop bootstrap configuration for a valid install link token.",
+      description: "Returns organization setup details and a fresh desktop connection handoff for a valid install link token.",
       responses: {
         200: jsonResponse("Install configuration resolved successfully.", installExperienceConfigSchema),
         400: jsonResponse("The install-link token was invalid.", invalidRequestSchema),
@@ -370,21 +322,76 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         webUrl: resolved.config.webUrl,
         apiUrl: resolved.config.apiUrl,
       })
+      const handoff = connectLink ?? await installer.mintConnectGrant({
+        installLinkId: resolved.installLinkId,
+        organizationName: resolved.config.clientName,
+        appName: resolved.config.appName,
+        logoUrl: resolved.config.logoUrl,
+        iconUrl: resolved.config.iconUrl,
+        webUrl: resolved.config.webUrl,
+        apiUrl: resolved.config.apiUrl,
+      })
 
       return c.json({
         ...resolved.config,
-        connectUrl: connectLink?.connectUrl ?? null,
-        connectExpiresAt: connectLink?.connectExpiresAt ?? null,
+        connectUrl: handoff.connectUrl,
+        connectExpiresAt: handoff.connectExpiresAt,
       })
     },
   )
+
+  const connectGrantModes: Array<"preview" | "exchange"> = ["preview", "exchange"]
+  for (const mode of connectGrantModes) {
+    app.post(
+      `/v1/install-connect/${mode}`,
+      describeRoute({
+        tags: ["Organizations"],
+        summary: mode === "preview" ? "Preview desktop connection" : "Accept desktop connection",
+        description: mode === "preview"
+          ? "Resolves a short-lived organization connection code without consuming it."
+          : "Consumes a short-lived organization connection code exactly once.",
+        responses: {
+          200: jsonResponse("Desktop connection resolved successfully.", connectGrantResponseSchema),
+          400: jsonResponse("The connection code body was invalid.", invalidRequestSchema),
+          404: jsonResponse("The connection code was not found.", connectGrantFailureSchema),
+          409: jsonResponse("The connection code was already consumed.", connectGrantFailureSchema),
+          410: jsonResponse("The connection code expired.", connectGrantFailureSchema),
+          429: jsonResponse("Too many connection attempts.", rateLimitedSchema),
+        },
+      }),
+      publicRoute,
+      jsonValidator(connectGrantBodySchema),
+      async (c) => {
+        const retryAfter = await enforceRateLimit(c.req.raw.headers, `connect-${mode}`, INSTALL_CONFIG_RATE_LIMIT_MAX)
+        if (retryAfter !== null) {
+          c.header("Retry-After", String(retryAfter))
+          return c.json({ error: "rate_limited", message: "Too many connection attempts. Try again later." }, 429)
+        }
+
+        const input = c.req.valid("json")
+        const result = mode === "preview"
+          ? await installer.previewConnectGrant(input.code)
+          : await installer.consumeConnectGrant(input.code)
+        if (result.ok) {
+          return c.json({ claims: result.claims })
+        }
+        if (result.code === "replayed") {
+          return c.json({ error: "connect_grant_replayed" }, 409)
+        }
+        if (result.code === "expired") {
+          return c.json({ error: "connect_grant_expired" }, 410)
+        }
+        return c.json({ error: "connect_grant_invalid" }, 404)
+      },
+    )
+  }
 
   app.get(
     "/v1/install/:platform",
     describeRoute({
       tags: ["Organizations"],
       summary: "Download OpenWork desktop",
-      description: "Returns an explicitly provisioned standard OpenWork installer or redirects to the configured standard release. Organization setup remains in the Den guide and signed connect link.",
+      description: "Streams an explicitly provisioned standard OpenWork installer or redirects directly to the configured standard release. Organization setup remains a separate Den deep-link step.",
       responses: {
         200: textResponse("Installer artifact returned successfully."),
         302: emptyResponse("Den redirected the browser to a verified normal desktop download."),
@@ -419,65 +426,22 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         return c.json({ error: "invalid_request", details: [{ message: "Unsupported installer platform." }] }, 400)
       }
 
-      // Signed connect links move organization setup into an explicit second
-      // step. The installer is therefore the ordinary signed release asset:
-      // serve an operator-provisioned file for air-gapped installs, otherwise
-      // issue a constant-time redirect without downloading it through Den.
-      if (env.connectLink) {
-        const configuredArtifact = await installer.resolveConfiguredArtifact(fileName)
-        if (configuredArtifact) {
-          return new Response(new Uint8Array(configuredArtifact), {
-            headers: {
-              "content-type": installerContentType(platform),
-              "content-length": String(configuredArtifact.byteLength),
-              "content-disposition": contentDisposition(fileName),
-              "cache-control": "private, max-age=300",
-            },
-          })
-        }
-        return c.redirect(installer.resolveDirectUrl(platform), 302)
-      }
-
-      // Backwards-compatible path for deployments that have not configured a
-      // connect-link signing key yet. It retains the existing bundled setup so
-      // upgrading Den does not silently break organization onboarding.
-      if (platform.startsWith("linux-")) {
-        return new Response(linuxInstallScript({ token: input.token, config: resolved.config }), {
-          headers: {
-            "content-type": "text/x-shellscript; charset=utf-8",
-            "content-disposition": contentDisposition(`openwork-linux-setup-${safeAttachmentSlug(resolved.organizationSlug)}.sh`),
-            "cache-control": "no-store",
-          },
+      // Organization setup is always a separate deep-link step, so every Den
+      // deployment can return the ordinary installer without keys, wrapping,
+      // or a per-pod artifact cache.
+      const configuredArtifact = await installer.resolveConfiguredArtifact(fileName)
+      if (configuredArtifact) {
+        c.header("content-type", installerContentType(platform))
+        c.header("content-length", String(configuredArtifact.size))
+        c.header("content-disposition", contentDisposition(fileName))
+        c.header("cache-control", "private, max-age=300")
+        return stream(c, async (body) => {
+          for await (const chunk of createReadStream(configuredArtifact.filePath)) {
+            await body.write(chunk)
+          }
         })
       }
-
-      const artifact = await installer.resolveArtifact(fileName)
-      if (!artifact) {
-        return c.redirect(await installer.resolveFallbackUrl(platform), 302)
-      }
-
-      const bootstrap = desktopBootstrapConfigSchema.parse({
-        baseUrl: resolved.config.webUrl,
-        apiBaseUrl: resolved.config.apiUrl,
-        requireSignin: resolved.config.requireSignin,
-        brandAppName: resolved.config.appName,
-        brandLogoUrl: resolved.config.logoUrl ?? undefined,
-        brandIconUrl: resolved.config.iconUrl ?? undefined,
-        writtenAt: new Date().toISOString(),
-      })
-      const bundle = createStoredZipStream([
-        { name: fileName, content: artifact },
-        { name: DESKTOP_BOOTSTRAP_FILENAME, content: Buffer.from(`${JSON.stringify(bootstrap, null, 2)}\n`, "utf8") },
-      ])
-
-      return new Response(bundle.body, {
-        headers: {
-          "content-type": "application/zip",
-          "content-length": String(bundle.byteLength),
-          "content-disposition": contentDisposition(`OpenWork-${safeAttachmentSlug(resolved.organizationSlug)}-${platform}.zip`),
-          "cache-control": "no-store",
-        },
-      })
+      return c.redirect(installer.resolveDirectUrl(platform), 302)
     },
   )
 }
