@@ -68,6 +68,12 @@ export type ExternalMcpTool = {
   };
 };
 
+export type ExternalMcpToolRun = {
+  referenceId: string;
+  durationMs: number;
+  result: unknown;
+};
+
 export type ExternalMcpPreset = {
   presetId: string;
   displayName: string;
@@ -120,6 +126,39 @@ export function useMcpConnectionTools(connectionId: string, enabled: boolean) {
       }
       const record = payload as { tools?: ExternalMcpTool[] };
       return record.tools ?? [];
+    },
+  });
+}
+
+export function useRunMcpConnectionTool(connectionId: string) {
+  const { orgId } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (input: { toolName: string; arguments: Record<string, unknown> }): Promise<ExternalMcpToolRun> => {
+      const { response, payload } = await requestJson(
+        `/v1/mcp-connections/${encodeURIComponent(connectionId)}/tools/call`,
+        {
+          method: "POST",
+          headers: getOrgScopeHeaders(requireOrgId(orgId)),
+          body: JSON.stringify(input),
+        },
+        60000,
+      );
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to run MCP tool (${response.status}).`);
+      }
+      if (
+        !isRecord(payload)
+        || typeof payload.referenceId !== "string"
+        || typeof payload.durationMs !== "number"
+        || !("result" in payload)
+      ) {
+        throw new Error("MCP tool result was incomplete.");
+      }
+      return {
+        referenceId: payload.referenceId,
+        durationMs: payload.durationMs,
+        result: payload.result,
+      };
     },
   });
 }

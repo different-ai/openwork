@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { AlertTriangle, Check, Loader2, Plug } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Loader2, Plug, Wrench } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { getOrgAccessFlags } from "../../_lib/den-org";
@@ -14,10 +14,12 @@ import { MICROSOFT_365_DISPLAY_SCOPES } from "./microsoft-365-permissions";
 import {
   canDisconnectNativeProviderAccount,
   type ExternalMcpConnection,
+  isNativeProviderConnectionId,
   useDisconnectMyProviderAccount,
   useMcpConnections,
   useStartMcpConnectionOAuth,
 } from "./mcp-connections-data";
+import { McpToolRunner } from "./mcp-tool-runner";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
@@ -121,7 +123,7 @@ export function YourConnectionsScreen() {
       icon={Plug}
       title="Your Connections"
       badgeLabel="Alpha"
-      description="Tools your organization has made available to you. Connect your own account where needed — your AI coworker then acts as you, with your permissions."
+      description="Tools your organization has made available to you. Connect your own account where needed, then test a tool directly or let your AI coworker use it with your permissions."
       colors={["#DBEAFE", "#1E3A8A", "#2563EB", "#93C5FD"]}
     >
       {error ? (
@@ -189,6 +191,8 @@ function YourConnectionRow({
   const needsMyConnect = isPerMember && !connection.connectedForMe;
   const needsAdminConnect = isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
   const canDisconnect = canDisconnectNativeProviderAccount(connection);
+  const canTestTools = !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
+  const [toolRunnerOpen, setToolRunnerOpen] = useState(false);
   const microsoftScopes = connection.id === "microsoft-365"
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
     : [];
@@ -198,75 +202,91 @@ function YourConnectionRow({
     <div
       ref={rowRef}
       tabIndex={highlighted ? -1 : undefined}
-      className={`flex items-center justify-between gap-4 px-6 py-4 outline-none transition ${highlighted ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`}
+      className={`outline-none transition ${highlighted ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
-            {needsReconnect ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                <AlertTriangle className="h-3 w-3" />
-                Reconnect to grant new permissions
-              </span>
-            ) : connection.connectedForMe ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                <Check className="h-3 w-3" />
-                {isPerMember ? "Connected as you" : "Org account connected"}
-              </span>
-            ) : polling ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Waiting for authorization…
-              </span>
-            ) : needsMyConnect ? (
-              <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                Connect your account
-              </span>
-            ) : needsAdminConnect ? (
-              <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                Connect the org account
-              </span>
-            ) : (
-              <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                Waiting for an admin to connect
-              </span>
-            )}
-          </div>
-          <p className="mt-0.5 truncate text-[12px] text-gray-500">{connection.url}</p>
-          {requiredByLabel ? (
-            <p className="mt-1 text-[12px] font-medium text-gray-700">{requiredByLabel}</p>
-          ) : null}
-          {connection.id === "microsoft-365" && connection.tenantId ? (
-            <p className="mt-1 text-[11px] text-gray-500">
-              Tenant <span className="font-mono text-gray-700">{connection.tenantId}</span>
-              {connection.externalAccountId ? <> · {connection.externalAccountId}</> : null}
-            </p>
-          ) : null}
-          {microsoftScopes.length > 0 ? (
-            <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Approved Microsoft 365 capabilities">
-              {microsoftScopes.map((scope) => (
-                <span key={scope} className="rounded-full bg-blue-50 px-2 py-0.5 font-mono text-[10px] text-blue-700">{scope}</span>
-              ))}
+      <div className="flex flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
+              {needsReconnect ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  <AlertTriangle className="h-3 w-3" />
+                  Reconnect to grant new permissions
+                </span>
+              ) : connection.connectedForMe ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                  <Check className="h-3 w-3" />
+                  {isPerMember ? "Connected as you" : "Org account connected"}
+                </span>
+              ) : polling ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Waiting for authorization…
+                </span>
+              ) : needsMyConnect ? (
+                <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  Connect your account
+                </span>
+              ) : needsAdminConnect ? (
+                <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  Connect the org account
+                </span>
+              ) : (
+                <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                  Waiting for an admin to connect
+                </span>
+              )}
             </div>
+            <p className="mt-0.5 truncate text-[12px] text-gray-500">{connection.url}</p>
+            {requiredByLabel ? (
+              <p className="mt-1 text-[12px] font-medium text-gray-700">{requiredByLabel}</p>
+            ) : null}
+            {connection.id === "microsoft-365" && connection.tenantId ? (
+              <p className="mt-1 text-[11px] text-gray-500">
+                Tenant <span className="font-mono text-gray-700">{connection.tenantId}</span>
+                {connection.externalAccountId ? <> · {connection.externalAccountId}</> : null}
+              </p>
+            ) : null}
+            {microsoftScopes.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Approved Microsoft 365 capabilities">
+                {microsoftScopes.map((scope) => (
+                  <span key={scope} className="rounded-full bg-blue-50 px-2 py-0.5 font-mono text-[10px] text-blue-700">{scope}</span>
+                ))}
+              </div>
+            ) : null}
+            {errorMessage ? <p className="mt-1 text-[12px] text-red-600">{errorMessage}</p> : null}
+          </div>
+        </div>
+
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {canTestTools ? (
+            <DenButton
+              variant="secondary"
+              size="sm"
+              icon={Wrench}
+              onClick={() => setToolRunnerOpen((open) => !open)}
+              aria-expanded={toolRunnerOpen}
+              data-testid={`toggle-mcp-tool-runner-${connection.id}`}
+            >
+              Test tools
+              {toolRunnerOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            </DenButton>
           ) : null}
-          {errorMessage ? <p className="mt-1 text-[12px] text-red-600">{errorMessage}</p> : null}
+          {canDisconnect ? (
+            <DenButton variant="destructive" size="sm" loading={disconnecting} onClick={onDisconnect}>
+              Disconnect
+            </DenButton>
+          ) : null}
+          {needsReconnect || needsMyConnect || needsAdminConnect ? (
+            <DenButton variant="primary" size="sm" loading={connecting || polling} onClick={onConnect}>
+              {needsReconnect ? "Reconnect" : "Connect"}
+            </DenButton>
+          ) : null}
         </div>
       </div>
-
-      <div className="flex shrink-0 items-center gap-2">
-        {canDisconnect ? (
-          <DenButton variant="destructive" size="sm" loading={disconnecting} onClick={onDisconnect}>
-            Disconnect
-          </DenButton>
-        ) : null}
-        {needsReconnect || needsMyConnect || needsAdminConnect ? (
-          <DenButton variant="primary" size="sm" loading={connecting || polling} onClick={onConnect}>
-            {needsReconnect ? "Reconnect" : "Connect"}
-          </DenButton>
-        ) : null}
-      </div>
+      {toolRunnerOpen && canTestTools ? <McpToolRunner connection={connection} /> : null}
     </div>
   );
 }
