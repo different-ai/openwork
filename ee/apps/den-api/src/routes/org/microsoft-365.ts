@@ -307,7 +307,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
   options: Microsoft365RouteOptions = {},
 ) {
   const resolveAccessToken = options.resolveAccessToken ?? defaultAccessTokenResolver
-  const memberRoute = options.memberRoute ?? orgMemberRoute()
+  const orgMemberRouteMiddleware = options.memberRoute ?? orgMemberRoute()
 
   function graphClient(accessToken: string) {
     return new MicrosoftGraphClient({
@@ -330,7 +330,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    memberRoute,
+    orgMemberRouteMiddleware,
     queryValidator(mailMessagesQuerySchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -373,7 +373,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    memberRoute,
+    orgMemberRouteMiddleware,
     paramValidator(mailMessageParamSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -409,7 +409,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    memberRoute,
+    orgMemberRouteMiddleware,
     queryValidator(calendarEventsQuerySchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -450,7 +450,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    memberRoute,
+    orgMemberRouteMiddleware,
     queryValidator(driveFilesQuerySchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -487,7 +487,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    memberRoute,
+    orgMemberRouteMiddleware,
     paramValidator(driveFileParamSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -523,7 +523,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    memberRoute,
+    orgMemberRouteMiddleware,
     jsonValidator(mailDraftBodySchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -560,7 +560,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    memberRoute,
+    orgMemberRouteMiddleware,
     jsonValidator(calendarEventBodySchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -596,7 +596,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    memberRoute,
+    orgMemberRouteMiddleware,
     jsonValidator(driveFileWriteBodySchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -632,7 +632,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    memberRoute,
+    orgMemberRouteMiddleware,
     queryValidator(teamsChatsQuerySchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -668,7 +668,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    memberRoute,
+    orgMemberRouteMiddleware,
     paramValidator(teamsChatParamSchema),
     queryValidator(teamsMessagesQuerySchema),
     async (c) => {
@@ -708,7 +708,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    memberRoute,
+    orgMemberRouteMiddleware,
     paramValidator(teamsChatParamSchema),
     jsonValidator(teamsMessageBodySchema),
     async (c) => {
