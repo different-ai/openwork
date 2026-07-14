@@ -1,3 +1,9 @@
+import {
+  SEARCH_CAPABILITIES_TOOL_NAME,
+  compareCapabilityMatches,
+  type ConnectCapabilityMatch,
+  type ConnectSearchType,
+} from "@openwork/connect-core"
 import { getParameters, hasJsonRequestBody, pathParameterNamesFromTemplate, type McpToolOperation } from "./catalog.js"
 
 /**
@@ -16,28 +22,9 @@ import { getParameters, hasJsonRequestBody, pathParameterNamesFromTemplate, type
  *   caller to construct a valid `execute_capability` call without guessing.
  */
 
-export const SEARCH_CAPABILITIES_TOOL_NAME = "search_capabilities"
-export type SearchCapabilityType = "all" | "api" | "admin" | "mcp" | "marketplace" | "skills"
-
-export type CapabilityMatch = {
-  name: string
-  method: string
-  path: string
-  score: number
-  summary: string
-  /** Path parameter names this tool's `path` template requires, e.g. ["workerId"]. */
-  pathParams: string[]
-  /** Query parameter names this tool documents, if any. */
-  queryParams: string[]
-  /** Whether calling this tool requires a JSON `body`. */
-  hasBody: boolean
-}
-
-export function compareCapabilityMatches(a: CapabilityMatch, b: CapabilityMatch): number {
-  const statusPriority = Number("kind" in b && b.kind === "connection_status")
-    - Number("kind" in a && a.kind === "connection_status")
-  return statusPriority || (b.score - a.score) || a.name.localeCompare(b.name)
-}
+export { SEARCH_CAPABILITIES_TOOL_NAME, compareCapabilityMatches }
+export type CapabilityMatch = ConnectCapabilityMatch
+export type SearchCapabilityType = ConnectSearchType
 
 export function searchCapabilitySourceFilter(type?: SearchCapabilityType) {
   const capabilityType = type ?? "all"

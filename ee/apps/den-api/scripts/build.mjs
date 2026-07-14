@@ -110,6 +110,7 @@ function main() {
   cleanDist()
 
   run(pnpmCommand, ["run", "build:connect-link"])
+  run(pnpmCommand, ["run", "build:connect-core"])
   run(pnpmCommand, ["run", "build:email"])
   run(pnpmCommand, ["run", "build:install-config"])
   run(pnpmCommand, ["run", "build:enterprise-mcp-client"])
