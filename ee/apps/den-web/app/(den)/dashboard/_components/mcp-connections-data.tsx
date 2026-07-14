@@ -40,6 +40,7 @@ export type ExternalMcpConnection = {
   credentialMode: ExternalMcpCredentialMode;
   connected: boolean;
   connectedAt: string | null;
+  updatedAt: string | null;
   connectedForMe: boolean;
   needsReconnect?: boolean;
   missingFeatures?: string[];
@@ -47,7 +48,9 @@ export type ExternalMcpConnection = {
   grantedScopes?: string[];
   tenantId?: string | null;
   requiredBy: ExternalMcpRequiredBy[];
+  identityManagedBy: ExternalMcpRequiredBy[];
   access: ExternalMcpAccessSummary | null;
+  oauthClientId?: string | null;
 };
 
 export type ExternalMcpTool = {
@@ -150,6 +153,8 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
   return (record.connections ?? []).map((connection) => ({
     ...connection,
     requiredBy: parseRequiredBy(connection.requiredBy),
+    identityManagedBy: parseRequiredBy(connection.identityManagedBy),
+    updatedAt: typeof connection.updatedAt === "string" ? connection.updatedAt : null,
     ...(typeof connection.needsReconnect === "boolean" ? { needsReconnect: connection.needsReconnect } : {}),
     ...(isStringArray(connection.missingFeatures) ? { missingFeatures: connection.missingFeatures } : {}),
     ...(typeof connection.externalAccountId === "string" || connection.externalAccountId === null
@@ -202,6 +207,26 @@ export type CreateMcpConnectionInput = {
   access: McpConnectionAccessInput;
 };
 
+export type UpdateMcpConnectionInput = {
+  connectionId: string;
+  expectedUpdatedAt: string;
+  name: string;
+  url: string;
+  authType: ExternalMcpAuthType;
+  credentialMode: ExternalMcpCredentialMode;
+  apiKey?: string;
+  oauthClient?: {
+    clientId: string;
+    clientSecret?: string;
+  };
+  access: McpConnectionAccessInput;
+};
+
+export type UpdatedMcpConnection = ExternalMcpConnection & {
+  identityChanged: boolean;
+  reconnectionRequired: boolean;
+};
+
 export function useCreateMcpConnection() {
   const queryClient = useQueryClient();
   const { orgId, runReauthableAction } = useOrgDashboard();
@@ -222,6 +247,34 @@ export function useCreateMcpConnection() {
       });
       if (!created) throw new Error("Create MCP connection response was incomplete.");
       return created;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
+    },
+  });
+}
+
+export function useUpdateMcpConnection() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: UpdateMcpConnectionInput): Promise<UpdatedMcpConnection> => {
+      let updated: UpdatedMcpConnection | null = null;
+      await runReauthableAction("update-mcp-connection", async () => {
+        const { connectionId, ...body } = input;
+        const { response, payload } = await requestJson(
+          `/v1/mcp-connections/${encodeURIComponent(connectionId)}`,
+          { method: "PUT", headers: getOrgScopeHeaders(requireOrgId(orgId)), body: JSON.stringify(body) },
+          30000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to update MCP connection (${response.status}).`);
+        }
+        updated = payload as UpdatedMcpConnection;
+      });
+      if (!updated) throw new Error("Update MCP connection response was incomplete.");
+      return updated;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });

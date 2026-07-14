@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, Loader2, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
@@ -13,6 +13,12 @@ import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { IntegrationIcon } from "./integration-icon";
 import { Microsoft365Dialog } from "./microsoft-365-dialog";
 import { safeMcpAuthorizationUrl } from "./mcp-authorization-url";
+import {
+  editableMcpIdentityChanged,
+  marketplaceIdentityOwnerNames,
+  mcpAccessMode,
+  type McpConnectionAccessMode,
+} from "./mcp-connection-editing";
 import { shouldShowMcpConnectionsStagingBanner } from "./mcp-connections-capability";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { marketplaceQueryKeys, useMarketplaces } from "./marketplace-data";
@@ -25,6 +31,8 @@ import {
   type ExternalMcpPreset,
   type ExternalMcpTool,
   type McpConnectionAccessInput,
+  type UpdatedMcpConnection,
+  type UpdateMcpConnectionInput,
   formatMcpConnectedTimestamp,
   mcpConnectionQueryKeys,
   useCreateMcpConnection,
@@ -36,6 +44,7 @@ import {
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
   useTelegramConnection,
+  useUpdateMcpConnection,
 } from "./mcp-connections-data";
 import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
 import { TelegramDialog } from "./telegram-dialog";
@@ -199,12 +208,14 @@ export function McpConnectionsScreen() {
   const { data: usableConnections = [] } = useMcpConnections("usable");
   const { data: presets = [] } = useMcpConnectionPresets();
   const createConnection = useCreateMcpConnection();
+  const updateConnection = useUpdateMcpConnection();
   const startOAuth = useStartMcpConnectionOAuth();
   const deleteConnection = useDeleteMcpConnection();
   const saveNativeClient = useSaveNativeProviderClient();
 
   const [formOpen, setFormOpen] = useState(false);
   const [formPreset, setFormPreset] = useState<ExternalMcpPreset | null>(null);
+  const [editingConnection, setEditingConnection] = useState<ExternalMcpConnection | null>(null);
   const [pluginDialogOpen, setPluginDialogOpen] = useState(false);
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
   const [microsoftDialogOpen, setMicrosoftDialogOpen] = useState(false);
@@ -215,6 +226,7 @@ export function McpConnectionsScreen() {
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
   const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
+  const [connectionActionNotice, setConnectionActionNotice] = useState<string | null>(null);
   const [toolsConnectionId, setToolsConnectionId] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -279,6 +291,19 @@ export function McpConnectionsScreen() {
     return created;
   }
 
+  async function handleUpdate(input: UpdateMcpConnectionInput): Promise<UpdatedMcpConnection> {
+    setConnectionActionError(null);
+    setConnectionActionNotice(null);
+    const updated = await updateConnection.mutateAsync(input);
+    setEditingConnection(null);
+    setConnectionActionNotice(updated.reconnectionRequired
+      ? `${updated.name} was saved securely. Reconnect it before the new identity can be used.`
+      : updated.identityChanged
+        ? `${updated.name} was saved and the replacement configuration was validated.`
+        : `${updated.name} was updated without disconnecting it.`);
+    return updated;
+  }
+
   return (
     <DashboardPageTemplate
       icon={Plug}
@@ -305,6 +330,12 @@ export function McpConnectionsScreen() {
       {connectionActionError ? (
         <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700" role="alert">
           {connectionActionError.message}
+        </div>
+      ) : null}
+
+      {connectionActionNotice ? (
+        <div className="mb-6 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-800" role="status">
+          {connectionActionNotice}
         </div>
       ) : null}
 
@@ -452,6 +483,10 @@ export function McpConnectionsScreen() {
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
+              onEdit={() => {
+                updateConnection.reset();
+                setEditingConnection(connection);
+              }}
               onConnect={() => void handleConnectOAuth(connection.id)}
               onRemove={() => deleteConnection.mutate(connection.id)}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
@@ -472,6 +507,17 @@ export function McpConnectionsScreen() {
           setFormPreset(null);
         }}
         onSubmit={handleCreate}
+      />
+
+      <EditConnectionDialog
+        connection={editingConnection}
+        submitting={updateConnection.isPending}
+        error={updateConnection.error}
+        onClose={() => {
+          updateConnection.reset();
+          setEditingConnection(null);
+        }}
+        onSubmit={handleUpdate}
       />
 
       <ImportPluginConnectionDialog
@@ -1072,6 +1118,7 @@ function ConnectionRow({
   polling,
   connecting,
   errorMessage,
+  onEdit,
   onConnect,
   onRemove,
   removing,
@@ -1082,6 +1129,7 @@ function ConnectionRow({
   polling: boolean;
   connecting: boolean;
   errorMessage: string | null;
+  onEdit: () => void;
   onConnect: () => void;
   onRemove: () => void;
   removing: boolean;
@@ -1135,6 +1183,17 @@ function ConnectionRow({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
+          <DenButton
+            variant="secondary"
+            size="sm"
+            icon={Pencil}
+            onClick={onEdit}
+            disabled={!connection.updatedAt}
+            aria-label={`Edit ${connection.name}`}
+            data-testid={`edit-mcp-connection-${connection.id}`}
+          >
+            Edit
+          </DenButton>
           <DenButton
             variant="secondary"
             size="sm"
@@ -1352,10 +1411,12 @@ function SegmentedControl<TValue extends string>({
   options,
   value,
   onChange,
+  disabled = false,
 }: {
   options: SegmentedControlOption<TValue>[];
   value: TValue;
   onChange: (value: TValue) => void;
+  disabled?: boolean;
 }) {
   const gridColumns = options.length === 2 ? "grid-cols-2" : "grid-cols-3";
 
@@ -1365,9 +1426,10 @@ function SegmentedControl<TValue extends string>({
         <button
           key={option.value}
           type="button"
+          disabled={disabled}
           aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
-          className={`rounded-full px-3 py-1.5 text-[12px] font-medium transition ${
+          className={`rounded-full px-3 py-1.5 text-[12px] font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
             value === option.value
               ? "bg-white text-gray-900 shadow-[0_1px_2px_rgba(15,23,42,0.08)]"
               : "text-gray-500 hover:text-gray-900"
@@ -1380,7 +1442,7 @@ function SegmentedControl<TValue extends string>({
   );
 }
 
-type AddConnectionAccessMode = "everyone" | "teams" | "people";
+type AddConnectionAccessMode = McpConnectionAccessMode;
 
 const AUTH_TYPE_OPTIONS: SegmentedControlOption<ExternalMcpAuthType>[] = [
   { value: "oauth", label: "OAuth" },
@@ -1398,6 +1460,336 @@ const ACCESS_MODE_OPTIONS: SegmentedControlOption<AddConnectionAccessMode>[] = [
   { value: "teams", label: "Specific teams" },
   { value: "people", label: "Specific people" },
 ];
+
+function EditConnectionDialog({
+  connection,
+  submitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  connection: ExternalMcpConnection | null;
+  submitting: boolean;
+  error: unknown;
+  onClose: () => void;
+  onSubmit: (input: UpdateMcpConnectionInput) => Promise<UpdatedMcpConnection>;
+}) {
+  const { orgContext } = useOrgDashboard();
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [authType, setAuthType] = useState<ExternalMcpAuthType>("oauth");
+  const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("shared");
+  const [apiKey, setApiKey] = useState("");
+  const [showOAuthClient, setShowOAuthClient] = useState(false);
+  const [oauthClientId, setOAuthClientId] = useState("");
+  const [oauthClientSecret, setOAuthClientSecret] = useState("");
+  const [accessMode, setAccessMode] = useState<AddConnectionAccessMode>("everyone");
+  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [confirmingIdentityChange, setConfirmingIdentityChange] = useState(false);
+
+  useEffect(() => {
+    if (!connection) return;
+    setName(connection.name);
+    setUrl(connection.url);
+    setAuthType(connection.authType);
+    setCredentialMode(connection.credentialMode);
+    setApiKey("");
+    setShowOAuthClient(Boolean(connection.oauthClientId));
+    setOAuthClientId(connection.oauthClientId ?? "");
+    setOAuthClientSecret("");
+    setAccessMode(mcpAccessMode(connection.access));
+    setSelectedTeamIds(connection.access?.teamIds ?? []);
+    setSelectedMemberIds(connection.access?.memberIds ?? []);
+    setConfirmingIdentityChange(false);
+  }, [connection]);
+
+  const teams = useMemo(() => orgContext?.teams ?? [], [orgContext?.teams]);
+  const members = useMemo(
+    () => (orgContext?.members ?? []).filter((member) => Boolean(member.userId)),
+    [orgContext?.members],
+  );
+  const marketplaceOwners = connection?.identityManagedBy ?? [];
+  const marketplaceManaged = marketplaceOwners.length > 0;
+  const proposedCredentialMode = authType === "oauth" ? credentialMode : "shared";
+  const identityChanged = Boolean(connection && editableMcpIdentityChanged(connection, {
+    url,
+    authType,
+    credentialMode: proposedCredentialMode,
+  }));
+  const access: McpConnectionAccessInput = accessMode === "everyone"
+    ? { orgWide: true, memberIds: [], teamIds: [] }
+    : {
+      orgWide: false,
+      // Preserve a pre-existing mixed direct grant set on unrelated edits.
+      // Choosing a different mode below explicitly clears the hidden set.
+      memberIds: selectedMemberIds,
+      teamIds: selectedTeamIds,
+    };
+  const accessIncomplete = accessMode === "teams"
+    ? selectedTeamIds.length === 0
+    : accessMode === "people"
+      ? selectedMemberIds.length === 0
+      : false;
+  const replacementApiKeyRequired = authType === "apikey" && identityChanged && !apiKey.trim();
+
+  function toggle(list: string[], id: string): string[] {
+    return list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id];
+  }
+
+  async function submit() {
+    if (!connection?.updatedAt) return;
+    if (identityChanged && !confirmingIdentityChange) {
+      setConfirmingIdentityChange(true);
+      return;
+    }
+    const trimmedApiKey = apiKey.trim();
+    const trimmedClientId = oauthClientId.trim();
+    const trimmedClientSecret = oauthClientSecret.trim();
+    const input: UpdateMcpConnectionInput = {
+      connectionId: connection.id,
+      expectedUpdatedAt: connection.updatedAt,
+      name: name.trim(),
+      url: url.trim(),
+      authType,
+      credentialMode: proposedCredentialMode,
+      ...(!marketplaceManaged && authType === "apikey" && trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+      ...(!marketplaceManaged && authType === "oauth" && showOAuthClient && trimmedClientId
+        ? {
+          oauthClient: {
+            clientId: trimmedClientId,
+            ...(trimmedClientSecret ? { clientSecret: trimmedClientSecret } : {}),
+          },
+        }
+        : {}),
+      access,
+    };
+    try {
+      await onSubmit(input);
+    } catch {
+      // The mutation error is rendered below and the dialog stays open with
+      // the proposed values, including a stale-edit response from the API.
+    }
+  }
+
+  if (!connection) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+      <div
+        className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        onClick={(event) => event.stopPropagation()}
+        data-testid="edit-mcp-connection-dialog"
+      >
+        <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Edit MCP connection</h2>
+        <p className="mt-1 text-[13px] leading-6 text-gray-600">
+          Update how this server is presented and who can use it. Saved credentials are never shown here.
+        </p>
+
+        {marketplaceManaged ? (
+          <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-[12px] leading-5 text-blue-800" data-testid="marketplace-managed-identity-note">
+            <p className="font-semibold text-blue-900">Server and authentication are managed by {marketplaceIdentityOwnerNames(marketplaceOwners)}.</p>
+            <p className="mt-1">Change those values in the marketplace plugin definition. You can still rename this connection and edit its direct assignments here.</p>
+          </div>
+        ) : null}
+
+        <div className="mt-5 space-y-4">
+          <div>
+            <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Name</label>
+            <DenInput value={name} onChange={(event) => setName(event.target.value)} data-testid="edit-mcp-name" />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Server URL</label>
+            <DenInput
+              value={url}
+              data-testid="edit-mcp-url"
+              disabled={marketplaceManaged}
+              onChange={(event) => {
+                setUrl(event.target.value);
+                setConfirmingIdentityChange(false);
+              }}
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</label>
+            <SegmentedControl
+              options={AUTH_TYPE_OPTIONS}
+              value={authType}
+              disabled={marketplaceManaged}
+              onChange={(option) => {
+                setAuthType(option);
+                if (option !== "oauth") {
+                  setCredentialMode("shared");
+                  setShowOAuthClient(false);
+                }
+                setConfirmingIdentityChange(false);
+              }}
+            />
+          </div>
+
+          {!marketplaceManaged && authType === "apikey" ? (
+            <div>
+              <label className="mb-1.5 block text-[12px] font-medium text-gray-700">
+                {identityChanged ? "Replacement API key (required)" : "Replacement API key (optional)"}
+              </label>
+              <DenInput
+                type="password"
+                value={apiKey}
+                onChange={(event) => {
+                  setApiKey(event.target.value);
+                  setConfirmingIdentityChange(false);
+                }}
+                placeholder={identityChanged ? "Enter a key for the new identity" : "Leave empty to keep the saved key"}
+                data-testid="edit-mcp-api-key"
+              />
+              <p className="mt-1.5 text-[11px] leading-5 text-gray-500">The saved key is encrypted and is never returned to this form.</p>
+            </div>
+          ) : null}
+
+          {!marketplaceManaged && authType === "oauth" && !showOAuthClient ? (
+            <button
+              type="button"
+              onClick={() => {
+                setShowOAuthClient(true);
+                setConfirmingIdentityChange(false);
+              }}
+              className="text-left text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
+            >
+              Replace a pre-registered OAuth app
+            </button>
+          ) : null}
+
+          {!marketplaceManaged && authType === "oauth" && showOAuthClient ? (
+            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+              <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
+              <p className="mt-1 text-[12px] leading-5 text-gray-500">The client ID is safe to display. The saved client secret remains hidden.</p>
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
+                  <DenInput
+                    value={oauthClientId}
+                    onChange={(event) => {
+                      setOAuthClientId(event.target.value);
+                      setConfirmingIdentityChange(false);
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Replacement client secret (optional)</label>
+                  <DenInput
+                    type="password"
+                    value={oauthClientSecret}
+                    onChange={(event) => {
+                      setOAuthClientSecret(event.target.value);
+                      setConfirmingIdentityChange(false);
+                    }}
+                    placeholder="Leave empty to keep it when identity and client ID are unchanged"
+                    data-testid="edit-mcp-oauth-client-secret"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <div>
+            <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Whose account does the AI use?</label>
+            <SegmentedControl
+              options={CREDENTIAL_MODE_OPTIONS}
+              value={proposedCredentialMode}
+              disabled={marketplaceManaged || authType !== "oauth"}
+              onChange={(option) => {
+                setCredentialMode(option);
+                setConfirmingIdentityChange(false);
+              }}
+            />
+            {authType !== "oauth" ? (
+              <p className="mt-1.5 text-[11px] leading-5 text-gray-500">API-key and no-auth connections always use one organization connection.</p>
+            ) : null}
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Who can use this?</label>
+            <SegmentedControl
+              options={ACCESS_MODE_OPTIONS}
+              value={accessMode}
+              onChange={(option) => {
+                if (option !== accessMode) {
+                  if (option === "teams") setSelectedMemberIds([]);
+                  if (option === "people") setSelectedTeamIds([]);
+                }
+                setAccessMode(option);
+              }}
+            />
+            {accessMode === "teams" ? (
+              <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-xl border border-gray-100 p-2">
+                {teams.length === 0 ? (
+                  <p className="px-2 py-1 text-[12px] text-gray-400">No teams in this org yet.</p>
+                ) : teams.map((team) => (
+                  <button
+                    key={team.id}
+                    type="button"
+                    onClick={() => setSelectedTeamIds((current) => toggle(current, team.id))}
+                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] transition ${selectedTeamIds.includes(team.id) ? "bg-gray-100 text-gray-900" : "text-gray-700 hover:bg-gray-50"}`}
+                  >
+                    <span className="truncate">{team.name}</span>
+                    {selectedTeamIds.includes(team.id) ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {accessMode === "people" ? (
+              <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-xl border border-gray-100 p-2">
+                {members.length === 0 ? (
+                  <p className="px-2 py-1 text-[12px] text-gray-400">No members in this org yet.</p>
+                ) : members.map((member) => (
+                  <button
+                    key={member.id}
+                    type="button"
+                    onClick={() => setSelectedMemberIds((current) => toggle(current, member.id))}
+                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] transition ${selectedMemberIds.includes(member.id) ? "bg-gray-100 text-gray-900" : "text-gray-700 hover:bg-gray-50"}`}
+                  >
+                    <span className="truncate">{member.user.name || member.user.email}</span>
+                    {selectedMemberIds.includes(member.id) ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        {identityChanged && !marketplaceManaged ? (
+          <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[12px] leading-5 text-amber-900" data-testid="mcp-identity-change-warning">
+            <p className="font-semibold">This changes the connection identity.</p>
+            <p className="mt-1">OpenWork will clear shared and individual sessions, API keys, pending OAuth state, OAuth client registration, scopes, and connected timestamps before the new server can be used.</p>
+            {authType === "oauth" ? <p className="mt-1 font-medium">The connection must be authorized again after saving.</p> : null}
+            {confirmingIdentityChange ? <p className="mt-2 font-semibold">Confirm that you want to invalidate the old identity.</p> : null}
+          </div>
+        ) : null}
+
+        {error ? (
+          <p className="mt-3 text-[13px] text-red-600" role="alert">{error instanceof Error ? error.message : "Failed to update connection."}</p>
+        ) : null}
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          {confirmingIdentityChange ? (
+            <DenButton variant="secondary" onClick={() => setConfirmingIdentityChange(false)} disabled={submitting}>Back</DenButton>
+          ) : (
+            <DenButton variant="secondary" onClick={onClose} disabled={submitting}>Cancel</DenButton>
+          )}
+          <DenButton
+            variant="primary"
+            loading={submitting}
+            disabled={!connection.updatedAt || !name.trim() || !url.trim() || replacementApiKeyRequired || accessIncomplete}
+            onClick={() => void submit()}
+            data-testid="save-mcp-connection-edit"
+          >
+            {confirmingIdentityChange ? "Confirm and save" : identityChanged ? "Review identity change" : "Save changes"}
+          </DenButton>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function AddConnectionDialog({
   open,

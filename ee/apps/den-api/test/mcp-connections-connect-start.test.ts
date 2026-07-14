@@ -20,6 +20,7 @@ let schema: typeof import("@openwork-ee/den-db/schema")
 let drizzle: typeof import("@openwork-ee/den-db/drizzle")
 let session: typeof import("../src/session.js")
 let createExternalMcpConnection: typeof import("../src/capability-sources/external-mcp-connections.js").createExternalMcpConnection
+let externalMcpIdentityBinding: typeof import("../src/capability-sources/external-mcp-connections.js").externalMcpIdentityBinding
 let createOAuthStateToken: typeof import("../src/capability-sources/generic-oauth.js").createOAuthStateToken
 
 const userId = createDenTypeId("user")
@@ -54,6 +55,7 @@ beforeAll(async () => {
   drizzle = drizzleMod
   session = sessionMod
   createExternalMcpConnection = connectionsMod.createExternalMcpConnection
+  externalMcpIdentityBinding = connectionsMod.externalMcpIdentityBinding
   createOAuthStateToken = genericOAuthMod.createOAuthStateToken
 
   await db.insert(schema.AuthUserTable).values({
@@ -179,6 +181,11 @@ test("public OAuth callback scopes the signed connection lookup to its organizat
     organizationId: createDenTypeId("organization"),
     orgMembershipId: memberId,
     providerId: seededConnectionId(),
+    binding: externalMcpIdentityBinding({
+      url: "http://127.0.0.1:9/mcp",
+      authType: "oauth",
+      credentialMode: "per_member",
+    }),
     secret: process.env.BETTER_AUTH_SECRET ?? "",
   })
   const callbackUrl = new URL(`http://den-api.local/v1/mcp-connections/${seededConnectionId()}/connect/callback`)
@@ -196,6 +203,11 @@ test("public OAuth callback validates state and renders a safe provider-denial d
     organizationId,
     orgMembershipId: memberId,
     providerId: seededConnectionId(),
+    binding: externalMcpIdentityBinding({
+      url: "http://127.0.0.1:9/mcp",
+      authType: "oauth",
+      credentialMode: "per_member",
+    }),
     secret: process.env.BETTER_AUTH_SECRET ?? "",
   })
   const callbackUrl = new URL(`http://den-api.local/v1/mcp-connections/${seededConnectionId()}/connect/callback`)

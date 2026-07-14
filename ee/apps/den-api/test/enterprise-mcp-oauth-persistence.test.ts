@@ -186,6 +186,51 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
     expect(after?.tokens.access_token).toBe(before?.tokens.access_token)
   })
 
+  test("rejects late credential and client writes after the connection identity changes", async () => {
+    const oldIdentity = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP old identity",
+      url: "https://old-mcp.example.test/mcp",
+      authType: "oauth",
+      credentialMode: "shared",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const persistence = new DenEnterpriseMcpOAuthPersistence(oldIdentity)
+    await db
+      .update(schema.ExternalMcpConnectionTable)
+      .set({ url: "https://replacement-mcp.example.test/mcp", updatedAt: new Date() })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, oldIdentity.id))
+    const oldContext = {
+      connectionId: oldIdentity.id,
+      commitExpiresAt: Date.now() + 30_000,
+      signal: new AbortController().signal,
+    }
+
+    await expect(persistence.credentials.save({
+      context: oldContext,
+      tokens: { access_token: "late-enterprise-token", token_type: "Bearer" },
+      source: "refresh",
+    })).rejects.toThrow("identity changed")
+    await expect(persistence.clientRegistrations.save({
+      context: oldContext,
+      clientInformation: { client_id: "late-enterprise-client" },
+      source: "dynamic",
+    })).rejects.toThrow("identity changed")
+
+    const rows = await db
+      .select()
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, oldIdentity.id))
+      .limit(1)
+    expect(rows[0]?.accessToken).toBeNull()
+    const clients = await db
+      .select()
+      .from(schema.OrgOAuthClientTable)
+      .where(drizzle.eq(schema.OrgOAuthClientTable.providerId, oldIdentity.id))
+    expect(clients).toEqual([])
+  })
+
   test("removes a denied per-member authorization and keeps repeated cleanup idempotent", async () => {
     const perMemberConnection = await createExternalMcpConnection({
       organizationId,

@@ -62,6 +62,7 @@ type OAuthStatePayload = {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
   providerId: string
+  binding?: string
   nonce: string
   exp: number
 }
@@ -70,6 +71,7 @@ export function createOAuthStateToken(input: {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
   providerId: string
+  binding?: string
   secret: string
   ttlSeconds?: number
   now?: number
@@ -79,6 +81,7 @@ export function createOAuthStateToken(input: {
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     providerId: input.providerId,
+    ...(input.binding ? { binding: input.binding } : {}),
     nonce: randomUUID(),
     exp: Math.floor(nowMs / 1000) + (input.ttlSeconds ?? 10 * 60),
   }
@@ -106,6 +109,7 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
       typeof payload.organizationId !== "string"
       || typeof payload.orgMembershipId !== "string"
       || typeof payload.providerId !== "string"
+      || (payload.binding !== undefined && typeof payload.binding !== "string")
       || typeof payload.nonce !== "string"
       || typeof payload.exp !== "number"
       || payload.exp < nowSeconds
