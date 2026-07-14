@@ -19,6 +19,74 @@ import { SettingsInset, SettingsNotice, SettingsSection } from "../settings-sect
 
 const EXPECTED_CLOUD_TOOL_IDS = ["search_capabilities", "execute_capability"];
 
+const STATUS_LABEL_KEYS: Record<AgentContextDiagnosticStatus | AgentContextDiagnosticOverall, string> = {
+  passed: "connect.diagnostics_status_passed",
+  warning: "connect.diagnostics_status_warning",
+  failed: "connect.diagnostics_status_failed",
+  skipped: "connect.diagnostics_status_skipped",
+};
+
+const EVIDENCE_LABEL_KEYS: Record<AgentContextDiagnosticEvidenceKind, string> = {
+  observed: "connect.diagnostics_evidence_observed",
+  "client-observed": "connect.diagnostics_evidence_client_observed",
+  expected: "connect.diagnostics_evidence_expected",
+  derived: "connect.diagnostics_evidence_derived",
+  unavailable: "connect.diagnostics_evidence_unavailable",
+};
+
+const OWNER_LABEL_KEYS: Record<AgentContextDiagnosticOwner, string> = {
+  "openwork-client": "connect.diagnostics_owner_openwork_client",
+  "openwork-server": "connect.diagnostics_owner_openwork_server",
+  "opencode-engine": "connect.diagnostics_owner_opencode_engine",
+  "network-admin": "connect.diagnostics_owner_network_admin",
+  "organization-admin": "connect.diagnostics_owner_organization_admin",
+  member: "connect.diagnostics_owner_member",
+  "member-and-organization-admin": "connect.diagnostics_owner_member_and_organization_admin",
+  "openwork-support": "connect.diagnostics_owner_openwork_support",
+};
+
+const PERMISSION_LABEL_KEYS: Record<AgentContextToolPermission, string> = {
+  allowed: "connect.diagnostics_permission_allowed",
+  "approval-required": "connect.diagnostics_permission_approval_required",
+  denied: "connect.diagnostics_permission_denied",
+  unspecified: "connect.diagnostics_permission_unspecified",
+};
+
+const SYNC_STATUS_LABEL_KEYS: Record<AgentContextDiagnosticsReport["mcps"][number]["syncStatus"], string> = {
+  connected: "connect.diagnostics_sync_status_connected",
+  disabled: "connect.diagnostics_sync_status_disabled",
+  failed: "connect.diagnostics_sync_status_failed",
+  "needs-auth": "connect.diagnostics_sync_status_needs_auth",
+  "needs-client-registration": "connect.diagnostics_sync_status_needs_client_registration",
+  "not-recorded": "connect.diagnostics_sync_status_not_recorded",
+  "not-applicable": "connect.diagnostics_sync_status_not_applicable",
+};
+
+const PROBE_STATUS_LABEL_KEYS: Record<AgentContextDiagnosticsReport["organizationConnectionsProbe"]["status"], string> = {
+  observed: "connect.diagnostics_probe_status_observed",
+  unavailable: "connect.diagnostics_probe_status_unavailable",
+  skipped: "connect.diagnostics_probe_status_skipped",
+};
+
+const PROBE_CODE_LABEL_KEYS: Record<NonNullable<AgentContextDiagnosticsReport["organizationConnectionsProbe"]["code"]>, string> = {
+  signed_out: "connect.diagnostics_probe_code_signed_out",
+  list_failed: "connect.diagnostics_probe_code_list_failed",
+  not_attempted: "connect.diagnostics_probe_code_not_attempted",
+  remote_workspace_privacy: "connect.diagnostics_probe_code_remote_workspace_privacy",
+};
+
+const BRANCH_LABEL_KEYS: Record<AgentContextDiagnosticsReport["connect"]["expectedBranch"], string> = {
+  "cloud-active": "connect.diagnostics_branch_cloud_active",
+  "cloud-disconnected": "connect.diagnostics_branch_cloud_disconnected",
+  "extensions-only": "connect.diagnostics_branch_extensions_only",
+};
+
+const AGENT_STATE_LABEL_KEYS: Record<AgentContextDiagnosticsReport["agent"]["configuredOpenworkAgent"]["state"], string> = {
+  present: "connect.diagnostics_agent_state_present",
+  missing: "connect.diagnostics_agent_state_missing",
+  "configured-disabled": "connect.diagnostics_agent_state_configured_disabled",
+};
+
 const CHECK_LABEL_KEYS: Record<AgentContextDiagnosticCheckId, string> = {
   "request-safety": "connect.diagnostics_check_request_safety",
   "workspace-runtime": "connect.diagnostics_check_workspace_runtime",
@@ -39,15 +107,15 @@ const CHECK_LABEL_KEYS: Record<AgentContextDiagnosticCheckId, string> = {
 };
 
 function statusLabel(status: AgentContextDiagnosticStatus | AgentContextDiagnosticOverall) {
-  return t(`connect.diagnostics_status_${status}`);
+  return t(STATUS_LABEL_KEYS[status]);
 }
 
 function evidenceLabel(kind: AgentContextDiagnosticEvidenceKind) {
-  return t(`connect.diagnostics_evidence_${kind.replace("-", "_")}`);
+  return t(EVIDENCE_LABEL_KEYS[kind]);
 }
 
 function ownerLabel(owner: AgentContextDiagnosticOwner) {
-  return t(`connect.diagnostics_owner_${owner.replaceAll("-", "_")}`);
+  return t(OWNER_LABEL_KEYS[owner]);
 }
 
 function checkLabel(id: AgentContextDiagnosticCheckId, effectiveEngineObserved = false) {
@@ -81,7 +149,7 @@ function booleanLabel(value: boolean) {
 }
 
 function permissionLabel(value: AgentContextToolPermission) {
-  return t(`connect.diagnostics_permission_${value.replaceAll("-", "_")}`);
+  return t(PERMISSION_LABEL_KEYS[value]);
 }
 
 function detailLabel(key: string) {
@@ -368,7 +436,7 @@ function McpInventory(props: {
                           : "connect.diagnostics_configured_disabled")}
                 </span>
                 <span data-testid="agent-diagnostics-mcp-sync" className="rounded-full border border-dls-border px-2 py-1 text-xs font-medium text-dls-secondary">
-                  {t("connect.diagnostics_sync_label")}: {t(`connect.diagnostics_sync_status_${mcp.syncStatus.replaceAll("-", "_")}`)}
+                  {t("connect.diagnostics_sync_label")}: {t(SYNC_STATUS_LABEL_KEYS[mcp.syncStatus])}
                 </span>
                 <span data-testid="agent-diagnostics-mcp-live-status" className="rounded-full border border-dls-border px-2 py-1 text-xs font-medium text-dls-secondary">
                   {t(engineConfigRow
@@ -455,9 +523,9 @@ function OrganizationConnections(props: { report: AgentContextDiagnosticsReport 
         <div className="text-xs text-dls-secondary">{t("connect.diagnostics_org_description")}</div>
       </div>
       <div data-testid="agent-diagnostics-org-probe" className="text-xs text-dls-secondary">
-        {t("connect.diagnostics_observation_label")}: {t(`connect.diagnostics_probe_status_${props.report.organizationConnectionsProbe.status}`)}
+        {t("connect.diagnostics_observation_label")}: {t(PROBE_STATUS_LABEL_KEYS[props.report.organizationConnectionsProbe.status])}
         {props.report.organizationConnectionsProbe.code
-          ? ` · ${t(`connect.diagnostics_probe_code_${props.report.organizationConnectionsProbe.code}`)}`
+          ? ` · ${t(PROBE_CODE_LABEL_KEYS[props.report.organizationConnectionsProbe.code])}`
           : ""}
         {props.report.organizationConnectionsProbe.status === "observed"
           ? ` · ${t("connect.diagnostics_org_count", {
@@ -577,7 +645,7 @@ export function AgentContextDiagnosticsReportView(props: {
           <div className="grid gap-3 rounded-xl border border-dls-border bg-dls-surface p-3 sm:grid-cols-2">
             <Fact
               label={t("connect.diagnostics_expected_branch")}
-              value={t(`connect.diagnostics_branch_${props.report.connect.expectedBranch.replaceAll("-", "_")}`)}
+              value={t(BRANCH_LABEL_KEYS[props.report.connect.expectedBranch])}
             />
             <Fact label={t("connect.diagnostics_connect_enabled")} value={booleanLabel(props.report.connect.connectEnabled)} />
             <Fact
@@ -589,7 +657,7 @@ export function AgentContextDiagnosticsReportView(props: {
             <Fact label={t("connect.diagnostics_cross_workspace_drift")} value={booleanLabel(props.report.connect.crossWorkspaceSteeringDrift)} />
             <Fact
               label={t("connect.diagnostics_agent_state")}
-              value={t(`connect.diagnostics_agent_state_${agent.state.replaceAll("-", "_")}`)}
+              value={t(AGENT_STATE_LABEL_KEYS[agent.state])}
             />
           </div>
         </div>
