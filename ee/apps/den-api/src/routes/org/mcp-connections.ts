@@ -17,6 +17,7 @@ import { appLogger } from "../../observability/logger.js"
 import {
   jsonValidator,
   orgMemberRoute,
+  orgRoleRoute,
   paramValidator,
   publicRoute,
   queryValidator,
@@ -825,19 +826,19 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Manually run a tool from an External MCP Connection",
-      description: "Human-only diagnostic runner. Executes one named MCP tool with caller-supplied JSON arguments using the Den-managed shared credential or the calling member's connected credential. The caller must already be granted access to the connection. Credentials, arguments, and results are never written to logs.",
+      description: "Workspace owner/admin diagnostic runner. Executes one named MCP tool with caller-supplied JSON arguments using the Den-managed shared credential or the calling admin's connected credential. The caller must already be granted access to the connection. Credentials, arguments, and results are never written to logs.",
       responses: {
         200: jsonResponse("The MCP tool completed.", connectionToolRunResponseSchema),
         400: jsonResponse("Invalid tool name or arguments.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("The caller has not been granted access to this connection.", forbiddenSchema),
+        403: jsonResponse("The caller must be a workspace owner/admin and have access to this connection.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
         409: jsonResponse("The connection has no usable credential for this member.", connectionNotReadySchema),
         413: jsonResponse("The tool arguments exceeded the request size limit.", connectionToolRequestTooLargeSchema),
         502: jsonResponse("The upstream MCP tool call failed.", connectionToolRunFailedSchema),
       },
     }),
-    orgMemberRoute(),
+    orgRoleRoute(["admin"]),
     resolveMemberTeamsMiddleware,
     bodyLimit({
       maxSize: MANUAL_MCP_TOOL_REQUEST_MAX_BYTES,

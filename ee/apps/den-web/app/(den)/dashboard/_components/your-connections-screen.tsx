@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Loader2, Plug, Wrench } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Plug, Wrench } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { getOrgAccessFlags } from "../../_lib/den-org";
@@ -127,7 +127,7 @@ export function YourConnectionsScreen() {
       icon={Plug}
       title="Your Connections"
       badgeLabel="Alpha"
-      description="Tools your organization has made available to you. Connect your own account where needed, then test a tool directly or let your AI coworker use it with your permissions."
+      description="Tools your organization has made available to you. Connect your own account where needed; workspace admins can test tools directly, and your AI coworker uses them with your permissions."
       colors={["#DBEAFE", "#1E3A8A", "#2563EB", "#93C5FD"]}
     >
       {error ? (
@@ -195,7 +195,7 @@ function YourConnectionRow({
   const needsMyConnect = isPerMember && !connection.connectedForMe;
   const needsAdminConnect = isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
   const canDisconnect = canDisconnectNativeProviderAccount(connection);
-  const canTestTools = !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
+  const canTestTools = isAdmin && !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
   const [toolRunnerOpen, setToolRunnerOpen] = useState(false);
   const microsoftScopes = connection.id === "microsoft-365"
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
@@ -272,11 +272,11 @@ function YourConnectionRow({
               icon={Wrench}
               onClick={() => setToolRunnerOpen((open) => !open)}
               aria-expanded={toolRunnerOpen}
+              aria-label={`Test tools for ${connection.name}`}
+              title={`Test tools for ${connection.name}`}
+              className="h-8 w-8 !px-0"
               data-testid={`toggle-mcp-tool-runner-${connection.id}`}
-            >
-              Test tools
-              {toolRunnerOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            </DenButton>
+            />
           ) : null}
           {canDisconnect ? (
             <DenButton variant="destructive" size="sm" loading={disconnecting} onClick={onDisconnect}>

@@ -349,10 +349,10 @@ test("an ungranted member cannot inspect or run a connection", async () => {
   expect(callResponse.status).toBe(403)
 })
 
-test("a granted member manually runs a tool with a diagnostic reference", async () => {
+test("an admin manually runs a tool with a diagnostic reference", async () => {
   observedMethods.length = 0
   observedArguments.length = 0
-  const response = await callRequest(connectionId, memberUserId, {
+  const response = await callRequest(connectionId, adminUserId, {
     toolName: "search_incidents",
     arguments: { query: "network timeout", status: "active" },
   })
@@ -369,14 +369,21 @@ test("a granted member manually runs a tool with a diagnostic reference", async 
   expect(observedArguments).toEqual([{ query: "network timeout", status: "active" }])
 })
 
-test("per-member tool execution uses only the calling member's credential", async () => {
+test("per-member tool execution uses only the calling admin's credential", async () => {
   observedAuthorization.length = 0
   const response = await callRequest(perMemberConnectionId)
   expect(response.status).toBe(200)
   expect(observedAuthorization).toContain("Bearer member-catalog-token")
+})
 
-  const missingCredential = await callRequest(perMemberConnectionId, memberUserId)
-  expect(missingCredential.status).toBe(409)
+test("a granted regular member cannot manually run a tool", async () => {
+  const response = await callRequest(connectionId, memberUserId)
+  expect(response.status).toBe(403)
+})
+
+test("manual tool execution requires a connected admin credential", async () => {
+  const response = await callRequest(disconnectedConnectionId)
+  expect(response.status).toBe(409)
 })
 
 test("manual tool execution is tenant scoped", async () => {
@@ -397,7 +404,7 @@ test("manual tool execution validates a JSON object payload", async () => {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId: memberUserId, organizationId }),
+      "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId: adminUserId, organizationId }),
     },
     body: JSON.stringify({ toolName: "search_incidents", arguments: [] }),
   }))
@@ -414,7 +421,7 @@ test("manual tool execution rejects payloads larger than 1 MB", async () => {
     headers: {
       "content-length": String(Buffer.byteLength(body)),
       "content-type": "application/json",
-      "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId: memberUserId, organizationId }),
+      "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId: adminUserId, organizationId }),
     },
     body,
   }))
