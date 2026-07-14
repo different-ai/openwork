@@ -100,6 +100,9 @@ function resetFakeGoogle() {
   lastGmailThreadUrl = null
 }
 
+// Trailing high bytes force base64url output ("-"/"_") to differ from standard base64 ("+"/"/").
+const attachmentBytes = Buffer.concat([Buffer.from("%PDF-1.4 fake attachment", "utf8"), Buffer.from([0xfb, 0xef, 0xbe, 0xff])])
+
 function gmailMessagePayload() {
   return {
     id: "msg_1",
@@ -144,6 +147,9 @@ const fakeGoogleServer = Bun.serve({
     }
     if (url.pathname === "/gmail/v1/users/me/messages/msg_1") {
       return json(gmailMessagePayload())
+    }
+    if (url.pathname === "/gmail/v1/users/me/messages/msg_1/attachments/att_1") {
+      return json({ attachmentId: "att_1", size: attachmentBytes.byteLength, data: attachmentBytes.toString("base64url") })
     }
     if (url.pathname === "/gmail/v1/users/me/threads/thread_1") {
       lastGmailThreadUrl = request.url
@@ -520,6 +526,42 @@ test("gmail list returns metadata-mapped messages", async () => {
   })
 })
 
+test("gmail attachment download returns standard base64 bytes and sends the member token", async () => {
+  // The fixture must exercise base64url -> base64 normalization, or this test proves nothing.
+  expect(attachmentBytes.toString("base64url")).not.toBe(attachmentBytes.toString("base64"))
+
+  const response = await request("/v1/capabilities/google-workspace/gmail-attachment/msg_1/att_1")
+  expect(response.status).toBe(200)
+  expect(lastAuthorization).toBe("Bearer gws-token")
+  const body: unknown = await response.json()
+  expect(body).toEqual({
+    ok: true,
+    messageId: "msg_1",
+    attachmentId: "att_1",
+    size: attachmentBytes.byteLength,
+    dataBase64: attachmentBytes.toString("base64"),
+  })
+})
+
+test("gmail attachment download requires Gmail read scope before calling Google", async () => {
+  await seedConnectedAccount([CALENDAR_READ_SCOPE, CALENDAR_EVENTS_SCOPE, DRIVE_READ_SCOPE])
+  resetFakeGoogle()
+  const response = await request("/v1/capabilities/google-workspace/gmail-attachment/msg_1/att_1")
+  expect(response.status).toBe(409)
+  expect(googleCallCount).toBe(0)
+  const body: unknown = await response.json()
+  expect(expectMessage(body)).toContain("missing the Gmail read permission")
+})
+
+test("gmail attachment download returns google_api_error when Google rejects the attachment id", async () => {
+  const response = await request("/v1/capabilities/google-workspace/gmail-attachment/msg_1/att_missing")
+  expect(response.status).toBe(502)
+  const body: unknown = await response.json()
+  const responseBody = expectRecord(body, "attachment error response")
+  expect(responseBody.error).toBe("google_api_error")
+  expect(expectMessage(body).startsWith("Gmail attachment download failed: 404")).toBe(true)
+})
+
 test("gmail plain draft supports cc without requiring a thread", async () => {
   const to = "sam@acme.test"
   const subject = "Quarterly plan"
@@ -810,10 +852,12 @@ test("Google Workspace capability tools are discoverable and keep readable names
   expect(draftMatch?.name).toBe("postCapabilitiesGoogleWorkspaceGmailDrafts")
   expect(draftMatch?.summary).toContain("attachments: [{ filename, mimeType, dataBase64 }]")
   expect(draftMatch?.summary).toContain("standard base64")
+  expect(searchCapabilities(catalog, "download gmail attachment bytes", 10)[0]?.name).toBe("getCapabilitiesGoogleWorkspaceGmailAttachment")
 
   const expectedNames = [
     "getCapabilitiesGoogleWorkspaceGmailMessages",
     "getCapabilitiesGoogleWorkspaceGmailMessage",
+    "getCapabilitiesGoogleWorkspaceGmailAttachment",
     "getCapabilitiesGoogleWorkspaceCalendarEvents",
     "postCapabilitiesGoogleWorkspaceCalendarEvents",
     "patchCapabilitiesGoogleWorkspaceCalendarEvent",

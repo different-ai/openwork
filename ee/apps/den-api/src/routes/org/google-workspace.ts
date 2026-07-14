@@ -13,6 +13,7 @@ import {
   buildDriveSearchQuery,
   extractCalendarEvents,
   extractDriveFiles,
+  extractGmailAttachmentData,
   extractGmailMessage,
   extractGmailMessageIds,
   extractGmailThreadReplyContext,
@@ -124,6 +125,19 @@ const gmailMessageResponseSchema = z.object({
   ok: z.literal(true),
   message: gmailMessageSchema,
 }).meta({ ref: "GoogleWorkspaceGmailMessageResponse" })
+
+const gmailAttachmentParamSchema = z.object({
+  messageId: z.string().trim().min(1).max(512).describe("Gmail message id that contains the attachment."),
+  attachmentId: z.string().trim().min(1).max(2_048).describe("Attachment id from the gmail-message capability's attachments metadata."),
+}).meta({ ref: "GoogleWorkspaceGmailAttachmentParams" })
+
+const gmailAttachmentResponseSchema = z.object({
+  ok: z.literal(true),
+  messageId: z.string(),
+  attachmentId: z.string(),
+  size: z.number().describe("Attachment size in bytes."),
+  dataBase64: z.string().describe("Standard base64-encoded attachment bytes; decode locally to reconstruct the file."),
+}).meta({ ref: "GoogleWorkspaceGmailAttachmentResponse" })
 
 const calendarEventsQuerySchema = z.object({
   timeMin: z.string().datetime().describe("Inclusive lower bound for event start time."),
@@ -418,7 +432,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Read a Gmail message with its plain-text body as the calling member",
-      description: "Reads one Gmail message, including decoded plain-text body content and attachment metadata, using the calling member's connected Google Workspace account.",
+      description: "Reads one Gmail message, including decoded plain-text body content and attachment metadata, using the calling member's connected Google Workspace account. To download an attachment's bytes, pass its attachmentId to the gmail-attachment capability.",
       responses: {
         200: jsonResponse("Gmail message returned.", gmailMessageResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -455,6 +469,55 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       return c.json({ ok: true, message: extractGmailMessage(await readJson(response)) })
+    },
+  )
+
+  app.get(
+    "/v1/capabilities/google-workspace/gmail-attachment/:messageId/:attachmentId",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Download a Gmail attachment's bytes as the calling member",
+      description: "Downloads one Gmail attachment (file) as base64-encoded bytes, using the messageId and the attachmentId from the gmail-message capability's attachments metadata. Decode dataBase64 locally to reconstruct the file, e.g. a PDF or spreadsheet, then extract its contents.",
+      responses: {
+        200: jsonResponse("Gmail attachment returned.", gmailAttachmentResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Google account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Google rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(gmailAttachmentParamSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const token = await googleWorkspaceToken({
+        organizationId: payload.organization.id,
+        orgMembershipId: payload.currentMember.id,
+      })
+      if (token.kind === "google_api_error") {
+        return c.json({ error: "google_api_error", message: token.message }, 502)
+      }
+      if (token.kind === "needs_connection") {
+        return c.json({ error: "needs_connection", message: token.message }, 409)
+      }
+      if (missingScope(token.account, [GMAIL_READ_SCOPE])) {
+        return c.json({ error: "needs_connection", message: missingPermissionMessage("Gmail read") }, 409)
+      }
+
+      const { messageId, attachmentId } = c.req.valid("param")
+      const url = new URL(`${gmailApiBase()}/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`)
+      const response = await googleWorkspaceApiFetch(url, {
+        headers: { authorization: `Bearer ${token.accessToken}` },
+      })
+      if (!response.ok) {
+        return c.json(await googleApiError("Gmail attachment download", response), 502)
+      }
+
+      const attachment = extractGmailAttachmentData(await readJson(response))
+      if (!attachment) {
+        return c.json({ error: "google_api_error", message: "Gmail attachment download returned no data." }, 502)
+      }
+
+      return c.json({ ok: true, messageId, attachmentId, size: attachment.size, dataBase64: attachment.dataBase64 })
     },
   )
 
@@ -766,7 +829,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     "/v1/capabilities/google-workspace/gmail-drafts",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "Create a Gmail draft or threaded reply draft; attach workspace files with body.attachments: [{ filename, mimeType, dataBase64 }], where dataBase64 is the file bytes encoded as standard base64",
+      summary: "Create a Gmail draft or threaded reply draft; attach workspace files with body.attachments: [{ filename, mimeType, dataBase64 }], where dataBase64 is each attachment's file bytes encoded as standard base64",
       description: "Creates a plain-text Gmail draft in the calling member own mailbox, with optional Cc/Bcc recipients and files read from the active workspace. Set threadId to attach the draft to an existing Gmail thread as a reply using the thread's matching subject. Returns needs_connection when the member has not connected their Google account yet or when a threaded reply needs Gmail read permission.",
       responses: {
         200: jsonResponse("Draft created.", createDraftResponseSchema),

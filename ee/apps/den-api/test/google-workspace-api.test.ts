@@ -3,6 +3,7 @@ import {
   buildDriveSearchQuery,
   extractCalendarEvents,
   extractDriveFiles,
+  extractGmailAttachmentData,
   extractGmailMessage,
   truncateText,
 } from "../src/capability-sources/google-workspace-api.js"
@@ -70,6 +71,25 @@ describe("extractGmailMessage", () => {
       payload: { mimeType: "text/plain", body: { data: base64Url("x".repeat(100_010)) } },
     })
     expect(message.body.length).toBe(100_000)
+  })
+})
+
+describe("extractGmailAttachmentData", () => {
+  test("normalizes base64url data to standard base64 and keeps Gmail's size", () => {
+    // "----_w" decodes to bytes fb ef be ff; standard base64 re-encodes them as "++++/w==".
+    expect(extractGmailAttachmentData({ size: 4, data: "----_w" })).toEqual({ size: 4, dataBase64: "++++/w==" })
+  })
+
+  test("falls back to decoded byte length when size is missing", () => {
+    expect(extractGmailAttachmentData({ data: base64Url("hello") })).toEqual({
+      size: 5,
+      dataBase64: Buffer.from("hello", "utf8").toString("base64"),
+    })
+  })
+
+  test("returns null when Gmail sends no data", () => {
+    expect(extractGmailAttachmentData({ size: 4 })).toBeNull()
+    expect(extractGmailAttachmentData(null)).toBeNull()
   })
 })
 
