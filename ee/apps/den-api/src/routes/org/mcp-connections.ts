@@ -28,9 +28,9 @@ import { emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jso
 import { createOAuthStateToken, resolvePublicOrigin, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
 import {
   abandonExternalMcpAuth,
-  callExternalMcpTool,
   connectExternalMcp,
   completeExternalMcpAuth,
+  inspectExternalMcpToolCall,
   listExternalMcpTools,
 } from "../../capability-sources/external-mcp-client-runtime.js"
 import {
@@ -64,6 +64,10 @@ import {
   externalMcpOAuthCallbackError,
   safeExternalMcpEndpointForLog,
 } from "../../capability-sources/external-mcp-diagnostics.js"
+import {
+  diagnoseExternalMcpToolCall,
+  externalMcpToolCallInspectionForError,
+} from "../../capability-sources/external-mcp-tool-inspection.js"
 import { resolvePluginArchResourceRole, type PluginArchActorContext } from "./plugin-system/access.js"
 import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -241,10 +245,52 @@ const runConnectionToolBodySchema = z.object({
   arguments: z.record(z.string(), z.unknown()),
 }).meta({ ref: "ExternalMcpConnectionToolRunInput" })
 
+const connectionToolInspectionHeaderSchema = z.object({
+  name: z.string(),
+  value: z.string(),
+  redacted: z.boolean(),
+}).meta({ ref: "ExternalMcpConnectionToolInspectionHeader" })
+
+const connectionToolInspectionBodySchema = z.object({
+  text: z.string(),
+  bytes: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  unavailable: z.boolean().optional(),
+}).meta({ ref: "ExternalMcpConnectionToolInspectionBody" })
+
+const connectionToolInspectionRequestSchema = z.object({
+  method: z.string(),
+  url: z.string(),
+  startedAt: z.string().datetime(),
+  headers: z.array(connectionToolInspectionHeaderSchema),
+  body: connectionToolInspectionBodySchema,
+}).meta({ ref: "ExternalMcpConnectionToolInspectionRequest" })
+
+const connectionToolInspectionResponseSchema = z.object({
+  status: z.number().int().min(100).max(599),
+  statusText: z.string(),
+  durationMs: z.number().nonnegative(),
+  headers: z.array(connectionToolInspectionHeaderSchema),
+  body: connectionToolInspectionBodySchema,
+}).meta({ ref: "ExternalMcpConnectionToolInspectionResponse" })
+
+const connectionToolInspectionDiagnosisSchema = z.object({
+  status: z.enum(["succeeded", "failed"]),
+  layer: z.enum(["openwork", "network", "mcp_connection", "remote_http", "mcp_tool"]),
+  summary: z.string(),
+}).meta({ ref: "ExternalMcpConnectionToolInspectionDiagnosis" })
+
+const connectionToolInspectionSchema = z.object({
+  request: connectionToolInspectionRequestSchema.optional(),
+  response: connectionToolInspectionResponseSchema.optional(),
+  diagnosis: connectionToolInspectionDiagnosisSchema,
+}).meta({ ref: "ExternalMcpConnectionToolInspection" })
+
 const connectionToolRunResponseSchema = z.object({
   referenceId: z.string(),
   durationMs: z.number().nonnegative(),
   result: z.unknown(),
+  inspection: connectionToolInspectionSchema,
 }).meta({ ref: "ExternalMcpConnectionToolRunResponse" })
 
 const connectionNotReadySchema = z.object({
@@ -346,6 +392,7 @@ const connectionToolRunFailedSchema = z.object({
   error: z.literal("tool_execution_failed"),
   message: z.string(),
   diagnostic: externalMcpDiagnosticSchema,
+  inspection: connectionToolInspectionSchema,
 }).meta({ ref: "ExternalMcpConnectionToolRunFailedError" })
 
 const connectionToolRequestTooLargeSchema = z.object({
@@ -829,7 +876,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Manually run a tool from an External MCP Connection",
-      description: "Workspace owner/admin diagnostic runner. Executes one named MCP tool with caller-supplied JSON arguments using the Den-managed shared credential or the calling admin's connected credential. The caller must already be granted access to the connection. Credentials, arguments, and results are never written to logs.",
+      description: "Workspace owner/admin diagnostic runner. Executes one named MCP tool with caller-supplied JSON arguments using the Den-managed shared credential or the calling admin's connected credential. Returns an ephemeral inspection of the actual tools/call HTTP request and response with credential and session headers redacted. The caller must already be granted access to the connection. Credentials, arguments, results, and inspection payloads are never written to logs.",
       responses: {
         200: jsonResponse("The MCP tool completed.", connectionToolRunResponseSchema),
         400: jsonResponse("Invalid tool name or arguments.", invalidRequestSchema),
@@ -886,7 +933,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
 
       const startedAt = Date.now()
       try {
-        const result = await callExternalMcpTool({
+        const inspected = await inspectExternalMcpToolCall({
           connection,
           redirectUri: callbackRedirectUri(c.req.raw, connectionId),
           toolName,
@@ -902,9 +949,18 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           duration_ms: durationMs,
           diagnostic_reference_id: c.get("requestId"),
         })
-        return c.json({ referenceId: c.get("requestId"), durationMs, result })
+        return c.json({
+          referenceId: c.get("requestId"),
+          durationMs,
+          result: inspected.result,
+          inspection: {
+            ...inspected.inspection,
+            diagnosis: diagnoseExternalMcpToolCall({ inspection: inspected.inspection, succeeded: true }),
+          },
+        })
       } catch (error) {
         const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "MCP_TOOL_EXECUTION")
+        const wireInspection = externalMcpToolCallInspectionForError(error)
         logger.error("external_mcp_manual_tool_failed", {
           connection_id: connection.id,
           organization_id: payload.organization.id,
@@ -916,6 +972,10 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           error: "tool_execution_failed",
           message: `Could not run "${toolName}" on "${connection.name}": ${diagnostic.message} Reference: ${diagnostic.referenceId}.`,
           diagnostic,
+          inspection: {
+            ...wireInspection,
+            diagnosis: diagnoseExternalMcpToolCall({ inspection: wireInspection, succeeded: false, diagnostic }),
+          },
         }, 502)
       }
     },

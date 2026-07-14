@@ -72,7 +72,53 @@ export type ExternalMcpToolRun = {
   referenceId: string;
   durationMs: number;
   result: unknown;
+  inspection: ExternalMcpToolCallInspection;
 };
+
+export type ExternalMcpInspectionHeader = {
+  name: string;
+  value: string;
+  redacted: boolean;
+};
+
+export type ExternalMcpInspectionBody = {
+  text: string;
+  bytes: number;
+  truncated: boolean;
+  unavailable?: boolean;
+};
+
+export type ExternalMcpToolCallInspection = {
+  request?: {
+    method: string;
+    url: string;
+    startedAt: string;
+    headers: ExternalMcpInspectionHeader[];
+    body: ExternalMcpInspectionBody;
+  };
+  response?: {
+    status: number;
+    statusText: string;
+    durationMs: number;
+    headers: ExternalMcpInspectionHeader[];
+    body: ExternalMcpInspectionBody;
+  };
+  diagnosis: {
+    status: "succeeded" | "failed";
+    layer: "openwork" | "network" | "mcp_connection" | "remote_http" | "mcp_tool";
+    summary: string;
+  };
+};
+
+export class ExternalMcpToolRunError extends Error {
+  readonly inspection: ExternalMcpToolCallInspection | null;
+
+  constructor(message: string, inspection: ExternalMcpToolCallInspection | null) {
+    super(message);
+    this.name = "ExternalMcpToolRunError";
+    this.inspection = inspection;
+  }
+}
 
 export type ExternalMcpPreset = {
   presetId: string;
@@ -141,10 +187,14 @@ export function useRunMcpConnectionTool(connectionId: string) {
           headers: getOrgScopeHeaders(requireOrgId(orgId)),
           body: JSON.stringify(input),
         },
-        60000,
+        160000,
       );
       if (!response.ok) {
-        throw getRequestError(payload, response, `Failed to run MCP tool (${response.status}).`);
+        const requestError = getRequestError(payload, response, `Failed to run MCP tool (${response.status}).`);
+        throw new ExternalMcpToolRunError(
+          requestError.message,
+          isRecord(payload) ? parseToolCallInspection(payload.inspection) : null,
+        );
       }
       if (
         !isRecord(payload)
@@ -154,10 +204,13 @@ export function useRunMcpConnectionTool(connectionId: string) {
       ) {
         throw new Error("MCP tool result was incomplete.");
       }
+      const inspection = parseToolCallInspection(payload.inspection);
+      if (!inspection) throw new Error("MCP tool inspection was incomplete.");
       return {
         referenceId: payload.referenceId,
         durationMs: payload.durationMs,
         result: payload.result,
+        inspection,
       };
     },
   });
@@ -165,6 +218,82 @@ export function useRunMcpConnectionTool(connectionId: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function parseInspectionHeaders(value: unknown): ExternalMcpInspectionHeader[] | null {
+  if (!Array.isArray(value)) return null;
+  const headers: ExternalMcpInspectionHeader[] = [];
+  for (const header of value) {
+    if (
+      !isRecord(header)
+      || typeof header.name !== "string"
+      || typeof header.value !== "string"
+      || typeof header.redacted !== "boolean"
+    ) return null;
+    headers.push({ name: header.name, value: header.value, redacted: header.redacted });
+  }
+  return headers;
+}
+
+function parseInspectionBody(value: unknown): ExternalMcpInspectionBody | null {
+  if (
+    !isRecord(value)
+    || typeof value.text !== "string"
+    || typeof value.bytes !== "number"
+    || typeof value.truncated !== "boolean"
+    || (value.unavailable !== undefined && typeof value.unavailable !== "boolean")
+  ) return null;
+  return {
+    text: value.text,
+    bytes: value.bytes,
+    truncated: value.truncated,
+    ...(value.unavailable === true ? { unavailable: true } : {}),
+  };
+}
+
+function parseInspectionRequest(value: unknown): ExternalMcpToolCallInspection["request"] | null {
+  if (
+    !isRecord(value)
+    || typeof value.method !== "string"
+    || typeof value.url !== "string"
+    || typeof value.startedAt !== "string"
+  ) return null;
+  const headers = parseInspectionHeaders(value.headers);
+  const body = parseInspectionBody(value.body);
+  if (!headers || !body) return null;
+  return { method: value.method, url: value.url, startedAt: value.startedAt, headers, body };
+}
+
+function parseInspectionResponse(value: unknown): ExternalMcpToolCallInspection["response"] | null {
+  if (
+    !isRecord(value)
+    || typeof value.status !== "number"
+    || typeof value.statusText !== "string"
+    || typeof value.durationMs !== "number"
+  ) return null;
+  const headers = parseInspectionHeaders(value.headers);
+  const body = parseInspectionBody(value.body);
+  if (!headers || !body) return null;
+  return { status: value.status, statusText: value.statusText, durationMs: value.durationMs, headers, body };
+}
+
+function parseToolCallInspection(value: unknown): ExternalMcpToolCallInspection | null {
+  if (!isRecord(value) || !isRecord(value.diagnosis)) return null;
+  const status = value.diagnosis.status;
+  const layer = value.diagnosis.layer;
+  if (
+    (status !== "succeeded" && status !== "failed")
+    || (layer !== "openwork" && layer !== "network" && layer !== "mcp_connection" && layer !== "remote_http" && layer !== "mcp_tool")
+    || typeof value.diagnosis.summary !== "string"
+  ) return null;
+  const request = value.request === undefined ? undefined : parseInspectionRequest(value.request);
+  const response = value.response === undefined ? undefined : parseInspectionResponse(value.response);
+  if (request === null || response === null) return null;
+  return {
+    ...(request ? { request } : {}),
+    ...(response ? { response } : {}),
+    diagnosis: { status, layer, summary: value.diagnosis.summary },
+  };
 }
 
 function isStringArray(value: unknown): value is string[] {

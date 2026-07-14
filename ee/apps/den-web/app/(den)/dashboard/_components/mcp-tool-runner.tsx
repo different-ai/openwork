@@ -1,13 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, Loader2, Play, RefreshCw, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, Loader2, LockKeyhole, Play, RefreshCw, Wrench } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenSelect } from "../../_components/ui/select";
 import { DenTextarea } from "../../_components/ui/textarea";
 import {
   type ExternalMcpConnection,
+  type ExternalMcpInspectionBody,
+  type ExternalMcpInspectionHeader,
   type ExternalMcpTool,
+  type ExternalMcpToolCallInspection,
+  ExternalMcpToolRunError,
   useMcpConnectionTools,
   useRunMcpConnectionTool,
 } from "./mcp-connections-data";
@@ -44,6 +48,118 @@ export function mcpToolArgumentTemplate(tool: ExternalMcpTool): Record<string, u
 
 function formatJson(value: unknown): string {
   return JSON.stringify(value, null, 2) ?? "null";
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+}
+
+function InspectionHeaders({ headers }: { headers: ExternalMcpInspectionHeader[] }) {
+  if (headers.length === 0) return <p className="text-[11px] text-gray-400">No headers captured.</p>;
+  return (
+    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+      {headers.map((header) => (
+        <div key={header.name} className="grid grid-cols-[minmax(7rem,0.7fr)_minmax(0,1.3fr)] gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0">
+          <code className="break-all text-[10px] font-semibold text-gray-600">{header.name}</code>
+          <code className="break-all text-[10px] text-gray-800">
+            {header.redacted ? <LockKeyhole className="mr-1 inline h-3 w-3 text-amber-600" aria-label="Redacted" /> : null}
+            {header.value}
+          </code>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InspectionBody({ body }: { body: ExternalMcpInspectionBody }) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between gap-3 text-[10px] text-gray-500">
+        <span>Raw body</span>
+        <span>{formatBytes(body.bytes)}{body.truncated ? " · truncated" : ""}</span>
+      </div>
+      {body.unavailable ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">The transport body could not be captured.</div>
+      ) : (
+        <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-3 text-[10px] leading-4 text-gray-100">{body.text || "(empty body)"}</pre>
+      )}
+    </div>
+  );
+}
+
+function diagnosisLayerLabel(layer: ExternalMcpToolCallInspection["diagnosis"]["layer"]): string {
+  if (layer === "openwork") return "OpenWork before send";
+  if (layer === "network") return "Network / no response";
+  if (layer === "mcp_connection") return "MCP connection / setup";
+  if (layer === "remote_http") return "Remote MCP HTTP";
+  return "MCP tool response";
+}
+
+function McpToolCallInspector({ inspection }: { inspection: ExternalMcpToolCallInspection }) {
+  const succeeded = inspection.diagnosis.status === "succeeded";
+  return (
+    <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white" aria-label="Tool call inspection">
+      <div className={`border-b px-4 py-3 ${succeeded ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className={`text-[12px] font-semibold ${succeeded ? "text-emerald-800" : "text-red-800"}`}>
+            {succeeded ? "Remote MCP completed the call" : "Call stopped at: "}{!succeeded ? diagnosisLayerLabel(inspection.diagnosis.layer) : ""}
+          </p>
+          <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-600">
+            <span>OpenWork</span><ArrowRight className="h-3 w-3" />
+            <span>{inspection.response ? `HTTP ${inspection.response.status}` : inspection.request ? "No response" : "Not sent"}</span><ArrowRight className="h-3 w-3" />
+            <span>{succeeded ? "Tool result" : "Failure"}</span>
+          </div>
+        </div>
+        <p className={`mt-1 text-[11px] leading-5 ${succeeded ? "text-emerald-700" : "text-red-700"}`}>{inspection.diagnosis.summary}</p>
+      </div>
+
+      <div className="border-b border-amber-100 bg-amber-50/70 px-4 py-2 text-[10px] leading-4 text-amber-800">
+        Credential and session headers are redacted. Request and response bodies may contain sensitive provider data; this inspection is returned only for this run and is not stored in Den logs.
+      </div>
+
+      <div className="grid gap-0 xl:grid-cols-2 xl:divide-x xl:divide-gray-200">
+        <div className="space-y-4 p-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Request sent</p>
+            {inspection.request ? (
+              <div className="mt-2 rounded-lg bg-gray-950 px-3 py-2 font-mono text-[10px] leading-4 text-gray-100">
+                <span className="font-semibold text-blue-300">{inspection.request.method}</span> <span className="break-all">{inspection.request.url}</span>
+              </div>
+            ) : (
+              <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">No tools/call request left OpenWork.</p>
+            )}
+          </div>
+          {inspection.request ? (
+            <>
+              <div><p className="mb-1.5 text-[11px] font-medium text-gray-700">Headers</p><InspectionHeaders headers={inspection.request.headers} /></div>
+              <InspectionBody body={inspection.request.body} />
+            </>
+          ) : null}
+        </div>
+
+        <div className="space-y-4 border-t border-gray-200 p-4 xl:border-t-0">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Response received</p>
+            {inspection.response ? (
+              <div className="mt-2 flex items-center justify-between gap-3 rounded-lg bg-gray-950 px-3 py-2 font-mono text-[10px] text-gray-100">
+                <span><span className={inspection.response.status < 400 ? "text-emerald-300" : "text-red-300"}>HTTP {inspection.response.status}</span> {inspection.response.statusText}</span>
+                <span className="text-gray-400">{inspection.response.durationMs} ms</span>
+              </div>
+            ) : (
+              <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">No HTTP response was captured.</p>
+            )}
+          </div>
+          {inspection.response ? (
+            <>
+              <div><p className="mb-1.5 text-[11px] font-medium text-gray-700">Headers</p><InspectionHeaders headers={inspection.response.headers} /></div>
+              <InspectionBody body={inspection.response.body} />
+            </>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 export function McpToolRunner({ connection }: { connection: ExternalMcpConnection }) {
@@ -101,6 +217,8 @@ export function McpToolRunner({ connection }: { connection: ExternalMcpConnectio
 
   const executionError = localError
     ?? (runTool.error instanceof Error ? runTool.error.message : runTool.error ? "The MCP tool failed." : null);
+  const inspection = runTool.data?.inspection
+    ?? (runTool.error instanceof ExternalMcpToolRunError ? runTool.error.inspection : null);
 
   return (
     <div className="border-t border-gray-100 bg-gray-50/70 px-6 py-5" data-testid={`mcp-tool-runner-${connection.id}`}>
@@ -216,6 +334,8 @@ export function McpToolRunner({ connection }: { connection: ExternalMcpConnectio
             </DenButton>
             <p className="text-[11px] text-gray-500">Runs immediately against {connection.name}.</p>
           </div>
+
+          {inspection ? <McpToolCallInspector inspection={inspection} /> : null}
 
           {runTool.data ? (
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4" role="status">

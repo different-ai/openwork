@@ -3,6 +3,7 @@ import {
   callExternalMcpTool as callWithCurrentClient,
   completeExternalMcpAuth as completeWithCurrentClient,
   connectExternalMcp as connectWithCurrentClient,
+  inspectExternalMcpToolCall as inspectWithCurrentClient,
   listExternalMcpTools as listWithCurrentClient,
 } from "./external-mcp-client.js"
 import {
@@ -10,6 +11,7 @@ import {
   callExternalMcpTool as callWithEnterpriseClient,
   completeExternalMcpAuth as completeWithEnterpriseClient,
   connectExternalMcp as connectWithEnterpriseClient,
+  inspectExternalMcpToolCall as inspectWithEnterpriseClient,
   listExternalMcpTools as listWithEnterpriseClient,
 } from "./enterprise-mcp-client-adapter.js"
 
@@ -21,6 +23,7 @@ export type ExternalMcpClientRuntime = {
   abandonExternalMcpAuth: typeof abandonWithEnterpriseClient
   listExternalMcpTools: typeof listWithCurrentClient
   callExternalMcpTool: typeof callWithCurrentClient
+  inspectExternalMcpToolCall: typeof inspectWithCurrentClient
 }
 
 const currentDenMcpClient: ExternalMcpClientRuntime = {
@@ -31,6 +34,7 @@ const currentDenMcpClient: ExternalMcpClientRuntime = {
   abandonExternalMcpAuth: async () => undefined,
   listExternalMcpTools: listWithCurrentClient,
   callExternalMcpTool: callWithCurrentClient,
+  inspectExternalMcpToolCall: inspectWithCurrentClient,
 }
 
 const enterpriseMcpClient: ExternalMcpClientRuntime = {
@@ -39,6 +43,7 @@ const enterpriseMcpClient: ExternalMcpClientRuntime = {
   abandonExternalMcpAuth: abandonWithEnterpriseClient,
   listExternalMcpTools: listWithEnterpriseClient,
   callExternalMcpTool: callWithEnterpriseClient,
+  inspectExternalMcpToolCall: inspectWithEnterpriseClient,
 }
 
 export function selectExternalMcpClientRuntime(input: {
@@ -65,4 +70,5 @@ export const {
   abandonExternalMcpAuth,
   listExternalMcpTools,
   callExternalMcpTool,
+  inspectExternalMcpToolCall,
 } = selectedRuntime

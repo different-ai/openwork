@@ -36,6 +36,10 @@ import {
   lifecycleDeadlineDiagnosticError,
   providerToolDiagnosticError,
 } from "./external-mcp-diagnostics.js"
+import {
+  attachExternalMcpToolCallInspection,
+  ExternalMcpToolCallInspector,
+} from "./external-mcp-tool-inspection.js"
 
 /**
  * Real MCP client for "add any MCP server" (External MCP Connections) —
@@ -430,6 +434,7 @@ function buildTransport(
   member?: ExternalMcpMemberContext,
   diagnosticReferenceId?: string,
   lifecycleDeadline?: ExternalMcpLifecycleDeadline,
+  toolCallInspector?: ExternalMcpToolCallInspector,
 ) {
   const diagnostic = new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID(), {
     authType: connection.authType,
@@ -442,13 +447,14 @@ function buildTransport(
   const lifecycleFetch = lifecycleDeadline
     ? bindExternalMcpFetchToLifecycle(guardedFetch, lifecycleDeadline, diagnostic)
     : guardedFetch
+  const diagnosticFetch = createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint: connection.url, tracker: diagnostic })
   const transport = new StreamableHTTPClientTransport(new URL(connection.url), {
     authProvider: provider,
     // SSRF guard: every outbound request (the MCP endpoint itself, but also
     // discovery documents and token endpoints the SDK follows to OTHER
     // hosts) is checked against private/reserved address ranges at request
     // time. Hosted-deployment protection; self-hosted/dev opt out via env.
-    fetch: createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint: connection.url, tracker: diagnostic }),
+    fetch: toolCallInspector ? toolCallInspector.observeFetch(diagnosticFetch) : diagnosticFetch,
     requestInit: connection.authType === "apikey" && connection.apiKey
       ? { headers: { authorization: `Bearer ${connection.apiKey}` } }
       : undefined,
@@ -911,14 +917,19 @@ export async function listExternalMcpTools(
   }
 }
 
-export async function callExternalMcpTool(input: {
+type ExternalMcpToolCallInput = {
   connection: ExternalMcpConnectionRow
   redirectUri: string
   toolName: string
   args: Record<string, unknown>
   member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
-}) {
+}
+
+async function runExternalMcpToolCall(
+  input: ExternalMcpToolCallInput,
+  toolCallInspector?: ExternalMcpToolCallInspector,
+) {
   const client = buildClient()
   const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
   const { transport, diagnostic } = buildTransport(
@@ -928,6 +939,7 @@ export async function callExternalMcpTool(input: {
     input.member,
     input.diagnosticReferenceId,
     deadline,
+    toolCallInspector,
   )
   let operationError: unknown
   try {
@@ -960,5 +972,20 @@ export async function callExternalMcpTool(input: {
     } catch (error) {
       if (!operationError) throw diagnostic.error(error, "SHUTDOWN")
     }
+  }
+}
+
+export function callExternalMcpTool(input: ExternalMcpToolCallInput) {
+  return runExternalMcpToolCall(input)
+}
+
+export async function inspectExternalMcpToolCall(input: ExternalMcpToolCallInput) {
+  const inspector = new ExternalMcpToolCallInspector()
+  try {
+    const result = await runExternalMcpToolCall(input, inspector)
+    return { result, inspection: inspector.snapshot() }
+  } catch (error) {
+    attachExternalMcpToolCallInspection(error, inspector.snapshot())
+    throw error
   }
 }

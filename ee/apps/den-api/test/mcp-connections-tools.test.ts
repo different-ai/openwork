@@ -80,6 +80,30 @@ beforeAll(async () => {
   errorMcp.all("/mcp", async (c) => {
     const payload: unknown = await c.req.raw.json().catch(() => null)
     const id = payload && typeof payload === "object" && "id" in payload ? payload.id : null
+    const method = payload && typeof payload === "object" && "method" in payload && typeof payload.method === "string"
+      ? payload.method
+      : null
+    if (method === "initialize") {
+      const protocolVersion = payload
+        && typeof payload === "object"
+        && "params" in payload
+        && payload.params
+        && typeof payload.params === "object"
+        && "protocolVersion" in payload.params
+        && typeof payload.params.protocolVersion === "string"
+        ? payload.params.protocolVersion
+        : "2025-11-25"
+      return c.json({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          protocolVersion,
+          capabilities: { tools: {} },
+          serverInfo: { name: "failing-tool-proof", version: "1.0.0" },
+        },
+      })
+    }
+    if (method === "notifications/initialized") return new Response(null, { status: 202 })
     return c.json({
       jsonrpc: "2.0",
       id,
@@ -364,6 +388,22 @@ test("an admin manually runs a tool with a diagnostic reference", async () => {
       content: [{ type: "text", text: "Found incidents for network timeout" }],
       structuredContent: { resultCount: 1 },
     },
+    inspection: {
+      diagnosis: {
+        status: "succeeded",
+        layer: "mcp_tool",
+      },
+      request: {
+        method: "POST",
+        url: expect.stringContaining("/mcp"),
+        body: { text: expect.stringContaining('"method":"tools/call"'), truncated: false },
+      },
+      response: {
+        status: 200,
+        durationMs: expect.any(Number),
+        body: { text: expect.stringContaining("Found incidents for network timeout"), truncated: false },
+      },
+    },
   })
   expect(observedMethods).toContain("tools/call")
   expect(observedArguments).toEqual([{ query: "network timeout", status: "active" }])
@@ -374,6 +414,17 @@ test("per-member tool execution uses only the calling admin's credential", async
   const response = await callRequest(perMemberConnectionId)
   expect(response.status).toBe(200)
   expect(observedAuthorization).toContain("Bearer member-catalog-token")
+  const body: unknown = await response.json()
+  expect(body).toMatchObject({
+    inspection: {
+      request: {
+        headers: expect.arrayContaining([
+          { name: "authorization", value: "Bearer [redacted]", redacted: true },
+        ]),
+      },
+    },
+  })
+  expect(JSON.stringify(body)).not.toContain("member-catalog-token")
 })
 
 test("a granted regular member cannot manually run a tool", async () => {
@@ -391,12 +442,31 @@ test("manual tool execution is tenant scoped", async () => {
   expect(response.status).toBe(404)
 })
 
-test("manual tool failures return a structured diagnostic without provider secrets", async () => {
+test("manual tool failures separate safe diagnostics from the ephemeral raw MCP response", async () => {
   const response = await callRequest(failingConnectionId)
   expect(response.status).toBe(502)
   const body: unknown = await response.json()
-  expect(body).toMatchObject({ error: "tool_execution_failed" })
-  expect(JSON.stringify(body)).not.toContain("provider-catalog-secret")
+  expect(body).toMatchObject({
+    error: "tool_execution_failed",
+    inspection: {
+      diagnosis: {
+        status: "failed",
+        layer: "mcp_tool",
+      },
+      request: {
+        method: "POST",
+        body: { text: expect.stringContaining('"method":"tools/call"') },
+      },
+      response: {
+        status: 200,
+        body: { text: expect.stringContaining("provider-catalog-secret") },
+      },
+    },
+  })
+  if (!body || typeof body !== "object" || !("diagnostic" in body)) {
+    throw new Error("tool failure response did not include a diagnostic")
+  }
+  expect(JSON.stringify(body.diagnostic)).not.toContain("provider-catalog-secret")
 })
 
 test("manual tool execution validates a JSON object payload", async () => {

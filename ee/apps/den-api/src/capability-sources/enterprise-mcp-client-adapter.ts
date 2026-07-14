@@ -22,6 +22,10 @@ import {
   providerToolDiagnosticError,
   type ExternalMcpDiagnosticPhase,
 } from "./external-mcp-diagnostics.js"
+import {
+  attachExternalMcpToolCallInspection,
+  ExternalMcpToolCallInspector,
+} from "./external-mcp-tool-inspection.js"
 
 function toEnterpriseConnection(
   connection: ExternalMcpConnectionRow,
@@ -155,16 +159,20 @@ function createOperationClient(input: {
   connection: ExternalMcpConnectionRow
   diagnosticReferenceId?: string
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
+  toolCallInspector?: ExternalMcpToolCallInspector
 }): { client: EnterpriseMcpClient; tracker: ExternalMcpDiagnosticTracker } {
   const tracker = new ExternalMcpDiagnosticTracker(input.diagnosticReferenceId ?? randomUUID(), {
     authType: input.connection.authType,
     credentialMode: input.connection.credentialMode,
   })
-  const observedFetch = createExternalMcpDiagnosticFetch({
+  const diagnosticFetch = createExternalMcpDiagnosticFetch({
     fetch: guardedFetch,
     endpoint: input.connection.url,
     tracker,
   })
+  const observedFetch = input.toolCallInspector
+    ? input.toolCallInspector.observeFetch(diagnosticFetch)
+    : diagnosticFetch
   return {
     tracker,
     client: createEnterpriseMcpClient({
@@ -184,6 +192,7 @@ async function runEnterpriseMcpOperation<T>(input: {
   connection: ExternalMcpConnectionRow
   diagnosticReferenceId?: string
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
+  toolCallInspector?: ExternalMcpToolCallInspector
   operation: (client: EnterpriseMcpClient) => Promise<T>
 }): Promise<T> {
   const { client, tracker } = createOperationClient(input)
@@ -268,17 +277,23 @@ export async function listExternalMcpTools(
   })
 }
 
-export async function callExternalMcpTool(input: {
+type ExternalMcpToolCallInput = {
   connection: ExternalMcpConnectionRow
   redirectUri: string
   toolName: string
   args: Record<string, unknown>
   member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
-}) {
+}
+
+function runExternalMcpToolCall(
+  input: ExternalMcpToolCallInput,
+  toolCallInspector?: ExternalMcpToolCallInspector,
+) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
     diagnosticReferenceId: input.diagnosticReferenceId,
+    toolCallInspector,
     operation: (client) => client.callTool({
       connection: toEnterpriseConnection(input.connection, input.member),
       redirectUri: input.redirectUri,
@@ -286,4 +301,19 @@ export async function callExternalMcpTool(input: {
       arguments: input.args,
     }),
   })
+}
+
+export function callExternalMcpTool(input: ExternalMcpToolCallInput) {
+  return runExternalMcpToolCall(input)
+}
+
+export async function inspectExternalMcpToolCall(input: ExternalMcpToolCallInput) {
+  const inspector = new ExternalMcpToolCallInspector()
+  try {
+    const result = await runExternalMcpToolCall(input, inspector)
+    return { result, inspection: inspector.snapshot() }
+  } catch (error) {
+    attachExternalMcpToolCallInspection(error, inspector.snapshot())
+    throw error
+  }
 }
