@@ -2,6 +2,10 @@ import { Buffer } from "node:buffer"
 import type { ExternalMcpDiagnostic } from "./external-mcp-diagnostics.js"
 
 const INSPECTION_BODY_LIMIT_BYTES = 512 * 1024
+// How long snapshotting waits for a response body that the remote has not
+// finished sending. A stream the server holds open must not delay returning
+// the inspection after the tool call itself has settled.
+const INSPECTION_BODY_SETTLE_TIMEOUT_MS = 1_000
 const REDACTED_VALUE = "[redacted]"
 
 type FetchLike = (url: string | URL, init?: RequestInit) => Promise<Response>
@@ -93,19 +97,25 @@ function isSecretHeader(name: string): boolean {
     || normalized === "proxy-authorization"
     || normalized === "cookie"
     || normalized === "set-cookie"
-    || normalized === "mcp-session-id"
+    || normalized === "dpop"
     || normalized === "last-event-id"
-    || normalized === "x-api-key"
-    || normalized === "x-auth-token"
-    || normalized.includes("access-token")
-    || normalized.includes("refresh-token")
-    || normalized.includes("client-secret")
+    || normalized.endsWith("-key")
+    || normalized.includes("api-key")
+    || normalized.includes("apikey")
+    || normalized.includes("access-key")
+    || normalized.includes("private-key")
+    || normalized.includes("credential")
+    || normalized.includes("password")
+    || normalized.includes("session")
+    || normalized.includes("signature")
+    || normalized.includes("token")
+    || normalized.includes("secret")
 }
 
 function redactedHeaderValue(name: string, value: string): string {
   if (name.toLowerCase() !== "authorization") return REDACTED_VALUE
-  const scheme = value.trim().split(/\s+/, 1)[0]
-  return scheme ? `${scheme} ${REDACTED_VALUE}` : REDACTED_VALUE
+  const match = /^([A-Za-z][A-Za-z0-9+.-]*)\s+.+$/.exec(value.trim())
+  return match ? `${match[1]} ${REDACTED_VALUE}` : REDACTED_VALUE
 }
 
 function inspectionHeaders(rawHeaders?: HeadersInit): ExternalMcpInspectionHeader[] {
@@ -140,17 +150,93 @@ function requestBody(init?: RequestInit): ExternalMcpInspectionBody {
   return { text: "", bytes: 0, truncated: false, unavailable: init?.body !== undefined }
 }
 
-async function responseBody(response: Response): Promise<ExternalMcpInspectionBody> {
+type ResponseBodyCapture = {
+  settle: () => Promise<ExternalMcpInspectionBody>
+}
+
+const UNAVAILABLE_BODY: ExternalMcpInspectionBody = { text: "", bytes: 0, truncated: false, unavailable: true }
+
+/**
+ * Captures a bounded copy of the response body without consuming or delaying
+ * the stream the MCP transport reads. The capture must never change the
+ * behavior it observes: the transport receives the response immediately, the
+ * copy stops pulling at the inspection cap, and settle() abandons a stream
+ * the remote is still holding open instead of waiting for it to end.
+ */
+function captureBoundedResponseBody(response: Response): ResponseBodyCapture {
+  let stream: ReadableStream<Uint8Array> | null
   try {
-    return boundedBody(await response.clone().text())
+    stream = response.clone().body
   } catch {
-    return { text: "", bytes: 0, truncated: false, unavailable: true }
+    return { settle: async () => UNAVAILABLE_BODY }
+  }
+  if (!stream) return { settle: async () => ({ text: "", bytes: 0, truncated: false }) }
+
+  const reader = stream.getReader()
+  const decoder = new TextDecoder("utf-8", { fatal: false })
+  let text = ""
+  let observedBytes = 0
+  let capturedBytes = 0
+  let ended = false
+  let errored = false
+
+  const reading = (async () => {
+    try {
+      while (true) {
+        const next = await reader.read()
+        if (next.done) {
+          ended = true
+          return
+        }
+        observedBytes += next.value.byteLength
+        const remaining = INSPECTION_BODY_LIMIT_BYTES - capturedBytes
+        const slice = next.value.byteLength > remaining ? next.value.subarray(0, Math.max(0, remaining)) : next.value
+        text += decoder.decode(slice, { stream: true })
+        capturedBytes += slice.byteLength
+        if (observedBytes > capturedBytes) {
+          ended = true
+          // Do not await: a cloned branch's cancel promise resolves only when
+          // the transport's branch is also done with the stream.
+          reader.cancel().catch(() => undefined)
+          return
+        }
+      }
+    } catch {
+      errored = true
+    }
+  })()
+
+  let settled: Promise<ExternalMcpInspectionBody> | null = null
+  return {
+    settle: () => {
+      settled ??= (async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        await Promise.race([
+          reading,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, INSPECTION_BODY_SETTLE_TIMEOUT_MS)
+          }),
+        ])
+        if (timer !== undefined) clearTimeout(timer)
+        if (!ended && !errored) reader.cancel().catch(() => undefined)
+        if (errored && capturedBytes === 0) return UNAVAILABLE_BODY
+        return {
+          text: text + decoder.decode(),
+          bytes: observedBytes,
+          // The capture is incomplete when bytes exceeded the cap or the
+          // cloned stream never reached EOF before settle stopped waiting.
+          truncated: observedBytes > capturedBytes || !ended,
+        }
+      })()
+      return settled
+    },
   }
 }
 
 export class ExternalMcpToolCallInspector {
   private request?: ExternalMcpInspectionRequest
   private response?: ExternalMcpInspectionResponse
+  private responseBodyCapture?: { capture: ResponseBodyCapture; target: ExternalMcpInspectionResponse }
 
   observeFetch(fetchImpl: FetchLike): FetchLike {
     return async (url, init) => {
@@ -164,16 +250,34 @@ export class ExternalMcpToolCallInspector {
         headers: inspectionHeaders(init?.headers),
         body: requestBody(init),
       }
+      // A retried tools/call must not pair its request with the previous
+      // attempt's response, so the failing attempt is the one displayed.
+      this.response = undefined
+      this.responseBodyCapture = undefined
 
       const response = await fetchImpl(url, init)
-      this.response = {
+      const captured: ExternalMcpInspectionResponse = {
         status: response.status,
         statusText: response.statusText,
         durationMs: Date.now() - startedAtMs,
         headers: inspectionHeaders(response.headers),
-        body: await responseBody(response),
+        body: UNAVAILABLE_BODY,
       }
+      this.response = captured
+      this.responseBodyCapture = { capture: captureBoundedResponseBody(response), target: captured }
       return response
+    }
+  }
+
+  /** Finalize the bounded response-body copy. Call after the tool call settles, before snapshot(). */
+  async settle(): Promise<void> {
+    if (!this.responseBodyCapture) return
+    try {
+      this.responseBodyCapture.target.body = await this.responseBodyCapture.capture.settle()
+    } catch {
+      // Inspection is diagnostic-only and must never change the tool call's
+      // success or preserve a provider failure as a different local error.
+      this.responseBodyCapture.target.body = UNAVAILABLE_BODY
     }
   }
 
@@ -182,6 +286,26 @@ export class ExternalMcpToolCallInspector {
       ...(this.request ? { request: this.request } : {}),
       ...(this.response ? { response: this.response } : {}),
     }
+  }
+}
+
+/**
+ * Shared inspect wrapper for the current and enterprise client entry points:
+ * run the tool call with a fresh inspector, settle the bounded body capture,
+ * and either return or attach the wire snapshot alongside the outcome.
+ */
+export async function withExternalMcpToolCallInspection<T>(
+  run: (inspector: ExternalMcpToolCallInspector) => Promise<T>,
+): Promise<{ result: T; inspection: ExternalMcpToolCallWireInspection }> {
+  const inspector = new ExternalMcpToolCallInspector()
+  try {
+    const result = await run(inspector)
+    await inspector.settle()
+    return { result, inspection: inspector.snapshot() }
+  } catch (error) {
+    await inspector.settle()
+    attachExternalMcpToolCallInspection(error, inspector.snapshot())
+    throw error
   }
 }
 
@@ -200,7 +324,7 @@ export function externalMcpToolCallInspectionForError(error: unknown): ExternalM
 export function diagnoseExternalMcpToolCall(input: {
   inspection: ExternalMcpToolCallWireInspection
   succeeded: boolean
-  diagnostic?: Pick<ExternalMcpDiagnostic, "phase">
+  diagnostic?: Pick<ExternalMcpDiagnostic, "phase"> & Partial<Pick<ExternalMcpDiagnostic, "category" | "code">>
 }): ExternalMcpToolCallDiagnosis {
   if (input.succeeded) {
     return {
@@ -239,6 +363,27 @@ export function diagnoseExternalMcpToolCall(input: {
     }
   }
   if (!input.inspection.response) {
+    // The inspector records the request before the SSRF guard and lifecycle
+    // deadline run, so "request captured, no response" does not always mean
+    // the request reached the network.
+    if (
+      input.diagnostic?.category === "security_blocked"
+      || input.diagnostic?.code === "MCP_URL_BLOCKED"
+      || input.diagnostic?.code === "MCP_FETCH_FORBIDDEN_PORT"
+    ) {
+      return {
+        status: "failed",
+        layer: "openwork",
+        summary: "OpenWork's outbound network safety policy blocked this tools/call request, so it was not sent to the remote MCP.",
+      }
+    }
+    if (input.diagnostic?.code === "MCP_LIFECYCLE_DEADLINE" || input.diagnostic?.code === "MCP_REQUEST_TIMEOUT") {
+      return {
+        status: "failed",
+        layer: "network",
+        summary: "OpenWork sent tools/call but the remote MCP did not answer before OpenWork stopped waiting at its deadline.",
+      }
+    }
     return {
       status: "failed",
       layer: "network",

@@ -23,8 +23,8 @@ import {
   type ExternalMcpDiagnosticPhase,
 } from "./external-mcp-diagnostics.js"
 import {
-  attachExternalMcpToolCallInspection,
-  ExternalMcpToolCallInspector,
+  withExternalMcpToolCallInspection,
+  type ExternalMcpToolCallInspector,
 } from "./external-mcp-tool-inspection.js"
 
 function toEnterpriseConnection(
@@ -307,13 +307,6 @@ export function callExternalMcpTool(input: ExternalMcpToolCallInput) {
   return runExternalMcpToolCall(input)
 }
 
-export async function inspectExternalMcpToolCall(input: ExternalMcpToolCallInput) {
-  const inspector = new ExternalMcpToolCallInspector()
-  try {
-    const result = await runExternalMcpToolCall(input, inspector)
-    return { result, inspection: inspector.snapshot() }
-  } catch (error) {
-    attachExternalMcpToolCallInspection(error, inspector.snapshot())
-    throw error
-  }
+export function inspectExternalMcpToolCall(input: ExternalMcpToolCallInput) {
+  return withExternalMcpToolCallInspection((inspector) => runExternalMcpToolCall(input, inspector))
 }

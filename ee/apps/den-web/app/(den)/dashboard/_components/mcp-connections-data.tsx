@@ -72,7 +72,7 @@ export type ExternalMcpToolRun = {
   referenceId: string;
   durationMs: number;
   result: unknown;
-  inspection: ExternalMcpToolCallInspection;
+  inspection: ExternalMcpToolCallInspection | null;
 };
 
 export type ExternalMcpInspectionHeader = {
@@ -176,6 +176,11 @@ export function useMcpConnectionTools(connectionId: string, enabled: boolean) {
   });
 }
 
+// The den-api tool run is bounded by its 150s MCP tool lifecycle deadline;
+// give the request a little headroom so the server's structured failure
+// arrives instead of a client-side timeout.
+const RUN_TOOL_REQUEST_TIMEOUT_MS = 160000;
+
 export function useRunMcpConnectionTool(connectionId: string) {
   const { orgId } = useOrgDashboard();
   return useMutation({
@@ -187,7 +192,7 @@ export function useRunMcpConnectionTool(connectionId: string) {
           headers: getOrgScopeHeaders(requireOrgId(orgId)),
           body: JSON.stringify(input),
         },
-        160000,
+        RUN_TOOL_REQUEST_TIMEOUT_MS,
       );
       if (!response.ok) {
         const requestError = getRequestError(payload, response, `Failed to run MCP tool (${response.status}).`);
@@ -204,13 +209,14 @@ export function useRunMcpConnectionTool(connectionId: string) {
       ) {
         throw new Error("MCP tool result was incomplete.");
       }
-      const inspection = parseToolCallInspection(payload.inspection);
-      if (!inspection) throw new Error("MCP tool inspection was incomplete.");
       return {
         referenceId: payload.referenceId,
         durationMs: payload.durationMs,
         result: payload.result,
-        inspection,
+        // A missing or unparseable inspection must not fail a tool run that
+        // succeeded (for example across a den-api/den-web deploy skew); the
+        // runner simply renders without the inspector panel.
+        inspection: parseToolCallInspection(payload.inspection),
       };
     },
   });

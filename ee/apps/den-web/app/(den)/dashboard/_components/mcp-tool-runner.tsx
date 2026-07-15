@@ -59,11 +59,13 @@ function InspectionHeaders({ headers }: { headers: ExternalMcpInspectionHeader[]
   if (headers.length === 0) return <p className="text-[11px] text-gray-400">No headers captured.</p>;
   return (
     <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-      {headers.map((header) => (
-        <div key={header.name} className="grid grid-cols-[minmax(7rem,0.7fr)_minmax(0,1.3fr)] gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0">
+      {headers.map((header, index) => (
+        // Headers such as set-cookie can repeat, so the name alone is not a
+        // stable React key.
+        <div key={`${index}-${header.name}`} className="grid grid-cols-[minmax(7rem,0.7fr)_minmax(0,1.3fr)] gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0">
           <code className="break-all text-[10px] font-semibold text-gray-600">{header.name}</code>
           <code className="break-all text-[10px] text-gray-800">
-            {header.redacted ? <LockKeyhole className="mr-1 inline h-3 w-3 text-amber-600" aria-label="Redacted" /> : null}
+            {header.redacted ? <LockKeyhole className="mr-1 inline h-3 w-3 text-amber-600" aria-hidden="true" /> : null}
             {header.value}
           </code>
         </div>
@@ -77,7 +79,10 @@ function InspectionBody({ body }: { body: ExternalMcpInspectionBody }) {
     <div>
       <div className="mb-1.5 flex items-center justify-between gap-3 text-[10px] text-gray-500">
         <span>Raw body</span>
-        <span>{formatBytes(body.bytes)}{body.truncated ? " · truncated" : ""}</span>
+        <span>
+          {formatBytes(body.bytes)}
+          {body.truncated ? <span className="ml-1 font-semibold text-amber-700">· capture truncated</span> : null}
+        </span>
       </div>
       {body.unavailable ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">The transport body could not be captured.</div>
@@ -98,16 +103,24 @@ function diagnosisLayerLabel(layer: ExternalMcpToolCallInspection["diagnosis"]["
 
 function McpToolCallInspector({ inspection }: { inspection: ExternalMcpToolCallInspection }) {
   const succeeded = inspection.diagnosis.status === "succeeded";
+  // A captured request can still have been blocked inside OpenWork (for
+  // example by the outbound SSRF policy); the diagnosis layer decides
+  // between "never sent" and "sent but unanswered".
+  const transportChip = inspection.response
+    ? `HTTP ${inspection.response.status}`
+    : inspection.request && inspection.diagnosis.layer !== "openwork"
+      ? "No response"
+      : "Not sent";
   return (
     <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white" aria-label="Tool call inspection">
       <div className={`border-b px-4 py-3 ${succeeded ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className={`text-[12px] font-semibold ${succeeded ? "text-emerald-800" : "text-red-800"}`}>
-            {succeeded ? "Remote MCP completed the call" : "Call stopped at: "}{!succeeded ? diagnosisLayerLabel(inspection.diagnosis.layer) : ""}
+            {succeeded ? "Remote MCP completed the call" : `Call stopped at: ${diagnosisLayerLabel(inspection.diagnosis.layer)}`}
           </p>
           <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-600">
-            <span>OpenWork</span><ArrowRight className="h-3 w-3" />
-            <span>{inspection.response ? `HTTP ${inspection.response.status}` : inspection.request ? "No response" : "Not sent"}</span><ArrowRight className="h-3 w-3" />
+            <span>OpenWork</span><ArrowRight className="h-3 w-3" aria-hidden="true" />
+            <span>{transportChip}</span><ArrowRight className="h-3 w-3" aria-hidden="true" />
             <span>{succeeded ? "Tool result" : "Failure"}</span>
           </div>
         </div>
@@ -121,7 +134,7 @@ function McpToolCallInspector({ inspection }: { inspection: ExternalMcpToolCallI
       <div className="grid gap-0 xl:grid-cols-2 xl:divide-x xl:divide-gray-200">
         <div className="space-y-4 p-4">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Request sent</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outgoing request</p>
             {inspection.request ? (
               <div className="mt-2 rounded-lg bg-gray-950 px-3 py-2 font-mono text-[10px] leading-4 text-gray-100">
                 <span className="font-semibold text-blue-300">{inspection.request.method}</span> <span className="break-all">{inspection.request.url}</span>
@@ -336,6 +349,12 @@ export function McpToolRunner({ connection }: { connection: ExternalMcpConnectio
           </div>
 
           {inspection ? <McpToolCallInspector inspection={inspection} /> : null}
+
+          {runTool.data && !runTool.data.inspection ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] leading-5 text-amber-800" role="status">
+              The tool completed, but request and response details were unavailable. Refresh after the dashboard and its server are running the same version.
+            </div>
+          ) : null}
 
           {runTool.data ? (
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4" role="status">
