@@ -33,6 +33,7 @@ import {
 } from "lexical";
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
+import { shouldCollapsePastedText } from "./pasted-text";
 
 type EditorProps = {
   value: string;
@@ -316,20 +317,27 @@ function createPastedTextChipDom(label: string, lines: number) {
 
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-amber-10 transition-colors hover:bg-amber-4 hover:text-amber-12";
-  button.title = "Expand pasted text";
-  button.setAttribute("aria-label", "Expand pasted text");
+  button.className = "ml-1 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] font-medium text-amber-11 underline decoration-amber-8 underline-offset-2 transition-colors hover:bg-amber-4 hover:text-amber-12";
+  button.title = "Show in text field";
+  button.setAttribute("aria-label", "Show pasted text in text field");
   button.dataset.pastedExpandLabel = label;
+
+  const actionText = document.createElement("span");
+  actionText.textContent = "Show in text field";
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 16 16");
-  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.5");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("class", "h-3 w-3");
   svg.setAttribute("aria-hidden", "true");
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M5 3h8v8h-1.5V5.56l-7.97 7.97-1.06-1.06 7.97-7.97H5V3Z");
+  path.setAttribute("d", "m6 3 5 5-5 5");
   svg.append(path);
-  button.append(svg);
+  button.append(actionText, svg);
   dom.append(text, button);
   return dom;
 }
@@ -633,9 +641,6 @@ function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void |
   return null;
 }
 
-const PASTE_CHIP_LINE_THRESHOLD = 3;
-const PASTE_CHIP_CHAR_THRESHOLD = 200;
-
 function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
   const [editor] = useLexicalComposerContext();
   const onPasteTextRef = useRef(props.onPasteText);
@@ -654,10 +659,7 @@ function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
         if (files && files.length > 0) return false;
         const text = event.clipboardData?.getData("text/plain") ?? "";
         if (!text.trim()) return false;
-        const lineCount = text.split(/\r?\n/).length;
-        if (lineCount < PASTE_CHIP_LINE_THRESHOLD && text.length < PASTE_CHIP_CHAR_THRESHOLD) {
-          return false;
-        }
+        if (!shouldCollapsePastedText(text)) return false;
         // Collapse into a paste chip.
         event.preventDefault();
         onPasteTextRef.current(text);
