@@ -27,6 +27,20 @@ describe("MCP OAuth callback migration UI contract", () => {
     expect(data).not.toContain("oauthCallbackMode:")
   })
 
+  test("keeps secondary tools and OAuth details collapsed behind More", () => {
+    const screen = readFileSync(screenPath, "utf8")
+
+    expect(screen).toContain("const [detailsOpen, setDetailsOpen] = useState(false)")
+    expect(screen).toContain("aria-expanded={detailsOpen}")
+    expect(screen).toContain("Tools and connection details")
+    expect(screen).toContain("aria-label={callbackMigrationPending")
+    expect(screen).toContain("Callback update required — open for details")
+    expect(screen).toContain("Reconnect using the shared callback to update this dynamic registration automatically.")
+    expect(screen).toContain("Tool inspection becomes available after this account is connected.")
+    expect(screen).toContain("detailsOpen && toolsOpen && canInspectTools")
+    expect(screen).not.toContain("Connect this account before inspecting tools")
+  })
+
   test("keeps deletion as a warned fallback instead of the primary migration path", () => {
     const screen = readFileSync(screenPath, "utf8")
 

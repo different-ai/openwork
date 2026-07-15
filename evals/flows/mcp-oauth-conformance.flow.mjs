@@ -349,7 +349,7 @@ export default {
               return nodes.some((node) => {
                 let current = node;
                 for (let depth = 0; depth < 8 && current; depth += 1) {
-                  if ((current.textContent ?? '').includes('Connected') && (current.textContent ?? '').includes('Shared callback')) return true;
+                  if ((current.textContent ?? '').includes('Connected')) return true;
                   current = current.parentElement;
                 }
                 return false;
@@ -360,6 +360,21 @@ export default {
               node?.scrollIntoView({ block: 'center' });
               return Boolean(node);
             })()`);
+            const opened = await ctx.eval(`(() => {
+              const node = [...document.querySelectorAll('*')].find((entry) => entry.children.length === 0 && (entry.textContent ?? '').trim() === ${JSON.stringify(CONNECTION_NAME)});
+              let row = node;
+              for (let depth = 0; depth < 8 && row; depth += 1) {
+                const more = [...row.querySelectorAll('button')].find((entry) => (entry.textContent ?? '').replace(/\\s+/g, ' ').trim() === 'More');
+                if (more) {
+                  if (more.getAttribute('aria-expanded') !== 'true') more.click();
+                  return true;
+                }
+                row = row.parentElement;
+              }
+              return false;
+            })()`);
+            ctx.assert(opened, "Could not reveal the connected MCP details.");
+            await ctx.waitForText("Tools and connection details", { timeoutMs: 10_000 });
           },
           assert: async () => {
             const connection = await findConnection(ctx);
@@ -384,7 +399,7 @@ export default {
           },
           screenshot: {
             name: "dashboard-shared-callback",
-            requireText: [CONNECTION_NAME, "Connected", "Shared callback", "Registration: dynamic", "Current callback:"],
+            requireText: [CONNECTION_NAME, "Connected", "Tools and connection details", "Registration", "dynamic", "Current callback:"],
             rejectText: ["Callback update required", "Return to legacy", "Something went wrong"],
           },
         });
@@ -402,6 +417,20 @@ export default {
               deviceScaleFactor: 1,
               mobile: false,
             });
+            await ctx.eval(`(() => {
+              const name = [...document.querySelectorAll('*')].find((entry) => entry.children.length === 0 && (entry.textContent ?? '').trim() === ${JSON.stringify(CONNECTION_NAME)});
+              let row = name;
+              for (let depth = 0; depth < 8 && row; depth += 1) {
+                const more = [...row.querySelectorAll('button')].find((entry) => (entry.textContent ?? '').replace(/\\s+/g, ' ').trim() === 'More');
+                if (more) {
+                  if (more.getAttribute('aria-expanded') !== 'true') more.click();
+                  return true;
+                }
+                row = row.parentElement;
+              }
+              return false;
+            })()`);
+            await ctx.waitForText("View tools", { timeoutMs: 10_000 });
             const opened = await ctx.eval(`(() => {
               const name = [...document.querySelectorAll('*')].find((entry) => entry.children.length === 0 && (entry.textContent ?? '').trim() === ${JSON.stringify(CONNECTION_NAME)});
               let row = name;

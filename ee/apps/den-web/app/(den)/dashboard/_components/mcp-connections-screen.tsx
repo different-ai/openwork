@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, Loader2, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Loader2, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -1184,15 +1184,21 @@ function ConnectionRow({
   onMigrateCallback: () => void;
 }) {
   const [copiedOAuthUrl, setCopiedOAuthUrl] = useState<"callback" | "shared-callback" | "metadata" | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const isPerMember = connection.credentialMode === "per_member";
   const callbackUpdateRequired = connection.oauthMigrationStatus === "legacy_manual_client";
   const automaticCallbackMigrationPending = connection.oauthMigrationStatus === "unclassified";
+  const callbackMigrationPending = connection.authType === "oauth" && connection.oauthCallbackMode !== "shared-v1";
   const needsOAuthConnect = connection.authType === "oauth"
     && (!connection.connected || automaticCallbackMigrationPending)
     && !callbackUpdateRequired
     && (!isPerMember || automaticCallbackMigrationPending);
 
   const canInspectTools = connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe;
+  const toggleDetails = () => {
+    if (detailsOpen && toolsOpen) onToggleTools();
+    setDetailsOpen((open) => !open);
+  };
 
   return (
     <div>
@@ -1231,14 +1237,6 @@ function ConnectionRow({
             <p className="mt-0.5 truncate text-[12px] text-gray-500">
               {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
             </p>
-            {connection.authType === "oauth" ? (
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
-                <span>{connection.oauthCallbackMode === "shared-v1" ? "Shared callback" : callbackUpdateRequired ? "Callback update required" : "Callback migration pending"}</span>
-                <span>Registration: {connection.oauthRegistrationSource ?? "not registered"}</span>
-                {connection.authorizationServerIssuer ? <span className="max-w-full truncate">Issuer: {connection.authorizationServerIssuer}</span> : null}
-                {(connection.requestedScopes?.length ?? 0) > 0 ? <span>Scopes: {connection.requestedScopes?.join(", ")}</span> : null}
-              </div>
-            ) : null}
             {errorMessage ? <p className="mt-1 text-[12px] text-red-600">{errorMessage}</p> : null}
           </div>
         </div>
@@ -1255,16 +1253,6 @@ function ConnectionRow({
           >
             Edit
           </DenButton>
-          <DenButton
-            variant="secondary"
-            size="sm"
-            disabled={!canInspectTools}
-            onClick={onToggleTools}
-            title={canInspectTools ? "Inspect the tools this MCP exposes" : "Connect this account before inspecting tools"}
-          >
-            {toolsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            View tools
-          </DenButton>
           {needsOAuthConnect ? (
             <DenButton
               variant="secondary"
@@ -1275,6 +1263,28 @@ function ConnectionRow({
               {automaticCallbackMigrationPending ? "Reconnect with shared callback" : "Connect"}
             </DenButton>
           ) : null}
+          {callbackUpdateRequired ? (
+            <DenButton
+              variant="secondary"
+              size="sm"
+              onClick={() => setDetailsOpen(true)}
+            >
+              Update callback
+            </DenButton>
+          ) : null}
+          <DenButton
+            variant="secondary"
+            size="sm"
+            onClick={toggleDetails}
+            aria-expanded={detailsOpen}
+            aria-controls={`mcp-connection-details-${connection.id}`}
+            aria-label={callbackMigrationPending ? `More details for ${connection.name}; callback update required` : `More details for ${connection.name}`}
+            title={callbackMigrationPending ? "Callback update required — open for details" : "Show tools and connection details"}
+          >
+            {callbackMigrationPending ? <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> : null}
+            More
+            {detailsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          </DenButton>
           <DenButton
             variant="destructive"
             size="sm"
@@ -1287,62 +1297,102 @@ function ConnectionRow({
           </DenButton>
         </div>
       </div>
-      {callbackUpdateRequired && connection.oauthSharedCallbackUrl ? (
-        <div className="border-t border-amber-200 bg-amber-50 px-6 py-4 text-[12px] leading-5 text-amber-950" data-testid={`mcp-callback-update-required-${connection.id}`}>
-          <p className="font-semibold">Callback update required</p>
-          <ol className="mt-2 list-decimal space-y-2 pl-5">
-            <li>
-              Copy the new shared callback.
-              <div className="mt-1 flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-2">
-                <code className="min-w-0 break-all text-[11px]">{connection.oauthSharedCallbackUrl}</code>
-                <button
-                  type="button"
-                  className="shrink-0 font-medium underline"
-                  onClick={() => void copyTextToClipboard(connection.oauthSharedCallbackUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("shared-callback"))}
-                >
-                  {copiedOAuthUrl === "shared-callback" ? "Copied" : "Copy"}
-                </button>
-              </div>
-            </li>
-            <li>Add it to the external OAuth application without removing the old callback yet.</li>
-            <li>
-              <DenButton variant="secondary" size="sm" loading={migratingCallback || connecting || polling} onClick={onMigrateCallback}>
-                Reconnect using shared callback
+      {detailsOpen ? (
+        <div
+          id={`mcp-connection-details-${connection.id}`}
+          className="border-t border-gray-100 bg-gray-50/70 px-6 py-4"
+          data-testid={`mcp-connection-details-${connection.id}`}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[12px] font-semibold text-gray-900">Tools and connection details</p>
+              <p className="mt-0.5 text-[11px] text-gray-500">Technical setup is hidden until you need it.</p>
+            </div>
+            {canInspectTools ? (
+              <DenButton variant="secondary" size="sm" onClick={onToggleTools}>
+                {toolsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                {toolsOpen ? "Hide tools" : "View tools"}
               </DenButton>
-              <p className="mt-1 text-[11px] text-amber-800">This migration is permanent. OpenWork preserves your manual client ID, secret, and access grants.</p>
-            </li>
-          </ol>
-        </div>
-      ) : null}
-      {connection.authType === "oauth" && (connection.oauthCallbackUrl || connection.oauthClientMetadataUrl) ? (
-        <div className="border-t border-gray-100 bg-gray-50/70 px-6 py-3 text-[11px] text-gray-600">
-          {connection.oauthCallbackUrl ? (
-            <div className="flex items-start justify-between gap-3">
-              <p className="min-w-0 break-all"><span className="font-semibold">Current callback:</span> {connection.oauthCallbackUrl}</p>
-              <button
-                type="button"
-                className="shrink-0 font-medium text-gray-900 underline"
-                onClick={() => void copyTextToClipboard(connection.oauthCallbackUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("callback"))}
-              >
-                {copiedOAuthUrl === "callback" ? "Copied" : "Copy"}
-              </button>
+            ) : (
+              <p className="text-[11px] text-gray-500">Tool inspection becomes available after this account is connected.</p>
+            )}
+          </div>
+
+          {automaticCallbackMigrationPending ? (
+            <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-950" data-testid={`mcp-callback-update-required-${connection.id}`}>
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <div>
+                <p className="font-semibold">Callback update required</p>
+                <p className="mt-0.5 text-[11px] text-amber-800">Reconnect using the shared callback to update this dynamic registration automatically.</p>
+              </div>
             </div>
           ) : null}
-          {connection.oauthClientMetadataUrl ? (
-            <div className="mt-1 flex items-start justify-between gap-3">
-              <p className="min-w-0 break-all"><span className="font-semibold">Client metadata:</span> {connection.oauthClientMetadataUrl}</p>
-              <button
-                type="button"
-                className="shrink-0 font-medium text-gray-900 underline"
-                onClick={() => void copyTextToClipboard(connection.oauthClientMetadataUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("metadata"))}
-              >
-                {copiedOAuthUrl === "metadata" ? "Copied" : "Copy"}
-              </button>
+
+          {callbackUpdateRequired && connection.oauthSharedCallbackUrl ? (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] leading-5 text-amber-950" data-testid={`mcp-callback-update-required-${connection.id}`}>
+              <p className="font-semibold">Callback update required</p>
+              <ol className="mt-2 list-decimal space-y-2 pl-5">
+                <li>
+                  Copy the new shared callback.
+                  <div className="mt-1 flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-2">
+                    <code className="min-w-0 break-all text-[11px]">{connection.oauthSharedCallbackUrl}</code>
+                    <button
+                      type="button"
+                      className="shrink-0 font-medium underline"
+                      onClick={() => void copyTextToClipboard(connection.oauthSharedCallbackUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("shared-callback"))}
+                    >
+                      {copiedOAuthUrl === "shared-callback" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                </li>
+                <li>Add it to the external OAuth application without removing the old callback yet.</li>
+                <li>
+                  <DenButton variant="secondary" size="sm" loading={migratingCallback || connecting || polling} onClick={onMigrateCallback}>
+                    Reconnect using shared callback
+                  </DenButton>
+                  <p className="mt-1 text-[11px] text-amber-800">This migration is permanent. OpenWork preserves your manual client ID, secret, and access grants.</p>
+                </li>
+              </ol>
+            </div>
+          ) : null}
+
+          {connection.authType === "oauth" ? (
+            <div className="mt-4 space-y-3 text-[11px] text-gray-600">
+              <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <div><dt className="font-semibold text-gray-700">Callback</dt><dd>{connection.oauthCallbackMode === "shared-v1" ? "Shared" : "Legacy compatibility"}</dd></div>
+                <div><dt className="font-semibold text-gray-700">Registration</dt><dd>{connection.oauthRegistrationSource ?? "Not registered"}</dd></div>
+                {connection.authorizationServerIssuer ? <div className="min-w-0"><dt className="font-semibold text-gray-700">Issuer</dt><dd className="truncate" title={connection.authorizationServerIssuer}>{connection.authorizationServerIssuer}</dd></div> : null}
+                {(connection.requestedScopes?.length ?? 0) > 0 ? <div className="min-w-0"><dt className="font-semibold text-gray-700">Scopes</dt><dd className="truncate" title={connection.requestedScopes?.join(", ")}>{connection.requestedScopes?.join(", ")}</dd></div> : null}
+              </dl>
+              {connection.oauthCallbackUrl ? (
+                <div className="flex items-start justify-between gap-3 border-t border-gray-200 pt-3">
+                  <p className="min-w-0 break-all"><span className="font-semibold">Current callback:</span> {connection.oauthCallbackUrl}</p>
+                  <button
+                    type="button"
+                    className="shrink-0 font-medium text-gray-900 underline"
+                    onClick={() => void copyTextToClipboard(connection.oauthCallbackUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("callback"))}
+                  >
+                    {copiedOAuthUrl === "callback" ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              ) : null}
+              {connection.oauthClientMetadataUrl ? (
+                <div className="flex items-start justify-between gap-3">
+                  <p className="min-w-0 break-all"><span className="font-semibold">Client metadata:</span> {connection.oauthClientMetadataUrl}</p>
+                  <button
+                    type="button"
+                    className="shrink-0 font-medium text-gray-900 underline"
+                    onClick={() => void copyTextToClipboard(connection.oauthClientMetadataUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("metadata"))}
+                  >
+                    {copiedOAuthUrl === "metadata" ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
       ) : null}
-      {toolsOpen && canInspectTools ? <McpToolCatalog connection={connection} /> : null}
+      {detailsOpen && toolsOpen && canInspectTools ? <McpToolCatalog connection={connection} /> : null}
     </div>
   );
 }

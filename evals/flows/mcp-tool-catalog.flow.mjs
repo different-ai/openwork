@@ -230,8 +230,15 @@ function connectionRowScript(action) {
       .find((entry) => (entry.textContent ?? '').trim() === ${JSON.stringify(state.connectionName)});
     let row = leaf;
     for (let depth = 0; depth < 8 && row; depth += 1) {
+      const more = [...row.querySelectorAll('button')]
+        .find((entry) => (entry.textContent ?? '').replace(/\\s+/g, ' ').trim() === 'More');
       const button = [...row.querySelectorAll('button')]
         .find((entry) => (entry.textContent ?? '').replace(/\\s+/g, ' ').trim() === 'View tools');
+      if (${JSON.stringify(action)}.startsWith('more') && more) {
+        if (${JSON.stringify(action)} === 'more' && more.getAttribute('aria-expanded') !== 'true') more.click();
+        row.scrollIntoView({ block: 'center' });
+        return true;
+      }
       if (button) {
         if (button.disabled) return false;
         row.scrollIntoView({ block: 'center' });
@@ -269,15 +276,15 @@ export default {
             await navigateToConnections(ctx);
           },
           assert: async () => {
-            const hasAction = await ctx.eval(connectionRowScript("find"));
-            witness(ctx, hasAction, "The connected Incident Response MCP has a View tools action.", { hasAction });
+            const hasMore = await ctx.eval(connectionRowScript("more-find"));
+            witness(ctx, hasMore, "The connected Incident Response MCP keeps secondary actions under More.", { hasMore });
             witness(ctx, !state.observedMethods.includes("tools/list"), "Merely viewing the connection does not read or execute its tool catalog.", state.observedMethods);
             witness(ctx, !state.observedMethods.includes("tools/call"), "No MCP tool has been executed.", state.observedMethods);
           },
           screenshot: {
             name: "connected-mcp-view-tools",
-            requireText: ["Connections", "Incident Response MCP", "View tools", "Connected"],
-            rejectText: ["Something went wrong"],
+            requireText: ["Connections", "Incident Response MCP", "More", "Connected"],
+            rejectText: ["Tools and connection details", "View tools", "Something went wrong"],
             hashIncludes: "/dashboard/mcp-connections",
           },
         });
@@ -289,6 +296,9 @@ export default {
         await ctx.prove("The dashboard reads live tools/list data and states that inspection does not run a tool", {
           voiceover: vo[1],
           action: async () => {
+            const revealed = await ctx.eval(connectionRowScript("more"));
+            witness(ctx, revealed, "Alex can reveal secondary connection actions from More.", { revealed });
+            await ctx.waitFor(connectionRowScript("find"), { timeoutMs: 10_000, label: "View tools action under More" });
             const clicked = await ctx.eval(connectionRowScript("click"));
             witness(ctx, clicked, "Alex can open the MCP's tool catalog from its row.", { clicked });
             await ctx.waitFor(`(() => {
