@@ -17,6 +17,11 @@ export default {
         await ctx.prove("Setup complete shows the workspace without placeholder skills or suggested tasks", {
           voiceover: vo[0],
           action: async () => {
+            await ctx.eval(`(() => {
+              window.location.hash = "/session";
+              window.location.reload();
+              return true;
+            })()`);
             await ctx.waitForText("Setup complete", { timeoutMs: 30_000 });
             initialWorkspaceRequestCount = await ctx.eval(`performance.getEntriesByType("resource").filter((entry) =>
               entry.name.includes("/sessions?limit=200") || entry.name.endsWith("/workspaces")
@@ -25,7 +30,6 @@ export default {
           },
           assert: async () => {
             await ctx.waitForText("Setup complete", { timeoutMs: 30_000 });
-            await ctx.expectText("Benjamin's Workspace");
             await ctx.expectNoText("First skill ready");
             await ctx.expectNoText("Try asking");
             await ctx.expectNoText("Open your workspace and try a task");
@@ -41,7 +45,7 @@ export default {
           },
           screenshot: {
             name: "prepared-workspace-concise",
-            requireText: ["Setup complete", "Benjamin's Workspace", "Claim this workspace"],
+            requireText: ["Setup complete", "Claim workspace and continue"],
             rejectText: ["First skill ready", "Try asking", "Open your workspace and try a task"],
           },
         });

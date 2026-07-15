@@ -4,6 +4,7 @@ import {
   clearDenSession,
   CLOUD_MCP_SYNC_MARKER_STORAGE_KEY,
   initializeDenBootstrapConfig,
+  readDenBootstrapConfig,
   readDenSettings,
   setDenBootstrapConfig,
   writeDenSettings,
@@ -36,7 +37,22 @@ function memoryStorage(): Storage {
 }
 
 describe("desktop Den bootstrap settings", () => {
-  let bootstrapConfig: { baseUrl: string; requireSignin: boolean; writtenAt?: string };
+  let bootstrapConfig: {
+    baseUrl: string;
+    requireSignin: boolean;
+    writtenAt?: string;
+    claimLinks?: Array<{ id: string; role: string; url: string; expiresAt: string }>;
+    prepared?: {
+      orgId: string;
+      orgName: string;
+      orgSlug: string;
+      skillId: string;
+      skillTitle: string;
+      skillsDir: string;
+      skillPath: string;
+      preparedAt: string;
+    };
+  };
 
   beforeEach(() => {
     bootstrapConfig = {
@@ -83,6 +99,30 @@ describe("desktop Den bootstrap settings", () => {
     const settings = readDenSettings();
     expect(settings.baseUrl).toBe("https://bootstrap.example.com");
     expect(settings.apiBaseUrl).toBe("https://bootstrap.example.com/api/den");
+  });
+
+  test("keeps the prepared workspace and claim action in the shared bootstrap snapshot", async () => {
+    bootstrapConfig.claimLinks = [{
+      id: "claim_owner",
+      role: "owner",
+      url: "https://bootstrap.example.com/workspace-claim?token=secret",
+      expiresAt: "2026-07-15T00:00:00.000Z",
+    }];
+    bootstrapConfig.prepared = {
+      orgId: "org_demo",
+      orgName: "Different AI",
+      orgSlug: "different-ai",
+      skillId: "skill_demo",
+      skillTitle: "Customer Briefing",
+      skillsDir: "/tmp/skills",
+      skillPath: "/tmp/skills/customer-briefing/SKILL.md",
+      preparedAt: "2026-07-14T00:00:00.000Z",
+    };
+
+    await initializeDenBootstrapConfig();
+
+    expect(readDenBootstrapConfig().prepared?.orgName).toBe("Different AI");
+    expect(readDenBootstrapConfig().claimLinks?.[0]?.role).toBe("owner");
   });
 
   test("saves base URL changes to bootstrap and clears legacy endpoint storage", async () => {

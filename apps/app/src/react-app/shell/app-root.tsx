@@ -43,9 +43,9 @@ type DenSigninGateProps = {
   children: ReactNode;
 };
 
-const readRequireSigninSnapshot = () => readDenBootstrapConfig().requireSignin;
+const readDenBootstrapSnapshot = () => readDenBootstrapConfig();
 
-const subscribeToRequireSignin = (onStoreChange: () => void) => {
+const subscribeToDenBootstrap = (onStoreChange: () => void) => {
   if (typeof window === "undefined") return () => {};
   window.addEventListener(denSettingsChangedEvent, onStoreChange);
   return () => {
@@ -68,15 +68,16 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   const denAuth = useDenAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const requireSignin = useSyncExternalStore(
-    subscribeToRequireSignin,
-    readRequireSigninSnapshot,
-    readRequireSigninSnapshot,
+  const bootstrap = useSyncExternalStore(
+    subscribeToDenBootstrap,
+    readDenBootstrapSnapshot,
+    readDenBootstrapSnapshot,
   );
+  const requireSignin = bootstrap.requireSignin;
   const path = location.pathname.toLowerCase();
   const onSignin = path === "/signin" || path.startsWith("/signin/");
   const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
-  const hasPreparedBootstrap = Boolean(readDenBootstrapConfig().prepared);
+  const hasPreparedBootstrap = Boolean(bootstrap.prepared);
   const redirectingPreparedWorkspace =
     denAuth.status !== "checking" &&
     !requireSignin &&

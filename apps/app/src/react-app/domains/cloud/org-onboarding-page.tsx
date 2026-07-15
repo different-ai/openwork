@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -17,6 +17,7 @@ import {
 
 import {
   createDenClient,
+  readDenBootstrapConfig,
   readDenSettings,
   resolveDenBaseUrls,
   writeDenSettings,
@@ -24,7 +25,7 @@ import {
   type DenOrgMarketplace,
   type DenOrgSummary,
 } from "@/app/lib/den";
-import { getDesktopBootstrapConfig } from "@/app/lib/desktop";
+import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { usePlatform } from "../../kernel/platform";
 import { useBootState } from "../../shell/boot-state";
 import { resolveModelDisplayName, resolveProviderDisplayName } from "@/app/utils";
@@ -99,30 +100,27 @@ type PreparedBootstrapSummary = {
 };
 
 function usePreparedBootstrap() {
-  const [prepared, setPrepared] = useState<PreparedBootstrapSummary | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void getDesktopBootstrapConfig()
-      .then((config) => {
-        if (cancelled) return;
-        if (config.prepared?.skillTitle) {
-          setPrepared({
-            orgName: config.prepared.orgName || "Your workspace",
-            claimLinks: config.claimLinks ?? [],
-          });
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
+  const bootstrap = useSyncExternalStore(
+    (onStoreChange) => {
+      window.addEventListener(denSettingsChangedEvent, onStoreChange);
+      return () => window.removeEventListener(denSettingsChangedEvent, onStoreChange);
+    },
+    readDenBootstrapConfig,
+    readDenBootstrapConfig,
+  );
+
+  return useMemo<PreparedBootstrapSummary | null>(() => {
+    if (!bootstrap.prepared?.skillTitle) return null;
+    return {
+      orgName: bootstrap.prepared.orgName || "Your workspace",
+      claimLinks: bootstrap.claimLinks ?? [],
     };
-  }, []);
-  return prepared;
+  }, [bootstrap]);
 }
 
 function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummary }) {
   const platform = usePlatform();
-  const ownerClaim = prepared.claimLinks.find((link) => link.role === "owner") ?? prepared.claimLinks[0] ?? null;
+  const ownerClaim = prepared.claimLinks.find((link) => link.role === "owner") ?? null;
 
   return (
     <Page>
@@ -147,14 +145,14 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
         {ownerClaim ? (
           <PageContent>
             <div className="mx-auto flex w-full max-w-md justify-center">
-              <button
+              <Button
                 type="button"
                 onClick={() => platform.openLink(ownerClaim.url)}
-                className="inline-flex items-center justify-center gap-1.5 text-sm text-foreground/70 transition-colors hover:text-foreground"
+                className="w-full sm:w-auto"
               >
-                Claim this workspace to add billing &amp; teammates
-                <ArrowUpRightIcon className="size-3.5" />
-              </button>
+                Claim workspace and continue
+                <ArrowUpRightIcon data-icon="inline-end" />
+              </Button>
             </div>
           </PageContent>
         ) : null}

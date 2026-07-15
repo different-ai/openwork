@@ -576,6 +576,7 @@ function resolveDenBootstrapConfig(
     requireSignin?: boolean | null;
     brandAppName?: string | null;
     brandLogoUrl?: string | null;
+    claimLinks?: DenBootstrapConfig["claimLinks"];
     handoff?: DenBootstrapHandoff | null;
     prepared?: DenBootstrapPrepared | null;
   },
@@ -585,6 +586,7 @@ function resolveDenBootstrapConfig(
     requireSignin: input.requireSignin === true,
     ...(input.brandAppName?.trim() ? { brandAppName: input.brandAppName.trim().slice(0, 64) } : {}),
     ...(input.brandLogoUrl?.trim() ? { brandLogoUrl: input.brandLogoUrl.trim() } : {}),
+    ...(input.claimLinks ? { claimLinks: input.claimLinks } : {}),
     ...(input.handoff ? { handoff: input.handoff } : {}),
     ...(input.prepared ? { prepared: input.prepared } : {}),
   };
@@ -601,6 +603,9 @@ function getPendingBootstrapConfig(next: DenSettings): DenBootstrapConfig | null
     requireSignin: previous.requireSignin,
     brandAppName: previous.brandAppName,
     brandLogoUrl: previous.brandLogoUrl,
+    claimLinks: previous.claimLinks,
+    handoff: previous.handoff,
+    prepared: previous.prepared,
   });
 }
 
