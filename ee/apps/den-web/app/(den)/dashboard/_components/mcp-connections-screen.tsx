@@ -2193,7 +2193,7 @@ function AddConnectionDialog({
               onClick={() => setShowOAuthClient(true)}
               className="text-left text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
             >
-              This server needs a pre-registered OAuth app
+              Use a pre-registered OAuth app instead
             </button>
           ) : null}
 

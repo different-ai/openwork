@@ -205,12 +205,24 @@ function authorize(req, res, url) {
 </html>`);
 }
 
-async function registerClient(req, res) {
+async function registerClient(req, res, entry) {
   if (disableDcr) {
     json(res, 404, { error: "not_found" });
     return;
   }
   const body = await readJson(req).catch(() => ({}));
+  if (entry) {
+    // Keep conformance evidence useful without recording credentials. These
+    // are the public RFC 7591 fields OpenWork is expected to send.
+    entry.registration = {
+      application_type: body.application_type ?? null,
+      redirect_uris: Array.isArray(body.redirect_uris) ? body.redirect_uris : [],
+      grant_types: Array.isArray(body.grant_types) ? body.grant_types : [],
+      response_types: Array.isArray(body.response_types) ? body.response_types : [],
+      scope: typeof body.scope === "string" ? body.scope : null,
+      token_endpoint_auth_method: body.token_endpoint_auth_method ?? null,
+    };
+  }
   const clientId = `mock-client-${randomUUID()}`;
   const client = {
     client_id: clientId,
@@ -426,7 +438,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/register" && req.method === "POST") {
-      await registerClient(req, res);
+      await registerClient(req, res, entry);
       return;
     }
 
