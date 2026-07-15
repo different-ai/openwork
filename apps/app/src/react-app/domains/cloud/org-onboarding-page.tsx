@@ -25,6 +25,7 @@ import {
   type DenOrgMarketplace,
   type DenOrgSummary,
 } from "@/app/lib/den";
+import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { usePlatform } from "../../kernel/platform";
 import { useBootState } from "../../shell/boot-state";
@@ -121,6 +122,32 @@ function usePreparedBootstrap() {
 function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummary }) {
   const platform = usePlatform();
   const ownerClaim = prepared.claimLinks.find((link) => link.role === "owner") ?? null;
+  const [showSignInCode, setShowSignInCode] = useState(false);
+  const [signInCode, setSignInCode] = useState("");
+  const [signInBusy, setSignInBusy] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
+
+  const submitSignInCode = useCallback(async () => {
+    const grant = signInCode.trim();
+    if (grant.length < 12 || signInBusy) {
+      if (grant.length < 12) setSignInError("Paste a valid one-time sign-in code.");
+      return;
+    }
+
+    const settings = readDenSettings();
+    setSignInBusy(true);
+    setSignInError(null);
+
+    try {
+      const result = await exchangeHandoffAndSignIn(grant, {
+        baseUrl: settings.baseUrl,
+        client: createDenClient({ baseUrl: settings.baseUrl }),
+      });
+      if (!result.ok) setSignInError(result.error);
+    } finally {
+      setSignInBusy(false);
+    }
+  }, [signInBusy, signInCode]);
 
   return (
     <Page>
@@ -144,7 +171,7 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
 
         {ownerClaim ? (
           <PageContent>
-            <div className="mx-auto flex w-full max-w-md justify-center">
+            <div className="mx-auto grid w-full max-w-md gap-3">
               <Button
                 type="button"
                 onClick={() => platform.openLink(ownerClaim.url)}
@@ -153,6 +180,43 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
                 Claim workspace and continue
                 <ArrowUpRightIcon data-icon="inline-end" />
               </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setShowSignInCode((visible) => !visible);
+                  setSignInError(null);
+                }}
+              >
+                {showSignInCode ? "Hide sign-in code" : "Paste sign-in code"}
+              </Button>
+
+              {showSignInCode ? (
+                <div className="grid gap-3 rounded-2xl border border-dls-border bg-dls-surface p-4">
+                  <Input
+                    aria-label="One-time sign-in code"
+                    value={signInCode}
+                    onChange={(event) => setSignInCode(event.currentTarget.value)}
+                    placeholder="Paste the code from your browser"
+                    disabled={signInBusy}
+                  />
+                  <Button
+                    type="button"
+                    onClick={() => void submitSignInCode()}
+                    disabled={signInBusy || !signInCode.trim()}
+                  >
+                    {signInBusy ? "Signing in..." : "Sign in to this workspace"}
+                  </Button>
+                </div>
+              ) : null}
+
+              {signInError ? (
+                <Alert variant="destructive">
+                  <CircleAlert />
+                  <AlertDescription>{signInError}</AlertDescription>
+                </Alert>
+              ) : null}
             </div>
           </PageContent>
         ) : null}

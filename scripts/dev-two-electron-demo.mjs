@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -267,17 +268,27 @@ function prepareSharedElectronResources() {
   );
 }
 
-function startElectron(label, env) {
-  const child = spawn(pnpmCmd, ["dev:electron"], {
-    cwd: repoRoot,
+function startElectron(label, env, built) {
+  const args = built
+    ? [
+        "exec",
+        "electron",
+        ...(env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1" ? ["--use-mock-keychain"] : []),
+        "./electron/main.mjs",
+      ]
+    : ["dev:electron"];
+  const child = spawn(pnpmCmd, args, {
+    cwd: built ? desktopRoot : repoRoot,
     env: { ...process.env, ...env },
-    stdio: ["ignore", "pipe", "pipe"],
+    // Keep the app's output attached directly to the launch destination. A
+    // background launcher may exit after opening both apps; inherited streams
+    // remain valid, while launcher-owned pipes become EPIPE and Electron turns
+    // the resulting uncaught exception into a blocking native alert.
+    stdio: ["ignore", "inherit", "inherit"],
     detached: process.platform !== "win32",
   });
 
   const prefix = `[${label}]`;
-  child.stdout.on("data", (chunk) => process.stdout.write(`${prefix} ${chunk}`));
-  child.stderr.on("data", (chunk) => process.stderr.write(`${prefix} ${chunk}`));
   child.once("error", (error) => {
     if (stopping) return;
     console.error(`${prefix} failed to start: ${error.message}`);
@@ -338,11 +349,13 @@ export function demoEnv(profile, paths, port, cdpPort) {
     OPENWORK_DATA_DIR: paths.dataDir,
     OPENWORK_DESKTOP_BOOTSTRAP_PATH: paths.bootstrapPath,
     OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "1",
+    OPENWORK_DEV_MODE: "1",
     VITE_DISABLE_OPENWORK_MODELS: "1",
     OPENWORK_ELECTRON_APP_IDENTIFIER: profile.appIdentifier,
     OPENWORK_ELECTRON_APP_NAME: profile.appName,
     OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort,
     OPENWORK_ELECTRON_SKIP_SHARED_PREPARE: "1",
+    OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1",
     OPENWORK_ELECTRON_USERDATA: paths.userDataDir,
     PORT: port,
   };
@@ -350,22 +363,22 @@ export function demoEnv(profile, paths, port, cdpPort) {
 
 async function main() {
   if (flag("--help") || flag("-h")) {
-    console.log(`Usage: pnpm dev:electron:two [options]\n\nStarts two isolated Electron dev instances for a local Den demo.\n\nOptions:\n  --reset                 Delete demo profile data before launching\n  --reset-only            Delete demo profile data and exit\n  --den-web-url <url>     Den Web URL (default: http://localhost:3005)\n  --den-api-url <url>     Den API URL (default: http://localhost:8788)\n  --admin-port <port>     Demo A Vite port (default: 5273)\n  --consumer-port <port>  Demo B Vite port (default: 5274)\n  --admin-cdp <port>      Demo A Electron CDP port (default: 9923)\n  --consumer-cdp <port>   Demo B Electron CDP port (default: 9924)\n`);
+    console.log(
+      `Usage: pnpm dev:electron:two [options]\n\nStarts two isolated Electron instances for a local Den demo.\n\nOptions:\n  --built                 Launch the prebuilt renderer without Vite\n  --reset                 Delete demo profile data before launching\n  --reset-only            Delete demo profile data and exit\n  --den-web-url <url>     Den Web URL (default: http://localhost:3005)\n  --den-api-url <url>     Den API URL (default: http://localhost:8788)\n  --admin-port <port>     Demo A Vite port (default: 5273)\n  --consumer-port <port>  Demo B Vite port (default: 5274)\n  --admin-cdp <port>      Demo A Electron CDP port (default: 9923)\n  --consumer-cdp <port>   Demo B Electron CDP port (default: 9924)\n`,
+    );
     return;
   }
 
+  const built = flag("--built");
   const denWebUrl = argValue("--den-web-url", "http://localhost:3005");
   const denApiUrl = argValue("--den-api-url", "http://localhost:8788");
   const adminPort = argValue(appProfiles.admin.portFlag, appProfiles.admin.port);
   const consumerPort = argValue(appProfiles.consumer.portFlag, appProfiles.consumer.port);
   const adminCdp = argValue(appProfiles.admin.cdpFlag, appProfiles.admin.cdpPort);
   const consumerCdp = argValue(appProfiles.consumer.cdpFlag, appProfiles.consumer.cdpPort);
-  const portEntries = [
-    ["Demo A", adminPort],
-    ["Demo B", consumerPort],
-    ["Demo A CDP", adminCdp],
-    ["Demo B CDP", consumerCdp],
-  ];
+  const portEntries = built
+    ? [["Demo A CDP", adminCdp], ["Demo B CDP", consumerCdp]]
+    : [["Demo A", adminPort], ["Demo B", consumerPort], ["Demo A CDP", adminCdp], ["Demo B CDP", consumerCdp]];
 
   if (flag("--reset") || flag("--reset-only")) {
     await stopExistingDemoProcesses(portEntries.map(([, port]) => port));
@@ -377,25 +390,33 @@ async function main() {
 
   await assertDemoPortsAvailable(portEntries);
 
+  if (built && !existsSync(path.join(repoRoot, "apps", "app", "dist", "index.html"))) {
+    throw new Error("The desktop renderer is not built. Run pnpm --filter @openwork/desktop build:electron first.");
+  }
+
   const demoRun = await createDemoRun();
   await writeBootstrap(demoRun.admin.bootstrapPath, appProfiles.admin.requireSignin, denWebUrl, denApiUrl);
   await writeBootstrap(demoRun.consumer.bootstrapPath, appProfiles.consumer.requireSignin, denWebUrl, denApiUrl);
 
-  prepareSharedElectronResources();
+  if (!built) prepareSharedElectronResources();
 
   children = [
-    startElectron(appProfiles.admin.label, demoEnv(appProfiles.admin, demoRun.admin, adminPort, adminCdp)),
+    startElectron(appProfiles.admin.label, demoEnv(appProfiles.admin, demoRun.admin, adminPort, adminCdp), built),
     startElectron(
       appProfiles.consumer.label,
       demoEnv(appProfiles.consumer, demoRun.consumer, consumerPort, consumerCdp),
+      built,
     ),
   ];
 
   console.log("\nTwo Electron demo is starting.");
   console.log(`Den Web:       ${denWebUrl}`);
   console.log(`Den API:       ${denApiUrl}`);
-  console.log(`Demo A URL:    http://localhost:${adminPort}`);
-  console.log(`Demo B URL:    http://localhost:${consumerPort}`);
+  console.log(`Renderer:      ${built ? "prebuilt" : "Vite"}`);
+  if (!built) {
+    console.log(`Demo A URL:    http://localhost:${adminPort}`);
+    console.log(`Demo B URL:    http://localhost:${consumerPort}`);
+  }
   console.log(`Demo A CDP:    http://127.0.0.1:${adminCdp}`);
   console.log(`Demo B CDP:    http://127.0.0.1:${consumerCdp}`);
   console.log(`Demo A folder: ${demoRun.admin.root}`);

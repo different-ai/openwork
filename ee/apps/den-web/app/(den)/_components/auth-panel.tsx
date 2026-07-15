@@ -4,6 +4,7 @@ import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { isSamePathname } from "../_lib/client-route";
+import { getDesktopGrant } from "../_lib/desktop-handoff";
 import { getErrorMessage, getSocialCallbackUrl, requestJson, type AuthMode } from "../_lib/den-flow";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
 import { useDenFlow } from "../_providers/den-flow-provider";
@@ -41,17 +42,6 @@ function readLoginOption(payload: unknown): LoginOption | null {
     signInPath: typeof payload.signInPath === "string" ? payload.signInPath : null,
     signInUrl: typeof payload.signInUrl === "string" ? payload.signInUrl : null,
   };
-}
-
-function getDesktopGrant(url: string | null) {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-    const grant = parsed.searchParams.get("grant")?.trim() ?? "";
-    return grant || null;
-  } catch {
-    return null;
-  }
 }
 
 function GitHubLogo() {

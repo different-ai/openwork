@@ -100,6 +100,8 @@ test("points each Electron instance at its own profile folders", async context =
 
   assert.equal(adminEnv.OPENWORK_ELECTRON_USERDATA, run.admin.userDataDir);
   assert.equal(adminEnv.OPENWORK_DATA_DIR, run.admin.dataDir);
+  assert.equal(adminEnv.OPENWORK_DEV_MODE, "1");
+  assert.equal(adminEnv.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN, "1");
   assert.equal(
     consumerEnv.OPENWORK_ELECTRON_USERDATA,
     run.consumer.userDataDir
