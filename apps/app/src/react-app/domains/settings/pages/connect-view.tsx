@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Activity, ArrowUpRight } from "lucide-react";
 import type { AgentContextDiagnosticsReport } from "@openwork/types/agent-context-diagnostics";
 
@@ -38,7 +38,6 @@ import {
   SettingsNotice,
   SettingsSection,
   SettingsSectionHeader,
-  SettingsSectionHeaderActions,
   SettingsSectionHeaderContent,
   SettingsSectionHeaderDescription,
   SettingsSectionHeaderTitle,
@@ -393,7 +392,7 @@ function AgentAccessCard(props: {
   );
 }
 
-function ConnectIntro(props: { busy: boolean; disabled: boolean; onRun: () => void }) {
+function ConnectIntro() {
   return (
     <SettingsSection>
       <SettingsSectionHeader>
@@ -403,18 +402,6 @@ function ConnectIntro(props: { busy: boolean; disabled: boolean; onRun: () => vo
             {t("connect.header_description")}
           </SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
-        <SettingsSectionHeaderActions>
-          <Button
-            data-testid="run-agent-diagnostics"
-            size="sm"
-            variant="outline"
-            disabled={props.busy || props.disabled}
-            onClick={props.onRun}
-          >
-            <Activity size={14} />
-            {props.busy ? t("connect.diagnostics_running") : t("connect.diagnostics_run")}
-          </Button>
-        </SettingsSectionHeaderActions>
       </SettingsSectionHeader>
     </SettingsSection>
   );
@@ -725,7 +712,7 @@ function ConnectOrganizationList(props: {
   );
 }
 
-function ConnectActivePanel(props: {
+export function ConnectActivePanel(props: {
   connections: DenExternalMcpConnection[];
   marketplaceItems: ExtensionItem[];
   openworkClient: OpenworkServerClient | null;
@@ -744,13 +731,6 @@ function ConnectActivePanel(props: {
 
   return (
     <SettingsSection>
-      <AgentAccessCard
-        client={props.openworkClient}
-        workspaceId={props.workspaceId}
-        currentModel={props.currentModel}
-        onHealthChange={props.onCloudMcpHealthChange}
-      />
-
       <div
         data-testid="connect-org-status-row"
         className="flex items-center gap-2 rounded-2xl border border-green-6/30 bg-green-2 px-4 py-3 text-sm font-medium text-green-11"
@@ -777,6 +757,13 @@ function ConnectActivePanel(props: {
       <div className="flex justify-end">
         <ManageInDenButton />
       </div>
+
+      <AgentAccessCard
+        client={props.openworkClient}
+        workspaceId={props.workspaceId}
+        currentModel={props.currentModel}
+        onHealthChange={props.onCloudMcpHealthChange}
+      />
     </SettingsSection>
   );
 }
@@ -792,6 +779,20 @@ function ConnectPitchPanel() {
         <ManageInDenButton />
       </SettingsInset>
     </SettingsSection>
+  );
+}
+
+export function ConnectViewLayout(props: {
+  primaryContent: ReactNode;
+  diagnosticsContent: ReactNode;
+}) {
+  return (
+    <SettingsStack>
+      <Separator />
+      <ConnectIntro />
+      {props.primaryContent}
+      {props.diagnosticsContent}
+    </SettingsStack>
   );
 }
 
@@ -989,28 +990,8 @@ export function ConnectView(props: ConnectViewProps) {
     }
   };
 
-  return (
-    <SettingsStack>
-      <Separator />
-      <ConnectIntro
-        busy={diagnosticsState.busy}
-        disabled={!props.diagnosticsAvailable}
-        onRun={() => void runAgentDiagnostics()}
-      />
-      {props.diagnosticsUnavailableReason === "direct-remote-opencode" ? (
-        <div data-testid="agent-diagnostics-unavailable-direct-opencode">
-          <SettingsNotice>{t("connect.diagnostics_unavailable_direct_opencode")}</SettingsNotice>
-        </div>
-      ) : null}
-      {diagnosticsState.error ? <AgentContextDiagnosticsErrorNotice message={diagnosticsState.error} /> : null}
-      {diagnosticsState.report ? (
-        <AgentContextDiagnosticsReportView
-          report={diagnosticsState.report}
-          copied={diagnosticsState.copied}
-          copying={diagnosticsState.copying}
-          onCopy={copyDiagnosticsReport}
-        />
-      ) : null}
+  const primaryContent = (
+    <>
       {state === "loading" ? <ConnectLoadingPanel /> : null}
       {state === "signin" ? <ConnectSignInPanel {...props} /> : null}
       {state === "active" ? (
@@ -1030,6 +1011,44 @@ export function ConnectView(props: ConnectViewProps) {
         />
       ) : null}
       {state === "pitch" ? <ConnectPitchPanel /> : null}
-    </SettingsStack>
+    </>
+  );
+
+  const diagnosticsContent = (
+    <SettingsSection data-testid="connect-diagnostics-section">
+      <div className="flex justify-end">
+        <Button
+          data-testid="run-agent-diagnostics"
+          size="sm"
+          variant="outline"
+          disabled={diagnosticsState.busy || !props.diagnosticsAvailable}
+          onClick={() => void runAgentDiagnostics()}
+        >
+          <Activity size={14} />
+          {diagnosticsState.busy ? t("connect.diagnostics_running") : t("connect.diagnostics_run")}
+        </Button>
+      </div>
+      {props.diagnosticsUnavailableReason === "direct-remote-opencode" ? (
+        <div data-testid="agent-diagnostics-unavailable-direct-opencode">
+          <SettingsNotice>{t("connect.diagnostics_unavailable_direct_opencode")}</SettingsNotice>
+        </div>
+      ) : null}
+      {diagnosticsState.error ? <AgentContextDiagnosticsErrorNotice message={diagnosticsState.error} /> : null}
+      {diagnosticsState.report ? (
+        <AgentContextDiagnosticsReportView
+          report={diagnosticsState.report}
+          copied={diagnosticsState.copied}
+          copying={diagnosticsState.copying}
+          onCopy={copyDiagnosticsReport}
+        />
+      ) : null}
+    </SettingsSection>
+  );
+
+  return (
+    <ConnectViewLayout
+      primaryContent={primaryContent}
+      diagnosticsContent={diagnosticsContent}
+    />
   );
 }
