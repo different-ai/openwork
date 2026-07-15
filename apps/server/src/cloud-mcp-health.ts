@@ -11,6 +11,7 @@ import type { ServerConfig, WorkspaceInfo } from "./types.js";
 import { validateMcpConfig } from "./validators.js";
 
 export const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
+export const LEGACY_OPENWORK_ADMIN_MCP_NAME = "openwork-admin";
 export const OPENWORK_CLOUD_EXPECTED_TOOLS = [
   "openwork-cloud_search_capabilities",
   "openwork-cloud_execute_capability",
@@ -135,6 +136,12 @@ export type CloudMcpRuntimeRegistrar = (
   onlyNames?: string[],
   options?: { throwOnFailure?: boolean },
 ) => Promise<CloudMcpRuntimeRegistrationResult>;
+
+export type CloudMcpLegacyRuntimeCleaner = (
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  name: typeof LEGACY_OPENWORK_ADMIN_MCP_NAME,
+) => Promise<void>;
 
 export type CloudMcpServerMetadata = {
   serverVersion?: string;
@@ -1905,14 +1912,16 @@ export async function readOpenworkCloudMcpHealth(input: {
   };
 }
 
-async function persistDesiredConfig(config: ServerConfig, workspaceId: string, desiredConfig: Record<string, unknown>): Promise<void> {
-  await writeRuntimeOpencodeConfig(config, workspaceId, (current) => ({
-    ...current,
-    mcp: {
-      ...runtimeMcpMap(current),
-      [OPENWORK_CLOUD_MCP_NAME]: desiredConfig,
-    },
-  }));
+async function persistDesiredConfig(config: ServerConfig, workspaceId: string, desiredConfig: Record<string, unknown>): Promise<boolean> {
+  let legacyAdminRemoved = false;
+  await writeRuntimeOpencodeConfig(config, workspaceId, (current) => {
+    const mcp = { ...runtimeMcpMap(current) };
+    legacyAdminRemoved = Object.hasOwn(mcp, LEGACY_OPENWORK_ADMIN_MCP_NAME);
+    delete mcp[LEGACY_OPENWORK_ADMIN_MCP_NAME];
+    mcp[OPENWORK_CLOUD_MCP_NAME] = desiredConfig;
+    return { ...current, mcp };
+  });
+  return legacyAdminRemoved;
 }
 
 function registrationFailure(failures: CloudMcpRuntimeRegistrationFailure[]): CloudMcpFailure {
@@ -1973,6 +1982,7 @@ export async function reconcileOpenworkCloudMcp(input: {
   serverMetadata?: CloudMcpServerMetadata;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
+  cleanupLegacyRuntimeMcp?: CloudMcpLegacyRuntimeCleaner;
 }): Promise<CloudMcpHealth> {
   const configBody = input.body.config ?? input.body;
   const desiredConfig = canonicalizeCloudMcpConfig(normalizeCloudMcpConfig(configBody));
@@ -1983,7 +1993,10 @@ export async function reconcileOpenworkCloudMcp(input: {
     return healthWithFailure(await readOpenworkCloudMcpHealth(input), validationFailure);
   }
   const desiredRevision = calculateCloudMcpDesiredRevision(desiredConfig, metadata);
-  await persistDesiredConfig(input.config, input.workspace.id, desiredConfig);
+  const legacyAdminRemoved = await persistDesiredConfig(input.config, input.workspace.id, desiredConfig);
+  if (legacyAdminRemoved) {
+    await input.cleanupLegacyRuntimeMcp?.(input.config, input.workspace, LEGACY_OPENWORK_ADMIN_MCP_NAME);
+  }
   cloudMcpDeliveryState.markDesired(input.workspace, input.directory, desiredRevision, metadata);
 
   if (!input.directory) {
@@ -2043,6 +2056,7 @@ export async function reconcilePersistedOpenworkCloudMcp(input: {
   serverMetadata?: CloudMcpServerMetadata;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
+  cleanupLegacyRuntimeMcp?: CloudMcpLegacyRuntimeCleaner;
   trigger?: string;
 }): Promise<CloudMcpHealth> {
   const runtimeConfig = await readRuntimeOpencodeConfig(input.config, input.workspace.id);

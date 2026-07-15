@@ -65,6 +65,7 @@ import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import {
+  LEGACY_OPENWORK_ADMIN_MCP_NAME,
   markOpenworkCloudMcpStale,
   reconcilePersistedOpenworkCloudMcp,
   type CloudMcpHealth,
@@ -1486,6 +1487,8 @@ function createRoutes(
         options,
         engineMcpServerState,
       ),
+    cleanupLegacyRuntimeMcp: (routeConfig, workspace, name) =>
+      cleanupRetiredRuntimeMcp(routeConfig, workspace, name, engineMcpServerState),
     serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
   });
 
@@ -3240,6 +3243,8 @@ async function reloadOpencodeEngine(
           options,
           activeState ?? null,
         ),
+      cleanupLegacyRuntimeMcp: (routeConfig, routeWorkspace, name) =>
+        cleanupRetiredRuntimeMcp(routeConfig, routeWorkspace, name, activeState ?? null),
       trigger: "engine_reload",
     });
     logPersistedCloudMcpReconcileResult({ config, workspace, trigger: "engine_reload", health });
@@ -3270,7 +3275,17 @@ async function syncRuntimeMcpToOpencodeEngine(
     return { status: "skipped", syncedNames: [], failures: [] };
   }
 
-  const runtimeConfig = await readRuntimeOpencodeConfig(config, workspace.id);
+  let runtimeConfig = await readRuntimeOpencodeConfig(config, workspace.id);
+  if (Object.hasOwn(runtimeMcpMap(runtimeConfig), LEGACY_OPENWORK_ADMIN_MCP_NAME)) {
+    await removeMcp(config, workspace.id, LEGACY_OPENWORK_ADMIN_MCP_NAME);
+    await cleanupRetiredRuntimeMcp(
+      config,
+      workspace,
+      LEGACY_OPENWORK_ADMIN_MCP_NAME,
+      activeState ?? null,
+    );
+    runtimeConfig = await readRuntimeOpencodeConfig(config, workspace.id);
+  }
   const entries = Object.entries(runtimeMcpMap(runtimeConfig)).filter(
     ([name]) => !onlyNames || onlyNames.includes(name),
   );
@@ -4003,6 +4018,8 @@ export async function syncAllWorkspacesRuntimeMcpToEngine(config: ServerConfig):
             options,
             serverState,
           ),
+        cleanupLegacyRuntimeMcp: (routeConfig, routeWorkspace, name) =>
+          cleanupRetiredRuntimeMcp(routeConfig, routeWorkspace, name, serverState),
         trigger: "startup",
       });
       logPersistedCloudMcpReconcileResult({ config, workspace, trigger: "startup", health });
@@ -4015,6 +4032,29 @@ export async function syncAllWorkspacesRuntimeMcpToEngine(config: ServerConfig):
 // Counterpart of syncRuntimeMcpToOpencodeEngine for removals: tell the engine
 // to drop the MCP's client so deleted MCPs stop serving tools immediately
 // instead of lingering until the next engine restart. Best-effort.
+async function cleanupRetiredRuntimeMcp(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  name: typeof LEGACY_OPENWORK_ADMIN_MCP_NAME,
+  serverState?: EngineMcpServerState | null,
+): Promise<void> {
+  if (serverState) deleteEngineMcpRegistration(config, serverState, workspace, name);
+  try {
+    await disconnectMcpFromOpencodeEngine(config, workspace, name);
+  } catch (error) {
+    createServerLogger(config).log(
+      "warn",
+      `Retired MCP cleanup could not disconnect ${name} for workspace ${workspace.id}.`,
+      {
+        "workspace.id": workspace.id,
+        "mcp.name": name,
+        "mcp.trigger": "retired_mcp_cleanup",
+        "mcp.failure.code": error instanceof ApiError ? error.code : "retired_mcp_disconnect_failed",
+      },
+    );
+  }
+}
+
 async function disconnectMcpFromOpencodeEngine(
   config: ServerConfig,
   workspace: WorkspaceInfo,

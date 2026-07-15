@@ -4,6 +4,7 @@ import type { DenMcpToken, DenSettings } from "../src/app/lib/den";
 import type { OpenworkCloudMcpHealth, OpenworkCloudMcpReconcilePayload } from "../src/app/lib/openwork-server";
 import {
   __setCloudMcpUserStateStorageForTest,
+  readCloudMcpUserState,
   readCloudMcpSyncMarker,
   writeCloudMcpUserState,
 } from "../src/react-app/domains/connections/cloud-mcp-user-state";
@@ -96,6 +97,7 @@ function installStorageStub() {
     setItem: (key, value) => values.set(key, value),
     removeItem: (key) => values.delete(key),
   });
+  return values;
 }
 
 afterAll(() => {
@@ -354,7 +356,7 @@ describe("session MCP maintenance", () => {
     expect(writes).toEqual([workerA.baseUrl, workerB.baseUrl]);
   });
 
-  test("explicit removal keeps background maintenance disabled", async () => {
+  test("a genuinely removed Cloud entry keeps background maintenance disabled", async () => {
     writeCloudMcpUserState("removed", {
       denBaseUrl: SETTINGS.baseUrl,
       serverBaseUrl: "https://worker.openwork.test",
@@ -377,7 +379,145 @@ describe("session MCP maintenance", () => {
       settings: SETTINGS,
       mintToken: async () => MINTED,
     })).resolves.toEqual({ outcome: "skipped", status: "skipped", reason: "disabled", health: null });
-    expect(listed).toBe(false);
+    expect(listed).toBe(true);
+  });
+
+  test("enabled Cloud config clears stale legacy removed intent and repairs", async () => {
+    const backing = installStorageStub();
+    backing.set("openwork.den.mcp.cloudControlUserState", "removed");
+    const scope = {
+      denBaseUrl: SETTINGS.baseUrl,
+      serverBaseUrl: "https://worker.openwork.test",
+      orgId: SETTINGS.activeOrgId ?? "",
+      workspaceId: WORKSPACE_ID,
+    };
+    let mintCount = 0;
+
+    const result = await syncCloudControlMcpInBackground({
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        listMcp: async () => ({
+          items: [{
+            name: "openwork-cloud",
+            config: { type: "remote", enabled: true, url: "https://api.openwork.test/mcp/agent" },
+          }],
+        }),
+        getOpenworkCloudMcpHealth: async () => cloudHealth(false),
+        reconcileOpenworkCloudMcp: async () => cloudHealth(true),
+      },
+      workspaceId: WORKSPACE_ID,
+      settings: SETTINGS,
+      mintToken: async () => {
+        mintCount += 1;
+        return MINTED;
+      },
+    });
+
+    expect(result).toMatchObject({ outcome: "ready", status: "synced" });
+    expect(mintCount).toBe(1);
+    expect(readCloudMcpUserState(scope)).toBeNull();
+  });
+
+  test("an explicitly disabled Cloud config remains disabled", async () => {
+    const scope = {
+      denBaseUrl: SETTINGS.baseUrl,
+      serverBaseUrl: "https://worker.openwork.test",
+      orgId: SETTINGS.activeOrgId ?? "",
+      workspaceId: WORKSPACE_ID,
+    };
+    writeCloudMcpUserState("disabled", scope);
+
+    await expect(syncCloudControlMcpInBackground({
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        listMcp: async () => ({
+          items: [{
+            name: "openwork-cloud",
+            config: { type: "remote", enabled: false, url: "https://api.openwork.test/mcp/agent" },
+          }],
+        }),
+        getOpenworkCloudMcpHealth: async () => cloudHealth(false),
+        reconcileOpenworkCloudMcp: async () => cloudHealth(true),
+      },
+      workspaceId: WORKSPACE_ID,
+      settings: SETTINGS,
+      mintToken: async () => MINTED,
+    })).resolves.toEqual({ outcome: "skipped", status: "skipped", reason: "disabled", health: null });
+    expect(readCloudMcpUserState(scope)).toBe("disabled");
+  });
+
+  test("observes localStorage intent changes without reloading the module", async () => {
+    const backing = installStorageStub();
+    backing.set("openwork.den.mcp.cloudControlUserState", "removed");
+    let mintCount = 0;
+    const client = {
+      baseUrl: "https://worker.openwork.test",
+      listMcp: async () => ({ items: [] }),
+      getOpenworkCloudMcpHealth: async () => cloudHealth(false),
+      reconcileOpenworkCloudMcp: async () => cloudHealth(true),
+    };
+
+    await expect(syncCloudControlMcpInBackground({
+      client,
+      workspaceId: WORKSPACE_ID,
+      settings: SETTINGS,
+      mintToken: async () => {
+        mintCount += 1;
+        return MINTED;
+      },
+    })).resolves.toMatchObject({ outcome: "skipped", reason: "disabled" });
+
+    backing.delete("openwork.den.mcp.cloudControlUserState");
+    await expect(syncCloudControlMcpInBackground({
+      client,
+      workspaceId: WORKSPACE_ID,
+      settings: SETTINGS,
+      mintToken: async () => {
+        mintCount += 1;
+        return MINTED;
+      },
+    })).resolves.toMatchObject({ outcome: "ready", status: "synced" });
+    expect(mintCount).toBe(1);
+  });
+
+  test("token mint failure remains actionable after bounded retry exhaustion", async () => {
+    const attempts: Array<{ attempt: number; willRetry: boolean; code: string | null }> = [];
+    const client = {
+      baseUrl: "https://worker.openwork.test",
+      listMcp: async () => ({ items: [] }),
+      getOpenworkCloudMcpHealth: async () => cloudHealth(false),
+      reconcileOpenworkCloudMcp: async () => cloudHealth(true),
+    };
+
+    const result = await runCloudMcpMaintenanceWithRetry({
+      attempt: () => syncCloudControlMcpInBackground({
+        client,
+        workspaceId: WORKSPACE_ID,
+        settings: SETTINGS,
+        mintToken: async () => null,
+      }),
+      retryDelaysMs: [0],
+      wait: async () => {},
+      onAttempt: ({ result: attemptResult, attempt, willRetry }) => {
+        attempts.push({
+          attempt,
+          willRetry,
+          code: attemptResult.outcome === "failed" ? attemptResult.issue.code : null,
+        });
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "failed",
+      issue: {
+        code: "cloud_mcp_token_mint_failed",
+        recommendedAction: "Retry, then open Settings → Connect if the problem continues.",
+      },
+    });
+    expect(attempts).toEqual([
+      { attempt: 1, willRetry: true, code: "cloud_mcp_token_mint_failed" },
+      { attempt: 2, willRetry: false, code: "cloud_mcp_token_mint_failed" },
+    ]);
   });
 
   test("pre-signout cleanup removes runtime MCP and disconnects the exact active workspace before resolving", async () => {

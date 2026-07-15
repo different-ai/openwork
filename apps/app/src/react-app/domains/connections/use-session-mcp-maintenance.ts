@@ -18,11 +18,12 @@ import type { Client, McpServerEntry, McpStatusMap } from "../../../app/types";
 import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
 import {
   CLOUD_MCP_SERVER_NAME,
-  readCloudMcpUserState,
+  LEGACY_OPENWORK_ADMIN_MCP_SERVER_NAME,
 } from "./cloud-mcp-user-state";
 import {
   runOpenworkCloudMcpReconciler,
   type CloudMcpClient,
+  type CloudMcpOperationResult,
 } from "./cloud-mcp-reconciler";
 
 export const SESSION_MCP_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
@@ -73,14 +74,16 @@ const IDLE_CLOUD_MCP_MAINTENANCE_STATE: SessionCloudMcpMaintenanceState = {
 
 function genericCloudMcpMaintenanceIssue(input?: {
   code?: string;
+  stage?: string;
   message?: string;
   retryable?: boolean;
+  recommendedAction?: string;
 }): CloudMcpMaintenanceIssue {
   return {
     code: input?.code ?? "cloud_mcp_maintenance_failed",
-    stage: "engine_delivery",
+    stage: input?.stage ?? "engine_delivery",
     retryable: input?.retryable ?? true,
-    recommendedAction: "Retry, then open Settings → Connect if the problem continues.",
+    recommendedAction: input?.recommendedAction ?? "Retry, then open Settings → Connect if the problem continues.",
     message: input?.message ?? "OpenWork could not verify connected service tools for this workspace.",
   };
 }
@@ -89,13 +92,22 @@ function failedCloudMcpBackgroundSync(input: {
   health: OpenworkCloudMcpHealth | null;
   issue?: CloudMcpMaintenanceIssue;
   code?: string;
+  stage?: string;
   message?: string;
+  retryable?: boolean;
+  recommendedAction?: string;
 }): CloudMcpBackgroundSyncResult {
   return {
     outcome: "failed",
     status: "failed",
     health: input.health,
-    issue: input.issue ?? genericCloudMcpMaintenanceIssue({ code: input.code, message: input.message }),
+    issue: input.issue ?? genericCloudMcpMaintenanceIssue({
+      code: input.code,
+      stage: input.stage,
+      message: input.message,
+      retryable: input.retryable,
+      recommendedAction: input.recommendedAction,
+    }),
   };
 }
 
@@ -158,38 +170,86 @@ export async function syncCloudControlMcpInBackground(input: {
     orgId,
     workspaceId,
   };
-  if (readCloudMcpUserState(scope) !== null) {
-    return { outcome: "skipped", status: "skipped", reason: "disabled", health: null };
+  let listed: Awaited<ReturnType<CloudMcpMaintenanceClient["listMcp"]>>;
+  try {
+    listed = await input.client.listMcp(workspaceId);
+  } catch {
+    return failedCloudMcpBackgroundSync({
+      health: null,
+      code: "cloud_mcp_config_read_failed",
+      stage: "prerequisites",
+      message: "OpenWork could not read the connected service configuration for this workspace.",
+    });
   }
-
-  const listed = await input.client.listMcp(workspaceId);
   const configured = listed.items.find((entry) => entry.name === CLOUD_MCP_SERVER_NAME);
-  if (configured?.config.enabled === false) {
-    return { outcome: "skipped", status: "skipped", reason: "disabled", health: null };
-  }
+  const legacyAdminPresent = listed.items.some((entry) => entry.name === LEGACY_OPENWORK_ADMIN_MCP_SERVER_NAME);
   const configuredUrl = typeof configured?.config.url === "string" ? configured.config.url : null;
 
-  const result = await runOpenworkCloudMcpReconciler({
-    mode: "repair",
-    client: input.client,
-    context: {
-      ...scope,
-      denAuthToken: settings.authToken,
-      orgSlug: settings.activeOrgSlug,
-      orgName: settings.activeOrgName,
-      fallbackUrl: configured?.config.type === "remote" ? configuredUrl : null,
-      providerModel: input.providerModel,
-      trigger: input.force ? "desktop-background-forced" : "desktop-background",
-    },
-    mintToken: input.mintToken
-      ? async () => input.mintToken?.() ?? null
-      : mintCloudControlMcpToken,
-    force: input.force,
-    refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
-    now: input.now,
-    configuredEnabled: typeof configured?.config.enabled === "boolean" ? configured.config.enabled : null,
-  });
+  const trigger = legacyAdminPresent
+    ? "desktop-legacy-admin-cleanup"
+    : input.force
+      ? "desktop-background-forced"
+      : "desktop-background";
+  let result: CloudMcpOperationResult;
+  try {
+    result = await runOpenworkCloudMcpReconciler({
+      mode: "repair",
+      client: input.client,
+      context: {
+        ...scope,
+        denAuthToken: settings.authToken,
+        orgSlug: settings.activeOrgSlug,
+        orgName: settings.activeOrgName,
+        fallbackUrl: configured?.config.type === "remote" ? configuredUrl : null,
+        providerModel: input.providerModel,
+        trigger,
+      },
+      mintToken: async (context) => {
+        try {
+          return input.mintToken
+            ? await input.mintToken()
+            : await mintCloudControlMcpToken(context);
+        } catch {
+          return null;
+        }
+      },
+      force: input.force || legacyAdminPresent,
+      refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
+      now: input.now,
+      configuredPresent: Boolean(configured),
+      configuredEnabled: typeof configured?.config.enabled === "boolean" ? configured.config.enabled : null,
+    });
+  } catch {
+    return failedCloudMcpBackgroundSync({
+      health: null,
+      code: "cloud_mcp_reconcile_request_failed",
+      message: "OpenWork could not complete the Cloud tool health and reconciliation request.",
+    });
+  }
   if (result.health?.usable) {
+    if (legacyAdminPresent) {
+      let legacyStillPresent = true;
+      try {
+        const refreshed = await input.client.listMcp(workspaceId);
+        legacyStillPresent = refreshed.items.some((entry) => entry.name === LEGACY_OPENWORK_ADMIN_MCP_SERVER_NAME);
+      } catch {
+        // The next bounded maintenance attempt will verify cleanup again.
+      }
+      recordInspectorEvent("cloud_mcp.legacy_admin_cleanup", {
+        workspaceId,
+        outcome: legacyStillPresent ? "failed" : "removed",
+      });
+      if (legacyStillPresent) {
+        return failedCloudMcpBackgroundSync({
+          health: result.health,
+          code: "legacy_openwork_admin_cleanup_failed",
+          stage: "desired_config",
+          retryable: false,
+          recommendedAction: "Open Connect and remove the retired openwork-admin entry.",
+          message: "The retired openwork-admin connection could not be removed from this workspace.",
+        });
+      }
+    }
     return {
       outcome: "ready",
       status: result.status === "unchanged" || result.status === "ready" ? "unchanged" : "synced",

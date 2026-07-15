@@ -120,7 +120,7 @@ export function publishInspectorSlice(
 
 export function recordInspectorEvent(name: string, data?: unknown) {
   installIfNeeded();
-  window.__openwork?.record(name, data);
+  if (typeof window !== "undefined") window.__openwork?.record(name, data);
 }
 
 export function ensureInspectorInstalled() {

@@ -3,6 +3,7 @@ import {
   OPENWORK_CLOUD_MCP_NAME,
   readOpenworkCloudMcpHealth,
   reconcileOpenworkCloudMcp,
+  type CloudMcpLegacyRuntimeCleaner,
   type CloudMcpServerMetadata,
   type CloudMcpProviderModelContext,
   type CloudMcpRuntimeRegistrar,
@@ -26,6 +27,7 @@ export type RegisterCloudMcpRoutesOptions = {
   resolveOpencodeDirectory: (workspace: WorkspaceInfo) => string | null;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
+  cleanupLegacyRuntimeMcp?: CloudMcpLegacyRuntimeCleaner;
   serverMetadata?: CloudMcpServerMetadata;
 };
 
@@ -81,6 +83,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
     resolveOpencodeDirectory,
     createWorkspaceOpencodeClient,
     registerRuntimeMcp,
+    cleanupLegacyRuntimeMcp,
     serverMetadata,
   } = options;
 
@@ -117,6 +120,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       serverMetadata,
       createWorkspaceOpencodeClient,
       registerRuntimeMcp,
+      cleanupLegacyRuntimeMcp,
     });
     return jsonResponse(health);
   });

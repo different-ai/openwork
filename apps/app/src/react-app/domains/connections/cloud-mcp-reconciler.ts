@@ -3,6 +3,7 @@ import {
   type DenMcpTokenMintContext,
   resolveCloudMcpResourceUrl,
 } from "../../../app/lib/den";
+import { recordInspectorEvent } from "../../../app/lib/app-inspector";
 import type {
   OpenworkCloudMcpFailure,
   OpenworkCloudMcpHealth,
@@ -82,6 +83,7 @@ type CloudMcpReconcilerInput = {
   force?: boolean;
   refreshMarginMs: number;
   now?: number;
+  configuredPresent?: boolean;
   configuredEnabled?: boolean | null;
 };
 
@@ -189,7 +191,8 @@ export function isCloudMcpAuthTokenFailureCode(code: string | null | undefined):
   ) {
     return false;
   }
-  return normalized === "openwork_cloud_auth_required" ||
+  return normalized === "invalid_mcp_token" ||
+    normalized === "openwork_cloud_auth_required" ||
     normalized === "openwork_cloud_auth_invalid" ||
     normalized === "openwork_cloud_token_expired" ||
     normalized.includes("invalid_token") ||
@@ -198,12 +201,47 @@ export function isCloudMcpAuthTokenFailureCode(code: string | null | undefined):
     normalized.includes("auth");
 }
 
+export function isCloudMcpAuthTokenFailure(failure: OpenworkCloudMcpFailure | null | undefined): boolean {
+  if (!failure) return false;
+  return [failure.code, ...(failure.aliases ?? [])].some(isCloudMcpAuthTokenFailureCode);
+}
+
+function reconcileStoredUserIntent(input: {
+  scope: CloudMcpScope;
+  configuredPresent: boolean;
+  configuredEnabled: boolean | null;
+  trigger?: string;
+}): CloudMcpUserState | null {
+  const userState = readCloudMcpUserState(input.scope);
+  if (!userState) return null;
+  if (!input.configuredPresent || input.configuredEnabled === false) return userState;
+
+  clearCloudMcpUserState(input.scope);
+  recordInspectorEvent("cloud_mcp.user_intent_reconciled", {
+    workspaceId: input.scope.workspaceId,
+    previousState: userState,
+    configuredPresent: true,
+    configuredEnabled: true,
+    trigger: input.trigger ?? "unknown",
+  });
+  return null;
+}
+
 function shouldSkipForPrerequisite(input: CloudMcpReconcilerInput, scope: CloudMcpScope): CloudMcpOperationResult | null {
   if (!scope.workspaceId) return { status: "skipped", health: null, skippedReason: "missing_workspace", attempts: 0, markerWritten: false, reminted: false };
   if (input.mode === "health") return null;
   if (!input.context.denAuthToken?.trim()) return { status: "skipped", health: null, skippedReason: "signed_out", attempts: 0, markerWritten: false, reminted: false };
   if (!scope.orgId) return { status: "skipped", health: null, skippedReason: "missing_org", attempts: 0, markerWritten: false, reminted: false };
-  if (input.configuredEnabled === false || readCloudMcpUserState(scope) !== null) {
+  if (input.configuredEnabled === false) {
+    return { status: "skipped", health: null, skippedReason: "disabled", attempts: 0, markerWritten: false, reminted: false };
+  }
+  const userState = reconcileStoredUserIntent({
+    scope,
+    configuredPresent: input.configuredPresent === true,
+    configuredEnabled: input.configuredEnabled ?? null,
+    trigger: input.context.trigger,
+  });
+  if (userState) {
     return { status: "skipped", health: null, skippedReason: "disabled", attempts: 0, markerWritten: false, reminted: false };
   }
   return null;
@@ -274,7 +312,7 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
   let health = first.health;
   let token = first.token;
   let reminted = false;
-  if (isCloudMcpAuthTokenFailureCode(health?.firstFailure?.code)) {
+  if (isCloudMcpAuthTokenFailure(health?.firstFailure)) {
     const second = await mintAndPost(input, scope);
     attempts += 1;
     reminted = true;
@@ -298,7 +336,18 @@ export async function runOpenworkCloudMcpReconciler(input: CloudMcpReconcilerInp
   const prerequisite = shouldSkipForPrerequisite(input, scope);
   if (prerequisite) return prerequisite;
 
-  if (input.mode === "health") return probeHealth(input, scope);
+  if (input.mode === "health") {
+    const result = await probeHealth(input, scope);
+    if (result.health) {
+      reconcileStoredUserIntent({
+        scope,
+        configuredPresent: result.health.desired.present,
+        configuredEnabled: result.health.desired.config?.enabled === false ? false : true,
+        trigger: input.context.trigger,
+      });
+    }
+    return result;
+  }
 
   const scopeKey = getCloudMcpScopeKey(scope);
   if (!scopeKey) return { status: "skipped", health: null, skippedReason: "missing_workspace", attempts: 0, markerWritten: false, reminted: false };

@@ -79,6 +79,9 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
         return Response.json({ healthy: true, version: "1.17.11" });
       }
       if (url.pathname === "/instance/dispose") return Response.json({ disposed: true });
+      if (url.pathname === "/mcp/openwork-admin/disconnect" && request.method === "POST") {
+        return Response.json({ disconnected: true });
+      }
       if (url.pathname === "/mcp" && request.method === "POST") {
         if (options.postFailure) return Response.json(options.postFailure.body, { status: options.postFailure.status });
         registerCount += 1;
@@ -291,6 +294,43 @@ describe("openwork-cloud MCP strict reconcile", () => {
     const mcpPosts = mock.requests.filter((request) => request.method === "POST" && request.pathname === "/mcp");
     expect(mcpPosts.length).toBe(1);
     expect(mcpPosts[0]?.search).toContain(`directory=${encodeURIComponent(root)}`);
+  });
+
+  test("removes retired openwork-admin config before engine sync and never reintroduces it", async () => {
+    const root = await createRoot();
+    const mock = startMockOpencode();
+    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)], root);
+    await writeRuntimeOpencodeConfig(openwork.config, "ws_1", (current) => ({
+      ...current,
+      mcp: {
+        ...current.mcp,
+        "openwork-admin": {
+          type: "remote",
+          enabled: true,
+          url: "https://api.openwork.test/mcp/admin",
+          headers: { Authorization: "Bearer expired-token" },
+          oauth: false,
+        },
+      },
+    }));
+
+    expect((await responseRecord(await reconcile(openwork.base))).phase).toBe("ready");
+    const firstRuntime = await readRuntimeOpencodeConfig(openwork.config, "ws_1");
+    expect(firstRuntime.mcp?.["openwork-admin"]).toBeUndefined();
+    expect(firstRuntime.mcp?.["openwork-cloud"]).toBeDefined();
+
+    expect((await responseRecord(await reconcile(openwork.base))).phase).toBe("ready");
+    const secondRuntime = await readRuntimeOpencodeConfig(openwork.config, "ws_1");
+    expect(secondRuntime.mcp?.["openwork-admin"]).toBeUndefined();
+    expect(mock.requests.some((request) => (
+      request.method === "POST" && request.pathname === "/mcp/openwork-admin/disconnect"
+    ))).toBe(true);
+    expect(mock.requests.some((request) => (
+      request.method === "POST"
+      && request.pathname === "/mcp"
+      && isRecord(request.body)
+      && request.body.name === "openwork-admin"
+    ))).toBe(false);
   });
 
   test("rejects malformed desired config without persisting or registering it", async () => {

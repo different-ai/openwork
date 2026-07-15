@@ -11,6 +11,7 @@ import {
 import {
   cloudMcpDisplaySummary,
   cloudMcpFailureStageLabel,
+  isCloudMcpAuthTokenFailure,
   isCloudMcpAuthTokenFailureCode,
   runOpenworkCloudMcpReconciler,
 } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
@@ -44,13 +45,14 @@ function installStorageStub() {
   });
 }
 
-function failure(code: string): OpenworkCloudMcpFailure {
+function failure(code: string, aliases?: string[]): OpenworkCloudMcpFailure {
   return {
     code,
     stage: "engine_status",
     retryable: false,
     recommendedAction: "fix it",
     message: "failed",
+    ...(aliases ? { aliases } : {}),
   };
 }
 
@@ -198,7 +200,8 @@ describe("OpenWork Cloud MCP reconciler", () => {
     expect(readCloudMcpSyncMarker(scope)?.expiresAt).toBe(token.expiresAt);
   });
 
-  test("auth failures remint exactly once", async () => {
+  test("the exact invalid_mcp_token failure remints exactly once", async () => {
+    expect(isCloudMcpAuthTokenFailureCode("invalid_mcp_token")).toBe(true);
     let mintCount = 0;
     const posts: OpenworkCloudMcpReconcilePayload[] = [];
     const result = await runOpenworkCloudMcpReconciler({
@@ -209,7 +212,7 @@ describe("OpenWork Cloud MCP reconciler", () => {
         reconcileOpenworkCloudMcp: async (_workspaceId, payload) => {
           posts.push(payload);
           return posts.length === 1
-            ? health({ usable: false, failure: failure("openwork_cloud_token_expired") })
+            ? health({ usable: false, failure: failure("invalid_mcp_token") })
             : health({ usable: true });
         },
       },
@@ -225,6 +228,36 @@ describe("OpenWork Cloud MCP reconciler", () => {
     expect(result.health?.usable).toBe(true);
     expect(mintCount).toBe(2);
     expect(posts).toHaveLength(2);
+  });
+
+  test("a canonical auth alias remints exactly once", async () => {
+    let mintCount = 0;
+    let postCount = 0;
+    const result = await runOpenworkCloudMcpReconciler({
+      mode: "repair",
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        getOpenworkCloudMcpHealth: async () => health({ usable: false }),
+        reconcileOpenworkCloudMcp: async () => {
+          postCount += 1;
+          return postCount === 1
+            ? health({ usable: false, failure: failure("cloud_connection_failed", ["openwork_cloud_token_expired"]) })
+            : health({ usable: true });
+        },
+      },
+      context,
+      mintToken: async () => {
+        mintCount += 1;
+        return token;
+      },
+      force: true,
+      refreshMarginMs: 1,
+    });
+
+    expect(isCloudMcpAuthTokenFailure(failure("cloud_connection_failed", ["openwork_cloud_token_expired"]))).toBe(true);
+    expect(result.health?.usable).toBe(true);
+    expect(mintCount).toBe(2);
+    expect(postCount).toBe(2);
   });
 
   test("membership and scope failures do not retry", async () => {

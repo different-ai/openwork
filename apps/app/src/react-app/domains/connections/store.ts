@@ -40,7 +40,7 @@ import type { OpenworkServerStore } from "./openwork-server-store";
 import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
 import {
   CLOUD_MCP_SERVER_NAME,
-  readCloudMcpUserState,
+  LEGACY_OPENWORK_ADMIN_MCP_SERVER_NAME,
 } from "./cloud-mcp-user-state";
 import {
   clearCloudMcpDisabledIntent,
@@ -905,10 +905,11 @@ export function createConnectionsStore(options: {
     if (!entry) return "skipped";
     const scope = { denBaseUrl: settings.baseUrl, serverBaseUrl, orgId, workspaceId };
 
-    // Respect explicit user intent for this exact workspace/org/server/deployment.
-    if (readCloudMcpUserState(scope) !== null) return "skipped";
-    const configuredEntry = snapshot.mcpServers.find((server) => server.name === CLOUD_MCP_SERVER_NAME);
-    if (configuredEntry?.config.enabled === false) return "skipped";
+    const listed = await openworkClient.listMcp(workspaceId).catch(() => null);
+    if (!listed) return "skipped";
+    const configuredEntry = listed.items.find((server) => server.name === CLOUD_MCP_SERVER_NAME);
+    const legacyAdminPresent = listed.items.some((server) => server.name === LEGACY_OPENWORK_ADMIN_MCP_SERVER_NAME);
+    const configuredUrl = typeof configuredEntry?.config.url === "string" ? configuredEntry.config.url : null;
 
     const result = await runOpenworkCloudMcpReconciler({
       mode: "repair",
@@ -918,12 +919,18 @@ export function createConnectionsStore(options: {
         denAuthToken: settings.authToken,
         orgSlug: settings.activeOrgSlug,
         orgName: settings.activeOrgName,
-        fallbackUrl: configuredEntry?.config.url ?? entry.url,
-        trigger: options?.force ? "desktop-settings-force" : "desktop-settings-background",
+        fallbackUrl: configuredUrl ?? entry.url,
+        trigger: legacyAdminPresent
+          ? "desktop-settings-legacy-admin-cleanup"
+          : options?.force
+            ? "desktop-settings-force"
+            : "desktop-settings-background",
       },
       mintToken: mintCloudControlMcpToken,
-      force: options?.force,
+      force: options?.force || legacyAdminPresent,
       refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
+      configuredPresent: Boolean(configuredEntry),
+      configuredEnabled: typeof configuredEntry?.config.enabled === "boolean" ? configuredEntry.config.enabled : null,
     });
     if (result.status === "unchanged" || result.status === "ready") return "unchanged";
     if (result.health?.usable) {
