@@ -18,6 +18,7 @@ describe("MCP OAuth callback migration UI contract", () => {
     expect(screen).toContain("Copy the new shared callback")
     expect(screen).toContain("Add it to the external OAuth application")
     expect(screen).toContain("Reconnect using shared callback")
+    expect(screen).toContain("onClick={automaticCallbackMigrationPending ? onMigrateCallback : onConnect}")
     expect(screen).toContain("This migration is permanent")
     expect(data).toContain("/oauth/use-shared-callback")
 

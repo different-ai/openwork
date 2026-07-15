@@ -18,8 +18,10 @@ let credentials: typeof import("../src/capability-sources/oauth-credentials.js")
 let persistenceModule: typeof import("../src/capability-sources/enterprise-mcp-oauth-persistence.js")
 
 const userId = createDenTypeId("user")
+const secondaryUserId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
+const secondaryMemberId = createDenTypeId("member")
 
 beforeAll(async () => {
   seedRequiredEnv()
@@ -50,6 +52,11 @@ beforeAll(async () => {
     name: "MCP Callback Migration User",
     email: `mcp-callback-migration+${userId}@test.local`,
   })
+  await db.insert(schema.AuthUserTable).values({
+    id: secondaryUserId,
+    name: "MCP Callback Migration Secondary User",
+    email: `mcp-callback-migration+${secondaryUserId}@test.local`,
+  })
   await db.insert(schema.OrganizationTable).values({
     id: organizationId,
     name: "MCP Callback Migration Org",
@@ -61,6 +68,12 @@ beforeAll(async () => {
     userId,
     role: "admin",
   })
+  await db.insert(schema.MemberTable).values({
+    id: secondaryMemberId,
+    organizationId,
+    userId: secondaryUserId,
+    role: "member",
+  })
 })
 
 afterAll(async () => {
@@ -71,7 +84,7 @@ afterAll(async () => {
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
   await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
   await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
-  await db.delete(schema.AuthUserTable).where(drizzle.eq(schema.AuthUserTable.id, userId))
+  await db.delete(schema.AuthUserTable).where(drizzle.inArray(schema.AuthUserTable.id, [userId, secondaryUserId]))
   mock.restore()
 })
 
@@ -124,7 +137,7 @@ test("all new OAuth connections use shared-v1 even if an internal caller asks fo
   expect(created.oauthConfiguration?.callbackMode).toBe("shared-v1")
 })
 
-test("manual migration preserves the client credentials and grants while permanently clearing authorization state", async () => {
+test("manual migration preserves the client credentials, grants, and other members while clearing the caller", async () => {
   const connection = await createConnection("Manual migration", "per_member")
   await markAsLegacy(connection.id)
   const clientBefore = await credentials.upsertOrgOAuthClient({
@@ -143,9 +156,21 @@ test("manual migration preserves the client credentials and grants while permane
     refreshToken: "member-refresh-token",
     pendingCodeVerifier: "member-pending-authorization",
   })
+  await credentials.upsertConnectedAccount({
+    organizationId,
+    orgMembershipId: secondaryMemberId,
+    providerId: connection.id,
+    accessToken: "secondary-member-access-token",
+    refreshToken: "secondary-member-refresh-token",
+    pendingCodeVerifier: "secondary-member-pending-authorization",
+  })
   const grantsBefore = await connections.listExternalMcpConnectionAccess({ organizationId, connectionId: connection.id })
 
-  const result = await connections.migrateExternalMcpOAuthCallbackToShared({ organizationId, connectionId: connection.id })
+  const result = await connections.migrateExternalMcpOAuthCallbackToShared({
+    organizationId,
+    connectionId: connection.id,
+    orgMembershipId: memberId,
+  })
   expect(result).toMatchObject({
     status: "migrated",
     changed: true,
@@ -154,9 +179,10 @@ test("manual migration preserves the client credentials and grants while permane
   })
   if (result.status !== "migrated") throw new Error("migration did not return a connection")
 
-  const [clientAfter, accountAfter, grantsAfter, connectionAfter] = await Promise.all([
+  const [clientAfter, accountAfter, secondaryAccountAfter, grantsAfter, connectionAfter] = await Promise.all([
     credentials.getOrgOAuthClient(organizationId, connection.id),
     credentials.getConnectedAccount({ organizationId, orgMembershipId: memberId, providerId: connection.id }),
+    credentials.getConnectedAccount({ organizationId, orgMembershipId: secondaryMemberId, providerId: connection.id }),
     connections.listExternalMcpConnectionAccess({ organizationId, connectionId: connection.id }),
     connections.getExternalMcpConnection({ organizationId, connectionId: connection.id }),
   ])
@@ -172,6 +198,11 @@ test("manual migration preserves the client credentials and grants while permane
     },
   })
   expect(accountAfter).toBeNull()
+  expect(secondaryAccountAfter).toMatchObject({
+    orgMembershipId: secondaryMemberId,
+    accessToken: "secondary-member-access-token",
+    refreshToken: "secondary-member-refresh-token",
+  })
   expect(grantsAfter.map((grant) => grant.id)).toEqual(grantsBefore.map((grant) => grant.id))
   expect(connectionAfter).toMatchObject({
     accessToken: null,
@@ -181,7 +212,11 @@ test("manual migration preserves the client credentials and grants while permane
     oauthConfiguration: { callbackMode: "shared-v1" },
   })
 
-  const repeated = await connections.migrateExternalMcpOAuthCallbackToShared({ organizationId, connectionId: connection.id })
+  const repeated = await connections.migrateExternalMcpOAuthCallbackToShared({
+    organizationId,
+    connectionId: connection.id,
+    orgMembershipId: memberId,
+  })
   expect(repeated).toMatchObject({ status: "migrated", changed: false })
 
   const reverseAttempt = await connections.updateExternalMcpConnection({
@@ -202,7 +237,7 @@ test("manual migration preserves the client credentials and grants while permane
   expect(reverseAttempt).toEqual({ status: "conflict" })
 })
 
-test("reconnect preparation removes an old dynamic registration and selects shared-v1", async () => {
+test("explicit reconnect migration replaces an old dynamic registration without clearing another member", async () => {
   const connection = await createConnection("Dynamic migration", "per_member")
   await markAsLegacy(connection.id)
   const oldClient = await credentials.upsertOrgOAuthClient({
@@ -225,17 +260,41 @@ test("reconnect preparation removes an old dynamic registration and selects shar
     accessToken: "old-member-token",
     pendingCodeVerifier: "old-member-pending-authorization",
   })
+  await credentials.upsertConnectedAccount({
+    organizationId,
+    orgMembershipId: secondaryMemberId,
+    providerId: connection.id,
+    accessToken: "other-member-token",
+    pendingCodeVerifier: "other-member-pending-authorization",
+  })
 
-  const prepared = await connections.prepareExternalMcpOAuthAuthorization({ organizationId, connectionId: connection.id })
-  expect(prepared).toMatchObject({
-    accessToken: null,
-    refreshToken: null,
-    pendingCodeVerifier: null,
-    connectedAt: null,
-    oauthConfiguration: { callbackMode: "shared-v1" },
+  const migrated = await connections.migrateExternalMcpOAuthCallbackToShared({
+    organizationId,
+    connectionId: connection.id,
+    orgMembershipId: memberId,
+  })
+  expect(migrated).toMatchObject({
+    status: "migrated",
+    dynamicRegistrationInvalidated: true,
+    manualClientPreserved: false,
+    connection: {
+      accessToken: null,
+      refreshToken: null,
+      pendingCodeVerifier: null,
+      connectedAt: null,
+      oauthConfiguration: { callbackMode: "shared-v1" },
+    },
   })
   expect(await credentials.getOrgOAuthClient(organizationId, connection.id)).toBeNull()
   expect(await credentials.getConnectedAccount({ organizationId, orgMembershipId: memberId, providerId: connection.id })).toBeNull()
+  expect(await credentials.getConnectedAccount({
+    organizationId,
+    orgMembershipId: secondaryMemberId,
+    providerId: connection.id,
+  })).toMatchObject({
+    orgMembershipId: secondaryMemberId,
+    accessToken: "other-member-token",
+  })
 
   const replacement = await credentials.upsertOrgOAuthClient({
     organizationId,

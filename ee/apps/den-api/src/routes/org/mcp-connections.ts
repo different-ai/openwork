@@ -55,7 +55,6 @@ import {
   memberCanUseExternalMcpConnection,
   migrateExternalMcpOAuthCallbackToShared,
   normalizeExternalMcpIdentityUrl,
-  prepareExternalMcpOAuthAuthorization,
   replaceExternalMcpConnectionAccess,
   updateExternalMcpConnection,
   type ExternalMcpConnectionRow,
@@ -1833,6 +1832,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const result = await migrateExternalMcpOAuthCallbackToShared({
         organizationId: payload.organization.id,
         connectionId: externalMcpConnectionId,
+        orgMembershipId: payload.currentMember.id,
       })
       if (result.status === "not_found") {
         return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
@@ -1961,18 +1961,10 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       }
 
       try {
-        // Classify legacy rows before enforcing the manual-client migration
-        // gate. SDK-created registrations migrate automatically and safely on
-        // any authorized reconnect; manual clients remain legacy until an
-        // administrator confirms that the shared callback was allowlisted.
-        const prepared = await prepareExternalMcpOAuthAuthorization({
-          organizationId: payload.organization.id,
-          connectionId: externalMcpConnectionId,
-        })
-        if (!prepared) {
-          return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
-        }
-        connection = prepared
+        // Legacy callback migration is destructive: it clears authorization
+        // state and may replace an SDK-created client registration. Never do
+        // that work from this GET. The admin dashboard performs the explicit,
+        // fresh-session-gated POST first, then retries authorization here.
         if (connection.oauthConfiguration?.callbackMode !== "shared-v1") {
           return c.json({
             error: "mcp_oauth_callback_update_required",

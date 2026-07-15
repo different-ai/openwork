@@ -24,12 +24,19 @@ let createExternalMcpConnection: typeof import("../src/capability-sources/extern
 let externalMcpIdentityBinding: typeof import("../src/capability-sources/external-mcp-connections.js").externalMcpIdentityBinding
 let createOAuthStateToken: typeof import("../src/capability-sources/generic-oauth.js").createOAuthStateToken
 let upsertOrgOAuthClient: typeof import("../src/capability-sources/oauth-credentials.js").upsertOrgOAuthClient
+let upsertConnectedAccount: typeof import("../src/capability-sources/oauth-credentials.js").upsertConnectedAccount
+let getOrgOAuthClient: typeof import("../src/capability-sources/oauth-credentials.js").getOrgOAuthClient
+let getConnectedAccount: typeof import("../src/capability-sources/oauth-credentials.js").getConnectedAccount
 
 const userId = createDenTypeId("user")
+const regularUserId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
+const regularMemberId = createDenTypeId("member")
 const staleSessionId = createDenTypeId("session")
 const staleSessionToken = `stale-mcp-session-${staleSessionId}`
+const freshSessionId = createDenTypeId("session")
+const freshSessionToken = `fresh-mcp-session-${freshSessionId}`
 const connectionName = "Broken OAuth MCP"
 let connectionId: DenTypeId<"externalMcpConnection"> | undefined
 
@@ -61,11 +68,19 @@ beforeAll(async () => {
   externalMcpIdentityBinding = connectionsMod.externalMcpIdentityBinding
   createOAuthStateToken = genericOAuthMod.createOAuthStateToken
   upsertOrgOAuthClient = oauthCredentialsMod.upsertOrgOAuthClient
+  upsertConnectedAccount = oauthCredentialsMod.upsertConnectedAccount
+  getOrgOAuthClient = oauthCredentialsMod.getOrgOAuthClient
+  getConnectedAccount = oauthCredentialsMod.getConnectedAccount
 
   await db.insert(schema.AuthUserTable).values({
     id: userId,
     name: "MCP Connect Start User",
     email: `mcp-connect-start+${userId}@test.local`,
+  })
+  await db.insert(schema.AuthUserTable).values({
+    id: regularUserId,
+    name: "MCP Connect Start Regular User",
+    email: `mcp-connect-start+${regularUserId}@test.local`,
   })
   await db.insert(schema.OrganizationTable).values({
     id: organizationId,
@@ -78,6 +93,12 @@ beforeAll(async () => {
     userId,
     role: "admin",
   })
+  await db.insert(schema.MemberTable).values({
+    id: regularMemberId,
+    organizationId,
+    userId: regularUserId,
+    role: "member",
+  })
   await db.insert(schema.AuthSessionTable).values({
     id: staleSessionId,
     userId,
@@ -85,6 +106,14 @@ beforeAll(async () => {
     token: staleSessionToken,
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     createdAt: new Date(Date.now() - 60 * 60 * 1000),
+  })
+  await db.insert(schema.AuthSessionTable).values({
+    id: freshSessionId,
+    userId,
+    activeOrganizationId: organizationId,
+    token: freshSessionToken,
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    createdAt: new Date(),
   })
 
   const connection = await createExternalMcpConnection({
@@ -104,11 +133,11 @@ afterAll(async () => {
   await db.delete(schema.OrgOAuthClientTable).where(drizzle.eq(schema.OrgOAuthClientTable.organizationId, organizationId))
   await db.delete(schema.ExternalMcpConnectionAccessGrantTable).where(drizzle.eq(schema.ExternalMcpConnectionAccessGrantTable.organizationId, organizationId))
   await db.delete(schema.ExternalMcpConnectionTable).where(drizzle.eq(schema.ExternalMcpConnectionTable.organizationId, organizationId))
-  await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, staleSessionId))
+  await db.delete(schema.AuthSessionTable).where(drizzle.inArray(schema.AuthSessionTable.id, [staleSessionId, freshSessionId]))
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
   await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
   await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
-  await db.delete(schema.AuthUserTable).where(drizzle.eq(schema.AuthUserTable.id, userId))
+  await db.delete(schema.AuthUserTable).where(drizzle.inArray(schema.AuthUserTable.id, [userId, regularUserId]))
   mock.restore()
 })
 
@@ -120,9 +149,14 @@ function seededConnectionId() {
 }
 
 function request(path: string) {
+  return principalRequest(userId, path)
+}
+
+function principalRequest(principalUserId: string, path: string, method = "GET") {
   return app.fetch(new Request(`http://den-api.local${path}`, {
+    method,
     headers: {
-      "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId, organizationId }),
+      "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId: principalUserId, organizationId }),
     },
   }))
 }
@@ -132,6 +166,17 @@ function staleSessionRequest(path: string, method = "GET", body?: unknown) {
     method,
     headers: {
       authorization: `Bearer ${staleSessionToken}`,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }))
+}
+
+function freshSessionRequest(path: string, method = "GET", body?: unknown) {
+  return app.fetch(new Request(`http://den-api.local${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${freshSessionToken}`,
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -209,6 +254,115 @@ test("an untouched manual legacy client must use the one-way migration action be
     message: "Add the shared callback to the external OAuth application, then choose Reconnect using shared callback.",
     sharedCallbackUrl: new URL("/v1/mcp-connections/oauth/callback", process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790").toString(),
   })
+})
+
+test("legacy dynamic migration is never destructive on GET and requires a fresh admin POST", async () => {
+  const legacyDynamic = await createExternalMcpConnection({
+    organizationId,
+    name: "Legacy dynamic OAuth MCP",
+    url: "http://127.0.0.1:9/dynamic-mcp",
+    authType: "oauth",
+    credentialMode: "per_member",
+    createdByOrgMembershipId: memberId,
+    access: { orgWide: true, memberIds: [], teamIds: [] },
+  })
+  await db
+    .update(schema.ExternalMcpConnectionTable)
+    .set({ oauthConfiguration: null })
+    .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, legacyDynamic.id))
+  await upsertOrgOAuthClient({
+    organizationId,
+    providerId: legacyDynamic.id,
+    clientId: "legacy-dynamic-client",
+    clientSecret: "legacy-dynamic-secret",
+    extra: {
+      clientInformation: {
+        client_id: "legacy-dynamic-client",
+        client_secret: "legacy-dynamic-secret",
+      },
+    },
+    createdByOrgMembershipId: memberId,
+  })
+  await upsertConnectedAccount({
+    organizationId,
+    orgMembershipId: memberId,
+    providerId: legacyDynamic.id,
+    accessToken: "admin-member-token",
+  })
+  await upsertConnectedAccount({
+    organizationId,
+    orgMembershipId: regularMemberId,
+    providerId: legacyDynamic.id,
+    accessToken: "regular-member-token",
+  })
+
+  const memberGet = await principalRequest(
+    regularUserId,
+    `/v1/mcp-connections/${legacyDynamic.id}/connect/start`,
+  )
+  expect(memberGet.status).toBe(409)
+  expect(await memberGet.json()).toMatchObject({ error: "mcp_oauth_callback_update_required" })
+
+  const staleAdminPost = await staleSessionRequest(
+    `/v1/mcp-connections/${legacyDynamic.id}/oauth/use-shared-callback`,
+    "POST",
+  )
+  expect(staleAdminPost.status).toBe(403)
+  expect(await staleAdminPost.json()).toMatchObject({
+    error: "reauth",
+    reason: "fresh_auth_required",
+  })
+
+  const memberPost = await principalRequest(
+    regularUserId,
+    `/v1/mcp-connections/${legacyDynamic.id}/oauth/use-shared-callback`,
+    "POST",
+  )
+  expect(memberPost.status).toBe(403)
+  expect(await memberPost.json()).toMatchObject({ error: "forbidden" })
+
+  expect(await getOrgOAuthClient(organizationId, legacyDynamic.id)).toMatchObject({
+    clientId: "legacy-dynamic-client",
+  })
+  expect(await getConnectedAccount({
+    organizationId,
+    orgMembershipId: memberId,
+    providerId: legacyDynamic.id,
+  })).toMatchObject({ accessToken: "admin-member-token" })
+  expect(await getConnectedAccount({
+    organizationId,
+    orgMembershipId: regularMemberId,
+    providerId: legacyDynamic.id,
+  })).toMatchObject({ accessToken: "regular-member-token" })
+
+  const freshAdminPost = await freshSessionRequest(
+    `/v1/mcp-connections/${legacyDynamic.id}/oauth/use-shared-callback`,
+    "POST",
+  )
+  expect(freshAdminPost.status).toBe(200)
+  expect(await freshAdminPost.json()).toMatchObject({
+    oauthCallbackMode: "shared-v1",
+    oauthMigrationStatus: "current",
+  })
+
+  expect(await getOrgOAuthClient(organizationId, legacyDynamic.id)).toBeNull()
+  expect(await getConnectedAccount({
+    organizationId,
+    orgMembershipId: memberId,
+    providerId: legacyDynamic.id,
+  })).toBeNull()
+  expect(await getConnectedAccount({
+    organizationId,
+    orgMembershipId: regularMemberId,
+    providerId: legacyDynamic.id,
+  })).toMatchObject({ accessToken: "regular-member-token" })
+  expect(await db
+    .select({ oauthConfiguration: schema.ExternalMcpConnectionTable.oauthConfiguration })
+    .from(schema.ExternalMcpConnectionTable)
+    .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, legacyDynamic.id))
+    .limit(1)).toEqual([{
+    oauthConfiguration: expect.objectContaining({ callbackMode: "shared-v1" }),
+  }])
 })
 
 test("there is no API that moves a shared callback back to legacy mode", async () => {

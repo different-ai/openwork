@@ -924,11 +924,14 @@ export type MigrateExternalMcpOAuthCallbackResult =
  * The transaction deliberately does not touch access grants or marketplace
  * bindings. A manually entered client stays in place (including its encrypted
  * secret); an SDK-created registration is removed because its redirect URI is
- * part of the registration contract and must be registered again.
+ * part of the registration contract and must be registered again. For a
+ * per-member connection, only the initiating admin's authorization state is
+ * cleared; migrating the shared client must never erase other members' tokens.
  */
 export async function migrateExternalMcpOAuthCallbackToShared(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId
 }): Promise<MigrateExternalMcpOAuthCallbackResult> {
   return db.transaction(async (tx) => {
     const rows = await tx
@@ -967,10 +970,13 @@ export async function migrateExternalMcpOAuthCallbackToShared(input: {
     const dynamicRegistrationInvalidated = Boolean(client && isSdkRegisteredOAuthClient(extra))
     const manualClientPreserved = Boolean(client && !dynamicRegistrationInvalidated)
 
-    await tx.delete(ConnectedAccountTable).where(and(
-      eq(ConnectedAccountTable.organizationId, input.organizationId),
-      eq(ConnectedAccountTable.providerId, input.connectionId),
-    ))
+    if (connection.credentialMode === "per_member") {
+      await tx.delete(ConnectedAccountTable).where(and(
+        eq(ConnectedAccountTable.organizationId, input.organizationId),
+        eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+        eq(ConnectedAccountTable.providerId, input.connectionId),
+      ))
+    }
 
     if (dynamicRegistrationInvalidated) {
       await tx.delete(OrgOAuthClientTable).where(and(
@@ -1039,105 +1045,6 @@ export async function migrateExternalMcpOAuthCallbackToShared(input: {
       changed: true,
       dynamicRegistrationInvalidated,
       manualClientPreserved,
-    }
-  })
-}
-
-/**
- * Lazily classifies pre-conformance OAuth rows at the next explicit connect.
- * Manual clients retain their registered legacy callback until an admin uses
- * the explicit one-way migration action. SDK-created clients and connections
- * without a client move to the shared callback automatically; old dynamic
- * credentials are removed so registration cannot reuse the old redirect URI.
- */
-export async function prepareExternalMcpOAuthAuthorization(input: {
-  organizationId: OrganizationId
-  connectionId: ExternalMcpConnectionId
-}): Promise<ExternalMcpConnectionRow | null> {
-  return db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(ExternalMcpConnectionTable)
-      .where(and(
-        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
-        eq(ExternalMcpConnectionTable.id, input.connectionId),
-      ))
-      .limit(1)
-      .for("update")
-    const connection = rows[0]
-    if (!connection) return null
-    if (connection.authType !== "oauth" || connection.oauthConfiguration?.callbackMode === "shared-v1") return connection
-
-    const clientRows = await tx
-      .select()
-      .from(OrgOAuthClientTable)
-      .where(and(
-        eq(OrgOAuthClientTable.organizationId, input.organizationId),
-        eq(OrgOAuthClientTable.providerId, input.connectionId),
-      ))
-      .limit(1)
-      .for("update")
-    const client = clientRows[0]
-    const extra = normalizeOAuthClientExtra(client?.extra)
-    const sdkRegistered = isSdkRegisteredOAuthClient(extra)
-    const shouldMigrateAutomatically = !client || sdkRegistered
-    const callbackMode: ExternalMcpOAuthConfiguration["callbackMode"] = shouldMigrateAutomatically
-      ? "shared-v1"
-      : "legacy-v1"
-    if (!shouldMigrateAutomatically && connection.oauthConfiguration?.callbackMode === "legacy-v1") {
-      return connection
-    }
-    const oauthConfiguration: ExternalMcpOAuthConfiguration = {
-      ...(connection.oauthConfiguration ?? {
-        version: 1,
-        authorizationServerIssuer: null,
-        requestedScopes: [],
-      }),
-      callbackMode,
-    }
-
-    if (shouldMigrateAutomatically) {
-      await tx.delete(ConnectedAccountTable).where(and(
-        eq(ConnectedAccountTable.organizationId, input.organizationId),
-        eq(ConnectedAccountTable.providerId, input.connectionId),
-      ))
-      if (client) {
-        await tx.delete(OrgOAuthClientTable).where(and(
-          eq(OrgOAuthClientTable.organizationId, input.organizationId),
-          eq(OrgOAuthClientTable.providerId, input.connectionId),
-        ))
-      }
-    }
-    const updatedAt = new Date(Math.max(Date.now(), connection.updatedAt.getTime() + 1))
-    await tx
-      .update(ExternalMcpConnectionTable)
-      .set({
-        oauthConfiguration,
-        ...(shouldMigrateAutomatically ? {
-          accessToken: null,
-          refreshToken: null,
-          tokenType: null,
-          scope: null,
-          expiresAt: null,
-          pendingCodeVerifier: null,
-          connectedAt: null,
-        } : {}),
-        updatedAt,
-      })
-      .where(eq(ExternalMcpConnectionTable.id, connection.id))
-    return {
-      ...connection,
-      oauthConfiguration,
-      ...(shouldMigrateAutomatically ? {
-        accessToken: null,
-        refreshToken: null,
-        tokenType: null,
-        scope: null,
-        expiresAt: null,
-        pendingCodeVerifier: null,
-        connectedAt: null,
-      } : {}),
-      updatedAt,
     }
   })
 }

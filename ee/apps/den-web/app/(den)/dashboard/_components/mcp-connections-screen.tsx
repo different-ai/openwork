@@ -1186,8 +1186,7 @@ function ConnectionRow({
   const [copiedOAuthUrl, setCopiedOAuthUrl] = useState<"callback" | "shared-callback" | "metadata" | null>(null);
   const isPerMember = connection.credentialMode === "per_member";
   const callbackUpdateRequired = connection.oauthMigrationStatus === "legacy_manual_client";
-  const automaticCallbackMigrationPending = connection.oauthMigrationStatus === "unclassified"
-    && (connection.oauthRegistrationSource === "dynamic" || connection.oauthRegistrationSource === "client-metadata");
+  const automaticCallbackMigrationPending = connection.oauthMigrationStatus === "unclassified";
   const needsOAuthConnect = connection.authType === "oauth"
     && (!connection.connected || automaticCallbackMigrationPending)
     && !callbackUpdateRequired
@@ -1267,7 +1266,12 @@ function ConnectionRow({
             View tools
           </DenButton>
           {needsOAuthConnect ? (
-            <DenButton variant="secondary" size="sm" loading={connecting || polling} onClick={onConnect}>
+            <DenButton
+              variant="secondary"
+              size="sm"
+              loading={connecting || polling || (automaticCallbackMigrationPending && migratingCallback)}
+              onClick={automaticCallbackMigrationPending ? onMigrateCallback : onConnect}
+            >
               {automaticCallbackMigrationPending ? "Reconnect with shared callback" : "Connect"}
             </DenButton>
           ) : null}
