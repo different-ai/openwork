@@ -141,12 +141,12 @@ function unknownOutcomeGuidance(mayHaveSideEffects: boolean): string {
 }
 
 function lastBoundaryFromDiagnostic(diagnostic: ExternalMcpDiagnostic | null): string | undefined {
-  if (diagnostic?.highestPassed === "operation_ready") return "Den started remote tool execution";
-  if (diagnostic?.highestPassed === "catalog_ready") return "Den loaded the remote MCP tool catalog";
-  if (diagnostic?.highestPassed === "protocol_ready") return "Den initialized the remote MCP session";
+  if (diagnostic?.highestPassed === "operation_ready") return "OpenWork started remote tool execution";
+  if (diagnostic?.highestPassed === "catalog_ready") return "OpenWork loaded the remote MCP tool catalog";
+  if (diagnostic?.highestPassed === "protocol_ready") return "OpenWork initialized the remote MCP session";
   if (diagnostic?.highestPassed === "authorized") return "Remote MCP accepted the connection credential";
-  if (diagnostic?.highestPassed === "reachable") return "Den reached the remote MCP endpoint";
-  if (diagnostic?.highestPassed === "configured") return "Den loaded the MCP connection configuration";
+  if (diagnostic?.highestPassed === "reachable") return "OpenWork reached the remote MCP endpoint";
+  if (diagnostic?.highestPassed === "configured") return "OpenWork loaded the MCP connection configuration";
   return undefined;
 }
 
@@ -174,9 +174,9 @@ export function attributeExternalMcpToolFailure(input: {
     const seconds = browserTimeout.timeoutMs / 1000;
     const duration = Number.isInteger(seconds) ? `${seconds}` : seconds.toFixed(1);
     return {
-      summary: `The OpenWork dashboard stopped waiting for Den after ${duration} seconds. The operation’s outcome is unknown.`,
-      lastConfirmedBoundary: "Dashboard started the request to Den",
-      likelySource: "Den, the network path, the remote MCP, or the downstream tool",
+      summary: `OpenWork stopped waiting after ${duration} seconds. The operation’s outcome is unknown.`,
+      lastConfirmedBoundary: "OpenWork dashboard sent the request",
+      likelySource: "Source unclear after OpenWork timeout",
       confidence: "Inferred",
       retryGuidance: unknownOutcomeGuidance(mayHaveSideEffects),
       outcome: "unknown",
@@ -189,9 +189,9 @@ export function attributeExternalMcpToolFailure(input: {
     || diagnostic?.code === "MCP_FETCH_FORBIDDEN_PORT";
   if (blockedBeforeSend) {
     return {
-      summary: "OpenWork blocked the request before it left Den.",
-      lastConfirmedBoundary: "Den evaluated the outbound request",
-      likelySource: "OpenWork policy or connection configuration",
+      summary: "OpenWork blocked the request before it was sent.",
+      lastConfirmedBoundary: "OpenWork evaluated the outbound request",
+      likelySource: "OpenWork",
       confidence: "Confirmed",
       retryGuidance: diagnostic?.operatorAction ?? "Resolve the OpenWork policy or connection configuration, then run the tool again.",
       outcome: "failed",
@@ -206,7 +206,7 @@ export function attributeExternalMcpToolFailure(input: {
     return {
       summary: `The remote MCP returned HTTP ${responseStatus}.`,
       lastConfirmedBoundary: `Remote MCP returned HTTP ${responseStatus}`,
-      likelySource: "Remote MCP HTTP layer",
+      likelySource: "Remote MCP",
       confidence: "Confirmed",
       retryGuidance: mayHaveSideEffects && (responseStatus === 408 || responseStatus === 504)
         ? "Check the remote MCP or provider for a completed operation before retrying this tool."
@@ -228,7 +228,7 @@ export function attributeExternalMcpToolFailure(input: {
       lastConfirmedBoundary: responseStatus !== undefined
         ? `Remote MCP returned HTTP ${responseStatus} with a tool error`
         : "Remote MCP returned a tool error",
-      likelySource: "Downstream provider or tool",
+      likelySource: "Downstream provider",
       confidence: "Confirmed",
       retryGuidance: diagnostic?.operatorAction
         ?? (diagnostic?.retryable
@@ -244,9 +244,9 @@ export function attributeExternalMcpToolFailure(input: {
     && (diagnostic?.code === "MCP_LIFECYCLE_DEADLINE" || diagnostic?.code === "MCP_REQUEST_TIMEOUT");
   if (deadlineAfterSend) {
     return {
-      summary: "Den sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
-      lastConfirmedBoundary: "Den started the outbound tools/call",
-      likelySource: "Network path or remote MCP after Den",
+      summary: "OpenWork sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
+      lastConfirmedBoundary: "OpenWork started the outbound tools/call",
+      likelySource: "Network or remote MCP",
       confidence: "Inferred",
       retryGuidance: unknownOutcomeGuidance(mayHaveSideEffects),
       outcome: "unknown",
@@ -256,9 +256,9 @@ export function attributeExternalMcpToolFailure(input: {
 
   if (inspection?.request && !inspection.response) {
     return {
-      summary: "Den started the outbound request, but no HTTP response was captured. This does not prove the remote MCP caused the failure.",
-      lastConfirmedBoundary: "Den started the outbound tools/call",
-      likelySource: "Den outbound path, network, or remote MCP",
+      summary: "OpenWork started the outbound request, but no HTTP response was captured. This does not prove the remote MCP caused the failure.",
+      lastConfirmedBoundary: "OpenWork started the outbound tools/call",
+      likelySource: "Source unclear after send",
       confidence: "Inferred",
       retryGuidance: unknownOutcomeGuidance(mayHaveSideEffects),
       outcome: "unknown",
@@ -270,7 +270,7 @@ export function attributeExternalMcpToolFailure(input: {
     return {
       summary: inspection.diagnosis?.summary ?? "The remote MCP responded, but the tool result was not successful.",
       lastConfirmedBoundary: `Remote MCP returned HTTP ${inspection.response.status}`,
-      likelySource: "MCP protocol or tool result",
+      likelySource: "MCP tool result",
       confidence: "Inferred",
       retryGuidance: diagnostic?.operatorAction ?? "Inspect the MCP tool result and diagnostic reference before retrying.",
       outcome: "failed",
@@ -284,10 +284,10 @@ export function attributeExternalMcpToolFailure(input: {
       ?? diagnostic?.message
       ?? "The request failed before OpenWork received a tool result.",
     lastConfirmedBoundary: lastBoundaryFromDiagnostic(diagnostic)
-      ?? (diagnostic ? "Den returned a structured diagnostic" : "Dashboard started the request to Den"),
-    likelySource: networkSetup ? "Den connection path or remote MCP setup" : "OpenWork or MCP connection setup",
+      ?? (diagnostic ? "OpenWork returned a structured diagnostic" : "OpenWork dashboard sent the request"),
+    likelySource: networkSetup ? "Connection path or remote MCP" : "OpenWork or MCP setup",
     confidence: "Inferred",
-    retryGuidance: diagnostic?.operatorAction ?? "Use the diagnostic reference to inspect Den and MCP connection health before retrying.",
+    retryGuidance: diagnostic?.operatorAction ?? "Use the diagnostic reference to inspect OpenWork and MCP connection health before retrying.",
     outcome: "failed",
     ...details,
   };

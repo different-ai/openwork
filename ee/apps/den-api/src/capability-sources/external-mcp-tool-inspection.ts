@@ -381,13 +381,13 @@ export function diagnoseExternalMcpToolCall(input: {
       return {
         status: "failed",
         layer: "network",
-        summary: "Den sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
+        summary: "OpenWork sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
       }
     }
     return {
       status: "failed",
       layer: "network",
-      summary: "Den started tools/call but did not capture an HTTP response. This does not prove the remote MCP caused the failure.",
+      summary: "OpenWork started tools/call but did not capture an HTTP response. This does not prove the remote MCP caused the failure.",
     }
   }
   if (input.inspection.response.status < 200 || input.inspection.response.status >= 300) {

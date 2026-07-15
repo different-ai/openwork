@@ -98,7 +98,7 @@ export class DenRequestTimeoutError extends Error {
 
   constructor(timeoutMs: number, cause?: unknown) {
     super(
-      `The OpenWork dashboard stopped waiting for Den after ${formatDeadlineDuration(timeoutMs)}. The operation’s outcome is unknown.`,
+      `OpenWork stopped waiting after ${formatDeadlineDuration(timeoutMs)}. The operation’s outcome is unknown.`,
       cause === undefined ? undefined : { cause },
     );
     this.name = "DenRequestTimeoutError";
@@ -111,7 +111,7 @@ export class DenRequestCanceledError extends Error {
 
   constructor(cause?: unknown) {
     super(
-      "The request to Den was canceled before the dashboard received a result. The operation’s outcome is unknown.",
+      "The OpenWork request was canceled before the dashboard received a result. The operation’s outcome is unknown.",
       cause === undefined ? undefined : { cause },
     );
     this.name = "DenRequestCanceledError";

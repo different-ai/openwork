@@ -41,10 +41,10 @@ describe("browser-to-Den timeout", () => {
     expect(error.timeoutMs).toBe(5);
     expect(error.outcome).toBe("unknown");
     expect(error.message).toBe(
-      "The OpenWork dashboard stopped waiting for Den after 5 milliseconds. The operation’s outcome is unknown.",
+      "OpenWork stopped waiting after 5 milliseconds. The operation’s outcome is unknown.",
     );
     expect(new DenRequestTimeoutError(160_000).message).toBe(
-      "The OpenWork dashboard stopped waiting for Den after 160 seconds. The operation’s outcome is unknown.",
+      "OpenWork stopped waiting after 160 seconds. The operation’s outcome is unknown.",
     );
   });
 
@@ -83,9 +83,9 @@ describe("MCP failure attribution", () => {
     });
 
     expect(attribution).toMatchObject({
-      summary: "Den sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
-      lastConfirmedBoundary: "Den started the outbound tools/call",
-      likelySource: "Network path or remote MCP after Den",
+      summary: "OpenWork sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
+      lastConfirmedBoundary: "OpenWork started the outbound tools/call",
+      likelySource: "Network or remote MCP",
       confidence: "Inferred",
       outcome: "unknown",
       diagnosticReference: "req_deadline",
@@ -104,7 +104,7 @@ describe("MCP failure attribution", () => {
     expect(attribution).toMatchObject({
       summary: `The remote MCP returned HTTP ${status}.`,
       lastConfirmedBoundary: `Remote MCP returned HTTP ${status}`,
-      likelySource: "Remote MCP HTTP layer",
+      likelySource: "Remote MCP",
       confidence: "Confirmed",
       outcome: "failed",
     });
@@ -130,7 +130,7 @@ describe("MCP failure attribution", () => {
     expect(attribution).toMatchObject({
       summary: "The remote MCP responded, but the downstream provider rejected the operation.",
       lastConfirmedBoundary: "Remote MCP returned HTTP 200 with a tool error",
-      likelySource: "Downstream provider or tool",
+      likelySource: "Downstream provider",
       confidence: "Confirmed",
       providerRequestId: "provider-request-123",
     });
@@ -154,9 +154,9 @@ describe("MCP failure attribution", () => {
     });
 
     expect(attribution).toMatchObject({
-      summary: "OpenWork blocked the request before it left Den.",
-      lastConfirmedBoundary: "Den evaluated the outbound request",
-      likelySource: "OpenWork policy or connection configuration",
+      summary: "OpenWork blocked the request before it was sent.",
+      lastConfirmedBoundary: "OpenWork evaluated the outbound request",
+      likelySource: "OpenWork",
       confidence: "Confirmed",
       outcome: "failed",
     });
@@ -171,7 +171,7 @@ describe("MCP failure attribution", () => {
     });
 
     expect(attribution.summary).toBe(
-      "The OpenWork dashboard stopped waiting for Den after 160 seconds. The operation’s outcome is unknown.",
+      "OpenWork stopped waiting after 160 seconds. The operation’s outcome is unknown.",
     );
     expect(attribution.retryGuidance).toContain("Do not retry immediately");
     expect(attribution.retryGuidance).toContain("may have changed external data");
@@ -218,7 +218,7 @@ describe("MCP failure attribution", () => {
           status: 504,
           headers: [{ name: "x-request-id", value: "wire-request-789", redacted: false }],
         },
-        diagnosis: { layer: "remote_http", summary: "Older Den failure shape." },
+        diagnosis: { layer: "remote_http", summary: "Older OpenWork failure shape." },
       },
       browserTimeout: null,
       mayHaveSideEffects: false,

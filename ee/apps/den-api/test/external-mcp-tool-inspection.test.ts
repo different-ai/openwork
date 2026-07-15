@@ -104,7 +104,7 @@ test("ignores lifecycle requests and classifies a tools/call with no response as
   expect(diagnoseExternalMcpToolCall({ inspection, succeeded: false })).toEqual({
     status: "failed",
     layer: "network",
-    summary: "Den started tools/call but did not capture an HTTP response. This does not prove the remote MCP caused the failure.",
+    summary: "OpenWork started tools/call but did not capture an HTTP response. This does not prove the remote MCP caused the failure.",
   })
 })
 
@@ -209,7 +209,7 @@ test("attributes a blocked or deadline-stopped tools/call to the right layer", (
   })).toEqual({
     status: "failed",
     layer: "network",
-    summary: "Den sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
+    summary: "OpenWork sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
   })
 })
 
