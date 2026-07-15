@@ -12,8 +12,10 @@ import {
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import { desktopFetch } from "../../app/lib/desktop";
+import { createClient } from "../../app/lib/opencode";
 import { isWebDeployment } from "../../app/lib/openwork-deployment";
 import { isDesktopRuntime } from "../../app/utils";
+import { exposeDevSdkGlobal } from "./dev-sdk-global";
 import { initialServerState, serverReducer } from "./server-provider-state";
 
 export function normalizeServerUrl(input: string): string | undefined {
@@ -174,6 +176,10 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
       window.clearInterval(interval);
     };
   }, [active]);
+
+  useEffect(() => {
+    exposeDevSdkGlobal({ url: active, healthy, createClient });
+  }, [active, healthy]);
 
   const setActive = useCallback((input: string) => {
     const next = normalizeServerUrl(input);

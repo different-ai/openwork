@@ -89,6 +89,7 @@ import {
   workspaceExportFilename,
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
+import { exposeDevSdkGlobal } from "@/react-app/kernel/dev-sdk-global";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { SessionPage, type OpenSessionTab } from "@/react-app/domains/session/chat/session-page";
@@ -413,6 +414,18 @@ export function SessionRoute() {
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     providerModel: cloudMcpProviderModel,
   });
+  useEffect(() => {
+    exposeDevSdkGlobal({
+      workspace:
+        opencodeClient && selectedWorkspaceRoot
+          ? {
+              directory: selectedWorkspaceRoot,
+              baseUrl: opencodeBaseUrl ?? "",
+              client: opencodeClient,
+            }
+          : null,
+    });
+  }, [opencodeBaseUrl, opencodeClient, selectedWorkspaceRoot]);
   // Agent selection is persisted in local prefs (like the model variant) so
   // it survives reloads instead of silently falling back to "build" (#2101).
   const selectedAgent = local.prefs.selectedAgent;
