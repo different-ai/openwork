@@ -33,11 +33,14 @@ import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import {
   createConnectLinkReplayGuard,
-  desktopBootstrapFromConnectClaims,
   extractConnectExchange,
   resolveConnectExchangeUrl,
   verifyConnectLinkUrl,
 } from "./connect-link.mjs";
+import {
+  applyDesktopBootstrapBrandIcon,
+  persistConnectLinkBranding,
+} from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
@@ -966,7 +969,11 @@ async function acceptConnectLink(rawUrl) {
 }
 
 async function persistConnectLinkClaims(claims) {
-  return workspaceStore.setDesktopBootstrapConfig(desktopBootstrapFromConnectClaims(claims));
+  return persistConnectLinkBranding(claims, {
+    persistBootstrap: (config) => workspaceStore.setDesktopBootstrapConfig(config),
+    applyBrandIconUrl: (iconUrl) => applyBrandIconUrl(iconUrl).catch((error) =>
+      brandIconFailure("connect-apply-failed", error)),
+  });
 }
 
 function normalizePlatform(value) {
@@ -2386,8 +2393,8 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
-    if (process.platform === "win32" && bootstrapConfig.brandIconUrl) {
-      await applyBrandIconUrl(bootstrapConfig.brandIconUrl);
+    if (process.platform !== "linux") {
+      await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }
     applicationMenu.install();
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
@@ -2406,6 +2413,9 @@ if (!app.requestSingleInstanceLock()) {
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();
+    if (process.platform === "linux") {
+      await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
+    }
     win.webContents.on("did-finish-load", () => {
       flushPendingDeepLinks();
     });
