@@ -21,6 +21,7 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   scimReconciliationRun: "organization.scim.reconciliation_run",
   ssoConnectionRegistered: "organization.sso.connection_registered",
   ssoConnectionDeleted: "organization.sso.connection_deleted",
+  externalMcpEngineChanged: "organization.mcp.external_engine_changed",
 }
 
 type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
@@ -61,6 +62,7 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.scimConnectionDeleted:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted:
+    case ORGANIZATION_AUDIT_ACTIONS.externalMcpEngineChanged:
       return true
     case ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun:
       return false

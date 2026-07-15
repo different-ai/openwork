@@ -23,7 +23,7 @@ catalogs:
 patchedDependencies:
   '@better-auth/drizzle-adapter@1.6.11': c2a439a1ad0efd852c39bf116166078b55f77feaa3d944e16330e7168b93f6f6
   '@better-auth/oauth-provider@1.6.11': 56f1501f62fed5f4e23b81d73005aede9d31b78a5f051e519796288f48e2a555
-  '@modelcontextprotocol/sdk': be9fb525960afc244ba45795d718a2d6b5341edc16bf8703b42d55abe8534a4e
+  '@modelcontextprotocol/sdk': 2038e94bf511d9f917a4315c9f9376716a97f7f09cd830e99d9edd751e244bff
 
 importers:
 
@@ -408,7 +408,7 @@ importers:
         version: 0.173.0(ws@8.19.0)
       '@hono/mcp':
         specifier: ^0.2.5
-        version: 0.2.5(@modelcontextprotocol/sdk@1.29.0(patch_hash=be9fb525960afc244ba45795d718a2d6b5341edc16bf8703b42d55abe8534a4e)(zod@4.3.6))(hono-rate-limiter@0.4.2(hono@4.12.8))(hono@4.12.8)(zod@4.3.6)
+        version: 0.2.5(@modelcontextprotocol/sdk@1.29.0(patch_hash=2038e94bf511d9f917a4315c9f9376716a97f7f09cd830e99d9edd751e244bff)(zod@4.3.6))(hono-rate-limiter@0.4.2(hono@4.12.8))(hono@4.12.8)(zod@4.3.6)
       '@hono/node-server':
         specifier: ^1.13.8
         version: 1.19.11(hono@4.12.8)
@@ -423,7 +423,7 @@ importers:
         version: 0.6.1(hono@4.12.8)
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
-        version: 1.29.0(patch_hash=be9fb525960afc244ba45795d718a2d6b5341edc16bf8703b42d55abe8534a4e)(zod@4.3.6)
+        version: 1.29.0(patch_hash=2038e94bf511d9f917a4315c9f9376716a97f7f09cd830e99d9edd751e244bff)(zod@4.3.6)
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1
@@ -817,7 +817,7 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
-        version: 1.29.0(patch_hash=be9fb525960afc244ba45795d718a2d6b5341edc16bf8703b42d55abe8534a4e)(zod@3.25.76)
+        version: 1.29.0(patch_hash=2038e94bf511d9f917a4315c9f9376716a97f7f09cd830e99d9edd751e244bff)(zod@3.25.76)
       mysql2:
         specifier: ^3.11.3
         version: 3.17.4
@@ -950,7 +950,7 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
-        version: 1.29.0(patch_hash=be9fb525960afc244ba45795d718a2d6b5341edc16bf8703b42d55abe8534a4e)(zod@4.3.6)
+        version: 1.29.0(patch_hash=2038e94bf511d9f917a4315c9f9376716a97f7f09cd830e99d9edd751e244bff)(zod@4.3.6)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -1008,7 +1008,7 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
-        version: 1.29.0(patch_hash=be9fb525960afc244ba45795d718a2d6b5341edc16bf8703b42d55abe8534a4e)(zod@3.25.76)
+        version: 1.29.0(patch_hash=2038e94bf511d9f917a4315c9f9376716a97f7f09cd830e99d9edd751e244bff)(zod@3.25.76)
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -11538,9 +11538,9 @@ snapshots:
     dependencies:
       react: 19.2.4
 
-  '@hono/mcp@0.2.5(@modelcontextprotocol/sdk@1.29.0(patch_hash=be9fb525960afc244ba45795d718a2d6b5341edc16bf8703b42d55abe8534a4e)(zod@4.3.6))(hono-rate-limiter@0.4.2(hono@4.12.8))(hono@4.12.8)(zod@4.3.6)':
+  '@hono/mcp@0.2.5(@modelcontextprotocol/sdk@1.29.0(patch_hash=2038e94bf511d9f917a4315c9f9376716a97f7f09cd830e99d9edd751e244bff)(zod@4.3.6))(hono-rate-limiter@0.4.2(hono@4.12.8))(hono@4.12.8)(zod@4.3.6)':
     dependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(patch_hash=be9fb525960afc244ba45795d718a2d6b5341edc16bf8703b42d55abe8534a4e)(zod@4.3.6)
+      '@modelcontextprotocol/sdk': 1.29.0(patch_hash=2038e94bf511d9f917a4315c9f9376716a97f7f09cd830e99d9edd751e244bff)(zod@4.3.6)
       hono: 4.12.8
       hono-rate-limiter: 0.4.2(hono@4.12.8)
       pkce-challenge: 5.0.1
@@ -12152,7 +12152,7 @@ snapshots:
     dependencies:
       '@chevrotain/types': 11.1.2
 
-  '@modelcontextprotocol/sdk@1.29.0(patch_hash=be9fb525960afc244ba45795d718a2d6b5341edc16bf8703b42d55abe8534a4e)(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.29.0(patch_hash=2038e94bf511d9f917a4315c9f9376716a97f7f09cd830e99d9edd751e244bff)(zod@3.25.76)':
     dependencies:
       '@hono/node-server': 1.19.11(hono@4.12.12)
       ajv: 8.20.0
@@ -12174,7 +12174,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@modelcontextprotocol/sdk@1.29.0(patch_hash=be9fb525960afc244ba45795d718a2d6b5341edc16bf8703b42d55abe8534a4e)(zod@4.3.6)':
+  '@modelcontextprotocol/sdk@1.29.0(patch_hash=2038e94bf511d9f917a4315c9f9376716a97f7f09cd830e99d9edd751e244bff)(zod@4.3.6)':
     dependencies:
       '@hono/node-server': 1.19.11(hono@4.12.12)
       ajv: 8.20.0
@@ -18679,7 +18679,7 @@ snapshots:
       '@babel/plugin-transform-typescript': 7.28.6(@babel/core@7.29.0)
       '@babel/preset-typescript': 7.27.1(@babel/core@7.29.0)
       '@dotenvx/dotenvx': 1.64.0
-      '@modelcontextprotocol/sdk': 1.29.0(patch_hash=be9fb525960afc244ba45795d718a2d6b5341edc16bf8703b42d55abe8534a4e)(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.29.0(patch_hash=2038e94bf511d9f917a4315c9f9376716a97f7f09cd830e99d9edd751e244bff)(zod@3.25.76)
       '@types/validate-npm-package-name': 4.0.2
       browserslist: 4.28.1
       commander: 14.0.3

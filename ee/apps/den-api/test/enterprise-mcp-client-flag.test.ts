@@ -3,8 +3,8 @@ import { describe, it } from "node:test"
 import { parseEnterpriseMcpClientEnabled } from "../src/enterprise-mcp-client-flag.js"
 
 describe("DEN_ENABLE_ENTERPRISE_MCP_CLIENT", () => {
-  it("defaults to the enterprise client while preserving false as rollback", () => {
-    assert.equal(parseEnterpriseMcpClientEnabled(undefined), true)
+  it("defaults to the previous client and keeps enterprise opt-in", () => {
+    assert.equal(parseEnterpriseMcpClientEnabled(undefined), false)
     assert.equal(parseEnterpriseMcpClientEnabled("false"), false)
   })
 

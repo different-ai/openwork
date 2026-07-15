@@ -7,12 +7,18 @@ const port = Number(process.env.PORT || 3978);
 const issuer = process.env.ISSUER || `http://${host}:${port}`;
 const autoApprove = process.env.AUTO_APPROVE !== "0";
 const disableDcr = process.env.DISABLE_DCR === "1";
+const strictOAuth = process.argv.includes("--strict") || process.env.STRICT_OAUTH === "1";
 // Strict mode rejects refresh tokens this instance did not issue (and
 // rotates on every refresh grant). Off by default: eval flows restart the
 // mock mid-scenario and legitimately present pre-restart refresh tokens.
 const strictRefreshTokens = process.env.STRICT_REFRESH_TOKENS === "1";
 const mockClientId = process.env.MOCK_CLIENT_ID || "mock-preregistered-client";
 const mockClientSecret = process.env.MOCK_CLIENT_SECRET || "mock-preregistered-secret";
+const preregisteredRedirectUris = (process.env.MOCK_REDIRECT_URIS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const advertisedScopes = ["mcp:read", "mcp:write"];
 const extraToolName = (process.env.MOCK_EXTRA_TOOL_NAME || "").trim();
 const extraToolTitle = (process.env.MOCK_EXTRA_TOOL_TITLE || extraToolName).trim();
 const extraToolDescription = (process.env.MOCK_EXTRA_TOOL_DESCRIPTION || "Returns a fixed result from the mock OAuth MCP server.").trim();
@@ -93,7 +99,7 @@ function protectedResourceMetadata() {
   return {
     resource: `${issuer}/mcp`,
     authorization_servers: [issuer],
-    scopes_supported: ["mcp:read", "mcp:write"],
+    scopes_supported: advertisedScopes,
     bearer_methods_supported: ["header"],
   };
 }
@@ -108,7 +114,7 @@ function authorizationServerMetadata() {
     grant_types_supported: ["authorization_code", "refresh_token"],
     token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
     code_challenge_methods_supported: ["S256", "plain"],
-    scopes_supported: ["mcp:read", "mcp:write"],
+    scopes_supported: advertisedScopes,
   };
 }
 
@@ -134,6 +140,31 @@ function requirePreregisteredAuthorizeClient(res, params) {
   if (params.get("client_id") === mockClientId) return true;
   rejectInvalidPreregisteredClient(res);
   return false;
+}
+
+function requireStrictAuthorizeContract(res, params) {
+  if (!strictOAuth) return true;
+  const clientId = params.get("client_id") || "";
+  const redirectUri = params.get("redirect_uri") || "";
+  const registeredRedirects = clients.get(clientId)?.redirect_uris
+    ?? (clientId === mockClientId ? preregisteredRedirectUris : []);
+  if (!redirectUri || !registeredRedirects.includes(redirectUri)) {
+    json(res, 400, {
+      error: "invalid_request",
+      error_description: "redirect_uri did not match any configured URIs",
+    });
+    return false;
+  }
+
+  const scopes = (params.get("scope") || "").split(/\s+/).filter(Boolean);
+  if (scopes.length === 0 || scopes.some((scope) => !advertisedScopes.includes(scope))) {
+    json(res, 400, {
+      error: "invalid_scope",
+      error_description: "scope is required and must be advertised",
+    });
+    return false;
+  }
+  return true;
 }
 
 function requirePreregisteredTokenClient(req, res, form, grant) {
@@ -178,6 +209,9 @@ function redirectWithCode(res, params) {
 
 function authorize(req, res, url) {
   if (!requirePreregisteredAuthorizeClient(res, url.searchParams)) {
+    return;
+  }
+  if (!requireStrictAuthorizeContract(res, url.searchParams)) {
     return;
   }
   if (autoApprove && url.searchParams.get("force_consent") !== "1") {

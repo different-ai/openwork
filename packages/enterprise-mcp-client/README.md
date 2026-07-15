@@ -70,9 +70,11 @@ then silently writing credentials afterward.
 - `discoverConnectionRequirements` performs bounded, side-effect-free MCP,
   protected-resource, authorization-server, and unauthenticated tool discovery.
   It never performs DCR or writes application state.
-- `scopes_supported` is treated as an availability declaration. The client
-  requests challenge-required plus administrator-selected scopes and includes
-  `offline_access` only when refresh support is advertised.
+- `scopes_supported` is treated as an availability declaration while an
+  administrator or challenge selects scopes. When neither selects any, the
+  client falls back to the provider-advertised set so providers with a
+  scope-less challenge still receive a usable authorization request. It
+  includes `offline_access` only when refresh support is advertised.
 - New DCR client secrets are stored only in Den's encrypted client-secret
   column. Unencrypted JSON metadata excludes `client_secret` and
   `registration_access_token`.

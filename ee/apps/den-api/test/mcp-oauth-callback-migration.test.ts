@@ -61,6 +61,7 @@ beforeAll(async () => {
     id: organizationId,
     name: "MCP Callback Migration Org",
     slug: `mcp-callback-migration-${organizationId}`,
+    metadata: { externalMcpEngine: "legacy" },
   })
   await db.insert(schema.MemberTable).values({
     id: memberId,
@@ -117,7 +118,7 @@ async function markAsLegacy(connectionId: DenTypeId<"externalMcpConnection">) {
     .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connectionId))
 }
 
-test("all new OAuth connections use shared-v1 even if an internal caller asks for legacy", async () => {
+test("new OAuth connections keep the previous callback when the organization selects the legacy engine", async () => {
   const created = await connections.createExternalMcpConnection({
     organizationId,
     name: "Creation invariant",
@@ -128,13 +129,13 @@ test("all new OAuth connections use shared-v1 even if an internal caller asks fo
       version: 1,
       authorizationServerIssuer: null,
       requestedScopes: [],
-      callbackMode: "legacy-v1",
+      callbackMode: "shared-v1",
     },
     createdByOrgMembershipId: memberId,
     access: { orgWide: true, memberIds: [], teamIds: [] },
   })
 
-  expect(created.oauthConfiguration?.callbackMode).toBe("shared-v1")
+  expect(created.oauthConfiguration?.callbackMode).toBe("legacy-v1")
 })
 
 test("manual migration preserves the client credentials, grants, and other members while clearing the caller", async () => {
@@ -235,6 +236,38 @@ test("manual migration preserves the client credentials, grants, and other membe
     updatedByOrgMembershipId: memberId,
   })
   expect(reverseAttempt).toEqual({ status: "conflict" })
+
+  const reverted = await connections.revertExternalMcpOAuthCallbackToLegacy({
+    organizationId,
+    connectionId: connection.id,
+    orgMembershipId: memberId,
+  })
+  expect(reverted).toMatchObject({
+    status: "reverted",
+    changed: true,
+    dynamicRegistrationInvalidated: false,
+    manualClientPreserved: true,
+    connection: { oauthConfiguration: { callbackMode: "legacy-v1" } },
+  })
+  expect(await credentials.getOrgOAuthClient(organizationId, connection.id)).toMatchObject({
+    id: clientBefore.id,
+    clientId: "manual-client-id",
+    clientSecret: "manual-client-secret",
+    extra: {
+      registeredRedirectUri: new URL(`/v1/mcp-connections/${connection.id}/connect/callback`, process.env.DEN_API_PUBLIC_URL).toString(),
+    },
+  })
+
+  const migratedAgain = await connections.migrateExternalMcpOAuthCallbackToShared({
+    organizationId,
+    connectionId: connection.id,
+    orgMembershipId: memberId,
+  })
+  expect(migratedAgain).toMatchObject({
+    status: "migrated",
+    changed: true,
+    connection: { oauthConfiguration: { callbackMode: "shared-v1" } },
+  })
 })
 
 test("explicit reconnect migration replaces an old dynamic registration without clearing another member", async () => {
@@ -309,6 +342,20 @@ test("explicit reconnect migration replaces an old dynamic registration without 
   })
   expect(replacement.id).not.toBe(oldClient.id)
   expect(replacement.clientId).toBe("replacement-dynamic-client")
+
+  const reverted = await connections.revertExternalMcpOAuthCallbackToLegacy({
+    organizationId,
+    connectionId: connection.id,
+    orgMembershipId: memberId,
+  })
+  expect(reverted).toMatchObject({
+    status: "reverted",
+    changed: true,
+    dynamicRegistrationInvalidated: true,
+    manualClientPreserved: false,
+    connection: { oauthConfiguration: { callbackMode: "legacy-v1" } },
+  })
+  expect(await credentials.getOrgOAuthClient(organizationId, connection.id)).toBeNull()
 })
 
 test("a stale concurrent refresh cannot overwrite the credential that won the transaction", async () => {

@@ -130,7 +130,7 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
       || payload.exp < nowSeconds
       || (payload.version === 2 && (
         typeof payload.binding !== "string"
-        || payload.callbackMode !== "shared-v1"
+        || payload.callbackMode === undefined
         || typeof payload.iat !== "number"
       ))
     ) {

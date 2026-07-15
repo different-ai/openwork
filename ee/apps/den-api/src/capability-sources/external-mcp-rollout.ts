@@ -20,6 +20,13 @@ import { organizationHasCapability } from "../organization-capabilities.js"
 
 type MetadataInput = Record<string, unknown> | string | null | undefined
 
+export type ExternalMcpEngine = "enterprise" | "legacy"
+
+export type ExternalMcpEngineConfiguration = {
+  effective: ExternalMcpEngine
+  source: "org" | "default"
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
@@ -52,4 +59,25 @@ export function memberFacingMcpConnectionsEnabled(
   return organizationHasCapability(metadata, "mcpConnections") ||
     parsed.mcpConnectionsEnabled === true ||
     parsed.connectEnabled === true
+}
+
+export function externalMcpEngineConfigurationForOrganization(
+  metadata: MetadataInput,
+  options: { envDefault: boolean },
+): ExternalMcpEngineConfiguration {
+  const configured = parseMetadata(metadata).externalMcpEngine
+  if (configured === "enterprise" || configured === "legacy") {
+    return { effective: configured, source: "org" }
+  }
+  return {
+    effective: options.envDefault ? "enterprise" : "legacy",
+    source: "default",
+  }
+}
+
+export function externalMcpEngineForOrganization(
+  metadata: MetadataInput,
+  options: { envDefault: boolean },
+): ExternalMcpEngine {
+  return externalMcpEngineConfigurationForOrganization(metadata, options).effective
 }

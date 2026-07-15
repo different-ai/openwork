@@ -5,8 +5,12 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { validateBrandIconUrl } from "../../brand-icon-validation.js"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
+import {
+  externalMcpEngineConfigurationForOrganization,
+  memberFacingMcpConnectionsEnabled,
+} from "../../capability-sources/external-mcp-rollout.js"
 import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
 import { db } from "../../db.js"
 import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
@@ -44,7 +48,8 @@ const updateOrganizationSchema = z.object({
   brandLogoUrl: z.string().url().max(2048).nullable().optional(),
   brandIconUrl: z.string().url().max(2048).nullable().optional(),
   brandAccentColor: z.string().trim().min(1).max(32).nullable().optional(),
-}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
+  externalMcpEngine: z.enum(["enterprise", "legacy"]).nullable().optional(),
+}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined || value.externalMcpEngine !== undefined, {
   message: "Provide at least one organization field to update.",
 })
 
@@ -369,6 +374,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
+      const previousExternalMcpEngine = currentMetadata.externalMcpEngine === "enterprise" || currentMetadata.externalMcpEngine === "legacy"
+        ? currentMetadata.externalMcpEngine
+        : null
       const enablesRequireSso = input.requireSso === true && currentMetadata.requireSso !== true
       const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
       if (enablesRequireSso || enablesVersionPinning) {
@@ -407,10 +415,23 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         brandLogoUrl: input.brandLogoUrl,
         brandIconUrl: input.brandIconUrl,
         brandAccentColor: input.brandAccentColor,
+        externalMcpEngine: input.externalMcpEngine,
       })
 
       if (!updated) {
         return c.json({ error: "organization_not_found" }, 404)
+      }
+
+      if (input.externalMcpEngine !== undefined && previousExternalMcpEngine !== input.externalMcpEngine) {
+        await recordOrganizationAuditEvent({
+          organizationId: payload.organization.id,
+          actorUserId: payload.currentMember.userId,
+          action: ORGANIZATION_AUDIT_ACTIONS.externalMcpEngineChanged,
+          payload: {
+            previous: previousExternalMcpEngine,
+            next: input.externalMcpEngine,
+          },
+        })
       }
 
       return c.json({ organization: updated })
@@ -526,6 +547,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           // /admin reads the raw capability from its own endpoint.
           mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {
             gatingEnabled: env.mcpConnectionsGatingEnabled,
+          }),
+          externalMcpEngine: externalMcpEngineConfigurationForOrganization(payload.organization.metadata, {
+            envDefault: env.enterpriseMcpClientEnabled,
           }),
           installLinks: organizationInstallLinksEnabled(payload.organization.metadata, {
             gatingEnabled: env.installLinksGatingEnabled,

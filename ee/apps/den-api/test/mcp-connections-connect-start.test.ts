@@ -1,4 +1,4 @@
-import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 
 function seedRequiredEnv() {
@@ -9,6 +9,7 @@ function seedRequiredEnv() {
   process.env.DEN_API_PUBLIC_URL = process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
   process.env.DEN_ALLOW_PRIVATE_MCP_URLS = "1"
+  process.env.DEN_ENABLE_ENTERPRISE_MCP_CLIENT = "true"
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -225,7 +226,7 @@ test("GET /v1/mcp-connections/:connectionId/connect/start still returns connecti
   expect(body.error).toBe("connection_not_found")
 })
 
-test("an untouched manual legacy client must use the one-way migration action before a new authorization", async () => {
+test("an untouched manual legacy client must use the explicit migration action before a new authorization", async () => {
   const legacyManual = await createExternalMcpConnection({
     organizationId,
     name: "Legacy manual OAuth MCP",
@@ -254,6 +255,88 @@ test("an untouched manual legacy client must use the one-way migration action be
     message: "Add the shared callback to the external OAuth application, then choose Reconnect using shared callback.",
     sharedCallbackUrl: new URL("/v1/mcp-connections/oauth/callback", process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790").toString(),
   })
+})
+
+test("an org legacy override skips the enterprise shared-callback gate", async () => {
+  const legacyManual = await createExternalMcpConnection({
+    organizationId,
+    name: "Legacy engine manual OAuth MCP",
+    url: "http://127.0.0.1:9/legacy-engine-mcp",
+    authType: "oauth",
+    credentialMode: "per_member",
+    createdByOrgMembershipId: memberId,
+    access: { orgWide: true, memberIds: [], teamIds: [] },
+  })
+  await db
+    .update(schema.ExternalMcpConnectionTable)
+    .set({ oauthConfiguration: null })
+    .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, legacyManual.id))
+  await upsertOrgOAuthClient({
+    organizationId,
+    providerId: legacyManual.id,
+    clientId: "legacy-engine-manual-client",
+    clientSecret: "legacy-engine-manual-secret",
+    createdByOrgMembershipId: memberId,
+  })
+  await db
+    .update(schema.OrganizationTable)
+    .set({ metadata: { externalMcpEngine: "legacy" } })
+    .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
+
+  try {
+    const response = await request(`/v1/mcp-connections/${legacyManual.id}/connect/start`)
+    expect(response.status).toBe(502)
+    expect(await response.json()).toMatchObject({ error: "oauth_handshake_failed" })
+  } finally {
+    await db
+      .update(schema.OrganizationTable)
+      .set({ metadata: null })
+      .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
+  }
+})
+
+test("creating a pre-registered client under the legacy engine records its per-connection callback", async () => {
+  await db
+    .update(schema.OrganizationTable)
+    .set({ metadata: { externalMcpEngine: "legacy" } })
+    .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
+
+  try {
+    const response = await freshSessionRequest("/v1/mcp-connections", "POST", {
+      name: "Legacy default pre-registered MCP",
+      url: "http://127.0.0.1:9/legacy-default-pre-registered",
+      authType: "oauth",
+      credentialMode: "shared",
+      oauthClient: {
+        clientId: "legacy-default-client",
+        clientSecret: "legacy-default-secret",
+      },
+    })
+    expect(response.status).toBe(200)
+    const body: unknown = await response.json()
+    if (!isRecord(body) || typeof body.id !== "string") {
+      throw new Error("create connection response did not include an id")
+    }
+
+    const legacyCallbackUrl = new URL(
+      `/v1/mcp-connections/${body.id}/connect/callback`,
+      process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790",
+    ).toString()
+    expect(body.oauthCallbackMode).toBe("legacy-v1")
+    expect(body.oauthCallbackUrl).toBe(legacyCallbackUrl)
+    expect(await getOrgOAuthClient(organizationId, normalizeDenTypeId("externalMcpConnection", body.id))).toMatchObject({
+      clientId: "legacy-default-client",
+      extra: {
+        enterpriseMcpRegistrationSource: "pre-registered",
+        registeredRedirectUri: legacyCallbackUrl,
+      },
+    })
+  } finally {
+    await db
+      .update(schema.OrganizationTable)
+      .set({ metadata: null })
+      .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
+  }
 })
 
 test("legacy dynamic migration is never destructive on GET and requires a fresh admin POST", async () => {
@@ -301,7 +384,17 @@ test("legacy dynamic migration is never destructive on GET and requires a fresh 
     `/v1/mcp-connections/${legacyDynamic.id}/connect/start`,
   )
   expect(memberGet.status).toBe(409)
-  expect(await memberGet.json()).toMatchObject({ error: "mcp_oauth_callback_update_required" })
+  expect(await memberGet.json()).toMatchObject({
+    error: "mcp_oauth_callback_update_required",
+    message: "Ask a workspace admin to migrate this connection.",
+  })
+
+  const adminGet = await request(`/v1/mcp-connections/${legacyDynamic.id}/connect/start`)
+  expect(adminGet.status).toBe(409)
+  expect(await adminGet.json()).toMatchObject({
+    error: "mcp_oauth_callback_update_required",
+    message: "Choose Reconnect with shared callback — OpenWork re-registers the client automatically.",
+  })
 
   const staleAdminPost = await staleSessionRequest(
     `/v1/mcp-connections/${legacyDynamic.id}/oauth/use-shared-callback`,
@@ -365,17 +458,24 @@ test("legacy dynamic migration is never destructive on GET and requires a fresh 
   }])
 })
 
-test("there is no API that moves a shared callback back to legacy mode", async () => {
-  const response = await app.fetch(new Request(
-    `http://den-api.local/v1/mcp-connections/${seededConnectionId()}/oauth/use-legacy-callback`,
-    {
-      method: "POST",
-      headers: {
-        "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId, organizationId }),
-      },
-    },
-  ))
-  expect(response.status).toBe(404)
+test("a fresh admin can revert and reapply the shared callback", async () => {
+  const reverted = await freshSessionRequest(
+    `/v1/mcp-connections/${seededConnectionId()}/oauth/revert-shared-callback`,
+    "POST",
+  )
+  expect(reverted.status).toBe(200)
+  expect(await reverted.json()).toMatchObject({
+    oauthCallbackMode: "legacy-v1",
+  })
+
+  const migrated = await freshSessionRequest(
+    `/v1/mcp-connections/${seededConnectionId()}/oauth/use-shared-callback`,
+    "POST",
+  )
+  expect(migrated.status).toBe(200)
+  expect(await migrated.json()).toMatchObject({
+    oauthCallbackMode: "shared-v1",
+  })
 })
 
 test("requirements discovery is side-effect free", async () => {
@@ -571,6 +671,58 @@ test("version-one state remains temporarily valid only through the legacy callba
   const wrongRoute = await app.fetch(new Request(sharedUrl))
   expect(wrongRoute.status).toBe(400)
   expect(await wrongRoute.json()).toMatchObject({ error: "invalid_request" })
+})
+
+test("legacy engine callbacks keep the previous flow and skip enterprise issuer validation", async () => {
+  await db
+    .update(schema.OrganizationTable)
+    .set({ metadata: { externalMcpEngine: "legacy" } })
+    .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
+  const legacyConnection = await createExternalMcpConnection({
+    organizationId,
+    name: "Legacy engine callback",
+    url: "http://127.0.0.1:9/legacy-engine-callback",
+    authType: "oauth",
+    credentialMode: "shared",
+    oauthConfiguration: {
+      version: 1,
+      authorizationServerIssuer: null,
+      requestedScopes: [],
+      callbackMode: "legacy-v1",
+    },
+    createdByOrgMembershipId: memberId,
+    access: { orgWide: true, memberIds: [], teamIds: [] },
+  })
+  await db
+    .update(schema.ExternalMcpConnectionTable)
+    .set({ pendingCodeVerifier: "legacy-engine-pkce-verifier" })
+    .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, legacyConnection.id))
+
+  try {
+    const state = createOAuthStateToken({
+      organizationId,
+      orgMembershipId: memberId,
+      providerId: legacyConnection.id,
+      binding: externalMcpIdentityBinding(legacyConnection),
+      version: 2,
+      callbackMode: "legacy-v1",
+      secret: process.env.BETTER_AUTH_SECRET ?? "",
+    })
+    const callbackUrl = new URL(`http://den-api.local/v1/mcp-connections/${legacyConnection.id}/connect/callback`)
+    callbackUrl.searchParams.set("error", "access_denied")
+    callbackUrl.searchParams.set("state", state)
+
+    const response = await app.fetch(new Request(callbackUrl))
+    expect(response.status).toBe(400)
+    const html = await response.text()
+    expect(html).toContain("The provider did not grant authorization")
+    expect(html).not.toContain("cannot be validated without a bound authorization-server issuer")
+  } finally {
+    await db
+      .update(schema.OrganizationTable)
+      .set({ metadata: null })
+      .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
+  }
 })
 
 test("version-two state is rejected by the legacy callback even when its path id matches", async () => {

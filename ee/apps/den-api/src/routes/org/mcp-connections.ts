@@ -41,6 +41,7 @@ import {
   inspectExternalMcpToolCall,
   listExternalMcpTools,
 } from "../../capability-sources/external-mcp-client-runtime.js"
+import { resolveExternalMcpEngine } from "../../capability-sources/external-mcp-engine.js"
 import {
   createExternalMcpConnection,
   deleteExternalMcpConnection,
@@ -56,6 +57,7 @@ import {
   migrateExternalMcpOAuthCallbackToShared,
   normalizeExternalMcpIdentityUrl,
   replaceExternalMcpConnectionAccess,
+  revertExternalMcpOAuthCallbackToLegacy,
   updateExternalMcpConnection,
   type ExternalMcpConnectionRow,
 } from "../../capability-sources/external-mcp-connections.js"
@@ -737,6 +739,19 @@ async function requiredByForConnections(input: {
   return { requiredBy: result, identityManagedBy: identityManagedResult }
 }
 
+function oauthRegistrationSourceForClient(
+  oauthClient: Awaited<ReturnType<typeof getOrgOAuthClient>>,
+): "pre-registered" | "client-metadata" | "dynamic" | null {
+  const registrationSource = oauthClient?.extra?.enterpriseMcpRegistrationSource
+  if (registrationSource === "dynamic" || registrationSource === "client-metadata" || registrationSource === "pre-registered") {
+    return registrationSource
+  }
+  if (registrationSource === undefined && isRecord(oauthClient?.extra?.clientInformation)) {
+    return "dynamic"
+  }
+  return oauthClient ? "pre-registered" : null
+}
+
 async function toConnectionResponse(
   row: ExternalMcpConnectionRow,
   options: {
@@ -773,18 +788,7 @@ async function toConnectionResponse(
   const oauthClient = options.includeAccess
     ? await getOrgOAuthClient(row.organizationId, row.id)
     : null
-  const registrationSource = oauthClient?.extra?.enterpriseMcpRegistrationSource
-  const legacySdkRegistration = registrationSource === undefined
-    && isRecord(oauthClient?.extra?.clientInformation)
-  const oauthRegistrationSource = registrationSource === "dynamic"
-    || registrationSource === "client-metadata"
-    || registrationSource === "pre-registered"
-    ? registrationSource
-    : legacySdkRegistration
-      ? "dynamic"
-      : oauthClient
-      ? "pre-registered"
-      : null
+  const oauthRegistrationSource = oauthRegistrationSourceForClient(oauthClient)
   const callbackMode = row.oauthConfiguration?.callbackMode ?? null
   const manualLegacyClient = Boolean(oauthClient && oauthRegistrationSource === "pre-registered")
 
@@ -861,15 +865,15 @@ async function handleExternalMcpOAuthCallback(input: {
 
   const isLegacyRoute = input.legacyConnectionId !== undefined
   const callbackMode = statePayload.version === 2 ? statePayload.callbackMode : "legacy-v1"
-  // New transactions are v2/shared only. The compatibility route accepts
-  // only pre-existing v1 state for its remaining signed lifetime and never
-  // becomes another way to start a legacy authorization.
+  // Version-two transactions can use either callback, but the route and the
+  // signed callback mode must agree. Version-one transactions remain bound to
+  // the legacy runtime and per-connection compatibility route.
   if (!isLegacyRoute && (statePayload.version !== 2 || callbackMode !== "shared-v1")) {
     return invalidMcpOAuthCallback("This authorization callback must use the shared callback selected when authorization started.")
   }
   if (isLegacyRoute && (
-    statePayload.version === 2
-    || statePayload.providerId !== input.legacyConnectionId
+    statePayload.providerId !== input.legacyConnectionId
+    || (statePayload.version === 2 && callbackMode !== "legacy-v1")
   )) {
     return invalidMcpOAuthCallback("Invalid or expired state.")
   }
@@ -927,7 +931,8 @@ async function handleExternalMcpOAuthCallback(input: {
   const completeAuthorization = statePayload.version === 2
     ? completeExternalMcpAuth
     : completeLegacyExternalMcpAuth
-  if (statePayload.version === 2) {
+  const externalMcpEngine = await resolveExternalMcpEngine(connection.organizationId)
+  if (statePayload.version === 2 && externalMcpEngine === "enterprise") {
     const responseIssuer = url.searchParams.has("iss")
       ? (url.searchParams.get("iss") ?? "")
       : undefined
@@ -1450,7 +1455,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           version: 1,
           authorizationServerIssuer: body.authorizationServerIssuer ?? null,
           requestedScopes: [...new Set(body.requestedScopes)],
-          callbackMode: "shared-v1",
+          callbackMode: "legacy-v1",
         } : null,
         createdByOrgMembershipId: payload.currentMember.id,
         access: {
@@ -1461,6 +1466,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       })
 
       if (body.oauthClient) {
+        const callbackMode = created.oauthConfiguration?.callbackMode ?? "legacy-v1"
         await upsertOrgOAuthClient({
           organizationId: payload.organization.id,
           providerId: created.id,
@@ -1469,7 +1475,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           extra: {
             enterpriseMcpRegistrationSource: "pre-registered",
             registrationContractVersion: 2,
-            registeredRedirectUri: externalMcpSharedCallbackUrl(),
+            registeredRedirectUri: externalMcpCallbackUrl({ connectionId: created.id, callbackMode }),
             authorizationServerIssuer: body.authorizationServerIssuer ?? undefined,
           },
           createdByOrgMembershipId: payload.currentMember.id,
@@ -1569,6 +1575,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
                   ? connection.oauthConfiguration?.authorizationServerIssuer ?? null
                   : null,
               requestedScopes: [...new Set(body.requestedScopes ?? connection.oauthConfiguration?.requestedScopes ?? [])],
+              ...(connection.authType === "oauth" && connection.oauthConfiguration?.discovery
+                ? { discovery: connection.oauthConfiguration.discovery }
+                : {}),
               callbackMode: (connection.authType === "oauth" ? connection.oauthConfiguration?.callbackMode : undefined)
                 ?? (connection.authType === "oauth" ? "legacy-v1" : "shared-v1"),
             }
@@ -1810,8 +1819,8 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     "/v1/mcp-connections/:connectionId/oauth/use-shared-callback",
     describeRoute({
       tags: ["Authentication"],
-      summary: "Permanently migrate an External MCP OAuth connection to the shared callback",
-      description: "Admin-only one-way migration. Clears tokens and pending authorizations, preserves manual client credentials and access grants, and invalidates SDK-created registrations so the next authorization registers the shared callback.",
+      summary: "Migrate an External MCP OAuth connection to the shared callback",
+      description: "Admin-only reversible migration. Clears tokens and pending authorizations, preserves manual client credentials and access grants, and invalidates SDK-created registrations so the next authorization registers the shared callback.",
       responses: {
         200: jsonResponse("Connection migrated to the shared callback.", connectionResponseSchema),
         400: jsonResponse("The connection does not use OAuth.", invalidRequestSchema),
@@ -1839,6 +1848,56 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       }
       if (result.status === "not_oauth") {
         return c.json({ error: "invalid_request", message: "Only OAuth connections have a callback to migrate." }, 400)
+      }
+
+      const context = { memberTeams: [], organizationContext: payload, session: c.get("session") } satisfies PluginArchActorContext
+      const provenance = await requiredByForConnections({
+        context,
+        includeAllPluginNames: true,
+        rows: [result.connection],
+      })
+      return c.json(await toConnectionResponse(result.connection, {
+        callerOrgMembershipId: payload.currentMember.id,
+        includeAccess: true,
+        requiredBy: provenance.requiredBy.get(result.connection.id) ?? [],
+        identityManagedBy: provenance.identityManagedBy.get(result.connection.id) ?? [],
+      }))
+    },
+  )
+
+  app.post(
+    "/v1/mcp-connections/:connectionId/oauth/revert-shared-callback",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "Return an External MCP OAuth connection to its previous callback",
+      description: "Admin-only rollback to the per-connection callback. Clears tokens and pending authorizations, preserves manual client credentials and access grants, and invalidates SDK-created registrations so the next authorization registers the previous callback.",
+      responses: {
+        200: jsonResponse("Connection returned to its previous callback.", connectionResponseSchema),
+        400: jsonResponse("The connection does not use OAuth.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can revert MCP callbacks.", forbiddenSchema),
+        404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(connectionParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can revert MCP callbacks.")
+      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+
+      const { connectionId } = c.req.valid("param")
+      const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
+      const result = await revertExternalMcpOAuthCallbackToLegacy({
+        organizationId: payload.organization.id,
+        connectionId: externalMcpConnectionId,
+        orgMembershipId: payload.currentMember.id,
+      })
+      if (result.status === "not_found") {
+        return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+      }
+      if (result.status === "not_oauth") {
+        return c.json({ error: "invalid_request", message: "Only OAuth connections have a callback to revert." }, 400)
       }
 
       const context = { memberTeams: [], organizationContext: payload, session: c.get("session") } satisfies PluginArchActorContext
@@ -1961,14 +2020,22 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       }
 
       try {
+        const externalMcpEngine = await resolveExternalMcpEngine(payload.organization.id)
         // Legacy callback migration is destructive: it clears authorization
         // state and may replace an SDK-created client registration. Never do
         // that work from this GET. The admin dashboard performs the explicit,
         // fresh-session-gated POST first, then retries authorization here.
-        if (connection.oauthConfiguration?.callbackMode !== "shared-v1") {
+        if (externalMcpEngine === "enterprise" && connection.oauthConfiguration?.callbackMode !== "shared-v1") {
+          const oauthClient = await getOrgOAuthClient(payload.organization.id, connection.id)
+          const registrationSource = oauthRegistrationSourceForClient(oauthClient)
+          const message = !callerIsAdmin
+            ? "Ask a workspace admin to migrate this connection."
+            : registrationSource === "pre-registered"
+              ? "Add the shared callback to the external OAuth application, then choose Reconnect using shared callback."
+              : "Choose Reconnect with shared callback — OpenWork re-registers the client automatically."
           return c.json({
             error: "mcp_oauth_callback_update_required",
-            message: "Add the shared callback to the external OAuth application, then choose Reconnect using shared callback.",
+            message,
             sharedCallbackUrl: externalMcpSharedCallbackUrl(),
           }, 409)
         }
@@ -1977,13 +2044,16 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         // travel as the standard OAuth `state` param — a custom param would
         // simply be dropped, since only `state` is guaranteed to round-trip on
         // any spec-compliant authorization server (see ExternalMcpOAuthProvider.state()).
+        const callbackMode = externalMcpEngine === "enterprise"
+          ? "shared-v1"
+          : connection.oauthConfiguration?.callbackMode ?? "legacy-v1"
         const signedState = createOAuthStateToken({
           organizationId: payload.organization.id,
           orgMembershipId: payload.currentMember.id,
           providerId: connectionId,
           binding: externalMcpIdentityBinding(connection),
           version: 2,
-          callbackMode: "shared-v1",
+          callbackMode,
           authorizationServerIssuer: connection.oauthConfiguration?.authorizationServerIssuer ?? undefined,
           secret: env.betterAuthSecret,
         })

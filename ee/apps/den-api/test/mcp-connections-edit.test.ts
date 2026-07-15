@@ -303,6 +303,53 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     expect(grants.map((grant) => grant.orgMembershipId)).toEqual([memberId])
   })
 
+  test("scope-only edits preserve discovery and connected OAuth credentials", async () => {
+    const created = await createConnection({ name: "Scoped OAuth", authType: "oauth", credentialMode: "shared" })
+    const issuer = "https://identity.example.test/tenant"
+    const discovery = {
+      authorizationServerUrl: issuer,
+      authorizationServerMetadata: {
+        issuer,
+        authorization_endpoint: `${issuer}/authorize`,
+        token_endpoint: `${issuer}/token`,
+        scopes_supported: ["records.read", "records.write"],
+      },
+      resourceMetadata: {
+        resource: created.url,
+        authorization_servers: [issuer],
+        scopes_supported: ["records.read", "records.write"],
+      },
+    }
+    await db.update(schema.ExternalMcpConnectionTable).set({
+      oauthConfiguration: {
+        version: 1,
+        authorizationServerIssuer: issuer,
+        requestedScopes: ["records.read"],
+        callbackMode: "shared-v1",
+        discovery,
+      },
+      accessToken: "scoped-access-token",
+      refreshToken: "scoped-refresh-token",
+      connectedAt: new Date(),
+    }).where(drizzle.eq(schema.ExternalMcpConnectionTable.id, created.id))
+    const before = await currentConnection(created.id)
+
+    const response = await humanRequest({
+      connectionId: created.id,
+      body: updateBody(before, { requestedScopes: ["records.read", "records.write"] }),
+    })
+    expect(response.status).toBe(200)
+    expect(await responseRecord(response)).toMatchObject({ reconnectionRequired: false })
+    expect(await currentConnection(created.id)).toMatchObject({
+      accessToken: "scoped-access-token",
+      refreshToken: "scoped-refresh-token",
+      oauthConfiguration: {
+        requestedScopes: ["records.read", "records.write"],
+        discovery,
+      },
+    })
+  })
+
   test("URL change clears shared and per-member OAuth identity state", async () => {
     const created = await createConnection({ name: "Personal OAuth", authType: "oauth", credentialMode: "per_member" })
     await db.update(schema.ExternalMcpConnectionTable).set({

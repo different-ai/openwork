@@ -143,6 +143,7 @@ async function sendMcpResponse(request: IncomingMessage, response: ServerRespons
 async function startOAuthMcpServer(options: {
   rejectAuthenticatedMcp?: boolean
   clientMetadataSupported?: boolean
+  scopeLessChallenge?: boolean
 } = {}) {
   let origin = ""
   let capturedRegistration: Record<string, unknown> | null = null
@@ -210,7 +211,9 @@ async function startOAuthMcpServer(options: {
       if (url.pathname === "/mcp") {
         if (request.headers.authorization !== "Bearer enterprise-access-token") {
           response.writeHead(401, {
-            "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="tools.read"`,
+            "www-authenticate": options.scopeLessChallenge
+              ? `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`
+              : `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="tools.read"`,
           })
           response.end()
           return
@@ -803,6 +806,34 @@ describe("enterprise MCP OAuth persistence contract", () => {
       ]) {
         assert.ok(events.some((event) => event.requestPhase === phase), `Expected a diagnostic event for ${phase}`)
       }
+    } finally {
+      await server.close()
+    }
+  })
+
+  it("falls back to advertised scopes when the challenge and requested scopes are empty", async () => {
+    const server = await startOAuthMcpServer({ scopeLessChallenge: true })
+    try {
+      const persistence = new MemoryOAuthPersistence()
+      const client = createEnterpriseMcpClient({ fetch })
+      const connection: EnterpriseMcpConnection = {
+        id: "oauth-advertised-scope-fallback",
+        serverUrl: `${server.origin}/mcp`,
+        authorization: {
+          type: "oauth",
+          persistence,
+          configuration: { applicationType: "web", requestedScopes: [] },
+        },
+      }
+      const started = await client.connect({
+        connection,
+        redirectUri: "https://den.example.test/v1/mcp-connections/oauth/callback",
+        authorizationId: "signed-fallback-state",
+      })
+      assert.equal(started.status, "needs_auth")
+      if (started.status !== "needs_auth") throw new Error("Expected OAuth authorization to be required.")
+      assert.equal(new URL(started.authorizeUrl).searchParams.get("scope"), "tools.read")
+      assert.equal(server.registration()?.scope, "tools.read")
     } finally {
       await server.close()
     }
