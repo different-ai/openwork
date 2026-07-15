@@ -79,7 +79,7 @@ export default {
   "common.submit": "提交",
   "common.unknown": "未知",
   "composer.agent_label": "智能体",
-  "composer.any_file_type_supported": "支持：PDF、图片、文本、Word 和 PowerPoint。",
+  "composer.any_file_type_supported": "支持：PDF、图片、文本、Word、PowerPoint 和 Excel。",
   "composer.attach_files": "附加文件",
   "composer.attachments_unavailable": "附件功能不可用。",
   "composer.behavior_label": "行为",

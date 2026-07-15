@@ -75,7 +75,7 @@ export default {
   "common.submit": "送信",
   "common.unknown": "不明",
   "composer.agent_label": "エージェント",
-  "composer.any_file_type_supported": "対応形式: PDF、画像、テキスト、Word、PowerPoint。",
+  "composer.any_file_type_supported": "対応形式: PDF、画像、テキスト、Word、PowerPoint、Excel。",
   "composer.attach_files": "ファイルを添付",
   "composer.attachments_unavailable": "添付ファイルは利用できません。",
   "composer.behavior_label": "動作",

@@ -4,6 +4,14 @@ import { ArrowRight, BookOpen, MessageCircleMore, Settings, Sparkles, X } from "
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
@@ -12,6 +20,12 @@ import { useDenAuth } from "../../cloud/den-auth-provider";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useShellConfig } from "../../../shell/shell-config";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
+import { readDenSettings } from "../../../../app/lib/den";
+import {
+  resolveOpenWorkConnectStatus,
+  type OpenWorkConnectStatus,
+} from "../../connections/openwork-connect-status";
+import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
 import {
   getOpenWorkModelsActionUrl,
   hasOpenWorkModelsProvider,
@@ -52,6 +66,56 @@ function StatusDot({ variant }: StatusDotProps) {
         )}
       />
     </span>
+  );
+}
+
+function OpenWorkConnectIndicator(props: {
+  status: OpenWorkConnectStatus;
+  onRunDiagnostics: () => void;
+}) {
+  const content = (
+    <span className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
+      <StatusDot
+        variant={props.status.state === "ready"
+          ? "connected"
+          : props.status.state === "checking"
+            ? "loading"
+            : "disconnected"}
+      />
+      <span>OpenWork Connect: {props.status.label}</span>
+    </span>
+  );
+
+  if (props.status.state !== "needs_attention") {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={<span data-testid="openwork-connect-status" className="inline-flex" />}>{content}</TooltipTrigger>
+        <TooltipContent>{props.status.description}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={(
+          <button
+            type="button"
+            data-testid="openwork-connect-status"
+            className="rounded-md px-1.5 py-1 transition-colors hover:bg-muted"
+          />
+        )}
+      >
+        {content}
+      </PopoverTrigger>
+      <PopoverContent side="top" align="start" className="w-80 gap-3 rounded-xl">
+        <PopoverHeader>
+          <PopoverTitle>OpenWork Connect needs attention</PopoverTitle>
+          <PopoverDescription>{props.status.description}</PopoverDescription>
+        </PopoverHeader>
+        <Button size="sm" onClick={props.onRunDiagnostics}>Run diagnostics</Button>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -170,6 +234,7 @@ export type StatusBarProps = {
   initializing?: boolean;
   reloadBusy?: boolean;
   reloadError?: string | null;
+  openWorkConnectState?: SessionCloudMcpMaintenanceState;
 };
 
 export function StatusBar(props: StatusBarProps) {
@@ -187,6 +252,11 @@ export function StatusBar(props: StatusBarProps) {
   );
   const [initializing, setInitializing] = useState(
     () => Date.now() - STATUS_BAR_BOOT_STARTED_AT < STATUS_BAR_INITIALIZING_MS,
+  );
+  const openWorkConnectStatus = resolveOpenWorkConnectStatus(
+    denAuth.isSignedIn
+      || (denAuth.status === "checking" && Boolean(readDenSettings().authToken?.trim())),
+    props.openWorkConnectState,
   );
 
   useEffect(() => {
@@ -293,15 +363,26 @@ export function StatusBar(props: StatusBarProps) {
   return (
     <div className="border-t border-border bg-background">
       <div className="flex h-8 items-center justify-between gap-3 px-4 md:px-6">
-        <StatusIndicator
-          clientConnected={props.clientConnected}
-          openworkServerStatus={props.openworkServerStatus}
-          developerMode={props.developerMode}
-          loading={props.loading}
-          initializing={initializing}
-          reloadBusy={props.reloadBusy}
-          reloadError={props.reloadError}
-        />
+        <div className="flex min-w-0 items-center gap-3">
+          <StatusIndicator
+            clientConnected={props.clientConnected}
+            openworkServerStatus={props.openworkServerStatus}
+            developerMode={props.developerMode}
+            loading={props.loading}
+            initializing={initializing}
+            reloadBusy={props.reloadBusy}
+            reloadError={props.reloadError}
+          />
+          {openWorkConnectStatus ? (
+            <>
+              <span className="h-3.5 w-px shrink-0 bg-border" />
+              <OpenWorkConnectIndicator
+                status={openWorkConnectStatus}
+                onRunDiagnostics={() => navigate("/settings/connect")}
+              />
+            </>
+          ) : null}
+        </div>
 
         <div className="flex items-center gap-1">
           {openWorkModelsHintVisible ? (

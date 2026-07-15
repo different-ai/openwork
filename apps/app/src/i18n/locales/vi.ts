@@ -76,7 +76,7 @@ export default {
   "common.submit": "Gửi",
   "common.unknown": "Không rõ",
   "composer.agent_label": "Agent",
-  "composer.any_file_type_supported": "Hỗ trợ: PDF, hình ảnh, văn bản, Word và PowerPoint.",
+  "composer.any_file_type_supported": "Hỗ trợ: PDF, hình ảnh, văn bản, Word, PowerPoint và Excel.",
   "composer.attach_files": "Đính kèm tệp",
   "composer.attachments_unavailable": "Đính kèm không khả dụng.",
   "composer.behavior_label": "Hành vi",

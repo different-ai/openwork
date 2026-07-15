@@ -3,6 +3,7 @@ import type { ThreadStatus } from "@/lib/messages"
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 const SAFE_DOWNLOAD_PROTOCOLS = new Set(["blob:", "data:"])
 
 interface MessageGroup {
@@ -55,9 +56,10 @@ export function getMediaBadge(part: Pick<FileUIPart, "filename" | "mediaType">) 
 
   if (mime === DOCX_MIME) return "DOCX"
   if (mime === PPTX_MIME) return "PPTX"
+  if (mime === XLSX_MIME) return "XLSX"
 
   const fromExtension = extensionBadge(part.filename)
-  if (fromExtension === "DOCX" || fromExtension === "PPTX") return fromExtension
+  if (fromExtension === "DOCX" || fromExtension === "PPTX" || fromExtension === "XLSX") return fromExtension
 
   if (mime && mime !== "application/octet-stream") {
     return mime.replace(/^application\//, "").replace(/^text\//, "").toUpperCase()

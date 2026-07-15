@@ -254,6 +254,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
+      application_type: "web",
     }
   }
 
@@ -276,7 +277,13 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       connection: this.connection,
       clientId: clientInformation.client_id,
       clientSecret: clientInformation.client_secret ?? null,
-      extra: { clientInformation },
+      extra: {
+        clientInformation,
+        enterpriseMcpRegistrationSource: "dynamic",
+        registrationContractVersion: 2,
+        registeredRedirectUri: this.redirectUri,
+        authorizationServerIssuer: this.connection.oauthConfiguration?.authorizationServerIssuer ?? undefined,
+      },
     })
     if (!saved) throw new Error("The external MCP connection identity changed during client registration.")
     this.diagnostic.passed("AUTH_CLIENT_REGISTRATION", "reachable")
@@ -872,6 +879,37 @@ export async function completeExternalMcpAuth(
     close: () => client.close(),
     deadline,
   })
+}
+
+/**
+ * Compatibility cleanup for a version-one authorization that was started by
+ * the pre-enterprise runtime. Those flows stored one plaintext verifier slot,
+ * so they cannot be consumed by the version-two state-hash transaction store.
+ */
+export async function abandonExternalMcpAuth(
+  connection: ExternalMcpConnectionRow,
+  _signedState: string,
+  member?: ExternalMcpMemberContext,
+  _diagnosticReferenceId?: string,
+): Promise<void> {
+  if (connection.credentialMode === "per_member") {
+    if (!member) return
+    const existing = await readConnectedAccountForExternalMcpIdentity({
+      connection,
+      orgMembershipId: member.orgMembershipId,
+    })
+    if (!existing.current) throw new Error("The external MCP connection identity changed during authorization cleanup.")
+    if (!existing.value) return
+    const cleared = await upsertConnectedAccountForExternalMcpIdentity({
+      connection,
+      orgMembershipId: member.orgMembershipId,
+      changes: { pendingCodeVerifier: null },
+    })
+    if (!cleared) throw new Error("The external MCP connection identity changed during authorization cleanup.")
+    return
+  }
+  const cleared = await saveExternalMcpPendingCodeVerifierForIdentity({ connection, codeVerifier: null })
+  if (!cleared) throw new Error("The external MCP connection identity changed during authorization cleanup.")
 }
 
 export async function listExternalMcpTools(

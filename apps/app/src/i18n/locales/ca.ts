@@ -76,7 +76,7 @@ export default {
   "common.submit": "Envia",
   "common.unknown": "Desconegut",
   "composer.agent_label": "Agent",
-  "composer.any_file_type_supported": "S'admeten: PDF, imatges, text, Word i PowerPoint.",
+  "composer.any_file_type_supported": "S'admeten: PDF, imatges, text, Word, PowerPoint i Excel.",
   "composer.attach_files": "Adjuntar fitxers",
   "composer.attachments_unavailable": "Els fitxers adjunts no estan disponibles.",
   "composer.behavior_label": "Comportament",

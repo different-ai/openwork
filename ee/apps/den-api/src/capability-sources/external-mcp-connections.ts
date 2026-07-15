@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { isDeepStrictEqual } from "node:util"
 import { and, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
@@ -7,6 +8,7 @@ import {
   ConfigObjectVersionTable,
   ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
+  type ExternalMcpOAuthConfiguration,
   MarketplaceAccessGrantTable,
   MarketplacePluginTable,
   MarketplaceTable,
@@ -19,6 +21,7 @@ import {
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { normalizeConnectedAccountScopes, normalizeOAuthClientExtra } from "./oauth-credentials.js"
+import { externalMcpSharedCallbackUrl } from "./external-mcp-oauth-contract.js"
 
 /**
  * CRUD for ExternalMcpConnectionTable and its access grants — the "add any
@@ -49,6 +52,13 @@ function unique<TValue extends string>(values: TValue[]): TValue[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isSdkRegisteredOAuthClient(extra: Record<string, unknown> | null): boolean {
+  const source = extra?.enterpriseMcpRegistrationSource
+  return source === "dynamic"
+    || source === "client-metadata"
+    || (source === undefined && isRecord(extra?.clientInformation))
 }
 
 function readString(value: unknown) {
@@ -403,6 +413,7 @@ export async function createExternalMcpConnection(input: {
   authType: "oauth" | "apikey" | "none"
   credentialMode: "shared" | "per_member"
   apiKey?: string | null
+  oauthConfiguration?: ExternalMcpOAuthConfiguration | null
   createdByOrgMembershipId: OrgMembershipId
   access: ExternalMcpAccessInput
 }): Promise<ExternalMcpConnectionRow> {
@@ -415,6 +426,19 @@ export async function createExternalMcpConnection(input: {
     authType: input.authType,
     credentialMode: input.credentialMode,
     apiKey: input.apiKey ?? null,
+    oauthConfiguration: input.authType === "oauth"
+      ? {
+          ...(input.oauthConfiguration ?? {
+            version: 1,
+            authorizationServerIssuer: null,
+            requestedScopes: [],
+          }),
+          // This helper is shared by dashboard, agent, and marketplace
+          // callers, so the invariant belongs here rather than only at the
+          // HTTP route boundary.
+          callbackMode: "shared-v1",
+        }
+      : null,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
   })
   await replaceExternalMcpConnectionAccess({
@@ -625,7 +649,9 @@ export type UpdateExternalMcpConnectionInput = {
   oauthClient?: {
     clientId: string
     clientSecret?: string
+    extra?: Record<string, unknown>
   }
+  oauthConfiguration?: ExternalMcpOAuthConfiguration | null
   access: ExternalMcpAccessInput
   updatedByOrgMembershipId: OrgMembershipId
   validatedAt?: Date
@@ -666,6 +692,16 @@ export async function updateExternalMcpConnection(
     if (existing.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) {
       return { status: "conflict" }
     }
+    // Callback migration is intentionally absent from the ordinary edit
+    // contract. Once a connection has selected the shared callback, no caller
+    // (including another Den module) may write it back to legacy mode.
+    if (
+      input.authType === "oauth"
+      && input.oauthConfiguration?.callbackMode === "legacy-v1"
+      && existing.oauthConfiguration?.callbackMode === "shared-v1"
+    ) {
+      return { status: "conflict" }
+    }
 
     const activeBindings = await tx
       .select({ id: PluginMcpRequirementBindingTable.id })
@@ -679,11 +715,14 @@ export async function updateExternalMcpConnection(
         isNull(PluginTable.deletedAt),
       ))
       .for("update")
+    const oauthConfigurationChanged = input.oauthConfiguration !== undefined
+      && !isDeepStrictEqual(existing.oauthConfiguration, input.oauthConfiguration)
     const marketplaceOwnedFieldsChanged = existing.url !== input.url
       || existing.authType !== input.authType
       || existing.credentialMode !== input.credentialMode
       || input.apiKey !== undefined
       || input.oauthClient !== undefined
+      || oauthConfigurationChanged
     if (activeBindings.length > 0 && marketplaceOwnedFieldsChanged) {
       return { status: "marketplace_managed" }
     }
@@ -691,6 +730,10 @@ export async function updateExternalMcpConnection(
     const identityChanged = normalizeExternalMcpIdentityUrl(existing.url) !== normalizeExternalMcpIdentityUrl(input.url)
       || existing.authType !== input.authType
       || existing.credentialMode !== input.credentialMode
+    const issuerChanged = input.oauthConfiguration !== undefined
+      && existing.oauthConfiguration?.authorizationServerIssuer !== input.oauthConfiguration?.authorizationServerIssuer
+    const callbackModeChanged = input.oauthConfiguration !== undefined
+      && existing.oauthConfiguration?.callbackMode !== input.oauthConfiguration?.callbackMode
     const directGrants = await tx
       .select()
       .from(ExternalMcpConnectionAccessGrantTable)
@@ -712,6 +755,12 @@ export async function updateExternalMcpConnection(
       .limit(1)
       .for("update")
     const existingClient = clientRows[0]
+    const existingClientExtra = normalizeOAuthClientExtra(existingClient?.extra)
+    const clientWasSdkRegistered = isSdkRegisteredOAuthClient(existingClientExtra)
+    const clientRegistrationInvalidated = identityChanged
+      || issuerChanged
+      || (callbackModeChanged && clientWasSdkRegistered)
+    const credentialsInvalidated = identityChanged || issuerChanged || callbackModeChanged
     const clientIdChanged = Boolean(input.oauthClient && existingClient?.clientId !== input.oauthClient.clientId)
     const clientSecretChanged = Boolean(
       input.oauthClient?.clientSecret !== undefined
@@ -727,6 +776,7 @@ export async function updateExternalMcpConnection(
       || existing.credentialMode !== input.credentialMode
       || apiKeyChanged
       || identityChanged
+      || oauthConfigurationChanged
     const changed = rowFieldsChanged || accessChanged || oauthClientChanged
 
     if (!changed) {
@@ -739,15 +789,17 @@ export async function updateExternalMcpConnection(
     }
 
     const changedAt = new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1))
-    if (identityChanged) {
+    if (credentialsInvalidated) {
       await tx.delete(ConnectedAccountTable).where(and(
         eq(ConnectedAccountTable.organizationId, input.organizationId),
         eq(ConnectedAccountTable.providerId, input.connectionId),
       ))
-      await tx.delete(OrgOAuthClientTable).where(and(
-        eq(OrgOAuthClientTable.organizationId, input.organizationId),
-        eq(OrgOAuthClientTable.providerId, input.connectionId),
-      ))
+      if (clientRegistrationInvalidated) {
+        await tx.delete(OrgOAuthClientTable).where(and(
+          eq(OrgOAuthClientTable.organizationId, input.organizationId),
+          eq(OrgOAuthClientTable.providerId, input.connectionId),
+        ))
+      }
       await tx
         .update(ExternalMcpConnectionTable)
         .set({
@@ -755,6 +807,7 @@ export async function updateExternalMcpConnection(
           url: input.url,
           authType: input.authType,
           credentialMode: input.credentialMode,
+          oauthConfiguration: input.authType === "oauth" ? input.oauthConfiguration ?? null : null,
           apiKey: input.authType === "apikey" ? input.apiKey ?? null : null,
           accessToken: null,
           refreshToken: null,
@@ -778,6 +831,7 @@ export async function updateExternalMcpConnection(
           authType: input.authType,
           credentialMode: input.credentialMode,
           ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+          ...(input.oauthConfiguration !== undefined ? { oauthConfiguration: input.oauthConfiguration } : {}),
           ...(input.authType === "none" && input.validatedAt ? { connectedAt: input.validatedAt } : {}),
           updatedAt: changedAt,
         })
@@ -805,14 +859,14 @@ export async function updateExternalMcpConnection(
     }
 
     if (input.authType === "oauth" && input.oauthClient) {
-      if (identityChanged || !existingClient) {
+      if (clientRegistrationInvalidated || !existingClient) {
         await tx.insert(OrgOAuthClientTable).values({
           id: createDenTypeId("orgOAuthClient"),
           organizationId: input.organizationId,
           providerId: input.connectionId,
           clientId: input.oauthClient.clientId,
           clientSecret: input.oauthClient.clientSecret ?? null,
-          extra: null,
+          extra: input.oauthClient.extra ?? null,
           createdByOrgMembershipId: input.updatedByOrgMembershipId,
         })
       } else if (oauthClientChanged) {
@@ -826,6 +880,7 @@ export async function updateExternalMcpConnection(
                 ? { clientSecret: null }
                 : {}),
             ...(clientIdChanged ? { extra: null } : {}),
+            ...(input.oauthClient.extra !== undefined ? { extra: input.oauthClient.extra } : {}),
           })
           .where(and(
             eq(OrgOAuthClientTable.organizationId, input.organizationId),
@@ -848,7 +903,149 @@ export async function updateExternalMcpConnection(
       status: "updated",
       connection: updated,
       identityChanged,
-      reconnectionRequired: identityChanged && input.authType === "oauth",
+      reconnectionRequired: credentialsInvalidated && input.authType === "oauth",
+    }
+  })
+}
+
+export type MigrateExternalMcpOAuthCallbackResult =
+  | { status: "not_found" }
+  | { status: "not_oauth" }
+  | {
+    status: "migrated"
+    connection: ExternalMcpConnectionRow
+    changed: boolean
+    dynamicRegistrationInvalidated: boolean
+    manualClientPreserved: boolean
+  }
+
+/**
+ * Permanently moves one OAuth connection to the deployment-wide callback.
+ *
+ * The transaction deliberately does not touch access grants or marketplace
+ * bindings. A manually entered client stays in place (including its encrypted
+ * secret); an SDK-created registration is removed because its redirect URI is
+ * part of the registration contract and must be registered again. For a
+ * per-member connection, only the initiating admin's authorization state is
+ * cleared; migrating the shared client must never erase other members' tokens.
+ */
+export async function migrateExternalMcpOAuthCallbackToShared(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId
+}): Promise<MigrateExternalMcpOAuthCallbackResult> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = rows[0]
+    if (!connection) return { status: "not_found" }
+    if (connection.authType !== "oauth") return { status: "not_oauth" }
+    if (connection.oauthConfiguration?.callbackMode === "shared-v1") {
+      return {
+        status: "migrated",
+        connection,
+        changed: false,
+        dynamicRegistrationInvalidated: false,
+        manualClientPreserved: false,
+      }
+    }
+
+    const clientRows = await tx
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(and(
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const client = clientRows[0]
+    const extra = normalizeOAuthClientExtra(client?.extra)
+    const dynamicRegistrationInvalidated = Boolean(client && isSdkRegisteredOAuthClient(extra))
+    const manualClientPreserved = Boolean(client && !dynamicRegistrationInvalidated)
+
+    if (connection.credentialMode === "per_member") {
+      await tx.delete(ConnectedAccountTable).where(and(
+        eq(ConnectedAccountTable.organizationId, input.organizationId),
+        eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+        eq(ConnectedAccountTable.providerId, input.connectionId),
+      ))
+    }
+
+    if (dynamicRegistrationInvalidated) {
+      await tx.delete(OrgOAuthClientTable).where(and(
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, input.connectionId),
+      ))
+    } else if (client) {
+      await tx
+        .update(OrgOAuthClientTable)
+        .set({
+          extra: {
+            ...(extra ?? {}),
+            enterpriseMcpRegistrationSource: "pre-registered",
+            registrationContractVersion: 2,
+            registeredRedirectUri: externalMcpSharedCallbackUrl(),
+            authorizationServerIssuer: connection.oauthConfiguration?.authorizationServerIssuer ?? undefined,
+          },
+        })
+        .where(and(
+          eq(OrgOAuthClientTable.organizationId, input.organizationId),
+          eq(OrgOAuthClientTable.id, client.id),
+        ))
+    }
+
+    const oauthConfiguration: ExternalMcpOAuthConfiguration = {
+      ...(connection.oauthConfiguration ?? {
+        version: 1,
+        authorizationServerIssuer: null,
+        requestedScopes: [],
+      }),
+      callbackMode: "shared-v1",
+    }
+    const updatedAt = new Date(Math.max(Date.now(), connection.updatedAt.getTime() + 1))
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        oauthConfiguration,
+        accessToken: null,
+        refreshToken: null,
+        tokenType: null,
+        scope: null,
+        expiresAt: null,
+        pendingCodeVerifier: null,
+        connectedAt: null,
+        updatedAt,
+      })
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+
+    return {
+      status: "migrated",
+      connection: {
+        ...connection,
+        oauthConfiguration,
+        accessToken: null,
+        refreshToken: null,
+        tokenType: null,
+        scope: null,
+        expiresAt: null,
+        pendingCodeVerifier: null,
+        connectedAt: null,
+        updatedAt,
+      },
+      changed: true,
+      dynamicRegistrationInvalidated,
+      manualClientPreserved,
     }
   })
 }

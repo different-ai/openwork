@@ -7,6 +7,7 @@ import type { CloudMcpUserState } from "./cloud-mcp-user-state";
 
 export const CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS = [1_000, 3_000];
 export const CLOUD_MCP_SUBMISSION_ATTEMPT_TIMEOUT_MS = 12_000;
+export const CLOUD_MCP_AUTH_RESOLUTION_TIMEOUT_MS = 12_000;
 
 const REQUIRED_DIRECT_TOOL_IDS = ["search_capabilities", "execute_capability"];
 const REQUIRED_PROJECTED_TOOL_IDS = [
@@ -20,7 +21,8 @@ export type CloudMcpSubmissionIssue = Pick<
 >;
 
 export type CloudMcpSubmissionGateContext = {
-  cloudSignedIn: boolean;
+  cloudAuthStatus: "checking" | "signed_in" | "unavailable" | "signed_out";
+  cloudHasSessionToken: boolean;
   denBaseUrl: string;
   serverBaseUrl: string;
   orgId: string | null;
@@ -31,6 +33,7 @@ export type CloudMcpSubmissionGateContext = {
 
 export type CloudMcpSubmissionGateDecision =
   | { mode: "required"; scopeKey: string }
+  | { mode: "waiting_for_auth"; scopeKey: string }
   | {
       mode: "bypass";
       scopeKey: string;
@@ -58,6 +61,10 @@ export type CloudMcpSubmissionPreparationResult =
   | { outcome: "bypass" }
   | { outcome: "failed"; issue: CloudMcpSubmissionIssue }
   | { outcome: "cancelled"; reason: "context_changed" | "unmounted" };
+
+export type CloudMcpSubmissionAuthResolution =
+  | { outcome: "resolved"; decision: CloudMcpSubmissionGateDecision }
+  | { outcome: "failed"; issue: CloudMcpSubmissionIssue };
 
 export type CloudMcpSubmissionResult =
   | { outcome: "sent"; bypassed: boolean }
@@ -122,8 +129,12 @@ function healthShowsExplicitDisable(health: OpenworkCloudMcpHealth): boolean {
 }
 
 export function cloudMcpSubmissionScopeKey(context: CloudMcpSubmissionGateContext): string {
+  const cloudSessionScope = context.cloudAuthStatus === "signed_out"
+    || (context.cloudAuthStatus === "checking" && !context.cloudHasSessionToken)
+    ? "signed_out"
+    : "cloud_session";
   return JSON.stringify([
-    context.cloudSignedIn ? "signed_in" : "signed_out",
+    cloudSessionScope,
     normalize(context.denBaseUrl),
     normalize(context.serverBaseUrl),
     normalize(context.orgId),
@@ -138,10 +149,58 @@ export function decideCloudMcpSubmissionGate(
   context: CloudMcpSubmissionGateContext,
 ): CloudMcpSubmissionGateDecision {
   const scopeKey = cloudMcpSubmissionScopeKey(context);
-  if (!context.cloudSignedIn) return { mode: "bypass", scopeKey, reason: "signed_out" };
+  if (
+    context.cloudAuthStatus === "signed_out"
+    || (context.cloudAuthStatus === "checking" && !context.cloudHasSessionToken)
+  ) {
+    return { mode: "bypass", scopeKey, reason: "signed_out" };
+  }
+  if (context.cloudAuthStatus === "checking") {
+    if (context.userState) return { mode: "bypass", scopeKey, reason: "disabled" };
+    return { mode: "waiting_for_auth", scopeKey };
+  }
   if (!context.orgId?.trim()) return { mode: "bypass", scopeKey, reason: "missing_org" };
   if (context.userState) return { mode: "bypass", scopeKey, reason: "disabled" };
   return { mode: "required", scopeKey };
+}
+
+function authResolutionIssue(input?: { timedOut?: boolean }): CloudMcpSubmissionIssue {
+  return genericSubmissionIssue({
+    code: input?.timedOut
+      ? "cloud_mcp_auth_resolution_timeout"
+      : "cloud_mcp_auth_resolution_failed",
+    message: input?.timedOut
+      ? "OpenWork timed out while restoring connected service access."
+      : "OpenWork could not finish restoring connected service access.",
+    recommendedAction: "Retry or open Settings → Connect.",
+  });
+}
+
+export async function resolveCloudMcpSubmissionAuth(
+  input: {
+    decision: CloudMcpSubmissionGateDecision;
+    waitForResolution: () => Promise<CloudMcpSubmissionGateDecision>;
+    timeoutMs?: number;
+  },
+): Promise<CloudMcpSubmissionAuthResolution> {
+  if (input.decision.mode !== "waiting_for_auth") {
+    return { outcome: "resolved", decision: input.decision };
+  }
+
+  try {
+    const decision = await withTimeout(
+      input.waitForResolution,
+      input.timeoutMs ?? CLOUD_MCP_AUTH_RESOLUTION_TIMEOUT_MS,
+    );
+    if (decision.mode === "waiting_for_auth") {
+      return { outcome: "failed", issue: authResolutionIssue() };
+    }
+    return { outcome: "resolved", decision };
+  } catch (error) {
+    const timedOut = error instanceof Error
+      && error.message === "cloud_mcp_submission_timeout";
+    return { outcome: "failed", issue: authResolutionIssue({ timedOut }) };
+  }
 }
 
 /**

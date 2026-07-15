@@ -119,8 +119,8 @@ on-device.
 ### Search backend [DECISION: MySQL FULLTEXT] + [FIX B2]
 PlanetScale/Vitess supports `FULLTEXT` + `MATCH … AGAINST`. v0 uses **NATURAL LANGUAGE
 MODE**, owner-scoped, relevance-ranked.
-- **Fresh-install hazard:** new DBs bootstrap via `drizzle-kit push` (which cannot see a
-  raw `FULLTEXT` index — Drizzle mysql-core has no FULLTEXT DSL,
+- **Fresh-install hazard:** new DBs bootstrap from the build-time current-schema
+  SQL snapshot (which cannot see a raw `FULLTEXT` index — Drizzle mysql-core has no FULLTEXT DSL,
   [drizzle-orm#1495](https://github.com/drizzle-team/drizzle-orm/issues/1495)) and
   baseline marks migrations applied-without-executing — so a plain migration-only index
   is **silently absent in production** while working on incrementally-migrated dev DBs.

@@ -318,6 +318,28 @@ function AgentAccessCard(props: {
   const canRun = Boolean(props.client && context && signedIn);
   const readyTools = readyCloudMcpToolIds(health);
 
+  if (health?.usable) {
+    return (
+      <SettingsInset className="flex flex-col gap-3 bg-dls-surface sm:flex-row sm:items-center sm:justify-between" data-testid="agent-access-card">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-base font-semibold text-dls-text">Agent access ready</div>
+            <SettingsStatusBadge label={summary.statusLabel} tone={summary.tone} />
+          </div>
+          <div className="text-sm text-dls-secondary">
+            This workspace can search and run your organization&apos;s shared capabilities.
+          </div>
+          <div className="flex flex-wrap gap-2 font-mono text-xs text-green-11">
+            {readyTools.map((tool) => <span key={tool} className="rounded-md bg-green-3 px-2 py-1">{tool}</span>)}
+          </div>
+        </div>
+        <Button variant="outline" size="sm" disabled={!canRun || busy !== null} onClick={() => void testNow()}>
+          {busy === "test" ? "Testing…" : "Test again"}
+        </Button>
+      </SettingsInset>
+    );
+  }
+
   return (
     <SettingsInset className="space-y-4 bg-dls-surface" data-testid="agent-access-card">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -394,7 +416,6 @@ function ConnectIntro(props: { busy: boolean; disabled: boolean; onRun: () => vo
           </Button>
         </SettingsSectionHeaderActions>
       </SettingsSectionHeader>
-      <SettingsNotice>{t("connect.diagnostics_preflight_notice")}</SettingsNotice>
     </SettingsSection>
   );
 }
@@ -516,12 +537,16 @@ function rowSearchText(row: ConnectOrganizationRow) {
   return [row.name, row.description, row.meta].join(" ").toLowerCase();
 }
 
-function buildConnectRows(input: {
+export function buildConnectRows(input: {
   connections: DenExternalMcpConnection[];
   items: ExtensionItem[];
   role: "owner" | "admin" | "member" | null | undefined;
 }) {
-  const connectionRows: ConnectOrganizationRow[] = input.connections.map((connection) => ({
+  const marketplaceItems = input.items.filter(isCloudMarketplaceItem);
+  const pluginConnectionIds = new Set(
+    marketplaceItems.flatMap((item) => item.plugin.cloudReadiness?.connections.flatMap((connection) => connection.id ? [connection.id] : []) ?? []),
+  );
+  const connectionRows: ConnectOrganizationRow[] = input.connections.filter((connection) => !pluginConnectionIds.has(connection.id)).map((connection) => ({
     kind: "connection",
     id: connection.id,
     group: resolveConnectionRowGroup(connection),
@@ -531,7 +556,7 @@ function buildConnectRows(input: {
     connection,
   }));
 
-  const pluginRows: ConnectOrganizationRow[] = input.items.filter(isCloudMarketplaceItem).flatMap((item) => {
+  const pluginRows: ConnectOrganizationRow[] = marketplaceItems.flatMap((item) => {
     const group = resolveConnectRowGroup(item.plugin.cloudReadiness, input.role, item.plugin.componentCounts);
     if (group === "excluded") return [];
     return [{
@@ -645,7 +670,11 @@ function ConnectOrganizationList(props: {
   }
 
   return (
-    <div data-testid="connect-organization-section" className="space-y-3">
+    <div
+      data-testid="connect-organization-section"
+      data-connect-marketplace-item-count={props.items.length}
+      className="space-y-3"
+    >
       <div className="space-y-1">
         <div className="text-sm font-semibold text-dls-text">{t("connect.organization_section_title")}</div>
         <div className="text-sm text-dls-secondary">{t("connect.organization_section_description")}</div>
@@ -818,9 +847,9 @@ export function ConnectView(props: ConnectViewProps) {
       });
 
   useEffect(() => {
-    if (state !== "active" || connectEnabled !== true) return;
+    if (state !== "active") return;
     void refreshMarketplaceItems?.();
-  }, [connectEnabled, refreshMarketplaceItems, state]);
+  }, [refreshMarketplaceItems, state]);
 
   useEffect(() => {
     setScopedDiagnosticsState((current) => readDiagnosticsValueForScope(current, diagnosticsScope) !== null

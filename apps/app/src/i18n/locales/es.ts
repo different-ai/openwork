@@ -76,7 +76,7 @@ export default {
   "common.submit": "Enviar",
   "common.unknown": "Desconocido",
   "composer.agent_label": "Agente",
-  "composer.any_file_type_supported": "Compatible: PDF, imágenes, texto, Word y PowerPoint.",
+  "composer.any_file_type_supported": "Compatible: PDF, imágenes, texto, Word, PowerPoint y Excel.",
   "composer.attach_files": "Adjuntar archivos",
   "composer.attachments_unavailable": "Los archivos adjuntos no están disponibles.",
   "composer.behavior_label": "Comportamiento",

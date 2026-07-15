@@ -107,6 +107,7 @@ type StatusBarOverrides = Pick<
   | "settingsOpen"
   | "reloadBusy"
   | "reloadError"
+  | "openWorkConnectState"
 >;
 
 export type SessionPageHistoryControls = {
@@ -1421,6 +1422,7 @@ export function SessionPage(props: SessionPageProps) {
               showSettingsButton={props.statusBar?.showSettingsButton}
               reloadBusy={props.statusBar?.reloadBusy}
               reloadError={props.statusBar?.reloadError}
+              openWorkConnectState={props.statusBar?.openWorkConnectState}
             />
           ) : null}
               </main>

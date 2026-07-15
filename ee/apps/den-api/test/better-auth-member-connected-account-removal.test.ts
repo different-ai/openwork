@@ -15,6 +15,7 @@ beforeAll(async () => {
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
+  process.env.DEN_ORG_MODE = "multi_org"
 
   authModule = await import("../src/auth.js")
   dbModule = await import("../src/db.js")

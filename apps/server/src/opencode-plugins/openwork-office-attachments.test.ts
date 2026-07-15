@@ -12,8 +12,10 @@ import { OpenWorkOfficeAttachments } from "./openwork-office-attachments.js";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const DOCX_SENTINEL = "DOCX sentinel fact: Northstar margin lift is 17.42 percent.";
 const PPTX_SENTINEL = "PPTX sentinel fact: Launch window opens on 2026-09-17.";
+const XLSX_SENTINEL = "XLSX sentinel fact: Northstar revenue is 1742.42.";
 const ZIP_LOCAL_FILE_HEADER = 0x04034b50;
 const ZIP_CENTRAL_DIRECTORY_HEADER = 0x02014b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY = 0x06054b50;
@@ -145,6 +147,16 @@ function pptxFixture(text = PPTX_SENTINEL) {
   ]);
 }
 
+function xlsxFixture(text = XLSX_SENTINEL) {
+  return zip([
+    { name: "xl/workbook.xml", data: Buffer.from(`<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Summary" sheetId="1" r:id="rId1"/></sheets></workbook>`, "utf8") },
+    { name: "xl/_rels/workbook.xml.rels", data: Buffer.from(`<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`, "utf8") },
+    { name: "xl/sharedStrings.xml", data: Buffer.from(`<sst><si><t>${text}</t></si><si><t>Northstar Revenue</t></si><si><r><t>EM</t></r><r><t>EA</t></r></si></sst>`, "utf8") },
+    { name: "xl/styles.xml", data: Buffer.from(`<styleSheet><numFmts count="1"><numFmt numFmtId="164" formatCode="$#,##0.00"/></numFmts><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164" applyNumberFormat="1"/></cellXfs></styleSheet>`, "utf8") },
+    { name: "xl/worksheets/sheet1.xml", data: Buffer.from(`<worksheet><dimension ref="A1:D3"/><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row><row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2" t="s"><v>2</v></c><c r="C2" s="1"><v>1742.42</v></c><c r="D2" s="1"><f>SUM(C2:C3)</f><v>3484.84</v></c></row><row r="3"><c r="C3" s="1"><v>1742.42</v></c></row></sheetData><mergeCells count="1"><mergeCell ref="A1:D1"/></mergeCells></worksheet>`, "utf8") },
+  ]);
+}
+
 async function transform(root: string, messages: unknown[]) {
   const plugin = await OpenWorkOfficeAttachments({ directory: root });
   const output = { messages: structuredClone(messages) };
@@ -185,6 +197,35 @@ describe("OpenWorkOfficeAttachments", () => {
     });
   });
 
+  test("extracts XLSX structure, values, formulas, styles, merged cells, and materializes exact bytes", async () => {
+    await withWorkspace(async (root) => {
+      const xlsx = xlsxFixture();
+      const messages = await transform(root, [{
+        role: "user",
+        parts: [{ id: "part-xlsx", sessionID: "ses_xlsx", messageID: "msg_xlsx", type: "file", filename: "RevenueWorkbook.xlsx", mediaType: XLSX_MIME, url: dataUrl(XLSX_MIME, xlsx) }],
+      }]);
+
+      const xlsxRecord = expectRecord(messageParts(messages[0])[0]);
+      const text = textOf(xlsxRecord);
+      expect(xlsxRecord).toMatchObject({ id: "part-xlsx", sessionID: "ses_xlsx", messageID: "msg_xlsx", type: "text" });
+      expect(text).toContain(`canonical_mime: ${XLSX_MIME}`);
+      expect(text).toContain(`sha256: ${sha256(xlsx)}`);
+      expect(text).toContain("xlsx_workbook:");
+      expect(text).toContain("sheet_count: 1");
+      expect(text).toContain("name: \"Summary\"");
+      expect(text).toContain("merged_ranges: \"A1:D1\"");
+      expect(text).toContain("cell: \"A1\"");
+      expect(text).toContain(`displayed_value: "${XLSX_SENTINEL}"`);
+      expect(text).toContain("cell: \"C2\"");
+      expect(text).toContain("raw_value: \"1742.42\"");
+      expect(text).toContain("number_format: \"$#,##0.00\"");
+      expect(text).toContain("formula: \"SUM(C2:C3)\"");
+      expect(JSON.stringify(messages)).not.toContain(xlsx.toString("base64"));
+      expect(JSON.stringify(messages)).not.toContain('"type":"file"');
+      await expect(readFile(join(root, pathFromText(text)))).resolves.toEqual(xlsx);
+    });
+  });
+
   test("preserves the output messages array reference", async () => {
     await withWorkspace(async (root) => {
       const docx = docxFixture();
@@ -199,25 +240,39 @@ describe("OpenWorkOfficeAttachments", () => {
 
   test("is idempotent on replay", async () => {
     await withWorkspace(async (root) => {
-      const docx = docxFixture();
-      const messages = [{ role: "user", parts: [{ id: "stable", type: "file", filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) }] }];
+      const xlsx = xlsxFixture();
+      const messages = [{ role: "user", parts: [{ id: "stable", type: "file", filename: "RevenueWorkbook.xlsx", mediaType: XLSX_MIME, url: dataUrl(XLSX_MIME, xlsx) }] }];
       const firstText = textOf(messageParts((await transform(root, messages))[0])[0]);
       const secondText = textOf(messageParts((await transform(root, messages))[0])[0]);
       expect(firstText).toBe(secondText);
-      await expect(readFile(join(root, pathFromText(firstText)))).resolves.toEqual(docx);
+      expect(firstText).toContain(XLSX_SENTINEL);
+      await expect(readFile(join(root, pathFromText(firstText)))).resolves.toEqual(xlsx);
     });
   });
 
   test("normalizes generic-MIME workspace file URLs by safe extension", async () => {
     await withWorkspace(async (root) => {
       const pptx = pptxFixture();
+      const xlsx = xlsxFixture();
       await mkdir(join(root, "input"), { recursive: true });
       const path = join(root, "input", "LaunchRoadmap.PPTX");
+      const spreadsheetPath = join(root, "input", "RevenueWorkbook.XLSX");
       await writeFile(path, pptx);
-      const messages = await transform(root, [{ role: "user", parts: [{ type: "file", filename: "LaunchRoadmap.PPTX", mime: "application/octet-stream", url: pathToFileURL(path).toString() }] }]);
-      const text = textOf(messageParts(messages[0])[0]);
-      expect(text).toContain(PPTX_SENTINEL);
-      expect(text).toContain(`canonical_mime: ${PPTX_MIME}`);
+      await writeFile(spreadsheetPath, xlsx);
+      const messages = await transform(root, [{
+        role: "user",
+        parts: [
+          { type: "file", filename: "LaunchRoadmap.PPTX", mime: "application/octet-stream", url: pathToFileURL(path).toString() },
+          { type: "file", filename: "RevenueWorkbook.XLSX", mime: "", url: pathToFileURL(spreadsheetPath).toString() },
+        ],
+      }]);
+      const [pptxPart, xlsxPart] = messageParts(messages[0]);
+      const pptxText = textOf(pptxPart);
+      const xlsxText = textOf(xlsxPart);
+      expect(pptxText).toContain(PPTX_SENTINEL);
+      expect(pptxText).toContain(`canonical_mime: ${PPTX_MIME}`);
+      expect(xlsxText).toContain(XLSX_SENTINEL);
+      expect(xlsxText).toContain(`canonical_mime: ${XLSX_MIME}`);
     });
   });
 
@@ -301,6 +356,17 @@ describe("OpenWorkOfficeAttachments", () => {
     });
   });
 
+  test("materializes malformed XLSX files but replaces them with an actionable placeholder", async () => {
+    await withWorkspace(async (root) => {
+      const malformed = Buffer.from("not a zip", "utf8");
+      const messages = await transform(root, [{ role: "user", parts: [{ type: "file", filename: "RevenueWorkbook.xlsx", mediaType: XLSX_MIME, url: dataUrl(XLSX_MIME, malformed) }] }]);
+      const text = textOf(messageParts(messages[0])[0]);
+      expect(text).toContain("extraction_error:");
+      expect(text).toContain("No text could be safely extracted");
+      await expect(readFile(join(root, pathFromText(text)))).resolves.toEqual(malformed);
+    });
+  });
+
   test("rejects EOCD comment-length mismatches", async () => {
     await withWorkspace(async (root) => {
       const corrupted = Buffer.from(docxFixture());
@@ -328,6 +394,7 @@ describe("OpenWorkOfficeAttachments", () => {
       const tooManyEntries = zip(Array.from({ length: 130 }, (_item, index) => ({ name: `word/header${index}.xml`, data: Buffer.from("<w:t>x</w:t>", "utf8") })));
       const tooLargeEntry = zip([{ name: "word/document.xml", data: Buffer.alloc(2 * 1024 * 1024 + 1, "A") }]);
       const tooLargeTotal = zip(Array.from({ length: 11 }, (_item, index) => ({ name: `word/header${index}.xml`, data: Buffer.alloc(1024 * 1024, "A") })));
+      const xlsxRatioBomb = zip([{ name: "xl/worksheets/sheet1.xml", data: Buffer.alloc(200_000, "A"), method: 8 }]);
       const messages = await transform(root, [{
         role: "user",
         parts: [
@@ -335,19 +402,27 @@ describe("OpenWorkOfficeAttachments", () => {
           { type: "file", filename: "entries.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, tooManyEntries) },
           { type: "file", filename: "entry.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, tooLargeEntry) },
           { type: "file", filename: "total.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, tooLargeTotal) },
+          { type: "file", filename: "ratio.xlsx", mediaType: XLSX_MIME, url: dataUrl(XLSX_MIME, xlsxRatioBomb) },
         ],
       }]);
-      const [ratioPart, entriesPart, entryPart, totalPart] = messageParts(messages[0]);
+      const [ratioPart, entriesPart, entryPart, totalPart, xlsxRatioPart] = messageParts(messages[0]);
       expect(textOf(ratioPart)).toContain("compression ratio limit");
       expect(textOf(entriesPart)).toContain("entry count");
       expect(textOf(entryPart)).toContain("per-entry uncompressed limit");
       expect(textOf(totalPart)).toContain("total uncompressed limit");
+      expect(textOf(xlsxRatioPart)).toContain("compression ratio limit");
     });
   });
 
   test("leaves non-Office file parts unchanged", async () => {
     await withWorkspace(async (root) => {
-      const original = [{ role: "user", parts: [{ id: "pdf", type: "file", filename: "brief.pdf", mediaType: "application/pdf", url: "data:application/pdf;base64,JVBERi0=" }] }];
+      const original = [{
+        role: "user",
+        parts: [
+          { id: "pdf", type: "file", filename: "brief.pdf", mediaType: "application/pdf", url: "data:application/pdf;base64,JVBERi0=" },
+          { id: "xls", type: "file", filename: "legacy.xls", mediaType: "application/octet-stream", url: "data:application/octet-stream;base64,AA==" },
+        ],
+      }];
       expect(await transform(root, original)).toEqual(original);
     });
   });

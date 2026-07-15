@@ -3,12 +3,12 @@ import { describe, it } from "node:test"
 import { parseEnterpriseMcpClientEnabled } from "../src/enterprise-mcp-client-flag.js"
 
 describe("DEN_ENABLE_ENTERPRISE_MCP_CLIENT", () => {
-  it("keeps the current Den implementation when unset or false", () => {
-    assert.equal(parseEnterpriseMcpClientEnabled(undefined), false)
+  it("defaults to the enterprise client while preserving false as rollback", () => {
+    assert.equal(parseEnterpriseMcpClientEnabled(undefined), true)
     assert.equal(parseEnterpriseMcpClientEnabled("false"), false)
   })
 
-  it("enables the enterprise MCP client only for true", () => {
+  it("accepts an explicit true value", () => {
     assert.equal(parseEnterpriseMcpClientEnabled("true"), true)
   })
 

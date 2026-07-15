@@ -55,6 +55,56 @@ export type ExternalMcpConnection = {
   identityManagedBy: ExternalMcpRequiredBy[];
   access: ExternalMcpAccessSummary | null;
   oauthClientId?: string | null;
+  oauthCallbackUrl?: string | null;
+  oauthSharedCallbackUrl?: string | null;
+  oauthClientMetadataUrl?: string | null;
+  oauthCallbackMode?: "shared-v1" | "legacy-v1" | null;
+  oauthRegistrationSource?: "pre-registered" | "client-metadata" | "dynamic" | null;
+  authorizationServerIssuer?: string | null;
+  requestedScopes?: string[];
+  oauthMigrationStatus?: "current" | "legacy_manual_client" | "unclassified" | null;
+};
+
+export type McpRequirementsDiscovery = {
+  status: "ready" | "manual_action_required" | "unsupported" | "unreachable";
+  server: {
+    url: string;
+    protocolVersion?: string;
+    initialize: "succeeded" | "authentication_required" | "failed";
+  };
+  authentication: {
+    kind: "none" | "oauth" | "manual_bearer" | "unknown";
+    resource?: string;
+    protectedResourceMetadataUrl?: string;
+    authorizationServers: Array<{
+      issuer: string;
+      authorizationEndpoint?: string;
+      tokenEndpoint?: string;
+      registrationEndpoint?: string;
+      clientIdMetadataDocumentSupported: boolean;
+      scopesSupported?: string[];
+      grantTypesSupported?: string[];
+      codeChallengeMethodsSupported?: string[];
+      tokenEndpointAuthMethodsSupported?: string[];
+    }>;
+    requiredScopes: string[];
+    recommendedScopes: string[];
+    refreshSupport: "supported" | "not_advertised" | "unknown";
+    availableRegistrationMethods: Array<"pre_registered" | "client_metadata" | "dynamic">;
+    recommendedRegistrationMethod: "client_metadata" | "dynamic" | "pre_registered";
+  };
+  tools: {
+    visibility: "available_without_auth" | "requires_auth" | "unavailable";
+    count?: number;
+    items?: Array<{
+      name: string;
+      readOnlyHint?: boolean;
+      destructiveHint?: boolean;
+      openWorldHint?: boolean;
+    }>;
+  };
+  manualRequirements: Array<{ code: string; label: string; reason: string; required: boolean }>;
+  warnings: Array<{ code: string; message: string }>;
 };
 
 export type ExternalMcpTool = {
@@ -389,6 +439,8 @@ export type CreateMcpConnectionInput = {
     clientId: string;
     clientSecret?: string;
   };
+  authorizationServerIssuer?: string | null;
+  requestedScopes?: string[];
   access: McpConnectionAccessInput;
 };
 
@@ -404,8 +456,55 @@ export type UpdateMcpConnectionInput = {
     clientId: string;
     clientSecret?: string;
   };
+  authorizationServerIssuer?: string | null;
+  requestedScopes?: string[];
   access: McpConnectionAccessInput;
 };
+
+export function useDiscoverMcpConnectionRequirements() {
+  const { orgId } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (url: string): Promise<McpRequirementsDiscovery> => {
+      const { response, payload } = await requestJson(
+        "/v1/mcp-connections/discover",
+        {
+          method: "POST",
+          headers: getOrgScopeHeaders(requireOrgId(orgId)),
+          body: JSON.stringify({ url }),
+        },
+        20000,
+      );
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to discover MCP requirements (${response.status}).`);
+      }
+      return payload as McpRequirementsDiscovery;
+    },
+  });
+}
+
+export function useMigrateMcpConnectionCallback() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (connectionId: string): Promise<ExternalMcpConnection> => {
+      let migrated: ExternalMcpConnection | null = null;
+      await runReauthableAction("migrate-mcp-oauth-callback", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/mcp-connections/${encodeURIComponent(connectionId)}/oauth/use-shared-callback`,
+          { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+          20000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to update the MCP callback (${response.status}).`);
+        }
+        migrated = payload as ExternalMcpConnection;
+      });
+      if (!migrated) throw new Error("MCP callback migration response was incomplete.");
+      return migrated;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
+  });
+}
 
 export type UpdatedMcpConnection = ExternalMcpConnection & {
   identityChanged: boolean;

@@ -31,6 +31,16 @@ const connectionSchema = z.object({
 })
 
 const redirectUriSchema = z.string().trim().url()
+const clientMetadataUrlSchema = z.string().trim().url().refine((value) => {
+  const url = new URL(value)
+  return url.protocol === "https:" && url.pathname !== "/"
+}, "An OAuth client metadata document URL must use HTTPS and include a path.")
+const oauthConfigurationSchema = z.object({
+  applicationType: z.enum(["web", "native"]),
+  clientMetadataUrl: clientMetadataUrlSchema.optional(),
+  authorizationServerIssuer: z.string().trim().url().optional(),
+  requestedScopes: z.array(z.string().trim().min(1)).max(128).optional(),
+})
 const toolNameSchema = z.string().trim().min(1)
 const authorizationIdSchema = z.string().min(1).max(8 * 1024)
 const authorizationCodeSchema = z.string().min(1).max(8 * 1024)
@@ -158,6 +168,13 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
   }): Session {
     const serverUrl = validateConnection(input.connection)
     const redirectUri = validateRedirectUri(input.redirectUri)
+    const oauthConfiguration = input.connection.authorization.type === "oauth"
+      ? configurationValue(() => oauthConfigurationSchema.parse(
+          input.connection.authorization.type === "oauth"
+            ? input.connection.authorization.configuration ?? { applicationType: "web" }
+            : { applicationType: "web" },
+        ))
+      : undefined
     const controller = new AbortController()
     const configuredExpiresAt = options.lifecycle?.expiresAt ?? (clock.now() + operationTimeoutMs)
     const remaining = Math.max(1, Math.min(operationTimeoutMs, configuredExpiresAt - clock.now()))
@@ -193,6 +210,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           },
           authorizationTransactionTtlMs,
           expirationSkewMs,
+          oauthConfiguration,
         })
       : undefined
     const transport = new StreamableHTTPClientTransport(serverUrl, {

@@ -1064,19 +1064,20 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     setAuthBusy(true);
     setAuthError(null);
+    const submitMode: AuthMode = isSingleOrgMode && !runtimeConfig.singleOrgAllowPublicSignup && authMode === "sign-up" ? "sign-in" : authMode;
     trackPosthogEvent("den_auth_submitted", {
-      mode: authMode,
+      mode: submitMode,
       method: "email"
     });
 
     try {
-      const endpoint = authMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
+      const endpoint = submitMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
       const trimmedEmail = email.trim();
       if (trimmedEmail && await redirectToRequiredSso(trimmedEmail)) {
         return null;
       }
       const body =
-        authMode === "sign-up"
+        submitMode === "sign-up"
           ? {
               name: authName.trim() || DEFAULT_AUTH_NAME,
               email: trimmedEmail,
@@ -1098,7 +1099,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         }
         setAuthError(getErrorMessage(payload, `Authentication failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
-          mode: authMode,
+          mode: submitMode,
           method: "email",
           status: response.status
         });
@@ -1107,7 +1108,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
       const token = getToken(payload);
 
-      if (authMode === "sign-up" && !token) {
+      if (submitMode === "sign-up" && !token) {
         setUser(null);
         openVerificationStep(trimmedEmail, `We emailed a 6-digit verification code to ${trimmedEmail}. Enter it below to finish creating your account.`);
         appendEvent("info", "Verification code sent", trimmedEmail);
@@ -1117,12 +1118,12 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         });
         return null;
       }
-      return await finalizeEmailPasswordSignIn(authMode, trimmedEmail);
+      return await finalizeEmailPasswordSignIn(submitMode, trimmedEmail);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthError(message);
       trackPosthogEvent("den_auth_failed", {
-        mode: authMode,
+        mode: submitMode,
         method: "email",
         reason: "network_error"
       });

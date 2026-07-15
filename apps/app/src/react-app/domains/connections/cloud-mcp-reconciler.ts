@@ -192,10 +192,27 @@ export function isCloudMcpAuthTokenFailureCode(code: string | null | undefined):
   return normalized === "openwork_cloud_auth_required" ||
     normalized === "openwork_cloud_auth_invalid" ||
     normalized === "openwork_cloud_token_expired" ||
+    // The Den rejects an expired/missing first-party bearer with exactly these
+    // codes; the `_mcp_` infix means the `invalid_token` substring below never
+    // matches them (field incident: token sat expired for 7 days because the
+    // remint retry never fired).
+    normalized === "invalid_mcp_token" ||
+    normalized === "missing_mcp_token" ||
     normalized.includes("invalid_token") ||
     normalized.includes("unauthorized") ||
     normalized.includes("expired") ||
     normalized.includes("auth");
+}
+
+/**
+ * Health failures carry the primary `code` plus optional `aliases` (e.g. the
+ * direct-probe 401 reports code `invalid_mcp_token` with alias
+ * `openwork_cloud_token_expired`). Remint decisions must consider both.
+ */
+export function isCloudMcpAuthTokenFailure(failure: Pick<OpenworkCloudMcpFailure, "code" | "aliases"> | null | undefined): boolean {
+  if (!failure) return false;
+  if (isCloudMcpAuthTokenFailureCode(failure.code)) return true;
+  return (failure.aliases ?? []).some((alias) => isCloudMcpAuthTokenFailureCode(alias));
 }
 
 function shouldSkipForPrerequisite(input: CloudMcpReconcilerInput, scope: CloudMcpScope): CloudMcpOperationResult | null {
@@ -203,7 +220,13 @@ function shouldSkipForPrerequisite(input: CloudMcpReconcilerInput, scope: CloudM
   if (input.mode === "health") return null;
   if (!input.context.denAuthToken?.trim()) return { status: "skipped", health: null, skippedReason: "signed_out", attempts: 0, markerWritten: false, reminted: false };
   if (!scope.orgId) return { status: "skipped", health: null, skippedReason: "missing_org", attempts: 0, markerWritten: false, reminted: false };
-  if (input.configuredEnabled === false || readCloudMcpUserState(scope) !== null) {
+  if (input.configuredEnabled === false) {
+    return { status: "skipped", health: null, skippedReason: "disabled", attempts: 0, markerWritten: false, reminted: false };
+  }
+  // Recorded user intent only blocks provisioning (entry absent/unknown). A
+  // known-enabled entry must keep its token fresh even when a stale
+  // disabled/removed intent is still recorded.
+  if (input.configuredEnabled !== true && readCloudMcpUserState(scope) !== null) {
     return { status: "skipped", health: null, skippedReason: "disabled", attempts: 0, markerWritten: false, reminted: false };
   }
   return null;
@@ -274,7 +297,7 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
   let health = first.health;
   let token = first.token;
   let reminted = false;
-  if (isCloudMcpAuthTokenFailureCode(health?.firstFailure?.code)) {
+  if (isCloudMcpAuthTokenFailure(health?.firstFailure)) {
     const second = await mintAndPost(input, scope);
     attempts += 1;
     reminted = true;

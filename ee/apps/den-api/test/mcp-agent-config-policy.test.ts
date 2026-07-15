@@ -99,6 +99,14 @@ describe("agent-configurable org connections policy", () => {
       method: "POST",
       path: "/v1/mcp-connections",
       hasBody: true,
+      bodySchema: expect.objectContaining({
+        type: "object",
+        properties: expect.objectContaining({
+          name: expect.objectContaining({ type: "string" }),
+          url: expect.objectContaining({ type: "string" }),
+        }),
+        required: expect.arrayContaining(["name", "url"]),
+      }),
     }))
     expect(toolCatalogMatches).toContainEqual(expect.objectContaining({
       method: "GET",

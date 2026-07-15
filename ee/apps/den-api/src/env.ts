@@ -35,6 +35,7 @@ const EnvSchema = z.object({
   DEN_SINGLE_ORG_NAME: z.string().optional(),
   DEN_SINGLE_ORG_SLUG: z.string().optional(),
   DEN_SINGLE_ORG_OWNER_EMAILS: z.string().optional(),
+  DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: z.string().optional(),
   DEN_REQUIRE_EMAIL_VERIFICATION: z.string().optional(),
   DEN_PASSWORD_BREACH_SCREENING_ENABLED: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
@@ -222,6 +223,23 @@ export function normalizeSingleOrgSlug(value: string | undefined) {
   }
 
   return normalized
+}
+
+export function parseSingleOrgAllowPublicSignup(value: string | undefined, orgMode: DenOrgMode) {
+  const normalized = value?.trim().toLowerCase()
+  if (!normalized) {
+    return orgMode === "multi_org"
+  }
+
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
+    return true
+  }
+
+  if (["0", "false", "no", "n", "off"].includes(normalized)) {
+    return false
+  }
+
+  throw new Error("DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP must be true or false")
 }
 
 function normalizeOrigin(origin: string) {
@@ -427,6 +445,7 @@ export const env = {
   singleOrg: {
     name: optionalString(parsed.DEN_SINGLE_ORG_NAME) ?? "OpenWork",
     slug: normalizeSingleOrgSlug(parsed.DEN_SINGLE_ORG_SLUG),
+    allowPublicSignup: parseSingleOrgAllowPublicSignup(parsed.DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP, orgMode),
     ownerEmails: splitCsv(parsed.DEN_SINGLE_ORG_OWNER_EMAILS)
       .map((email) => email.toLowerCase()),
   },

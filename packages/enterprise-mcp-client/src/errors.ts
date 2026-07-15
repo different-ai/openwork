@@ -2,6 +2,7 @@ import type { EnterpriseMcpOperationPhase, EnterpriseMcpRequestPhase } from "./c
 
 export type EnterpriseMcpErrorCode =
   | "MCP_CONFIGURATION_FAILED"
+  | "MCP_REQUIREMENTS_DISCOVERY_FAILED"
   | "MCP_CONNECTION_HANDSHAKE_FAILED"
   | "MCP_AUTHORIZATION_CALLBACK_FAILED"
   | "MCP_PROTOCOL_INITIALIZE_FAILED"
@@ -11,6 +12,7 @@ export type EnterpriseMcpErrorCode =
 
 const errorCodeByPhase: Record<EnterpriseMcpOperationPhase, EnterpriseMcpErrorCode> = {
   configuration: "MCP_CONFIGURATION_FAILED",
+  "requirements-discovery": "MCP_REQUIREMENTS_DISCOVERY_FAILED",
   "connection-handshake": "MCP_CONNECTION_HANDSHAKE_FAILED",
   "authorization-callback": "MCP_AUTHORIZATION_CALLBACK_FAILED",
   "protocol-initialize": "MCP_PROTOCOL_INITIALIZE_FAILED",
@@ -21,6 +23,7 @@ const errorCodeByPhase: Record<EnterpriseMcpOperationPhase, EnterpriseMcpErrorCo
 
 const phaseLabel: Record<EnterpriseMcpOperationPhase, string> = {
   configuration: "connection configuration",
+  "requirements-discovery": "MCP connection requirements discovery",
   "connection-handshake": "MCP connection handshake",
   "authorization-callback": "OAuth authorization callback",
   "protocol-initialize": "MCP protocol initialization",
@@ -68,6 +71,9 @@ export type EnterpriseMcpOAuthContractErrorCode =
   | "MCP_OAUTH_AUTHORIZATION_CLIENT_CHANGED"
   | "MCP_OAUTH_CLIENT_EXPIRED"
   | "MCP_OAUTH_CREDENTIAL_EXPIRED"
+  | "MCP_OAUTH_CREDENTIAL_CHANGED"
+  | "MCP_OAUTH_CONFIGURATION_REQUIRED"
+  | "MCP_OAUTH_ISSUER_MISMATCH"
   | "MCP_OAUTH_PERSISTENCE_INVALID"
   | "MCP_LIFECYCLE_DEADLINE"
 

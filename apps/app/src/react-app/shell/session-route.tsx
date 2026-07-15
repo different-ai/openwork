@@ -401,49 +401,18 @@ export function SessionRoute() {
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     opencodeClient,
     directory: selectedWorkspaceRoot,
+    engineReloadBusy: reloadCoordinator.reloadBusy,
     providerModel: cloudMcpProviderModel,
   });
   const {
     state: cloudMcpSubmissionState,
     submit: submitWithCloudMcpReadiness,
   } = useCloudMcpSubmitReadiness({
-    cloudSignedIn: denAuth.isSignedIn,
+    cloudAuthStatus: denAuth.status,
     client: selectedWorkspaceEndpoint?.client ?? null,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     providerModel: cloudMcpProviderModel,
   });
-  useEffect(() => {
-    const toastId = `cloud-mcp-session-maintenance:${selectedWorkspaceEndpoint?.workspaceId ?? "none"}`;
-    if (sessionMcpMaintenance.status === "retrying") {
-      toast.warning("Restoring connected service tools", {
-        id: toastId,
-        description: `${sessionMcpMaintenance.issue?.message ?? "OpenWork could not verify the tools yet."} Retrying automatically (${sessionMcpMaintenance.attempt}/${sessionMcpMaintenance.maxAttempts}).`,
-        action: {
-          label: "Open Connect",
-          onClick: () => navigate("/settings/connect"),
-        },
-        duration: Infinity,
-      });
-    } else if (sessionMcpMaintenance.status === "failed") {
-      toast.error("Connected service tools are unavailable", {
-        id: toastId,
-        description: [
-          sessionMcpMaintenance.issue?.message,
-          sessionMcpMaintenance.issue?.recommendedAction,
-        ].filter(Boolean).join(" "),
-        action: {
-          label: "Open Connect",
-          onClick: () => navigate("/settings/connect"),
-        },
-        duration: Infinity,
-      });
-    } else {
-      toast.dismiss(toastId);
-    }
-    return () => {
-      toast.dismiss(toastId);
-    };
-  }, [navigate, selectedWorkspaceEndpoint?.workspaceId, sessionMcpMaintenance]);
   // Agent selection is persisted in local prefs (like the model variant) so
   // it survives reloads instead of silently falling back to "build" (#2101).
   const selectedAgent = local.prefs.selectedAgent;
@@ -942,7 +911,9 @@ export function SessionRoute() {
         if (selectedModelUnavailable) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
         return submitWithCloudMcpReadiness({
-          skipGate: draft.mode === "shell",
+          // Temporarily bypass the pre-send Cloud MCP gate: it blocks every
+          // message, including tasks that do not use connected services.
+          skipGate: true,
           send: async () => {
             captureAnalyticsEvent("task_message_sent", {
               mode: draft.mode ?? "prompt",
@@ -2303,7 +2274,12 @@ export function SessionRoute() {
           : undefined
       }
       onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
-      statusBar={{ loading: showPreparingStatus, reloadBusy: reloadCoordinator.reloadBusy, reloadError: reloadCoordinator.reloadError }}
+      statusBar={{
+        loading: showPreparingStatus,
+        reloadBusy: reloadCoordinator.reloadBusy,
+        reloadError: reloadCoordinator.reloadError,
+        openWorkConnectState: sessionMcpMaintenance,
+      }}
       notFoundMessage={routeNotFoundMessage}
       onAccessibleTargetsChange={setPaletteAccessibleTargets}
     />

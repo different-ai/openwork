@@ -4,8 +4,8 @@ import { parseMySqlConnectionConfig } from "./src/mysql-config.ts"
 
 const databaseUrl = process.env.DATABASE_URL?.trim()
 
-function isGenerateCommand() {
-  return process.argv.some((arg) => arg === "generate")
+function isOfflineSchemaCommand() {
+  return process.argv.some((arg) => arg === "generate" || arg === "export")
 }
 
 function resolveDrizzleDbCredentials() {
@@ -19,7 +19,7 @@ function resolveDrizzleDbCredentials() {
   const database = process.env.DATABASE_NAME?.trim()
 
   if (!host || !user || !database) {
-    if (isGenerateCommand()) {
+    if (isOfflineSchemaCommand()) {
       return {
         host: "127.0.0.1",
         user: "root",

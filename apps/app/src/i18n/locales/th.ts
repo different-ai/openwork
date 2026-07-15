@@ -76,7 +76,7 @@ export default {
   "common.submit": "ส่ง",
   "common.unknown": "ไม่ทราบ",
   "composer.agent_label": "Agent",
-  "composer.any_file_type_supported": "รองรับ: PDF, รูปภาพ, ข้อความ, Word และ PowerPoint",
+  "composer.any_file_type_supported": "รองรับ: PDF, รูปภาพ, ข้อความ, Word, PowerPoint และ Excel",
   "composer.attach_files": "แนบไฟล์",
   "composer.attachments_unavailable": "ไฟล์แนบไม่พร้อมใช้งาน",
   "composer.behavior_label": "พฤติกรรม",

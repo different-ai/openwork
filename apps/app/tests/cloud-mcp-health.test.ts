@@ -11,6 +11,7 @@ import {
 import {
   cloudMcpDisplaySummary,
   cloudMcpFailureStageLabel,
+  isCloudMcpAuthTokenFailure,
   isCloudMcpAuthTokenFailureCode,
   runOpenworkCloudMcpReconciler,
 } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
@@ -254,6 +255,53 @@ describe("OpenWork Cloud MCP reconciler", () => {
 
     expect(mintCount).toBe(1);
     expect(postCount).toBe(1);
+  });
+
+  test("expired first-party token codes count as auth failures", () => {
+    // Field incident regression: the Den rejects an expired opaque bearer with
+    // code `invalid_mcp_token`; the `_mcp_` infix defeated the substring check
+    // and the remint retry never fired for ~7 days.
+    expect(isCloudMcpAuthTokenFailureCode("invalid_mcp_token")).toBe(true);
+    expect(isCloudMcpAuthTokenFailureCode("missing_mcp_token")).toBe(true);
+    expect(isCloudMcpAuthTokenFailureCode("openwork_cloud_token_expired")).toBe(true);
+    expect(isCloudMcpAuthTokenFailureCode("invalid_token")).toBe(true);
+    // Exclusions still hold.
+    expect(isCloudMcpAuthTokenFailureCode("openwork_cloud_client_registration_required")).toBe(false);
+    expect(isCloudMcpAuthTokenFailureCode("membership_not_found")).toBe(false);
+    expect(isCloudMcpAuthTokenFailureCode(null)).toBe(false);
+  });
+
+  test("auth aliases trigger the remint retry when the primary code is unrecognized", async () => {
+    expect(isCloudMcpAuthTokenFailure({ code: "cloud_connection_failed", aliases: ["openwork_cloud_token_expired"] })).toBe(true);
+    expect(isCloudMcpAuthTokenFailure({ code: "cloud_connection_failed", aliases: ["cloud_tools_missing"] })).toBe(false);
+    expect(isCloudMcpAuthTokenFailure(null)).toBe(false);
+
+    let mintCount = 0;
+    const posts: OpenworkCloudMcpReconcilePayload[] = [];
+    const result = await runOpenworkCloudMcpReconciler({
+      mode: "repair",
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        getOpenworkCloudMcpHealth: async () => health({ usable: false }),
+        reconcileOpenworkCloudMcp: async (_workspaceId, payload) => {
+          posts.push(payload);
+          return posts.length === 1
+            ? health({ usable: false, failure: { ...failure("invalid_mcp_token"), aliases: ["openwork_cloud_token_expired"] } })
+            : health({ usable: true });
+        },
+      },
+      context,
+      mintToken: async () => {
+        mintCount += 1;
+        return { ...token, token: `owt_mcp_secret_${mintCount}` };
+      },
+      force: true,
+      refreshMarginMs: 1,
+    });
+
+    expect(result.health?.usable).toBe(true);
+    expect(mintCount).toBe(2);
+    expect(posts).toHaveLength(2);
   });
 
   test("dedupe key is scoped by deployment, server, workspace, and org without token", () => {

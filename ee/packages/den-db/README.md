@@ -35,6 +35,12 @@ Install or upgrade a production database, including empty first installs:
 pnpm --dir ee/packages/den-db db:bootstrap
 ```
 
+Containerized production installs run the precompiled artifact directly:
+
+```bash
+node /app/ee/packages/den-db/dist/scripts/bootstrap.js
+```
+
 ## Automated migrations (CI)
 
 Two GitHub Actions workflows keep schema and database in sync:
@@ -81,8 +87,9 @@ ship as a later migration once no deployed code references the old shape.
 
 - The migration chain has no `0000` baseline (history starts at `0001`,
   which alters pre-existing tables), so empty production databases should use
-  `db:bootstrap`. It applies the current schema once, records the migration
-  baseline, then runs `db:migrate`. Use `db:push` only for development.
+  `db:bootstrap`. It applies the build-time current-schema SQL snapshot once,
+  records the migration baseline, then runs pending migrations with Drizzle ORM.
+  Use `db:push` only for development.
 - `db:generate` is the default path for new migration files.
 - `drizzle/meta/` must stay in sync with the SQL migration history so future generation stays incremental.
 - Only repair `drizzle/meta/` manually when recovering broken Drizzle history.

@@ -7,9 +7,32 @@ import test from "node:test";
 import {
   createDemoRun,
   demoEnv,
+  existingDemoRun,
+  parseDemoProcessIds,
   resetDemoData,
   resolveDemoRoot
 } from "./dev-two-electron-demo.mjs";
+
+test("finds stale launchers and profile processes while excluding the current reset", () => {
+  const output = [
+    "101 node /repo/scripts/dev-two-electron-demo.mjs",
+    "102 /bin/sh -c cd /repo && pnpm demo:electron",
+    "103 Electron --user-data-dir=/tmp/demo-root/run-old/demo-a",
+    "104 node /repo/scripts/dev-two-electron-demo.mjs --reset-only",
+    "105 /bin/zsh -lc node /repo/scripts/dev-two-electron-demo.mjs --reset-only",
+    "106 unrelated-process",
+  ].join("\n");
+
+  assert.deepEqual(
+    parseDemoProcessIds(output, {
+      demoRootPath: "/tmp/demo-root",
+      repoRootPath: "/repo",
+      currentPid: 104,
+      parentPid: 105,
+    }),
+    [101, 102, 103],
+  );
+});
 
 test("uses a non-production temporary demo root by default", () => {
   const root = resolveDemoRoot({});
@@ -47,7 +70,18 @@ test("creates fresh, independent folders for every demo launch", async context =
   ]) {
     assert.equal((await stat(paths.userDataDir)).isDirectory(), true);
     assert.equal((await stat(paths.dataDir)).isDirectory(), true);
+    assert.equal((await stat(paths.homeDir)).isDirectory(), true);
+    assert.equal((await stat(paths.configHome)).isDirectory(), true);
   }
+});
+
+test("reopens the same prepared profile pair without falling back to another profile", async context => {
+  const testRoot = await mkdtemp(path.join(os.tmpdir(), "openwork-demo-reopen-test-"));
+  context.after(() => rm(testRoot, { recursive: true, force: true }));
+  const prepared = await createDemoRun(testRoot);
+  const reopened = existingDemoRun(prepared.runRoot);
+
+  assert.deepEqual(reopened, prepared);
 });
 
 test("reset removes all prior demo runs from the configured root", async context => {
@@ -78,6 +112,18 @@ test("points each Electron instance at its own profile folders", async context =
 
   assert.equal(adminEnv.OPENWORK_ELECTRON_USERDATA, run.admin.userDataDir);
   assert.equal(adminEnv.OPENWORK_DATA_DIR, run.admin.dataDir);
+  assert.equal(adminEnv.HOME, run.admin.homeDir);
+  assert.equal(adminEnv.XDG_CONFIG_HOME, run.admin.configHome);
+  assert.equal(adminEnv.XDG_DATA_HOME, run.admin.dataHome);
+  assert.equal(adminEnv.XDG_CACHE_HOME, run.admin.cacheHome);
+  assert.equal(adminEnv.XDG_STATE_HOME, run.admin.stateHome);
+  assert.equal(adminEnv.OPENWORK_ENV_STORE, run.admin.envStorePath);
+  assert.equal(adminEnv.OPENCODE_CONFIG_DIR, run.admin.opencodeConfigDir);
+  assert.equal(adminEnv.APPDATA, run.admin.appDataDir);
+  assert.equal(adminEnv.LOCALAPPDATA, run.admin.localAppDataDir);
+  assert.equal(adminEnv.OPENWORK_DEV_MODE, "1");
+  assert.equal(adminEnv.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN, "1");
+  assert.equal(adminEnv.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION, "1");
   assert.equal(
     consumerEnv.OPENWORK_ELECTRON_USERDATA,
     run.consumer.userDataDir
@@ -88,4 +134,8 @@ test("points each Electron instance at its own profile folders", async context =
     consumerEnv.OPENWORK_ELECTRON_USERDATA
   );
   assert.notEqual(adminEnv.OPENWORK_DATA_DIR, consumerEnv.OPENWORK_DATA_DIR);
+  assert.notEqual(adminEnv.HOME, consumerEnv.HOME);
+  assert.notEqual(adminEnv.XDG_CONFIG_HOME, consumerEnv.XDG_CONFIG_HOME);
+  assert.notEqual(adminEnv.OPENWORK_ENV_STORE, consumerEnv.OPENWORK_ENV_STORE);
+  assert.notEqual(adminEnv.OPENCODE_CONFIG_DIR, consumerEnv.OPENCODE_CONFIG_DIR);
 });

@@ -17,6 +17,7 @@ type AttachmentFileMetadata = {
 const GENERIC_BINARY_MIME = "application/octet-stream";
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 type InboxUploadResult = {
   ok: boolean;
@@ -52,6 +53,7 @@ const EXTENSION_MIME_TYPES: Record<string, string> = {
   pdf: "application/pdf",
   docx: DOCX_MIME,
   pptx: PPTX_MIME,
+  xlsx: XLSX_MIME,
   txt: "text/plain",
   text: "text/plain",
   md: "text/markdown",
@@ -84,6 +86,7 @@ const MIME_FILENAME_EXTENSIONS: Record<string, string> = {
   "application/pdf": "pdf",
   [DOCX_MIME]: "docx",
   [PPTX_MIME]: "pptx",
+  [XLSX_MIME]: "xlsx",
   "application/json": "json",
   "application/javascript": "js",
   "application/xml": "xml",
@@ -105,7 +108,7 @@ function isGenericMime(mime: string) {
 }
 
 function isOfficeMime(mime: string) {
-  return mime === DOCX_MIME || mime === PPTX_MIME;
+  return mime === DOCX_MIME || mime === PPTX_MIME || mime === XLSX_MIME;
 }
 
 function extensionFromFilename(filename: string) {

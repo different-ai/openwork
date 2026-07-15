@@ -47,7 +47,7 @@ Run the migration once, then restart Den:
 
 ```bash
 docker compose -f packaging/docker/docker-compose.den-dev.yml exec den sh -lc \
-  "pnpm --dir /app/ee/packages/den-db run db:bootstrap"
+  "node /app/ee/packages/den-db/dist/scripts/bootstrap.js"
 ```
 
 If the stack has a custom Compose project name, include the same `-p <project>`

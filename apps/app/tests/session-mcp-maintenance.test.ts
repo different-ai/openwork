@@ -361,23 +361,31 @@ describe("session MCP maintenance", () => {
       orgId: SETTINGS.activeOrgId ?? "",
       workspaceId: WORKSPACE_ID,
     });
-    let listed = false;
+    let reconciled = false;
+    let minted = false;
 
     await expect(syncCloudControlMcpInBackground({
       client: {
         baseUrl: "https://worker.openwork.test",
-        listMcp: async () => {
-          listed = true;
-          return { items: [] };
-        },
+        // The engine list is consulted (an existing enabled entry must stay
+        // maintained even under recorded intent), but with no entry present
+        // the recorded removal keeps provisioning skipped.
+        listMcp: async () => ({ items: [] }),
         getOpenworkCloudMcpHealth: async () => cloudHealth(false),
-        reconcileOpenworkCloudMcp: async () => cloudHealth(true),
+        reconcileOpenworkCloudMcp: async () => {
+          reconciled = true;
+          return cloudHealth(true);
+        },
       },
       workspaceId: WORKSPACE_ID,
       settings: SETTINGS,
-      mintToken: async () => MINTED,
+      mintToken: async () => {
+        minted = true;
+        return MINTED;
+      },
     })).resolves.toEqual({ outcome: "skipped", status: "skipped", reason: "disabled", health: null });
-    expect(listed).toBe(false);
+    expect(reconciled).toBe(false);
+    expect(minted).toBe(false);
   });
 
   test("pre-signout cleanup removes runtime MCP and disconnects the exact active workspace before resolving", async () => {
