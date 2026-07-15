@@ -39,6 +39,11 @@
       "development": "./src/den/microsoft-365.ts",
       "default": "./src/den/microsoft-365.ts"
     },
+    "./den/organization-admission": {
+      "types": "./src/den/organization-admission.ts",
+      "development": "./src/den/organization-admission.ts",
+      "default": "./src/den/organization-admission.ts"
+    },
     "./workspace": {
       "types": "./src/workspace.ts",
       "development": "./src/workspace.ts",

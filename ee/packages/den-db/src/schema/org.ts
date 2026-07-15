@@ -1,7 +1,14 @@
 import { relations, sql } from "drizzle-orm"
-import { index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { index, int, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import type { DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
 import type { ConnectLinkClaims } from "@openwork/types/connect-link"
+import type {
+  OrganizationAdmissionMethod,
+  OrganizationAdmissionSource,
+  OrganizationAuthenticationRequirement,
+  OrganizationLifecycleAuthority,
+  OrganizationMembershipRemovalSource,
+} from "@openwork/types/den/organization-admission"
 import { denTypeIdColumn, mediumBlobColumn } from "../columns"
 
 export const DesktopHandoffGrantTable = mysqlTable(
@@ -55,6 +62,24 @@ export const OrganizationTable = mysqlTable(
   (table) => [uniqueIndex("organization_slug").on(table.slug), index("organization_created_at_id").on(table.createdAt, table.id)],
 )
 
+export const OrganizationAdmissionPolicyTable = mysqlTable(
+  "organization_admission_policy",
+  {
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull().primaryKey(),
+    version: int("version").notNull().default(1),
+    admissionMethods: json("admission_methods").$type<OrganizationAdmissionMethod[]>().notNull(),
+    emailDomainMode: varchar("email_domain_mode", { length: 32 }).notNull().default("any"),
+    allowedEmailDomains: json("allowed_email_domains").$type<string[]>().notNull(),
+    authenticationRequirement: varchar("authentication_requirement", { length: 32 }).$type<OrganizationAuthenticationRequirement>().notNull().default("any"),
+    lifecycleAuthority: varchar("lifecycle_authority", { length: 32 }).$type<OrganizationLifecycleAuthority>().notNull().default("local"),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [index("organization_admission_policy_updated_at").on(table.updatedAt)],
+)
+
 export const OrganizationBrandAssetTable = mysqlTable(
   "organization_brand_asset",
   {
@@ -87,8 +112,12 @@ export const MemberTable = mysqlTable(
     invitedByOrgMember: denTypeIdColumn("member", "invited_by_org_member"),
     role: varchar("role", { length: 255 }).notNull().default("member"),
     joinedAt: timestamp("joined_at", { fsp: 3 }).defaultNow(),
+    admissionSource: varchar("admission_source", { length: 32 }).$type<OrganizationAdmissionSource>(),
+    admissionPolicyVersion: int("admission_policy_version"),
+    admittedAt: timestamp("admitted_at", { fsp: 3 }),
     removedAt: timestamp("removed_at", { fsp: 3 }),
     removedByOrgMember: denTypeIdColumn("member", "removed_by_org_member"),
+    removalSource: varchar("removal_source", { length: 32 }).$type<OrganizationMembershipRemovalSource>(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
@@ -113,7 +142,7 @@ export const InvitationTable = mysqlTable(
     teamId: denTypeIdColumn("team", "team_id"),
     inviterId: denTypeIdColumn("user", "inviter_id").notNull(),
     orgMemberId: denTypeIdColumn("member", "org_member_id"),
-    inviteToken: varchar("invite_token", { length: 64 }),
+    inviteTokenHash: varchar("invite_token_hash", { length: 64 }),
     expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
@@ -124,7 +153,7 @@ export const InvitationTable = mysqlTable(
     index("invitation_team_id").on(table.teamId),
     index("invitation_inviter_id").on(table.inviterId),
     index("invitation_org_member_id").on(table.orgMemberId),
-    uniqueIndex("invitation_invite_token").on(table.inviteToken),
+    uniqueIndex("invitation_invite_token_hash").on(table.inviteTokenHash),
   ],
 )
 
