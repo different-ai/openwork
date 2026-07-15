@@ -31,6 +31,7 @@ import {
   type ExternalMcpCredentialMode,
   type ExternalMcpPreset,
   type ExternalMcpTool,
+  type McpRequirementsDiscovery,
   type McpConnectionAccessInput,
   type UpdatedMcpConnection,
   type UpdateMcpConnectionInput,
@@ -38,9 +39,11 @@ import {
   mcpConnectionQueryKeys,
   useCreateMcpConnection,
   useDeleteMcpConnection,
+  useDiscoverMcpConnectionRequirements,
   useMcpConnectionPresets,
   useMcpConnections,
   useMcpConnectionTools,
+  useMigrateMcpConnectionCallback,
   useNativeProviderClient,
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
@@ -211,6 +214,7 @@ export function McpConnectionsScreen() {
   const createConnection = useCreateMcpConnection();
   const updateConnection = useUpdateMcpConnection();
   const startOAuth = useStartMcpConnectionOAuth();
+  const migrateCallback = useMigrateMcpConnectionCallback();
   const deleteConnection = useDeleteMcpConnection();
   const saveNativeClient = useSaveNativeProviderClient();
 
@@ -315,6 +319,30 @@ export function McpConnectionsScreen() {
         ? `${updated.name} was saved and the replacement configuration was validated.`
         : `${updated.name} was updated without disconnecting it.`);
     return updated;
+  }
+
+  async function handleMigrateCallback(connection: ExternalMcpConnection) {
+    setConnectionActionError(null);
+    setConnectionActionNotice(null);
+    const authorizationWindow = openMcpAuthorizationWindow();
+    try {
+      const migrated = await migrateCallback.mutateAsync(connection.id);
+      setConnectionActionNotice(`${migrated.name} now permanently uses the deployment-wide callback.`);
+      await handleConnectOAuth(connection.id, authorizationWindow);
+    } catch (migrationError) {
+      authorizationWindow.close();
+      setConnectionActionError({
+        connectionId: connection.id,
+        message: migrationError instanceof Error ? migrationError.message : "Failed to migrate the MCP callback.",
+      });
+    }
+  }
+
+  function handleRemove(connection: ExternalMcpConnection) {
+    const confirmed = window.confirm(
+      `Delete ${connection.name}? This can remove access grants, per-member authorization state, and plugin or marketplace bindings. Reconnecting with the shared callback is the safer migration path.`,
+    );
+    if (confirmed) deleteConnection.mutate(connection.id);
   }
 
   return (
@@ -501,10 +529,12 @@ export function McpConnectionsScreen() {
                 setEditingConnection(connection);
               }}
               onConnect={() => void handleConnectOAuth(connection.id)}
-              onRemove={() => deleteConnection.mutate(connection.id)}
+              onRemove={() => handleRemove(connection)}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
               toolsOpen={toolsConnectionId === connection.id}
               onToggleTools={() => setToolsConnectionId((current) => current === connection.id ? null : connection.id)}
+              migratingCallback={migrateCallback.isPending && migrateCallback.variables === connection.id}
+              onMigrateCallback={() => void handleMigrateCallback(connection)}
             />
           ))}
         </div>
@@ -1137,6 +1167,8 @@ function ConnectionRow({
   removing,
   toolsOpen,
   onToggleTools,
+  migratingCallback,
+  onMigrateCallback,
 }: {
   connection: ExternalMcpConnection;
   polling: boolean;
@@ -1148,9 +1180,17 @@ function ConnectionRow({
   removing: boolean;
   toolsOpen: boolean;
   onToggleTools: () => void;
+  migratingCallback: boolean;
+  onMigrateCallback: () => void;
 }) {
+  const [copiedOAuthUrl, setCopiedOAuthUrl] = useState<"callback" | "shared-callback" | "metadata" | null>(null);
   const isPerMember = connection.credentialMode === "per_member";
-  const needsOAuthConnect = !isPerMember && connection.authType === "oauth" && !connection.connected;
+  const callbackUpdateRequired = connection.oauthMigrationStatus === "legacy_manual_client";
+  const automaticCallbackMigrationPending = connection.oauthMigrationStatus === "unclassified";
+  const needsOAuthConnect = connection.authType === "oauth"
+    && (!connection.connected || automaticCallbackMigrationPending)
+    && !callbackUpdateRequired
+    && (!isPerMember || automaticCallbackMigrationPending);
 
   const canInspectTools = connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe;
 
@@ -1191,6 +1231,14 @@ function ConnectionRow({
             <p className="mt-0.5 truncate text-[12px] text-gray-500">
               {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
             </p>
+            {connection.authType === "oauth" ? (
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
+                <span>{connection.oauthCallbackMode === "shared-v1" ? "Shared callback" : callbackUpdateRequired ? "Callback update required" : "Callback migration pending"}</span>
+                <span>Registration: {connection.oauthRegistrationSource ?? "not registered"}</span>
+                {connection.authorizationServerIssuer ? <span className="max-w-full truncate">Issuer: {connection.authorizationServerIssuer}</span> : null}
+                {(connection.requestedScopes?.length ?? 0) > 0 ? <span>Scopes: {connection.requestedScopes?.join(", ")}</span> : null}
+              </div>
+            ) : null}
             {errorMessage ? <p className="mt-1 text-[12px] text-red-600">{errorMessage}</p> : null}
           </div>
         </div>
@@ -1218,8 +1266,13 @@ function ConnectionRow({
             View tools
           </DenButton>
           {needsOAuthConnect ? (
-            <DenButton variant="secondary" size="sm" loading={connecting || polling} onClick={onConnect}>
-              Connect
+            <DenButton
+              variant="secondary"
+              size="sm"
+              loading={connecting || polling || (automaticCallbackMigrationPending && migratingCallback)}
+              onClick={automaticCallbackMigrationPending ? onMigrateCallback : onConnect}
+            >
+              {automaticCallbackMigrationPending ? "Reconnect with shared callback" : "Connect"}
             </DenButton>
           ) : null}
           <DenButton
@@ -1234,6 +1287,61 @@ function ConnectionRow({
           </DenButton>
         </div>
       </div>
+      {callbackUpdateRequired && connection.oauthSharedCallbackUrl ? (
+        <div className="border-t border-amber-200 bg-amber-50 px-6 py-4 text-[12px] leading-5 text-amber-950" data-testid={`mcp-callback-update-required-${connection.id}`}>
+          <p className="font-semibold">Callback update required</p>
+          <ol className="mt-2 list-decimal space-y-2 pl-5">
+            <li>
+              Copy the new shared callback.
+              <div className="mt-1 flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-2">
+                <code className="min-w-0 break-all text-[11px]">{connection.oauthSharedCallbackUrl}</code>
+                <button
+                  type="button"
+                  className="shrink-0 font-medium underline"
+                  onClick={() => void copyTextToClipboard(connection.oauthSharedCallbackUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("shared-callback"))}
+                >
+                  {copiedOAuthUrl === "shared-callback" ? "Copied" : "Copy"}
+                </button>
+              </div>
+            </li>
+            <li>Add it to the external OAuth application without removing the old callback yet.</li>
+            <li>
+              <DenButton variant="secondary" size="sm" loading={migratingCallback || connecting || polling} onClick={onMigrateCallback}>
+                Reconnect using shared callback
+              </DenButton>
+              <p className="mt-1 text-[11px] text-amber-800">This migration is permanent. OpenWork preserves your manual client ID, secret, and access grants.</p>
+            </li>
+          </ol>
+        </div>
+      ) : null}
+      {connection.authType === "oauth" && (connection.oauthCallbackUrl || connection.oauthClientMetadataUrl) ? (
+        <div className="border-t border-gray-100 bg-gray-50/70 px-6 py-3 text-[11px] text-gray-600">
+          {connection.oauthCallbackUrl ? (
+            <div className="flex items-start justify-between gap-3">
+              <p className="min-w-0 break-all"><span className="font-semibold">Current callback:</span> {connection.oauthCallbackUrl}</p>
+              <button
+                type="button"
+                className="shrink-0 font-medium text-gray-900 underline"
+                onClick={() => void copyTextToClipboard(connection.oauthCallbackUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("callback"))}
+              >
+                {copiedOAuthUrl === "callback" ? "Copied" : "Copy"}
+              </button>
+            </div>
+          ) : null}
+          {connection.oauthClientMetadataUrl ? (
+            <div className="mt-1 flex items-start justify-between gap-3">
+              <p className="min-w-0 break-all"><span className="font-semibold">Client metadata:</span> {connection.oauthClientMetadataUrl}</p>
+              <button
+                type="button"
+                className="shrink-0 font-medium text-gray-900 underline"
+                onClick={() => void copyTextToClipboard(connection.oauthClientMetadataUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("metadata"))}
+              >
+                {copiedOAuthUrl === "metadata" ? "Copied" : "Copy"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {toolsOpen && canInspectTools ? <McpToolCatalog connection={connection} /> : null}
     </div>
   );
@@ -1820,6 +1928,7 @@ function AddConnectionDialog({
   onSubmit: (input: CreateMcpConnectionInput) => Promise<CreatedMcpConnection>;
 }) {
   const { orgContext } = useOrgDashboard();
+  const discoverRequirements = useDiscoverMcpConnectionRequirements();
   const [name, setName] = useState(preset?.displayName ?? "");
   const [url, setUrl] = useState(preset?.url ?? "");
   const [authType, setAuthType] = useState<ExternalMcpAuthType>(preset?.authType ?? "oauth");
@@ -1829,7 +1938,12 @@ function AddConnectionDialog({
   const [oauthClientId, setOAuthClientId] = useState("");
   const [oauthClientSecret, setOAuthClientSecret] = useState("");
   const [oauthCallback, setOAuthCallback] = useState<string | null>(null);
+  const [oauthClientMetadataUrl, setOAuthClientMetadataUrl] = useState<string | null>(null);
   const [copiedCallback, setCopiedCallback] = useState(false);
+  const [copiedClientMetadata, setCopiedClientMetadata] = useState(false);
+  const [requirements, setRequirements] = useState<McpRequirementsDiscovery | null>(null);
+  const [authorizationServerIssuer, setAuthorizationServerIssuer] = useState("");
+  const [requestedScopes, setRequestedScopes] = useState<string[]>([]);
   const [accessMode, setAccessMode] = useState<AddConnectionAccessMode>("everyone");
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
@@ -1845,7 +1959,13 @@ function AddConnectionDialog({
     setOAuthClientId("");
     setOAuthClientSecret("");
     setOAuthCallback(null);
+    setOAuthClientMetadataUrl(null);
     setCopiedCallback(false);
+    setCopiedClientMetadata(false);
+    setRequirements(null);
+    setAuthorizationServerIssuer("");
+    setRequestedScopes([]);
+    discoverRequirements.reset();
     setAccessMode("everyone");
     setSelectedTeamIds([]);
     setSelectedMemberIds([]);
@@ -1862,12 +1982,34 @@ function AddConnectionDialog({
   }
 
   const showOAuthClientFields = authType === "oauth" && (Boolean(preset?.requiresOAuthClient) || showOAuthClient);
-  const oauthClientRequired = authType === "oauth" && Boolean(preset?.requiresOAuthClient);
-  const isSlackPreset = preset?.presetId === "slack";
+  const oauthClientRequired = authType === "oauth" && (
+    Boolean(preset?.requiresOAuthClient)
+    || requirements?.authentication.recommendedRegistrationMethod === "pre_registered"
+  );
+  const authorizationServers = requirements?.authentication.authorizationServers ?? [];
+  const selectedAuthorizationServer = authorizationServers.find((server) => server.issuer === authorizationServerIssuer);
+  const requiredScopes = requirements?.authentication.requiredScopes ?? [];
+  const availableScopes = selectedAuthorizationServer?.scopesSupported
+    ?? authorizationServers[0]?.scopesSupported
+    ?? [];
+  const optionalScopes = availableScopes.filter((scope) => !requiredScopes.includes(scope));
   const access: McpConnectionAccessInput = accessMode === "everyone"
     ? { orgWide: true, memberIds: [], teamIds: [] }
     : { orgWide: false, memberIds: accessMode === "people" ? selectedMemberIds : [], teamIds: accessMode === "teams" ? selectedTeamIds : [] };
   const accessIncomplete = accessMode === "teams" ? selectedTeamIds.length === 0 : accessMode === "people" ? selectedMemberIds.length === 0 : false;
+
+  async function discover() {
+    const result = await discoverRequirements.mutateAsync(url.trim());
+    setRequirements(result);
+    if (result.authentication.kind === "none") setAuthType("none");
+    else if (result.authentication.kind === "oauth") setAuthType("oauth");
+    const servers = result.authentication.authorizationServers;
+    setAuthorizationServerIssuer(servers.length === 1 ? servers[0].issuer : "");
+    setRequestedScopes(result.authentication.recommendedScopes);
+    if (result.authentication.recommendedRegistrationMethod === "pre_registered") {
+      setShowOAuthClient(true);
+    }
+  }
 
   async function submit() {
     const trimmedClientId = oauthClientId.trim();
@@ -1884,13 +2026,19 @@ function AddConnectionDialog({
           ...(trimmedClientSecret ? { clientSecret: trimmedClientSecret } : {}),
         }
         : undefined,
+      authorizationServerIssuer: authType === "oauth" && authorizationServerIssuer
+        ? authorizationServerIssuer
+        : undefined,
+      requestedScopes: authType === "oauth" ? [...new Set([...requiredScopes, ...requestedScopes])] : undefined,
       access,
     };
     try {
       const created = await onSubmit(input);
       if (input.oauthClient && created.links?.oauthCallback) {
         setOAuthCallback(created.links.oauthCallback);
+        setOAuthClientMetadataUrl(created.oauthClientMetadataUrl ?? null);
         setCopiedCallback(false);
+        setCopiedClientMetadata(false);
       }
     } catch {
       // The mutation's typed error is rendered by the dialog's error prop.
@@ -1904,6 +2052,11 @@ function AddConnectionDialog({
     if (await copyTextToClipboard(oauthCallback)) setCopiedCallback(true);
   }
 
+  async function copyOAuthClientMetadata() {
+    if (!oauthClientMetadataUrl) return;
+    if (await copyTextToClipboard(oauthClientMetadataUrl)) setCopiedClientMetadata(true);
+  }
+
   if (!open) {
     return null;
   }
@@ -1911,22 +2064,32 @@ function AddConnectionDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        data-testid="add-mcp-connection-dialog"
+        className="max-h-[calc(100dvh-3rem)] w-full max-w-md overflow-y-auto overscroll-contain rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
         {oauthCallback ? (
           <>
             <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-              {isSlackPreset ? "Almost done — add this redirect URL to your Slack app" : "Almost done — add this redirect URL to your app"}
+              Almost done — add this callback URL to your OAuth app
             </h2>
             <p className="mt-2 text-[13px] leading-6 text-gray-600">
-              {isSlackPreset
-                ? "Copy this exact URL into your Slack app's OAuth redirect URLs before teammates connect."
-                : "Copy this into the OAuth redirect URLs for your pre-registered app before teammates connect."}
+              Copy this exact deployment-wide URL into your pre-registered app before anyone connects.
             </p>
             <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
               <p className="break-all font-mono text-[12px] leading-5 text-gray-800">{oauthCallback}</p>
             </div>
+            {oauthClientMetadataUrl ? (
+              <div className="mt-3 flex items-start gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Client metadata URL</p>
+                  <p className="mt-1 break-all font-mono text-[12px] leading-5 text-gray-800">{oauthClientMetadataUrl}</p>
+                </div>
+                <DenButton variant="secondary" onClick={copyOAuthClientMetadata}>
+                  {copiedClientMetadata ? "Copied" : "Copy"}
+                </DenButton>
+              </div>
+            ) : null}
             <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <DenButton variant="secondary" onClick={copyOAuthCallback}>
                 {copiedCallback ? "Copied" : "Copy"}
@@ -1942,11 +2105,7 @@ function AddConnectionDialog({
           {preset ? `Add ${preset.displayName}` : "Add a custom MCP server"}
         </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          {isSlackPreset ? (
-            <>
-              Slack MCP needs a pre-registered Slack app — Slack does not support automatic app registration. Paste your Slack app&apos;s OAuth client below.
-            </>
-          ) : "Connect an MCP server org-wide. If it requires OAuth, you'll authorize it in a new tab next."}
+          Enter the server URL first. OpenWork will discover its authentication, registration, scope, and tool requirements before saving.
         </p>
 
         <div className="mt-5 space-y-4">
@@ -1958,11 +2117,61 @@ function AddConnectionDialog({
             <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Server URL</label>
             <DenInput
               value={url}
-              onChange={(event) => setUrl(event.target.value)}
+              onChange={(event) => {
+                setUrl(event.target.value);
+                setRequirements(null);
+                setAuthorizationServerIssuer("");
+                setRequestedScopes([]);
+              }}
               placeholder="https://mcp.example.com/mcp"
               disabled={Boolean(preset)}
             />
+            <DenButton
+              className="mt-2"
+              variant="secondary"
+              size="sm"
+              loading={discoverRequirements.isPending}
+              disabled={!url.trim()}
+              onClick={() => void discover()}
+            >
+              Discover requirements
+            </DenButton>
+            {discoverRequirements.error ? (
+              <p className="mt-2 text-[12px] text-red-600" role="alert">
+                {discoverRequirements.error instanceof Error ? discoverRequirements.error.message : "Requirements discovery failed."}
+              </p>
+            ) : null}
           </div>
+          {requirements ? (
+            <div className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4" data-testid="mcp-requirements-result">
+              <div>
+                <p className="text-[12px] font-semibold text-gray-900">Detected automatically</p>
+                <p className="mt-1 text-[12px] leading-5 text-gray-600">
+                  {requirements.server.initialize === "succeeded" ? "MCP initialized without authentication." : requirements.authentication.kind === "oauth" ? "OAuth authentication is required." : "Authentication requirements need review."}
+                  {requirements.tools.visibility === "available_without_auth" ? ` ${requirements.tools.count ?? 0} tools are visible before sign-in.` : " Tools require authentication before they can be listed."}
+                </p>
+                <p className="mt-1 text-[12px] text-gray-600">
+                  Registration: {requirements.authentication.recommendedRegistrationMethod === "client_metadata" ? "client metadata URL" : requirements.authentication.recommendedRegistrationMethod === "dynamic" ? "dynamic registration" : "pre-registered client"}.
+                  {requirements.authentication.refreshSupport === "supported" ? " Silent refresh is advertised." : " Silent refresh is not advertised."}
+                </p>
+              </div>
+              {requirements.manualRequirements.length > 0 ? (
+                <div>
+                  <p className="text-[12px] font-semibold text-gray-900">Administrator action required</p>
+                  <ul className="mt-1 space-y-1 text-[12px] leading-5 text-gray-600">
+                    {requirements.manualRequirements.map((requirement) => (
+                      <li key={requirement.code}>• {requirement.label}: {requirement.reason}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {requirements.warnings.length > 0 ? (
+                <div className="text-[12px] leading-5 text-amber-700">
+                  {requirements.warnings.map((warning) => <p key={warning.code}>{warning.message}</p>)}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {!preset ? (
             <div>
               <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</label>
@@ -1989,17 +2198,15 @@ function AddConnectionDialog({
               onClick={() => setShowOAuthClient(true)}
               className="text-left text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
             >
-              This server needs a pre-registered OAuth app
+              Use a pre-registered OAuth app instead
             </button>
           ) : null}
 
           {showOAuthClientFields ? (
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <p className="text-[13px] font-semibold text-gray-900">{isSlackPreset ? "Slack OAuth app" : "OAuth app"}</p>
+              <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
               <p className="mt-1 text-[12px] leading-5 text-gray-500">
-                {isSlackPreset
-                  ? "Create or use an internal or directory-published Slack app, then paste its Client ID and Client secret. After you create the connection, OpenWork shows the exact redirect URL to add to that Slack app."
-                  : "Create an app for your workspace, then paste its OAuth client here. Each person connects their own account with it — sign-ins stay in your org's cloud."}
+                Use a client registered by your administrator. After creation, OpenWork shows the exact shared callback URL to allowlist.
               </p>
               <div className="mt-3 space-y-3">
                 <div>
@@ -2019,6 +2226,55 @@ function AddConnectionDialog({
                     placeholder="Client secret"
                   />
                 </div>
+              </div>
+            </div>
+          ) : null}
+
+          {authType === "oauth" && authorizationServers.length > 1 ? (
+            <div>
+              <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authorization server</label>
+              <DenSelect
+                value={authorizationServerIssuer}
+                onChange={(event) => {
+                  const issuer = event.target.value;
+                  const server = authorizationServers.find((candidate) => candidate.issuer === issuer);
+                  const supportedScopes = server?.scopesSupported ?? [];
+                  const recommendedScopes = [...requiredScopes];
+                  if (server?.grantTypesSupported?.includes("refresh_token") && supportedScopes.includes("offline_access")) {
+                    recommendedScopes.push("offline_access");
+                  }
+                  setAuthorizationServerIssuer(issuer);
+                  setRequestedScopes([...new Set(recommendedScopes)]);
+                }}
+              >
+                <option value="" disabled>Choose an issuer</option>
+                {authorizationServers.map((server) => <option key={server.issuer} value={server.issuer}>{server.issuer}</option>)}
+              </DenSelect>
+            </div>
+          ) : null}
+
+          {authType === "oauth" && requirements && (requiredScopes.length > 0 || optionalScopes.length > 0) ? (
+            <div>
+              <p className="mb-1.5 text-[12px] font-medium text-gray-700">Permissions</p>
+              <div className="space-y-2 rounded-2xl border border-gray-100 bg-gray-50 p-3 text-[12px]">
+                {requiredScopes.map((scope) => (
+                  <label key={scope} className="flex items-center gap-2 text-gray-700">
+                    <input type="checkbox" checked disabled />
+                    <span>{scope} <span className="text-gray-400">required</span></span>
+                  </label>
+                ))}
+                {optionalScopes.map((scope) => (
+                  <label key={scope} className="flex items-center gap-2 text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={requestedScopes.includes(scope)}
+                      onChange={(event) => setRequestedScopes((current) => event.target.checked
+                        ? [...new Set([...current, scope])]
+                        : current.filter((entry) => entry !== scope))}
+                    />
+                    <span>{scope} <span className="text-gray-400">optional</span></span>
+                  </label>
+                ))}
               </div>
             </div>
           ) : null}
@@ -2094,7 +2350,7 @@ function AddConnectionDialog({
           <DenButton
             variant="primary"
             loading={submitting}
-            disabled={!name.trim() || !url.trim() || (authType === "apikey" && !apiKey.trim()) || (oauthClientRequired && (!oauthClientId.trim() || !oauthClientSecret.trim())) || accessIncomplete}
+            disabled={!name.trim() || !url.trim() || (authType === "oauth" && (!requirements || (authorizationServers.length > 1 && !authorizationServerIssuer))) || (authType === "apikey" && !apiKey.trim()) || (oauthClientRequired && !oauthClientId.trim()) || accessIncomplete}
             onClick={() => void submit()}
           >
             {showOAuthClientFields ? "Create and show redirect URL" : "Add connection"}

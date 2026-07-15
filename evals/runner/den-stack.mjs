@@ -215,6 +215,7 @@ async function ensureDenApi(log) {
     env: {
       DEN_PROXY_LISTEN_PORT: String(DEN_API_PORT),
       DEN_PROXY_UPSTREAM_PORT: String(DEN_API_INTERNAL_PORT),
+      OPENWORK_EVAL_DEN_PROXY_CONTROL: "1",
     },
   });
   await writePidState("den-proxy.pid", proxyPid);

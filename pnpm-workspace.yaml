@@ -32,3 +32,4 @@ allowBuilds:
 patchedDependencies:
   '@better-auth/drizzle-adapter@1.6.11': patches/@better-auth__drizzle-adapter@1.6.11.patch
   '@better-auth/oauth-provider@1.6.11': patches/@better-auth__oauth-provider@1.6.11.patch
+  '@modelcontextprotocol/sdk': patches/@modelcontextprotocol__sdk.patch

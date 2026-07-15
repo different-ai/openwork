@@ -113,6 +113,22 @@ export type ExternalMcpAuthType = (typeof externalMcpAuthTypeValues)[number]
 export const externalMcpCredentialModeValues = ["shared", "per_member"] as const
 export type ExternalMcpCredentialMode = (typeof externalMcpCredentialModeValues)[number]
 
+export const externalMcpOAuthCallbackModeValues = ["shared-v1", "legacy-v1"] as const
+export type ExternalMcpOAuthCallbackMode = (typeof externalMcpOAuthCallbackModeValues)[number]
+
+export type ExternalMcpOAuthConfiguration = {
+  version: 1
+  authorizationServerIssuer: string | null
+  requestedScopes: string[]
+  callbackMode: ExternalMcpOAuthCallbackMode
+  /**
+   * SDK-owned discovery state. Den validates it before reuse and never exposes
+   * it through the connection API. Keeping it with the connection allows
+   * issuer/resource discovery to be cached before a client registration exists.
+   */
+  discovery?: Record<string, unknown>
+}
+
 /**
  * "Add any MCP" — an org-level registration of a third-party MCP server.
  * This is what makes Notion (or anything else) just an example rather than a
@@ -131,6 +147,12 @@ export const ExternalMcpConnectionTable = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     url: varchar("url", { length: 2048 }).notNull(),
     authType: mysqlEnum("auth_type", externalMcpAuthTypeValues).notNull(),
+    /**
+     * Versioned OAuth policy for this MCP resource. Existing rows remain null
+     * and are classified lazily so manually registered legacy callbacks keep
+     * working until an administrator migrates them.
+     */
+    oauthConfiguration: json("oauth_configuration").$type<ExternalMcpOAuthConfiguration>(),
     /**
      * How the connection's credential relates to people:
      * - "shared": one org-level credential (this row's token columns, or

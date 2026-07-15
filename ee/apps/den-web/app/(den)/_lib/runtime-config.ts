@@ -6,6 +6,7 @@ export type DenWebRuntimeConfig = {
   orgMode: DenOrgMode;
   singleOrgName: string;
   singleOrgSlug: string;
+  singleOrgAllowPublicSignup: boolean;
   singleOrgSsoConfigured: boolean;
 };
 
@@ -15,6 +16,7 @@ export const EMPTY_RUNTIME_CONFIG: DenWebRuntimeConfig = {
   orgMode: "single_org",
   singleOrgName: "OpenWork",
   singleOrgSlug: "default",
+  singleOrgAllowPublicSignup: false,
   singleOrgSsoConfigured: false
 };
 
@@ -46,6 +48,7 @@ function normalizeRuntimeConfig(value: unknown): DenWebRuntimeConfig {
     orgMode: normalizeOrgMode(readStringProperty(value, "orgMode")),
     singleOrgName: singleOrgName || "OpenWork",
     singleOrgSlug: singleOrgSlug || "default",
+    singleOrgAllowPublicSignup: readBooleanProperty(value, "singleOrgAllowPublicSignup"),
     singleOrgSsoConfigured: readBooleanProperty(value, "singleOrgSsoConfigured")
   };
 }

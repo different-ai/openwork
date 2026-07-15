@@ -267,10 +267,9 @@ migrations:
   podAnnotations: {}
   resources: {}
   command:
-    - sh
-    - -lc
+    - node
   args:
-    - pnpm --dir /app/ee/packages/den-db run db:bootstrap
+    - /app/ee/packages/den-db/dist/scripts/bootstrap.js
 
 ingress:
   enabled: false

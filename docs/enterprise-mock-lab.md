@@ -248,7 +248,7 @@ Create and start a ServiceNow-style instance:
 
 ```bash
 export DATA_PORT=21080
-export DEN_REDIRECT_URI="http://127.0.0.1:8790/v1/mcp-connections/replace-with-den-connection-id/connect/callback"
+export DEN_REDIRECT_URI="http://127.0.0.1:8790/v1/mcp-connections/oauth/callback"
 CREATE_RESPONSE="$(curl --silent --show-error \
   --cookie "$LAB_COOKIES" \
   --header "Origin: $LAB_ORIGIN" \

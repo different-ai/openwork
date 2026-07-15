@@ -21,6 +21,7 @@ import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, queryValidator, tokenRoute } from "../../middleware/index.js"
 import { emptyResponse, jsonResponse } from "../../openapi.js"
 import { getSingletonSsoStatus } from "../../orgs.js"
+import { getAuthRequestEmail, getSingleOrgEmailSignupPolicyViolation, type SingleOrgEmailSignupPolicyViolation } from "../../single-org-signup-policy.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import { revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
@@ -208,6 +209,10 @@ function singleOrgSsoRequiredResponse(signInPath: string) {
   }, { status: 403 })
 }
 
+function singleOrgEmailSignupPolicyResponse(violation: SingleOrgEmailSignupPolicyViolation) {
+  return Response.json(violation, { status: 403 })
+}
+
 export function getBetterAuthProxyPath(pathname: string) {
   const prefix = "/api/auth"
   if (!pathname.startsWith(prefix)) {
@@ -231,6 +236,11 @@ export function isBetterAuthEmailPasswordRequest(request: Request) {
   const url = new URL(request.url)
   const path = getBetterAuthProxyPath(url.pathname)
   return request.method.toUpperCase() === "POST" && (path === "/sign-in/email" || path === "/sign-up/email")
+}
+
+export function isBetterAuthEmailSignupRequest(request: Request) {
+  const url = new URL(request.url)
+  return request.method.toUpperCase() === "POST" && getBetterAuthProxyPath(url.pathname) === "/sign-up/email"
 }
 
 export function isBetterAuthSignOutRequest(request: Request) {
@@ -285,6 +295,13 @@ async function getSingleOrgAuthGuardResponse(request: Request) {
 
   if (isBetterAuthOrganizationCreationRequest(request)) {
     return singleOrgModeResponse()
+  }
+
+  if (isBetterAuthEmailSignupRequest(request)) {
+    const violation = await getSingleOrgEmailSignupPolicyViolation(await getAuthRequestEmail(request))
+    if (violation) {
+      return singleOrgEmailSignupPolicyResponse(violation)
+    }
   }
 
   if (isBetterAuthEmailPasswordRequest(request)) {
@@ -426,6 +443,7 @@ const loginOptionKindSchema = z.union([
 const loginOptionsResponseSchema = z.object({
   email: z.string().email(),
   nextStep: loginOptionKindSchema,
+  allowPublicSignup: z.boolean().optional(),
   organizationSlug: z.string().optional(),
   signInPath: z.string().optional(),
   signInUrl: z.string().url().optional(),
@@ -539,19 +557,21 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
         : null
       const requirement = singletonSsoRequirement ?? await findEnterpriseAuthRequirementForEmail(email)
       const accounts = requirement ? [] : await getLoginOptionAccounts(email)
-      const nextStep = resolveLoginOptionKind({ requireSso: Boolean(requirement), accounts })
+      const allowPublicSignup = env.orgMode !== "single_org" || env.singleOrg.allowPublicSignup
+      const nextStep = resolveLoginOptionKind({ requireSso: Boolean(requirement), accounts, allowNewAccount: allowPublicSignup })
 
       if (nextStep === "sso" && requirement) {
         return c.json({
           email,
           nextStep,
+          allowPublicSignup,
           organizationSlug: requirement.organizationSlug,
           signInPath: requirement.signInPath,
           signInUrl: new URL(requirement.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
         })
       }
 
-      return c.json({ email, nextStep })
+      return c.json({ email, nextStep, allowPublicSignup })
     },
   )
 

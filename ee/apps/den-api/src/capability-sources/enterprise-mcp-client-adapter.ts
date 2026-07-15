@@ -14,6 +14,7 @@ import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
 import type { ExternalMcpMemberContext, ExternalMcpConnectResult } from "./external-mcp-client.js"
 import type { ExternalMcpLifecycleDeadline } from "./external-mcp-client.js"
 import { DenEnterpriseMcpOAuthPersistence } from "./enterprise-mcp-oauth-persistence.js"
+import { externalMcpClientMetadataUrl } from "./external-mcp-oauth-contract.js"
 import {
   ExternalMcpDiagnosticError,
   ExternalMcpDiagnosticTracker,
@@ -32,12 +33,22 @@ function toEnterpriseConnection(
   member?: ExternalMcpMemberContext,
 ): EnterpriseMcpConnection {
   if (connection.authType === "oauth") {
+    const metadataUrl = externalMcpClientMetadataUrl()
     return {
       id: connection.id,
       serverUrl: connection.url,
       authorization: {
         type: "oauth",
         persistence: new DenEnterpriseMcpOAuthPersistence(connection, member),
+        configuration: {
+          applicationType: "web",
+          // CIMD client identifiers must be HTTPS URLs. Local HTTP development
+          // still exposes the document for inspection, but falls back to DCR
+          // or pre-registration instead of advertising a non-conforming ID.
+          clientMetadataUrl: new URL(metadataUrl).protocol === "https:" ? metadataUrl : undefined,
+          authorizationServerIssuer: connection.oauthConfiguration?.authorizationServerIssuer ?? undefined,
+          requestedScopes: connection.oauthConfiguration?.requestedScopes ?? [],
+        },
       },
     }
   }

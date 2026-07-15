@@ -576,11 +576,13 @@ migrations:
   enabled: true
   hook: true
   hookDeletePolicy: before-hook-creation,hook-succeeded
+  command:
+    - node
   args:
-    - pnpm --dir /app/ee/packages/den-db run db:bootstrap
+    - /app/ee/packages/den-db/dist/scripts/bootstrap.js
 ```
 
-`db:bootstrap` uses `db:migrate` for normal upgrades. On a completely empty database it applies the current schema once, records the committed migrations as the baseline, then runs migrations. On an existing schema without a Drizzle ledger, it records the baseline before migrating.
+The default hook executes the precompiled Den DB bootstrap runner already built into the Den API image. On a completely empty database it applies the build-time current-schema SQL snapshot, records the committed migrations as the baseline, then runs pending migrations with Drizzle ORM. On an existing schema without a Drizzle ledger, it records the baseline before migrating.
 
 For retained-log troubleshooting, temporarily disable hook behavior and reduce
 retries:

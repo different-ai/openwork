@@ -228,6 +228,20 @@ async function rawStoredApiKey(connectionId: string) {
   return row.api_key
 }
 
+function oauthConfigurationInApiOrder(
+  connection: Awaited<ReturnType<typeof currentConnection>>,
+) {
+  const configuration = connection.oauthConfiguration
+  if (!configuration) throw new Error("Expected an OAuth configuration")
+  return {
+    version: configuration.version,
+    authorizationServerIssuer: configuration.authorizationServerIssuer,
+    requestedScopes: [...configuration.requestedScopes],
+    callbackMode: configuration.callbackMode,
+    ...(configuration.discovery ? { discovery: configuration.discovery } : {}),
+  }
+}
+
 describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
   test("rename preserves a connected shared OAuth session and client registration", async () => {
     const created = await createConnection({ name: "Shared OAuth", authType: "oauth", credentialMode: "shared" })
@@ -475,7 +489,7 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     expect(JSON.stringify(await responseRecord(agentResponse))).not.toContain("agent-secret-must-not-pass")
   })
 
-  test("marketplace bindings own identity while direct assignment edits preserve derived grants", async () => {
+  test("marketplace bindings protect identity without treating OAuth key order as a change", async () => {
     const connection = await createConnection({ name: "Marketplace MCP", authType: "oauth", credentialMode: "per_member" })
     const pluginId = createDenTypeId("plugin")
     const bindingId = createDenTypeId("pluginMcpRequirementBinding")
@@ -521,6 +535,8 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     expect(await responseRecord(blocked)).toMatchObject({ error: "marketplace_managed" })
 
     const fresh = await currentConnection(connection.id)
+    const apiOrderedConfiguration = oauthConfigurationInApiOrder(fresh)
+    expect(Object.keys(fresh.oauthConfiguration ?? {})).not.toEqual(Object.keys(apiOrderedConfiguration))
     const allowed = await humanRequest({
       connectionId: connection.id,
       body: updateBody(fresh, {
@@ -543,7 +559,7 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     expect(grants.some((grant) => grant.pluginMcpRequirementBindingId === null && grant.orgMembershipId === adminMemberId)).toBe(true)
   })
 
-  test("stale edits conflict, no-op edits stay connected, and old-identity writes are rejected", async () => {
+  test("stale edits conflict, OAuth key order stays a no-op, and old-identity writes are rejected", async () => {
     const connection = await createConnection({ name: "Concurrent OAuth", authType: "oauth", credentialMode: "per_member" })
     const first = await humanRequest({
       connectionId: connection.id,
@@ -559,6 +575,8 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     expect((await currentConnection(connection.id)).url).toBe(connection.url)
 
     const fresh = await currentConnection(connection.id)
+    const apiOrderedConfiguration = oauthConfigurationInApiOrder(fresh)
+    expect(Object.keys(fresh.oauthConfiguration ?? {})).not.toEqual(Object.keys(apiOrderedConfiguration))
     await oauthCredentials.upsertConnectedAccount({
       organizationId,
       orgMembershipId: memberId,

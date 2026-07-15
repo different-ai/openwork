@@ -1,5 +1,6 @@
 import { env } from "../env.js"
 import {
+  abandonExternalMcpAuth as abandonWithCurrentClient,
   callExternalMcpTool as callWithCurrentClient,
   completeExternalMcpAuth as completeWithCurrentClient,
   connectExternalMcp as connectWithCurrentClient,
@@ -31,7 +32,7 @@ const currentDenMcpClient: ExternalMcpClientRuntime = {
   completeExternalMcpAuth: (connection, code, redirectUri, member, diagnosticReferenceId) => (
     completeWithCurrentClient(connection, code, redirectUri, member, diagnosticReferenceId)
   ),
-  abandonExternalMcpAuth: async () => undefined,
+  abandonExternalMcpAuth: abandonWithCurrentClient,
   listExternalMcpTools: listWithCurrentClient,
   callExternalMcpTool: callWithCurrentClient,
   inspectExternalMcpToolCall: inspectWithCurrentClient,
@@ -72,3 +73,9 @@ export const {
   callExternalMcpTool,
   inspectExternalMcpToolCall,
 } = selectedRuntime
+
+// Version-one states can exist for at most their original ten-minute TTL
+// after rollout. They must finish against the verifier format that created
+// them, independent of the emergency runtime flag.
+export const completeLegacyExternalMcpAuth = currentDenMcpClient.completeExternalMcpAuth
+export const abandonLegacyExternalMcpAuth = currentDenMcpClient.abandonExternalMcpAuth

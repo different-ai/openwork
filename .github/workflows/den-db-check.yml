@@ -3,7 +3,15 @@ name: Den DB Check
 on:
   pull_request:
     paths:
+      - ".github/workflows/den-db-check.yml"
+      - ".github/workflows/den-db-migrate.yml"
+      - ".github/workflows/publish-ee-images.yml"
+      - "ee/apps/den-api/package.json"
+      - "ee/apps/den-api/scripts/build.mjs"
       - "ee/packages/den-db/**"
+      - "packaging/docker/Dockerfile.den"
+      - "packaging/helm/openwork-ee/values.yaml"
+      - "packaging/helm/openwork-ee/templates/migration-job.yaml"
 
 permissions:
   contents: read
@@ -32,6 +40,9 @@ jobs:
 
       - name: Generate migrations from schema
         run: pnpm --filter @openwork-ee/den-db db:generate
+
+      - name: Run migration readiness tests
+        run: pnpm --filter @openwork-ee/den-db test
 
       - name: Fail if schema changed without a committed migration
         run: |

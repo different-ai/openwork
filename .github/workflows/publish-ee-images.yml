@@ -252,6 +252,20 @@ jobs:
             sentry_release=${{ secrets.SENTRY_RELEASE }}
             sentry_dist=${{ secrets.SENTRY_DIST }}
 
+      - name: Assert Den DB migration assets
+        if: ${{ github.event_name == 'pull_request' && matrix.image == 'openwork-den-api' }}
+        shell: bash
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          image_tag="${IMAGE_TAGS%%$'\n'*}"
+          docker run --rm --entrypoint sh "$image_tag" -lc '
+            test -s /app/ee/packages/den-db/dist/scripts/bootstrap.js
+            test -s /app/ee/packages/den-db/dist/current-schema.sql
+            test -s /app/ee/packages/den-db/dist/drizzle/meta/_journal.json
+          '
+
       - name: Smoke health endpoint
         if: ${{ github.event_name == 'pull_request' }}
         shell: bash

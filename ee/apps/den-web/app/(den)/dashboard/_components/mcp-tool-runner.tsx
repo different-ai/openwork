@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, Check, Loader2, LockKeyhole, Play, RefreshCw, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ChevronDown, Loader2, LockKeyhole, Play, RefreshCw, Wrench } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenSelect } from "../../_components/ui/select";
 import { DenTextarea } from "../../_components/ui/textarea";
+import { DenRequestTimeoutError } from "../../_lib/den-flow";
 import {
   type ExternalMcpConnection,
   type ExternalMcpInspectionBody,
@@ -15,6 +16,10 @@ import {
   useMcpConnectionTools,
   useRunMcpConnectionTool,
 } from "./mcp-connections-data";
+import {
+  attributeExternalMcpToolFailure,
+  type ExternalMcpFailureAttribution,
+} from "./mcp-tool-error-attribution";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -101,7 +106,60 @@ function diagnosisLayerLabel(layer: ExternalMcpToolCallInspection["diagnosis"]["
   return "MCP tool response";
 }
 
-function McpToolCallInspector({ inspection }: { inspection: ExternalMcpToolCallInspection }) {
+function McpFailureAttribution({
+  attribution,
+  standalone = false,
+}: {
+  attribution: ExternalMcpFailureAttribution;
+  standalone?: boolean;
+}) {
+  return (
+    <div
+      className={`${standalone ? "rounded-2xl border border-red-200" : "border-b border-red-200"} bg-red-50 px-4 py-3`}
+      role="alert"
+    >
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-red-800">
+        <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+        <span className="font-semibold">Tool call failed</span>
+        <span className="text-red-400">·</span>
+        <span>Attribution: <strong>{attribution.likelySource}</strong></span>
+        <span className="rounded-full border border-red-200 bg-white/60 px-1.5 py-0.5 text-[10px] font-medium">{attribution.confidence}</span>
+      </div>
+      <details className="group/attribution mt-2">
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[10px] font-medium text-red-700 [&::-webkit-details-marker]:hidden">
+          Developer details
+          <ChevronDown className="h-3 w-3 transition-transform group-open/attribution:rotate-180" aria-hidden="true" />
+        </summary>
+        <p className="mt-2 border-t border-red-200 pt-2 text-[10px] leading-4 text-red-700">{attribution.summary}</p>
+        <dl className="mt-2 grid gap-2 text-[10px] sm:grid-cols-2">
+          <div>
+            <dt className="font-semibold uppercase tracking-wide text-red-500">Last confirmed boundary</dt>
+            <dd className="mt-0.5 text-gray-800">{attribution.lastConfirmedBoundary}</dd>
+          </div>
+          <div>
+            <dt className="font-semibold uppercase tracking-wide text-red-500">Retry guidance</dt>
+            <dd className="mt-0.5 text-gray-800">{attribution.retryGuidance}</dd>
+          </div>
+        </dl>
+        {attribution.diagnosticReference || attribution.providerRequestId || attribution.diagnosticCode ? (
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[9px] text-red-700">
+            {attribution.diagnosticReference ? <span>Diagnostic reference: {attribution.diagnosticReference}</span> : null}
+            {attribution.providerRequestId ? <span>Provider request ID: {attribution.providerRequestId}</span> : null}
+            {attribution.diagnosticCode ? <span>Code: {attribution.diagnosticCode}</span> : null}
+          </div>
+        ) : null}
+      </details>
+    </div>
+  );
+}
+
+function McpToolCallInspector({
+  inspection,
+  failureAttribution,
+}: {
+  inspection: ExternalMcpToolCallInspection;
+  failureAttribution: ExternalMcpFailureAttribution | null;
+}) {
   const succeeded = inspection.diagnosis.status === "succeeded";
   // A captured request can still have been blocked inside OpenWork (for
   // example by the outbound SSRF policy); the diagnosis layer decides
@@ -113,64 +171,81 @@ function McpToolCallInspector({ inspection }: { inspection: ExternalMcpToolCallI
       : "Not sent";
   return (
     <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white" aria-label="Tool call inspection">
-      <div className={`border-b px-4 py-3 ${succeeded ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className={`text-[12px] font-semibold ${succeeded ? "text-emerald-800" : "text-red-800"}`}>
-            {succeeded ? "Remote MCP completed the call" : `Call stopped at: ${diagnosisLayerLabel(inspection.diagnosis.layer)}`}
-          </p>
-          <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-600">
-            <span>OpenWork</span><ArrowRight className="h-3 w-3" aria-hidden="true" />
-            <span>{transportChip}</span><ArrowRight className="h-3 w-3" aria-hidden="true" />
-            <span>{succeeded ? "Tool result" : "Failure"}</span>
+      {succeeded ? (
+        <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[12px] font-semibold text-emerald-800">Remote MCP completed the call</p>
+            <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-600">
+              <span>OpenWork</span><ArrowRight className="h-3 w-3" aria-hidden="true" />
+              <span>{transportChip}</span><ArrowRight className="h-3 w-3" aria-hidden="true" />
+              <span>Tool result</span>
+            </div>
           </div>
+          <p className="mt-1 text-[11px] leading-5 text-emerald-700">{inspection.diagnosis.summary}</p>
         </div>
-        <p className={`mt-1 text-[11px] leading-5 ${succeeded ? "text-emerald-700" : "text-red-700"}`}>{inspection.diagnosis.summary}</p>
-      </div>
+      ) : failureAttribution ? (
+        <McpFailureAttribution attribution={failureAttribution} />
+      ) : (
+        <div className="border-b border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-[12px] font-semibold text-red-800">Call stopped at: {diagnosisLayerLabel(inspection.diagnosis.layer)}</p>
+          <p className="mt-1 text-[11px] leading-5 text-red-700">{inspection.diagnosis.summary}</p>
+        </div>
+      )}
 
-      <div className="border-b border-amber-100 bg-amber-50/70 px-4 py-2 text-[10px] leading-4 text-amber-800">
-        Credential and session headers are redacted. Request and response bodies may contain sensitive provider data; this inspection is returned only for this run and is not stored in Den logs.
-      </div>
+      <details className="group/wire">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-[11px] font-medium text-gray-700 transition hover:bg-gray-50 [&::-webkit-details-marker]:hidden">
+          <span>Inspect request and response</span>
+          <span className="inline-flex items-center gap-2 font-mono text-[10px] text-gray-500">
+            {transportChip}
+            <ChevronDown className="h-3.5 w-3.5 transition-transform group-open/wire:rotate-180" aria-hidden="true" />
+          </span>
+        </summary>
 
-      <div className="grid gap-0 xl:grid-cols-2 xl:divide-x xl:divide-gray-200">
-        <div className="space-y-4 p-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outgoing request</p>
+        <div className="border-t border-amber-100 bg-amber-50/70 px-4 py-2 text-[10px] leading-4 text-amber-800">
+          Credential and session headers are redacted. Request and response bodies may contain sensitive provider data; this inspection is returned only for this run and is not stored in OpenWork logs.
+        </div>
+
+        <div className="grid gap-0 border-t border-gray-200 xl:grid-cols-2 xl:divide-x xl:divide-gray-200">
+          <div className="space-y-4 p-4">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outgoing request</p>
+              {inspection.request ? (
+                <div className="mt-2 rounded-lg bg-gray-950 px-3 py-2 font-mono text-[10px] leading-4 text-gray-100">
+                  <span className="font-semibold text-blue-300">{inspection.request.method}</span> <span className="break-all">{inspection.request.url}</span>
+                </div>
+              ) : (
+                <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">No tools/call request left OpenWork.</p>
+              )}
+            </div>
             {inspection.request ? (
-              <div className="mt-2 rounded-lg bg-gray-950 px-3 py-2 font-mono text-[10px] leading-4 text-gray-100">
-                <span className="font-semibold text-blue-300">{inspection.request.method}</span> <span className="break-all">{inspection.request.url}</span>
-              </div>
-            ) : (
-              <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">No tools/call request left OpenWork.</p>
-            )}
+              <>
+                <div><p className="mb-1.5 text-[11px] font-medium text-gray-700">Headers</p><InspectionHeaders headers={inspection.request.headers} /></div>
+                <InspectionBody body={inspection.request.body} />
+              </>
+            ) : null}
           </div>
-          {inspection.request ? (
-            <>
-              <div><p className="mb-1.5 text-[11px] font-medium text-gray-700">Headers</p><InspectionHeaders headers={inspection.request.headers} /></div>
-              <InspectionBody body={inspection.request.body} />
-            </>
-          ) : null}
-        </div>
 
-        <div className="space-y-4 border-t border-gray-200 p-4 xl:border-t-0">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Response received</p>
+          <div className="space-y-4 border-t border-gray-200 p-4 xl:border-t-0">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Response received</p>
+              {inspection.response ? (
+                <div className="mt-2 flex items-center justify-between gap-3 rounded-lg bg-gray-950 px-3 py-2 font-mono text-[10px] text-gray-100">
+                  <span><span className={inspection.response.status < 400 ? "text-emerald-300" : "text-red-300"}>HTTP {inspection.response.status}</span> {inspection.response.statusText}</span>
+                  <span className="text-gray-400">{inspection.response.durationMs} ms</span>
+                </div>
+              ) : (
+                <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">No HTTP response was captured.</p>
+              )}
+            </div>
             {inspection.response ? (
-              <div className="mt-2 flex items-center justify-between gap-3 rounded-lg bg-gray-950 px-3 py-2 font-mono text-[10px] text-gray-100">
-                <span><span className={inspection.response.status < 400 ? "text-emerald-300" : "text-red-300"}>HTTP {inspection.response.status}</span> {inspection.response.statusText}</span>
-                <span className="text-gray-400">{inspection.response.durationMs} ms</span>
-              </div>
-            ) : (
-              <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">No HTTP response was captured.</p>
-            )}
+              <>
+                <div><p className="mb-1.5 text-[11px] font-medium text-gray-700">Headers</p><InspectionHeaders headers={inspection.response.headers} /></div>
+                <InspectionBody body={inspection.response.body} />
+              </>
+            ) : null}
           </div>
-          {inspection.response ? (
-            <>
-              <div><p className="mb-1.5 text-[11px] font-medium text-gray-700">Headers</p><InspectionHeaders headers={inspection.response.headers} /></div>
-              <InspectionBody body={inspection.response.body} />
-            </>
-          ) : null}
         </div>
-      </div>
+      </details>
     </section>
   );
 }
@@ -228,10 +303,24 @@ export function McpToolRunner({ connection }: { connection: ExternalMcpConnectio
     await runTool.mutateAsync({ toolName: selectedTool.name, arguments: parsed }).catch(() => undefined);
   }
 
-  const executionError = localError
-    ?? (runTool.error instanceof Error ? runTool.error.message : runTool.error ? "The MCP tool failed." : null);
   const inspection = runTool.data?.inspection
     ?? (runTool.error instanceof ExternalMcpToolRunError ? runTool.error.inspection : null);
+  const serverFailure = runTool.error instanceof ExternalMcpToolRunError ? runTool.error : null;
+  const browserTimeout = runTool.error instanceof DenRequestTimeoutError ? runTool.error : null;
+  const failureAttribution = !localError && (serverFailure || browserTimeout)
+    ? attributeExternalMcpToolFailure({
+        diagnostic: serverFailure?.diagnostic ?? null,
+        inspection,
+        browserTimeout,
+        mayHaveSideEffects: selectedTool?.annotations?.readOnlyHint !== true,
+      })
+    : null;
+  const executionError = localError
+    ?? (!failureAttribution && runTool.error instanceof Error
+      ? runTool.error.message
+      : !failureAttribution && runTool.error
+        ? "The MCP tool failed."
+        : null);
 
   return (
     <div className="border-t border-gray-100 bg-gray-50/70 px-6 py-5" data-testid={`mcp-tool-runner-${connection.id}`}>
@@ -242,7 +331,7 @@ export function McpToolRunner({ connection }: { connection: ExternalMcpConnectio
             <p className="text-[13px] font-semibold text-gray-900">Run a tool manually</p>
           </div>
           <p className="mt-1 max-w-2xl text-[12px] leading-5 text-gray-500">
-            This runs directly from Den with your available connection credential. Arguments and results are not written to Den logs.
+            This runs through OpenWork with your available connection credential. Arguments and results are not written to OpenWork logs.
           </p>
         </div>
         <DenButton variant="secondary" size="sm" loading={catalog.isFetching} onClick={() => void catalog.refetch()}>
@@ -348,7 +437,11 @@ export function McpToolRunner({ connection }: { connection: ExternalMcpConnectio
             <p className="text-[11px] text-gray-500">Runs immediately against {connection.name}.</p>
           </div>
 
-          {inspection ? <McpToolCallInspector inspection={inspection} /> : null}
+          {inspection ? (
+            <McpToolCallInspector inspection={inspection} failureAttribution={failureAttribution} />
+          ) : failureAttribution ? (
+            <McpFailureAttribution attribution={failureAttribution} standalone />
+          ) : null}
 
           {runTool.data && !runTool.data.inspection ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] leading-5 text-amber-800" role="status">
