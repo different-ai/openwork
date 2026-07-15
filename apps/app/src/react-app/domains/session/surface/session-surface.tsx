@@ -1491,19 +1491,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
         <DevProfiler id="SessionComposer">
         {props.cloudMcpSubmissionState.status === "failed" ? (
           <div
-            className="mx-3 mb-2 flex items-center gap-3 rounded-xl border border-red-7/40 bg-red-2/40 px-3 py-2 text-xs text-red-11"
+            className="mx-3 mb-2 flex max-h-24 items-center gap-3 overflow-hidden rounded-xl border border-red-7/40 bg-red-2/40 px-3 py-2 text-xs text-red-11"
             data-testid="cloud-mcp-submission-failure"
           >
-            <span className="min-w-0 flex-1">
+            <span className="max-h-16 min-w-0 flex-1 overflow-y-auto">
               {[
                 props.cloudMcpSubmissionState.issue?.message ?? "Connected service tools could not be prepared.",
                 props.cloudMcpSubmissionState.issue?.recommendedAction,
               ].filter(Boolean).join(" ")}
             </span>
-            <button type="button" className="font-medium hover:underline" onClick={handleRetryCloudSubmission}>
+            <button type="button" className="shrink-0 font-medium hover:underline" onClick={handleRetryCloudSubmission}>
               Retry
             </button>
-            <button type="button" className="font-medium hover:underline" onClick={props.onOpenConnect}>
+            <button type="button" className="shrink-0 font-medium hover:underline" onClick={props.onOpenConnect}>
               Open Connect
             </button>
           </div>
