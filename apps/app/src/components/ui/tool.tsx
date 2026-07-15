@@ -5,6 +5,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import { attributeChatToolError } from "@/components/tools/error-attribution"
 import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
 import {
@@ -120,6 +121,9 @@ const Tool = ({ title, toolPart, defaultOpen = false, className }: ToolProps) =>
   const { state, input } = toolPart
   const inFlight = isToolPartInFlight(toolPart)
   const isError = state === "output-error"
+  const errorAttribution = isError && toolPart.errorText
+    ? attributeChatToolError(toolPart.errorText)
+    : null
   const label = title ?? getToolActivityLabel(toolPart)
   const hasInput = input !== null && input !== undefined
   const hasOutput = "output" in toolPart && toolPart.output !== undefined
@@ -144,8 +148,17 @@ const Tool = ({ title, toolPart, defaultOpen = false, className }: ToolProps) =>
           <ChevronDown className="absolute size-4 opacity-0 transition-opacity group-hover:opacity-100 group-data-panel-open:rotate-180" />
         </span>
         <span className="min-w-0 truncate">{label}</span>
-        {isError ? (
+        {isError && !errorAttribution ? (
           <span className="text-destructive shrink-0 text-xs">failed</span>
+        ) : null}
+        {errorAttribution ? (
+          <span
+            className="border-border/70 text-muted-foreground shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-none"
+            title={`${errorAttribution.confidence}: ${errorAttribution.description}`}
+            aria-label={`Error attribution: ${errorAttribution.label}. ${errorAttribution.confidence}.`}
+          >
+            {errorAttribution.label}
+          </span>
         ) : null}
       </CollapsibleTrigger>
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden text-sm transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
