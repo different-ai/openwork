@@ -274,6 +274,13 @@
       "when": 1784037786637,
       "tag": "0039_bouncy_chamber",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "5",
+      "when": 1784076493575,
+      "tag": "0040_rapid_lady_bullseye",
+      "breakpoints": true
     }
   ]
 }

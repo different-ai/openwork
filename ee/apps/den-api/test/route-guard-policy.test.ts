@@ -54,6 +54,8 @@ const routeGuardExceptions = new Map<string, string>([
   ["POST /v1/bootstrap/workspace", "agent-first provisional workspace bootstrap is rate-limited in-handler"],
   ["GET /v1/oauth-providers/:providerId/connect/callback", "OAuth callback verifies signed state in-handler"],
   ["GET /v1/mcp-connections/:connectionId/connect/callback", "external MCP OAuth callback verifies signed state in-handler"],
+  ["GET /v1/mcp-connections/oauth/callback", "shared external MCP OAuth callback verifies signed state in-handler"],
+  ["GET /oauth/client-metadata.json", "public external MCP client metadata document contains no secrets"],
   ["ALL /v1/orgs/:orgId/*", "legacy proxy forwards to guarded /v1 routes"],
   ["POST /v1/webhooks/connectors/github", "GitHub webhook signature is validated in-handler"],
   ["POST /v1/webhooks/stripe", "Stripe webhook signature is validated in-handler"],

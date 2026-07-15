@@ -705,6 +705,36 @@ function classifyByCode(code: string): Classification | null {
       operatorAction: "Reconnect the provider account because the access token expired without a usable refresh token.",
     }
   }
+  if (code === "MCP_OAUTH_CREDENTIAL_CHANGED") {
+    return {
+      phase: "CONTINUITY_REFRESH",
+      category: "oauth_credential_changed",
+      code,
+      retryable: true,
+      actionOwner: "openwork",
+      operatorAction: "Retry with the newer OAuth credential after the concurrent refresh completes.",
+    }
+  }
+  if (code === "MCP_OAUTH_CONFIGURATION_REQUIRED") {
+    return {
+      phase: "AUTH_CLIENT_REGISTRATION",
+      category: "oauth_configuration_required",
+      code,
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Create a provider OAuth application, allowlist the shared callback, and save its client ID and optional secret before reconnecting.",
+    }
+  }
+  if (code === "MCP_OAUTH_ISSUER_MISMATCH") {
+    return {
+      phase: "AUTH_ISSUER_DISCOVERY",
+      category: "oauth_issuer_mismatch",
+      code,
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Repeat requirements discovery and select an authorization server advertised by the protected resource.",
+    }
+  }
   if (code === "MCP_OAUTH_PERSISTENCE_INVALID") {
     return {
       phase: "CONFIGURATION",
