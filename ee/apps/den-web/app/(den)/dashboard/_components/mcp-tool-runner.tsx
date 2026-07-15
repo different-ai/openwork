@@ -342,7 +342,7 @@ export function McpToolRunner({ connection }: { connection: ExternalMcpConnectio
           onClick={() => void catalog.refetch()}
         >
           <RefreshCw className="h-3.5 w-3.5" />
-          Refresh tools
+          <span>Refresh tools</span>
         </DenButton>
       </div>
 

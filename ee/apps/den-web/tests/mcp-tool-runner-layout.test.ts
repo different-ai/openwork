@@ -10,7 +10,7 @@ const runnerPath = join(
 describe("MCP tool runner layout", () => {
   test("keeps the Refresh tools action on one line", () => {
     const runner = readFileSync(runnerPath, "utf8");
-    const refreshLabelIndex = runner.indexOf("Refresh tools");
+    const refreshLabelIndex = runner.indexOf("<span>Refresh tools</span>");
     const refreshAction = runner.slice(Math.max(0, refreshLabelIndex - 400), refreshLabelIndex + 100);
 
     expect(refreshLabelIndex).toBeGreaterThan(-1);

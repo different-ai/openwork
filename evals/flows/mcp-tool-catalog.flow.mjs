@@ -1,5 +1,5 @@
 import http from "node:http";
-import { denApiFetch, denWebUrl, openAdminConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
+import { denApiFetch, denWebUrl, openAdminConnections, openYourConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "mcp-tool-catalog";
@@ -253,7 +253,7 @@ function connectionRowScript(action) {
 
 export default {
   id: FLOW_ID,
-  title: "Admins can inspect a connected MCP's live tools, inputs, and schemas without executing anything",
+  title: "Admins can inspect a connected MCP's live tools and open its manual runner without executing anything",
   kind: "user-facing",
   preserveTheme: true,
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
@@ -415,6 +415,86 @@ export default {
             requireText: ["search_incidents", "Read-only hint", "query: string · required", "status: string", "View input schema", "View output schema", "additionalProperties"],
             rejectText: ["This proof must never execute a tool"],
             hashIncludes: "/dashboard/mcp-connections",
+          },
+        });
+
+      },
+    },
+    {
+      name: "The manual tool runner keeps its refresh action readable",
+      run: async (ctx) => {
+        await ctx.prove("Refresh tools stays on one line at the constrained dashboard viewport", {
+          voiceover: vo[3],
+          action: async () => {
+            if (ctx.client?.send) {
+              await ctx.client.send("Emulation.setDeviceMetricsOverride", {
+                width: 840,
+                height: 900,
+                deviceScaleFactor: 1,
+                mobile: false,
+              });
+            }
+            await openYourConnections(ctx);
+            await ctx.waitFor(`(() => {
+              const row = [...document.querySelectorAll('p')]
+                .find((entry) => (entry.textContent ?? '').trim() === ${JSON.stringify(state.connectionName)});
+              row?.scrollIntoView({ block: 'center' });
+              return Boolean(row);
+            })()`, { timeoutMs: 30_000, label: "Incident Response MCP on Your Connections" });
+            const opened = await ctx.eval(`(() => {
+              const button = document.querySelector('[data-testid="toggle-mcp-tool-runner-${state.connectionId}"]');
+              button?.click();
+              return Boolean(button);
+            })()`);
+            witness(ctx, opened, "Alex can open the manual tool runner for the connected MCP.", { opened });
+            await ctx.waitFor(`(() => {
+              const runner = document.querySelector('[data-testid="mcp-tool-runner-${state.connectionId}"]');
+              return (runner?.textContent ?? '').includes('Refresh tools')
+                && (runner?.textContent ?? '').includes('Run a tool manually');
+            })()`, { timeoutMs: 30_000, label: "manual MCP tool runner" });
+            await ctx.eval(`(() => {
+              const runner = document.querySelector('[data-testid="mcp-tool-runner-${state.connectionId}"]');
+              runner?.scrollIntoView({ block: 'center' });
+              return Boolean(runner);
+            })()`);
+          },
+          assert: async () => {
+            const layout = await ctx.eval(`(() => {
+              const runner = document.querySelector('[data-testid="mcp-tool-runner-${state.connectionId}"]');
+              const button = [...(runner?.querySelectorAll('button') ?? [])]
+                .find((entry) => (entry.textContent ?? '').replace(/\\s+/g, ' ').trim() === 'Refresh tools');
+              const label = button?.querySelector('span');
+              if (!runner || !button || !label) return null;
+              const range = document.createRange();
+              range.selectNodeContents(label);
+              const rows = new Set(
+                [...range.getClientRects()]
+                  .filter((rect) => rect.width > 0 && rect.height > 0)
+                  .map((rect) => Math.round(rect.top)),
+              ).size;
+              const rect = button.getBoundingClientRect();
+              return {
+                whiteSpace: getComputedStyle(button).whiteSpace,
+                rows,
+                buttonHeight: rect.height,
+                buttonLeft: rect.left,
+                buttonRight: rect.right,
+                viewportWidth: window.innerWidth,
+                pageScrollWidth: document.documentElement.scrollWidth,
+                pageClientWidth: document.documentElement.clientWidth,
+              };
+            })()`);
+            witness(ctx, layout?.whiteSpace === "nowrap", "The Refresh tools button enforces no wrapping.", layout);
+            witness(ctx, layout?.rows === 1, "The Refresh tools label occupies exactly one rendered text row.", layout);
+            witness(ctx, Boolean(layout && layout.buttonLeft >= 0 && layout.buttonRight <= layout.viewportWidth), "The Refresh tools action remains inside the viewport.", layout);
+            witness(ctx, layout?.pageScrollWidth === layout?.pageClientWidth, "The constrained dashboard has no horizontal overflow.", layout);
+            witness(ctx, !state.observedMethods.includes("tools/call"), "Opening the manual runner does not execute a tool.", state.observedMethods);
+          },
+          screenshot: {
+            name: "manual-tool-runner-refresh-nowrap",
+            requireText: ["Your Connections", "Run a tool manually", "Refresh tools", "Tool", "Search incidents", "search_incidents"],
+            rejectText: ["Something went wrong", "Could not read this MCP's tools"],
+            hashIncludes: "/dashboard/your-connections",
           },
         });
 
