@@ -10,7 +10,7 @@ describe("Cloud MCP submission failure banner", () => {
   test("ellipsizes diagnostics with a full hover title and visible recovery actions", () => {
     const source = readFileSync(sessionSurfacePath, "utf8");
     const banner = source.match(
-      /<div\s+className="([^"]*max-h-24[^"]*)"\s+data-testid="cloud-mcp-submission-failure">([\s\S]*?)<ReactSessionComposer/,
+      /<div\s+className="([^"]*max-h-24[^"]*)"\s+data-testid="cloud-mcp-submission-failure"\s*>([\s\S]*?)<ReactSessionComposer/,
     );
 
     expect(banner?.[1]).toContain("overflow-hidden");
