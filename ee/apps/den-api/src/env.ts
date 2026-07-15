@@ -32,6 +32,7 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
   DEN_ORG_MODE: z.string().optional(),
+  DEN_ORG_ADMISSION_ENFORCEMENT: z.enum(["shadow", "enforce"]).optional(),
   DEN_SINGLE_ORG_NAME: z.string().optional(),
   DEN_SINGLE_ORG_SLUG: z.string().optional(),
   DEN_SINGLE_ORG_OWNER_EMAILS: z.string().optional(),
@@ -331,6 +332,7 @@ const publicUrlTrustedOrigins = Array.from(new Set([
   ...betterAuthTrustedOrigins,
 ])).filter((origin) => origin !== "*")
 const orgMode = parseDenOrgMode(parsed.DEN_ORG_MODE)
+const organizationAdmissionEnforcement = parsed.DEN_ORG_ADMISSION_ENFORCEMENT ?? "shadow"
 // SSRF guard for External MCP Connection URLs: on hosted (multi-tenant)
 // deployments, Den must not fetch private/reserved addresses on behalf of
 // users. Self-hosted deployments whose MCP servers legitimately live on a
@@ -424,6 +426,7 @@ export const env = {
     marketingEnabled: parsed.LOOPS_MARKETING_ENABLED?.trim() === "1",
   },
   orgMode,
+  organizationAdmissionEnforcement,
   singleOrg: {
     name: optionalString(parsed.DEN_SINGLE_ORG_NAME) ?? "OpenWork",
     slug: normalizeSingleOrgSlug(parsed.DEN_SINGLE_ORG_SLUG),

@@ -37,6 +37,7 @@ config:
     ownerEmails: "admin@example.com"
     allowPublicSignup: "false"
     requireEmailVerification: "false"
+    admissionEnforcement: "shadow"
   public:
     webOrigin: "https://openwork.example.com"
     apiOrigin: "https://api.openwork.example.com"
@@ -441,11 +442,13 @@ config:
     ownerEmails: "admin@example.com"
     allowPublicSignup: "false"
     requireEmailVerification: "false"
+    admissionEnforcement: "shadow"
 ```
 
 These values are exposed to both `den-api` and `den-web` as:
 
 - `DEN_ORG_MODE`
+- `DEN_ORG_ADMISSION_ENFORCEMENT`
 - `DEN_SINGLE_ORG_NAME`
 - `DEN_SINGLE_ORG_SLUG`
 - `DEN_SINGLE_ORG_OWNER_EMAILS`
@@ -459,6 +462,7 @@ config:
   tenancy:
     mode: "multi_org"
     requireEmailVerification: "true"
+    admissionEnforcement: "shadow"
 ```
 
 `config.tenancy.ownerEmails` controls who can claim ownership of the singleton deployment organization. `config.public.bootstrapAdminEmails` is separate: it seeds platform/admin allowlist access and does not by itself make a user the singleton organization owner.

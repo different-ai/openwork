@@ -10,6 +10,7 @@ import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/in
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
 import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
+import { hashOrganizationInvitationToken, normalizeAdmissionEmail } from "../../organization-admission.js"
 import { resolveOrganizationPermissionRecord, validateAssignableOrganizationPermissionRecord } from "../../organization-access.js"
 import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
 import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
@@ -28,7 +29,6 @@ const invitationResponseSchema = z.object({
   email: z.string().email(),
   role: z.string(),
   expiresAt: z.string().datetime(),
-  inviteToken: z.string(),
 }).meta({ ref: "InvitationResponse" })
 
 const invitationEmailFailedSchema = z.object({
@@ -89,7 +89,10 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     const user = c.get("user")
     const input = c.req.valid("json")
 
-    const email = input.email.trim().toLowerCase()
+    const email = normalizeAdmissionEmail(input.email)
+    if (!email) {
+      return c.json({ error: "invalid_email", message: "Enter a valid email address." }, 400)
+    }
     if (!isEmailAllowedForOrganization(payload.organization.allowedEmailDomains, email)) {
       const emailDomain = email.includes("@") ? email.slice(email.lastIndexOf("@") + 1) : null
       return c.json({
@@ -171,7 +174,13 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     if (existingInvitation[0]) {
       await db
         .update(InvitationTable)
-        .set({ role, inviterId: normalizeDenTypeId("user", user.id), orgMemberId: payload.currentMember.id, inviteToken, expiresAt })
+        .set({
+          role,
+          inviterId: normalizeDenTypeId("user", user.id),
+          orgMemberId: payload.currentMember.id,
+          inviteTokenHash: hashOrganizationInvitationToken(inviteToken),
+          expiresAt,
+        })
         .where(eq(InvitationTable.id, existingInvitation[0].id))
 
       const invitedMemberRows = await db
@@ -209,7 +218,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         status: "pending",
         inviterId: normalizeDenTypeId("user", user.id),
         orgMemberId: payload.currentMember.id,
-        inviteToken,
+        inviteTokenHash: hashOrganizationInvitationToken(inviteToken),
         expiresAt,
       })
 
@@ -240,7 +249,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       payload: {
         invitationId,
         targetOrgMembershipId: invitationOrgMemberId,
-        targetEmail: email,
         role,
         expiresAt: expiresAt.toISOString(),
       },
@@ -268,7 +276,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           organization_id: payload.organization.id,
           invitation_id: invitationId,
           reason: error.reason,
-          detail: error.detail,
         })
 
         return c.json({
@@ -287,7 +294,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       throw error
     }
 
-    return c.json({ invitationId, email, role, expiresAt, inviteToken }, existingInvitation[0] ? 200 : 201)
+    return c.json({ invitationId, email, role, expiresAt }, existingInvitation[0] ? 200 : 201)
     },
   )
 
@@ -343,7 +350,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       .where(and(eq(MemberTable.inviteId, invitationId), eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.joinedAt), isNull(MemberTable.removedAt)))
       .limit(1)
 
-    await db.update(InvitationTable).set({ status: "canceled" }).where(eq(InvitationTable.id, invitationId))
+    await db.update(InvitationTable).set({ status: "canceled", inviteTokenHash: null }).where(eq(InvitationTable.id, invitationId))
 
     const invitedMember = invitedMemberRows[0]
     if (invitedMember) {
@@ -364,7 +371,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       payload: {
         invitationId: invitationRows[0].id,
         targetOrgMembershipId: invitedMember?.id ?? null,
-        targetEmail: invitationRows[0].email,
         role: invitationRows[0].role,
         previousStatus: invitationRows[0].status,
       },

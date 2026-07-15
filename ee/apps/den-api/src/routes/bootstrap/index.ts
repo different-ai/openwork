@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
 import {
   MemberTable,
   OrganizationTable,
@@ -16,6 +16,7 @@ import { db } from "../../db.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "../../desktop-policies.js"
 import { env } from "../../env.js"
 import { jsonValidator, publicRoute, authenticatedRoute } from "../../middleware/index.js"
+import { admitOrganizationMember, initializeOrganizationAdmissionPolicy, OrganizationAdmissionConflictError } from "../../organization-admission.js"
 import { DEFAULT_ORGANIZATION_LIMITS } from "../../organization-limits.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { seedDefaultOrganizationRoles, setSessionActiveOrganization } from "../../orgs.js"
@@ -258,6 +259,12 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
 
       await ensureDefaultDesktopPolicyForOrganization({ organizationId: result.organization.id, createdByOrgMemberId: result.setupMemberId })
       await seedDefaultOrganizationRoles(result.organization.id)
+      await initializeOrganizationAdmissionPolicy(result.organization.id, {
+        admissionMethods: ["invitation"],
+        emailDomainRule: { mode: "any" },
+        authenticationRequirement: "any",
+        lifecycleAuthority: "local",
+      })
 
       const response = { organization: result.organization, setup: result.setup, skill: result.skill, claimLinks: result.claimLinks }
       return c.json({ ok: true, ...response })
@@ -276,6 +283,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
         401: jsonResponse("The caller must be signed in to claim a workspace.", unauthorizedSchema),
         403: jsonResponse("The caller cannot accept this claim.", forbiddenSchema),
         404: jsonResponse("The claim token was missing, expired, or already used.", notFoundSchema),
+        409: { description: "The claim state changed concurrently." },
       },
     }),
     authenticatedRoute(),
@@ -286,79 +294,67 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (!user?.id) {
         return c.json({ error: "unauthorized" }, 401)
       }
+      if (!user.emailVerified) {
+        return c.json({
+          error: "email_verification_required",
+          message: "Verify your account email before claiming a workspace.",
+        }, 403)
+      }
 
       const input = c.req.valid("json")
       const now = new Date()
       const tokenHash = sha256(input.token)
       const normalizedUserId = normalizeDenTypeId("user", user.id)
 
-      const result = await db.transaction(async (tx) => {
-        const [claim] = await tx
-          .select({
-            id: WorkspaceClaimTable.id,
-            organizationId: WorkspaceClaimTable.organizationId,
-            bootstrapId: WorkspaceClaimTable.bootstrapId,
-            role: WorkspaceClaimTable.role,
-            setupMemberId: WorkspaceBootstrapTable.setupMemberId,
-            organization: OrganizationTable,
-          })
-          .from(WorkspaceClaimTable)
-          .innerJoin(WorkspaceBootstrapTable, eq(WorkspaceClaimTable.bootstrapId, WorkspaceBootstrapTable.id))
-          .innerJoin(OrganizationTable, eq(WorkspaceClaimTable.organizationId, OrganizationTable.id))
-          .where(
-            and(
-              eq(WorkspaceClaimTable.tokenHash, tokenHash),
-              eq(WorkspaceClaimTable.status, "pending"),
-              gt(WorkspaceClaimTable.expiresAt, now),
-            ),
-          )
-          .limit(1)
+      const claimRows = await db
+        .select({
+          id: WorkspaceClaimTable.id,
+          organizationId: WorkspaceClaimTable.organizationId,
+          role: WorkspaceClaimTable.role,
+          organization: OrganizationTable,
+        })
+        .from(WorkspaceClaimTable)
+        .innerJoin(WorkspaceBootstrapTable, eq(WorkspaceClaimTable.bootstrapId, WorkspaceBootstrapTable.id))
+        .innerJoin(OrganizationTable, eq(WorkspaceClaimTable.organizationId, OrganizationTable.id))
+        .where(and(
+          eq(WorkspaceClaimTable.tokenHash, tokenHash),
+          eq(WorkspaceClaimTable.status, "pending"),
+          gt(WorkspaceClaimTable.expiresAt, now),
+          eq(WorkspaceBootstrapTable.status, "provisional"),
+          gt(WorkspaceBootstrapTable.expiresAt, now),
+        ))
+        .limit(1)
+      const claim = claimRows[0] ?? null
 
-        if (!claim) {
-          return null
-        }
-
-        const [existingMember] = await tx
-          .select({ id: MemberTable.id })
-          .from(MemberTable)
-          .where(and(eq(MemberTable.organizationId, claim.organizationId), eq(MemberTable.userId, normalizedUserId), isNull(MemberTable.removedAt)))
-          .limit(1)
-
-        const memberId = existingMember?.id ?? createDenTypeId("member")
-        if (existingMember) {
-          await tx.update(MemberTable).set({ role: claim.role, joinedAt: now }).where(eq(MemberTable.id, existingMember.id))
-        } else {
-          await tx.insert(MemberTable).values({
-            id: memberId,
-            organizationId: claim.organizationId,
-            userId: normalizedUserId,
-            role: claim.role,
-            joinedAt: now,
-          })
-        }
-
-        await tx.update(MemberTable).set({ removedAt: now }).where(eq(MemberTable.id, claim.setupMemberId))
-        await tx.update(WorkspaceClaimTable).set({ status: "claimed", claimedByUserId: normalizedUserId, claimedAt: now }).where(eq(WorkspaceClaimTable.id, claim.id))
-        await tx.update(WorkspaceBootstrapTable).set({ status: "claimed", claimedAt: now }).where(eq(WorkspaceBootstrapTable.id, claim.bootstrapId))
-        await tx.update(OrganizationTable).set({
-          metadata: {
-            ...(claim.organization.metadata ?? {}),
-            bootstrap: { provisional: false, claimedAt: now.toISOString(), claimedByUserId: normalizedUserId },
-          },
-        }).where(eq(OrganizationTable.id, claim.organizationId))
-
-        return {
-          organization: {
-            id: claim.organization.id,
-            name: claim.organization.name,
-            slug: claim.organization.slug,
-            role: claim.role,
-          },
-        }
-      })
-
-      if (!result) {
+      if (!claim) {
         return c.json({ error: "claim_not_found", message: "This workspace claim link is missing, expired, or already used." }, 404)
+      }
+
+      let admission
+      try {
+        admission = await admitOrganizationMember({
+          organizationId: claim.organizationId,
+          userId: normalizedUserId,
+          evidence: { kind: "workspace_claim", token: input.token },
+        })
+      } catch (error) {
+        if (error instanceof OrganizationAdmissionConflictError) {
+          return c.json({ error: "claim_state_changed", message: "The workspace claim changed. Try again." }, 409)
+        }
+        throw error
+      }
+
+      if (admission.decision !== "allow" || admission.existing) {
+        return c.json({ error: "admission_required", admission }, 403)
+      }
+
+      const result = {
+        organization: {
+          id: claim.organization.id,
+          name: claim.organization.name,
+          slug: claim.organization.slug,
+          role: admission.role,
+        },
       }
 
       if (session?.id) {

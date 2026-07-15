@@ -5,16 +5,15 @@ export type JoinVerificationResult =
 /**
  * Verification boundary for organization membership.
  *
- * Unverified accounts are intentionally allowed to sign up when a deployment
- * does not require email verification. When verification is required, joining
- * another organization remains the hard boundary; when it is not required (the
- * single-org default), the email invite itself is the join proof.
+ * Global account creation can remain available to unverified accounts, but an
+ * email invitation is only trusted when the account email has been verified.
+ * The deployment-wide signup setting therefore does not weaken this boundary.
  */
 export function validateInvitationAcceptVerification(input: {
   emailVerified: boolean | null | undefined
   emailVerificationRequired: boolean
 }): JoinVerificationResult {
-  if (!input.emailVerificationRequired || input.emailVerified === true) {
+  if (input.emailVerified === true) {
     return { ok: true }
   }
 

@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gt, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthUserTable,
@@ -38,7 +38,15 @@ import {
   type OrganizationPermissionRecord,
 } from "./organization-access.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "./desktop-policies.js"
-import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
+import { isSingleOrgOwnerEmailEligible } from "./single-org-policy.js"
+import {
+  admitOrganizationMember,
+  createOrganizationWithInitialOwner,
+  ensureOrganizationAdmissionPolicy,
+  hashOrganizationInvitationToken,
+  normalizeAdmissionDomain,
+  normalizeAdmissionEmail,
+} from "./organization-admission.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
 type SessionId = typeof AuthSessionTable.$inferSelect.id
@@ -132,6 +140,9 @@ export type OrganizationContext = {
     role: string
     createdAt: Date
     joinedAt: Date | null
+    admissionSource: MemberRow["admissionSource"]
+    admissionPolicyVersion: number | null
+    admittedAt: Date | null
     isOwner: boolean
   }
   members: Array<{
@@ -141,6 +152,9 @@ export type OrganizationContext = {
     role: string
     createdAt: Date
     joinedAt: Date | null
+    admissionSource: MemberRow["admissionSource"]
+    admissionPolicyVersion: number | null
+    admittedAt: Date | null
     isOwner: boolean
     user: {
       id: UserId | MemberId
@@ -156,7 +170,6 @@ export type OrganizationContext = {
     status: string
     expiresAt: Date
     createdAt: Date
-    inviteToken: string | null
   }>
   roles: Array<{
     id: string
@@ -266,7 +279,7 @@ function getEmailDomain(email: string) {
   if (atIndex === -1 || atIndex + 1 >= normalized.length) {
     return null
   }
-  return normalized.slice(atIndex + 1)
+  return normalizeAdmissionDomain(normalized.slice(atIndex + 1))
 }
 
 function getEmailLocalPart(email: string) {
@@ -347,6 +360,13 @@ export class OrganizationEmailDomainRestrictionError extends Error {
   }
 }
 
+export class OrganizationEmailVerificationRequiredError extends Error {
+  constructor() {
+    super("Verify the account email before creating an organization.")
+    this.name = "OrganizationEmailVerificationRequiredError"
+  }
+}
+
 function clonePermissionRecord(value: Record<string, readonly string[]>) {
   const permission: OrganizationPermissionRecord = {}
   for (const [resource, actions] of Object.entries(value)) {
@@ -375,27 +395,13 @@ async function getInvitationById(invitationIdRaw: string) {
   const tokenRows = await db
     .select()
     .from(InvitationTable)
-    .where(eq(InvitationTable.inviteToken, invitationIdRaw))
+    .where(eq(InvitationTable.inviteTokenHash, hashOrganizationInvitationToken(invitationIdRaw)))
     .limit(1)
 
   if (tokenRows[0]) {
     return tokenRows[0]
   }
-
-  let invitationId
-  try {
-    invitationId = normalizeDenTypeId("invitation", invitationIdRaw)
-  } catch {
-    return null
-  }
-
-  const rows = await db
-    .select()
-    .from(InvitationTable)
-    .where(eq(InvitationTable.id, invitationId))
-    .limit(1)
-
-  return rows[0] ?? null
+  return null
 }
 
 async function ensureDefaultDynamicRoles(orgId: OrgId) {
@@ -417,14 +423,6 @@ async function ensureDefaultDynamicRoles(orgId: OrgId) {
   }
 }
 
-function normalizeAssignableRole(input: string, availableRoles: Set<string>, fallbackRole = "member") {
-  const roles = splitRoles(input).filter((role) => availableRoles.has(role))
-  if (roles.length === 0) {
-    return fallbackRole
-  }
-  return roles.join(",")
-}
-
 export async function listAssignableRoles(orgId: OrgId) {
   await ensureDefaultDynamicRoles(orgId)
 
@@ -436,233 +434,11 @@ export async function listAssignableRoles(orgId: OrgId) {
   return new Set(rows.map((row) => row.role))
 }
 
-async function insertMemberIfMissing(input: {
-  organizationId: OrgId
-  userId: UserId
-  role: string
-  email?: string | null
-}) {
-  const existing = await db
-    .select()
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
-    .limit(1)
-
-  if (existing.length > 0) {
-    return existing[0]
-  }
-
-  const invitedMember = await acceptPendingInvitationForBootstrapMembership({
-    organizationId: input.organizationId,
-    userId: input.userId,
-    email: input.email ?? null,
-    defaultRole: input.role,
-  })
-  if (invitedMember) {
-    return invitedMember
-  }
-
-  try {
-    await db.insert(MemberTable).values({
-      id: createDenTypeId("member"),
-      organizationId: input.organizationId,
-      userId: input.userId,
-      role: input.role,
-      joinedAt: new Date(),
-    })
-  } catch {}
-
-  const created = await db
-    .select()
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
-    .limit(1)
-
-  if (!created[0]) {
-    throw new Error("failed_to_create_member")
-  }
-
-  return created[0]
-}
-
-export async function ensureBootstrapMembershipForOrganization(input: {
-  organizationId: OrgId
-  userId: UserId
-  role: string
-  email?: string | null
-}) {
-  return insertMemberIfMissing(input)
-}
-
-export async function acceptPendingInvitationForBootstrapMembership(input: {
-  organizationId: OrgId
-  userId: UserId
-  email: string | null
-  defaultRole: string
-}) {
-  const email = input.email?.trim().toLowerCase()
-  if (!email) {
-    return null
-  }
-
-  const invitationRows = await db
-    .select()
-    .from(InvitationTable)
-    .where(and(
-      eq(InvitationTable.organizationId, input.organizationId),
-      eq(InvitationTable.status, "pending"),
-      gt(InvitationTable.expiresAt, new Date()),
-      sql`lower(${InvitationTable.email}) = ${email}`,
-    ))
-    .limit(1)
-
-  const invitation = invitationRows.find((row) => (
-    row.organizationId === input.organizationId
-    && row.status === "pending"
-    && row.expiresAt > new Date()
-    && row.email.trim().toLowerCase() === email
-  )) ?? null
-  if (!invitation) {
-    return null
-  }
-
-  // Bootstrap paths already grant same-org membership before email verification.
-  // organization-join-verification.ts keeps that gate on the explicit accept endpoint.
-  return acceptInvitation(invitation, input.userId, { fallbackRole: input.defaultRole })
-}
-
-export async function reconcilePendingInvitationsForUser(userId: UserId) {
-  const userRows = await db
-    .select({ email: AuthUserTable.email })
-    .from(AuthUserTable)
-    .where(eq(AuthUserTable.id, userId))
-    .limit(1)
-  const email = userRows[0]?.email.trim().toLowerCase()
-  if (!email) {
-    return 0
-  }
-
-  const now = new Date()
-  const invitations = await db
-    .select()
-    .from(InvitationTable)
-    .where(and(
-      eq(InvitationTable.status, "pending"),
-      gt(InvitationTable.expiresAt, now),
-      sql`lower(${InvitationTable.email}) = ${email}`,
-    ))
-    .limit(20)
-
-  let acceptedCount = 0
-  for (const invitation of invitations) {
-    if (invitation.status !== "pending" || invitation.expiresAt <= now || invitation.email.trim().toLowerCase() !== email) {
-      continue
-    }
-
-    const existingMemberRows = await db
-      .select({ id: MemberTable.id })
-      .from(MemberTable)
-      .where(and(eq(MemberTable.organizationId, invitation.organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
-      .limit(1)
-    if (!existingMemberRows[0]) {
-      // No cross-org auto-join here; organization-join-verification.ts keeps
-      // that email-verification boundary on the explicit accept endpoint.
-      continue
-    }
-
-    await acceptInvitation(invitation, userId)
-    acceptedCount += 1
-  }
-
-  return acceptedCount
-}
-
-async function acceptInvitation(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string }) {
-  const availableRoles = await listAssignableRoles(invitation.organizationId)
-  const role = normalizeAssignableRole(invitation.role, availableRoles, options?.fallbackRole)
-  const joinedAt = new Date()
-
-  const existingMemberRows = await db
-    .select()
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, invitation.organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
-    .limit(1)
-
-  const invitedMemberRows = await db
-    .select()
-    .from(MemberTable)
-    .where(and(eq(MemberTable.inviteId, invitation.id), eq(MemberTable.organizationId, invitation.organizationId), isNull(MemberTable.removedAt)))
-    .limit(1)
-
-  const invitedMember = invitedMemberRows[0] ?? null
-  const existingMember = existingMemberRows[0] ?? null
-  let member = existingMember
-
-  if (existingMember && invitedMember) {
-    const existingJoinedAt = existingMember.joinedAt ?? joinedAt
-    const existingRole = roleIncludesOwner(existingMember.role) ? existingMember.role : role
-    await db
-      .update(MemberTable)
-      .set({ role: existingRole, joinedAt: existingJoinedAt })
-      .where(eq(MemberTable.id, existingMember.id))
-    if (invitedMember.id !== existingMember.id) {
-      await db.delete(MemberTable).where(eq(MemberTable.id, invitedMember.id))
-    }
-    member = { ...existingMember, role: existingRole, joinedAt: existingJoinedAt }
-  }
-
-  if (!member && invitedMember) {
-    await db
-      .update(MemberTable)
-      .set({ userId, role, joinedAt })
-      .where(eq(MemberTable.id, invitedMember.id))
-    member = { ...invitedMember, userId, role, joinedAt }
-  }
-
-  if (!member) {
-    member = await insertMemberIfMissing({
-      organizationId: invitation.organizationId,
-      userId,
-      role,
-    })
-  }
-
-  if (invitation.teamId) {
-    const teams = await db
-      .select({ id: TeamTable.id })
-      .from(TeamTable)
-      .where(eq(TeamTable.id, invitation.teamId))
-      .limit(1)
-
-    if (teams[0]) {
-      const existingTeamMember = await db
-        .select({ id: TeamMemberTable.id })
-        .from(TeamMemberTable)
-        .where(and(eq(TeamMemberTable.teamId, invitation.teamId), eq(TeamMemberTable.orgMembershipId, member.id)))
-        .limit(1)
-
-      if (!existingTeamMember[0]) {
-        await db.insert(TeamMemberTable).values({
-          id: createDenTypeId("teamMember"),
-          teamId: invitation.teamId,
-          orgMembershipId: member.id,
-        })
-      }
-    }
-  }
-
-  await db
-    .update(InvitationTable)
-    .set({ status: "accepted" })
-    .where(eq(InvitationTable.id, invitation.id))
-
-  return member
-}
-
 export async function acceptInvitationForUser(input: {
   userId: UserId
   email: string
   invitationId: string | null
+  sessionId?: SessionId | null
 }) {
   if (!input.invitationId) {
     return null
@@ -674,45 +450,32 @@ export async function acceptInvitationForUser(input: {
     return null
   }
 
-  if (invitation.email.trim().toLowerCase() !== input.email.trim().toLowerCase()) {
+  if (normalizeAdmissionEmail(invitation.email) !== normalizeAdmissionEmail(input.email)) {
     return null
   }
 
-  const invitationStatus = getInvitationStatus(invitation)
-  if (invitationStatus !== "pending") {
-    if (invitationStatus === "accepted") {
-      const memberRows = await db
-        .select()
-        .from(MemberTable)
-        .where(and(eq(MemberTable.organizationId, invitation.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
+  const assuranceRows = input.sessionId
+    ? await db
+        .select({
+          providerId: AuthSessionTable.authenticationProviderId,
+          organizationId: AuthSessionTable.authenticationOrganizationId,
+        })
+        .from(AuthSessionTable)
+        .where(eq(AuthSessionTable.id, input.sessionId))
         .limit(1)
-      const member = memberRows[0]
-      if (member) {
-        return {
-          invitation,
-          member,
-        }
-      }
-    }
-
-    return null
-  }
-
-  const organizationRows = await db
-    .select({ allowedEmailDomains: OrganizationTable.allowedEmailDomains })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, invitation.organizationId))
-    .limit(1)
-
-  const allowedEmailDomains = normalizeStoredAllowedEmailDomains(organizationRows[0]?.allowedEmailDomains)
-  if (!isEmailAllowedForOrganization(allowedEmailDomains, input.email)) {
-    throw new OrganizationEmailDomainRestrictionError(input.email, allowedEmailDomains ?? [])
-  }
-
-  const member = await acceptInvitation(invitation, input.userId)
-  await runPostOrganizationMemberChangeHooks({ organizationId: invitation.organizationId, memberId: member.id, change: "added" })
+    : []
+  const decision = await admitOrganizationMember({
+    organizationId: invitation.organizationId,
+    userId: input.userId,
+    evidence: { kind: "invitation", token: input.invitationId },
+    assurance: assuranceRows[0] ?? null,
+  })
+  const member = decision.decision === "allow" && decision.membershipId
+    ? (await db.select().from(MemberTable).where(eq(MemberTable.id, normalizeDenTypeId("member", decision.membershipId))).limit(1))[0] ?? null
+    : null
   return {
     invitation,
+    decision,
     member,
   }
 }
@@ -769,6 +532,15 @@ async function createOrganizationRecord(input: {
   logo?: string | null
   metadata?: Record<string, unknown> | null
 }) {
+  const userRows = await db
+    .select({ emailVerified: AuthUserTable.emailVerified })
+    .from(AuthUserTable)
+    .where(eq(AuthUserTable.id, input.userId))
+    .limit(1)
+  if (!userRows[0]?.emailVerified) {
+    throw new OrganizationEmailVerificationRequiredError()
+  }
+
   const organizationId = createDenTypeId("organization")
   const metadata =
     input.metadata ?? {
@@ -778,21 +550,15 @@ async function createOrganizationRecord(input: {
       },
     }
 
-  await db.insert(OrganizationTable).values({
-    id: organizationId,
+  const created = await createOrganizationWithInitialOwner({
+    organizationId,
+    userId: input.userId,
     name: input.name,
     slug: input.slug ?? organizationId,
     logo: input.logo ?? null,
     metadata,
   })
-
-  const ownerMemberId = createDenTypeId("member")
-  await db.insert(MemberTable).values({
-    id: ownerMemberId,
-    organizationId,
-    userId: input.userId,
-    role: "owner",
-  })
+  const ownerMemberId = created.memberId
 
   await ensureDefaultDesktopPolicyForOrganization({
     organizationId,
@@ -822,6 +588,7 @@ export async function getSingletonSsoStatus() {
   if (!organization) {
     return {
       configured: false,
+      required: false,
       organizationSlug,
       signInPath: fallbackSignInPath,
     }
@@ -833,27 +600,21 @@ export async function getSingletonSsoStatus() {
     .where(eq(SsoConnectionTable.organizationId, organization.id))
     .limit(1)
   const signInPath = rows[0]?.signInPath || fallbackSignInPath
+  const policy = await ensureOrganizationAdmissionPolicy(organization.id)
 
   return {
     configured: Boolean(rows[0]),
+    required: policy?.authenticationRequirement === "organization_sso",
     organizationSlug,
     signInPath,
   }
-}
-
-async function countActiveOwners(organizationId: OrgId) {
-  const rows = await db
-    .select({ role: MemberTable.role })
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
-
-  return rows.filter((row) => roleIncludesOwner(row.role)).length
 }
 
 export async function ensureSingletonOrganizationForUser(userId: UserId) {
   const userRows = await db
     .select({
       email: AuthUserTable.email,
+      emailVerified: AuthUserTable.emailVerified,
     })
     .from(AuthUserTable)
     .where(eq(AuthUserTable.id, userId))
@@ -866,6 +627,14 @@ export async function ensureSingletonOrganizationForUser(userId: UserId) {
       email: userEmail,
       ownerEmails: env.singleOrg.ownerEmails,
     })) {
+      return null
+    }
+
+    // Account creation and organization admission are separate boundaries.
+    // The eligible initial owner can finish authentication before verification,
+    // but the singleton organization is not created until its owner can be
+    // admitted with verified email evidence.
+    if (userRows[0]?.emailVerified !== true) {
       return null
     }
 
@@ -884,30 +653,16 @@ export async function ensureSingletonOrganizationForUser(userId: UserId) {
     }
   }
 
-  const activeOwnerCount = await countActiveOwners(organization.id)
-  const role = resolveSingleOrgMembershipRole({
-    activeOwnerCount,
-    email: userEmail,
-    ownerEmails: env.singleOrg.ownerEmails,
-  })
-  if (!role) {
-    return null
-  }
-
-  const member = await ensureBootstrapMembershipForOrganization({
-    organizationId: organization.id,
-    userId,
-    role,
-    email: userEmail,
-  })
-
-  await ensureDefaultDesktopPolicyForOrganization({
-    organizationId: organization.id,
-    createdByOrgMemberId: member.id,
-  })
-  await ensureDefaultDynamicRoles(organization.id)
-
-  return organization.id
+  const membershipRows = await db
+    .select({ id: MemberTable.id })
+    .from(MemberTable)
+    .where(and(
+      eq(MemberTable.organizationId, organization.id),
+      eq(MemberTable.userId, userId),
+      isNull(MemberTable.removedAt),
+    ))
+    .limit(1)
+  return membershipRows[0] ? organization.id : null
 }
 
 export async function ensureUserOrgAccess(input: {
@@ -1248,6 +1003,9 @@ export async function getOrganizationContextForUser(input: {
       role: MemberTable.role,
       createdAt: MemberTable.createdAt,
       joinedAt: MemberTable.joinedAt,
+      admissionSource: MemberTable.admissionSource,
+      admissionPolicyVersion: MemberTable.admissionPolicyVersion,
+      admittedAt: MemberTable.admittedAt,
       user: {
         id: AuthUserTable.id,
         email: AuthUserTable.email,
@@ -1272,7 +1030,6 @@ export async function getOrganizationContextForUser(input: {
       status: InvitationTable.status,
       expiresAt: InvitationTable.expiresAt,
       createdAt: InvitationTable.createdAt,
-      inviteToken: InvitationTable.inviteToken,
     })
     .from(InvitationTable)
     .where(eq(InvitationTable.organizationId, organization.id))
@@ -1305,6 +1062,9 @@ export async function getOrganizationContextForUser(input: {
       role: currentMember.role,
       createdAt: currentMember.createdAt,
       joinedAt: currentMember.joinedAt,
+      admissionSource: currentMember.admissionSource,
+      admissionPolicyVersion: currentMember.admissionPolicyVersion,
+      admittedAt: currentMember.admittedAt,
       isOwner: roleIncludesOwner(currentMember.role),
     },
     members: members.map((member) => {
@@ -1317,6 +1077,9 @@ export async function getOrganizationContextForUser(input: {
         role: member.role,
         createdAt: member.createdAt,
         joinedAt: member.joinedAt,
+        admissionSource: member.admissionSource,
+        admissionPolicyVersion: member.admissionPolicyVersion,
+        admittedAt: member.admittedAt,
         isOwner: roleIncludesOwner(member.role),
         user: {
           id: member.user?.id ?? member.id,
@@ -1650,6 +1413,7 @@ export async function removeOrganizationMember(input: {
   organizationId: OrgId
   memberId: MemberRow["id"]
   removedByOrgMemberId?: MemberRow["id"]
+  removalSource?: "admin" | "self" | "scim" | "system"
 }): Promise<MemberMutationResult> {
   const memberRows = await db
     .select()
@@ -1704,7 +1468,11 @@ export async function removeOrganizationMember(input: {
 
     await tx
       .update(MemberTable)
-      .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId ?? null, userId: null })
+      .set({
+        removedAt: new Date(),
+        removedByOrgMember: input.removedByOrgMemberId ?? null,
+        removalSource: input.removalSource ?? (input.removedByOrgMemberId ? "admin" : "system"),
+      })
       .where(eq(MemberTable.id, member.id))
     return true
   })

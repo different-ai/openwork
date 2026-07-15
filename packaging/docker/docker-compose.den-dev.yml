@@ -19,6 +19,7 @@
 #   DEN_MCP_ADDITIONAL_RESOURCES — Extra public MCP resource URLs this deployment serves, e.g. https://api.openworklabs.com/mcp — needed when den-api is reachable on more than one public origin
 #   DEN_CORS_ORIGINS        — comma-separated trusted origins for Better Auth + CORS
 #   DEN_ORG_MODE            — single_org or multi_org (default: single_org)
+#   DEN_ORG_ADMISSION_ENFORCEMENT — shadow or enforce (default: shadow)
 #   DEN_SINGLE_ORG_NAME / DEN_SINGLE_ORG_SLUG / DEN_SINGLE_ORG_OWNER_EMAILS
 #                           — singleton organization defaults for local private-mode testing
 #   DEN_PROVISIONER_MODE    — stub, render, or daytona (default: stub)
@@ -118,6 +119,7 @@ services:
       DEN_DB_ENCRYPTION_KEY: ${DEN_DB_ENCRYPTION_KEY:-dev-den-db-encryption-key-please-change-1234567890}
       BETTER_AUTH_URL: ${DEN_BETTER_AUTH_URL:-http://localhost:3005}
       DEN_ORG_MODE: ${DEN_ORG_MODE:-single_org}
+      DEN_ORG_ADMISSION_ENFORCEMENT: ${DEN_ORG_ADMISSION_ENFORCEMENT:-shadow}
       DEN_SINGLE_ORG_NAME: ${DEN_SINGLE_ORG_NAME:-OpenWork}
       DEN_SINGLE_ORG_SLUG: ${DEN_SINGLE_ORG_SLUG:-default}
       DEN_SINGLE_ORG_OWNER_EMAILS: ${DEN_SINGLE_ORG_OWNER_EMAILS:-}

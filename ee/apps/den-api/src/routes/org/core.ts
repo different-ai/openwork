@@ -1,5 +1,5 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { OrganizationTable, ScimProviderTable, SsoConnectionTable } from "@openwork-ee/den-db/schema"
+import { OrganizationTable, ScimProviderTable, SsoConnectionTable, SsoProviderTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -11,19 +11,25 @@ import { organizationInstallLinksEnabled } from "../../capability-sources/instal
 import { db } from "../../db.js"
 import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
-import { findEnterpriseAuthRequirementForEmail } from "../../enterprise-auth-requirement.js"
+import { findEnterpriseAuthRequirementForOrganizationSlug } from "../../enterprise-auth-requirement.js"
 import { authenticatedRoute, jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator, resolveMemberTeamsMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { normalizeOrganizationCapabilities } from "../../organization-capabilities.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
+  ensureOrganizationAdmissionPolicy,
+  OrganizationAdmissionConflictError,
+  OrganizationAdmissionPolicyValidationError,
+  updateOrganizationAdmissionPolicy,
+} from "../../organization-admission.js"
+import {
   acceptInvitationForUser,
   createOrganizationForUser,
   getInvitationPreview,
   getSingletonSsoStatus,
   normalizeAllowedEmailDomains,
-  OrganizationEmailDomainRestrictionError,
+  OrganizationEmailVerificationRequiredError,
   setSessionActiveOrganization,
   updateOrganizationSettings,
 } from "../../orgs.js"
@@ -50,6 +56,7 @@ const updateOrganizationSchema = z.object({
 
 const resolveSsoByEmailQuerySchema = z.object({
   email: z.string().trim().email(),
+  organizationSlug: z.string().trim().min(1).max(255).optional(),
 })
 
 const resolveSsoByEmailResponseSchema = z.object({
@@ -73,6 +80,11 @@ const invitationPreviewQuerySchema = z.object({
 const acceptInvitationSchema = z.object({
   id: z.string().trim().min(1).max(255),
 })
+
+const invitationSeatRequiredSchema = z.object({
+  error: z.literal("payment_required"),
+  admission: z.object({ decision: z.literal("deny"), reason: z.literal("seat_limit_reached") }),
+}).meta({ ref: "InvitationSeatRequired" })
 
 const organizationResponseSchema = z.object({
   organization: z.object({}).passthrough().nullable(),
@@ -206,10 +218,18 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     const user = c.get("user")
     const input = c.req.valid("json")
 
-    const organizationId = await createOrganizationForUser({
-      userId: normalizeDenTypeId("user", user.id),
-      name: input.name,
-    })
+    let organizationId
+    try {
+      organizationId = await createOrganizationForUser({
+        userId: normalizeDenTypeId("user", user.id),
+        name: input.name,
+      })
+    } catch (error) {
+      if (error instanceof OrganizationEmailVerificationRequiredError) {
+        return c.json({ error: "require_email_verification", message: error.message }, 403)
+      }
+      throw error
+    }
 
     await setRequestActiveOrganization(c, organizationId)
 
@@ -259,6 +279,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         200: jsonResponse("Invitation accepted successfully.", invitationAcceptedResponseSchema),
         400: jsonResponse("The invitation acceptance request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to accept an invitation.", unauthorizedSchema),
+        402: jsonResponse("A paid organization seat is required.", invitationSeatRequiredSchema),
         403: jsonResponse("API keys cannot accept invitations, or the deployment requires a verified account email.", forbiddenSchema),
         409: jsonResponse("The current account email is not allowed to join this organization.", accountEmailDomainNotAllowedSchema),
         404: jsonResponse("The invitation could not be found.", notFoundSchema),
@@ -290,27 +311,31 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: verification.error, message: verification.message }, 403)
     }
 
-    let accepted
-    try {
-      accepted = await acceptInvitationForUser({
-        userId: normalizeDenTypeId("user", user.id),
-        email,
-        invitationId: input.id,
-      })
-    } catch (error) {
-      if (error instanceof OrganizationEmailDomainRestrictionError) {
-        return c.json({
-          error: "account_email_domain_not_allowed",
-          message: error.message,
-          emailDomain: error.emailDomain,
-          allowedEmailDomains: error.allowedEmailDomains,
-        }, 409)
-      }
-      throw error
-    }
+    const accepted = await acceptInvitationForUser({
+      userId: normalizeDenTypeId("user", user.id),
+      email,
+      invitationId: input.id,
+      sessionId: getStoredSessionId(c.get("session")),
+    })
 
     if (!accepted) {
       return c.json({ error: "invitation_not_found" }, 404)
+    }
+
+    if (accepted.decision.decision !== "allow" || !accepted.member) {
+      if (accepted.decision.decision === "deny" && accepted.decision.reason === "domain_not_allowed") {
+        const policy = await ensureOrganizationAdmissionPolicy(accepted.invitation.organizationId)
+        return c.json({
+          error: "account_email_domain_not_allowed",
+          message: "This account email domain is not allowed to join the organization.",
+          emailDomain: email.includes("@") ? email.slice(email.lastIndexOf("@") + 1) : null,
+          allowedEmailDomains: policy?.emailDomainRule.mode === "allowlist" ? policy.emailDomainRule.domains : [],
+        }, 409)
+      }
+      if (accepted.decision.decision === "deny" && accepted.decision.reason === "seat_limit_reached") {
+        return c.json({ error: "payment_required", admission: accepted.decision }, 402)
+      }
+      return c.json({ error: "organization_admission_required", admission: accepted.decision }, 403)
     }
 
     await setRequestActiveOrganization(c, accepted.member.organizationId)
@@ -369,9 +394,10 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
+      const changesAdmissionPolicy = input.requireSso !== undefined || input.allowedEmailDomains !== undefined
       const enablesRequireSso = input.requireSso === true && currentMetadata.requireSso !== true
       const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
-      if (enablesRequireSso || enablesVersionPinning) {
+      if (changesAdmissionPolicy || enablesRequireSso || enablesVersionPinning) {
         const entitlement = checkEntitlement(payload.organization.metadata, "orgControls")
         if (!entitlement.ok) {
           return c.json(entitlement.response, entitlement.status)
@@ -397,12 +423,44 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         }
       }
 
+      if (changesAdmissionPolicy) {
+        const policy = await ensureOrganizationAdmissionPolicy(payload.organization.id)
+        if (!policy) {
+          return c.json({ error: "policy_unavailable", message: "The organization admission policy is unavailable." }, 400)
+        }
+        try {
+          await updateOrganizationAdmissionPolicy({
+            organizationId: payload.organization.id,
+            actorUserId: normalizeDenTypeId("user", c.get("user").id),
+            expectedVersion: policy.version,
+            admissionMethods: policy.admissionMethods,
+            emailDomainRule: normalizedDomains.domains === undefined
+              ? policy.emailDomainRule
+              : normalizedDomains.domains && normalizedDomains.domains.length > 0
+                ? { mode: "allowlist", domains: normalizedDomains.domains }
+                : { mode: "any" },
+            authenticationRequirement: input.requireSso === undefined
+              ? policy.authenticationRequirement
+              : input.requireSso ? "organization_sso" : "any",
+            lifecycleAuthority: policy.lifecycleAuthority,
+          })
+        } catch (error) {
+          if (error instanceof OrganizationAdmissionConflictError) {
+            return c.json({ error: "policy_version_conflict", message: "Reload the organization and try again." }, 409)
+          }
+          if (error instanceof OrganizationAdmissionPolicyValidationError) {
+            return c.json({ error: error.code, message: error.message }, 400)
+          }
+          throw error
+        }
+      }
+
       const updated = await updateOrganizationSettings({
         organizationId: payload.organization.id,
         name: input.name,
-        allowedEmailDomains: normalizedDomains.domains,
+        allowedEmailDomains: changesAdmissionPolicy ? undefined : normalizedDomains.domains,
         allowedDesktopVersions: input.allowedDesktopVersions,
-        requireSso: input.requireSso,
+        requireSso: changesAdmissionPolicy ? undefined : input.requireSso,
         brandAppName: input.brandAppName,
         brandLogoUrl: input.brandLogoUrl,
         brandIconUrl: input.brandIconUrl,
@@ -457,7 +515,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     queryValidator(resolveSsoByEmailQuerySchema),
     async (c) => {
       const query = c.req.valid("query")
-      const requirement = await findEnterpriseAuthRequirementForEmail(query.email)
+      const requirement = query.organizationSlug
+        ? await findEnterpriseAuthRequirementForOrganizationSlug(query.organizationSlug)
+        : null
       if (!requirement) {
         return c.body(null, 204)
       }
@@ -491,8 +551,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       const capabilities = normalizeOrganizationCapabilities(payload.organization.metadata)
       const [ssoRows, scimRows] = await Promise.all([
         db
-          .select({ id: SsoConnectionTable.id })
+          .select({ id: SsoConnectionTable.id, domainVerified: SsoProviderTable.domainVerified })
           .from(SsoConnectionTable)
+          .leftJoin(SsoProviderTable, eq(SsoConnectionTable.providerId, SsoProviderTable.providerId))
           .where(eq(SsoConnectionTable.organizationId, payload.organization.id))
           .limit(1),
         db
@@ -533,6 +594,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         },
         authMethods: {
           sso: Boolean(ssoRows[0]),
+          ssoVerified: ssoRows[0]?.domainVerified === true,
           scim: Boolean(scimRows[0]),
         },
       })

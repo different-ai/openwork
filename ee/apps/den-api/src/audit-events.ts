@@ -16,6 +16,14 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   memberRoleUpdated: "organization.member.role_updated",
   memberOwnershipTransferred: "organization.member.ownership_transferred",
   memberRemoved: "organization.member.removed",
+  admissionPolicyUpdated: "organization.admission_policy.updated",
+  admissionEvaluated: "organization.admission.evaluated",
+  admissionBypassAttempt: "organization.admission.bypass_attempt",
+  admissionAllowed: "organization.admission.allowed",
+  admissionDenied: "organization.admission.denied",
+  admissionShadowMismatch: "organization.admission.shadow_mismatch",
+  memberReactivated: "organization.member.reactivated",
+  scimDeprovisioned: "organization.scim.deprovisioned",
   scimTokenRotated: "organization.scim.token_rotated",
   scimConnectionDeleted: "organization.scim.connection_deleted",
   scimReconciliationRun: "organization.scim.reconciliation_run",
@@ -57,12 +65,20 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.roleDeleted:
     case ORGANIZATION_AUDIT_ACTIONS.memberRoleUpdated:
     case ORGANIZATION_AUDIT_ACTIONS.memberRemoved:
+    case ORGANIZATION_AUDIT_ACTIONS.admissionPolicyUpdated:
+    case ORGANIZATION_AUDIT_ACTIONS.admissionBypassAttempt:
+    case ORGANIZATION_AUDIT_ACTIONS.admissionDenied:
+    case ORGANIZATION_AUDIT_ACTIONS.memberReactivated:
+    case ORGANIZATION_AUDIT_ACTIONS.scimDeprovisioned:
     case ORGANIZATION_AUDIT_ACTIONS.scimTokenRotated:
     case ORGANIZATION_AUDIT_ACTIONS.scimConnectionDeleted:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted:
       return true
     case ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun:
+    case ORGANIZATION_AUDIT_ACTIONS.admissionEvaluated:
+    case ORGANIZATION_AUDIT_ACTIONS.admissionAllowed:
+    case ORGANIZATION_AUDIT_ACTIONS.admissionShadowMismatch:
       return false
   }
 }

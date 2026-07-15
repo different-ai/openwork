@@ -1,4 +1,4 @@
-import { eq } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNotNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
@@ -11,11 +11,15 @@ import { db } from "../../db.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { listAssignableRoles, recoverOrganizationOwnership, removeOrganizationMember, transferOrganizationOwnership, validateOrganizationMemberRoleUpdate } from "../../orgs.js"
+import { admitOrganizationMember } from "../../organization-admission.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureMemberRemover, ensureOrganizationAdmin, ensureOwner, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
 
 const updateMemberRoleSchema = z.object({
   role: z.string().trim().min(1).max(64),
+})
+const restoreMemberSchema = z.object({
+  role: z.string().trim().min(1).max(64).optional(),
 })
 
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -232,6 +236,53 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     })
 
     return c.body(null, 204)
+    },
+  )
+
+  app.post(
+    "/v1/members/:memberId/restore",
+    describeRoute({
+      tags: ["Members"],
+      summary: "Restore a removed organization member",
+      description: "Explicitly restores a removed member through the organization admission policy.",
+      responses: {
+        200: jsonResponse("Member restored successfully.", successSchema),
+        400: jsonResponse("The restoration request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only a workspace owner or admin can restore members.", forbiddenSchema),
+        404: jsonResponse("The removed member could not be found.", notFoundSchema),
+      },
+    }),
+    orgRoleRoute(["admin"]),
+    paramValidator(orgMemberParamsSchema),
+    jsonValidator(restoreMemberSchema),
+    async (c) => {
+      const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can restore members.")
+      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+      const payload = c.get("organizationContext")
+      const memberId = normalizeDenTypeId("member", c.req.valid("param").memberId)
+      const rows = await db
+        .select()
+        .from(MemberTable)
+        .where(and(
+          eq(MemberTable.id, memberId),
+          eq(MemberTable.organizationId, payload.organization.id),
+          isNotNull(MemberTable.removedAt),
+        ))
+        .limit(1)
+      const member = rows[0]
+      if (!member?.userId) return c.json({ error: "member_not_found" }, 404)
+      const requestedRole = c.req.valid("json").role
+      const role = requestedRole ? normalizeRoleName(requestedRole) : member.role
+      const availableRoles = await listAssignableRoles(payload.organization.id)
+      if (!availableRoles.has(role)) return c.json({ error: "invalid_role", message: "Choose one of the existing organization roles." }, 400)
+      const admission = await admitOrganizationMember({
+        organizationId: payload.organization.id,
+        userId: member.userId,
+        evidence: { kind: "admin_restore", role, actorMemberId: payload.currentMember.id },
+      })
+      if (admission.decision !== "allow") return c.json({ error: "organization_admission_required", admission }, 403)
+      return c.json({ success: true })
     },
   )
 }

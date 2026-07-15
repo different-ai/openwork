@@ -1187,7 +1187,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
             membershipRows.map((member) => member.id),
           ))
         }
-        await tx.update(MemberTable).set({ removedAt }).where(eq(MemberTable.userId, userId))
+        await tx
+          .update(MemberTable)
+          .set({ removedAt, removalSource: "system" })
+          .where(eq(MemberTable.userId, userId))
         await tx.update(WorkerTable).set({ created_by_user_id: null }).where(eq(WorkerTable.created_by_user_id, userId))
         await tx.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
       })

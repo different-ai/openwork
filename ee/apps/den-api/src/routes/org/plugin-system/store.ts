@@ -4783,6 +4783,9 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
     session: null,
     organizationContext: {
       currentMember: {
+        admissionPolicyVersion: member.admissionPolicyVersion,
+        admissionSource: member.admissionSource,
+        admittedAt: member.admittedAt,
         createdAt: member.createdAt,
         id: member.id,
         isOwner: roleIncludesOwner(member.role),

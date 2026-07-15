@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   MemberTable,
@@ -27,11 +27,16 @@ export async function revokeMembershipSessionCredentials(input: {
   const sessions = await db
     .select({ id: AuthSessionTable.id })
     .from(AuthSessionTable)
-    .where(eq(AuthSessionTable.userId, input.userId))
+    .where(and(
+      eq(AuthSessionTable.userId, input.userId),
+      or(
+        eq(AuthSessionTable.activeOrganizationId, input.organizationId),
+        eq(AuthSessionTable.authenticationOrganizationId, input.organizationId),
+      ),
+    ))
 
   if (sessions.length > 0) {
-    // Auth sessions are user-scoped credentials. Revoke them all so a live
-    // session cannot re-select the changed organization and mint new tokens.
+    // Keep the global account and sessions for other organizations intact.
     await db
       .delete(AuthSessionTable)
       .where(inArray(AuthSessionTable.id, sessions.map((session) => session.id)))

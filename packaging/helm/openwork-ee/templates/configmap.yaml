@@ -12,6 +12,7 @@ data:
   DEN_API_NODE_OPTIONS: {{ .Values.config.denApiNodeOptions | quote }}
   DB_MODE: {{ .Values.config.databaseMode | quote }}
   DEN_ORG_MODE: {{ .Values.config.tenancy.mode | quote }}
+  DEN_ORG_ADMISSION_ENFORCEMENT: {{ .Values.config.tenancy.admissionEnforcement | quote }}
   DEN_SINGLE_ORG_NAME: {{ .Values.config.tenancy.singleOrgName | quote }}
   DEN_SINGLE_ORG_SLUG: {{ .Values.config.tenancy.singleOrgSlug | quote }}
   DEN_SINGLE_ORG_OWNER_EMAILS: {{ .Values.config.tenancy.ownerEmails | quote }}
