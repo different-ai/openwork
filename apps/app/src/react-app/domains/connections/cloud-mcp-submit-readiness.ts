@@ -201,8 +201,8 @@ export function assessCloudMcpSubmissionReadiness(input: {
         code: "provider_tool_projection_unverified",
         stage: "provider_projection",
         retryable: false,
-        message: "The current engine cannot prove that connected service tools were injected into the selected model.",
-        recommendedAction: "Update or restart OpenWork, then Retry. Open Connect for detailed diagnostics.",
+        message: "Connected service tools couldn't be verified for this model.",
+        recommendedAction: "Restart OpenWork, then Retry, or open Connect for details.",
       }),
     };
   }

@@ -256,7 +256,7 @@ export default {
         await ctx.prove("An unprovable selected-model projection creates no run and preserves the draft with safe recovery actions", {
           voiceover: vo[1],
           action: async () => {
-            await ctx.waitForText("The current engine cannot prove that connected service tools were injected into the selected model.", { timeoutMs: 20_000 });
+            await ctx.waitForText("Connected service tools couldn't be verified for this model.", { timeoutMs: 20_000 });
             await ctx.waitForText("Retry", { timeoutMs: 5_000 });
             await ctx.waitForText("Open Connect", { timeoutMs: 5_000 });
           },
@@ -271,7 +271,7 @@ export default {
           screenshot: {
             name: "cloud-submit-projection-failure-preserves-draft",
             claim: "The selected-model projection gap fails closed with the draft preserved and Retry/Open Connect actions.",
-            requireText: ["The current engine cannot prove that connected service tools were injected into the selected model.", "Retry", "Open Connect", EDITED_PROMPT],
+            requireText: ["Connected service tools couldn't be verified for this model.", "Retry", "Open Connect", EDITED_PROMPT],
             rejectText: ["Stop", "search_capabilities was unavailable but the task was sent"],
             hashIncludes: `/workspace/${state.workspaceId}/session/`,
           },
