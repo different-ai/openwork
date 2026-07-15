@@ -142,4 +142,42 @@ describe("enterprise MCP requirements discovery", () => {
     assert.equal(result.manualRequirements[0]?.code, "authorization_server_selection")
     assert.equal(result.manualRequirements[0]?.required, true)
   })
+
+  it("accepts a resource-scoped OAuth discovery alias while exposing the canonical issuer", async () => {
+    const resource = "https://api.salesforce.example:443/platform/mcp/v1/platform/sobject-all"
+    const fetch: EnterpriseMcpFetch = async (url) => {
+      const target = new URL(url)
+      if (target.pathname === "/.well-known/oauth-protected-resource/platform/mcp/v1/platform/sobject-all") {
+        return Response.json({
+          resource,
+          authorization_servers: [resource],
+          scopes_supported: ["mcp_api", "refresh_token"],
+        })
+      }
+      if (target.pathname === "/.well-known/oauth-authorization-server/platform/mcp/v1/platform/sobject-all") {
+        return Response.json({
+          issuer: "https://login.salesforce.example",
+          authorization_endpoint: "https://login.salesforce.example/services/oauth2/authorize",
+          token_endpoint: "https://login.salesforce.example/services/oauth2/token",
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
+          code_challenge_methods_supported: ["S256"],
+          scopes_supported: ["mcp_api", "refresh_token"],
+        })
+      }
+      return new Response(null, { status: 401 })
+    }
+
+    const result = await discoverConnectionRequirements({
+      serverUrl: "https://api.salesforce.example/platform/mcp/v1/platform/sobject-all",
+      fetch,
+    })
+
+    assert.equal(result.authentication.authorizationServers[0]?.issuer, "https://login.salesforce.example")
+    assert.deepEqual(result.authentication.authorizationServers[0]?.scopesSupported, ["mcp_api", "refresh_token"])
+    assert.deepEqual(result.authentication.recommendedScopes, ["mcp_api", "refresh_token"])
+    assert.equal(result.authentication.recommendedRegistrationMethod, "pre_registered")
+    assert.equal(result.warnings.some((warning) => warning.code === "oauth_issuer_mismatch"), false)
+  })
 })

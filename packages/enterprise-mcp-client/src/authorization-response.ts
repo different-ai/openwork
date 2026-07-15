@@ -1,4 +1,5 @@
 import { EnterpriseMcpOAuthContractError } from "./errors.js"
+import { isAuthorizationServerDiscoveryBound } from "./oauth-discovery-binding.js"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -41,11 +42,20 @@ export function validateMcpAuthorizationResponseIssuer(input: {
   const advertisedIssuers = Array.isArray(resourceMetadata?.authorization_servers)
     ? resourceMetadata.authorization_servers.filter((value): value is string => typeof value === "string")
     : undefined
-  if (
-    (metadataIssuer !== undefined && metadataIssuer !== expectedIssuer)
-    || (discoveryIssuer !== undefined && discoveryIssuer !== expectedIssuer)
-    || (advertisedIssuers !== undefined && !advertisedIssuers.includes(expectedIssuer))
-  ) {
+  const discoveryIsBound = discoveryIssuer
+    ? isAuthorizationServerDiscoveryBound({
+        authorizationServerUrl: discoveryIssuer,
+        authorizationServerMetadata: metadataIssuer ? { issuer: metadataIssuer } : undefined,
+        resourceMetadata: resourceMetadata
+          ? {
+              resource: optionalString(resourceMetadata.resource),
+              authorization_servers: advertisedIssuers,
+            }
+          : undefined,
+      }, expectedIssuer)
+    : (metadataIssuer === undefined || metadataIssuer === expectedIssuer)
+      && (advertisedIssuers === undefined || advertisedIssuers.includes(expectedIssuer))
+  if (!discoveryIsBound) {
     throw new EnterpriseMcpOAuthContractError(
       "MCP_OAUTH_ISSUER_MISMATCH",
       "The stored OAuth discovery state no longer matches the issuer bound to this MCP connection.",

@@ -73,8 +73,12 @@ function scopedFetch(input: {
 function metadataRequirement(
   advertisedIssuer: string,
   metadata: AuthorizationServerMetadata,
+  resource: string | undefined,
 ): EnterpriseMcpAuthorizationServerRequirement | null {
-  if (metadata.issuer !== advertisedIssuer) return null
+  // Some providers advertise the protected resource itself as a scoped
+  // metadata discovery alias. Accept that exact alias while retaining the
+  // metadata issuer as the canonical issuer used by the OAuth flow.
+  if (metadata.issuer !== advertisedIssuer && advertisedIssuer !== resource) return null
   return {
     issuer: metadata.issuer,
     authorizationEndpoint: metadata.authorization_endpoint,
@@ -230,7 +234,7 @@ export async function discoverConnectionRequirements(
         warnings.push({ code: "oauth_server_metadata_unavailable", message: `No OAuth metadata was found for issuer ${issuer}.` })
         continue
       }
-      const requirement = metadataRequirement(issuer, metadata)
+      const requirement = metadataRequirement(issuer, metadata, resourceMetadata?.resource)
       if (!requirement) {
         warnings.push({ code: "oauth_issuer_mismatch", message: `OAuth metadata did not return the advertised issuer ${issuer}.` })
         continue
@@ -247,7 +251,9 @@ export async function discoverConnectionRequirements(
   const requiredScopes = uniqueScopes(challengeScope)
   const refreshSupported = authorizationServers.some((server) => server.grantTypesSupported?.includes("refresh_token"))
   const offlineAccessSupported = authorizationServers.some((server) => server.scopesSupported?.includes("offline_access"))
-  const recommendedScopes = [...requiredScopes]
+  const recommendedScopes = requiredScopes.length > 0
+    ? [...requiredScopes]
+    : [...new Set(resourceMetadata?.scopes_supported ?? [])]
   if (refreshSupported && offlineAccessSupported && !recommendedScopes.includes("offline_access")) {
     recommendedScopes.push("offline_access")
   }

@@ -617,6 +617,47 @@ describe("enterprise MCP OAuth persistence contract", () => {
       && error.code === "MCP_OAUTH_ISSUER_MISMATCH")
   })
 
+  it("binds a resource-scoped discovery alias to its canonical callback issuer", async () => {
+    const alias = "https://api.salesforce.example:443/platform/mcp/v1/platform/sobject-all"
+    const canonicalIssuer = "https://login.salesforce.example"
+    const discoveryState: OAuthDiscoveryState = {
+      authorizationServerUrl: alias,
+      authorizationServerMetadata: {
+        issuer: canonicalIssuer,
+        authorization_endpoint: `${canonicalIssuer}/services/oauth2/authorize`,
+        token_endpoint: `${canonicalIssuer}/services/oauth2/token`,
+        response_types_supported: ["code"],
+      },
+      resourceMetadata: {
+        resource: alias,
+        authorization_servers: [alias],
+      },
+    }
+    const persistence = new MemoryOAuthPersistence()
+    const provider = new EnterpriseMcpOAuthProvider({
+      redirectUri: "https://den.example.test/v1/mcp-connections/oauth/callback",
+      connectionId: "connection-1",
+      persistence,
+      flow: { kind: "connect", authorizationId: "signed-state" },
+      clientName: "OpenWork",
+      clock: { now: () => Date.now() },
+      lifecycle: { expiresAt: Date.now() + 30_000, signal: new AbortController().signal },
+      authorizationTransactionTtlMs: 600_000,
+      expirationSkewMs: 0,
+      oauthConfiguration: {
+        applicationType: "web",
+        authorizationServerIssuer: canonicalIssuer,
+      },
+    })
+
+    await assert.doesNotReject(provider.saveDiscoveryState(discoveryState))
+    assert.doesNotThrow(() => validateMcpAuthorizationResponseIssuer({
+      expectedIssuer: canonicalIssuer,
+      discoveryState,
+      responseIssuer: canonicalIssuer,
+    }))
+  })
+
   it("rejects a non-HTTPS client metadata document before OAuth performs network work", async () => {
     let fetchCount = 0
     const client = createEnterpriseMcpClient({
