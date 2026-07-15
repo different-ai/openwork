@@ -17,6 +17,7 @@ import { ModelBehaviorSelect } from "@/components/model-behavior-select";
 import { ModelSelect } from "@/components/model-select";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
+import { clipboardAttachmentFiles } from "./clipboard-files";
 import type { ComposerMentionKind } from "./mention-encoding";
 import { getSlashCommandQuery } from "./slash-command";
 
@@ -1217,7 +1218,8 @@ export function ReactSessionComposer(props: ComposerProps) {
               onPasteText={props.onPasteText}
               onPaste={(event) => {
                 // Paste policy:
-                // 1. Actual files on the clipboard -> attach them.
+                // 1. Substantial files on the clipboard -> attach them. Tiny
+                //    clipboard representations fall through to normal paste.
                 // 2. Explicit text/uri-list (drag from Finder / browser) -> insert links.
                 // 3. Plain text -> DO NOTHING. Let Lexical's PlainTextPlugin
                 //    handle the paste natively so newlines render correctly
@@ -1225,8 +1227,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                 //    hijacked pastes that merely contained absolute paths
                 //    like "/Users/..." or pastes longer than 10 lines, which
                 //    was the root cause of "paste into composer is broken".
-                const files = Array.from(event.clipboardData?.files ?? []);
-                if (files.length) {
+                const clipboardFiles = Array.from(event.clipboardData?.files ?? []);
+                if (clipboardFiles.length) {
+                  const files = clipboardAttachmentFiles(clipboardFiles);
+                  if (!files.length) return;
                   event.preventDefault();
                   void addAttachments(files);
                   return;
