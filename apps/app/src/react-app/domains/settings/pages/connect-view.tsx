@@ -758,12 +758,14 @@ export function ConnectActivePanel(props: {
         <ManageInDenButton />
       </div>
 
-      <AgentAccessCard
-        client={props.openworkClient}
-        workspaceId={props.workspaceId}
-        currentModel={props.currentModel}
-        onHealthChange={props.onCloudMcpHealthChange}
-      />
+      <div data-testid="agent-access-section">
+        <AgentAccessCard
+          client={props.openworkClient}
+          workspaceId={props.workspaceId}
+          currentModel={props.currentModel}
+          onHealthChange={props.onCloudMcpHealthChange}
+        />
+      </div>
     </SettingsSection>
   );
 }
@@ -1015,34 +1017,36 @@ export function ConnectView(props: ConnectViewProps) {
   );
 
   const diagnosticsContent = (
-    <SettingsSection data-testid="connect-diagnostics-section">
-      <div className="flex justify-end">
-        <Button
-          data-testid="run-agent-diagnostics"
-          size="sm"
-          variant="outline"
-          disabled={diagnosticsState.busy || !props.diagnosticsAvailable}
-          onClick={() => void runAgentDiagnostics()}
-        >
-          <Activity size={14} />
-          {diagnosticsState.busy ? t("connect.diagnostics_running") : t("connect.diagnostics_run")}
-        </Button>
-      </div>
-      {props.diagnosticsUnavailableReason === "direct-remote-opencode" ? (
-        <div data-testid="agent-diagnostics-unavailable-direct-opencode">
-          <SettingsNotice>{t("connect.diagnostics_unavailable_direct_opencode")}</SettingsNotice>
+    <div data-testid="connect-diagnostics-section">
+      <SettingsSection>
+        <div className="flex justify-end">
+          <Button
+            data-testid="run-agent-diagnostics"
+            size="sm"
+            variant="outline"
+            disabled={diagnosticsState.busy || !props.diagnosticsAvailable}
+            onClick={() => void runAgentDiagnostics()}
+          >
+            <Activity size={14} />
+            {diagnosticsState.busy ? t("connect.diagnostics_running") : t("connect.diagnostics_run")}
+          </Button>
         </div>
-      ) : null}
-      {diagnosticsState.error ? <AgentContextDiagnosticsErrorNotice message={diagnosticsState.error} /> : null}
-      {diagnosticsState.report ? (
-        <AgentContextDiagnosticsReportView
-          report={diagnosticsState.report}
-          copied={diagnosticsState.copied}
-          copying={diagnosticsState.copying}
-          onCopy={copyDiagnosticsReport}
-        />
-      ) : null}
-    </SettingsSection>
+        {props.diagnosticsUnavailableReason === "direct-remote-opencode" ? (
+          <div data-testid="agent-diagnostics-unavailable-direct-opencode">
+            <SettingsNotice>{t("connect.diagnostics_unavailable_direct_opencode")}</SettingsNotice>
+          </div>
+        ) : null}
+        {diagnosticsState.error ? <AgentContextDiagnosticsErrorNotice message={diagnosticsState.error} /> : null}
+        {diagnosticsState.report ? (
+          <AgentContextDiagnosticsReportView
+            report={diagnosticsState.report}
+            copied={diagnosticsState.copied}
+            copying={diagnosticsState.copying}
+            onCopy={copyDiagnosticsReport}
+          />
+        ) : null}
+      </SettingsSection>
+    </div>
   );
 
   return (

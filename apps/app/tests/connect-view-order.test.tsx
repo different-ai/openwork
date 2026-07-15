@@ -29,9 +29,9 @@ describe("Connect page section priority", () => {
     );
 
     expect(html.indexOf('data-testid="connect-organization-section"')).toBeGreaterThan(-1);
-    expect(html.indexOf("Agent access to connected services")).toBeGreaterThan(-1);
+    expect(html.indexOf('data-testid="agent-access-section"')).toBeGreaterThan(-1);
     expect(html.indexOf('data-testid="connect-organization-section"'))
-      .toBeLessThan(html.indexOf("Agent access to connected services"));
+      .toBeLessThan(html.indexOf('data-testid="agent-access-section"'));
   });
 
   test("renders primary Connect content before diagnostics", () => {
