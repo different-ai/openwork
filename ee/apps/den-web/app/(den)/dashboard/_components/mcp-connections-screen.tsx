@@ -44,6 +44,7 @@ import {
   useMcpConnections,
   useMcpConnectionTools,
   useMigrateMcpConnectionCallback,
+  useRevertMcpConnectionCallback,
   useNativeProviderClient,
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
@@ -215,6 +216,7 @@ export function McpConnectionsScreen() {
   const updateConnection = useUpdateMcpConnection();
   const startOAuth = useStartMcpConnectionOAuth();
   const migrateCallback = useMigrateMcpConnectionCallback();
+  const revertCallback = useRevertMcpConnectionCallback();
   const deleteConnection = useDeleteMcpConnection();
   const saveNativeClient = useSaveNativeProviderClient();
 
@@ -327,13 +329,27 @@ export function McpConnectionsScreen() {
     const authorizationWindow = openMcpAuthorizationWindow();
     try {
       const migrated = await migrateCallback.mutateAsync(connection.id);
-      setConnectionActionNotice(`${migrated.name} now permanently uses the deployment-wide callback.`);
+      setConnectionActionNotice(`${migrated.name} now uses the deployment-wide callback. You can restore its previous callback if the provider is not ready.`);
       await handleConnectOAuth(connection.id, authorizationWindow);
     } catch (migrationError) {
       authorizationWindow.close();
       setConnectionActionError({
         connectionId: connection.id,
         message: migrationError instanceof Error ? migrationError.message : "Failed to migrate the MCP callback.",
+      });
+    }
+  }
+
+  async function handleRevertCallback(connection: ExternalMcpConnection) {
+    setConnectionActionError(null);
+    setConnectionActionNotice(null);
+    try {
+      const reverted = await revertCallback.mutateAsync(connection.id);
+      setConnectionActionNotice(`${reverted.name} now uses its previous per-connection callback. Keep the MCP OAuth engine on the previous flow before reconnecting.`);
+    } catch (revertError) {
+      setConnectionActionError({
+        connectionId: connection.id,
+        message: revertError instanceof Error ? revertError.message : "Failed to restore the previous MCP callback.",
       });
     }
   }
@@ -521,6 +537,7 @@ export function McpConnectionsScreen() {
             <ConnectionRow
               key={connection.id}
               connection={connection}
+              externalMcpEngine={orgContext?.capabilities.externalMcpEngine.effective ?? "legacy"}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
@@ -535,6 +552,8 @@ export function McpConnectionsScreen() {
               onToggleTools={() => setToolsConnectionId((current) => current === connection.id ? null : connection.id)}
               migratingCallback={migrateCallback.isPending && migrateCallback.variables === connection.id}
               onMigrateCallback={() => void handleMigrateCallback(connection)}
+              revertingCallback={revertCallback.isPending && revertCallback.variables === connection.id}
+              onRevertCallback={() => void handleRevertCallback(connection)}
             />
           ))}
         </div>
@@ -1158,6 +1177,7 @@ function accessSummaryLabel(connection: ExternalMcpConnection): string {
 
 function ConnectionRow({
   connection,
+  externalMcpEngine,
   polling,
   connecting,
   errorMessage,
@@ -1169,8 +1189,11 @@ function ConnectionRow({
   onToggleTools,
   migratingCallback,
   onMigrateCallback,
+  revertingCallback,
+  onRevertCallback,
 }: {
   connection: ExternalMcpConnection;
+  externalMcpEngine: "enterprise" | "legacy";
   polling: boolean;
   connecting: boolean;
   errorMessage: string | null;
@@ -1182,17 +1205,24 @@ function ConnectionRow({
   onToggleTools: () => void;
   migratingCallback: boolean;
   onMigrateCallback: () => void;
+  revertingCallback: boolean;
+  onRevertCallback: () => void;
 }) {
   const [copiedOAuthUrl, setCopiedOAuthUrl] = useState<"callback" | "shared-callback" | "metadata" | null>(null);
+  const [sharedCallbackConfirmed, setSharedCallbackConfirmed] = useState(false);
   const isPerMember = connection.credentialMode === "per_member";
-  const callbackUpdateRequired = connection.oauthMigrationStatus === "legacy_manual_client";
-  const automaticCallbackMigrationPending = connection.oauthMigrationStatus === "unclassified";
+  const callbackUpdateRequired = externalMcpEngine === "enterprise" && connection.oauthMigrationStatus === "legacy_manual_client";
+  const automaticCallbackMigrationPending = externalMcpEngine === "enterprise" && connection.oauthMigrationStatus === "unclassified";
   const needsOAuthConnect = connection.authType === "oauth"
     && (!connection.connected || automaticCallbackMigrationPending)
     && !callbackUpdateRequired
     && (!isPerMember || automaticCallbackMigrationPending);
 
   const canInspectTools = connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe;
+
+  useEffect(() => {
+    setSharedCallbackConfirmed(false);
+  }, [connection.id, connection.oauthCallbackMode]);
 
   return (
     <div>
@@ -1233,7 +1263,7 @@ function ConnectionRow({
             </p>
             {connection.authType === "oauth" ? (
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
-                <span>{connection.oauthCallbackMode === "shared-v1" ? "Shared callback" : callbackUpdateRequired ? "Callback update required" : "Callback migration pending"}</span>
+                <span>{connection.oauthCallbackMode === "shared-v1" ? "Shared callback" : callbackUpdateRequired ? "Callback update required" : automaticCallbackMigrationPending ? "Callback migration pending" : "Previous callback"}</span>
                 <span>Registration: {connection.oauthRegistrationSource ?? "not registered"}</span>
                 {connection.authorizationServerIssuer ? <span className="max-w-full truncate">Issuer: {connection.authorizationServerIssuer}</span> : null}
                 {(connection.requestedScopes?.length ?? 0) > 0 ? <span>Scopes: {connection.requestedScopes?.join(", ")}</span> : null}
@@ -1306,10 +1336,19 @@ function ConnectionRow({
             </li>
             <li>Add it to the external OAuth application without removing the old callback yet.</li>
             <li>
-              <DenButton variant="secondary" size="sm" loading={migratingCallback || connecting || polling} onClick={onMigrateCallback}>
+              <label className="mb-2 flex items-start gap-2 text-[11px] text-amber-900">
+                <input
+                  type="checkbox"
+                  checked={sharedCallbackConfirmed}
+                  onChange={(event) => setSharedCallbackConfirmed(event.target.checked)}
+                  className="mt-1"
+                />
+                <span>I added the shared callback to the OAuth app</span>
+              </label>
+              <DenButton variant="secondary" size="sm" loading={migratingCallback || connecting || polling} disabled={!sharedCallbackConfirmed} onClick={onMigrateCallback}>
                 Reconnect using shared callback
               </DenButton>
-              <p className="mt-1 text-[11px] text-amber-800">This migration is permanent. OpenWork preserves your manual client ID, secret, and access grants.</p>
+              <p className="mt-1 text-[11px] text-amber-800">OpenWork preserves your manual client ID, secret, and access grants. You can restore the previous callback if the provider is not ready.</p>
             </li>
           </ol>
         </div>
@@ -1338,6 +1377,14 @@ function ConnectionRow({
               >
                 {copiedOAuthUrl === "metadata" ? "Copied" : "Copy"}
               </button>
+            </div>
+          ) : null}
+          {connection.oauthCallbackMode === "shared-v1" && connection.oauthRegistrationSource === "pre-registered" ? (
+            <div className="mt-2 border-t border-gray-200 pt-2">
+              <DenButton variant="secondary" size="sm" loading={revertingCallback} onClick={onRevertCallback}>
+                Revert to previous callback
+              </DenButton>
+              <p className="mt-1 text-[10px] text-gray-500">Use this recovery action when the provider still allowlists only the per-connection callback.</p>
             </div>
           ) : null}
         </div>
@@ -1604,6 +1651,7 @@ function EditConnectionDialog({
   const [showOAuthClient, setShowOAuthClient] = useState(false);
   const [oauthClientId, setOAuthClientId] = useState("");
   const [oauthClientSecret, setOAuthClientSecret] = useState("");
+  const [requestedScopesText, setRequestedScopesText] = useState("");
   const [accessMode, setAccessMode] = useState<AddConnectionAccessMode>("everyone");
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
@@ -1619,6 +1667,7 @@ function EditConnectionDialog({
     setShowOAuthClient(Boolean(connection.oauthClientId));
     setOAuthClientId(connection.oauthClientId ?? "");
     setOAuthClientSecret("");
+    setRequestedScopesText((connection.requestedScopes ?? []).join(" "));
     setAccessMode(mcpAccessMode(connection.access));
     setSelectedTeamIds(connection.access?.teamIds ?? []);
     setSelectedMemberIds(connection.access?.memberIds ?? []);
@@ -1667,6 +1716,7 @@ function EditConnectionDialog({
     const trimmedApiKey = apiKey.trim();
     const trimmedClientId = oauthClientId.trim();
     const trimmedClientSecret = oauthClientSecret.trim();
+    const requestedScopes = [...new Set(requestedScopesText.split(/[\s,]+/).map((scope) => scope.trim()).filter(Boolean))];
     const input: UpdateMcpConnectionInput = {
       connectionId: connection.id,
       expectedUpdatedAt: connection.updatedAt,
@@ -1683,6 +1733,7 @@ function EditConnectionDialog({
           },
         }
         : {}),
+      ...(!marketplaceManaged && authType === "oauth" ? { requestedScopes } : {}),
       access,
     };
     try {
@@ -1809,6 +1860,20 @@ function EditConnectionDialog({
                   />
                 </div>
               </div>
+            </div>
+          ) : null}
+
+          {authType === "oauth" ? (
+            <div>
+              <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Requested OAuth scopes</label>
+              <DenInput
+                value={requestedScopesText}
+                disabled={marketplaceManaged}
+                onChange={(event) => setRequestedScopesText(event.target.value)}
+                placeholder="records.read records.write"
+                data-testid="edit-mcp-requested-scopes"
+              />
+              <p className="mt-1.5 text-[11px] leading-5 text-gray-500">Separate scopes with spaces or commas. Scope changes apply on next connect — reconnect to re-authorize.</p>
             </div>
           ) : null}
 
@@ -2206,7 +2271,7 @@ function AddConnectionDialog({
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
               <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
               <p className="mt-1 text-[12px] leading-5 text-gray-500">
-                Use a client registered by your administrator. After creation, OpenWork shows the exact shared callback URL to allowlist.
+                Use a client registered by your administrator. After creation, OpenWork shows the exact callback URL to allowlist for the selected OAuth engine.
               </p>
               <div className="mt-3 space-y-3">
                 <div>

@@ -506,6 +506,30 @@ export function useMigrateMcpConnectionCallback() {
   });
 }
 
+export function useRevertMcpConnectionCallback() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (connectionId: string): Promise<ExternalMcpConnection> => {
+      let reverted: ExternalMcpConnection | null = null;
+      await runReauthableAction("revert-mcp-oauth-callback", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/mcp-connections/${encodeURIComponent(connectionId)}/oauth/revert-shared-callback`,
+          { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+          20000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to restore the previous MCP callback (${response.status}).`);
+        }
+        reverted = payload as ExternalMcpConnection;
+      });
+      if (!reverted) throw new Error("MCP callback rollback response was incomplete.");
+      return reverted;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
+  });
+}
+
 export type UpdatedMcpConnection = ExternalMcpConnection & {
   identityChanged: boolean;
   reconnectionRequired: boolean;

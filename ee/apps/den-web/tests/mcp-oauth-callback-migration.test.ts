@@ -10,7 +10,7 @@ const dataPath = fileURLToPath(
 )
 
 describe("MCP OAuth callback migration UI contract", () => {
-  test("offers only the guided one-way shared callback migration", () => {
+  test("offers a confirmed shared callback migration and explicit rollback", () => {
     const screen = readFileSync(screenPath, "utf8")
     const data = readFileSync(dataPath, "utf8")
 
@@ -18,13 +18,21 @@ describe("MCP OAuth callback migration UI contract", () => {
     expect(screen).toContain("Copy the new shared callback")
     expect(screen).toContain("Add it to the external OAuth application")
     expect(screen).toContain("Reconnect using shared callback")
+    expect(screen).toContain("I added the shared callback to the OAuth app")
     expect(screen).toContain("onClick={automaticCallbackMigrationPending ? onMigrateCallback : onConnect}")
-    expect(screen).toContain("This migration is permanent")
+    expect(screen).toContain("Revert to previous callback")
     expect(data).toContain("/oauth/use-shared-callback")
+    expect(data).toContain("/oauth/revert-shared-callback")
 
-    expect(screen).not.toContain("Use legacy callback")
-    expect(screen).not.toContain("Return to legacy")
     expect(data).not.toContain("oauthCallbackMode:")
+  })
+
+  test("edits requested scopes without forcing an immediate reconnect", () => {
+    const screen = readFileSync(screenPath, "utf8")
+
+    expect(screen).toContain("Requested OAuth scopes")
+    expect(screen).toContain("requestedScopesText")
+    expect(screen).toContain("Scope changes apply on next connect — reconnect to re-authorize.")
   })
 
   test("keeps deletion as a warned fallback instead of the primary migration path", () => {

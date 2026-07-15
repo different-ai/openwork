@@ -99,6 +99,8 @@ export function OrgSettingsScreen() {
   const [domainRestrictionsEnabled, setDomainRestrictionsEnabled] =
     useState(false);
   const [requireSsoEnabled, setRequireSsoEnabled] = useState(false);
+  const [externalMcpEngine, setExternalMcpEngine] = useState<"enterprise" | "legacy">("legacy");
+  const [externalMcpEngineDirty, setExternalMcpEngineDirty] = useState(false);
   const [domainEditModeEnabled, setDomainEditModeEnabled] = useState(false);
   const [desktopVersionOptions, setDesktopVersionOptions] = useState<string[]>(
     [],
@@ -162,6 +164,8 @@ export function OrgSettingsScreen() {
       (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
     );
     setRequireSsoEnabled(getRequireSsoFromMetadata(orgContext.organization.metadata));
+    setExternalMcpEngine(orgContext.capabilities.externalMcpEngine.effective);
+    setExternalMcpEngineDirty(false);
     setDomainEditModeEnabled(false);
   }, [orgContext]);
 
@@ -317,6 +321,7 @@ export function OrgSettingsScreen() {
             }
           : {}),
         requireSso: requireSsoEnabled,
+        ...(externalMcpEngineDirty ? { externalMcpEngine } : {}),
       });
       setDomainEditModeEnabled(false);
     } catch (error) {
@@ -507,6 +512,43 @@ export function OrgSettingsScreen() {
               checked={requireSsoEnabled}
               disabled={!isOwner}
               onChange={setRequireSsoEnabled}
+            />
+          </div>
+        </DenCard>
+
+        <DenCard size="spacious" className="grid gap-6">
+          <div className="grid gap-2">
+            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+              OpenWork Connect
+            </p>
+            <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
+              MCP OAuth engine
+            </h2>
+            <p className="text-[14px] text-gray-500">
+              Keep the previous OAuth flow for compatibility, or opt this organization into the new enterprise MCP client.
+            </p>
+          </div>
+
+          <div className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4">
+            <div className="grid gap-1 pr-4">
+              <p className="text-[15px] font-medium text-gray-900">
+                Use hardened OAuth client (new)
+                {!externalMcpEngineDirty && orgContext.capabilities.externalMcpEngine.source === "default" ? (
+                  <span className="ml-2 text-[11px] font-normal text-gray-400">(deployment default)</span>
+                ) : null}
+              </p>
+              <p className="text-[13px] text-gray-500">
+                Off uses the previous OAuth flow with per-connection callbacks and provider-advertised scope fallback. On uses the new enterprise MCP client and shared callback flow.
+              </p>
+            </div>
+            <SettingsToggle
+              label="Use the new enterprise MCP OAuth client"
+              checked={externalMcpEngine === "enterprise"}
+              disabled={!isOwner}
+              onChange={(enabled) => {
+                setExternalMcpEngine(enabled ? "enterprise" : "legacy");
+                setExternalMcpEngineDirty(true);
+              }}
             />
           </div>
         </DenCard>
