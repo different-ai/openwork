@@ -10,6 +10,7 @@ import {
 import { cleanupOpenworkCloudMcpAfterSignOut } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
 import {
   getSessionMcpMaintenanceTargetKey,
+  runCloudMcpMaintenanceWithRetry,
   runSessionMcpMaintenanceTask,
   syncCloudControlMcpInBackground,
 } from "../src/react-app/domains/connections/use-session-mcp-maintenance";
@@ -78,6 +79,16 @@ function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
   };
 }
 
+function retryableCloudHealth(): OpenworkCloudMcpHealth {
+  const health = cloudHealth(false);
+  return {
+    ...health,
+    firstFailure: health.firstFailure
+      ? { ...health.firstFailure, retryable: true }
+      : null,
+  };
+}
+
 function installStorageStub() {
   const values = new Map<string, string>();
   __setCloudMcpUserStateStorageForTest({
@@ -112,7 +123,7 @@ describe("session MCP maintenance", () => {
       settings: SETTINGS,
       now: NOW,
       mintToken: async () => MINTED,
-    })).resolves.toBe("synced");
+    })).resolves.toMatchObject({ outcome: "ready", status: "synced" });
 
     expect(writes).toEqual([{
       workspaceId: WORKSPACE_ID,
@@ -149,6 +160,56 @@ describe("session MCP maintenance", () => {
       workspaceId: WORKSPACE_ID,
       expiresAt: MINTED.expiresAt,
     });
+  });
+
+  test("keeps a retryable injection failure visible until a bounded retry restores the tools", async () => {
+    let reconcileCount = 0;
+    const waits: number[] = [];
+    const attempts: Array<{ outcome: string; attempt: number; willRetry: boolean }> = [];
+    const client = {
+      baseUrl: "https://worker.openwork.test",
+      listMcp: async () => ({
+        items: [{
+          name: "openwork-cloud",
+          config: { type: "remote", enabled: true, url: "https://api.openwork.test/mcp/agent" },
+        }],
+      }),
+      getOpenworkCloudMcpHealth: async () => retryableCloudHealth(),
+      reconcileOpenworkCloudMcp: async () => {
+        reconcileCount += 1;
+        return reconcileCount === 3 ? cloudHealth(true) : retryableCloudHealth();
+      },
+    };
+
+    const result = await runCloudMcpMaintenanceWithRetry({
+      attempt: () => syncCloudControlMcpInBackground({
+        client,
+        workspaceId: WORKSPACE_ID,
+        settings: SETTINGS,
+        now: NOW,
+        mintToken: async () => MINTED,
+      }),
+      retryDelaysMs: [25, 50],
+      wait: async (delayMs) => {
+        waits.push(delayMs);
+      },
+      onAttempt: (attempt) => {
+        attempts.push({
+          outcome: attempt.result.outcome,
+          attempt: attempt.attempt,
+          willRetry: attempt.willRetry,
+        });
+      },
+    });
+
+    expect(result).toMatchObject({ outcome: "ready", status: "synced" });
+    expect(reconcileCount).toBe(3);
+    expect(waits).toEqual([25, 50]);
+    expect(attempts).toEqual([
+      { outcome: "failed", attempt: 1, willRetry: true },
+      { outcome: "failed", attempt: 2, willRetry: true },
+      { outcome: "ready", attempt: 3, willRetry: false },
+    ]);
   });
 
   test("a fresh per-workspace marker prevents repeated token and config writes", async () => {
@@ -190,7 +251,7 @@ describe("session MCP maintenance", () => {
         mintCount += 1;
         return MINTED;
       },
-    })).resolves.toBe("unchanged");
+    })).resolves.toMatchObject({ outcome: "ready", status: "unchanged" });
     expect(mintCount).toBe(0);
     expect(writeCount).toBe(0);
   });
@@ -229,21 +290,21 @@ describe("session MCP maintenance", () => {
       settings: SETTINGS,
       now: NOW,
       mintToken,
-    })).resolves.toBe("synced");
+    })).resolves.toMatchObject({ outcome: "ready", status: "synced" });
     await expect(syncCloudControlMcpInBackground({
       client,
       workspaceId: "workspace_b",
       settings: SETTINGS,
       now: NOW,
       mintToken,
-    })).resolves.toBe("synced");
+    })).resolves.toMatchObject({ outcome: "ready", status: "synced" });
     await expect(syncCloudControlMcpInBackground({
       client,
       workspaceId: "workspace_a",
       settings: SETTINGS,
       now: NOW + 1_000,
       mintToken,
-    })).resolves.toBe("unchanged");
+    })).resolves.toMatchObject({ outcome: "ready", status: "unchanged" });
 
     expect(mintCount).toBe(2);
     expect(writes).toEqual(["workspace_a", "workspace_b"]);
@@ -315,7 +376,7 @@ describe("session MCP maintenance", () => {
       workspaceId: WORKSPACE_ID,
       settings: SETTINGS,
       mintToken: async () => MINTED,
-    })).resolves.toBe("skipped");
+    })).resolves.toEqual({ outcome: "skipped", status: "skipped", reason: "disabled", health: null });
     expect(listed).toBe(false);
   });
 

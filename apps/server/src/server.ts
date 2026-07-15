@@ -64,7 +64,11 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
-import { markOpenworkCloudMcpStale, reconcilePersistedOpenworkCloudMcp } from "./cloud-mcp-health.js";
+import {
+  markOpenworkCloudMcpStale,
+  reconcilePersistedOpenworkCloudMcp,
+  type CloudMcpHealth,
+} from "./cloud-mcp-health.js";
 import { runAgentContextDiagnostics } from "./agent-context-diagnostics.js";
 import { createAgentDiagnosticsEngineFetch } from "./agent-context-engine-inspection.js";
 import {
@@ -3210,29 +3214,38 @@ async function reloadOpencodeEngine(
   // configs (including the server-managed runtime config file for the
   // primary workspace), but other workspaces' runtime MCPs only reach the
   // engine through this dynamic push.
-  await syncRuntimeMcpToOpencodeEngine(
-    config,
-    workspace,
-    undefined,
-    undefined,
-    activeState ?? null,
-  ).catch(() => undefined);
-  await reconcilePersistedOpenworkCloudMcp({
-    config,
-    workspace,
-    directory,
-    serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
-    createWorkspaceOpencodeClient,
-    registerRuntimeMcp: (routeConfig, routeWorkspace, onlyNames, options) =>
-      syncRuntimeMcpToOpencodeEngine(
-        routeConfig,
-        routeWorkspace,
-        onlyNames,
-        options,
-        activeState ?? null,
-      ),
-    trigger: "engine_reload",
-  }).catch(() => undefined);
+  try {
+    await syncRuntimeMcpToOpencodeEngine(
+      config,
+      workspace,
+      undefined,
+      undefined,
+      activeState ?? null,
+    );
+  } catch (error) {
+    logRuntimeMcpSyncError({ config, workspace, trigger: "engine_reload", error });
+  }
+  try {
+    const health = await reconcilePersistedOpenworkCloudMcp({
+      config,
+      workspace,
+      directory,
+      serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
+      createWorkspaceOpencodeClient,
+      registerRuntimeMcp: (routeConfig, routeWorkspace, onlyNames, options) =>
+        syncRuntimeMcpToOpencodeEngine(
+          routeConfig,
+          routeWorkspace,
+          onlyNames,
+          options,
+          activeState ?? null,
+        ),
+      trigger: "engine_reload",
+    });
+    logPersistedCloudMcpReconcileResult({ config, workspace, trigger: "engine_reload", health });
+  } catch (error) {
+    logPersistedCloudMcpReconcileError({ config, workspace, trigger: "engine_reload", error });
+  }
 }
 
 // Push runtime-DB MCP entries into the running OpenCode engine via its dynamic
@@ -3897,6 +3910,66 @@ function deleteEngineMcpRegistration(
   state.registrationByWorkspace.get(workspace.id)?.delete(name);
 }
 
+function logPersistedCloudMcpReconcileResult(input: {
+  config: ServerConfig;
+  workspace: WorkspaceInfo;
+  trigger: "startup" | "engine_reload";
+  health: CloudMcpHealth;
+}): void {
+  if (!input.health.desired.present || input.health.usable) return;
+  const failure = input.health.firstFailure;
+  createServerLogger(input.config).log(
+    "warn",
+    `Cloud MCP ${input.trigger} reconciliation left connected service tools unavailable for workspace ${input.workspace.id}.`,
+    {
+      "workspace.id": input.workspace.id,
+      "mcp.name": "openwork-cloud",
+      "mcp.trigger": input.trigger,
+      "mcp.failure.code": failure?.code ?? "unknown",
+      "mcp.failure.stage": failure?.stage ?? "unknown",
+      "mcp.failure.retryable": failure?.retryable ?? null,
+      "mcp.failure.message": failure?.message ?? "Cloud MCP health remained unusable after reconciliation.",
+    },
+  );
+}
+
+function logRuntimeMcpSyncError(input: {
+  config: ServerConfig;
+  workspace: WorkspaceInfo;
+  trigger: "startup" | "engine_reload";
+  error: unknown;
+}): void {
+  createServerLogger(input.config).log(
+    "error",
+    `Runtime MCP ${input.trigger} sync crashed for workspace ${input.workspace.id}.`,
+    {
+      "workspace.id": input.workspace.id,
+      "mcp.trigger": input.trigger,
+      "mcp.failure.code": "runtime_mcp_sync_exception",
+      "mcp.failure.message": input.error instanceof Error ? input.error.message : String(input.error),
+    },
+  );
+}
+
+function logPersistedCloudMcpReconcileError(input: {
+  config: ServerConfig;
+  workspace: WorkspaceInfo;
+  trigger: "startup" | "engine_reload";
+  error: unknown;
+}): void {
+  createServerLogger(input.config).log(
+    "error",
+    `Cloud MCP ${input.trigger} reconciliation crashed for workspace ${input.workspace.id}.`,
+    {
+      "workspace.id": input.workspace.id,
+      "mcp.name": "openwork-cloud",
+      "mcp.trigger": input.trigger,
+      "mcp.failure.code": "cloud_mcp_reconcile_exception",
+      "mcp.failure.message": input.error instanceof Error ? input.error.message : String(input.error),
+    },
+  );
+}
+
 // Re-push every workspace's runtime-DB MCPs into the engine. Used at startup:
 // the runtime config file injected via OPENCODE_CONFIG covers workspaces[0]
 // only, so other workspaces' runtime MCPs are invisible to the engine until
@@ -3904,29 +3977,38 @@ function deleteEngineMcpRegistration(
 export async function syncAllWorkspacesRuntimeMcpToEngine(config: ServerConfig): Promise<void> {
   const serverState = activeEngineMcpServerState(config) ?? null;
   for (const workspace of config.workspaces) {
-    await syncRuntimeMcpToOpencodeEngine(
-      config,
-      workspace,
-      undefined,
-      undefined,
-      serverState,
-    ).catch(() => undefined);
-    await reconcilePersistedOpenworkCloudMcp({
-      config,
-      workspace,
-      directory: resolveOpencodeDirectory(workspace),
-      serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
-      createWorkspaceOpencodeClient,
-      registerRuntimeMcp: (routeConfig, routeWorkspace, onlyNames, options) =>
-        syncRuntimeMcpToOpencodeEngine(
-          routeConfig,
-          routeWorkspace,
-          onlyNames,
-          options,
-          serverState,
-        ),
-      trigger: "startup",
-    }).catch(() => undefined);
+    try {
+      await syncRuntimeMcpToOpencodeEngine(
+        config,
+        workspace,
+        undefined,
+        undefined,
+        serverState,
+      );
+    } catch (error) {
+      logRuntimeMcpSyncError({ config, workspace, trigger: "startup", error });
+    }
+    try {
+      const health = await reconcilePersistedOpenworkCloudMcp({
+        config,
+        workspace,
+        directory: resolveOpencodeDirectory(workspace),
+        serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
+        createWorkspaceOpencodeClient,
+        registerRuntimeMcp: (routeConfig, routeWorkspace, onlyNames, options) =>
+          syncRuntimeMcpToOpencodeEngine(
+            routeConfig,
+            routeWorkspace,
+            onlyNames,
+            options,
+            serverState,
+          ),
+        trigger: "startup",
+      });
+      logPersistedCloudMcpReconcileResult({ config, workspace, trigger: "startup", health });
+    } catch (error) {
+      logPersistedCloudMcpReconcileError({ config, workspace, trigger: "startup", error });
+    }
   }
 }
 
