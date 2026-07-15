@@ -407,7 +407,7 @@ export function SessionRoute() {
     state: cloudMcpSubmissionState,
     submit: submitWithCloudMcpReadiness,
   } = useCloudMcpSubmitReadiness({
-    cloudSignedIn: denAuth.isSignedIn,
+    cloudAuthStatus: denAuth.status,
     client: selectedWorkspaceEndpoint?.client ?? null,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     providerModel: cloudMcpProviderModel,

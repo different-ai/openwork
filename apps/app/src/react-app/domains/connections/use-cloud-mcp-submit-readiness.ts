@@ -7,6 +7,7 @@ import type {
   OpenworkServerClient,
 } from "../../../app/lib/openwork-server";
 import { denSettingsChangedEvent } from "../../../app/lib/den-session-events";
+import type { DenAuthStatus } from "../cloud/den-auth-provider";
 import {
   normalizeCloudMcpScope,
   readCloudMcpUserState,
@@ -16,6 +17,8 @@ import {
   decideCloudMcpSubmissionGate,
   ensureCloudMcpSubmissionReadiness,
   IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
+  resolveCloudMcpSubmissionAuth,
+  type CloudMcpSubmissionGateDecision,
   type CloudMcpSubmissionGateState,
   type CloudMcpSubmissionIssue,
   type CloudMcpSubmissionPreparationResult,
@@ -31,7 +34,7 @@ type CloudMcpSubmitReadinessClient = Pick<
 >;
 
 type UseCloudMcpSubmitReadinessInput = {
-  cloudSignedIn: boolean;
+  cloudAuthStatus: DenAuthStatus;
   client: CloudMcpSubmitReadinessClient | null;
   workspaceId: string | null;
   providerModel?: OpenworkCloudMcpProviderModelContext;
@@ -87,7 +90,10 @@ export function useCloudMcpSubmitReadiness(
     IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
   );
   const coordinatorRef = useRef(createCloudMcpSubmissionCoordinator());
-  const settings = useMemo(() => readDenSettings(), [input.cloudSignedIn, settingsVersion]);
+  const authStatusRef = useRef(input.cloudAuthStatus);
+  const authWaitersRef = useRef(new Set<() => void>());
+  authStatusRef.current = input.cloudAuthStatus;
+  const settings = useMemo(() => readDenSettings(), [input.cloudAuthStatus, settingsVersion]);
   const workspaceId = input.workspaceId?.trim() ?? "";
   const serverBaseUrl = input.client?.baseUrl.trim() ?? "";
   const orgId = settings.activeOrgId?.trim() ?? "";
@@ -99,7 +105,8 @@ export function useCloudMcpSubmitReadiness(
   });
   const userState = scope ? readCloudMcpUserState(scope) : null;
   const decision = useMemo(() => decideCloudMcpSubmissionGate({
-    cloudSignedIn: input.cloudSignedIn,
+    cloudAuthStatus: input.cloudAuthStatus,
+    cloudHasSessionToken: Boolean(settings.authToken?.trim()),
     denBaseUrl: settings.baseUrl,
     serverBaseUrl,
     orgId: orgId || null,
@@ -107,11 +114,12 @@ export function useCloudMcpSubmitReadiness(
     providerModel: input.providerModel,
     userState,
   }), [
-    input.cloudSignedIn,
+    input.cloudAuthStatus,
     input.providerModel?.model,
     input.providerModel?.provider,
     orgId,
     serverBaseUrl,
+    settings.authToken,
     settings.baseUrl,
     userState,
     workspaceId,
@@ -119,6 +127,16 @@ export function useCloudMcpSubmitReadiness(
   const currentScopeKeyRef = useRef(decision.scopeKey);
   currentScopeKeyRef.current = decision.scopeKey;
   const previousScopeKeyRef = useRef(decision.scopeKey);
+  const gateSnapshot = {
+    cloudAuthStatus: input.cloudAuthStatus,
+    client: input.client,
+    decision,
+    providerModel: input.providerModel,
+    settings,
+    workspaceId,
+  };
+  const gateSnapshotRef = useRef(gateSnapshot);
+  gateSnapshotRef.current = gateSnapshot;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -126,6 +144,13 @@ export function useCloudMcpSubmitReadiness(
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged);
     return () => window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged);
   }, []);
+
+  useEffect(() => {
+    if (input.cloudAuthStatus === "checking") return;
+    const waiters = [...authWaitersRef.current];
+    authWaitersRef.current.clear();
+    for (const resolve of waiters) resolve();
+  }, [input.cloudAuthStatus]);
 
   useEffect(() => {
     if (previousScopeKeyRef.current === decision.scopeKey) return;
@@ -142,34 +167,91 @@ export function useCloudMcpSubmitReadiness(
 
   useEffect(() => () => {
     coordinatorRef.current.cancel("unmounted");
+    const waiters = [...authWaitersRef.current];
+    authWaitersRef.current.clear();
+    for (const resolve of waiters) resolve();
+  }, []);
+
+  const waitForAuthResolution = useCallback((): Promise<void> => {
+    if (authStatusRef.current !== "checking") return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      authWaitersRef.current.add(resolve);
+    });
   }, []);
 
   const submit = useCallback(async (submission: CloudMcpSubmitInput): Promise<CloudMcpSubmissionResult> => {
-    const capturedScopeKey = decision.scopeKey;
-    const gateRequired = !submission.skipGate && decision.mode === "required";
+    const initialSnapshot = gateSnapshotRef.current;
+    const capturedScopeKey = initialSnapshot.decision.scopeKey;
+    const gateRequired = !submission.skipGate && initialSnapshot.decision.mode !== "bypass";
     let prepare: (() => Promise<CloudMcpSubmissionPreparationResult>) | undefined;
 
     if (gateRequired) {
       prepare = async () => {
-        const client = input.client;
-        const providerModel = input.providerModel;
-        if (!client || !workspaceId || !providerModel) {
+        let activeSnapshot = initialSnapshot;
+        let resolvedDecision: CloudMcpSubmissionGateDecision = initialSnapshot.decision;
+
+        if (resolvedDecision.mode === "waiting_for_auth") {
+          recordInspectorEvent("cloud_mcp.submission_auth_wait", {
+            workspaceId: activeSnapshot.workspaceId,
+            outcome: "started",
+          });
+          const authResolution = await resolveCloudMcpSubmissionAuth({
+            decision: resolvedDecision,
+            waitForResolution: async () => {
+              await waitForAuthResolution();
+              return gateSnapshotRef.current.decision;
+            },
+          });
+          if (currentScopeKeyRef.current !== capturedScopeKey) {
+            return { outcome: "cancelled", reason: "context_changed" };
+          }
+          if (authResolution.outcome === "failed") {
+            recordInspectorEvent("cloud_mcp.submission_auth_wait", {
+              workspaceId: activeSnapshot.workspaceId,
+              outcome: "failed",
+              code: authResolution.issue.code,
+            });
+            if (authResolution.issue.code === "cloud_mcp_auth_resolution_timeout") {
+              recordInspectorEvent("cloud_mcp.submission_timeout", {
+                workspaceId: activeSnapshot.workspaceId,
+                stage: "auth_resolution",
+              });
+            }
+            return { outcome: "failed", issue: authResolution.issue };
+          }
+
+          activeSnapshot = gateSnapshotRef.current;
+          resolvedDecision = authResolution.decision;
+          recordInspectorEvent("cloud_mcp.submission_auth_wait", {
+            workspaceId: activeSnapshot.workspaceId,
+            outcome: resolvedDecision.mode,
+            authStatus: activeSnapshot.cloudAuthStatus,
+          });
+        }
+
+        if (resolvedDecision.mode === "bypass") return { outcome: "bypass" };
+        if (resolvedDecision.mode !== "required") {
+          return { outcome: "cancelled", reason: "context_changed" };
+        }
+
+        const { client, providerModel, settings, workspaceId: activeWorkspaceId } = activeSnapshot;
+        if (!client || !activeWorkspaceId || !providerModel) {
           return {
             outcome: "failed",
             issue: missingContextIssue({
               client,
-              workspaceId,
+              workspaceId: activeWorkspaceId,
               providerModel,
             }),
           };
         }
         const result = await ensureCloudMcpSubmissionReadiness({
           providerModel,
-          check: () => client.getOpenworkCloudMcpHealth(workspaceId, providerModel),
+          check: () => client.getOpenworkCloudMcpHealth(activeWorkspaceId, providerModel),
           repair: async () => {
             const repaired = await syncCloudControlMcpInBackground({
               client,
-              workspaceId,
+              workspaceId: activeWorkspaceId,
               providerModel,
               settings,
               force: true,
@@ -190,7 +272,7 @@ export function useCloudMcpSubmitReadiness(
                 ? "cloud_mcp.submission_readiness"
                 : "cloud_mcp.submission_repair",
               {
-                workspaceId,
+                workspaceId: activeWorkspaceId,
                 provider: providerModel.provider,
                 model: providerModel.model,
                 attempt: attempt.attempt,
@@ -203,7 +285,7 @@ export function useCloudMcpSubmitReadiness(
             );
             if (issue?.code === "cloud_mcp_submission_timeout") {
               recordInspectorEvent("cloud_mcp.submission_timeout", {
-                workspaceId,
+                workspaceId: activeWorkspaceId,
                 provider: providerModel.provider,
                 model: providerModel.model,
                 attempt: attempt.attempt,
@@ -242,9 +324,9 @@ export function useCloudMcpSubmitReadiness(
             issue: nextState.issue,
           });
           recordInspectorEvent("cloud_mcp.submission_failure", {
-            workspaceId,
-            provider: input.providerModel?.provider ?? null,
-            model: input.providerModel?.model ?? null,
+            workspaceId: initialSnapshot.workspaceId,
+            provider: initialSnapshot.providerModel?.provider ?? null,
+            model: initialSnapshot.providerModel?.model ?? null,
             code: nextState.issue.code,
             stage: nextState.issue.stage,
             retryable: nextState.issue.retryable,
@@ -254,7 +336,7 @@ export function useCloudMcpSubmitReadiness(
         setState(IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE);
       },
     });
-  }, [decision, input.client, input.providerModel, settings, workspaceId]);
+  }, [waitForAuthResolution]);
 
   return { state, submit };
 }

@@ -8,6 +8,8 @@ import {
   createCloudMcpSubmissionCoordinator,
   decideCloudMcpSubmissionGate,
   ensureCloudMcpSubmissionReadiness,
+  resolveCloudMcpSubmissionAuth,
+  type CloudMcpSubmissionGateDecision,
   type CloudMcpSubmissionPreparationResult,
 } from "../src/react-app/domains/connections/cloud-mcp-submit-readiness";
 
@@ -113,9 +115,16 @@ function health(input?: {
   };
 }
 
-function requiredDecision(input?: { signedIn?: boolean; userState?: "disabled" | "removed" | null; workspaceId?: string; model?: string }) {
+function requiredDecision(input?: {
+  authStatus?: "checking" | "signed_in" | "unavailable" | "signed_out";
+  hasSessionToken?: boolean;
+  userState?: "disabled" | "removed" | null;
+  workspaceId?: string;
+  model?: string;
+}) {
   return decideCloudMcpSubmissionGate({
-    cloudSignedIn: input?.signedIn ?? true,
+    cloudAuthStatus: input?.authStatus ?? "signed_in",
+    cloudHasSessionToken: input?.hasSessionToken ?? true,
     denBaseUrl: "https://app.openwork.test",
     serverBaseUrl: "https://worker.openwork.test",
     orgId: "org_1",
@@ -195,6 +204,87 @@ describe("Cloud MCP pre-send readiness", () => {
     expect(runs).toBe(1);
   });
 
+  test("a cached Cloud session waits for auth restoration and sends exactly once", async () => {
+    const coordinator = createCloudMcpSubmissionCoordinator();
+    const checking = requiredDecision({ authStatus: "checking", hasSessionToken: true });
+    const signedIn = requiredDecision();
+    expect(checking.mode).toBe("waiting_for_auth");
+    expect(checking.scopeKey).toBe(signedIn.scopeKey);
+
+    let resolveAuth: ((decision: CloudMcpSubmissionGateDecision) => void) | null = null;
+    const authResolution = new Promise<CloudMcpSubmissionGateDecision>((resolve) => {
+      resolveAuth = resolve;
+    });
+    let checks = 0;
+    let runs = 0;
+    const input = {
+      scopeKey: checking.scopeKey,
+      prepare: async (): Promise<CloudMcpSubmissionPreparationResult> => {
+        const resolution = await resolveCloudMcpSubmissionAuth({
+          decision: checking,
+          waitForResolution: () => authResolution,
+          timeoutMs: 0,
+        });
+        if (resolution.outcome === "failed") {
+          return { outcome: "failed", issue: resolution.issue };
+        }
+        if (resolution.decision.mode === "bypass") return { outcome: "bypass" };
+        if (resolution.decision.mode !== "required") {
+          return { outcome: "cancelled", reason: "context_changed" };
+        }
+        return preparation({
+          check: async () => {
+            checks += 1;
+            return health();
+          },
+          repair: async () => health(),
+        })();
+      },
+      send: async () => {
+        runs += 1;
+      },
+    };
+
+    const first = coordinator.submit(input);
+    const second = coordinator.submit(input);
+    expect(second).toBe(first);
+    expect({ checks, runs }).toEqual({ checks: 0, runs: 0 });
+    resolveAuth?.(signedIn);
+
+    await expect(first).resolves.toEqual({ outcome: "sent", bypassed: false });
+    await expect(second).resolves.toEqual({ outcome: "sent", bypassed: false });
+    expect({ checks, runs }).toEqual({ checks: 1, runs: 1 });
+  });
+
+  test("an auth restoration timeout creates no run", async () => {
+    const coordinator = createCloudMcpSubmissionCoordinator();
+    const checking = requiredDecision({ authStatus: "checking", hasSessionToken: true });
+    let runs = 0;
+    const result = await coordinator.submit({
+      scopeKey: checking.scopeKey,
+      prepare: async () => {
+        const resolution = await resolveCloudMcpSubmissionAuth({
+          decision: checking,
+          waitForResolution: () => new Promise<CloudMcpSubmissionGateDecision>(() => undefined),
+          timeoutMs: 1,
+        });
+        if (resolution.outcome === "failed") {
+          return { outcome: "failed", issue: resolution.issue };
+        }
+        return { outcome: "ready" };
+      },
+      send: async () => {
+        runs += 1;
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "blocked",
+      issue: { code: "cloud_mcp_auth_resolution_timeout" },
+    });
+    expect(runs).toBe(0);
+  });
+
   test("a permanent injection failure creates no run and preserves the exact draft", async () => {
     const coordinator = createCloudMcpSubmissionCoordinator();
     const decision = requiredDecision();
@@ -272,12 +362,13 @@ describe("Cloud MCP pre-send readiness", () => {
     expect(runs).toBe(1);
   });
 
-  test("signed-out and explicitly disabled or removed Cloud bypass readiness entirely", async () => {
+  test("signed-out, tokenless startup, and explicitly disabled or removed Cloud bypass readiness entirely", async () => {
     const coordinator = createCloudMcpSubmissionCoordinator();
     let preparations = 0;
     let runs = 0;
     for (const decision of [
-      requiredDecision({ signedIn: false }),
+      requiredDecision({ authStatus: "signed_out", hasSessionToken: false }),
+      requiredDecision({ authStatus: "checking", hasSessionToken: false }),
       requiredDecision({ userState: "disabled" }),
       requiredDecision({ userState: "removed" }),
     ]) {
@@ -298,7 +389,7 @@ describe("Cloud MCP pre-send readiness", () => {
     }
 
     expect(preparations).toBe(0);
-    expect(runs).toBe(3);
+    expect(runs).toBe(4);
   });
 
   test("workspace or model changes cannot release an old queued message", async () => {
