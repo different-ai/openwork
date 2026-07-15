@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist/migration-runtime-types",
+    "declaration": false,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["scripts/migration-runtime/runner.ts", "src/mysql-config.ts"]
+}
