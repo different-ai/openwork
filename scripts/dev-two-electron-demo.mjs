@@ -4,11 +4,14 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const desktopRoot = path.join(repoRoot, "apps", "desktop");
 const desktopScriptsRoot = path.join(desktopRoot, "scripts");
+const desktopRequire = createRequire(path.join(desktopRoot, "package.json"));
+const electronCli = desktopRequire.resolve("electron/cli.js");
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 export function resolveDemoRoot(env = process.env) {
   return env.OPENWORK_ELECTRON_DEMO_ROOT?.trim() || path.join(os.tmpdir(), "openwork-two-electron-demo");
@@ -43,9 +46,18 @@ const appProfiles = {
 function profilePaths(runRoot, profile) {
   const root = path.join(runRoot, profile.label);
   return {
+    appDataDir: path.join(root, "appdata"),
     bootstrapPath: path.join(root, profile.bootstrapName),
+    cacheHome: path.join(root, "xdg-cache"),
+    configHome: path.join(root, "xdg-config"),
     dataDir: path.join(root, "openwork-data"),
+    dataHome: path.join(root, "xdg-data"),
+    envStorePath: path.join(root, "openwork-env.json"),
+    homeDir: path.join(root, "home"),
+    localAppDataDir: path.join(root, "local-appdata"),
+    opencodeConfigDir: path.join(root, "opencode-config"),
     root,
+    stateHome: path.join(root, "xdg-state"),
     userDataDir: path.join(root, "electron-userdata"),
   };
 }
@@ -56,10 +68,18 @@ export async function createDemoRun(root = demoRoot) {
   const admin = profilePaths(runRoot, appProfiles.admin);
   const consumer = profilePaths(runRoot, appProfiles.consumer);
   await Promise.all([
-    mkdir(admin.userDataDir, { recursive: true }),
-    mkdir(admin.dataDir, { recursive: true }),
-    mkdir(consumer.userDataDir, { recursive: true }),
-    mkdir(consumer.dataDir, { recursive: true }),
+    ...[admin, consumer].flatMap((profile) => [
+      mkdir(profile.userDataDir, { recursive: true }),
+      mkdir(profile.appDataDir, { recursive: true }),
+      mkdir(profile.localAppDataDir, { recursive: true }),
+      mkdir(profile.opencodeConfigDir, { recursive: true }),
+      mkdir(profile.dataDir, { recursive: true }),
+      mkdir(profile.homeDir, { recursive: true }),
+      mkdir(profile.configHome, { recursive: true }),
+      mkdir(profile.dataHome, { recursive: true }),
+      mkdir(profile.cacheHome, { recursive: true }),
+      mkdir(profile.stateHome, { recursive: true }),
+    ]),
   ]);
   return { admin, consumer, runRoot };
 }
@@ -269,15 +289,15 @@ function prepareSharedElectronResources() {
 }
 
 function startElectron(label, env, built) {
+  const command = built ? process.execPath : pnpmCmd;
   const args = built
     ? [
-        "exec",
-        "electron",
+        electronCli,
         ...(env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1" ? ["--use-mock-keychain"] : []),
         "./electron/main.mjs",
       ]
     : ["dev:electron"];
-  const child = spawn(pnpmCmd, args, {
+  const child = spawn(command, args, {
     cwd: built ? desktopRoot : repoRoot,
     env: { ...process.env, ...env },
     // Keep the app's output attached directly to the launch destination. A
@@ -331,11 +351,11 @@ async function stopAll(exitCode = 0) {
   setTimeout(() => process.exit(exitCode), 1500).unref();
 }
 
-async function writeBootstrap(filePath, requireSignin, baseUrl, apiBaseUrl) {
+async function writeBootstrap(filePath, requireSignin, baseUrl, apiBaseUrl, brandAppName) {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(
     filePath,
-    `${JSON.stringify({ baseUrl, apiBaseUrl, requireSignin }, null, 2)}\n`,
+    `${JSON.stringify({ baseUrl, apiBaseUrl, requireSignin, brandAppName }, null, 2)}\n`,
     "utf8",
   );
 }
@@ -346,10 +366,15 @@ export async function resetDemoData(root = demoRoot) {
 
 export function demoEnv(profile, paths, port, cdpPort) {
   return {
+    APPDATA: paths.appDataDir,
+    HOME: paths.homeDir,
+    LOCALAPPDATA: paths.localAppDataDir,
     OPENWORK_DATA_DIR: paths.dataDir,
     OPENWORK_DESKTOP_BOOTSTRAP_PATH: paths.bootstrapPath,
     OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "1",
     OPENWORK_DEV_MODE: "1",
+    OPENWORK_ENV_STORE: paths.envStorePath,
+    OPENCODE_CONFIG_DIR: paths.opencodeConfigDir,
     VITE_DISABLE_OPENWORK_MODELS: "1",
     OPENWORK_ELECTRON_APP_IDENTIFIER: profile.appIdentifier,
     OPENWORK_ELECTRON_APP_NAME: profile.appName,
@@ -358,6 +383,10 @@ export function demoEnv(profile, paths, port, cdpPort) {
     OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1",
     OPENWORK_ELECTRON_USERDATA: paths.userDataDir,
     PORT: port,
+    XDG_CACHE_HOME: paths.cacheHome,
+    XDG_CONFIG_HOME: paths.configHome,
+    XDG_DATA_HOME: paths.dataHome,
+    XDG_STATE_HOME: paths.stateHome,
   };
 }
 
@@ -395,8 +424,20 @@ async function main() {
   }
 
   const demoRun = await createDemoRun();
-  await writeBootstrap(demoRun.admin.bootstrapPath, appProfiles.admin.requireSignin, denWebUrl, denApiUrl);
-  await writeBootstrap(demoRun.consumer.bootstrapPath, appProfiles.consumer.requireSignin, denWebUrl, denApiUrl);
+  await writeBootstrap(
+    demoRun.admin.bootstrapPath,
+    appProfiles.admin.requireSignin,
+    denWebUrl,
+    denApiUrl,
+    appProfiles.admin.appName,
+  );
+  await writeBootstrap(
+    demoRun.consumer.bootstrapPath,
+    appProfiles.consumer.requireSignin,
+    denWebUrl,
+    denApiUrl,
+    appProfiles.consumer.appName,
+  );
 
   if (!built) prepareSharedElectronResources();
 

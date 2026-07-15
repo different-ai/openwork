@@ -69,6 +69,8 @@ test("creates fresh, independent folders for every demo launch", async context =
   ]) {
     assert.equal((await stat(paths.userDataDir)).isDirectory(), true);
     assert.equal((await stat(paths.dataDir)).isDirectory(), true);
+    assert.equal((await stat(paths.homeDir)).isDirectory(), true);
+    assert.equal((await stat(paths.configHome)).isDirectory(), true);
   }
 });
 
@@ -100,6 +102,15 @@ test("points each Electron instance at its own profile folders", async context =
 
   assert.equal(adminEnv.OPENWORK_ELECTRON_USERDATA, run.admin.userDataDir);
   assert.equal(adminEnv.OPENWORK_DATA_DIR, run.admin.dataDir);
+  assert.equal(adminEnv.HOME, run.admin.homeDir);
+  assert.equal(adminEnv.XDG_CONFIG_HOME, run.admin.configHome);
+  assert.equal(adminEnv.XDG_DATA_HOME, run.admin.dataHome);
+  assert.equal(adminEnv.XDG_CACHE_HOME, run.admin.cacheHome);
+  assert.equal(adminEnv.XDG_STATE_HOME, run.admin.stateHome);
+  assert.equal(adminEnv.OPENWORK_ENV_STORE, run.admin.envStorePath);
+  assert.equal(adminEnv.OPENCODE_CONFIG_DIR, run.admin.opencodeConfigDir);
+  assert.equal(adminEnv.APPDATA, run.admin.appDataDir);
+  assert.equal(adminEnv.LOCALAPPDATA, run.admin.localAppDataDir);
   assert.equal(adminEnv.OPENWORK_DEV_MODE, "1");
   assert.equal(adminEnv.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN, "1");
   assert.equal(
@@ -112,4 +123,8 @@ test("points each Electron instance at its own profile folders", async context =
     consumerEnv.OPENWORK_ELECTRON_USERDATA
   );
   assert.notEqual(adminEnv.OPENWORK_DATA_DIR, consumerEnv.OPENWORK_DATA_DIR);
+  assert.notEqual(adminEnv.HOME, consumerEnv.HOME);
+  assert.notEqual(adminEnv.XDG_CONFIG_HOME, consumerEnv.XDG_CONFIG_HOME);
+  assert.notEqual(adminEnv.OPENWORK_ENV_STORE, consumerEnv.OPENWORK_ENV_STORE);
+  assert.notEqual(adminEnv.OPENCODE_CONFIG_DIR, consumerEnv.OPENCODE_CONFIG_DIR);
 });
