@@ -6,11 +6,14 @@ The package owns the provider-neutral MCP/OAuth lifecycle. A composition root
 supplies networking, persistence, tenancy/authorization, diagnostics, and the
 clock. Den is one adapter; it is not embedded in the package architecture.
 
-The implementation is additive. Den's current client remains the default:
+The implementation is additive. Den uses the enterprise client by default:
 
 ```bash
 DEN_ENABLE_ENTERPRISE_MCP_CLIENT=true pnpm dev:den
 ```
+
+The enterprise runtime is Den's default. Set the flag to `false` only as a
+temporary emergency rollback while the legacy implementation remains present.
 
 Only `true`, `false`, or an unset value are valid. An invalid value fails Den
 startup, and there is no request-time fallback that could hide an error.
@@ -61,13 +64,24 @@ then silently writing credentials afterward.
   revision, connection identity, member/shared ownership, and lifecycle.
 - Dynamic client registration is first-writer-wins. A losing concurrent DCR
   cannot silently continue with the wrong client.
+- Den supplies `application_type: web`, a deployment client-metadata URL, an
+  exact authorization-server issuer binding, and the administrator-approved
+  scope set. The SDK chooses pre-registration, client metadata, then DCR.
+- `discoverConnectionRequirements` performs bounded, side-effect-free MCP,
+  protected-resource, authorization-server, and unauthenticated tool discovery.
+  It never performs DCR or writes application state.
+- `scopes_supported` is treated as an availability declaration. The client
+  requests challenge-required plus administrator-selected scopes and includes
+  `offline_access` only when refresh support is advertised.
 - New DCR client secrets are stored only in Den's encrypted client-secret
   column. Unencrypted JSON metadata excludes `client_secret` and
   `registration_access_token`.
 - Access-token and client-secret expiration are absolute, validated values.
   An expired access token without a refresh token is invalidated and reported
   as reconnect-required. Refresh-token rotation preserves the previous refresh
-  token when a valid provider omits it from the refresh response.
+  token when a valid provider omits it from the refresh response. Refresh
+  commits compare the credential revision so a stale concurrent response cannot
+  overwrite newer rotated credentials.
 - MCP `isError: true` is a failed provider operation, not a successful request.
 - Tool catalogs have page, item, cursor, name, schema depth, schema size, and
   aggregate-byte ceilings.
@@ -88,7 +102,7 @@ The package covers Den's outbound server-side remote MCP client only. It does
 not change local/direct engine MCP, the incoming OpenWork Cloud meta-MCP,
 desktop UI, or provider-specific tenant administration.
 
-Rollback is one restart with the feature flag unset or `false`. No schema
+Rollback is one restart with the feature flag set to `false`. No schema
 migration or token copy is required; both implementations use the existing
 encrypted credential records through separate code paths.
 

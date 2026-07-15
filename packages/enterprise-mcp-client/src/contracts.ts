@@ -1,3 +1,4 @@
+import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import type { Tool } from "@modelcontextprotocol/sdk/types.js"
@@ -33,7 +34,7 @@ export type EnterpriseMcpOAuthClientRegistration = {
   revision: string
   /** Absolute client/client-secret expiration, when the provider declares one. */
   expiresAt?: EnterpriseMcpEpochMs
-  source: "pre-registered" | "dynamic"
+  source: "pre-registered" | "client-metadata" | "dynamic"
 }
 
 export interface EnterpriseMcpOAuthClientRegistrationPort {
@@ -46,11 +47,23 @@ export interface EnterpriseMcpOAuthClientRegistrationPort {
     context: EnterpriseMcpPersistenceContext
     clientInformation: OAuthClientInformationMixed
     expiresAt?: EnterpriseMcpEpochMs
-    source: "dynamic"
+    source: "client-metadata" | "dynamic"
   }): Promise<EnterpriseMcpOAuthClientRegistration>
   invalidate(input: {
     context: EnterpriseMcpPersistenceContext
     reason: "expired" | "provider-rejected"
+  }): Promise<void>
+}
+
+export interface EnterpriseMcpOAuthDiscoveryPort {
+  load(context: EnterpriseMcpPersistenceContext): Promise<OAuthDiscoveryState | undefined>
+  save(input: {
+    context: EnterpriseMcpPersistenceContext
+    state: OAuthDiscoveryState
+  }): Promise<void>
+  invalidate(input: {
+    context: EnterpriseMcpPersistenceContext
+    reason: "issuer-mismatch" | "provider-rejected"
   }): Promise<void>
 }
 
@@ -109,6 +122,8 @@ export interface EnterpriseMcpOAuthCredentialPort {
     source: "authorization-code" | "refresh"
     authorization?: EnterpriseMcpOAuthAuthorizationHandle
     clientRegistrationRevision?: string
+    /** Required for refresh commits; rejects a response based on stale tokens. */
+    expectedCredentialRevision?: string
   }): Promise<void>
   invalidate(input: {
     context: EnterpriseMcpPersistenceContext
@@ -121,6 +136,14 @@ export type EnterpriseMcpOAuthPersistence = {
   clientRegistrations: EnterpriseMcpOAuthClientRegistrationPort
   credentials: EnterpriseMcpOAuthCredentialPort
   authorizations: EnterpriseMcpOAuthAuthorizationPort
+  discovery?: EnterpriseMcpOAuthDiscoveryPort
+}
+
+export type EnterpriseMcpOAuthConfiguration = {
+  applicationType: "web" | "native"
+  clientMetadataUrl?: string
+  authorizationServerIssuer?: string
+  requestedScopes?: string[]
 }
 
 export type EnterpriseMcpRequestPhase =
@@ -137,6 +160,7 @@ export type EnterpriseMcpRequestPhase =
 
 export type EnterpriseMcpOperationPhase =
   | "configuration"
+  | "requirements-discovery"
   | "connection-handshake"
   | "authorization-callback"
   | "protocol-initialize"
@@ -159,7 +183,11 @@ export type EnterpriseMcpDiagnosticSink = (event: EnterpriseMcpDiagnosticEvent) 
 export type EnterpriseMcpAuthorization =
   | { type: "none" }
   | { type: "api-key"; token: string }
-  | { type: "oauth"; persistence: EnterpriseMcpOAuthPersistence }
+  | {
+    type: "oauth"
+    persistence: EnterpriseMcpOAuthPersistence
+    configuration?: EnterpriseMcpOAuthConfiguration
+  }
 
 export type EnterpriseMcpConnection = {
   id: string
@@ -205,6 +233,70 @@ export type EnterpriseMcpCallToolInput = {
 }
 
 export type EnterpriseMcpToolResult = Awaited<ReturnType<Client["callTool"]>>
+
+export type EnterpriseMcpRequirementWarning = {
+  code: string
+  message: string
+}
+
+export type EnterpriseMcpManualRequirement = {
+  code: string
+  label: string
+  reason: string
+  required: boolean
+}
+
+export type EnterpriseMcpAuthorizationServerRequirement = {
+  issuer: string
+  authorizationEndpoint?: string
+  tokenEndpoint?: string
+  registrationEndpoint?: string
+  clientIdMetadataDocumentSupported: boolean
+  scopesSupported?: string[]
+  grantTypesSupported?: string[]
+  codeChallengeMethodsSupported?: string[]
+  tokenEndpointAuthMethodsSupported?: string[]
+}
+
+export type EnterpriseMcpConnectionRequirements = {
+  status: "ready" | "manual_action_required" | "unsupported" | "unreachable"
+  server: {
+    url: string
+    protocolVersion?: string
+    initialize: "succeeded" | "authentication_required" | "failed"
+  }
+  authentication: {
+    kind: "none" | "oauth" | "manual_bearer" | "unknown"
+    resource?: string
+    protectedResourceMetadataUrl?: string
+    authorizationServers: EnterpriseMcpAuthorizationServerRequirement[]
+    requiredScopes: string[]
+    recommendedScopes: string[]
+    refreshSupport: "supported" | "not_advertised" | "unknown"
+    availableRegistrationMethods: Array<"pre_registered" | "client_metadata" | "dynamic">
+    recommendedRegistrationMethod: "client_metadata" | "dynamic" | "pre_registered"
+  }
+  tools: {
+    visibility: "available_without_auth" | "requires_auth" | "unavailable"
+    count?: number
+    items?: Array<{
+      name: string
+      readOnlyHint?: boolean
+      destructiveHint?: boolean
+      openWorldHint?: boolean
+    }>
+  }
+  manualRequirements: EnterpriseMcpManualRequirement[]
+  warnings: EnterpriseMcpRequirementWarning[]
+}
+
+export type DiscoverEnterpriseMcpConnectionRequirementsInput = {
+  serverUrl: string
+  fetch: EnterpriseMcpFetch
+  timeoutMs?: number
+  maxAuthorizationServers?: number
+  maxTools?: number
+}
 
 export type EnterpriseMcpClientOptions = {
   /**
