@@ -125,6 +125,28 @@ function processIdsListeningOnPort(port) {
   }
 }
 
+export function parseDemoProcessIds(
+  output,
+  {
+    demoRootPath = demoRoot,
+    repoRootPath = repoRoot,
+    currentPid = process.pid,
+    parentPid = process.ppid,
+  } = {},
+) {
+  return output
+    .split("\n")
+    .filter((line) =>
+      line.includes(demoRootPath) ||
+      (line.includes(repoRootPath) &&
+        (line.includes("dev-two-electron-demo.mjs") || line.includes("demo:electron"))),
+    )
+    .map((line) => Number(line.trim().split(/\s+/, 1)[0]))
+    .filter((value) =>
+      Number.isInteger(value) && value > 0 && value !== currentPid && value !== parentPid,
+    );
+}
+
 function processIdsUsingDemoRoot() {
   if (process.platform === "win32") return [];
   try {
@@ -132,26 +154,78 @@ function processIdsUsingDemoRoot() {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return output
-      .split("\n")
-      .filter((line) => line.includes(demoRoot))
-      .map((line) => Number(line.trim().split(/\s+/, 1)[0]))
-      .filter((value) => Number.isInteger(value) && value > 0 && value !== process.pid && value !== process.ppid);
+    return parseDemoProcessIds(output);
   } catch {
     return [];
   }
 }
 
-function stopExistingDemoProcesses(ports) {
-  const pids = new Set([
+function processGroupId(pid) {
+  if (process.platform === "win32") return null;
+  try {
+    const output = execFileSync("ps", ["-o", "pgid=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const groupId = Number(output.trim());
+    return Number.isInteger(groupId) && groupId > 1 ? groupId : null;
+  } catch {
+    return null;
+  }
+}
+
+function signalDemoProcesses(pids, signal) {
+  const currentGroupId = processGroupId(process.pid);
+  const groups = new Set(
+    [...pids]
+      .map((pid) => processGroupId(pid))
+      .filter((groupId) => groupId && groupId !== currentGroupId),
+  );
+
+  for (const groupId of groups) {
+    try {
+      process.kill(-groupId, signal);
+    } catch {}
+  }
+
+  for (const pid of pids) {
+    if (groups.has(processGroupId(pid))) continue;
+    try {
+      process.kill(pid, signal);
+    } catch {}
+  }
+}
+
+function existingDemoProcessIds(ports) {
+  return new Set([
     ...ports.flatMap((port) => processIdsListeningOnPort(port)),
     ...processIdsUsingDemoRoot(),
   ]);
-  for (const pid of pids) {
-    try {
-      process.kill(pid, "SIGINT");
-    } catch {}
+}
+
+async function waitForDemoProcessesStopped(ports, timeoutMs) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (existingDemoProcessIds(ports).size === 0) return true;
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
+  return existingDemoProcessIds(ports).size === 0;
+}
+
+async function stopExistingDemoProcesses(ports) {
+  let pids = existingDemoProcessIds(ports);
+  if (pids.size === 0) return;
+
+  signalDemoProcesses(pids, "SIGINT");
+  if (await waitForDemoProcessesStopped(ports, 4_000)) return;
+
+  pids = existingDemoProcessIds(ports);
+  signalDemoProcesses(pids, "SIGTERM");
+  if (await waitForDemoProcessesStopped(ports, 2_000)) return;
+
+  pids = existingDemoProcessIds(ports);
+  signalDemoProcesses(pids, "SIGKILL");
+  await waitForDemoProcessesStopped(ports, 1_000);
 }
 
 async function waitForDemoPortsAvailable(entries, timeoutMs = 5000) {
@@ -294,7 +368,7 @@ async function main() {
   ];
 
   if (flag("--reset") || flag("--reset-only")) {
-    stopExistingDemoProcesses(portEntries.map(([, port]) => port));
+    await stopExistingDemoProcesses(portEntries.map(([, port]) => port));
     await waitForDemoPortsAvailable(portEntries);
     await resetDemoData();
     console.log(`Reset demo data at ${demoRoot}`);

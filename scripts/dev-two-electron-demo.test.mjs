@@ -7,9 +7,31 @@ import test from "node:test";
 import {
   createDemoRun,
   demoEnv,
+  parseDemoProcessIds,
   resetDemoData,
   resolveDemoRoot
 } from "./dev-two-electron-demo.mjs";
+
+test("finds stale launchers and profile processes while excluding the current reset", () => {
+  const output = [
+    "101 node /repo/scripts/dev-two-electron-demo.mjs",
+    "102 /bin/sh -c cd /repo && pnpm demo:electron",
+    "103 Electron --user-data-dir=/tmp/demo-root/run-old/demo-a",
+    "104 node /repo/scripts/dev-two-electron-demo.mjs --reset-only",
+    "105 /bin/zsh -lc node /repo/scripts/dev-two-electron-demo.mjs --reset-only",
+    "106 unrelated-process",
+  ].join("\n");
+
+  assert.deepEqual(
+    parseDemoProcessIds(output, {
+      demoRootPath: "/tmp/demo-root",
+      repoRootPath: "/repo",
+      currentPid: 104,
+      parentPid: 105,
+    }),
+    [101, 102, 103],
+  );
+});
 
 test("uses a non-production temporary demo root by default", () => {
   const root = resolveDemoRoot({});
