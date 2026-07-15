@@ -1,5 +1,5 @@
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, ExternalIdentityTable, SsoConnectionTable, SsoProviderTable } from "@openwork-ee/den-db/schema"
+import { AuthAccountTable, ExternalIdentityTable, OrganizationAdmissionPolicyTable, SsoConnectionTable, SsoProviderTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { auth } from "./auth.js"
@@ -201,12 +201,30 @@ export async function getOrganizationSsoConnection(organizationId: OrganizationI
 }
 
 export async function deleteOrganizationSsoConnection(organizationId: OrganizationId) {
-  const connection = await getOrganizationSsoConnection(organizationId)
-  if (!connection) {
-    return false
-  }
+  return db.transaction(async (tx) => {
+    const policyRows = await tx
+      .select({
+        admissionMethods: OrganizationAdmissionPolicyTable.admissionMethods,
+        authenticationRequirement: OrganizationAdmissionPolicyTable.authenticationRequirement,
+      })
+      .from(OrganizationAdmissionPolicyTable)
+      .where(eq(OrganizationAdmissionPolicyTable.organizationId, organizationId))
+      .for("update")
+      .limit(1)
+    const policy = policyRows[0]
+    if (policy?.authenticationRequirement === "organization_sso" || policy?.admissionMethods.includes("sso_jit")) {
+      return "policy_dependency" as const
+    }
 
-  await db.transaction(async (tx) => {
+    const connectionRows = await tx
+      .select()
+      .from(SsoConnectionTable)
+      .where(eq(SsoConnectionTable.organizationId, organizationId))
+      .for("update")
+      .limit(1)
+    const connection = connectionRows[0]
+    if (!connection) return "not_found" as const
+
     await tx
       .update(ExternalIdentityTable)
       .set({
@@ -243,8 +261,8 @@ export async function deleteOrganizationSsoConnection(organizationId: Organizati
 
     await tx.delete(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id))
     await tx.delete(SsoProviderTable).where(eq(SsoProviderTable.providerId, connection.providerId))
+    return "deleted" as const
   })
-  return true
 }
 
 export async function registerOrganizationSsoConnection(input: OrganizationSsoRegistrationInput) {

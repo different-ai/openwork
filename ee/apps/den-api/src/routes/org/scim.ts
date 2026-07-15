@@ -3,6 +3,7 @@ import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
 import { deleteOrganizationScimConnection, getOrganizationScimConnection, getOrganizationScimHealth, getScimBaseUrl, reconcileOrganizationScimDrift, rotateOrganizationScimToken } from "../../scim.js"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ensureOrganizationAdmissionPolicy } from "../../organization-admission.js"
 import { orgMemberRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureScimManager, orgAccessFailureStatus } from "./shared.js"
@@ -356,8 +357,21 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const payload = c.get("organizationContext")
-      const deleted = await deleteOrganizationScimConnection(payload.organization.id)
-      if (deleted) {
+      const policy = await ensureOrganizationAdmissionPolicy(payload.organization.id)
+      if (policy?.lifecycleAuthority === "scim" || policy?.admissionMethods.includes("scim")) {
+        return c.json({
+          error: "forbidden",
+          message: "Update the admission policy before deleting the SCIM connection it depends on.",
+        }, 403)
+      }
+      const result = await deleteOrganizationScimConnection(payload.organization.id)
+      if (result === "policy_dependency") {
+        return c.json({
+          error: "forbidden",
+          message: "Update the admission policy before deleting the SCIM connection it depends on.",
+        }, 403)
+      }
+      if (result === "deleted") {
         await recordOrganizationAuditEvent({
           organizationId: payload.organization.id,
           actorUserId: payload.currentMember.userId,

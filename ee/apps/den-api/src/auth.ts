@@ -1,4 +1,6 @@
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
+import { randomBytes } from "node:crypto";
+import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "./audit-events.js";
 import { db } from "./db.js";
 import { env } from "./env.js";
 import { appLogger } from "./observability/logger.js";
@@ -36,25 +38,18 @@ import {
   denOrganizationStaticRoles,
 } from "./organization-access.js";
 import {
-  getOrganizationSsoJitRole,
-  ORGANIZATION_SSO_JIT_ROLE,
-} from "./sso-jit.js";
-import {
   ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
   ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
   ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
 } from "./sso-saml-policy.js";
 import {
   getOrganizationContextForUser,
-  reconcilePendingInvitationsForUser,
   seedDefaultOrganizationRoles,
   validateOrganizationMemberRemovalForHook,
   validateOrganizationMemberRoleUpdate,
 } from "./orgs.js";
-import {
-  findEnterpriseAuthRequirementForEmail,
-  findEnterpriseAuthRequirementForUserId,
-} from "./enterprise-auth-requirement.js";
+import { admitOrganizationMember, ensureOrganizationAdmissionPolicy, evaluateOrganizationAdmission, getOrganizationAdmissionPolicy, hashOrganizationInvitationToken, preserveLegacyOrganizationAdmissionInShadow, retainRemovedOrganizationMembership } from "./organization-admission.js";
+import { getOrganizationAdmissionGrant, organizationAdmissionGrantKey } from "./organization-admission-grant.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
@@ -64,8 +59,7 @@ import { sso } from "@better-auth/sso";
 import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { deleteSessionCookie } from "better-auth/cookies";
-import { and, eq, sql } from "@openwork-ee/den-db/drizzle";
+import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle";
 import { emailOTP, jwt, organization } from "better-auth/plugins";
 
 const logger = appLogger.child({ component: "auth" });
@@ -153,6 +147,109 @@ export function normalizeMcpOAuthResource(resource: string): string | null {
 }
 
 type AuthMemberHookRow = typeof schema.MemberTable.$inferSelect;
+const pendingMemberRemovalTombstones = new Map<string, AuthMemberHookRow>();
+
+function betterAuthRemovalSource(context: { path?: string } | null | undefined) {
+  if (context?.path === "/organization/leave") return "self" as const;
+  if (context?.path?.includes("/scim/")) return "scim" as const;
+  return "admin" as const;
+}
+
+function sessionAuthenticationEvidence(context: { path?: string; params?: Record<string, unknown> } | null | undefined) {
+  const path = context?.path ?? "";
+  if (path.includes("/sso/")) {
+    return { authenticationMethod: "organization_sso", authenticationProviderId: maybeString(context?.params?.providerId) };
+  }
+  if (path === "/sign-in/email" || path === "/sign-up/email") {
+    return { authenticationMethod: "password", authenticationProviderId: null };
+  }
+  if (path.includes("email-otp")) {
+    return { authenticationMethod: "email_otp", authenticationProviderId: null };
+  }
+  const providerId = maybeString(context?.params?.providerId) ?? maybeString(context?.params?.id);
+  return { authenticationMethod: providerId ? "oauth" : "account", authenticationProviderId: providerId };
+}
+
+async function validateBetterAuthMembershipBinding(member: AuthMemberHookRow) {
+  if (!member.userId) {
+    return { data: member };
+  }
+
+  const grant = getOrganizationAdmissionGrant();
+  if (!grant || grant.organizationId !== member.organizationId) {
+    let policyVersion = 1;
+    logger.warn("user-backed membership mutation bypassed admission grant", {
+      organization_id: member.organizationId,
+      user_id: member.userId,
+      enforcement_mode: env.organizationAdmissionEnforcement,
+    });
+    try {
+      const organizationId = normalizeDenTypeId("organization", member.organizationId);
+      const userId = normalizeDenTypeId("user", member.userId);
+      const policy = await getOrganizationAdmissionPolicy(organizationId);
+      policyVersion = policy?.version ?? 1;
+      await recordOrganizationAuditEvent({
+        organizationId,
+        actorUserId: userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.admissionBypassAttempt,
+        payload: {
+          method: "better_auth",
+          decision: "ungranted_binding",
+          policyVersion: policy?.version ?? null,
+          enforcementMode: env.organizationAdmissionEnforcement,
+          membershipId: member.id,
+        },
+      });
+    } catch (error) {
+      logger.error("membership bypass audit failed", { error });
+    }
+    if (env.organizationAdmissionEnforcement === "enforce") {
+      throw new APIError("FORBIDDEN", { message: "Organization admission grant required." });
+    }
+    return {
+      data: {
+        ...member,
+        admissionSource: "legacy",
+        admissionPolicyVersion: policyVersion,
+        admittedAt: new Date(),
+      },
+    };
+  }
+
+  const organizationId = normalizeDenTypeId("organization", member.organizationId);
+  const userId = normalizeDenTypeId("user", member.userId);
+  if (env.organizationAdmissionEnforcement === "shadow") {
+    await ensureOrganizationAdmissionPolicy(organizationId);
+  }
+  const decision = await evaluateOrganizationAdmission({
+    organizationId,
+    userId,
+    evidence: { kind: "scim", providerId: grant.providerId, active: true },
+  });
+  grant.decisions.set(organizationAdmissionGrantKey(member.organizationId, member.userId), decision);
+  if (decision.decision !== "allow" && env.organizationAdmissionEnforcement === "enforce") {
+    throw new APIError("FORBIDDEN", { message: `Organization admission denied: ${decision.decision}.` });
+  }
+  if (decision.decision === "allow") {
+    return {
+      data: {
+        ...member,
+        admissionSource: decision.source,
+        admissionPolicyVersion: decision.policyVersion,
+        admittedAt: new Date(),
+      },
+    };
+  }
+  const policy = await getOrganizationAdmissionPolicy(organizationId);
+  return {
+    data: {
+      ...member,
+      admissionSource: "legacy",
+      admissionPolicyVersion: policy?.version ?? 1,
+      admittedAt: new Date(),
+    },
+  };
+}
 
 const socialProviders = {
   ...(env.github.clientId && env.github.clientSecret
@@ -258,16 +355,11 @@ function throwMemberLifecycleError(message: string): never {
   throw new APIError("BAD_REQUEST", { message });
 }
 
-function getBodyEmail(body: unknown) {
-  if (!body || typeof body !== "object") {
-    return null;
-  }
-
-  const value = Object.getOwnPropertyDescriptor(body, "email")?.value;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function removedMemberIdentity(value: unknown): { id: string; organizationId: string } | null {
+function removedMemberIdentity(value: unknown): {
+  id: string;
+  organizationId: string;
+  record: Record<string, unknown>;
+} | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -279,20 +371,7 @@ function removedMemberIdentity(value: unknown): { id: string; organizationId: st
   if (typeof id !== "string" || typeof organizationId !== "string") {
     return null;
   }
-  return { id, organizationId };
-}
-
-function getEnterpriseAuthRedirectUrl(input: {
-  signInPath: string;
-  email: string;
-  callbackUrl: string | null;
-}) {
-  const url = new URL(input.signInPath, getInvitationOrigin());
-  url.searchParams.set("loginHint", input.email);
-  if (input.callbackUrl) {
-    url.searchParams.set("callbackURL", input.callbackUrl);
-  }
-  return url.toString();
+  return { id, organizationId, record: candidate as Record<string, unknown> };
 }
 
 export const auth = betterAuth({
@@ -316,6 +395,21 @@ export const auth = betterAuth({
   },
   databaseHooks: {
     member: {
+      create: {
+        before: validateBetterAuthMembershipBinding,
+      },
+      update: {
+        before: async (member: AuthMemberHookRow) => {
+          if (!member.userId) return { data: member };
+          const rows = await db
+            .select({ userId: schema.MemberTable.userId })
+            .from(schema.MemberTable)
+            .where(eq(schema.MemberTable.id, member.id))
+            .limit(1);
+          if (rows[0]?.userId === member.userId) return { data: member };
+          return validateBetterAuthMembershipBinding(member);
+        },
+      },
       delete: {
         before: async (member: AuthMemberHookRow) => {
           const validation = await validateOrganizationMemberRemovalForHook({
@@ -335,26 +429,43 @@ export const auth = betterAuth({
             orgMembershipId: member.id,
             userId: member.userId,
           });
+
+          if (member.userId) {
+            const rows = await db
+              .select()
+              .from(schema.MemberTable)
+              .where(eq(schema.MemberTable.id, member.id))
+              .limit(1);
+            if (rows[0]) pendingMemberRemovalTombstones.set(member.id, rows[0]);
+          }
+        },
+        after: async (member: AuthMemberHookRow, context: { path?: string } | null) => {
+          const original = pendingMemberRemovalTombstones.get(member.id);
+          pendingMemberRemovalTombstones.delete(member.id);
+          if (!original?.userId) return;
+
+          await retainRemovedOrganizationMembership({
+            ...original,
+            userId: original.userId,
+            removedAt: new Date(),
+            removalSource: betterAuthRemovalSource(context),
+          });
         },
       },
     },
     session: {
       create: {
-        before: async (session) => {
+        before: async (session, context) => {
           const userId = normalizeDenTypeId("user", session.userId);
           const activeOrganizationId = await getInitialActiveOrganizationIdForUser(userId);
-          try {
-            // SSO JIT creates the raw member row before the session row, so this
-            // chokepoint can merge any matching pending invitation without blocking sign-in.
-            await reconcilePendingInvitationsForUser(userId);
-          } catch (error) {
-            logger.error("invitation reconcile failed", { user_id: userId, error });
-          }
+          const authentication = sessionAuthenticationEvidence(context);
 
           return {
             data: {
               ...session,
               activeOrganizationId,
+              ...authentication,
+              authenticatedAt: new Date(),
             },
           };
         },
@@ -388,23 +499,6 @@ export const auth = betterAuth({
         }
       }
 
-      if (ctx.path !== "/sign-in/email" && ctx.path !== "/sign-up/email") {
-        return;
-      }
-
-      const email = getBodyEmail(ctx.body);
-      if (!email) {
-        return;
-      }
-
-      const requirement = await findEnterpriseAuthRequirementForEmail(email);
-      if (!requirement) {
-        return;
-      }
-
-      throw new APIError("FORBIDDEN", {
-        message: "This account is managed by an organization. Use SSO to sign in.",
-      });
     }),
     after: createAuthMiddleware(async (ctx) => {
       if (ctx.path === "/organization/leave") {
@@ -414,31 +508,85 @@ export const auth = betterAuth({
             organizationId: member.organizationId,
             orgMembershipId: member.id,
           });
+          const memberId = normalizeDenTypeId("member", member.id);
+          const existingRows = await db
+            .select({ id: schema.MemberTable.id })
+            .from(schema.MemberTable)
+            .where(eq(schema.MemberTable.id, memberId))
+            .limit(1);
+          if (existingRows[0]) {
+            await db
+              .update(schema.MemberTable)
+              .set({ removalSource: "self" })
+              .where(eq(schema.MemberTable.id, memberId));
+          } else {
+            const userId = member.record.userId;
+            if (typeof userId === "string") {
+              const role = typeof member.record.role === "string" ? member.record.role : "member";
+              await retainRemovedOrganizationMembership({
+                id: memberId,
+                organizationId: normalizeDenTypeId("organization", member.organizationId),
+                userId: normalizeDenTypeId("user", userId),
+                role,
+                joinedAt: member.record.joinedAt instanceof Date ? member.record.joinedAt : null,
+                admissionSource: "legacy",
+                admissionPolicyVersion: 1,
+                admittedAt: member.record.createdAt instanceof Date ? member.record.createdAt : new Date(),
+                removedAt: new Date(),
+                removalSource: "self",
+                createdAt: member.record.createdAt instanceof Date ? member.record.createdAt : new Date(),
+              });
+            }
+          }
         }
         return;
       }
 
-      if (ctx.path !== "/callback/:id") {
+      if (
+        ctx.path !== "/sso/callback/:providerId"
+        && ctx.path !== "/sso/saml2/callback/:providerId"
+        && ctx.path !== "/sso/saml2/sp/acs/:providerId"
+      ) {
         return;
       }
 
       const newSession = ctx.context.newSession;
-      if (!newSession) {
+      const providerId = maybeString(ctx.params?.providerId);
+      if (!newSession || !providerId) {
         return;
       }
-
-      const requirement = await findEnterpriseAuthRequirementForUserId(newSession.user.id);
-      if (!requirement) {
+      const connectionRows = await db
+        .select({ organizationId: schema.SsoConnectionTable.organizationId })
+        .from(schema.SsoConnectionTable)
+        .where(and(
+          eq(schema.SsoConnectionTable.providerId, providerId),
+          eq(schema.SsoConnectionTable.status, "enabled"),
+        ))
+        .limit(1);
+      const connection = connectionRows[0];
+      if (!connection) {
         return;
       }
-
-      await ctx.context.internalAdapter.deleteSession(newSession.session.token);
-      deleteSessionCookie(ctx);
-      throw ctx.redirect(getEnterpriseAuthRedirectUrl({
-        signInPath: requirement.signInPath,
-        email: newSession.user.email,
-        callbackUrl: ctx.context.responseHeaders?.get("location") ?? null,
-      }));
+      const userId = normalizeDenTypeId("user", newSession.user.id);
+      const memberRows = await db
+        .select({ id: schema.MemberTable.id })
+        .from(schema.MemberTable)
+        .where(and(
+          eq(schema.MemberTable.organizationId, connection.organizationId),
+          eq(schema.MemberTable.userId, userId),
+          isNull(schema.MemberTable.removedAt),
+        ))
+        .limit(1);
+      await db
+        .update(schema.AuthSessionTable)
+        .set({
+          authenticationMethod: "organization_sso",
+          authenticationProviderId: providerId,
+          authenticationOrganizationId: connection.organizationId,
+          authenticatedAt: new Date(),
+          ...(memberRows[0] ? { activeOrganizationId: connection.organizationId } : {}),
+        })
+        .where(eq(schema.AuthSessionTable.id, normalizeDenTypeId("session", newSession.session.id)));
     }),
   },
   advanced: {
@@ -577,11 +725,19 @@ export const auth = betterAuth({
         },
       },
       async sendInvitationEmail(data) {
+        const inviteToken = randomBytes(32).toString("base64url");
+        await db
+          .update(schema.InvitationTable)
+          .set({
+            inviteTokenHash: hashOrganizationInvitationToken(inviteToken),
+            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          })
+          .where(eq(schema.InvitationTable.id, normalizeDenTypeId("invitation", data.id)));
         await sendEmail({
           to: data.email,
           template: "organizationInvite",
           props: {
-            inviteLink: buildInvitationLink(data.id),
+            inviteLink: buildInvitationLink(inviteToken),
             invitedByName: data.inviter.user.name ?? data.inviter.user.email,
             invitedByEmail: data.inviter.user.email,
             organizationName: data.organization.name,
@@ -591,9 +747,20 @@ export const auth = betterAuth({
       },
       organizationHooks: {
         afterCreateOrganization: async ({ organization }) => {
-          await seedDefaultOrganizationRoles(
-            normalizeDenTypeId("organization", organization.id),
-          );
+          const organizationId = normalizeDenTypeId("organization", organization.id);
+          await seedDefaultOrganizationRoles(organizationId);
+          const policy = await ensureOrganizationAdmissionPolicy(organizationId);
+          await db
+            .update(schema.MemberTable)
+            .set({
+              admissionSource: "legacy",
+              admissionPolicyVersion: policy?.version ?? 1,
+              admittedAt: new Date(),
+            })
+            .where(and(
+              eq(schema.MemberTable.organizationId, organizationId),
+              isNull(schema.MemberTable.admissionSource),
+            ));
         },
         beforeRemoveMember: async ({ member }) => {
           const validation = await validateOrganizationMemberRemovalForHook({
@@ -612,6 +779,25 @@ export const auth = betterAuth({
             organizationId: member.organizationId,
             orgMembershipId: member.id,
             userId: member.userId,
+          });
+
+          const rows = await db
+            .select()
+            .from(schema.MemberTable)
+            .where(eq(schema.MemberTable.id, normalizeDenTypeId("member", member.id)))
+            .limit(1);
+          if (rows[0]?.userId) pendingMemberRemovalTombstones.set(member.id, rows[0]);
+        },
+        afterRemoveMember: async ({ member }) => {
+          const original = pendingMemberRemovalTombstones.get(member.id);
+          pendingMemberRemovalTombstones.delete(member.id);
+          if (!original?.userId) return;
+
+          await retainRemovedOrganizationMembership({
+            ...original,
+            userId: original.userId,
+            removedAt: new Date(),
+            removalSource: "admin",
           });
         },
         beforeUpdateMemberRole: async ({ member, newRole }) => {
@@ -740,9 +926,7 @@ export const auth = betterAuth({
         enabled: true,
       },
       organizationProvisioning: {
-        disabled: false,
-        defaultRole: ORGANIZATION_SSO_JIT_ROLE,
-        getRole: getOrganizationSsoJitRole,
+        disabled: true,
       },
       saml: {
         enableInResponseToValidation: true,
@@ -794,6 +978,27 @@ export const auth = betterAuth({
               lastSsoLoginAt: payload.lastSsoLoginAt,
             },
           });
+
+        if (env.organizationAdmissionEnforcement === "shadow") {
+          await ensureOrganizationAdmissionPolicy(payload.organizationId);
+        }
+        const decision = await admitOrganizationMember({
+          organizationId: payload.organizationId,
+          userId: payload.userId,
+          evidence: { kind: "sso", providerId: provider.providerId },
+          assurance: {
+            providerId: provider.providerId,
+            organizationId: payload.organizationId,
+          },
+        });
+        if (decision.decision !== "allow") {
+          await preserveLegacyOrganizationAdmissionInShadow({
+            organizationId: payload.organizationId,
+            userId: payload.userId,
+            method: "sso_jit",
+            evaluatedDecision: decision,
+          });
+        }
       },
     }),
     apiKey({

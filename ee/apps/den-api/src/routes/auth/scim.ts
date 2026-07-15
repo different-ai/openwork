@@ -4,6 +4,9 @@ import { resolver } from "hono-openapi"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { auth } from "../../auth.js"
+import { env } from "../../env.js"
+import { admitOrganizationMember, ensureOrganizationAdmissionPolicy, finalizeGrantedOrganizationMembership, preserveLegacyOrganizationAdmissionInShadow } from "../../organization-admission.js"
+import { organizationAdmissionGrantKey, runWithOrganizationAdmissionGrant, type OrganizationAdmissionGrant } from "../../organization-admission-grant.js"
 import { deleteScimProvisionedAccessForProvider, recordScimSyncFailure, recordScimSyncFailureFromBearerToken, resolveScimProviderFromBearerToken, syncExternalIdentityFromScimResource, syncExternalIdentityFromScimUserId } from "../../scim.js"
 import { authenticatedRoute, publicRoute, tokenRoute } from "../../middleware/index.js"
 import { appLogger } from "../../observability/logger.js"
@@ -59,6 +62,22 @@ function maybeNormalizeUserId(value: string | undefined) {
   } catch {
     return null
   }
+}
+
+function readScimActive(payload: Record<string, unknown> | null) {
+  if (!payload) return null
+  if (typeof payload.active === "boolean") return payload.active
+  const operations = Array.isArray(payload.Operations) ? payload.Operations : []
+  for (const operation of operations) {
+    if (!isScimResource(operation)) continue
+    if (String(operation.path ?? "").toLowerCase() === "active" && typeof operation.value === "boolean") {
+      return operation.value
+    }
+    if (isScimResource(operation.value) && typeof operation.value.active === "boolean") {
+      return operation.value.active
+    }
+  }
+  return null
 }
 
 async function recordScimFailureSafely(recordFailure: () => Promise<unknown>) {
@@ -344,10 +363,26 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
 
   const handleScimMutation = async (c: { req: { raw: Request; param: (key: string) => string } }) => {
     const bearerToken = readBearerToken(c.req.raw.headers)
-    const response = await auth.handler(c.req.raw)
     if (!bearerToken) {
-      return response
+      return auth.handler(c.req.raw)
     }
+
+    const provider = await resolveScimProviderFromBearerToken(bearerToken)
+    if (!provider) {
+      return auth.handler(c.req.raw)
+    }
+    if (env.organizationAdmissionEnforcement === "shadow") {
+      await ensureOrganizationAdmissionPolicy(provider.organizationId)
+    }
+    const requestPayload = await c.req.raw.clone().json().catch(() => null)
+    const active = readScimActive(isScimResource(requestPayload) ? requestPayload : null)
+    const grant: OrganizationAdmissionGrant = {
+      method: "scim",
+      organizationId: provider.organizationId,
+      providerId: provider.providerId,
+      decisions: new Map(),
+    }
+    const response = await runWithOrganizationAdmissionGrant(grant, () => auth.handler(c.req.raw))
 
     const syncResult = await syncScimMutationFromResponse({
       bearerToken,
@@ -367,6 +402,44 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
         }),
       )
       return createScimSyncFailureResponse(syncResult)
+    }
+
+    const responsePayload = await getScimResponsePayload(response)
+    const userId = maybeNormalizeUserId(
+      typeof responsePayload?.id === "string" ? responsePayload.id : c.req.param("userId"),
+    )
+    if (response.ok && userId) {
+      if (active === false) {
+        const deprovisioned = await deleteScimProvisionedAccessForProvider({ provider, userId })
+        if (!deprovisioned.ok) {
+          return new Response(JSON.stringify(deprovisioned.body), {
+            status: deprovisioned.status,
+            headers: { "content-type": "application/scim+json" },
+          })
+        }
+      } else {
+        const granted = grant.decisions.get(organizationAdmissionGrantKey(provider.organizationId, userId))
+        if (granted?.decision === "allow") {
+          await finalizeGrantedOrganizationMembership({
+            organizationId: provider.organizationId,
+            userId,
+            decision: granted,
+          })
+        } else if (granted) {
+          await preserveLegacyOrganizationAdmissionInShadow({
+            organizationId: provider.organizationId,
+            userId,
+            method: "scim",
+            evaluatedDecision: granted,
+          })
+        } else {
+          await admitOrganizationMember({
+            organizationId: provider.organizationId,
+            userId,
+            evidence: { kind: "scim", providerId: provider.providerId, active: true },
+          })
+        }
+      }
     }
     return response
   }

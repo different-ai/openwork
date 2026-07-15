@@ -1,6 +1,6 @@
 import { oauthProviderAuthServerMetadata, oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider"
 import { eq, sql } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, AuthUserTable, OAuthClientTable } from "@openwork-ee/den-db/schema"
+import { AuthAccountTable, AuthUserTable, OAuthClientTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -15,17 +15,21 @@ import {
 } from "../../auth-protection.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { findEnterpriseAuthRequirementForEmail } from "../../enterprise-auth-requirement.js"
+import { findEnterpriseAuthRequirementForOrganizationSlug } from "../../enterprise-auth-requirement.js"
 import { getInvalidMcpOAuthRedirectUris, isAllowedMcpOAuthRedirectUri, MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION } from "../../mcp/oauth-client-policy.js"
 import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, queryValidator, tokenRoute } from "../../middleware/index.js"
 import { emptyResponse, jsonResponse } from "../../openapi.js"
 import { getSingletonSsoStatus } from "../../orgs.js"
+import { evaluateOrganizationSessionAssurance } from "../../organization-admission.js"
+import { appLogger } from "../../observability/logger.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import { revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
 import { normalizeOAuthAuthorizeRedirect } from "./oauth-redirect.js"
 import { registerScimAuthRoutes } from "./scim.js"
+
+const logger = appLogger.child({ component: "auth_routes" })
 
 function rewriteAuthRequest(request: Request, path: string) {
   const url = new URL(request.url)
@@ -238,6 +242,23 @@ export function isBetterAuthSignOutRequest(request: Request) {
   return request.method.toUpperCase() === "POST" && getBetterAuthProxyPath(url.pathname) === "/sign-out"
 }
 
+const BETTER_AUTH_ORGANIZATION_ADMISSION_MUTATIONS = new Set([
+  "/organization/create",
+  "/organization/add-member",
+  "/organization/invite-member",
+  "/organization/accept-invitation",
+])
+
+export function isBetterAuthOrganizationAdmissionMutationRequest(request: Request) {
+  if (request.method.toUpperCase() === "GET") return false
+  return BETTER_AUTH_ORGANIZATION_ADMISSION_MUTATIONS.has(getBetterAuthProxyPath(new URL(request.url).pathname))
+}
+
+function isRawBetterAuthSsoProviderDeletionRequest(request: Request) {
+  return request.method.toUpperCase() !== "GET"
+    && getBetterAuthProxyPath(new URL(request.url).pathname) === "/sso/delete-provider"
+}
+
 export function canSetActiveOrganizationInSingleOrgMode(input: {
   activeOrganizationId: string | null
   singleOrganizationSlug: string
@@ -289,7 +310,7 @@ async function getSingleOrgAuthGuardResponse(request: Request) {
 
   if (isBetterAuthEmailPasswordRequest(request)) {
     const status = await getSingletonSsoStatus()
-    if (status.configured) {
+    if (status.configured && status.required) {
       return singleOrgSsoRequiredResponse(status.signInPath)
     }
   }
@@ -312,6 +333,31 @@ async function getSingleOrgAuthGuardResponse(request: Request) {
   })
     ? null
     : singleOrgModeResponse()
+}
+
+async function getOrganizationSwitchAssuranceResponse(request: Request) {
+  if (!isBetterAuthSetActiveOrganizationRequest(request)) return null
+  const body = await readSetActiveOrganizationBody(request)
+  if (!body || (body.organizationId == null && body.organizationSlug == null)) return null
+  const rows = body.organizationId
+    ? await db.select({ id: OrganizationTable.id }).from(OrganizationTable).where(eq(OrganizationTable.id, body.organizationId as typeof OrganizationTable.$inferSelect.id)).limit(1)
+    : await db.select({ id: OrganizationTable.id }).from(OrganizationTable).where(eq(OrganizationTable.slug, body.organizationSlug ?? "")).limit(1)
+  const organization = rows[0]
+  if (!organization) return null
+  const session = await auth.api.getSession({ headers: request.headers })
+  const admission = await evaluateOrganizationSessionAssurance({
+    organizationId: organization.id,
+    sessionId: session?.session.id,
+  })
+  if (!admission) return null
+  logger.warn("organization switch lacks required SSO assurance", {
+    organization_id: organization.id,
+    enforcement_mode: env.organizationAdmissionEnforcement,
+    decision: admission.decision,
+  })
+  return env.organizationAdmissionEnforcement === "enforce" && admission.decision === "require_sso"
+    ? Response.json({ error: "organization_sso_required", admission }, { status: 403 })
+    : null
 }
 
 function oauthRegistrationError(status: number, error: string, errorDescription: string) {
@@ -413,6 +459,7 @@ const authPasswordScreeningUnavailableSchema = z.object({
 
 const loginOptionsQuerySchema = z.object({
   email: z.string().trim().email().transform(normalizeLoginEmail),
+  organizationSlug: z.string().trim().min(1).max(255).optional(),
 })
 
 const loginOptionKindSchema = z.union([
@@ -452,9 +499,35 @@ async function handleAuthRequest(request: Request) {
   if (authRequest instanceof Response) {
     return authRequest
   }
+  if (isRawBetterAuthSsoProviderDeletionRequest(authRequest)) {
+    logger.warn("raw better auth SSO provider deletion blocked", {
+      enforcement_mode: env.organizationAdmissionEnforcement,
+    })
+    return Response.json({
+      error: "forbidden",
+      message: "Use the organization SSO endpoint so admission-policy dependencies are enforced.",
+    }, { status: 403 })
+  }
+  if (isBetterAuthOrganizationAdmissionMutationRequest(authRequest)) {
+    const path = getBetterAuthProxyPath(new URL(authRequest.url).pathname)
+    logger.warn("better auth organization mutation reached canonical admission boundary", {
+      path,
+      enforcement_mode: env.organizationAdmissionEnforcement,
+    })
+    if (env.organizationAdmissionEnforcement === "enforce") {
+      return Response.json({
+        error: "organization_admission_required",
+        message: "Use the OpenWork organization admission API for membership changes.",
+      }, { status: 403 })
+    }
+  }
   const singleOrgAuthGuardResponse = await getSingleOrgAuthGuardResponse(authRequest)
   if (singleOrgAuthGuardResponse) {
     return singleOrgAuthGuardResponse
+  }
+  const organizationSwitchAssuranceResponse = await getOrganizationSwitchAssuranceResponse(authRequest)
+  if (organizationSwitchAssuranceResponse) {
+    return organizationSwitchAssuranceResponse
   }
 
   const emailPasswordAttempt = await readEmailPasswordSignInAttempt(authRequest)
@@ -529,15 +602,16 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     publicRoute,
     queryValidator(loginOptionsQuerySchema),
     async (c) => {
-      const { email } = c.req.valid("query")
+      const { email, organizationSlug } = c.req.valid("query")
       const singletonSsoStatus = env.orgMode === "single_org" ? await getSingletonSsoStatus() : null
-      const singletonSsoRequirement = singletonSsoStatus?.configured
+      const singletonSsoRequirement = singletonSsoStatus?.configured && singletonSsoStatus.required
         ? {
             organizationSlug: singletonSsoStatus.organizationSlug,
             signInPath: singletonSsoStatus.signInPath,
           }
         : null
-      const requirement = singletonSsoRequirement ?? await findEnterpriseAuthRequirementForEmail(email)
+      const requirement = singletonSsoRequirement
+        ?? (organizationSlug ? await findEnterpriseAuthRequirementForOrganizationSlug(organizationSlug) : null)
       const accounts = requirement ? [] : await getLoginOptionAccounts(email)
       const nextStep = resolveLoginOptionKind({ requireSso: Boolean(requirement), accounts })
 

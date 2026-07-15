@@ -5,6 +5,7 @@ import { auth } from "../../auth.js"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
+import { ensureOrganizationAdmissionPolicy } from "../../organization-admission.js"
 import { enterprisePlanRequiredSchema } from "../../openapi.js"
 import {
   deleteOrganizationSsoConnection,
@@ -408,9 +409,22 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       }
 
       const payload = c.get("organizationContext")
+      const policy = await ensureOrganizationAdmissionPolicy(payload.organization.id)
+      if (policy?.authenticationRequirement === "organization_sso" || policy?.admissionMethods.includes("sso_jit")) {
+        return c.json({
+          error: "forbidden",
+          message: "Update the admission policy before deleting the SSO connection it depends on.",
+        }, 403)
+      }
       const connection = await getOrganizationSsoConnection(payload.organization.id)
-      const deleted = await deleteOrganizationSsoConnection(payload.organization.id)
-      if (deleted && connection) {
+      const result = await deleteOrganizationSsoConnection(payload.organization.id)
+      if (result === "policy_dependency") {
+        return c.json({
+          error: "forbidden",
+          message: "Update the admission policy before deleting the SSO connection it depends on.",
+        }, 403)
+      }
+      if (result === "deleted" && connection) {
         await recordOrganizationAuditEvent({
           organizationId: payload.organization.id,
           actorUserId: payload.currentMember.userId,

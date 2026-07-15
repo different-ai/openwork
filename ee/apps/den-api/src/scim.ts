@@ -1,8 +1,9 @@
 import { Buffer } from "node:buffer"
 import { and, count, desc, eq, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimProviderTable, ScimSyncEventTable } from "@openwork-ee/den-db/schema"
+import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, OrganizationAdmissionPolicyTable, ScimProviderTable, ScimSyncEventTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { auth } from "./auth.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "./audit-events.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
@@ -291,18 +292,53 @@ export async function rotateOrganizationScimToken(input: {
 }
 
 export async function deleteOrganizationScimConnection(organizationId: OrganizationId) {
-  const connection = await getOrganizationScimConnection(organizationId)
-  if (!connection) {
-    return false
-  }
+  return db.transaction(async (tx) => {
+    const policyRows = await tx
+      .select({
+        admissionMethods: OrganizationAdmissionPolicyTable.admissionMethods,
+        lifecycleAuthority: OrganizationAdmissionPolicyTable.lifecycleAuthority,
+      })
+      .from(OrganizationAdmissionPolicyTable)
+      .where(eq(OrganizationAdmissionPolicyTable.organizationId, organizationId))
+      .for("update")
+      .limit(1)
+    const policy = policyRows[0]
+    if (policy?.lifecycleAuthority === "scim" || policy?.admissionMethods.includes("scim")) {
+      return "policy_dependency" as const
+    }
 
-  await cleanupExternalIdentitiesForDeletedScimConnection(connection)
-  await db.delete(ScimProviderTable).where(eq(ScimProviderTable.id, connection.id))
-  return true
+    const connectionRows = await tx
+      .select()
+      .from(ScimProviderTable)
+      .where(eq(ScimProviderTable.organizationId, organizationId))
+      .for("update")
+      .limit(1)
+    const connection = connectionRows[0]
+    if (!connection) return "not_found" as const
+
+    const managedIdentities = await tx
+      .select({ userId: ExternalIdentityTable.userId })
+      .from(ExternalIdentityTable)
+      .where(and(
+        eq(ExternalIdentityTable.organizationId, organizationId),
+        eq(ExternalIdentityTable.scimProviderId, connection.providerId),
+        eq(ExternalIdentityTable.active, true),
+      ))
+    for (const identity of managedIdentities) {
+      const removed = await deleteScimProvisionedAccessForProvider({ provider: connection, userId: identity.userId })
+      if (!removed.ok) throw new Error(removed.body.detail)
+    }
+    await cleanupExternalIdentitiesForDeletedScimConnection(connection, tx)
+    await tx.delete(ScimProviderTable).where(eq(ScimProviderTable.id, connection.id))
+    return "deleted" as const
+  })
 }
 
-async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typeof ScimProviderTable.$inferSelect) {
-  await db
+async function cleanupExternalIdentitiesForDeletedScimConnection(
+  connection: typeof ScimProviderTable.$inferSelect,
+  executor: Pick<typeof db, "update" | "delete"> = db,
+) {
+  await executor
     .update(ExternalIdentityTable)
     .set({
       source: "sso",
@@ -318,7 +354,7 @@ async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typ
       isNotNull(ExternalIdentityTable.ssoProviderId),
     ))
 
-  await db
+  await executor
     .update(ExternalIdentityTable)
     .set({
       active: false,
@@ -334,7 +370,7 @@ async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typ
       isNull(ExternalIdentityTable.ssoProviderId),
     ))
 
-  await db
+  await executor
     .delete(AuthAccountTable)
     .where(eq(AuthAccountTable.providerId, connection.providerId))
 }
@@ -352,20 +388,32 @@ export async function deleteScimProvisionedAccessForProvider(input: {
   const memberRows = await db
     .select()
     .from(MemberTable)
-    .where(and(eq(MemberTable.userId, input.userId), eq(MemberTable.organizationId, input.provider.organizationId), isNull(MemberTable.removedAt)))
+    .where(and(eq(MemberTable.userId, input.userId), eq(MemberTable.organizationId, input.provider.organizationId)))
     .limit(1)
 
   const account = accountRows[0] ?? null
   const member = memberRows[0] ?? null
 
-  if (member) {
+  if (member && !member.removedAt) {
     const removed = await removeOrganizationMember({
       organizationId: input.provider.organizationId,
       memberId: member.id,
+      removalSource: "scim",
     })
     if (!removed.ok) {
       return { ok: false as const, status: 409, body: { detail: removed.message } }
     }
+  }
+  if (member) {
+    await recordOrganizationAuditEvent({
+      organizationId: input.provider.organizationId,
+      actorUserId: input.userId,
+      action: ORGANIZATION_AUDIT_ACTIONS.scimDeprovisioned,
+      payload: {
+        membershipId: member.id,
+        providerId: input.provider.providerId,
+      },
+    })
   }
 
   await db.transaction(async (tx) => {

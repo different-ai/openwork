@@ -2,12 +2,17 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
 import { getApiKeyScopedOrganizationId, isScopedApiKeyForOrganization } from "../api-keys.js"
 import { getOrganizationContextForUser, resolveUserOrganizations, type OrganizationContext } from "../orgs.js"
+import { env } from "../env.js"
+import { evaluateOrganizationSessionAssurance } from "../organization-admission.js"
+import { appLogger } from "../observability/logger.js"
 import type { AuthContextVariables } from "../session.js"
 import { getRequestScopedOrganizationId, hydrateSessionActiveOrganization, shouldHydrateSessionActiveOrganization, type UserOrganizationsContext } from "./user-organizations.js"
 
 export type OrganizationContextVariables = {
   organizationContext: OrganizationContext
 }
+
+const logger = appLogger.child({ component: "organization_context" })
 
 export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   Variables: AuthContextVariables & Partial<OrganizationContextVariables> & Partial<UserOrganizationsContext>
@@ -107,6 +112,23 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
       error: "forbidden",
       message: "This API key is no longer valid for the current organization member.",
     }, 403) as never
+  }
+
+  if (!apiKey && session?.id !== "mcp_internal") {
+    const assuranceDecision = await evaluateOrganizationSessionAssurance({
+      organizationId: context.organization.id,
+      sessionId: session?.id,
+    })
+    if (assuranceDecision) {
+      logger.warn("organization session does not satisfy authentication policy", {
+        organization_id: context.organization.id,
+        decision: assuranceDecision.decision,
+        enforcement_mode: env.organizationAdmissionEnforcement,
+      })
+      if (env.organizationAdmissionEnforcement === "enforce" && assuranceDecision.decision === "require_sso") {
+        return c.json({ error: "organization_sso_required", admission: assuranceDecision }, 403) as never
+      }
+    }
   }
 
   c.set("organizationContext", context)

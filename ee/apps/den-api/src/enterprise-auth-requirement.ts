@@ -2,12 +2,15 @@ import { and, eq, isNotNull, isNull, or, sql } from "@openwork-ee/den-db/drizzle
 import {
   AuthUserTable,
   MemberTable,
+  OrganizationAdmissionPolicyTable,
   OrganizationTable,
   ScimProviderTable,
   SsoConnectionTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
+import { env } from "./env.js"
+import { ensureOrganizationAdmissionPolicy } from "./organization-admission.js"
 
 type EnterpriseAuthRequirementRow = {
   organizationId: string
@@ -64,11 +67,13 @@ async function findEnterpriseAuthRequirement(where: ReturnType<typeof and>) {
     .from(AuthUserTable)
     .innerJoin(MemberTable, eq(AuthUserTable.id, MemberTable.userId))
     .innerJoin(OrganizationTable, eq(MemberTable.organizationId, OrganizationTable.id))
+    .innerJoin(OrganizationAdmissionPolicyTable, eq(OrganizationTable.id, OrganizationAdmissionPolicyTable.organizationId))
     .leftJoin(SsoConnectionTable, eq(OrganizationTable.id, SsoConnectionTable.organizationId))
     .leftJoin(ScimProviderTable, eq(OrganizationTable.id, ScimProviderTable.organizationId))
     .where(and(
       where,
       isNull(MemberTable.removedAt),
+      eq(OrganizationAdmissionPolicyTable.authenticationRequirement, "organization_sso"),
       or(isNotNull(SsoConnectionTable.id), isNotNull(ScimProviderTable.id)),
     ))
 
@@ -87,4 +92,34 @@ export async function findEnterpriseAuthRequirementForEmail(email: string) {
 
 export async function findEnterpriseAuthRequirementForUserId(userId: string) {
   return findEnterpriseAuthRequirement(eq(AuthUserTable.id, normalizeDenTypeId("user", userId)))
+}
+
+export async function findEnterpriseAuthRequirementForOrganizationSlug(organizationSlug: string) {
+  if (env.orgMode === "single_org") {
+    const organizationRows = await db
+      .select({ id: OrganizationTable.id })
+      .from(OrganizationTable)
+      .where(eq(OrganizationTable.slug, organizationSlug))
+      .limit(1)
+    if (organizationRows[0]) await ensureOrganizationAdmissionPolicy(organizationRows[0].id)
+  }
+  const rows = await db
+    .select({
+      organizationId: OrganizationTable.id,
+      organizationSlug: OrganizationTable.slug,
+      signInPath: SsoConnectionTable.signInPath,
+      ssoProviderId: SsoConnectionTable.providerId,
+      scimProviderId: ScimProviderTable.providerId,
+    })
+    .from(OrganizationTable)
+    .innerJoin(OrganizationAdmissionPolicyTable, eq(OrganizationTable.id, OrganizationAdmissionPolicyTable.organizationId))
+    .leftJoin(SsoConnectionTable, eq(OrganizationTable.id, SsoConnectionTable.organizationId))
+    .leftJoin(ScimProviderTable, eq(OrganizationTable.id, ScimProviderTable.organizationId))
+    .where(and(
+      eq(OrganizationTable.slug, organizationSlug),
+      eq(OrganizationAdmissionPolicyTable.authenticationRequirement, "organization_sso"),
+      isNotNull(SsoConnectionTable.id),
+    ))
+    .limit(1)
+  return rows[0] ? toRequirement(rows[0]) : null
 }
