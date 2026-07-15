@@ -22,6 +22,7 @@ import { useShellConfig } from "../../../shell/shell-config";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { readDenSettings } from "../../../../app/lib/den";
 import {
+  openWorkConnectAttentionTitle,
   resolveOpenWorkConnectStatus,
   type OpenWorkConnectStatus,
 } from "../../connections/openwork-connect-status";
@@ -102,6 +103,7 @@ function OpenWorkConnectIndicator(props: {
           <button
             type="button"
             data-testid="openwork-connect-status"
+            title={openWorkConnectAttentionTitle(props.status.description)}
             className="rounded-md px-1.5 py-1 transition-colors hover:bg-muted"
           />
         )}
