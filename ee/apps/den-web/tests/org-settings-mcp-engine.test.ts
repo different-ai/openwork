@@ -13,11 +13,13 @@ const denOrg = readFileSync(fileURLToPath(
 ), "utf8")
 
 describe("MCP OAuth engine organization setting", () => {
-  test("shows legacy as the safe fallback and saves an explicit org override", () => {
+  test("shows the safe rollout choices and can clear an org override", () => {
     expect(screen).toContain("MCP OAuth engine")
-    expect(screen).toContain("Use hardened OAuth client (new)")
+    expect(screen).toContain("Follow deployment default")
+    expect(screen).toContain("Previous flow")
+    expect(screen).toContain("Hardened client (new)")
     expect(screen).toContain("(deployment default)")
-    expect(screen).toContain("externalMcpEngineDirty ? { externalMcpEngine } : {}")
+    expect(screen).toContain('externalMcpEngineChoice === "default" ? null : externalMcpEngineChoice')
     expect(provider).toContain("body.externalMcpEngine = input.externalMcpEngine")
     expect(denOrg).toContain('externalMcpEngine: { effective: "legacy", source: "default" }')
   })

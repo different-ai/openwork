@@ -46,6 +46,9 @@ type ExternalMcpConnectionId = DenTypeId<"externalMcpConnection">
 type PluginMcpRequirementBindingId = DenTypeId<"pluginMcpRequirementBinding">
 type PluginId = DenTypeId<"plugin">
 type ConfigObjectId = DenTypeId<"configObject">
+type ExternalMcpOAuthConfigurationInput = Omit<ExternalMcpOAuthConfiguration, "callbackMode"> & {
+  callbackMode?: ExternalMcpOAuthConfiguration["callbackMode"]
+}
 
 function unique<TValue extends string>(values: TValue[]): TValue[] {
   return [...new Set(values)]
@@ -414,7 +417,7 @@ export async function createExternalMcpConnection(input: {
   authType: "oauth" | "apikey" | "none"
   credentialMode: "shared" | "per_member"
   apiKey?: string | null
-  oauthConfiguration?: ExternalMcpOAuthConfiguration | null
+  oauthConfiguration?: ExternalMcpOAuthConfigurationInput | null
   createdByOrgMembershipId: OrgMembershipId
   access: ExternalMcpAccessInput
 }): Promise<ExternalMcpConnectionRow> {

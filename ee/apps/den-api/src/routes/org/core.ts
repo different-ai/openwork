@@ -111,6 +111,12 @@ const organizationContextResponseSchema = z.object({
   }).passthrough(),
   currentMember: z.object({}).passthrough(),
   currentMemberTeams: z.array(z.object({}).passthrough()),
+  capabilities: z.object({
+    externalMcpEngine: z.object({
+      effective: z.enum(["enterprise", "legacy"]),
+      source: z.enum(["org", "default"]),
+    }),
+  }).passthrough(),
 }).passthrough().meta({ ref: "OrganizationContextResponse" })
 
 const userEmailRequiredSchema = z.object({

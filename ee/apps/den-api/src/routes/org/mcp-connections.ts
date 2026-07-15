@@ -1455,7 +1455,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           version: 1,
           authorizationServerIssuer: body.authorizationServerIssuer ?? null,
           requestedScopes: [...new Set(body.requestedScopes)],
-          callbackMode: "legacy-v1",
         } : null,
         createdByOrgMembershipId: payload.currentMember.id,
         access: {

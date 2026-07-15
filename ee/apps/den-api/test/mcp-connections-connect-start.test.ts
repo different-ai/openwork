@@ -725,7 +725,7 @@ test("legacy engine callbacks keep the previous flow and skip enterprise issuer 
   }
 })
 
-test("version-two state is rejected by the legacy callback even when its path id matches", async () => {
+test("shared-callback version-two state is rejected by the legacy callback even when its path id matches", async () => {
   const state = createOAuthStateToken({
     organizationId,
     orgMembershipId: memberId,

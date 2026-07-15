@@ -36,6 +36,12 @@ organizations without an override. The effective engine and whether it comes
 from the organization or deployment default are returned to the dashboard, but
 the environment variable name is never exposed to the browser.
 
+> **Deployment upgrade note:** A hosted Den deployment that already relies on
+> the hardened client must explicitly set
+> `DEN_ENABLE_ENTERPRISE_MCP_CLIENT=true` before upgrading. Leaving it unset
+> now selects the previous flow for every organization without its own
+> override.
+
 ## Add a connection
 
 In Cloud → Connections, enter the MCP server URL and select **Discover
