@@ -1,5 +1,6 @@
 "use client";
 
+import type { AdmissionDecision } from "@openwork/types/den/organization-admission";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -16,6 +17,7 @@ import {
 import { useDenFlow } from "../_providers/den-flow-provider";
 import { AuthPanel } from "./auth-panel";
 import { JoinOrgSuccess } from "./join-org-success";
+import { DenInput } from "./ui/input";
 
 type JoinedOrg = {
   name: string;
@@ -75,7 +77,33 @@ function getStringProperty(value: unknown, key: string) {
   return typeof property === "string" ? property : null;
 }
 
-export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
+function parseAdmissionDecision(value: unknown): AdmissionDecision | null {
+  if (!isRecord(value) || typeof value.decision !== "string") return null;
+  if (["allow", "require_invitation", "require_email_verification", "require_sso", "require_scim_provisioning", "deny"].includes(value.decision)) {
+    return value as AdmissionDecision;
+  }
+  return null;
+}
+
+function AdmissionNextStep({ decision, organizationSlug, invitationToken }: { decision: AdmissionDecision; organizationSlug: string; invitationToken?: string }) {
+  if (decision.decision === "require_sso") {
+    return <div className="grid gap-3"><p className="den-copy">This organization requires its own single sign-on session.</p><button type="button" className="den-button-primary w-full sm:w-auto" onClick={() => {
+      const nextUrl = new URL(decision.signInUrl, window.location.origin);
+      const callbackUrl = new URL("/join-org", window.location.origin);
+      if (invitationToken) callbackUrl.searchParams.set("invite", invitationToken);
+      else callbackUrl.searchParams.set("slug", organizationSlug);
+      nextUrl.searchParams.set("callbackURL", callbackUrl.toString());
+      window.location.assign(nextUrl.toString());
+    }}>Continue with organization SSO</button></div>;
+  }
+  if (decision.decision === "require_email_verification") return <p className="den-copy">Verify your account email, then return here to join.</p>;
+  if (decision.decision === "require_invitation") return <p className="den-copy">This organization requires an invitation. Ask an owner or admin to invite your verified email address.</p>;
+  if (decision.decision === "require_scim_provisioning") return <p className="den-copy">Membership is managed by your organization. Ask your identity administrator to provision you through SCIM.</p>;
+  if (decision.decision === "deny") return <p className="den-copy">Access was denied by this organization&apos;s policy ({decision.reason.replaceAll("_", " ")}).</p>;
+  return null;
+}
+
+export function JoinOrgScreen({ invitationId, organizationSlug }: { invitationId: string; organizationSlug: string }) {
   const router = useRouter();
   const { user, sessionHydrated, signOut } = useDenFlow();
   const [preview, setPreview] = useState<DenInvitationPreview | null>(null);
@@ -84,6 +112,8 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinedOrg, setJoinedOrg] = useState<JoinedOrg | null>(null);
+  const [slugDraft, setSlugDraft] = useState(organizationSlug);
+  const [admissionDecision, setAdmissionDecision] = useState<AdmissionDecision | null>(null);
 
   const invitedEmailMatches = preview && user
     ? preview.invitation.email.trim().toLowerCase() === user.email.trim().toLowerCase()
@@ -103,7 +133,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
     async function loadPreview() {
       if (!invitationId) {
         setPreview(null);
-        setPreviewError("Missing invitation link.");
+        setPreviewError(null);
         setPreviewBusy(false);
         return;
       }
@@ -167,6 +197,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
 
     setJoinBusy(true);
     setJoinError(null);
+    setAdmissionDecision(null);
 
     try {
       const { response, payload } = await requestJson(
@@ -179,6 +210,8 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
       );
 
       if (!response.ok) {
+        const decision = isRecord(payload) ? parseAdmissionDecision(payload.admission) : null;
+        if (decision) setAdmissionDecision(decision);
         setJoinError(getErrorMessage(payload, response.status === 404 ? "This invite could not be accepted." : `Could not join the organization (${response.status}).`));
         return;
       }
@@ -192,6 +225,32 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
         name: preview?.organization.name ?? "your team",
         slug: organizationSlug,
       });
+    } catch (error) {
+      setJoinError(error instanceof Error ? error.message : "Could not join the organization.");
+    } finally {
+      setJoinBusy(false);
+    }
+  }
+
+  async function handleJoinBySlug(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const slug = slugDraft.trim();
+    if (!slug) return;
+    setJoinBusy(true);
+    setJoinError(null);
+    setAdmissionDecision(null);
+    try {
+      const { response, payload } = await requestJson(`/v1/orgs/${encodeURIComponent(slug)}/admission/join`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      }, 12000);
+      const decision = isRecord(payload) ? parseAdmissionDecision(payload.decision) : null;
+      if (!response.ok || decision?.decision !== "allow") {
+        if (decision) setAdmissionDecision(decision);
+        setJoinError(decision ? null : getErrorMessage(payload, `Could not join the organization (${response.status}).`));
+        return;
+      }
+      setJoinedOrg({ name: slug, slug });
     } catch (error) {
       setJoinError(error instanceof Error ? error.message : "Could not join the organization.");
     } finally {
@@ -217,6 +276,26 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
         organizationName={joinedOrg.name}
         onContinueInBrowser={() => router.replace(joinedOrg.slug ? getOrgDashboardRoute(joinedOrg.slug) : "/dashboard")}
       />
+    );
+  }
+
+  if (!invitationId) {
+    return (
+      <section className="den-page py-4 lg:py-6">
+        <div className="den-frame grid max-w-[44rem] gap-6 p-6 md:p-8">
+          <div className="grid gap-2"><p className="den-eyebrow">OpenWork Cloud</p><h1 className="den-title-lg">Join an organization.</h1><p className="den-copy">Signing in identifies your global account. Joining is a separate policy decision made by the organization.</p></div>
+          {!user ? (
+            <AuthPanel eyebrow="Organization access" initialMode="sign-in" signInContent={{ title: "Sign in first.", copy: "Then enter the organization slug you want to join.", submitLabel: "Sign in" }} />
+          ) : (
+            <form className="grid gap-4" onSubmit={handleJoinBySlug}>
+              <label className="grid gap-2"><span className="den-label">Organization slug</span><DenInput value={slugDraft} onChange={(event) => setSlugDraft(event.target.value)} placeholder="your-organization" required /></label>
+              <div className="flex flex-wrap gap-3"><button type="submit" className="den-button-primary w-full sm:w-auto" disabled={joinBusy}>{joinBusy ? "Checking access..." : "Check and join"}</button><Link href="/dashboard" className="den-button-secondary w-full sm:w-auto">Back to dashboard</Link></div>
+            </form>
+          )}
+          {admissionDecision ? <AdmissionNextStep decision={admissionDecision} organizationSlug={slugDraft.trim()} /> : null}
+          {joinError ? <div className="den-notice is-error">{joinError}</div> : null}
+        </div>
+      </section>
     );
   }
 
@@ -405,6 +484,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
           </div>
         )}
 
+        {admissionDecision ? <AdmissionNextStep decision={admissionDecision} organizationSlug={preview.organization.slug} invitationToken={invitationId} /> : null}
         {joinError ? <div className="den-notice is-error">{joinError}</div> : null}
         {previewError ? <div className="den-notice is-error">{previewError}</div> : null}
       </div>

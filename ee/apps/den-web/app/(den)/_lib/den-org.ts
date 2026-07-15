@@ -20,6 +20,9 @@ export type DenOrgMember = {
   role: string;
   createdAt: string | null;
   joinedAt: string | null;
+  admissionSource: "self_join" | "invitation" | "sso_jit" | "scim" | "initial_owner" | "workspace_claim" | "admin_restore" | "legacy" | null;
+  admissionPolicyVersion: number | null;
+  admittedAt: string | null;
   isOwner: boolean;
   user: {
     id: string;
@@ -36,7 +39,6 @@ export type DenOrgInvitation = {
   status: string;
   expiresAt: string | null;
   createdAt: string | null;
-  inviteToken: string | null;
 };
 
 export type DenOrgTeam = {
@@ -193,6 +195,7 @@ export type DenOrgContext = {
 
 export type DenOrgAuthMethods = {
   sso: boolean;
+  ssoVerified: boolean;
   scim: boolean;
 };
 
@@ -260,6 +263,10 @@ function asBoolean(value: unknown): boolean {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function asStringArray(value: unknown): string[] | null {
@@ -644,6 +651,11 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             role,
             createdAt: asIsoString(entry.createdAt),
             joinedAt: asIsoString(entry.joinedAt),
+            admissionSource: ["self_join", "invitation", "sso_jit", "scim", "initial_owner", "workspace_claim", "admin_restore", "legacy"].includes(asString(entry.admissionSource) ?? "")
+              ? asString(entry.admissionSource) as DenOrgMember["admissionSource"]
+              : null,
+            admissionPolicyVersion: asNumber(entry.admissionPolicyVersion),
+            admittedAt: asIsoString(entry.admittedAt),
             isOwner: asBoolean(entry.isOwner),
             user: {
               id: userIdentity,
@@ -678,7 +690,6 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             status,
             expiresAt: asIsoString(entry.expiresAt),
             createdAt: asIsoString(entry.createdAt),
-            inviteToken: asString(entry.inviteToken),
           } satisfies DenOrgInvitation;
         })
         .filter((entry): entry is DenOrgInvitation => entry !== null)
@@ -797,11 +808,12 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
 
 function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
   if (!isRecord(value)) {
-    return { sso: false, scim: false };
+    return { sso: false, ssoVerified: false, scim: false };
   }
 
   return {
     sso: value.sso === true,
+    ssoVerified: value.ssoVerified === true,
     scim: value.scim === true,
   };
 }

@@ -19,7 +19,6 @@ import {
 import {
   DEN_ROLE_PERMISSION_OPTIONS,
   formatRoleLabel,
-  getJoinOrgRoute,
   getOrgAccessFlags,
   getMembersRoute,
   splitRoleString,
@@ -206,11 +205,6 @@ export function ManageMembersScreen() {
       ]),
     );
   }, [orgContext?.members, orgContext?.teams]);
-
-  const invitationsById = useMemo(
-    () => new Map((orgContext?.invitations ?? []).map((invitation) => [invitation.id, invitation])),
-    [orgContext?.invitations],
-  );
 
   const feedbackHref = useMemo(
     () =>
@@ -816,7 +810,6 @@ export function ManageMembersScreen() {
             {orgContext.members.map((member) => {
               const isInvited = !member.joinedAt;
               const inviteId = member.inviteId;
-              const inviteToken = inviteId ? invitationsById.get(inviteId)?.inviteToken : null;
               const canOpenActions = member.isOwner
                 ? false
                 : isInvited
@@ -832,10 +825,9 @@ export function ManageMembersScreen() {
                   <span className="text-[13px] text-gray-500">
                     {splitRoleString(member.role).map(formatRoleLabel).join(", ")}
                   </span>
-                  <span className="text-[13px] text-gray-400">
-                    {member.joinedAt
-                      ? new Date(member.joinedAt).toLocaleDateString()
-                      : "Pending"}
+                  <span className="grid gap-0.5 text-[13px] text-gray-400">
+                    <span>{member.joinedAt ? new Date(member.joinedAt).toLocaleDateString() : "Pending"}</span>
+                    {member.admissionSource ? <span className="text-[10px] uppercase tracking-wide text-gray-400">{member.admissionSource === "scim" ? "SCIM managed" : member.admissionSource.replaceAll("_", " ")}</span> : null}
                   </span>
                   <div className="relative flex items-center justify-end gap-2">
                     {member.isOwner ? (
@@ -855,20 +847,6 @@ export function ManageMembersScreen() {
                         </button>
                         {openMemberMenuId === member.id ? (
                           <div className="absolute right-0 top-9 z-10 w-44 overflow-hidden rounded-2xl border border-gray-100 bg-white p-1.5 text-[13px] shadow-xl shadow-gray-900/10">
-                            {isInvited && inviteToken ? (
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  const inviteUrl = new URL(getJoinOrgRoute(inviteToken), window.location.origin).toString();
-                                  await navigator.clipboard.writeText(inviteUrl);
-                                  setOpenMemberMenuId(null);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50"
-                              >
-                                <Link className="h-3.5 w-3.5" />
-                                Copy invite link
-                              </button>
-                            ) : null}
                             {isInvited && access.canInviteMembers ? (
                               <button
                                 type="button"

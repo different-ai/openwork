@@ -12,6 +12,12 @@ export default async function JoinOrgPage({
     : Array.isArray(inviteParam)
       ? (inviteParam[0]?.trim() ?? "")
       : "";
+  const slugParam = params.slug;
+  const organizationSlug = typeof slugParam === "string"
+    ? slugParam.trim()
+    : Array.isArray(slugParam)
+      ? (slugParam[0]?.trim() ?? "")
+      : "";
 
-  return <JoinOrgScreen invitationId={invitationId} />;
+  return <JoinOrgScreen invitationId={invitationId} organizationSlug={organizationSlug} />;
 }

@@ -62,6 +62,7 @@ Runtime logs and telemetry scrubbing avoid request bodies, cookies, authorizatio
 ### Related Den API env vars
 
 - `DEN_ORG_MODE`: `single_org` or `multi_org`. Blank/unset resolves to `single_org` in the implemented target state; hosted/cloud deployments should set `multi_org` explicitly.
+- `DEN_ORG_ADMISSION_ENFORCEMENT`: `shadow` (default) or `enforce`. Keep `shadow` until admission mismatch audits and the documented activation checklist are clear.
 - `DEN_SINGLE_ORG_NAME` / `DEN_SINGLE_ORG_SLUG`: singleton organization display name and stable slug for private single-org deployments.
 - `DEN_SINGLE_ORG_OWNER_EMAILS`: comma-separated emails allowed to claim singleton organization ownership.
 - `DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP`: whether unauthenticated users can self-serve signup into the singleton organization.
