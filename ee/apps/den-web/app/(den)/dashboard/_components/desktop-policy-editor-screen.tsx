@@ -31,6 +31,7 @@ type PolicyDraft = {
   priority: number;
   onboardingPromptsEnabled: boolean;
   onboardingPromptTexts: string[];
+  onboardingPromptDescriptions: string[];
   memberIds: string[];
   teamIds: string[];
 };
@@ -41,11 +42,13 @@ const EMPTY_DRAFT: PolicyDraft = {
   priority: 0,
   onboardingPromptsEnabled: false,
   onboardingPromptTexts: ["", "", ""],
+  onboardingPromptDescriptions: ["", "", ""],
   memberIds: [],
   teamIds: [],
 };
 
 const ONBOARDING_PROMPT_LABELS = ["First prompt", "Second prompt", "Optional third prompt"];
+const ONBOARDING_PROMPT_DESCRIPTION_MAX_LENGTH = 120;
 const MAX_POLICY_PRIORITY = 1_000_000;
 const PRIORITY_HELP_ID = "desktop-policy-priority-help";
 const PRIORITY_ERROR_ID = "desktop-policy-priority-error";
@@ -58,6 +61,7 @@ function requiredPolicyValue(value: DesktopPolicyValue): Required<DesktopPolicyV
 
 function draftFromPolicy(policy: DenDesktopPolicy): PolicyDraft {
   const onboardingPrompts = policy.policy.onboardingPrompts ?? [];
+  const onboardingPromptDescriptions = policy.policy.onboardingPromptDescriptions ?? [];
   return {
     policyName: policy.policyName,
     policy: requiredPolicyValue(policy.policy),
@@ -67,6 +71,11 @@ function draftFromPolicy(policy: DenDesktopPolicy): PolicyDraft {
       onboardingPrompts[0] ?? "",
       onboardingPrompts[1] ?? "",
       onboardingPrompts[2] ?? "",
+    ],
+    onboardingPromptDescriptions: [
+      onboardingPromptDescriptions[0] ?? "",
+      onboardingPromptDescriptions[1] ?? "",
+      onboardingPromptDescriptions[2] ?? "",
     ],
     memberIds: policy.assignments.flatMap((assignment) => (assignment.orgMemberId ? [assignment.orgMemberId] : [])),
     teamIds: policy.assignments.flatMap((assignment) => (assignment.teamId ? [assignment.teamId] : [])),
@@ -88,6 +97,10 @@ function updateOnboardingPromptText(values: string[], index: number, nextValue: 
   return values.map((value, valueIndex) => (valueIndex === index ? nextValue : value));
 }
 
+function updateOnboardingPromptDescription(values: string[], index: number, nextValue: string) {
+  return values.map((value, valueIndex) => (valueIndex === index ? nextValue : value));
+}
+
 function getOnboardingPrompts(draft: PolicyDraft): string[] | undefined {
   if (!draft.onboardingPromptsEnabled) return undefined;
 
@@ -97,6 +110,14 @@ function getOnboardingPrompts(draft: PolicyDraft): string[] | undefined {
   if (prompts.some((prompt) => prompt.length > 500)) return undefined;
 
   return prompts[2] ? [...requiredPrompts, prompts[2]] : requiredPrompts;
+}
+
+function getOnboardingPromptDescriptions(draft: PolicyDraft, promptCount: number): string[] | undefined {
+  const descriptions = draft.onboardingPromptDescriptions
+    .slice(0, promptCount)
+    .map((description) => description.trim());
+  if (descriptions.some((description) => description.length > ONBOARDING_PROMPT_DESCRIPTION_MAX_LENGTH)) return undefined;
+  return descriptions.some((description) => description.length > 0) ? descriptions : undefined;
 }
 
 function getPriorityError(draft: PolicyDraft, isDefault: boolean) {
@@ -117,12 +138,30 @@ function getPromptError(draft: PolicyDraft, index: number) {
   return null;
 }
 
+function getPromptDescriptionError(draft: PolicyDraft, index: number) {
+  if (!draft.onboardingPromptsEnabled) return null;
+  const description = draft.onboardingPromptDescriptions[index] ?? "";
+  const trimmed = description.trim();
+  if (trimmed.length > ONBOARDING_PROMPT_DESCRIPTION_MAX_LENGTH) {
+    return `Description must be ${ONBOARDING_PROMPT_DESCRIPTION_MAX_LENGTH} characters or less.`;
+  }
+  return null;
+}
+
 function getPromptHelpId(index: number) {
   return `desktop-policy-onboarding-prompt-${index}-help`;
 }
 
 function getPromptErrorId(index: number) {
   return `desktop-policy-onboarding-prompt-${index}-error`;
+}
+
+function getPromptDescriptionHelpId(index: number) {
+  return `desktop-policy-onboarding-prompt-${index}-description-help`;
+}
+
+function getPromptDescriptionErrorId(index: number) {
+  return `desktop-policy-onboarding-prompt-${index}-description-error`;
 }
 
 function getDisabledPromptCopy(isDefault: boolean) {
@@ -133,13 +172,21 @@ function getDisabledPromptCopy(isDefault: boolean) {
 
 function policyDocumentFromDraft(draft: PolicyDraft): DesktopPolicyDocumentWrite {
   const onboardingPrompts = getOnboardingPrompts(draft);
+  const onboardingPromptDescriptions = onboardingPrompts !== undefined
+    ? getOnboardingPromptDescriptions(draft, onboardingPrompts.length)
+    : undefined;
   return {
     ...draft.policy,
     ...(draft.onboardingPromptsEnabled
       ? onboardingPrompts !== undefined
-        ? { onboardingPrompts }
+        ? {
+            onboardingPrompts,
+            ...(onboardingPromptDescriptions !== undefined
+              ? { onboardingPromptDescriptions }
+              : {}),
+          }
         : {}
-      : { onboardingPrompts: null }),
+      : { onboardingPrompts: null, onboardingPromptDescriptions: null }),
   };
 }
 
@@ -191,7 +238,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
     }
     if (draft.onboardingPromptsEnabled) {
       const promptError = ONBOARDING_PROMPT_LABELS
-        .map((_, index) => getPromptError(draft, index))
+        .map((_, index) => getPromptError(draft, index) ?? getPromptDescriptionError(draft, index))
         .find((error) => error !== null);
       if (promptError) {
         setPageError(promptError);
@@ -387,31 +434,58 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
               <div className="grid gap-3">
                 {ONBOARDING_PROMPT_LABELS.map((label, index) => {
                   const promptError = getPromptError(draft, index);
+                  const promptDescriptionError = getPromptDescriptionError(draft, index);
                   const promptHelpId = getPromptHelpId(index);
                   const promptErrorId = getPromptErrorId(index);
+                  const promptDescriptionHelpId = getPromptDescriptionHelpId(index);
+                  const promptDescriptionErrorId = getPromptDescriptionErrorId(index);
                   return (
-                    <label key={label} className="grid gap-2">
-                      <span className="text-[13px] font-medium text-gray-700">{label}</span>
-                      <DenTextarea
-                        rows={2}
-                        maxLength={500}
-                        value={draft.onboardingPromptTexts[index] ?? ""}
-                        aria-invalid={promptError ? true : undefined}
-                        aria-describedby={promptError ? `${promptHelpId} ${promptErrorId}` : promptHelpId}
-                        onChange={(event) => setDraft({
-                          ...draft,
-                          onboardingPromptTexts: updateOnboardingPromptText(draft.onboardingPromptTexts, index, event.target.value),
-                        })}
-                        disabled={saving || togglingEnabled}
-                        placeholder={index === 2 ? "Optional" : "Enter a suggested prompt"}
-                      />
-                      <span id={promptHelpId} className="text-[12px] text-gray-500">
-                        {(draft.onboardingPromptTexts[index] ?? "").trim().length}/500 characters
-                      </span>
-                      {promptError ? (
-                        <span id={promptErrorId} className="text-[12px] text-red-600">{promptError}</span>
-                      ) : null}
-                    </label>
+                    <div key={label} className="grid gap-3 rounded-[18px] border border-gray-200 bg-white px-4 py-3">
+                      <p className="text-[13px] font-medium text-gray-700">{label}</p>
+                      <label className="grid gap-2">
+                        <span className="text-[12px] font-medium text-gray-600">Description</span>
+                        <DenInput
+                          maxLength={ONBOARDING_PROMPT_DESCRIPTION_MAX_LENGTH}
+                          value={draft.onboardingPromptDescriptions[index] ?? ""}
+                          aria-invalid={promptDescriptionError ? true : undefined}
+                          aria-describedby={promptDescriptionError ? `${promptDescriptionHelpId} ${promptDescriptionErrorId}` : promptDescriptionHelpId}
+                          onChange={(event) => setDraft({
+                            ...draft,
+                            onboardingPromptDescriptions: updateOnboardingPromptDescription(draft.onboardingPromptDescriptions, index, event.target.value),
+                          })}
+                          disabled={saving || togglingEnabled}
+                          placeholder="Card title shown in the desktop app"
+                        />
+                        <span id={promptDescriptionHelpId} className="text-[12px] text-gray-500">
+                          {(draft.onboardingPromptDescriptions[index] ?? "").trim().length}/{ONBOARDING_PROMPT_DESCRIPTION_MAX_LENGTH} characters
+                        </span>
+                        {promptDescriptionError ? (
+                          <span id={promptDescriptionErrorId} className="text-[12px] text-red-600">{promptDescriptionError}</span>
+                        ) : null}
+                      </label>
+                      <label className="grid gap-2">
+                        <span className="text-[12px] font-medium text-gray-600">Prompt</span>
+                        <DenTextarea
+                          rows={2}
+                          maxLength={500}
+                          value={draft.onboardingPromptTexts[index] ?? ""}
+                          aria-invalid={promptError ? true : undefined}
+                          aria-describedby={promptError ? `${promptHelpId} ${promptErrorId}` : promptHelpId}
+                          onChange={(event) => setDraft({
+                            ...draft,
+                            onboardingPromptTexts: updateOnboardingPromptText(draft.onboardingPromptTexts, index, event.target.value),
+                          })}
+                          disabled={saving || togglingEnabled}
+                          placeholder={index === 2 ? "Optional" : "Enter a suggested prompt"}
+                        />
+                        <span id={promptHelpId} className="text-[12px] text-gray-500">
+                          {(draft.onboardingPromptTexts[index] ?? "").trim().length}/500 characters
+                        </span>
+                        {promptError ? (
+                          <span id={promptErrorId} className="text-[12px] text-red-600">{promptError}</span>
+                        ) : null}
+                      </label>
+                    </div>
                   );
                 })}
               </div>

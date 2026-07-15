@@ -631,32 +631,6 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     return recoverWorkspacesFromTokenStore();
   }
 
-  function firstRunDefaultWorkspaceDir() {
-    // Dev mode sandboxes HOME under userData (see desktopBootstrapPath);
-    // mirror that so the dev default workspace never touches the real home.
-    if (process.env.OPENWORK_DEV_MODE === "1") {
-      return path.join(app.getPath("userData"), "openwork-dev-data", "home", "OpenWork");
-    }
-    return path.join(os.homedir(), "OpenWork");
-  }
-
-  // True first run: create the default "OpenWork" workspace under the user's
-  // home directory so the renderer lands directly in a ready workspace — no
-  // folder picker, no empty state. Cross-platform (os.homedir + path.join).
-  async function createDefaultFirstRunWorkspace() {
-    const folderPath = await normalizeLocalWorkspacePath(firstRunDefaultWorkspaceDir());
-    await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
-    await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, "starter"));
-    return normalizeWorkspaceEntry({
-      id: localWorkspaceId(folderPath),
-      name: "OpenWork",
-      displayName: "OpenWork",
-      path: folderPath,
-      preset: "starter",
-      workspaceType: "local",
-    });
-  }
-
   function stableWorkspaceId(value) {
     return `ws_${createHash("sha256").update(String(value)).digest("hex").slice(0, 12)}`;
   }
@@ -812,7 +786,6 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   async function readWorkspaceState() {
-    const stateFileExists = existsSync(workspaceStatePath());
     const state = await readJsonFile(workspaceStatePath(), EMPTY_WORKSPACE_LIST);
     let selectedId =
       typeof state?.selectedId === "string"
@@ -844,28 +817,6 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
         activeId = selectedWorkspace.id;
         workspaces = recoveredWorkspaces;
         changed = true;
-      }
-    }
-    // First run only (no persisted desktop state file, nothing recovered):
-    // create the default workspace before the renderer ever reads the list,
-    // so the UI never flashes an empty "create a workspace" state and the
-    // engine boots with a workspace from the start. Gated to packaged/dev
-    // runs so tests never mkdir into a real home directory.
-    if (
-      workspaces.length === 0 &&
-      !stateFileExists &&
-      (app.isPackaged || process.env.OPENWORK_DEV_MODE === "1")
-    ) {
-      try {
-        const defaultWorkspace = await createDefaultFirstRunWorkspace();
-        console.info("[first-run] created default workspace", { path: defaultWorkspace.path });
-        selectedId = defaultWorkspace.id;
-        watchedId = defaultWorkspace.id;
-        activeId = defaultWorkspace.id;
-        workspaces = [defaultWorkspace];
-        changed = true;
-      } catch (error) {
-        console.warn("[first-run] default workspace creation failed", error);
       }
     }
     const idMap = new Map();

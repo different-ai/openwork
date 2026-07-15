@@ -120,8 +120,8 @@ function welcomeReducer(state: WelcomeState, action: WelcomeAction): WelcomeStat
  * the user has no workspaces and has not completed onboarding.
  *
  * Clicking "Get started" opens the CreateWorkspaceModal. Once a
- * workspace is created, hasCompletedOnboarding is set and the user
- * is redirected to /session.
+ * workspace is created, provider and attribution onboarding runs before
+ * hasCompletedOnboarding is set and the user is redirected to /session.
  */
 export function WelcomeRoute() {
   const navigate = useNavigate();
@@ -182,8 +182,8 @@ export function WelcomeRoute() {
       try {
         const workspaceName = folderNameFromPath(folder);
         let list: WorkspaceList | null = null;
-        let serverBaseUrl = "";
-        let serverToken = "";
+        let sessionBaseUrl = "";
+        let sessionToken = "";
         try {
           const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
             await resolveOpenworkConnection();
@@ -198,8 +198,8 @@ export function WelcomeRoute() {
               name: workspaceName,
               preset: "starter",
             });
-            serverBaseUrl = normalizedBaseUrl;
-            serverToken = resolvedToken;
+            sessionBaseUrl = normalizedBaseUrl;
+            sessionToken = resolvedToken;
           }
         } catch {
           list = null;
@@ -225,14 +225,19 @@ export function WelcomeRoute() {
             workspace: targetWorkspace,
             allWorkspaces: list.workspaces,
           }).catch(() => undefined);
+          const fresh = await resolveOpenworkConnection().catch(() => null);
+          if (fresh?.normalizedBaseUrl && fresh.resolvedToken) {
+            sessionBaseUrl = fresh.normalizedBaseUrl;
+            sessionToken = fresh.resolvedToken;
+          }
         }
-        if (targetWorkspaceId && serverBaseUrl && serverToken) {
+        if (targetWorkspaceId && sessionBaseUrl && sessionToken) {
           try {
             const workspacePath = targetWorkspace?.path?.trim() || folder;
             const session = unwrap(await createClient(
-              `${(buildOpenworkWorkspaceBaseUrl(serverBaseUrl, targetWorkspaceId) ?? serverBaseUrl).replace(/\/+$/, "")}/opencode`,
+              `${(buildOpenworkWorkspaceBaseUrl(sessionBaseUrl, targetWorkspaceId) ?? sessionBaseUrl).replace(/\/+$/, "")}/opencode`,
               workspacePath || undefined,
-              { token: serverToken, mode: "openwork" },
+              { token: sessionToken, mode: "openwork" },
             ).session.create({ directory: workspacePath || undefined }));
             targetSessionId = session.id;
             captureAnalyticsEvent("task_created", { source: "onboarding", workspace_type: "local" });
@@ -249,7 +254,6 @@ export function WelcomeRoute() {
           }
           if (targetSessionId) writeLastSessionFor(targetWorkspaceId, targetSessionId);
         }
-        markOnboardingComplete();
         dispatch({ type: "close" });
         // Show the provider selection step before navigating to the session.
         dispatch({ type: "provider-step", workspaceId: targetWorkspaceId, sessionId: targetSessionId });
@@ -263,7 +267,7 @@ export function WelcomeRoute() {
         dispatch({ type: "create:finish" });
       }
     },
-    [markOnboardingComplete, navigate],
+    [],
   );
 
   const handleCreateRemote = useCallback(
@@ -357,9 +361,10 @@ export function WelcomeRoute() {
   }, [platform]);
 
   const finishOnboarding = useCallback(() => {
+    markOnboardingComplete();
     navigate(state.pendingRoute ?? "/session", { replace: true });
     if (state.pendingSessionId) focusPromptSoon();
-  }, [navigate, state.pendingRoute, state.pendingSessionId]);
+  }, [markOnboardingComplete, navigate, state.pendingRoute, state.pendingSessionId]);
 
   const handleAttributionSubmit = useCallback(
     (source: AttributionSource, aiPrompt?: string) => {

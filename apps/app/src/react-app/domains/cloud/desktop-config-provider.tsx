@@ -62,6 +62,7 @@ const DESKTOP_CONFIG_ITEMS = [
   "brandAccentColor",
   "connectEnabled",
   "onboardingPrompts",
+  "onboardingPromptDescriptions",
 ] as const satisfies readonly (keyof DenDesktopConfig)[];
 
 type DesktopConfigItem = (typeof DESKTOP_CONFIG_ITEMS)[number];

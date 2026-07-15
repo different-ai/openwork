@@ -155,50 +155,6 @@ export function writeWorkspaceProjectDimension(
   safeSet(WORKSPACE_PROJECT_DIMENSION_KEY, Object.keys(map).length ? JSON.stringify(map) : null);
 }
 
-// Provider/org onboarding flags owned elsewhere but cleared together with the
-// workspace-memory keys so a "reset onboarding" (Settings → Recovery) or a
-// recovery-disabled dev launch produces a genuinely fresh first run — the
-// first-run loader arms, the first session auto-creates, and the provider step
-// (not the OpenWork Models startup promo) shows on the first send.
-const ONBOARDING_FLAG_KEYS = [
-  "openwork.acknowledgedProviders",
-  "openwork.orgOnboardingSeen",
-  "openwork.reloadAfterOrgOnboarding",
-  "openwork.seenProviderIds",
-];
-const PREFERENCES_KEY = "openwork.preferences";
-
-/**
- * Clear every renderer signal that marks this profile as "already onboarded".
- * Non-`all` reset paths previously left ACTIVE_WORKSPACE_KEY and
- * SESSION_BY_WORKSPACE_KEY behind, which silently suppressed the whole
- * first-run flow (the loader keys off active-workspace memory; auto-create and
- * the loader-dismiss check key off last-session memory).
- */
-export function resetFirstRunClientState(): void {
-  if (typeof window === "undefined") return;
-  try {
-    for (const key of [
-      ACTIVE_WORKSPACE_KEY,
-      SESSION_BY_WORKSPACE_KEY,
-      WORKSPACE_ORDER_KEY,
-      WORKSPACE_PROJECT_DIMENSION_KEY,
-      ...ONBOARDING_FLAG_KEYS,
-    ]) {
-      window.localStorage.removeItem(key);
-    }
-    const raw = window.localStorage.getItem(PREFERENCES_KEY);
-    if (raw) {
-      const prefs = JSON.parse(raw) as Record<string, unknown>;
-      prefs.hasCompletedOnboarding = false;
-      prefs.providerStepCompleted = false;
-      window.localStorage.setItem(PREFERENCES_KEY, JSON.stringify(prefs));
-    }
-  } catch {
-    // ignore storage errors (quota, privacy modes, etc.)
-  }
-}
-
 export function forgetWorkspaceMemory(workspaceId: string): void {
   const wsId = workspaceId?.trim();
   if (!wsId) return;

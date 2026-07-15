@@ -154,6 +154,30 @@ test("prefers server config workspaces when desktop state is empty", async () =>
   }
 });
 
+test("does not create a default workspace when desktop state is absent", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+  const userData = path.join(root, "userData");
+  const previousDevMode = process.env.OPENWORK_DEV_MODE;
+  const previousServerConfig = process.env.OPENWORK_SERVER_CONFIG;
+  process.env.OPENWORK_DEV_MODE = "1";
+  process.env.OPENWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  try {
+    const store = createWorkspaceStore({
+      app: { getPath: (name) => name === "userData" ? userData : root },
+      defaultDenBaseUrl: "https://example.test",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+    });
+
+    const state = await store.readWorkspaceState();
+    assert.equal(state.workspaces.length, 0);
+    await assert.rejects(readFile(path.join(userData, "openwork-dev-data", "home", "OpenWork", ".opencode", "openwork.json"), "utf8"));
+  } finally {
+    restoreEnv("OPENWORK_DEV_MODE", previousDevMode);
+    restoreEnv("OPENWORK_SERVER_CONFIG", previousServerConfig);
+  }
+});
+
 test("normalizes recovered remote OpenWork entries before persisting", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
   const userData = path.join(root, "userData");

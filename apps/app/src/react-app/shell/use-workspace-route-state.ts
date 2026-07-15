@@ -8,7 +8,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { publishInspectorSlice, recordInspectorEvent } from "@/app/lib/app-inspector";
+import {
+  publishInspectorOpencodeClient,
+  publishInspectorSlice,
+  recordInspectorEvent,
+} from "@/app/lib/app-inspector";
 import {
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
@@ -52,6 +56,7 @@ import {
 import { legacySessionRoute, workspaceSessionRoute } from "./workspace-routes";
 
 export type UseWorkspaceRouteStateInput = {
+  developerMode: boolean;
   /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local openwork-server host info discovered during refresh. */
@@ -59,7 +64,7 @@ export type UseWorkspaceRouteStateInput = {
 };
 
 export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
-  const { onServerSettingsChanged, onHostInfo } = input;
+  const { developerMode, onServerSettingsChanged, onHostInfo } = input;
   const navigate = useNavigate();
   const local = useLocal();
   const params = useParams<{ workspaceId?: string; sessionId?: string }>();
@@ -670,11 +675,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // Redirect to /welcome when no workspaces exist and the user hasn't
   // completed onboarding. This fires after the initial route refresh so
   // `loading` is false and we know for sure there are zero workspaces.
-  // Desktop skips it: first-run there lands on the chat with a default
-  // workspace and the welcome content as a modal (see session-route).
   useEffect(() => {
     if (loading) return;
-    if (isDesktopRuntime()) return;
     if (workspaces.length > 0) return;
     if (local.prefs.hasCompletedOnboarding) return;
     navigate("/welcome", { replace: true });
@@ -749,6 +751,10 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         : null,
     [opencodeBaseUrl, selectedWorkspaceError, selectedWorkspaceRoot, selectedWorkspaceServerToken],
   );
+  useEffect(() => {
+    if (!developerMode || !opencodeClient) return;
+    return publishInspectorOpencodeClient(opencodeClient);
+  }, [developerMode, opencodeClient]);
   const runRemoteWorkspaceConnectionCheck = useCallback(
     async (workspaceId: string, mode: "test" | "recover") => {
       const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
