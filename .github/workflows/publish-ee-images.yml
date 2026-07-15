@@ -289,3 +289,27 @@ jobs:
 
           docker logs "$container_id" || true
           exit 1
+
+      - name: Inspect immutable migration runtime
+        if: ${{ github.event_name == 'pull_request' && matrix.image == 'openwork-den-api' }}
+        shell: bash
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          image_tag="$(printf '%s\n' "$IMAGE_TAGS" | head -n 1)"
+
+          docker run --rm "$image_tag" sh -lc '
+            test -f /app/ee/packages/den-db/dist/migration-runtime/runner.js
+            test -f /app/ee/packages/den-db/dist/migration-runtime/manifest.json
+            test -z "$(find /app/node_modules/.pnpm -maxdepth 1 \( -name "typescript@*" -o -name "tsx@*" -o -name "drizzle-kit@*" \) -print -quit)"
+            ! command -v pnpm
+          '
+
+          set +e
+          output="$(docker run --rm "$image_tag" node /app/ee/packages/den-db/dist/migration-runtime/runner.js 2>&1)"
+          exit_code=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$exit_code" -eq 2
+          printf '%s\n' "$output" | grep -q '"category":"configuration_invalid"'

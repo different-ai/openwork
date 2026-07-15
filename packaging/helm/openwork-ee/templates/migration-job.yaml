@@ -1,4 +1,8 @@
 {{- if .Values.migrations.enabled }}
+{{- $migrationMode := default "apply" .Values.migrations.mode }}
+{{- if not (has $migrationMode (list "apply" "check")) }}
+{{- fail "migrations.mode must be either apply or check" }}
+{{- end }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -26,6 +30,7 @@ spec:
       {{- end }}
     spec:
       restartPolicy: Never
+      terminationGracePeriodSeconds: 30
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -38,6 +43,9 @@ spec:
             {{- toYaml .Values.migrations.command | nindent 12 }}
           args:
             {{- toYaml .Values.migrations.args | nindent 12 }}
+            {{- if eq $migrationMode "check" }}
+            - --check
+            {{- end }}
           env:
             - name: DB_MODE
               value: {{ .Values.config.databaseMode | quote }}
@@ -50,15 +58,10 @@ spec:
                   name: {{ include "openwork-ee.secretName" . }}
                   key: {{ .Values.secret.keys.databaseUrl }}
               {{- end }}
-            - name: DEN_DB_ENCRYPTION_KEY
-              {{- if .Values.secret.create }}
-              value: {{ .Values.secret.values.denDbEncryptionKey | quote }}
-              {{- else }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "openwork-ee.secretName" . }}
-                  key: {{ .Values.secret.keys.denDbEncryptionKey }}
-              {{- end }}
+            - name: MIGRATION_LOCK_TIMEOUT_SECONDS
+              value: {{ .Values.migrations.lockTimeoutSeconds | quote }}
+            - name: MIGRATION_LOCK_LEASE_SECONDS
+              value: {{ .Values.migrations.lockLeaseSeconds | quote }}
           {{- with .Values.migrations.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

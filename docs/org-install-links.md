@@ -43,11 +43,12 @@ The guided flow is scoped to Den organization install links. The public
 
 ### Docker Compose
 
-Run the migration once, then restart Den:
+The Den container runs the immutable migration artifact before starting the API.
+To retry or verify it manually:
 
 ```bash
-docker compose -f packaging/docker/docker-compose.den-dev.yml exec den sh -lc \
-  "pnpm --dir /app/ee/packages/den-db run db:bootstrap"
+docker compose -f packaging/docker/docker-compose.den-dev.yml exec den \
+  node /app/ee/packages/den-db/dist/migration-runtime/runner.js
 ```
 
 If the stack has a custom Compose project name, include the same `-p <project>`

@@ -301,9 +301,16 @@ imagePullSecrets:
 The migration Job runs before the Deployments and Services are installed. If it
 fails, fix that before debugging web/API readiness.
 
+The Job executes the precompiled migration runner from the released Den API
+image. It does not install dependencies or compile TypeScript in the cluster.
+Logs are JSON Lines and include a final `migration_result` event with a failure
+category and exit code. Use `migrations.mode: check` to run a read-only
+compatibility and pending-migration check before an upgrade window; restore
+`mode: apply` for the actual Helm upgrade.
+
 Avoid `kubectl describe job openwork-ee-migrate` in shared reports because the
-hook Job currently includes `DATABASE_URL` and `DEN_DB_ENCRYPTION_KEY` in the
-rendered environment. Use logs and redacted rendered manifests instead.
+hook Job includes `DATABASE_URL` in the rendered environment. Use logs and
+redacted rendered manifests instead.
 
 For a retained-log debug attempt, temporarily disable hook behavior:
 
@@ -311,6 +318,7 @@ For a retained-log debug attempt, temporarily disable hook behavior:
 migrations:
   enabled: true
   hook: false
+  mode: apply
   backoffLimit: 0
 ```
 
@@ -338,6 +346,7 @@ Return to the default hook mode after debugging:
 migrations:
   enabled: true
   hook: true
+  mode: apply
   backoffLimit: 2
 ```
 

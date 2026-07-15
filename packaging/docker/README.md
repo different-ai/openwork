@@ -251,10 +251,11 @@ Caveats: `grafana/otel-lgtm` is intended for development, demos, and tests, not 
 
 ### Install links (self-host)
 
-Run the install-link migration once against the Den database:
+The Den container runs the immutable migration artifact before starting the API.
+To retry or verify the install-link migration manually:
 
 ```bash
-docker compose -f packaging/docker/docker-compose.den-dev.yml exec den sh -lc "pnpm --dir /app/ee/packages/den-db run db:bootstrap"
+docker compose -f packaging/docker/docker-compose.den-dev.yml exec den node /app/ee/packages/den-db/dist/migration-runtime/runner.js
 ```
 
 Set `DEN_BOOTSTRAP_ADMIN_EMAILS` on the Den API service, restart it, open `/admin`, and toggle `Install links` for each org. Optional installer artifact env vars are `OPENWORK_INSTALLER_RELEASE_TAG`, `OPENWORK_INSTALLER_RELEASE_REPO`, and `OPENWORK_INSTALLER_ARTIFACTS_DIR`; see the [operator guide](../../docs/org-install-links.md).

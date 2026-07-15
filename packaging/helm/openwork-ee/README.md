@@ -7,7 +7,35 @@ Initial Helm chart for the OpenWork EE Den stack:
 - optional `inference` service on port `8791`
 - shared ConfigMap and Secret templating
 - optional Ingress for web and API hosts
-- pre-install/pre-upgrade migration Job scaffold
+- pre-install/pre-upgrade immutable migration Job
+
+## Immutable database migrations
+
+The released Den API image contains a compiled migration runner, immutable SQL
+files, their SHA-256 manifest, and schema/index metadata. The Helm hook invokes
+that JavaScript directly; it does not run pnpm, TypeScript, declaration
+generation, package builds, or Drizzle Kit during an install or upgrade.
+
+The runner validates configuration and database compatibility, acquires a
+renewable database lease, applies only the immutable pending migrations,
+ensures required indexes, verifies the released schema, and emits JSON Lines.
+The default Job requests `64Mi` and is limited to `256Mi`; override
+`migrations.resources` after measuring against your database and migration
+history.
+
+Render a compatibility-only Job that does not acquire the lock or mutate the
+database:
+
+```yaml
+migrations:
+  mode: check
+```
+
+`mode: apply` is the default. Completed runs can be retried safely because the
+runner verifies and advances the immutable migration ledger under the database
+lock. A killed container reports Kubernetes exit `137`; graceful SIGTERM and
+SIGINT exits are `143` and `130`. The remaining categorized exit codes are
+documented in [`ee/packages/den-db/README.md`](../../../ee/packages/den-db/README.md).
 
 ## Install
 
@@ -575,12 +603,19 @@ The migration Job runs as a Helm `pre-install,pre-upgrade` hook by default:
 migrations:
   enabled: true
   hook: true
+  mode: apply
   hookDeletePolicy: before-hook-creation,hook-succeeded
+  command:
+    - node
   args:
-    - pnpm --dir /app/ee/packages/den-db run db:bootstrap
+    - /app/ee/packages/den-db/dist/migration-runtime/runner.js
 ```
 
-`db:bootstrap` uses `db:migrate` for normal upgrades. On a completely empty database it applies the current schema once, records the committed migrations as the baseline, then runs migrations. On an existing schema without a Drizzle ledger, it records the baseline before migrating.
+The command runs the compiled artifact described above. On a completely empty
+database it applies the immutable current schema and records the committed
+migration baseline. Existing managed databases apply only their pending
+immutable migrations. A compatible legacy schema without a Drizzle ledger is
+verified before its baseline is recorded.
 
 For retained-log troubleshooting, temporarily disable hook behavior and reduce
 retries:
@@ -589,13 +624,14 @@ retries:
 migrations:
   enabled: true
   hook: false
+  mode: apply
   backoffLimit: 0
 ```
 
-The hook Job currently renders `DATABASE_URL` and `DEN_DB_ENCRYPTION_KEY` into
-the Job environment when `secret.create=true`, because pre-install hooks run
-before normal chart resources. Avoid sharing `kubectl describe job` output
-without redacting secrets.
+The hook Job renders `DATABASE_URL` into the Job environment when
+`secret.create=true`, because pre-install hooks run before normal chart
+resources. Avoid sharing `kubectl describe job` output without redacting
+secrets.
 
 ## Install links
 

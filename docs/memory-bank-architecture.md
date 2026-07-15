@@ -119,15 +119,12 @@ on-device.
 ### Search backend [DECISION: MySQL FULLTEXT] + [FIX B2]
 PlanetScale/Vitess supports `FULLTEXT` + `MATCH … AGAINST`. v0 uses **NATURAL LANGUAGE
 MODE**, owner-scoped, relevance-ranked.
-- **Fresh-install hazard:** new DBs bootstrap via `drizzle-kit push` (which cannot see a
-  raw `FULLTEXT` index — Drizzle mysql-core has no FULLTEXT DSL,
-  [drizzle-orm#1495](https://github.com/drizzle-team/drizzle-orm/issues/1495)) and
-  baseline marks migrations applied-without-executing — so a plain migration-only index
-  is **silently absent in production** while working on incrementally-migrated dev DBs.
-  **[FIX B2]** Create the index **idempotently on a path both bootstrap and migrate
-  hit** — e.g. a startup/bootstrap step that checks `information_schema.STATISTICS` for
-  the index and runs `CREATE FULLTEXT INDEX` if missing. Add a CI/startup assertion that
-  the index exists.
+- **Fresh-install behavior:** the released immutable migration runner includes the
+  generated bootstrap schema plus explicit required-index metadata. Drizzle mysql-core
+  cannot express the raw `FULLTEXT` index
+  ([drizzle-orm#1495](https://github.com/drizzle-team/drizzle-orm/issues/1495)), so the
+  runner creates it idempotently on both bootstrap and upgrade paths and verifies it
+  before reporting success.
 - **Query safety [FIX]:** bind the query (`MATCH(content) AGAINST(${q} IN NATURAL
   LANGUAGE MODE)` via Drizzle's `sql` template) — **never** `sql.raw`; combine the MATCH
   with the `user_id` predicate in a single `and(...)`. (Precedent: `admin-tools.ts` binds
