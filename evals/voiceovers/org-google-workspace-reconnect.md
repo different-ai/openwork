@@ -10,8 +10,10 @@ state.
 
 2. Alex enables Read Gmail and Create calendar events for the org. Jordan's row immediately changes from ready to an amber reconnect prompt, with a Reconnect button and the Disconnect escape hatch still available.
 
-3. Jordan clicks Reconnect. The mock Google consent page now lists the newly requested Gmail read and Calendar event scopes, so the extra permissions are explicit before approval.
+3. Jordan can inspect the Google Workspace tools before reconnecting. OpenWork shows the real registered Gmail and Calendar capabilities, marks each one as needing the new permissions, and does not run anything.
 
-4. After approval, Jordan lands back in Your Connections and the row is green again. The API agrees that no reconnect is needed anymore.
+4. Jordan clicks Reconnect. The mock Google consent page now lists the newly requested Gmail read and Calendar event scopes, so the extra permissions are explicit before approval.
 
-5. Finally, Jordan disconnects the account. The same row falls back to Connect your account, proving the reconnect nudge did not break the normal disconnect path.
+5. After approval, Jordan lands back in Your Connections and the row is green again. The API agrees that no reconnect is needed anymore.
+
+6. Finally, Jordan disconnects the account. The same row falls back to Connect your account, proving the reconnect nudge did not break the normal disconnect path.

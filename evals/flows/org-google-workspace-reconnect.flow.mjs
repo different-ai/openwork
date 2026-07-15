@@ -350,12 +350,65 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        await ctx.prove("Clicking Reconnect opens consent for the newly requested Google scopes", {
+        await ctx.prove("A member can inspect permission-aware native provider tools without executing them", {
           voiceover: vo[2],
+          action: async () => {
+            const clicked = await ctx.eval(`(() => {
+              const button = document.querySelector('button[aria-label="View tools for Google Workspace"]');
+              button?.click();
+              return Boolean(button);
+            })()`);
+            ctx.assert(clicked, "Could not open the Google Workspace tool catalog.");
+            await ctx.waitFor(`(() => {
+              const catalog = document.querySelector('[data-mcp-tool-catalog="google-workspace"]');
+              const text = catalog?.textContent ?? '';
+              return text.includes('0 of 6 tools available now')
+                && text.includes('List or search Gmail messages as the calling member')
+                && text.includes('Create a Google Calendar event as the calling member')
+                && text.includes('Reconnect required');
+            })()`, { timeoutMs: 30_000, label: "permission-aware Google Workspace tool catalog" });
+            await ctx.eval(`(() => {
+              const catalog = document.querySelector('[data-mcp-tool-catalog="google-workspace"]');
+              catalog?.scrollIntoView({ block: 'center' });
+              return Boolean(catalog);
+            })()`);
+          },
+          assert: async () => {
+            const catalog = await denApiFetch("/v1/mcp-connections/google-workspace/tools", {
+              headers: orgHeaders(state.memberSession),
+            });
+            ctx.assert(catalog.response.ok, `Native provider tool catalog failed: ${catalog.response.status} ${JSON.stringify(catalog.body).slice(0, 200)}`);
+            const tools = Array.isArray(catalog.body.tools) ? catalog.body.tools : [];
+            ctx.assert(tools.length === 6, `Expected six enabled Google Workspace tools, got ${JSON.stringify(tools)}`);
+            ctx.assert(tools.every((tool) => tool.availability === "reconnect_required"), `Expected every tool to require reconnect, got ${JSON.stringify(tools)}`);
+            await ctx.expectText("Viewing this catalog does not run a tool.");
+            await ctx.expectText("0 of 6 tools available now");
+          },
+          screenshot: {
+            name: "org-google-workspace-native-tool-catalog",
+            claim: "The native Google Workspace row opens a read-only catalog of registered Den capabilities and clearly marks permission gaps.",
+            requireText: ["Tools available to your agents", "0 of 6 tools available now", "List or search Gmail messages as the calling member", "Create a Google Calendar event as the calling member", "Reconnect required"],
+            rejectText: ["Run tool", "Something went wrong"],
+          },
+        });
+      },
+    },
+    {
+      name: "Frame 4",
+      run: async (ctx) => {
+        await ctx.prove("Clicking Reconnect opens consent for the newly requested Google scopes", {
+          voiceover: vo[3],
           action: async () => {
             await ctx.eval(`(() => {
               window.__openworkEvalLastOpen = null;
-              window.open = (url) => { window.__openworkEvalLastOpen = String(url); return null; };
+              window.open = () => {
+                const popup = { opener: null, close() {} };
+                popup.location = {};
+                Object.defineProperty(popup.location, 'href', {
+                  set(url) { window.__openworkEvalLastOpen = String(url); },
+                });
+                return popup;
+              };
               return true;
             })()`);
             const clicked = await ctx.eval(clickGoogleWorkspaceRowButtonScript("Reconnect"));
@@ -386,10 +439,10 @@ export default {
       },
     },
     {
-      name: "Frame 4",
+      name: "Frame 5",
       run: async (ctx) => {
         await ctx.prove("After reconnect approval, the row returns to connected and the API clears needsReconnect", {
-          voiceover: vo[3],
+          voiceover: vo[4],
           action: async () => {
             await waitForMemberStatus(ctx, RECONNECT_SCOPES);
             await openMemberYourConnections(ctx);
@@ -412,10 +465,10 @@ export default {
       },
     },
     {
-      name: "Frame 5",
+      name: "Frame 6",
       run: async (ctx) => {
         await ctx.prove("Disconnect still returns the Google Workspace row to Connect your account", {
-          voiceover: vo[4],
+          voiceover: vo[5],
           action: async () => {
             const clicked = await ctx.eval(clickGoogleWorkspaceRowButtonScript("Disconnect"));
             ctx.assert(clicked, "Could not click the Google Workspace Disconnect button.");

@@ -120,6 +120,8 @@ export type ExternalMcpTool = {
     idempotentHint?: boolean;
     openWorldHint?: boolean;
   };
+  availability?: "available" | "connection_required" | "reconnect_required";
+  availabilityReason?: string;
 };
 
 export type ExternalMcpToolRun = {

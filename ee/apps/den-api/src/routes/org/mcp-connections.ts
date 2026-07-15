@@ -19,6 +19,7 @@ import {
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
+import { getCatalog } from "../../mcp/index.js"
 import { appLogger } from "../../observability/logger.js"
 import {
   jsonValidator,
@@ -61,8 +62,10 @@ import {
 } from "../../capability-sources/external-mcp-connections.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { listNativeProviderUsableEntries } from "../../capability-sources/native-provider-connections.js"
+import { buildNativeProviderToolCatalog } from "../../capability-sources/native-provider-tool-catalog.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
 import { getConnectedAccount, getOrgOAuthClient, upsertOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
+import { clientSelectedFeatures, getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
 import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
 import {
   externalMcpCallbackUrl,
@@ -87,6 +90,10 @@ import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, or
 import type { OrgRouteVariables } from "./shared.js"
 
 const connectionParamsSchema = idParamSchema("connectionId", "externalMcpConnection")
+const connectionToolParamsSchema = z.union([
+  connectionParamsSchema,
+  z.object({ connectionId: z.enum(["google-workspace", "microsoft-365"]) }),
+])
 const logger = appLogger.child({ component: "mcp_connections" })
 const MANUAL_MCP_TOOL_REQUEST_MAX_BYTES = 1024 * 1024
 const externalMcpDiscoveryFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
@@ -327,6 +334,8 @@ const connectionToolSchema = z.object({
   inputSchema: z.record(z.string(), z.unknown()),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
   annotations: connectionToolAnnotationsSchema.optional(),
+  availability: z.enum(["available", "connection_required", "reconnect_required"]).optional(),
+  availabilityReason: z.string().optional(),
 }).meta({ ref: "ExternalMcpConnectionTool" })
 
 const connectionToolListResponseSchema = z.object({
@@ -1182,10 +1191,10 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     "/v1/mcp-connections/:connectionId/tools",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "List tools exposed by an External MCP Connection",
-      description: "Uses the Den-managed credential available to the calling member to read the live MCP tools/list catalog. Granted members can inspect connections available under Your Connections; workspace owners and admins can also inspect connections they manage. Credentials and tool calls are never returned.",
+      summary: "List tools available through a connection",
+      description: "Returns a read-only tool catalog for a connection in Your Connections. External MCP catalogs are read live with the caller's Den-managed credential. Native Google Workspace and Microsoft 365 catalogs are derived from Den's registered capability routes and filtered by the organization's enabled features and the member's granted permissions. Inspecting a catalog never runs a tool and never returns credentials.",
       responses: {
-        200: jsonResponse("External MCP tool catalog.", connectionToolListResponseSchema),
+        200: jsonResponse("Connection tool catalog.", connectionToolListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("The caller has not been granted access to this connection.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
@@ -1195,10 +1204,35 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     }),
     orgMemberRoute(),
     resolveMemberTeamsMiddleware,
-    paramValidator(connectionParamsSchema),
+    paramValidator(connectionToolParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
       const { connectionId } = c.req.valid("param")
+      const nativeProvider = getNativeOAuthProvider(connectionId)
+      if (nativeProvider) {
+        if (!memberFacingMcpConnectionsEnabled(payload.organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })) {
+          return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+        }
+        const client = await getOrgOAuthClient(payload.organization.id, nativeProvider.providerId)
+        if (!client) {
+          return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+        }
+        const account = await getConnectedAccount({
+          organizationId: payload.organization.id,
+          orgMembershipId: payload.currentMember.id,
+          providerId: nativeProvider.providerId,
+        })
+        const operations = await getCatalog(app as unknown as Hono, c.env)
+        return c.json({
+          tools: buildNativeProviderToolCatalog({
+            provider: nativeProvider,
+            operations,
+            selectedFeatures: clientSelectedFeatures(nativeProvider, client.extra),
+            grantedScopes: account?.scopes ?? null,
+            connected: Boolean(account?.accessToken),
+          }),
+        })
+      }
       const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
       const connection = await getExternalMcpConnection({
         organizationId: payload.organization.id,

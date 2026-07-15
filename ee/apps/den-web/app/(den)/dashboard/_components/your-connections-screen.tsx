@@ -19,6 +19,7 @@ import {
   useMcpConnections,
   useStartMcpConnectionOAuth,
 } from "./mcp-connections-data";
+import { McpToolCatalog } from "./mcp-tool-catalog";
 import { McpToolRunner } from "./mcp-tool-runner";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
@@ -195,7 +196,9 @@ function YourConnectionRow({
   const needsMyConnect = isPerMember && !connection.connectedForMe;
   const needsAdminConnect = isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
   const canDisconnect = canDisconnectNativeProviderAccount(connection);
-  const canTestTools = isAdmin && !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
+  const nativeProvider = isNativeProviderConnectionId(connection.id);
+  const canTestTools = isAdmin && !nativeProvider && connection.connectedForMe && !needsReconnect;
+  const canViewTools = nativeProvider || canTestTools;
   const [toolRunnerOpen, setToolRunnerOpen] = useState(false);
   const microsoftScopes = connection.id === "microsoft-365"
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
@@ -265,17 +268,17 @@ function YourConnectionRow({
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {canTestTools ? (
+          {canViewTools ? (
             <DenButton
               variant="secondary"
               size="sm"
               icon={Wrench}
               onClick={() => setToolRunnerOpen((open) => !open)}
               aria-expanded={toolRunnerOpen}
-              aria-label={`Test tools for ${connection.name}`}
-              title={`Test tools for ${connection.name}`}
+              aria-label={`${nativeProvider ? "View" : "Test"} tools for ${connection.name}`}
+              title={`${nativeProvider ? "View" : "Test"} tools for ${connection.name}`}
               className="h-8 w-8 !px-0"
-              data-testid={`toggle-mcp-tool-runner-${connection.id}`}
+              data-testid={nativeProvider ? `toggle-native-provider-tool-catalog-${connection.id}` : `toggle-mcp-tool-runner-${connection.id}`}
             />
           ) : null}
           {canDisconnect ? (
@@ -290,6 +293,7 @@ function YourConnectionRow({
           ) : null}
         </div>
       </div>
+      {toolRunnerOpen && nativeProvider ? <McpToolCatalog connection={connection} /> : null}
       {toolRunnerOpen && canTestTools ? <McpToolRunner connection={connection} /> : null}
     </div>
   );

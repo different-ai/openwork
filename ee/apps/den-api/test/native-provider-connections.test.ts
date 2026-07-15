@@ -134,6 +134,21 @@ async function getGoogleWorkspaceEntry(input: { organizationId: DenTypeId<"organ
   return entries.find((entry) => entry.id === "google-workspace")
 }
 
+async function getNativeProviderTools(input: {
+  userId: DenTypeId<"user">
+  organizationId: DenTypeId<"organization">
+  providerId: string
+}) {
+  return app.fetch(new Request(`http://den-api.local/v1/mcp-connections/${input.providerId}/tools`, {
+    headers: {
+      "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({
+        userId: input.userId,
+        organizationId: input.organizationId,
+      }),
+    },
+  }))
+}
+
 describe("buildNativeProviderEntry", () => {
   test("no org client configured means no entry — the org has not enrolled", () => {
     const provider = registry.getNativeOAuthProvider("google-workspace")!
@@ -153,6 +168,7 @@ describe("buildNativeProviderEntry", () => {
       connectedForMe: false,
       needsReconnect: false,
       missingFeatures: [],
+      requiredBy: [],
       access: null,
     })
   })
@@ -311,5 +327,148 @@ describe("buildNativeProviderEntry", () => {
     }
     expect(Object.hasOwn(row, "needsReconnect")).toBe(false)
     expect(Object.hasOwn(row, "missingFeatures")).toBe(false)
+  })
+
+  test("native provider tools come from registered Den routes and reflect the member's granted permissions", async () => {
+    const seeded = await seedGoogleWorkspaceConnection({
+      label: "NativeToolCatalog",
+      features: ["calendarRead", "gmailRead"],
+      scopes: [...IDENTITY_SCOPES, CALENDAR_READ_SCOPE],
+    })
+
+    const response = await getNativeProviderTools({
+      userId: seeded.userId,
+      organizationId: seeded.organizationId,
+      providerId: "google-workspace",
+    })
+    expect(response.status).toBe(200)
+    const body: unknown = await response.json()
+    if (!isRecord(body) || !Array.isArray(body.tools)) {
+      throw new Error("Native provider tool catalog response was incomplete.")
+    }
+
+    const tools = body.tools.filter(isRecord)
+    const calendarTool = tools.find((tool) =>
+      typeof tool.description === "string"
+      && tool.description.includes("GET /v1/capabilities/google-workspace/calendar-events"),
+    )
+    const gmailTool = tools.find((tool) =>
+      typeof tool.description === "string"
+      && tool.description.includes("GET /v1/capabilities/google-workspace/gmail-messages"),
+    )
+
+    expect(calendarTool).toMatchObject({
+      availability: "available",
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    })
+    expect(gmailTool).toMatchObject({
+      availability: "reconnect_required",
+      availabilityReason: "Reconnect to grant the permissions required for this tool.",
+    })
+    expect(tools.some((tool) =>
+      typeof tool.description === "string"
+      && tool.description.includes("/v1/capabilities/google-workspace/drive-"),
+    )).toBe(false)
+  })
+
+  test("native provider tool inspection never opens a native execution route", async () => {
+    const seeded = await seedGoogleWorkspaceConnection({
+      label: "NativeToolReadOnly",
+      features: ["calendarRead"],
+      scopes: [...IDENTITY_SCOPES, CALENDAR_READ_SCOPE],
+    })
+    await db.update(schema.MemberTable)
+      .set({ role: "admin" })
+      .where(drizzle.eq(schema.MemberTable.id, seeded.memberId))
+
+    const response = await app.fetch(new Request("http://den-api.local/v1/mcp-connections/google-workspace/tools/call", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({
+          userId: seeded.userId,
+          organizationId: seeded.organizationId,
+        }),
+      },
+      body: JSON.stringify({ toolName: "getCalendarEvents", arguments: {} }),
+    }))
+
+    expect(response.status).toBe(400)
+  })
+
+  test("Microsoft 365 default features have a complete registered route catalog", async () => {
+    const seeded = await seedMember("MicrosoftNativeTools")
+    await oauthCredentials.upsertOrgOAuthClient({
+      organizationId: seeded.organizationId,
+      providerId: "microsoft-365",
+      clientId: `microsoft-client-${seeded.organizationId}`,
+      clientSecret: "microsoft-secret",
+      extra: { features: ["mailRead", "calendarRead", "filesRead"] },
+      createdByOrgMembershipId: seeded.memberId,
+    })
+    await oauthCredentials.upsertConnectedAccount({
+      organizationId: seeded.organizationId,
+      orgMembershipId: seeded.memberId,
+      providerId: "microsoft-365",
+      accessToken: `microsoft-token-${seeded.memberId}`,
+      scopes: ["User.Read", "Mail.Read", "Calendars.Read", "Files.Read"],
+    })
+
+    const response = await getNativeProviderTools({
+      userId: seeded.userId,
+      organizationId: seeded.organizationId,
+      providerId: "microsoft-365",
+    })
+    expect(response.status).toBe(200)
+    const body: unknown = await response.json()
+    if (!isRecord(body) || !Array.isArray(body.tools)) {
+      throw new Error("Microsoft 365 tool catalog response was incomplete.")
+    }
+
+    const tools = body.tools.filter(isRecord)
+    expect(tools).toHaveLength(5)
+    expect(tools.every((tool) => tool.availability === "available")).toBe(true)
+    expect(tools.every((tool) =>
+      typeof tool.description === "string"
+      && tool.description.includes("/v1/capabilities/microsoft-365/"),
+    )).toBe(true)
+  })
+
+  test("configured native providers expose their catalog before a member connects", async () => {
+    const seeded = await seedMember("NativeToolsBeforeConnect")
+    await oauthCredentials.upsertOrgOAuthClient({
+      organizationId: seeded.organizationId,
+      providerId: "google-workspace",
+      clientId: `google-client-${seeded.organizationId}`,
+      clientSecret: "google-secret",
+      extra: { features: ["calendarRead"] },
+      createdByOrgMembershipId: seeded.memberId,
+    })
+
+    const response = await getNativeProviderTools({
+      userId: seeded.userId,
+      organizationId: seeded.organizationId,
+      providerId: "google-workspace",
+    })
+    expect(response.status).toBe(200)
+    const body: unknown = await response.json()
+    if (!isRecord(body) || !Array.isArray(body.tools)) {
+      throw new Error("Disconnected native provider tool catalog response was incomplete.")
+    }
+    const tools = body.tools.filter(isRecord)
+    expect(tools).not.toHaveLength(0)
+    expect(tools.every((tool) => tool.availability === "connection_required")).toBe(true)
+  })
+
+  test("native provider tool inspection is tenant-scoped to configured clients", async () => {
+    const seeded = await seedMember("NativeToolsUnconfigured")
+    const response = await getNativeProviderTools({
+      userId: seeded.userId,
+      organizationId: seeded.organizationId,
+      providerId: "google-workspace",
+    })
+
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ error: "connection_not_found", message: "Unknown connection." })
   })
 })
