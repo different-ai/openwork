@@ -15,7 +15,7 @@ function isResourceScopedDiscoveryAlias(state: OAuthDiscoveryBindingState, expec
 
 /**
  * Bind OAuth metadata to either its advertised issuer or the constrained
- * resource-scoped discovery alias used by providers such as Salesforce.
+ * resource-scoped discovery alias advertised by the protected resource.
  * The canonical metadata issuer remains the issuer used for callbacks.
  */
 export function isAuthorizationServerDiscoveryBound(

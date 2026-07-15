@@ -20,6 +20,7 @@ import {
   mcpAccessMode,
   type McpConnectionAccessMode,
 } from "./mcp-connection-editing";
+import { formatConnectionCreatorAttribution } from "./mcp-connection-display";
 import { shouldShowMcpConnectionsStagingBanner } from "./mcp-connections-capability";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { marketplaceQueryKeys, useMarketplaces } from "./marketplace-data";
@@ -39,6 +40,7 @@ import {
   mcpConnectionQueryKeys,
   useCreateMcpConnection,
   useDeleteMcpConnection,
+  useDisconnectMcpConnection,
   useDiscoverMcpConnectionRequirements,
   useMcpConnectionPresets,
   useMcpConnections,
@@ -223,6 +225,7 @@ export function McpConnectionsScreen() {
   const createConnection = useCreateMcpConnection();
   const updateConnection = useUpdateMcpConnection();
   const startOAuth = useStartMcpConnectionOAuth();
+  const disconnectConnection = useDisconnectMcpConnection();
   const deleteConnection = useDeleteMcpConnection();
   const saveNativeClient = useSaveNativeProviderClient();
 
@@ -337,6 +340,24 @@ export function McpConnectionsScreen() {
       `Delete ${connection.name}? This can remove access grants, per-member authorization state, and plugin or marketplace bindings.`,
     );
     if (confirmed) deleteConnection.mutate(connection.id);
+  }
+
+  async function handleDisconnect(connection: ExternalMcpConnection) {
+    const confirmed = window.confirm(
+      `Disconnect ${connection.name}? This signs out every associated account for this connection, but keeps the MCP server setup, access rules, and plugin or marketplace bindings so you can reconnect later.`,
+    );
+    if (!confirmed) return;
+    setConnectionActionError(null);
+    setConnectionActionNotice(null);
+    try {
+      await disconnectConnection.mutateAsync(connection.id);
+      setConnectionActionNotice(`${connection.name} was disconnected. Its setup, access rules, and bindings were kept.`);
+    } catch (disconnectError) {
+      setConnectionActionError({
+        connectionId: connection.id,
+        message: disconnectError instanceof Error ? disconnectError.message : "Failed to disconnect the MCP connection.",
+      });
+    }
   }
 
   return (
@@ -523,7 +544,9 @@ export function McpConnectionsScreen() {
                 setEditingConnection(connection);
               }}
               onConnect={() => void handleConnectOAuth(connection.id)}
+              onDisconnect={() => void handleDisconnect(connection)}
               onRemove={() => handleRemove(connection)}
+              disconnecting={disconnectConnection.isPending && disconnectConnection.variables === connection.id}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
               toolsOpen={toolsConnectionId === connection.id}
               onToggleTools={() => setToolsConnectionId((current) => current === connection.id ? null : connection.id)}
@@ -1155,7 +1178,9 @@ function ConnectionRow({
   errorMessage,
   onEdit,
   onConnect,
+  onDisconnect,
   onRemove,
+  disconnecting,
   removing,
   toolsOpen,
   onToggleTools,
@@ -1166,13 +1191,16 @@ function ConnectionRow({
   errorMessage: string | null;
   onEdit: () => void;
   onConnect: () => void;
+  onDisconnect: () => void;
   onRemove: () => void;
+  disconnecting: boolean;
   removing: boolean;
   toolsOpen: boolean;
   onToggleTools: () => void;
 }) {
   const [copiedOAuthUrl, setCopiedOAuthUrl] = useState<"callback" | "metadata" | null>(null);
   const isPerMember = connection.credentialMode === "per_member";
+  const creatorAttribution = formatConnectionCreatorAttribution(connection.createdByName);
   const needsOAuthConnect = connection.authType === "oauth"
     && !connection.connected
     && !isPerMember;
@@ -1180,7 +1208,7 @@ function ConnectionRow({
   const canInspectTools = connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe;
 
   return (
-    <div>
+    <div data-testid={`mcp-connection-row-${connection.id}`}>
       <div className="flex flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
@@ -1188,9 +1216,9 @@ function ConnectionRow({
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
               {isPerMember ? (
-                <span className="inline-flex items-center gap-1 rounded-full bg-gray-900 px-2 py-0.5 text-[11px] font-medium text-white">
+                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${connection.connected ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
                   <Users className="h-3 w-3" />
-                  Individual accounts
+                  {connection.connected ? "Individual accounts connected" : "Not connected"}
                 </span>
               ) : connection.connected ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
@@ -1214,7 +1242,7 @@ function ConnectionRow({
               ) : null}
             </div>
             <p className="mt-0.5 truncate text-[12px] text-gray-500">
-              {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}
+              {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}{creatorAttribution ? ` · ${creatorAttribution}` : ""}
             </p>
             {connection.authType === "oauth" ? (
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
@@ -1256,6 +1284,18 @@ function ConnectionRow({
               onClick={onConnect}
             >
               Connect
+            </DenButton>
+          ) : null}
+          {connection.connected ? (
+            <DenButton
+              variant="secondary"
+              size="sm"
+              loading={disconnecting}
+              onClick={onDisconnect}
+              aria-label={`Disconnect ${connection.name}`}
+              data-testid={`disconnect-mcp-connection-${connection.id}`}
+            >
+              Disconnect
             </DenButton>
           ) : null}
           <DenButton

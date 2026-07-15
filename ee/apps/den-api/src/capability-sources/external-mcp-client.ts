@@ -185,6 +185,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   private readonly member?: ExternalMcpMemberContext
   private readonly diagnostic: ExternalMcpDiagnosticTracker
   private readonly lifecycleDeadline?: ExternalMcpLifecycleDeadline
+  private tokenExchangeCodeVerifier: string | null = null
   /** Captured by redirectToAuthorization so the HTTP route can hand it back to the admin's browser instead of actually redirecting anything server-side. */
   lastAuthorizeUrl: string | null = null
 
@@ -319,6 +320,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       const saved = await upsertConnectedAccountForExternalMcpIdentity({
         connection: this.connection,
         orgMembershipId: this.member.orgMembershipId,
+        ...(this.tokenExchangeCodeVerifier ? { expectedPendingCodeVerifier: this.tokenExchangeCodeVerifier } : {}),
         changes: {
           accessToken: tokens.access_token,
           // Most providers omit refresh_token on refresh responses; keep the existing one.
@@ -330,6 +332,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
         },
       })
       if (!saved) throw new Error("The external MCP connection identity changed during token persistence.")
+      this.tokenExchangeCodeVerifier = null
       this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
       return
     }
@@ -341,8 +344,10 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       tokenType: tokens.token_type ?? null,
       scope: tokens.scope ?? null,
       expiresAt,
+      ...(this.tokenExchangeCodeVerifier ? { expectedPendingCodeVerifier: this.tokenExchangeCodeVerifier } : {}),
     })
     if (!saved) throw new Error("The external MCP connection identity changed during token persistence.")
+    this.tokenExchangeCodeVerifier = null
     // Refresh the in-memory row so a subsequent tokens()/refresh in the same
     // connection attempt sees the just-saved values.
     const refreshed = await getExternalMcpConnection({
@@ -425,11 +430,13 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       if (!account?.pendingCodeVerifier) {
         throw new Error("No pending PKCE code verifier for this member on this external MCP connection.")
       }
+      this.tokenExchangeCodeVerifier = account.pendingCodeVerifier
       return account.pendingCodeVerifier
     }
     if (!this.connection.pendingCodeVerifier) {
       throw new Error("No pending PKCE code verifier for this external MCP connection.")
     }
+    this.tokenExchangeCodeVerifier = this.connection.pendingCodeVerifier
     return this.connection.pendingCodeVerifier
   }
 }

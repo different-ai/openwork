@@ -9,6 +9,7 @@ import {
 } from "@openwork/enterprise-mcp-client"
 import { and, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
+  ConnectedAccountTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
   MemberTable,
@@ -45,6 +46,7 @@ import {
   createExternalMcpConnection,
   deleteExternalMcpConnection,
   disconnectExternalMcpConnection,
+  disconnectExternalMcpMemberAccount,
   externalMcpIdentityBinding,
   getExternalMcpConnection,
   listActiveExternalMcpConnectionBindings,
@@ -276,6 +278,8 @@ const connectionResponseSchema = z.object({
   credentialMode: z.enum(["shared", "per_member"]),
   connected: z.boolean(),
   connectedAt: z.string().nullable(),
+  /** Safe creator display label for admin/manageable rows. */
+  createdByName: z.string().nullable().optional(),
   updatedAt: z.string().datetime().optional(),
   /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
   connectedForMe: z.boolean(),
@@ -530,6 +534,24 @@ function isConnectionConnected(row: ExternalMcpConnectionRow): boolean {
   return Boolean(row.accessToken || row.apiKey || (row.authType === "none" && row.connectedAt))
 }
 
+async function connectedAccountStateForConnection(input: {
+  organizationId: DenTypeId<"organization">
+  providerId: DenTypeId<"externalMcpConnection">
+}): Promise<{ connected: boolean; connectedAt: Date | null }> {
+  const rows = await db
+    .select({ accessToken: ConnectedAccountTable.accessToken, connectedAt: ConnectedAccountTable.connectedAt })
+    .from(ConnectedAccountTable)
+    .where(and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.providerId, input.providerId),
+    ))
+  const connectedRows = rows.filter((row) => Boolean(row.accessToken))
+  const connectedAt = connectedRows
+    .map((row) => row.connectedAt)
+    .sort((left, right) => right.getTime() - left.getTime())[0] ?? null
+  return { connected: connectedRows.length > 0, connectedAt }
+}
+
 type ExternalMcpToolCredentialContext =
   | { ok: true; member?: { orgMembershipId: DenTypeId<"member"> } }
   | { ok: false; message: string }
@@ -571,6 +593,11 @@ function parseJsonObject(value: string | null): Record<string, unknown> | null {
   } catch {
     return null
   }
+}
+
+function resolveCreatorName(context: PluginArchActorContext["organizationContext"], memberId: string): string | null {
+  const member = context.members.find((entry) => entry.id === memberId)
+  return member?.user.name.trim() || member?.user.email || null
 }
 
 function legacyExternalMcpConnectionIdsFromPayload(payload: Record<string, unknown> | null): string[] {
@@ -745,12 +772,15 @@ async function toConnectionResponse(
   row: ExternalMcpConnectionRow,
   options: {
     callerOrgMembershipId: DenTypeId<"member">
+    createdByName?: string | null
     includeAccess: boolean
     identityManagedBy: ConnectionRequiredBy[]
     requiredBy: ConnectionRequiredBy[]
   },
 ) {
-  let connectedForMe = isConnectionConnected(row) && row.credentialMode === "shared"
+  let connected = isConnectionConnected(row)
+  let connectedAt = row.connectedAt
+  let connectedForMe = connected && row.credentialMode === "shared"
   let grantedScopes = row.scope?.split(/\s+/).filter(Boolean) ?? []
   if (row.credentialMode === "per_member") {
     const account = await getConnectedAccount({
@@ -760,6 +790,17 @@ async function toConnectionResponse(
     })
     connectedForMe = Boolean(account?.accessToken)
     grantedScopes = account?.scopes ?? []
+    if (options.includeAccess) {
+      const accountState = await connectedAccountStateForConnection({
+        organizationId: row.organizationId,
+        providerId: row.id,
+      })
+      connected = accountState.connected
+      connectedAt = accountState.connectedAt
+    } else {
+      connected = connectedForMe
+      connectedAt = account?.accessToken ? account.connectedAt : null
+    }
   }
 
   let access: { orgWide: boolean; memberIds: string[]; teamIds: string[] } | null = null
@@ -786,8 +827,9 @@ async function toConnectionResponse(
     url: row.url,
     authType: row.authType,
     credentialMode: row.credentialMode,
-    connected: isConnectionConnected(row),
-    connectedAt: row.connectedAt ? row.connectedAt.toISOString() : null,
+    connected,
+    connectedAt: connectedAt ? connectedAt.toISOString() : null,
+    ...(options.includeAccess ? { createdByName: options.createdByName ?? null } : {}),
     updatedAt: row.updatedAt.toISOString(),
     connectedForMe,
     requiredBy: options.requiredBy,
@@ -1125,6 +1167,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         const connections = await Promise.all(rows.map((row) =>
           toConnectionResponse(row, {
             callerOrgMembershipId: payload.currentMember.id,
+            createdByName: resolveCreatorName(payload, row.createdByOrgMembershipId),
             includeAccess: true,
             requiredBy: provenance.requiredBy.get(row.id) ?? [],
             identityManagedBy: provenance.identityManagedBy.get(row.id) ?? [],
@@ -1148,6 +1191,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const connections = await Promise.all(rows.map((row) =>
         toConnectionResponse(row, {
           callerOrgMembershipId: payload.currentMember.id,
+          createdByName: resolveCreatorName(payload, row.createdByOrgMembershipId),
           includeAccess: false,
           requiredBy: provenance.requiredBy.get(row.id) ?? [],
           identityManagedBy: provenance.identityManagedBy.get(row.id) ?? [],
@@ -1490,6 +1534,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const refreshed = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id })
       const response = await toConnectionResponse(refreshed ?? created, {
         callerOrgMembershipId: payload.currentMember.id,
+        createdByName: resolveCreatorName(payload, (refreshed ?? created).createdByOrgMembershipId),
         includeAccess: true,
         requiredBy: [],
         identityManagedBy: [],
@@ -1726,6 +1771,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       })
       const response = await toConnectionResponse(result.connection, {
         callerOrgMembershipId: payload.currentMember.id,
+        createdByName: resolveCreatorName(payload, result.connection.createdByOrgMembershipId),
         includeAccess: true,
         requiredBy: provenance.requiredBy.get(result.connection.id) ?? [],
         identityManagedBy: provenance.identityManagedBy.get(result.connection.id) ?? [],
@@ -1787,6 +1833,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       })
       return c.json(await toConnectionResponse(connection, {
         callerOrgMembershipId: payload.currentMember.id,
+        createdByName: resolveCreatorName(payload, connection.createdByOrgMembershipId),
         includeAccess: true,
         requiredBy: provenance.requiredBy.get(connection.id) ?? [],
         identityManagedBy: provenance.identityManagedBy.get(connection.id) ?? [],
@@ -1828,6 +1875,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Disconnect (clear credentials for) an External MCP Connection without removing it",
+      description: "Admin-only. Signs out every shared or per-member account stored for this connection, while preserving the connection row, access grants, OAuth client configuration, and plugin bindings.",
       responses: {
         200: emptyResponse("Disconnected."),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -1847,6 +1895,43 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const removed = await disconnectExternalMcpConnection({ organizationId: payload.organization.id, connectionId: externalMcpConnectionId })
       if (!removed) {
         return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+      }
+      return c.json({ ok: true })
+    },
+  )
+
+  app.post(
+    "/v1/mcp-connections/:connectionId/disconnect-my-account",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "Disconnect the calling member's account for a per-member External MCP Connection",
+      description: "Removes only the caller's connected account for this MCP connection. The org-level connection, access grants, OAuth client configuration, and other members' accounts are preserved.",
+      responses: {
+        200: emptyResponse("Disconnected."),
+        400: jsonResponse("This connection does not use per-member credentials.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        404: jsonResponse("Unknown connection or nothing was connected.", connectionNotFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(connectionParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const { connectionId } = c.req.valid("param")
+      const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
+      const result = await disconnectExternalMcpMemberAccount({
+        organizationId: payload.organization.id,
+        connectionId: externalMcpConnectionId,
+        orgMembershipId: payload.currentMember.id,
+      })
+      if (result.status === "not_found") {
+        return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+      }
+      if (result.status === "not_per_member") {
+        return c.json({ error: "invalid_request", message: "Only per-member MCP connections can be disconnected from Your Connections." }, 400)
+      }
+      if (result.status === "not_connected") {
+        return c.json({ error: "connection_not_found", message: "Nothing was connected." }, 404)
       }
       return c.json({ ok: true })
     },

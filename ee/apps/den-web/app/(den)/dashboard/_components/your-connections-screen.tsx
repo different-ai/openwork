@@ -12,7 +12,7 @@ import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } f
 import { openMcpAuthorizationWindow, safeMcpAuthorizationUrl } from "./mcp-authorization-url";
 import { MICROSOFT_365_DISPLAY_SCOPES } from "./microsoft-365-permissions";
 import {
-  canDisconnectNativeProviderAccount,
+  canDisconnectMyConnectionAccount,
   type ExternalMcpConnection,
   isNativeProviderConnectionId,
   useDisconnectMyProviderAccount,
@@ -194,7 +194,7 @@ function YourConnectionRow({
   const needsReconnect = connection.connectedForMe && connection.needsReconnect === true;
   const needsMyConnect = isPerMember && !connection.connectedForMe;
   const needsAdminConnect = isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
-  const canDisconnect = canDisconnectNativeProviderAccount(connection);
+  const canDisconnect = canDisconnectMyConnectionAccount(connection);
   const canTestTools = isAdmin && !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
   const [toolRunnerOpen, setToolRunnerOpen] = useState(false);
   const microsoftScopes = connection.id === "microsoft-365"
@@ -279,7 +279,7 @@ function YourConnectionRow({
             />
           ) : null}
           {canDisconnect ? (
-            <DenButton variant="destructive" size="sm" loading={disconnecting} onClick={onDisconnect}>
+            <DenButton variant="destructive" size="sm" loading={disconnecting} onClick={onDisconnect} data-testid={`disconnect-my-mcp-account-${connection.id}`}>
               Disconnect
             </DenButton>
           ) : null}

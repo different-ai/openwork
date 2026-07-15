@@ -1144,6 +1144,7 @@ export async function upsertConnectedAccountForExternalMcpIdentity(input: {
   connection: ExternalMcpConnectionRow
   orgMembershipId: OrgMembershipId
   changes: ExternalMcpConnectedAccountChanges
+  expectedPendingCodeVerifier?: string
 }): Promise<boolean> {
   return db.transaction(async (tx) => {
     if (!await lockExternalMcpIdentity(tx, input.connection)) return false
@@ -1158,6 +1159,12 @@ export async function upsertConnectedAccountForExternalMcpIdentity(input: {
       .limit(1)
       .for("update")
     const existing = rows[0]
+    if (
+      input.expectedPendingCodeVerifier !== undefined
+      && existing?.pendingCodeVerifier !== input.expectedPendingCodeVerifier
+    ) {
+      return false
+    }
     if (existing) {
       await tx
         .update(ConnectedAccountTable)
@@ -1206,9 +1213,17 @@ export async function saveExternalMcpTokensForIdentity(input: {
   tokenType?: string | null
   scope?: string | null
   expiresAt?: Date | null
+  expectedPendingCodeVerifier?: string
 }): Promise<boolean> {
   return db.transaction(async (tx) => {
-    if (!await lockExternalMcpIdentity(tx, input.connection)) return false
+    const current = await lockExternalMcpIdentity(tx, input.connection)
+    if (!current) return false
+    if (
+      input.expectedPendingCodeVerifier !== undefined
+      && current.pendingCodeVerifier !== input.expectedPendingCodeVerifier
+    ) {
+      return false
+    }
     await tx
       .update(ExternalMcpConnectionTable)
       .set({
@@ -1314,14 +1329,83 @@ export async function disconnectExternalMcpConnection(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
 }): Promise<boolean> {
-  const existing = await getExternalMcpConnection(input)
-  if (!existing) return false
-  await clearExternalMcpTokens(input)
-  await db
-    .update(ExternalMcpConnectionTable)
-    .set({
-      pendingCodeVerifier: null,
-    })
-    .where(eq(ExternalMcpConnectionTable.id, existing.id))
-  return true
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const existing = rows[0]
+    if (!existing) return false
+
+    await tx.delete(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.providerId, existing.id),
+    ))
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        ...(existing.authType === "apikey" ? { apiKey: null } : {}),
+        accessToken: null,
+        refreshToken: null,
+        tokenType: null,
+        scope: null,
+        expiresAt: null,
+        pendingCodeVerifier: null,
+        connectedAt: null,
+        updatedAt: new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1)),
+      })
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, existing.id),
+      ))
+    return true
+  })
+}
+
+export type DisconnectExternalMcpMemberAccountResult =
+  | { status: "not_found" }
+  | { status: "not_per_member" }
+  | { status: "not_connected" }
+  | { status: "disconnected" }
+
+export async function disconnectExternalMcpMemberAccount(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  orgMembershipId: OrgMembershipId
+}): Promise<DisconnectExternalMcpMemberAccountResult> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = rows[0]
+    if (!connection) return { status: "not_found" }
+    if (connection.credentialMode !== "per_member") return { status: "not_per_member" }
+
+    const accountRows = await tx
+      .select({ id: ConnectedAccountTable.id })
+      .from(ConnectedAccountTable)
+      .where(and(
+        eq(ConnectedAccountTable.organizationId, input.organizationId),
+        eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+        eq(ConnectedAccountTable.providerId, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const account = accountRows[0]
+    if (!account) return { status: "not_connected" }
+
+    await tx.delete(ConnectedAccountTable).where(eq(ConnectedAccountTable.id, account.id))
+    return { status: "disconnected" }
+  })
 }

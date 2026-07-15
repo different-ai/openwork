@@ -44,6 +44,7 @@ export type ExternalMcpConnection = {
   credentialMode: ExternalMcpCredentialMode;
   connected: boolean;
   connectedAt: string | null;
+  createdByName?: string | null;
   updatedAt: string | null;
   connectedForMe: boolean;
   needsReconnect?: boolean;
@@ -199,8 +200,8 @@ export function isNativeProviderConnectionId(id: string): boolean {
   return id === "google-workspace" || id === "microsoft-365";
 }
 
-export function canDisconnectNativeProviderAccount(connection: Pick<ExternalMcpConnection, "id" | "connectedForMe">): boolean {
-  return connection.connectedForMe && isNativeProviderConnectionId(connection.id);
+export function canDisconnectMyConnectionAccount(connection: Pick<ExternalMcpConnection, "id" | "credentialMode" | "connectedForMe">): boolean {
+  return connection.connectedForMe && (isNativeProviderConnectionId(connection.id) || connection.credentialMode === "per_member");
 }
 
 export const mcpConnectionQueryKeys = {
@@ -389,6 +390,7 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
     requiredBy: parseRequiredBy(connection.requiredBy),
     identityManagedBy: parseRequiredBy(connection.identityManagedBy),
     updatedAt: typeof connection.updatedAt === "string" ? connection.updatedAt : null,
+    ...(typeof connection.createdByName === "string" || connection.createdByName === null ? { createdByName: connection.createdByName } : {}),
     ...(typeof connection.needsReconnect === "boolean" ? { needsReconnect: connection.needsReconnect } : {}),
     ...(isStringArray(connection.missingFeatures) ? { missingFeatures: connection.missingFeatures } : {}),
     ...(typeof connection.externalAccountId === "string" || connection.externalAccountId === null
@@ -592,8 +594,11 @@ export function useDisconnectMyProviderAccount() {
 
   return useMutation({
     mutationFn: async (providerId: string): Promise<string> => {
+      const path = isNativeProviderConnectionId(providerId)
+        ? `/v1/oauth-providers/${encodeURIComponent(providerId)}/disconnect`
+        : `/v1/mcp-connections/${encodeURIComponent(providerId)}/disconnect-my-account`;
       const { response, payload } = await requestJson(
-        `/v1/oauth-providers/${encodeURIComponent(providerId)}/disconnect`,
+        path,
         { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
         15000,
       );
@@ -601,6 +606,33 @@ export function useDisconnectMyProviderAccount() {
         throw getRequestError(payload, response, `Failed to disconnect account (${response.status}).`);
       }
       return providerId;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
+    },
+  });
+}
+
+export function useDisconnectMcpConnection() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (connectionId: string): Promise<string> => {
+      let result: string | null = null;
+      await runReauthableAction("disconnect-mcp-connection", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/mcp-connections/${encodeURIComponent(connectionId)}/disconnect`,
+          { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to disconnect MCP connection (${response.status}).`);
+        }
+        result = connectionId;
+      });
+      if (!result) throw new Error("Disconnect MCP connection response was incomplete.");
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
