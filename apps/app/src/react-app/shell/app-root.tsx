@@ -73,18 +73,22 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     readRequireSigninSnapshot,
     readRequireSigninSnapshot,
   );
+  const path = location.pathname.toLowerCase();
+  const onSignin = path === "/signin" || path.startsWith("/signin/");
+  const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
+  const hasPreparedBootstrap = Boolean(readDenBootstrapConfig().prepared);
+  const redirectingPreparedWorkspace =
+    denAuth.status !== "checking" &&
+    !requireSignin &&
+    !denAuth.isSignedIn &&
+    hasPreparedBootstrap &&
+    !onOnboarding;
 
   useEffect(() => {
     // Wait for the first auth check so we don't bounce the user between
     // `/session` and `/signin` every navigation while we figure out if
     // their cached token is still valid.
     if (denAuth.status === "checking") return;
-
-    const path = location.pathname.toLowerCase();
-    const onSignin = path === "/signin" || path.startsWith("/signin/");
-
-    const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
-    const hasPreparedBootstrap = Boolean(readDenBootstrapConfig().prepared);
 
     if (requireSignin) {
       if (!denAuth.isSignedIn && !onSignin) {
@@ -106,8 +110,11 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   }, [
     denAuth.isSignedIn,
     denAuth.status,
+    hasPreparedBootstrap,
     location,
     navigate,
+    onOnboarding,
+    onSignin,
     requireSignin,
   ]);
 
@@ -139,6 +146,8 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   if (requireSignin && denAuth.status === "checking") {
     return <ForcedSigninPage developerMode={false} />;
   }
+
+  if (redirectingPreparedWorkspace) return <Navigate to="/onboarding" replace />;
 
   return (
     <>
