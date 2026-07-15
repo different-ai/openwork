@@ -66,10 +66,10 @@ test("verified accounts are allowed to join an organization", () => {
   expect(validateInvitationAcceptVerification({ emailVerified: true, emailVerificationRequired: true })).toEqual({ ok: true })
 })
 
-test("deployments without required email verification let invited users join", () => {
-  expect(validateInvitationAcceptVerification({ emailVerified: false, emailVerificationRequired: false })).toEqual({ ok: true })
-  expect(validateInvitationAcceptVerification({ emailVerified: null, emailVerificationRequired: false })).toEqual({ ok: true })
-  expect(validateInvitationAcceptVerification({ emailVerified: undefined, emailVerificationRequired: false })).toEqual({ ok: true })
+test("organization invitations require verification even when signup does not", () => {
+  expect(validateInvitationAcceptVerification({ emailVerified: false, emailVerificationRequired: false }).ok).toBe(false)
+  expect(validateInvitationAcceptVerification({ emailVerified: null, emailVerificationRequired: false }).ok).toBe(false)
+  expect(validateInvitationAcceptVerification({ emailVerified: undefined, emailVerificationRequired: false }).ok).toBe(false)
 })
 
 test("accept-invitation route blocks an unverified user with 403 before touching the database", async () => {

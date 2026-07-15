@@ -1,543 +1,550 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { afterAll, beforeAll, expect, test } from "bun:test"
-
-const singleOrgSlug = "invite-duplicates-test"
-const future = new Date(Date.now() + 1000 * 60 * 60)
-const past = new Date(Date.now() - 1000 * 60 * 60)
-
-const organizationId = createDenTypeId("organization")
-const otherOrganizationId = createDenTypeId("organization")
-const ownerUserId = createDenTypeId("user")
-const ownerMemberId = createDenTypeId("member")
-const otherOwnerMemberId = createDenTypeId("member")
-
-const invitedUserId = createDenTypeId("user")
-const ssoInviteUserId = createDenTypeId("user")
-const reconcileNoMembershipUserId = createDenTypeId("user")
-const reconcileOwnerUserId = createDenTypeId("user")
-const noPendingUserId = createDenTypeId("user")
-const noInviteUserId = createDenTypeId("user")
-const mergeUserId = createDenTypeId("user")
-const ownerMergeUserId = createDenTypeId("user")
-const acceptedInviteUserId = createDenTypeId("user")
-const expiredInviteUserId = createDenTypeId("user")
-const nonMatchingInviteUserId = createDenTypeId("user")
-const otherOrgInviteUserId = createDenTypeId("user")
-
-const ownerEmail = `owner+${ownerUserId}@invite-duplicates.test`
-const invitedEmail = `invited+${invitedUserId}@invite-duplicates.test`
-const ssoInviteEmail = `sso-invited+${ssoInviteUserId}@invite-duplicates.test`
-const reconcileNoMembershipEmail = `reconcile-no-member+${reconcileNoMembershipUserId}@invite-duplicates.test`
-const reconcileOwnerEmail = `reconcile-owner+${reconcileOwnerUserId}@invite-duplicates.test`
-const noPendingEmail = `no-pending+${noPendingUserId}@invite-duplicates.test`
-const noInviteEmail = `no-invite+${noInviteUserId}@invite-duplicates.test`
-const mergeEmail = `merge+${mergeUserId}@invite-duplicates.test`
-const ownerMergeEmail = `owner-merge+${ownerMergeUserId}@invite-duplicates.test`
-const acceptedInviteEmail = `accepted+${acceptedInviteUserId}@invite-duplicates.test`
-const expiredEmail = `expired+${expiredInviteUserId}@invite-duplicates.test`
-const nonMatchingEmail = `non-matching+${nonMatchingInviteUserId}@invite-duplicates.test`
-const otherOrgEmail = `other-org+${otherOrgInviteUserId}@invite-duplicates.test`
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test"
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
-  process.env.DEN_ORG_MODE = "single_org"
-  process.env.DEN_SINGLE_ORG_SLUG = singleOrgSlug
-  process.env.DEN_SINGLE_ORG_OWNER_EMAILS = ownerEmail
+  process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
+  process.env.DEN_ORG_MODE = "multi_org"
 }
 
-let db: typeof import("../src/db.js").db | null = null
-let schema: typeof import("@openwork-ee/den-db/schema") | null = null
-let drizzle: typeof import("@openwork-ee/den-db/drizzle") | null = null
-let orgs: typeof import("../src/orgs.js") | null = null
+const organizationId = createDenTypeId("organization")
+const ownerUserId = createDenTypeId("user")
+const verifiedUserId = createDenTypeId("user")
+const unverifiedUserId = createDenTypeId("user")
+const subdomainUserId = createDenTypeId("user")
+const teamId = createDenTypeId("team")
 
-const userIds = [
-  ownerUserId,
-  invitedUserId,
-  ssoInviteUserId,
-  reconcileNoMembershipUserId,
-  reconcileOwnerUserId,
-  noPendingUserId,
-  noInviteUserId,
-  mergeUserId,
-  ownerMergeUserId,
-  acceptedInviteUserId,
-  expiredInviteUserId,
-  nonMatchingInviteUserId,
-  otherOrgInviteUserId,
-]
-
-async function deleteOrganizations(organizationIds: string[]) {
-  if (!db || !schema || !drizzle || organizationIds.length === 0) {
-    return
-  }
-
-  await db.delete(schema.DesktopPolicyMemberTable).where(drizzle.inArray(schema.DesktopPolicyMemberTable.organizationId, organizationIds))
-  await db.delete(schema.DesktopPolicyTable).where(drizzle.inArray(schema.DesktopPolicyTable.organizationId, organizationIds))
-  await db.delete(schema.MemberTable).where(drizzle.inArray(schema.MemberTable.organizationId, organizationIds))
-  await db.delete(schema.InvitationTable).where(drizzle.inArray(schema.InvitationTable.organizationId, organizationIds))
-  await db.delete(schema.OrganizationRoleTable).where(drizzle.inArray(schema.OrganizationRoleTable.organizationId, organizationIds))
-  await db.delete(schema.OrganizationTable).where(drizzle.inArray(schema.OrganizationTable.id, organizationIds))
-}
+let db: typeof import("../src/db.js").db
+let schema: typeof import("@openwork-ee/den-db/schema")
+let drizzle: typeof import("@openwork-ee/den-db/drizzle")
+let admission: typeof import("../src/organization-admission.js")
+let envModule: typeof import("../src/env.js")
 
 async function cleanup() {
-  if (!db || !schema || !drizzle) {
-    return
-  }
-
-  const staleOrgs = await db
-    .select({ id: schema.OrganizationTable.id })
-    .from(schema.OrganizationTable)
-    .where(drizzle.eq(schema.OrganizationTable.slug, singleOrgSlug))
-  await deleteOrganizations([...staleOrgs.map((row) => row.id), organizationId, otherOrganizationId])
-  await db.delete(schema.AuthUserTable).where(drizzle.inArray(schema.AuthUserTable.id, userIds))
+  const orgId = normalizeDenTypeId("org", organizationId)
+  await db.delete(schema.AuditEventTable).where(drizzle.eq(schema.AuditEventTable.org_id, orgId))
+  await db.delete(schema.WorkspaceClaimTable).where(drizzle.eq(schema.WorkspaceClaimTable.organizationId, organizationId))
+  await db.delete(schema.WorkspaceBootstrapTable).where(drizzle.eq(schema.WorkspaceBootstrapTable.organizationId, organizationId))
+  await db.delete(schema.SsoConnectionTable).where(drizzle.eq(schema.SsoConnectionTable.organizationId, organizationId))
+  await db.delete(schema.SsoProviderTable).where(drizzle.eq(schema.SsoProviderTable.organizationId, organizationId))
+  await db.delete(schema.ScimProviderTable).where(drizzle.eq(schema.ScimProviderTable.organizationId, organizationId))
+  await db.delete(schema.TeamMemberTable).where(drizzle.eq(schema.TeamMemberTable.teamId, teamId))
+  await db.delete(schema.TeamTable).where(drizzle.eq(schema.TeamTable.organizationId, organizationId))
+  await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
+  await db.delete(schema.InvitationTable).where(drizzle.eq(schema.InvitationTable.organizationId, organizationId))
+  await db.delete(schema.OrganizationAdmissionPolicyTable).where(drizzle.eq(schema.OrganizationAdmissionPolicyTable.organizationId, organizationId))
+  await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
+  await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
+  await db.delete(schema.AuthUserTable).where(drizzle.inArray(schema.AuthUserTable.id, [ownerUserId, verifiedUserId, unverifiedUserId, subdomainUserId]))
 }
 
-async function createInvitation(input: {
-  invitationId: string
-  memberId: string
-  organizationId: string
-  email: string
-  role: string
-  expiresAt: Date
-  inviterMemberId: string
+async function setPolicy(input: {
+  methods: Array<"self_join" | "invitation" | "sso_jit" | "scim">
+  domainMode?: "any" | "allowlist"
+  domains?: string[]
+  authenticationRequirement?: "any" | "organization_sso"
+  lifecycleAuthority?: "local" | "scim"
 }) {
-  if (!db || !schema) {
-    throw new Error("test database not initialized")
-  }
+  await db
+    .update(schema.OrganizationAdmissionPolicyTable)
+    .set({
+      version: 2,
+      admissionMethods: input.methods,
+      emailDomainMode: input.domainMode ?? "any",
+      allowedEmailDomains: input.domains ?? [],
+      authenticationRequirement: input.authenticationRequirement ?? "any",
+      lifecycleAuthority: input.lifecycleAuthority ?? "local",
+    })
+    .where(drizzle.eq(schema.OrganizationAdmissionPolicyTable.organizationId, organizationId))
+}
 
+async function createInvitation(input: { token: string; email?: string; status?: string; expiresAt?: Date; role?: string; teamId?: typeof teamId }) {
+  const id = createDenTypeId("invitation")
   await db.insert(schema.InvitationTable).values({
-    id: input.invitationId,
-    organizationId: input.organizationId,
-    email: input.email,
-    role: input.role,
-    status: "pending",
+    id,
+    organizationId,
+    email: input.email ?? "member@example.com",
+    role: input.role ?? "member",
+    status: input.status ?? "pending",
     inviterId: ownerUserId,
-    orgMemberId: input.inviterMemberId,
-    inviteToken: `token-${input.invitationId.slice(-20)}`,
-    expiresAt: input.expiresAt,
+    teamId: input.teamId ?? null,
+    inviteTokenHash: admission.hashOrganizationInvitationToken(input.token),
+    expiresAt: input.expiresAt ?? new Date(Date.now() + 60_000),
   })
   await db.insert(schema.MemberTable).values({
-    id: input.memberId,
-    organizationId: input.organizationId,
+    id: createDenTypeId("member"),
+    organizationId,
     userId: null,
-    inviteId: input.invitationId,
-    invitedByOrgMember: input.inviterMemberId,
-    role: input.role,
-    joinedAt: null,
+    inviteId: id,
+    role: input.role ?? "member",
   })
-}
-
-async function membersForOrganization(organizationIdToRead: string) {
-  if (!db || !schema || !drizzle) {
-    throw new Error("test database not initialized")
-  }
-
-  return db
-    .select()
-    .from(schema.MemberTable)
-    .where(drizzle.eq(schema.MemberTable.organizationId, organizationIdToRead))
-}
-
-async function invitationStatus(invitationId: string) {
-  if (!db || !schema || !drizzle) {
-    throw new Error("test database not initialized")
-  }
-
-  const rows = await db
-    .select({ status: schema.InvitationTable.status })
-    .from(schema.InvitationTable)
-    .where(drizzle.eq(schema.InvitationTable.id, invitationId))
-    .limit(1)
-  return rows[0]?.status ?? null
+  return id
 }
 
 beforeAll(async () => {
   seedRequiredEnv()
-  const [dbModule, schemaModule, drizzleModule, orgsModule] = await Promise.all([
+  ;[{ db }, schema, drizzle, admission, envModule] = await Promise.all([
     import("../src/db.js"),
     import("@openwork-ee/den-db/schema"),
     import("@openwork-ee/den-db/drizzle"),
-    import("../src/orgs.js"),
+    import("../src/organization-admission.js"),
+    import("../src/env.js"),
   ])
-  db = dbModule.db
-  schema = schemaModule
-  drizzle = drizzleModule
-  orgs = orgsModule
-
   await cleanup()
-
   await db.insert(schema.AuthUserTable).values([
-    { id: ownerUserId, name: "Invite Owner", email: ownerEmail, emailVerified: true },
-    { id: invitedUserId, name: "Invited User", email: invitedEmail.toUpperCase(), emailVerified: false },
-    { id: ssoInviteUserId, name: "SSO Invited User", email: ssoInviteEmail.toUpperCase(), emailVerified: false },
-    { id: reconcileNoMembershipUserId, name: "Reconcile No Member", email: reconcileNoMembershipEmail.toUpperCase(), emailVerified: false },
-    { id: reconcileOwnerUserId, name: "Reconcile Owner", email: reconcileOwnerEmail.toUpperCase(), emailVerified: false },
-    { id: noPendingUserId, name: "No Pending", email: noPendingEmail, emailVerified: false },
-    { id: noInviteUserId, name: "No Invite", email: noInviteEmail, emailVerified: false },
-    { id: mergeUserId, name: "Merge User", email: mergeEmail, emailVerified: true },
-    { id: ownerMergeUserId, name: "Owner Merge", email: ownerMergeEmail, emailVerified: true },
-    { id: acceptedInviteUserId, name: "Accepted Invite", email: acceptedInviteEmail, emailVerified: false },
-    { id: expiredInviteUserId, name: "Expired Invite", email: expiredEmail, emailVerified: false },
-    { id: nonMatchingInviteUserId, name: "Non Matching", email: nonMatchingEmail, emailVerified: false },
-    { id: otherOrgInviteUserId, name: "Other Org", email: otherOrgEmail, emailVerified: false },
+    { id: ownerUserId, name: "Owner", email: "owner@example.com", emailVerified: true },
+    { id: verifiedUserId, name: "Member", email: "member@example.com", emailVerified: true },
+    { id: unverifiedUserId, name: "Unverified", email: "new@example.com", emailVerified: false },
+    { id: subdomainUserId, name: "Subdomain", email: "person@sub.example.com", emailVerified: true },
   ])
-  await db.insert(schema.OrganizationTable).values([
-    { id: organizationId, name: "Invite Duplicates Test", slug: singleOrgSlug },
-    { id: otherOrganizationId, name: "Invite Duplicates Other", slug: `invite-duplicates-other-${otherOrganizationId}` },
+  await db.insert(schema.OrganizationTable).values({ id: organizationId, name: "Admission Test", slug: `admission-${organizationId}` })
+  await db.insert(schema.OrganizationAdmissionPolicyTable).values({
+    organizationId,
+    version: 1,
+    admissionMethods: ["self_join", "invitation"],
+    emailDomainMode: "any",
+    allowedEmailDomains: [],
+    authenticationRequirement: "any",
+    lifecycleAuthority: "local",
+  })
+  await db.insert(schema.OrganizationRoleTable).values([
+    { id: createDenTypeId("organizationRole"), organizationId, role: "owner", permission: {} },
+    { id: createDenTypeId("organizationRole"), organizationId, role: "admin", permission: {} },
+    { id: createDenTypeId("organizationRole"), organizationId, role: "member", permission: {} },
   ])
-  await db.insert(schema.MemberTable).values([
-    { id: ownerMemberId, organizationId, userId: ownerUserId, role: "owner" },
-    { id: otherOwnerMemberId, organizationId: otherOrganizationId, userId: ownerUserId, role: "owner" },
+  await db.insert(schema.MemberTable).values({ id: createDenTypeId("member"), organizationId, userId: ownerUserId, role: "owner", admissionSource: "legacy", admissionPolicyVersion: 1 })
+})
+
+beforeEach(async () => {
+  await db.delete(schema.AuditEventTable).where(drizzle.eq(schema.AuditEventTable.org_id, normalizeDenTypeId("org", organizationId)))
+  await db.delete(schema.WorkspaceClaimTable).where(drizzle.eq(schema.WorkspaceClaimTable.organizationId, organizationId))
+  await db.delete(schema.WorkspaceBootstrapTable).where(drizzle.eq(schema.WorkspaceBootstrapTable.organizationId, organizationId))
+  await db.delete(schema.SsoConnectionTable).where(drizzle.eq(schema.SsoConnectionTable.organizationId, organizationId))
+  await db.delete(schema.SsoProviderTable).where(drizzle.eq(schema.SsoProviderTable.organizationId, organizationId))
+  await db.delete(schema.ScimProviderTable).where(drizzle.eq(schema.ScimProviderTable.organizationId, organizationId))
+  await db.delete(schema.TeamMemberTable).where(drizzle.eq(schema.TeamMemberTable.teamId, teamId))
+  await db.delete(schema.TeamTable).where(drizzle.eq(schema.TeamTable.organizationId, organizationId))
+  await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
+  await db.delete(schema.InvitationTable).where(drizzle.eq(schema.InvitationTable.organizationId, organizationId))
+  await db
+    .update(schema.OrganizationTable)
+    .set({ metadata: { limits: { members: 5, workers: 20 } } })
+    .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
+  await db.insert(schema.MemberTable).values({ id: createDenTypeId("member"), organizationId, userId: ownerUserId, role: "owner", admissionSource: "legacy", admissionPolicyVersion: 1 })
+  await setPolicy({ methods: ["self_join", "invitation"] })
+})
+
+afterAll(cleanup)
+
+test("open self-join is explicit and records membership provenance", async () => {
+  const evaluated = await admission.evaluateOrganizationAdmission({ organizationId, userId: verifiedUserId, evidence: { kind: "self_join" } })
+  expect(evaluated).toMatchObject({ decision: "allow", source: "self_join", existing: false })
+  const before = await db.select().from(schema.MemberTable).where(drizzle.eq(schema.MemberTable.userId, verifiedUserId))
+  expect(before).toHaveLength(0)
+  const committed = await admission.admitOrganizationMember({ organizationId, userId: verifiedUserId, evidence: { kind: "self_join" } })
+  expect(committed).toMatchObject({ decision: "allow", source: "self_join", existing: false })
+  const after = await db.select().from(schema.MemberTable).where(drizzle.eq(schema.MemberTable.userId, verifiedUserId))
+  expect(after).toHaveLength(1)
+  expect(after[0]).toMatchObject({ admissionSource: "self_join", admissionPolicyVersion: 2 })
+})
+
+test("organization creation commits the policy and verified initial owner together", async () => {
+  const createdOrganizationId = createDenTypeId("organization")
+  const deniedOrganizationId = createDenTypeId("organization")
+  try {
+    const created = await admission.createOrganizationWithInitialOwner({
+      organizationId: createdOrganizationId,
+      userId: verifiedUserId,
+      name: "Atomic Organization",
+      slug: createdOrganizationId,
+      logo: null,
+      metadata: {},
+    })
+    expect(normalizeDenTypeId("member", created.memberId)).toBe(created.memberId)
+    expect(await admission.getOrganizationAdmissionPolicy(createdOrganizationId)).toMatchObject({ version: 1, admissionMethods: ["invitation"] })
+    const [owner] = await db.select().from(schema.MemberTable).where(drizzle.eq(schema.MemberTable.id, created.memberId)).limit(1)
+    expect(owner).toMatchObject({ role: "owner", admissionSource: "initial_owner", admissionPolicyVersion: 1 })
+
+    await expect(admission.createOrganizationWithInitialOwner({
+      organizationId: deniedOrganizationId,
+      userId: unverifiedUserId,
+      name: "Denied Organization",
+      slug: deniedOrganizationId,
+      logo: null,
+      metadata: {},
+    })).rejects.toThrow("organization_admission_state_changed")
+    expect(await db.select().from(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, deniedOrganizationId))).toHaveLength(0)
+  } finally {
+    await db.delete(schema.AuditEventTable).where(drizzle.eq(schema.AuditEventTable.org_id, normalizeDenTypeId("org", createdOrganizationId)))
+    await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, createdOrganizationId))
+    await db.delete(schema.OrganizationAdmissionPolicyTable).where(drizzle.eq(schema.OrganizationAdmissionPolicyTable.organizationId, createdOrganizationId))
+    await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, createdOrganizationId))
+  }
+})
+
+test("concurrent admission commits one membership and one allow audit", async () => {
+  const attempts = await Promise.all([
+    admission.admitOrganizationMember({ organizationId, userId: verifiedUserId, evidence: { kind: "self_join" } }),
+    admission.admitOrganizationMember({ organizationId, userId: verifiedUserId, evidence: { kind: "self_join" } }),
   ])
+  expect(attempts.filter((decision) => decision.decision === "allow" && !decision.existing)).toHaveLength(1)
+  expect(attempts.filter((decision) => decision.decision === "allow" && decision.existing)).toHaveLength(1)
+
+  const members = await db
+    .select({ id: schema.MemberTable.id })
+    .from(schema.MemberTable)
+    .where(drizzle.and(
+      drizzle.eq(schema.MemberTable.organizationId, organizationId),
+      drizzle.eq(schema.MemberTable.userId, verifiedUserId),
+    ))
+  expect(members).toHaveLength(1)
+
+  const allowAudits = await db
+    .select({ id: schema.AuditEventTable.id })
+    .from(schema.AuditEventTable)
+    .where(drizzle.and(
+      drizzle.eq(schema.AuditEventTable.org_id, normalizeDenTypeId("org", organizationId)),
+      drizzle.eq(schema.AuditEventTable.actor_user_id, verifiedUserId),
+      drizzle.eq(schema.AuditEventTable.action, "organization.admission.allowed"),
+    ))
+  expect(allowAudits).toHaveLength(1)
 })
 
-afterAll(async () => {
-  await cleanup()
+test("email admission requires verification and exact normalized domains", async () => {
+  expect(await admission.evaluateOrganizationAdmission({ organizationId, userId: unverifiedUserId, evidence: { kind: "self_join" } })).toEqual({ decision: "require_email_verification" })
+  await setPolicy({ methods: ["self_join"], domainMode: "allowlist", domains: ["example.com"] })
+  expect(await admission.evaluateOrganizationAdmission({ organizationId, userId: subdomainUserId, evidence: { kind: "self_join" } })).toEqual({ decision: "deny", reason: "domain_not_allowed" })
+  expect(await admission.evaluateOrganizationAdmission({ organizationId, userId: verifiedUserId, evidence: { kind: "self_join" } })).toMatchObject({ decision: "allow" })
 })
 
-test("single-org bootstrap adopts a pending invitation instead of creating a duplicate member", async () => {
-  if (!orgs) {
-    throw new Error("orgs module not initialized")
-  }
-  const invitationId = createDenTypeId("invitation")
-  const placeholderId = createDenTypeId("member")
-  await createInvitation({
-    invitationId,
-    memberId: placeholderId,
-    organizationId,
-    email: invitedEmail.toLowerCase(),
-    role: "admin",
-    expiresAt: future,
-    inviterMemberId: ownerMemberId,
-  })
-
-  const member = await orgs.ensureBootstrapMembershipForOrganization({
-    organizationId,
-    userId: invitedUserId,
-    role: "member",
-    email: invitedEmail.toUpperCase(),
-  })
-  expect(member.organizationId).toBe(organizationId)
-
-  const relatedMembers = (await membersForOrganization(organizationId))
-    .filter((member) => member.userId === invitedUserId || member.inviteId === invitationId)
-  expect(relatedMembers).toHaveLength(1)
-  expect(relatedMembers[0]?.id).toBe(placeholderId)
-  expect(relatedMembers[0]?.userId).toBe(invitedUserId)
-  expect(relatedMembers[0]?.role).toBe("admin")
-  expect(relatedMembers[0]?.joinedAt).toBeInstanceOf(Date)
-  await expect(invitationStatus(invitationId)).resolves.toBe("accepted")
+test("invite-only cannot be bypassed by self-join", async () => {
+  await setPolicy({ methods: ["invitation"] })
+  expect(await admission.evaluateOrganizationAdmission({ organizationId, userId: verifiedUserId, evidence: { kind: "self_join" } })).toEqual({ decision: "require_invitation" })
 })
 
-test("single-org bootstrap without a pending invitation keeps the default member insert behavior", async () => {
-  if (!orgs) {
-    throw new Error("orgs module not initialized")
-  }
-
-  const member = await orgs.ensureBootstrapMembershipForOrganization({
-    organizationId,
-    userId: noInviteUserId,
-    role: "member",
-    email: noInviteEmail,
-  })
-  expect(member.organizationId).toBe(organizationId)
-
-  const rows = (await membersForOrganization(organizationId)).filter((member) => member.userId === noInviteUserId)
-  expect(rows).toHaveLength(1)
-  expect(rows[0]?.role).toBe("member")
-  expect(rows[0]?.inviteId).toBeNull()
+test("invitations are exact-email, one-use, expiring, cancelable, and rotatable", async () => {
+  await setPolicy({ methods: ["invitation"] })
+  await createInvitation({ token: "correct-token-000000", email: "other@example.com" })
+  expect(await admission.evaluateOrganizationAdmission({ organizationId, userId: verifiedUserId, evidence: { kind: "invitation", token: "correct-token-000000" } })).toEqual({ decision: "deny", reason: "invitation_invalid" })
+  await createInvitation({ token: "expired-token-000000", expiresAt: new Date(Date.now() - 1) })
+  expect(await admission.evaluateOrganizationAdmission({ organizationId, userId: verifiedUserId, evidence: { kind: "invitation", token: "expired-token-000000" } })).toEqual({ decision: "deny", reason: "invitation_invalid" })
+  await createInvitation({ token: "canceled-token-0000", status: "canceled" })
+  expect(await admission.evaluateOrganizationAdmission({ organizationId, userId: verifiedUserId, evidence: { kind: "invitation", token: "canceled-token-0000" } })).toEqual({ decision: "deny", reason: "invitation_invalid" })
+  await db.insert(schema.TeamTable).values({ id: teamId, organizationId, name: "Invited team" })
+  const rotatedId = await createInvitation({ token: "old-rotated-token-00", teamId })
+  await db.update(schema.InvitationTable).set({ inviteTokenHash: admission.hashOrganizationInvitationToken("new-rotated-token-00") }).where(drizzle.eq(schema.InvitationTable.id, rotatedId))
+  expect(await admission.evaluateOrganizationAdmission({ organizationId, userId: verifiedUserId, evidence: { kind: "invitation", token: "old-rotated-token-00" } })).toEqual({ decision: "deny", reason: "invitation_invalid" })
+  const decision = await admission.admitOrganizationMember({ organizationId, userId: verifiedUserId, evidence: { kind: "invitation", token: "new-rotated-token-00" } })
+  expect(decision).toMatchObject({ decision: "allow", source: "invitation" })
+  expect(await admission.evaluateOrganizationAdmission({ organizationId, userId: verifiedUserId, evidence: { kind: "invitation", token: "new-rotated-token-00" } })).toMatchObject({ decision: "allow", existing: true })
+  const invitation = await db.select().from(schema.InvitationTable).where(drizzle.eq(schema.InvitationTable.id, rotatedId)).limit(1)
+  expect(invitation[0]).toMatchObject({ status: "accepted", inviteTokenHash: null })
+  const teamMemberships = await db
+    .select({ orgMembershipId: schema.TeamMemberTable.orgMembershipId })
+    .from(schema.TeamMemberTable)
+    .where(drizzle.eq(schema.TeamMemberTable.teamId, teamId))
+  expect(teamMemberships).toEqual([{ orgMembershipId: decision.decision === "allow" ? decision.membershipId : null }])
+  const auditPayloads = JSON.stringify((await db
+    .select({ payload: schema.AuditEventTable.payload })
+    .from(schema.AuditEventTable)
+    .where(drizzle.eq(schema.AuditEventTable.org_id, normalizeDenTypeId("org", organizationId))))
+    .map((event) => event.payload))
+  expect(auditPayloads).not.toContain("member@example.com")
+  expect(auditPayloads).not.toContain("new-rotated-token-00")
 })
 
-test("reconcilePendingInvitationsForUser merges a raw SSO JIT membership with its pending invitation", async () => {
-  if (!db || !schema || !orgs) {
-    throw new Error("test modules not initialized")
-  }
-  const invitationId = createDenTypeId("invitation")
-  const placeholderId = createDenTypeId("member")
-  const rawSsoMemberId = createDenTypeId("member")
-  await createInvitation({
-    invitationId,
-    memberId: placeholderId,
-    organizationId,
-    email: ssoInviteEmail.toLowerCase(),
-    role: "admin",
-    expiresAt: future,
-    inviterMemberId: ownerMemberId,
-  })
-  await db.insert(schema.MemberTable).values({
-    id: rawSsoMemberId,
-    organizationId,
-    userId: ssoInviteUserId,
-    role: "member",
-    joinedAt: null,
-  })
-
-  await expect(orgs.reconcilePendingInvitationsForUser(ssoInviteUserId)).resolves.toBe(1)
-
-  const relatedMembers = (await membersForOrganization(organizationId))
-    .filter((row) => row.userId === ssoInviteUserId || row.inviteId === invitationId)
-  expect(relatedMembers).toHaveLength(1)
-  expect(relatedMembers[0]?.id).toBe(rawSsoMemberId)
-  expect(relatedMembers[0]?.role).toBe("admin")
-  expect(relatedMembers[0]?.joinedAt).toBeInstanceOf(Date)
-  await expect(invitationStatus(invitationId)).resolves.toBe("accepted")
-})
-
-test("reconcilePendingInvitationsForUser leaves invitations pending when no same-org membership exists", async () => {
-  if (!orgs) {
-    throw new Error("orgs module not initialized")
-  }
-  const invitationId = createDenTypeId("invitation")
-  const placeholderId = createDenTypeId("member")
-  await createInvitation({
-    invitationId,
-    memberId: placeholderId,
-    organizationId,
-    email: reconcileNoMembershipEmail.toLowerCase(),
-    role: "admin",
-    expiresAt: future,
-    inviterMemberId: ownerMemberId,
-  })
-
-  await expect(orgs.reconcilePendingInvitationsForUser(reconcileNoMembershipUserId)).resolves.toBe(0)
-
-  const relatedMembers = (await membersForOrganization(organizationId))
-    .filter((row) => row.userId === reconcileNoMembershipUserId || row.inviteId === invitationId)
-  expect(relatedMembers).toHaveLength(1)
-  expect(relatedMembers[0]?.id).toBe(placeholderId)
-  expect(relatedMembers[0]?.userId).toBeNull()
-  await expect(invitationStatus(invitationId)).resolves.toBe("pending")
-})
-
-test("reconcilePendingInvitationsForUser never downgrades an existing owner", async () => {
-  if (!db || !schema || !orgs) {
-    throw new Error("test modules not initialized")
-  }
-  const invitationId = createDenTypeId("invitation")
-  const ownerMemberToReconcileId = createDenTypeId("member")
-  const placeholderId = createDenTypeId("member")
-  await db.insert(schema.MemberTable).values({
-    id: ownerMemberToReconcileId,
-    organizationId,
-    userId: reconcileOwnerUserId,
-    role: "owner",
-    joinedAt: null,
-  })
-  await createInvitation({
-    invitationId,
-    memberId: placeholderId,
-    organizationId,
-    email: reconcileOwnerEmail.toLowerCase(),
-    role: "admin",
-    expiresAt: future,
-    inviterMemberId: ownerMemberId,
-  })
-
-  await expect(orgs.reconcilePendingInvitationsForUser(reconcileOwnerUserId)).resolves.toBe(1)
-
-  const relatedMembers = (await membersForOrganization(organizationId))
-    .filter((row) => row.userId === reconcileOwnerUserId || row.inviteId === invitationId)
-  expect(relatedMembers).toHaveLength(1)
-  expect(relatedMembers[0]?.id).toBe(ownerMemberToReconcileId)
-  expect(relatedMembers[0]?.role).toBe("owner")
-  expect(relatedMembers[0]?.joinedAt).toBeInstanceOf(Date)
-  await expect(invitationStatus(invitationId)).resolves.toBe("accepted")
-})
-
-test("reconcilePendingInvitationsForUser is a no-op when the user has no pending invitations", async () => {
-  if (!orgs) {
-    throw new Error("orgs module not initialized")
-  }
-
-  await expect(orgs.reconcilePendingInvitationsForUser(noPendingUserId)).resolves.toBe(0)
-  const rows = (await membersForOrganization(organizationId)).filter((member) => member.userId === noPendingUserId)
-  expect(rows).toHaveLength(0)
-})
-
-test("acceptInvitation merges an existing member with the invitation placeholder", async () => {
-  if (!db || !schema || !orgs) {
-    throw new Error("test modules not initialized")
-  }
-  const invitationId = createDenTypeId("invitation")
-  const existingMemberId = createDenTypeId("member")
-  const placeholderId = createDenTypeId("member")
+test("external admission cannot grant owner and administrative removal is sticky", async () => {
+  await setPolicy({ methods: ["invitation"] })
+  const ownerInviteId = await createInvitation({ token: "owner-token-0000000", role: "owner" })
+  expect(await admission.evaluateOrganizationAdmission({ organizationId, userId: verifiedUserId, evidence: { kind: "invitation", token: "owner-token-0000000" } })).toEqual({ decision: "deny", reason: "owner_role_forbidden" })
+  await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.inviteId, ownerInviteId))
+  await db.delete(schema.InvitationTable).where(drizzle.eq(schema.InvitationTable.id, ownerInviteId))
 
   await db.insert(schema.MemberTable).values({
-    id: existingMemberId,
+    id: createDenTypeId("member"),
     organizationId,
-    userId: mergeUserId,
+    userId: verifiedUserId,
     role: "member",
-    joinedAt: null,
+    removedAt: new Date(),
+    removalSource: "admin",
   })
-  await createInvitation({
-    invitationId,
-    memberId: placeholderId,
-    organizationId,
-    email: mergeEmail,
-    role: "admin",
-    expiresAt: future,
-    inviterMemberId: ownerMemberId,
-  })
+  expect(await admission.evaluateOrganizationAdmission({ organizationId, userId: verifiedUserId, evidence: { kind: "self_join" } })).toEqual({ decision: "deny", reason: "membership_removed" })
 
-  const accepted = await orgs.acceptInvitationForUser({
-    userId: mergeUserId,
-    email: mergeEmail,
-    invitationId,
-  })
-
-  expect(accepted?.member.id).toBe(existingMemberId)
-  const relatedMembers = (await membersForOrganization(organizationId))
-    .filter((member) => member.userId === mergeUserId || member.inviteId === invitationId)
-  expect(relatedMembers).toHaveLength(1)
-  expect(relatedMembers[0]?.id).toBe(existingMemberId)
-  expect(relatedMembers[0]?.role).toBe("admin")
-  expect(relatedMembers[0]?.joinedAt).toBeInstanceOf(Date)
-  await expect(invitationStatus(invitationId)).resolves.toBe("accepted")
+  const restoreInviteId = await createInvitation({ token: "restore-token-00000" })
+  const restored = await admission.admitOrganizationMember({ organizationId, userId: verifiedUserId, evidence: { kind: "invitation", token: "restore-token-00000" } })
+  expect(restored).toMatchObject({ decision: "allow", source: "invitation" })
+  const subjectMemberships = await db.select().from(schema.MemberTable).where(drizzle.and(
+    drizzle.eq(schema.MemberTable.organizationId, organizationId),
+    drizzle.eq(schema.MemberTable.userId, verifiedUserId),
+  ))
+  expect(subjectMemberships).toHaveLength(1)
+  expect(subjectMemberships[0]?.removedAt).toBeNull()
+  const placeholders = await db.select().from(schema.MemberTable).where(drizzle.eq(schema.MemberTable.inviteId, restoreInviteId))
+  expect(placeholders).toHaveLength(0)
 })
 
-test("acceptInvitation does not downgrade an existing owner while removing the placeholder", async () => {
-  if (!db || !schema || !orgs) {
-    throw new Error("test modules not initialized")
-  }
-  const invitationId = createDenTypeId("invitation")
-  const ownerMemberToMergeId = createDenTypeId("member")
-  const placeholderId = createDenTypeId("member")
+test("administrative restoration requires a trusted active admin membership", async () => {
+  await db.insert(schema.MemberTable).values({
+    id: createDenTypeId("member"),
+    organizationId,
+    userId: verifiedUserId,
+    role: "member",
+    removedAt: new Date(),
+    removalSource: "admin",
+  })
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: verifiedUserId,
+    evidence: { kind: "admin_restore", role: "member", actorMemberId: createDenTypeId("member") },
+  })).toEqual({ decision: "deny", reason: "identity_conflict" })
+  const [owner] = await db.select().from(schema.MemberTable).where(drizzle.eq(schema.MemberTable.userId, ownerUserId)).limit(1)
+  const restored = await admission.admitOrganizationMember({
+    organizationId,
+    userId: verifiedUserId,
+    evidence: { kind: "admin_restore", role: "member", actorMemberId: owner!.id },
+  })
+  expect(restored).toMatchObject({ decision: "allow", source: "admin_restore" })
+})
+
+test("workspace claims atomically admit once and retire sibling claim links", async () => {
+  await setPolicy({ methods: ["invitation"] })
+  const setupMemberId = createDenTypeId("member")
+  const bootstrapId = createDenTypeId("workspaceBootstrap")
+  const ownerClaimId = createDenTypeId("workspaceClaim")
+  const siblingClaimId = createDenTypeId("workspaceClaim")
+  const expiresAt = new Date(Date.now() + 60_000)
+  await db.insert(schema.MemberTable).values({ id: setupMemberId, organizationId, userId: null, role: "owner" })
+  await db.insert(schema.WorkspaceBootstrapTable).values({
+    id: bootstrapId,
+    organizationId,
+    setupMemberId,
+    status: "provisional",
+    expiresAt,
+  })
+  await db.insert(schema.WorkspaceClaimTable).values([
+    {
+      id: ownerClaimId,
+      bootstrapId,
+      organizationId,
+      tokenHash: admission.hashOrganizationInvitationToken("workspace-owner-token"),
+      role: "owner",
+      status: "pending",
+      expiresAt,
+    },
+    {
+      id: siblingClaimId,
+      bootstrapId,
+      organizationId,
+      tokenHash: admission.hashOrganizationInvitationToken("workspace-member-token"),
+      role: "member",
+      status: "pending",
+      expiresAt,
+    },
+  ])
+
+  const decision = await admission.admitOrganizationMember({
+    organizationId,
+    userId: verifiedUserId,
+    evidence: { kind: "workspace_claim", token: "workspace-owner-token" },
+  })
+  expect(decision).toMatchObject({ decision: "allow", role: "owner", source: "workspace_claim", existing: false })
+  const [setupMember] = await db.select().from(schema.MemberTable).where(drizzle.eq(schema.MemberTable.id, setupMemberId)).limit(1)
+  expect(setupMember).toMatchObject({ removalSource: "system" })
+  expect(setupMember?.removedAt).toBeInstanceOf(Date)
+  const claims = await db.select().from(schema.WorkspaceClaimTable).where(drizzle.eq(schema.WorkspaceClaimTable.bootstrapId, bootstrapId))
+  expect(claims.find((claim) => claim.id === ownerClaimId)).toMatchObject({ status: "claimed", claimedByUserId: verifiedUserId })
+  expect(claims.find((claim) => claim.id === siblingClaimId)).toMatchObject({ status: "canceled" })
+  const [bootstrap] = await db.select().from(schema.WorkspaceBootstrapTable).where(drizzle.eq(schema.WorkspaceBootstrapTable.id, bootstrapId)).limit(1)
+  expect(bootstrap).toMatchObject({ status: "claimed" })
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: unverifiedUserId,
+    evidence: { kind: "workspace_claim", token: "workspace-member-token" },
+  })).toEqual({ decision: "deny", reason: "identity_conflict" })
+})
+
+test("organization SSO requires the exact provider assurance without consuming an invitation", async () => {
+  const providerId = `sso-${crypto.randomUUID()}`
+  await db.insert(schema.SsoProviderTable).values({
+    id: createDenTypeId("ssoProvider"),
+    issuer: "https://idp.example.test",
+    domain: "example.com",
+    userId: ownerUserId,
+    providerId,
+    organizationId,
+    domainVerified: true,
+  })
+  await db.insert(schema.SsoConnectionTable).values({
+    id: createDenTypeId("ssoConnection"),
+    organizationId,
+    providerId,
+    kind: "oidc",
+    issuer: "https://idp.example.test",
+    domain: "example.com",
+    status: "enabled",
+    signInPath: `/api/auth/sso/sign-in/${providerId}`,
+  })
+  await setPolicy({ methods: ["invitation", "sso_jit"], authenticationRequirement: "organization_sso" })
+  const invitationId = await createInvitation({ token: "sso-invite-token-000", role: "admin" })
+
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: verifiedUserId,
+    evidence: { kind: "invitation", token: "sso-invite-token-000" },
+    assurance: { organizationId: null, providerId: null },
+  })).toMatchObject({ decision: "require_sso" })
+  expect((await db.select({ status: schema.InvitationTable.status }).from(schema.InvitationTable).where(drizzle.eq(schema.InvitationTable.id, invitationId)).limit(1))[0]?.status).toBe("pending")
+
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: verifiedUserId,
+    evidence: { kind: "invitation", token: "sso-invite-token-000" },
+    assurance: { organizationId, providerId: "wrong-provider" },
+  })).toMatchObject({ decision: "require_sso" })
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: verifiedUserId,
+    evidence: { kind: "invitation", token: "sso-invite-token-000" },
+    assurance: { organizationId, providerId },
+  })).toMatchObject({ decision: "allow", role: "admin", source: "invitation" })
+
+  await createInvitation({ token: "sso-authoritative-000", email: "new@example.com" })
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: unverifiedUserId,
+    evidence: { kind: "sso", providerId },
+    assurance: { organizationId, providerId },
+  })).toMatchObject({ decision: "allow", source: "invitation" })
+
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: verifiedUserId,
+    evidence: { kind: "sso", providerId: "wrong-provider" },
+  })).toEqual({ decision: "deny", reason: "provider_mismatch" })
+
+  await db.delete(schema.SsoConnectionTable).where(drizzle.eq(schema.SsoConnectionTable.organizationId, organizationId))
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: verifiedUserId,
+    evidence: { kind: "self_join" },
+  })).toEqual({ decision: "deny", reason: "policy_unavailable" })
+})
+
+test("SCIM evidence is authoritative but reactivation requires SCIM lifecycle authority", async () => {
+  const providerId = `scim-${crypto.randomUUID()}`
+  await db.insert(schema.ScimProviderTable).values({
+    id: createDenTypeId("scimProvider"),
+    providerId,
+    scimToken: "hashed-test-token",
+    organizationId,
+  })
+  await setPolicy({ methods: ["scim"], lifecycleAuthority: "scim" })
+
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: unverifiedUserId,
+    evidence: { kind: "scim", providerId, active: false },
+  })).toEqual({ decision: "deny", reason: "provider_mismatch" })
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: unverifiedUserId,
+    evidence: { kind: "scim", providerId, active: true },
+  })).toMatchObject({ decision: "allow", source: "scim" })
 
   await db.insert(schema.MemberTable).values({
-    id: ownerMemberToMergeId,
+    id: createDenTypeId("member"),
     organizationId,
-    userId: ownerMergeUserId,
-    role: "owner",
-    joinedAt: null,
+    userId: unverifiedUserId,
+    role: "member",
+    removedAt: new Date(),
+    removalSource: "scim",
   })
-  await createInvitation({
-    invitationId,
-    memberId: placeholderId,
+  expect(await admission.evaluateOrganizationAdmission({
     organizationId,
-    email: ownerMergeEmail,
-    role: "admin",
-    expiresAt: future,
-    inviterMemberId: ownerMemberId,
-  })
+    userId: unverifiedUserId,
+    evidence: { kind: "scim", providerId, active: true },
+  })).toMatchObject({ decision: "allow", source: "scim" })
 
-  const accepted = await orgs.acceptInvitationForUser({
-    userId: ownerMergeUserId,
-    email: ownerMergeEmail,
-    invitationId,
-  })
-
-  expect(accepted?.member.id).toBe(ownerMemberToMergeId)
-  const relatedMembers = (await membersForOrganization(organizationId))
-    .filter((member) => member.userId === ownerMergeUserId || member.inviteId === invitationId)
-  expect(relatedMembers).toHaveLength(1)
-  expect(relatedMembers[0]?.role).toBe("owner")
-  expect(relatedMembers[0]?.joinedAt).toBeInstanceOf(Date)
-  await expect(invitationStatus(invitationId)).resolves.toBe("accepted")
+  await setPolicy({ methods: ["scim"], lifecycleAuthority: "local" })
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: unverifiedUserId,
+    evidence: { kind: "scim", providerId, active: true },
+  })).toEqual({ decision: "deny", reason: "membership_removed" })
 })
 
-test("acceptInvitationForUser returns the existing member when bootstrap already accepted the invite", async () => {
-  if (!orgs) {
-    throw new Error("orgs module not initialized")
-  }
-  const invitationId = createDenTypeId("invitation")
-  const placeholderId = createDenTypeId("member")
-  await createInvitation({
-    invitationId,
-    memberId: placeholderId,
+test("existing active memberships remain available when a policy dependency is unavailable", async () => {
+  await setPolicy({ methods: ["sso_jit"], authenticationRequirement: "organization_sso" })
+  await db.insert(schema.MemberTable).values({
+    id: createDenTypeId("member"),
     organizationId,
-    email: acceptedInviteEmail,
+    userId: verifiedUserId,
     role: "member",
-    expiresAt: future,
-    inviterMemberId: ownerMemberId,
+    admissionSource: "legacy",
+    admissionPolicyVersion: 1,
   })
-
-  const bootstrapMember = await orgs.ensureBootstrapMembershipForOrganization({
+  expect(await admission.evaluateOrganizationAdmission({
     organizationId,
-    userId: acceptedInviteUserId,
-    role: "member",
-    email: acceptedInviteEmail,
-  })
-  await expect(invitationStatus(invitationId)).resolves.toBe("accepted")
-
-  const accepted = await orgs.acceptInvitationForUser({
-    userId: acceptedInviteUserId,
-    email: acceptedInviteEmail,
-    invitationId,
-  })
-
-  expect(accepted?.invitation.id).toBe(invitationId)
-  expect(accepted?.member.id).toBe(bootstrapMember.id)
+    userId: verifiedUserId,
+    evidence: { kind: "self_join" },
+  })).toMatchObject({ decision: "allow", existing: true })
+  expect(await admission.evaluateOrganizationAdmission({
+    organizationId,
+    userId: unverifiedUserId,
+    evidence: { kind: "sso", providerId: "missing-provider" },
+  })).toEqual({ decision: "deny", reason: "policy_unavailable" })
 })
 
-test("bootstrap ignores expired, non-matching, and other-org invitations", async () => {
-  if (!orgs) {
-    throw new Error("orgs module not initialized")
+test("seat exhaustion and missing policy fail closed for new membership", async () => {
+  await setPolicy({ methods: ["self_join"] })
+  await db.insert(schema.MemberTable).values(Array.from({ length: 4 }, () => ({
+    id: createDenTypeId("member"),
+    organizationId,
+    userId: createDenTypeId("user"),
+    role: "member",
+    admissionSource: "legacy" as const,
+    admissionPolicyVersion: 1,
+  })))
+  const originalStripe = { ...envModule.env.stripe }
+  Object.assign(envModule.env.stripe, { secretKey: "sk_test_admission", seatPriceId: "price_admission" })
+  try {
+    expect(await admission.evaluateOrganizationAdmission({
+      organizationId,
+      userId: verifiedUserId,
+      evidence: { kind: "self_join" },
+    })).toEqual({ decision: "deny", reason: "seat_limit_reached" })
+  } finally {
+    Object.assign(envModule.env.stripe, originalStripe)
   }
-  const expiredInvitationId = createDenTypeId("invitation")
-  const nonMatchingInvitationId = createDenTypeId("invitation")
-  const otherOrgInvitationId = createDenTypeId("invitation")
 
-  await createInvitation({
-    invitationId: expiredInvitationId,
-    memberId: createDenTypeId("member"),
+  await db
+    .update(schema.OrganizationAdmissionPolicyTable)
+    .set({ admissionMethods: [] })
+    .where(drizzle.eq(schema.OrganizationAdmissionPolicyTable.organizationId, organizationId))
+  expect(await admission.evaluateOrganizationAdmission({
     organizationId,
-    email: expiredEmail,
-    role: "admin",
-    expiresAt: past,
-    inviterMemberId: ownerMemberId,
-  })
-  await createInvitation({
-    invitationId: nonMatchingInvitationId,
-    memberId: createDenTypeId("member"),
-    organizationId,
-    email: `different-${nonMatchingEmail}`,
-    role: "admin",
-    expiresAt: future,
-    inviterMemberId: ownerMemberId,
-  })
-  await createInvitation({
-    invitationId: otherOrgInvitationId,
-    memberId: createDenTypeId("member"),
-    organizationId: otherOrganizationId,
-    email: otherOrgEmail,
-    role: "admin",
-    expiresAt: future,
-    inviterMemberId: otherOwnerMemberId,
-  })
+    userId: verifiedUserId,
+    evidence: { kind: "self_join" },
+  })).toEqual({ decision: "deny", reason: "policy_unavailable" })
 
-  await orgs.ensureBootstrapMembershipForOrganization({
+  await db
+    .delete(schema.OrganizationAdmissionPolicyTable)
+    .where(drizzle.eq(schema.OrganizationAdmissionPolicyTable.organizationId, organizationId))
+  expect(await admission.evaluateOrganizationAdmission({
     organizationId,
-    userId: expiredInviteUserId,
-    role: "member",
-    email: expiredEmail,
-  })
-  await orgs.ensureBootstrapMembershipForOrganization({
+    userId: verifiedUserId,
+    evidence: { kind: "self_join" },
+  })).toEqual({ decision: "deny", reason: "policy_unavailable" })
+  await db.insert(schema.OrganizationAdmissionPolicyTable).values({
     organizationId,
-    userId: nonMatchingInviteUserId,
-    role: "member",
-    email: nonMatchingEmail,
+    version: 1,
+    admissionMethods: ["self_join", "invitation"],
+    emailDomainMode: "any",
+    allowedEmailDomains: [],
+    authenticationRequirement: "any",
+    lifecycleAuthority: "local",
   })
-  await orgs.ensureBootstrapMembershipForOrganization({
-    organizationId,
-    userId: otherOrgInviteUserId,
-    role: "member",
-    email: otherOrgEmail,
-  })
-
-  const singletonMembers = await membersForOrganization(organizationId)
-  expect(singletonMembers.filter((member) => member.userId === expiredInviteUserId && member.role === "member")).toHaveLength(1)
-  expect(singletonMembers.filter((member) => member.inviteId === expiredInvitationId && member.userId === null)).toHaveLength(1)
-  expect(singletonMembers.filter((member) => member.userId === nonMatchingInviteUserId && member.role === "member")).toHaveLength(1)
-  expect(singletonMembers.filter((member) => member.inviteId === nonMatchingInvitationId && member.userId === null)).toHaveLength(1)
-
-  const otherOrgMembers = await membersForOrganization(otherOrganizationId)
-  expect(singletonMembers.filter((member) => member.userId === otherOrgInviteUserId && member.role === "member")).toHaveLength(1)
-  expect(otherOrgMembers.filter((member) => member.userId === otherOrgInviteUserId)).toHaveLength(0)
-  expect(otherOrgMembers.filter((member) => member.inviteId === otherOrgInvitationId && member.userId === null)).toHaveLength(1)
-  await expect(invitationStatus(expiredInvitationId)).resolves.toBe("pending")
-  await expect(invitationStatus(nonMatchingInvitationId)).resolves.toBe("pending")
-  await expect(invitationStatus(otherOrgInvitationId)).resolves.toBe("pending")
 })

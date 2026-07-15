@@ -104,11 +104,19 @@ test("Better Auth's native remove and leave routes delete the member's connected
   const accountRows = await db.select({ id: schema.ConnectedAccountTable.id })
     .from(schema.ConnectedAccountTable)
     .where(drizzle.eq(schema.ConnectedAccountTable.id, account.id))
-  const memberRows = await db.select({ id: schema.MemberTable.id })
+  const memberRows = await db.select({
+    id: schema.MemberTable.id,
+    userId: schema.MemberTable.userId,
+    removedAt: schema.MemberTable.removedAt,
+    removalSource: schema.MemberTable.removalSource,
+  })
     .from(schema.MemberTable)
     .where(drizzle.eq(schema.MemberTable.id, targetMemberId))
   expect(accountRows).toEqual([])
-  expect(memberRows).toEqual([])
+  expect(memberRows).toHaveLength(1)
+  expect(memberRows[0]?.userId).toBe(targetUserId)
+  expect(memberRows[0]?.removedAt).toBeInstanceOf(Date)
+  expect(memberRows[0]?.removalSource).toBe("admin")
 
   const remainingOwnerUserId = createDenTypeId("user")
   const remainingOwnerMemberId = createDenTypeId("member")
@@ -140,9 +148,17 @@ test("Better Auth's native remove and leave routes delete the member's connected
   const ownerAccountRows = await db.select({ id: schema.ConnectedAccountTable.id })
     .from(schema.ConnectedAccountTable)
     .where(drizzle.eq(schema.ConnectedAccountTable.id, ownerAccount.id))
-  const ownerMemberRows = await db.select({ id: schema.MemberTable.id })
+  const ownerMemberRows = await db.select({
+    id: schema.MemberTable.id,
+    userId: schema.MemberTable.userId,
+    removedAt: schema.MemberTable.removedAt,
+    removalSource: schema.MemberTable.removalSource,
+  })
     .from(schema.MemberTable)
     .where(drizzle.eq(schema.MemberTable.id, ownerMemberId))
   expect(ownerAccountRows).toEqual([])
-  expect(ownerMemberRows).toEqual([])
+  expect(ownerMemberRows).toHaveLength(1)
+  expect(ownerMemberRows[0]?.userId).toBe(ownerUserId)
+  expect(ownerMemberRows[0]?.removedAt).toBeInstanceOf(Date)
+  expect(ownerMemberRows[0]?.removalSource).toBe("self")
 })

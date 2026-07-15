@@ -6,7 +6,7 @@ const credentialsSourcePath = new URL("../src/capability-sources/oauth-credentia
 const callbackSourcePath = new URL("../src/routes/org/oauth-providers.ts", import.meta.url)
 const adminSourcePath = new URL("../src/routes/admin/index.ts", import.meta.url)
 
-test("member removal deletes every per-member connected account before anonymizing the membership", async () => {
+test("member removal deletes every per-member connected account before retaining the removal tombstone", async () => {
   const source = await Bun.file(sourcePath).text()
   const removeMemberSource = source.slice(source.indexOf("export async function removeOrganizationMember"))
 
@@ -14,14 +14,15 @@ test("member removal deletes every per-member connected account before anonymizi
   const lockMembershipAt = removeMemberSource.indexOf('.for("update")')
   const scopeToOrganizationAt = removeMemberSource.indexOf("eq(ConnectedAccountTable.organizationId, input.organizationId)")
   const scopeToMembershipAt = removeMemberSource.indexOf("eq(ConnectedAccountTable.orgMembershipId, member.id)")
-  const anonymizeMembershipAt = removeMemberSource.indexOf(".update(MemberTable)")
+  const removeMembershipAt = removeMemberSource.indexOf(".update(MemberTable)")
 
   expect(deleteConnectedAccountsAt).toBeGreaterThan(-1)
   expect(lockMembershipAt).toBeGreaterThan(-1)
   expect(deleteConnectedAccountsAt).toBeGreaterThan(lockMembershipAt)
   expect(scopeToOrganizationAt).toBeGreaterThan(deleteConnectedAccountsAt)
   expect(scopeToMembershipAt).toBeGreaterThan(scopeToOrganizationAt)
-  expect(anonymizeMembershipAt).toBeGreaterThan(scopeToMembershipAt)
+  expect(removeMembershipAt).toBeGreaterThan(scopeToMembershipAt)
+  expect(removeMemberSource).not.toContain("userId: null")
 })
 
 test("Better Auth member deletion removes connected accounts without disconnecting role changes", async () => {
@@ -48,11 +49,12 @@ test("platform-admin user deletion erases connected accounts before removing mem
     source.indexOf('app.patch(', source.indexOf('"/v1/admin/users/:userId"')),
   )
   const deleteAccountsAt = deleteUserRoute.indexOf("tx.delete(ConnectedAccountTable)")
-  const removeMembershipsAt = deleteUserRoute.indexOf("tx.update(MemberTable).set({ removedAt })")
+  const removeMembershipsAt = deleteUserRoute.indexOf(".update(MemberTable)")
 
   expect(deleteAccountsAt).toBeGreaterThan(-1)
   expect(deleteUserRoute).toContain("ConnectedAccountTable.orgMembershipId")
   expect(removeMembershipsAt).toBeGreaterThan(deleteAccountsAt)
+  expect(deleteUserRoute).toContain('removalSource: "system"')
 })
 
 test("OAuth callback token persistence locks and requires an active membership", async () => {
