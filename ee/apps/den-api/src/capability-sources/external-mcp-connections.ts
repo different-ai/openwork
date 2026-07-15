@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { isDeepStrictEqual } from "node:util"
 import { and, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
@@ -714,13 +715,14 @@ export async function updateExternalMcpConnection(
         isNull(PluginTable.deletedAt),
       ))
       .for("update")
+    const oauthConfigurationChanged = input.oauthConfiguration !== undefined
+      && !isDeepStrictEqual(existing.oauthConfiguration, input.oauthConfiguration)
     const marketplaceOwnedFieldsChanged = existing.url !== input.url
       || existing.authType !== input.authType
       || existing.credentialMode !== input.credentialMode
       || input.apiKey !== undefined
       || input.oauthClient !== undefined
-      || (input.oauthConfiguration !== undefined
-        && JSON.stringify(existing.oauthConfiguration) !== JSON.stringify(input.oauthConfiguration))
+      || oauthConfigurationChanged
     if (activeBindings.length > 0 && marketplaceOwnedFieldsChanged) {
       return { status: "marketplace_managed" }
     }
@@ -774,8 +776,7 @@ export async function updateExternalMcpConnection(
       || existing.credentialMode !== input.credentialMode
       || apiKeyChanged
       || identityChanged
-      || (input.oauthConfiguration !== undefined
-        && JSON.stringify(existing.oauthConfiguration) !== JSON.stringify(input.oauthConfiguration))
+      || oauthConfigurationChanged
     const changed = rowFieldsChanged || accessChanged || oauthClientChanged
 
     if (!changed) {
