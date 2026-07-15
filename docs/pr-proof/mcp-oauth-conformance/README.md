@@ -16,6 +16,10 @@ The passing journey proves that:
    the shared callback and selected scope.
 4. The authorized tool is visible in the dashboard and works through
    `search_capabilities` and `execute_capability`.
+5. At a 600px-tall viewport, the add-connection dialog remains fully bounded,
+   switches to internal scrolling, and keeps the final action reachable. The
+   run measured a 550px client height, 745px scroll height, `overflow-y: auto`,
+   and dialog bounds from 24px to 576px.
 
 The machine-readable assertions and voice-over coverage are recorded in
 [report.md](./report.md). The durable end-to-end flow lives in

@@ -195,6 +195,48 @@ export default {
           action: async () => {
             await ctx.clickText("MCP server", { selector: "button", timeoutMs: 20_000 });
             await ctx.waitForText("Add a custom MCP server", { timeoutMs: 10_000 });
+            await ctx.client.send("Emulation.setDeviceMetricsOverride", {
+              width: 1440,
+              height: 600,
+              deviceScaleFactor: 1,
+              mobile: false,
+            });
+            const viewportSafety = await ctx.eval(`(() => {
+              const dialog = document.querySelector('[data-testid="add-mcp-connection-dialog"]');
+              if (!(dialog instanceof HTMLElement)) return null;
+              const style = getComputedStyle(dialog);
+              const dialogRect = dialog.getBoundingClientRect();
+              const action = [...dialog.querySelectorAll('button')].find((entry) => (entry.textContent ?? '').trim() === 'Add connection');
+              dialog.scrollTop = dialog.scrollHeight;
+              const actionRect = action?.getBoundingClientRect();
+              const actionReachable = Boolean(actionRect
+                && actionRect.top >= dialogRect.top
+                && actionRect.bottom <= dialogRect.bottom
+                && actionRect.bottom <= window.innerHeight);
+              const result = {
+                actionReachable,
+                clientHeight: dialog.clientHeight,
+                dialogBottom: Math.round(dialogRect.bottom),
+                dialogTop: Math.round(dialogRect.top),
+                overflowY: style.overflowY,
+                scrollHeight: dialog.scrollHeight,
+                viewportHeight: window.innerHeight,
+              };
+              dialog.scrollTop = 0;
+              return result;
+            })()`);
+            ctx.assert(viewportSafety, "The add-connection dialog was not rendered.");
+            ctx.assert(viewportSafety.scrollHeight > viewportSafety.clientHeight, "The long dialog did not become internally scrollable.");
+            ctx.assert(["auto", "scroll"].includes(viewportSafety.overflowY), `Dialog overflow was ${viewportSafety.overflowY}.`);
+            ctx.assert(viewportSafety.dialogTop >= 0 && viewportSafety.dialogBottom <= viewportSafety.viewportHeight, "The dialog was clipped by the viewport.");
+            ctx.assert(viewportSafety.actionReachable, "The final Add connection action could not be reached by scrolling.");
+            ctx.output("Short-viewport dialog safety", JSON.stringify(viewportSafety, null, 2));
+            await ctx.client.send("Emulation.setDeviceMetricsOverride", {
+              width: 1440,
+              height: 1100,
+              deviceScaleFactor: 1,
+              mobile: false,
+            });
             await ctx.fill('input[placeholder="notion"]', CONNECTION_NAME);
             await ctx.fill('input[placeholder="https://mcp.example.com/mcp"]', `${MOCK_ORIGIN}/mcp`);
             await ctx.clickText("Discover requirements", { selector: "button", timeoutMs: 15_000 });
