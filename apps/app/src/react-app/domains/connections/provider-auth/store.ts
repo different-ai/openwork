@@ -144,6 +144,7 @@ export type ProviderAuthStoreSnapshot = {
 
 type CreateProviderAuthStoreOptions = {
   client: () => Client | null;
+  opencodeBaseUrl: () => string;
   providers: () => ProviderListItem[];
   providerDefaults: () => Record<string, string>;
   providerConnectedIds: () => string[];
@@ -1208,6 +1209,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       const updated = filterProviderList(
         await ensureProviderListQuery(getReactQueryClient(), {
           client: activeClient,
+          baseUrl: options.opencodeBaseUrl(),
           directory: options.selectedWorkspaceRoot(),
           force: Boolean(optionsArg?.dispose),
         }),

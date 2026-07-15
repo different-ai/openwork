@@ -470,6 +470,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const routeStateRef = useRef({
     activeClient: null as Client | null,
+    opencodeBaseUrl: "",
     selectedWorkspaceId: "",
     selectedWorkspaceRoot: "",
     selectedWorkspaceType: "local" as "local" | "remote",
@@ -523,6 +524,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   routeStateRef.current = {
     activeClient,
+    opencodeBaseUrl: routeStateRef.current.opencodeBaseUrl,
     selectedWorkspaceId,
     selectedWorkspaceRoot,
     selectedWorkspaceType: selectedWorkspace?.workspaceType ?? "local",
@@ -617,6 +619,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     () =>
       createProviderAuthStore({
         client: () => routeStateRef.current.activeClient,
+        opencodeBaseUrl: () => routeStateRef.current.opencodeBaseUrl,
         providers: () => routeStateRef.current.providerItems,
         providerDefaults: () => routeStateRef.current.providerDefaults,
         providerConnectedIds: () => routeStateRef.current.providerConnectedIds,
@@ -844,6 +847,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [baseUrl, selectedWorkspace, token],
   );
   const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
+  routeStateRef.current.opencodeBaseUrl = opencodeBaseUrl;
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
   routeStateRef.current.runtimeWorkspaceId = runtimeWorkspaceId;
   routeStateRef.current.selectedWorkspaceOpenworkClient = selectedWorkspaceEndpoint?.client ?? openworkClient;
