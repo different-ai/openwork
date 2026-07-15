@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import {
   PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
@@ -32,6 +32,8 @@ type AcceptedClaim = {
   organizationName: string;
   organizationSlug: string;
 };
+
+const AUTO_ACCEPT_WORKSPACE_CLAIM_STORAGE_KEY = "openwork:web:auto-accept-workspace-claim";
 
 function parseAcceptedClaim(payload: unknown): AcceptedClaim | null {
   if (typeof payload !== "object" || payload === null) {
@@ -102,6 +104,7 @@ export function WorkspaceClaimScreen({
   const [handoffError, setHandoffError] = useState<string | null>(null);
   const [handoffAttempted, setHandoffAttempted] = useState(false);
   const [inviteSummary, setInviteSummary] = useState<string | null>(null);
+  const autoClaimAttempted = useRef(false);
 
   // Persist the token so sign-in / sign-up returns the user to this page.
   useEffect(() => {
@@ -115,6 +118,11 @@ export function WorkspaceClaimScreen({
       window.sessionStorage.removeItem(PENDING_WORKSPACE_CLAIM_STORAGE_KEY);
     }
   }, [token]);
+
+  useEffect(() => {
+    if (!sessionHydrated || user || !token || typeof window === "undefined") return;
+    window.sessionStorage.setItem(AUTO_ACCEPT_WORKSPACE_CLAIM_STORAGE_KEY, token);
+  }, [sessionHydrated, token, user]);
 
   async function handleClaim() {
     if (!token) {
@@ -175,6 +183,15 @@ export function WorkspaceClaimScreen({
       setClaimBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!sessionHydrated || !user || !token || claimBusy || claimedOrg || autoClaimAttempted.current) return;
+    if (window.sessionStorage.getItem(AUTO_ACCEPT_WORKSPACE_CLAIM_STORAGE_KEY) !== token) return;
+
+    autoClaimAttempted.current = true;
+    window.sessionStorage.removeItem(AUTO_ACCEPT_WORKSPACE_CLAIM_STORAGE_KEY);
+    void handleClaim();
+  }, [claimBusy, claimedOrg, sessionHydrated, token, user]);
 
   async function handleOpenDesktop() {
     setHandoffBusy(true);
