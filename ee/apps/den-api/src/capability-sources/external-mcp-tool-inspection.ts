@@ -381,27 +381,29 @@ export function diagnoseExternalMcpToolCall(input: {
       return {
         status: "failed",
         layer: "network",
-        summary: "OpenWork sent tools/call but the remote MCP did not answer before OpenWork stopped waiting at its deadline.",
+        summary: "Den sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
       }
     }
     return {
       status: "failed",
       layer: "network",
-      summary: "OpenWork sent tools/call but did not receive an HTTP response from the remote MCP.",
+      summary: "Den started tools/call but did not capture an HTTP response. This does not prove the remote MCP caused the failure.",
     }
   }
   if (input.inspection.response.status < 200 || input.inspection.response.status >= 300) {
     return {
       status: "failed",
       layer: "remote_http",
-      summary: `The remote MCP returned HTTP ${input.inspection.response.status} before the tool completed.`,
+      summary: `The remote MCP returned HTTP ${input.inspection.response.status}.`,
     }
   }
   return {
     status: "failed",
     layer: "mcp_tool",
-    summary: input.diagnostic?.phase === "MCP_TOOL_EXECUTION" || input.diagnostic?.phase === "PROVIDER_EXECUTION"
-      ? "The remote MCP answered, but the MCP tool result reported a provider or tool failure."
+    summary: input.diagnostic?.phase === "PROVIDER_AUTHORIZATION" || input.diagnostic?.phase === "PROVIDER_EXECUTION"
+      ? "The remote MCP responded, but the downstream provider rejected the operation."
+      : input.diagnostic?.phase === "MCP_TOOL_EXECUTION"
+        ? "The remote MCP responded, but the MCP tool returned an error."
       : "The remote MCP answered, but OpenWork could not accept the MCP response as a successful tool result.",
   }
 }

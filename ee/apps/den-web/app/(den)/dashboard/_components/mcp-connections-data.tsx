@@ -3,6 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import {
+  type ExternalMcpDiagnostic,
+  parseExternalMcpDiagnostic,
+} from "./mcp-tool-error-attribution";
 
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
 
@@ -112,11 +116,17 @@ export type ExternalMcpToolCallInspection = {
 
 export class ExternalMcpToolRunError extends Error {
   readonly inspection: ExternalMcpToolCallInspection | null;
+  readonly diagnostic: ExternalMcpDiagnostic | null;
 
-  constructor(message: string, inspection: ExternalMcpToolCallInspection | null) {
+  constructor(
+    message: string,
+    inspection: ExternalMcpToolCallInspection | null,
+    diagnostic: ExternalMcpDiagnostic | null,
+  ) {
     super(message);
     this.name = "ExternalMcpToolRunError";
     this.inspection = inspection;
+    this.diagnostic = diagnostic;
   }
 }
 
@@ -199,6 +209,7 @@ export function useRunMcpConnectionTool(connectionId: string) {
         throw new ExternalMcpToolRunError(
           requestError.message,
           isRecord(payload) ? parseToolCallInspection(payload.inspection) : null,
+          isRecord(payload) ? parseExternalMcpDiagnostic(payload.diagnostic) : null,
         );
       }
       if (
