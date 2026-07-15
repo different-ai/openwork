@@ -207,10 +207,6 @@ export type DenOrgEntitlements = {
 export type DenOrgCapabilities = {
   installLinks: boolean;
   mcpConnections: boolean;
-  externalMcpEngine: {
-    effective: "enterprise" | "legacy";
-    source: "org" | "default";
-  };
 };
 
 export type DenOrganizationMetadata = {
@@ -812,26 +808,12 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
 
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   if (!isRecord(value)) {
-    return {
-      installLinks: false,
-      mcpConnections: false,
-      externalMcpEngine: { effective: "legacy", source: "default" },
-    };
+    return { installLinks: false, mcpConnections: false };
   }
-
-  const externalMcpEngine: DenOrgCapabilities["externalMcpEngine"] = isRecord(value.externalMcpEngine)
-    && (value.externalMcpEngine.effective === "enterprise" || value.externalMcpEngine.effective === "legacy")
-    && (value.externalMcpEngine.source === "org" || value.externalMcpEngine.source === "default")
-    ? {
-        effective: value.externalMcpEngine.effective,
-        source: value.externalMcpEngine.source,
-      }
-    : { effective: "legacy", source: "default" };
 
   return {
     installLinks: value.installLinks === true,
     mcpConnections: value.mcpConnections === true,
-    externalMcpEngine,
   };
 }
 

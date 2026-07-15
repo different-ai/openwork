@@ -62,7 +62,6 @@ export type ExternalMcpConnection = {
   oauthRegistrationSource?: "pre-registered" | "client-metadata" | "dynamic" | null;
   authorizationServerIssuer?: string | null;
   requestedScopes?: string[];
-  oauthMigrationStatus?: "current" | "legacy_manual_client" | "unclassified" | null;
 };
 
 export type McpRequirementsDiscovery = {
@@ -479,54 +478,6 @@ export function useDiscoverMcpConnectionRequirements() {
       }
       return payload as McpRequirementsDiscovery;
     },
-  });
-}
-
-export function useMigrateMcpConnectionCallback() {
-  const queryClient = useQueryClient();
-  const { orgId, runReauthableAction } = useOrgDashboard();
-  return useMutation({
-    mutationFn: async (connectionId: string): Promise<ExternalMcpConnection> => {
-      let migrated: ExternalMcpConnection | null = null;
-      await runReauthableAction("migrate-mcp-oauth-callback", async () => {
-        const { response, payload } = await requestJson(
-          `/v1/mcp-connections/${encodeURIComponent(connectionId)}/oauth/use-shared-callback`,
-          { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
-          20000,
-        );
-        if (!response.ok) {
-          throw getRequestError(payload, response, `Failed to update the MCP callback (${response.status}).`);
-        }
-        migrated = payload as ExternalMcpConnection;
-      });
-      if (!migrated) throw new Error("MCP callback migration response was incomplete.");
-      return migrated;
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
-  });
-}
-
-export function useRevertMcpConnectionCallback() {
-  const queryClient = useQueryClient();
-  const { orgId, runReauthableAction } = useOrgDashboard();
-  return useMutation({
-    mutationFn: async (connectionId: string): Promise<ExternalMcpConnection> => {
-      let reverted: ExternalMcpConnection | null = null;
-      await runReauthableAction("revert-mcp-oauth-callback", async () => {
-        const { response, payload } = await requestJson(
-          `/v1/mcp-connections/${encodeURIComponent(connectionId)}/oauth/revert-shared-callback`,
-          { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
-          20000,
-        );
-        if (!response.ok) {
-          throw getRequestError(payload, response, `Failed to restore the previous MCP callback (${response.status}).`);
-        }
-        reverted = payload as ExternalMcpConnection;
-      });
-      if (!reverted) throw new Error("MCP callback rollback response was incomplete.");
-      return reverted;
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
   });
 }
 

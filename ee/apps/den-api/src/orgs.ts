@@ -990,7 +990,6 @@ export async function updateOrganizationSettings(input: {
   brandLogoAsset?: ManagedBrandAssetMetadata | null
   brandIconAsset?: ManagedBrandAssetMetadata | null
   brandAccentColor?: string | null
-  externalMcpEngine?: "enterprise" | "legacy" | null
 }) {
   const nextName = typeof input.name === "string" ? input.name.trim() : null
   if (typeof input.name === "string" && !nextName) {
@@ -1004,7 +1003,7 @@ export async function updateOrganizationSettings(input: {
   if (input.allowedEmailDomains !== undefined) {
     updates.allowedEmailDomains = normalizeAllowedEmailDomains(input.allowedEmailDomains).domains
   }
-  if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined || input.externalMcpEngine !== undefined) {
+  if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined) {
     const rows = await db
       .select({ metadata: OrganizationTable.metadata })
       .from(OrganizationTable)
@@ -1083,14 +1082,6 @@ export async function updateOrganizationSettings(input: {
         delete nextMetadata.brandAccentColor
       } else {
         nextMetadata.brandAccentColor = input.brandAccentColor
-      }
-    }
-
-    if (input.externalMcpEngine !== undefined) {
-      if (input.externalMcpEngine === null) {
-        delete nextMetadata.externalMcpEngine
-      } else {
-        nextMetadata.externalMcpEngine = input.externalMcpEngine
       }
     }
 

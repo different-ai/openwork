@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import {
-  externalMcpEngineConfigurationForOrganization,
-  externalMcpEngineForOrganization,
-  memberFacingMcpConnectionsEnabled,
-} from "../src/capability-sources/external-mcp-rollout.js"
+import { memberFacingMcpConnectionsEnabled } from "../src/capability-sources/external-mcp-rollout.js"
 
 describe("memberFacingMcpConnectionsEnabled", () => {
   test("gating disabled: enabled for every org, regardless of metadata", () => {
@@ -79,31 +75,5 @@ describe("memberFacingMcpConnectionsEnabled", () => {
         { gatingEnabled: true },
       ),
     ).toBe(true)
-  })
-})
-
-describe("externalMcpEngineForOrganization", () => {
-  test("uses the deployment default only when the org has no valid override", () => {
-    expect(externalMcpEngineConfigurationForOrganization(undefined, { envDefault: false })).toEqual({
-      effective: "legacy",
-      source: "default",
-    })
-    expect(externalMcpEngineConfigurationForOrganization("{}", { envDefault: true })).toEqual({
-      effective: "enterprise",
-      source: "default",
-    })
-    expect(externalMcpEngineConfigurationForOrganization({ externalMcpEngine: "invalid" }, { envDefault: true })).toEqual({
-      effective: "enterprise",
-      source: "default",
-    })
-  })
-
-  test("lets either org value override either deployment default", () => {
-    expect(externalMcpEngineForOrganization({ externalMcpEngine: "enterprise" }, { envDefault: false })).toBe("enterprise")
-    expect(externalMcpEngineForOrganization(JSON.stringify({ externalMcpEngine: "legacy" }), { envDefault: true })).toBe("legacy")
-    expect(externalMcpEngineConfigurationForOrganization({ externalMcpEngine: "legacy" }, { envDefault: true })).toEqual({
-      effective: "legacy",
-      source: "org",
-    })
   })
 })

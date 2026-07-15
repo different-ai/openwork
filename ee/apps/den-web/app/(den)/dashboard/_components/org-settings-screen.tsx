@@ -99,8 +99,6 @@ export function OrgSettingsScreen() {
   const [domainRestrictionsEnabled, setDomainRestrictionsEnabled] =
     useState(false);
   const [requireSsoEnabled, setRequireSsoEnabled] = useState(false);
-  const [externalMcpEngineChoice, setExternalMcpEngineChoice] = useState<"default" | "enterprise" | "legacy">("default");
-  const [externalMcpEngineDirty, setExternalMcpEngineDirty] = useState(false);
   const [domainEditModeEnabled, setDomainEditModeEnabled] = useState(false);
   const [desktopVersionOptions, setDesktopVersionOptions] = useState<string[]>(
     [],
@@ -164,12 +162,6 @@ export function OrgSettingsScreen() {
       (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
     );
     setRequireSsoEnabled(getRequireSsoFromMetadata(orgContext.organization.metadata));
-    setExternalMcpEngineChoice(
-      orgContext.capabilities.externalMcpEngine.source === "default"
-        ? "default"
-        : orgContext.capabilities.externalMcpEngine.effective,
-    );
-    setExternalMcpEngineDirty(false);
     setDomainEditModeEnabled(false);
   }, [orgContext]);
 
@@ -325,9 +317,6 @@ export function OrgSettingsScreen() {
             }
           : {}),
         requireSso: requireSsoEnabled,
-        ...(externalMcpEngineDirty
-          ? { externalMcpEngine: externalMcpEngineChoice === "default" ? null : externalMcpEngineChoice }
-          : {}),
       });
       setDomainEditModeEnabled(false);
     } catch (error) {
@@ -519,65 +508,6 @@ export function OrgSettingsScreen() {
               disabled={!isOwner}
               onChange={setRequireSsoEnabled}
             />
-          </div>
-        </DenCard>
-
-        <DenCard size="spacious" className="grid gap-6">
-          <div className="grid gap-2">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              OpenWork Connect
-            </p>
-            <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
-              MCP OAuth engine
-            </h2>
-            <p className="text-[14px] text-gray-500">
-              Keep the previous OAuth flow for compatibility, or opt this organization into the new enterprise MCP client.
-            </p>
-          </div>
-
-          <div className="grid gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4">
-            <div className="grid gap-1">
-              <p className="text-[15px] font-medium text-gray-900">
-                OAuth client policy
-                {externalMcpEngineChoice === "default" ? (
-                  <span className="ml-2 text-[11px] font-normal text-gray-400">(deployment default)</span>
-                ) : null}
-              </p>
-              <p className="text-[13px] text-gray-500">
-                Choose an organization override, or clear it so this workspace follows the deployment policy.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2" role="group" aria-label="MCP OAuth engine policy">
-              {([
-                ["default", "Follow deployment default"],
-                ["legacy", "Previous flow"],
-                ["enterprise", "Hardened client (new)"],
-              ] as const).map(([value, label]) => (
-                <DenButton
-                  key={value}
-                  type="button"
-                  size="sm"
-                  variant={externalMcpEngineChoice === value ? "primary" : "secondary"}
-                  aria-pressed={externalMcpEngineChoice === value}
-                  disabled={!isOwner}
-                  onClick={() => {
-                    setExternalMcpEngineChoice(value);
-                    setExternalMcpEngineDirty(true);
-                  }}
-                >
-                  {label}
-                </DenButton>
-              ))}
-            </div>
-            <p className="text-[12px] text-gray-500">
-              {externalMcpEngineChoice === "default" && externalMcpEngineDirty
-                ? "The deployment default will be resolved after you save."
-                : externalMcpEngineChoice === "default"
-                  ? `Currently resolves to the ${orgContext.capabilities.externalMcpEngine.effective === "enterprise" ? "hardened client" : "previous flow"}.`
-                  : externalMcpEngineChoice === "enterprise"
-                    ? "Uses the hardened enterprise MCP client and shared callback flow."
-                    : "Uses the previous OAuth flow with per-connection callbacks and provider-advertised scope fallback."}
-            </p>
           </div>
         </DenCard>
 

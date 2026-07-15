@@ -12,41 +12,31 @@ deployment. OpenWork derives both public OAuth URLs exclusively from this
 configured origin; request host headers cannot replace it.
 
 - Shared callback: `<DEN_API_PUBLIC_URL>/v1/mcp-connections/oauth/callback`
+- Existing connection callback: `<DEN_API_PUBLIC_URL>/v1/mcp-connections/<connection-id>/connect/callback`
 - Client metadata document: `<DEN_API_PUBLIC_URL>/oauth/client-metadata.json`
 
 The client metadata document is public, contains no secrets, and describes
 OpenWork as a web OAuth client. Each self-hosted Den deployment has its own
 callback and metadata URL.
 
-## OAuth engine selection
+## OAuth runtime and callback compatibility
 
-OpenWork keeps both Den-managed OAuth implementations available:
+Den uses `@openwork/enterprise-mcp-client` for discovery, authorization,
+refresh, tool discovery, and tool calls. There is no deployment or workspace
+runtime switch.
 
-- **Previous flow (default):** the established MCP SDK client, including
-  per-connection callbacks for untouched legacy connections.
-- **Hardened client (opt-in):** `@openwork/enterprise-mcp-client`, including
-  state-bound transaction persistence and the shared callback contract.
-
-Workspace owners can opt an organization into the hardened client under
-**Org settings → MCP OAuth engine**. The organization setting takes precedence
-over `DEN_ENABLE_ENTERPRISE_MCP_CLIENT`; an unset organization follows that
-deployment value. The environment value defaults to `false`, so a deployment
-must explicitly opt in before the hardened client becomes the default for
-organizations without an override. The effective engine and whether it comes
-from the organization or deployment default are returned to the dashboard, but
-the environment variable name is never exposed to the browser.
-
-> **Deployment upgrade note:** A hosted Den deployment that already relies on
-> the hardened client must explicitly set
-> `DEN_ENABLE_ENTERPRISE_MCP_CLIENT=true` before upgrading. Leaving it unset
-> now selects the previous flow for every organization without its own
-> override.
+New OAuth connections use the deployment-wide shared callback. An existing
+connection keeps the callback mode already stored on its row, including the
+older per-connection callback. Reconnecting therefore uses the exact redirect
+URI that was registered with the provider and does not rewrite credentials,
+tokens, access grants, or plugin bindings.
 
 ## Add a connection
 
-In Cloud → Connections, enter the MCP server URL and select **Discover
-requirements**. Discovery is side-effect free: it does not create a connection,
-register an OAuth client, open a browser, or save credentials. It reports MCP
+In Cloud → Connections, enter the MCP server URL. OpenWork automatically runs
+discovery after the URL settles; there is no separate discovery step. A failed
+check shows its error and a retry action. Discovery is side-effect free: it does
+not create a connection, register an OAuth client, open a browser, or save credentials. It reports MCP
 initialization, RFC 9728 protected-resource metadata, authorization servers,
 PKCE and refresh support, registration choices, scopes, visible tools, and any
 network or administrator work that standards metadata cannot prove.
@@ -66,36 +56,19 @@ with providers that reject scope-less authorization requests. A configured
 scope set still takes precedence. `offline_access` is requested only when both
 that scope and refresh-token support are advertised.
 
-## Callback migration
+## Callback routing
 
-New OAuth connections use the previous per-connection callback by default.
-Organizations that explicitly enable the enterprise MCP engine create new
-connections with the deployment-wide shared callback. Existing
-dynamically registered clients are cleared and registered again against the
-shared callback on their next explicit authorization. Existing manually
-registered clients keep their connection-specific legacy callback until an
-administrator copies the shared URL, adds it to the external OAuth application,
-confirms that step, and selects **Reconnect using shared callback**. That action selects
-the shared callback, clears old tokens and pending authorizations, and starts a
-new authorization while preserving the manually entered client ID, client
-secret, access grants, and plugin bindings.
+The callback mode is persisted and bound into signed OAuth state. The shared
+route accepts only shared-callback transactions; the per-connection route
+accepts only transactions for that connection whose signed mode is
+`legacy-v1`. Version-one transactions already in flight remain bound to the
+legacy verifier for their original ten-minute lifetime.
 
-For a pre-registered client, **Revert to previous callback** restores the
-connection-specific callback. It clears tokens and pending authorizations,
-rewrites the stored public redirect URI while preserving the manual client and
-secret, and removes SDK-created registrations so they can be registered again.
-Keep the workspace on the previous OAuth engine before reconnecting a reverted
-connection. Migration and reversion both require an administrator with a fresh
-session and preserve access grants, plugin bindings, and other members' saved
-credentials.
-
-The legacy callback route accepts version-two transactions only when their
-signed callback mode and connection binding both select `legacy-v1`.
-Version-one authorization transactions remain statically bound to the previous
-client for their original ten-minute lifetime.
-Deleting and recreating a connection remains a recovery option, but it can
-remove access grants, per-member authorization state, and plugin or marketplace
-bindings, so use the guided reconnect flow first.
+The dashboard shows the exact current callback for each connection and the
+deployment client metadata URL. It does not offer migration or rollback
+actions. Deleting and recreating a connection creates a new shared-callback
+registration and may remove access grants, per-member authorization state, and
+plugin or marketplace bindings.
 
 Changing the MCP server identity or selected issuer clears tokens and pending
 authorization state. An issuer change also clears the saved client registration
@@ -116,10 +89,9 @@ so a secret can never be sent to a newly selected issuer.
 - **Provider identity/verification page after authorize**: leave requested
   scopes empty only when the provider advertises the complete workable set, or
   edit the connection's requested scopes and reconnect.
-- **`redirect_uri did not match` after shared-callback migration**: add the
-  shared callback to the provider while keeping the previous callback, then
-  reconnect. If the provider cannot be changed yet, revert the connection and
-  use the previous OAuth engine.
+- **`redirect_uri did not match`**: copy the exact current callback shown on
+  the connection into the provider. Some providers take a short time to
+  propagate callback changes before authorization succeeds.
 
 OAuth logs and support data use phase/error codes and omit tokens, secrets,
 authorization codes, signed state, PKCE verifiers, and URL query strings.

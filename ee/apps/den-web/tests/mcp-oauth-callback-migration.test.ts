@@ -9,25 +9,20 @@ const dataPath = fileURLToPath(
   new URL("../app/(den)/dashboard/_components/mcp-connections-data.tsx", import.meta.url),
 )
 
-describe("MCP OAuth callback migration UI contract", () => {
-  test("offers a confirmed shared callback migration and explicit rollback", () => {
+describe("MCP OAuth callback compatibility UI contract", () => {
+  test("shows only the callback information needed to configure OAuth", () => {
     const screen = readFileSync(screenPath, "utf8")
     const data = readFileSync(dataPath, "utf8")
 
-    expect(screen).toContain("Callback update required")
-    expect(screen).toContain("Copy the new shared callback")
-    expect(screen).toContain("Add it to the external OAuth application")
-    expect(screen).toContain("Reconnect using shared callback")
-    expect(screen).toContain("I added the shared callback to the OAuth app")
-    expect(screen).toContain("Shared callback awaiting authorization")
-    expect(screen).toContain("callbackUpdateRequired ? onMigrateCallback : onConnect")
-    expect(screen).toContain("[connection.id]")
-    expect(screen).toContain("onClick={automaticCallbackMigrationPending ? onMigrateCallback : onConnect}")
-    expect(screen).toContain("Revert to previous callback")
-    expect(data).toContain("/oauth/use-shared-callback")
-    expect(data).toContain("/oauth/revert-shared-callback")
-
-    expect(data).not.toContain("oauthCallbackMode:")
+    expect(screen).toContain("Current callback:")
+    expect(screen).toContain("Client metadata:")
+    expect(screen).toContain("onClick={onConnect}")
+    expect(screen).not.toContain("Callback update required")
+    expect(screen).not.toContain("Reconnect using shared callback")
+    expect(screen).not.toContain("Revert to previous callback")
+    expect(data).not.toContain("/oauth/use-shared-callback")
+    expect(data).not.toContain("/oauth/revert-shared-callback")
+    expect(data).not.toContain("oauthMigrationStatus")
   })
 
   test("edits requested scopes without forcing an immediate reconnect", () => {
@@ -38,11 +33,10 @@ describe("MCP OAuth callback migration UI contract", () => {
     expect(screen).toContain("Scope changes apply on next connect — reconnect to re-authorize.")
   })
 
-  test("keeps deletion as a warned fallback instead of the primary migration path", () => {
+  test("warns before deleting a connection", () => {
     const screen = readFileSync(screenPath, "utf8")
 
     expect(screen).toContain("This can remove access grants, per-member authorization state, and plugin or marketplace bindings")
-    expect(screen).toContain("Reconnecting with the shared callback is the safer migration path")
     expect(screen).toContain("window.confirm")
   })
 

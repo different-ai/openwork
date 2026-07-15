@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, Loader2, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, Loader2, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -43,8 +43,6 @@ import {
   useMcpConnectionPresets,
   useMcpConnections,
   useMcpConnectionTools,
-  useMigrateMcpConnectionCallback,
-  useRevertMcpConnectionCallback,
   useNativeProviderClient,
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
@@ -56,7 +54,17 @@ import { TelegramDialog } from "./telegram-dialog";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
+const MCP_REQUIREMENTS_DISCOVERY_DELAY_MS = 500;
 const MCP_TOOL_PAGE_SIZE = 50;
+
+function isDiscoverableMcpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
 
 const GOOGLE_WORKSPACE_DEFAULT_FEATURES = ["calendarRead", "gmailDraft", "driveFile"];
 
@@ -215,8 +223,6 @@ export function McpConnectionsScreen() {
   const createConnection = useCreateMcpConnection();
   const updateConnection = useUpdateMcpConnection();
   const startOAuth = useStartMcpConnectionOAuth();
-  const migrateCallback = useMigrateMcpConnectionCallback();
-  const revertCallback = useRevertMcpConnectionCallback();
   const deleteConnection = useDeleteMcpConnection();
   const saveNativeClient = useSaveNativeProviderClient();
 
@@ -326,40 +332,9 @@ export function McpConnectionsScreen() {
     return updated;
   }
 
-  async function handleMigrateCallback(connection: ExternalMcpConnection) {
-    setConnectionActionError(null);
-    setConnectionActionNotice(null);
-    const authorizationWindow = openMcpAuthorizationWindow();
-    try {
-      const migrated = await migrateCallback.mutateAsync(connection.id);
-      setConnectionActionNotice(`${migrated.name} now uses the deployment-wide callback. You can restore its previous callback if the provider is not ready.`);
-      await handleConnectOAuth(connection.id, authorizationWindow);
-    } catch (migrationError) {
-      authorizationWindow.close();
-      setConnectionActionError({
-        connectionId: connection.id,
-        message: migrationError instanceof Error ? migrationError.message : "Failed to migrate the MCP callback.",
-      });
-    }
-  }
-
-  async function handleRevertCallback(connection: ExternalMcpConnection) {
-    setConnectionActionError(null);
-    setConnectionActionNotice(null);
-    try {
-      const reverted = await revertCallback.mutateAsync(connection.id);
-      setConnectionActionNotice(`${reverted.name} now uses its previous per-connection callback. Keep the MCP OAuth engine on the previous flow before reconnecting.`);
-    } catch (revertError) {
-      setConnectionActionError({
-        connectionId: connection.id,
-        message: revertError instanceof Error ? revertError.message : "Failed to restore the previous MCP callback.",
-      });
-    }
-  }
-
   function handleRemove(connection: ExternalMcpConnection) {
     const confirmed = window.confirm(
-      `Delete ${connection.name}? This can remove access grants, per-member authorization state, and plugin or marketplace bindings. Reconnecting with the shared callback is the safer migration path.`,
+      `Delete ${connection.name}? This can remove access grants, per-member authorization state, and plugin or marketplace bindings.`,
     );
     if (confirmed) deleteConnection.mutate(connection.id);
   }
@@ -540,7 +515,6 @@ export function McpConnectionsScreen() {
             <ConnectionRow
               key={connection.id}
               connection={connection}
-              externalMcpEngine={orgContext?.capabilities.externalMcpEngine.effective ?? "legacy"}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
@@ -553,10 +527,6 @@ export function McpConnectionsScreen() {
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
               toolsOpen={toolsConnectionId === connection.id}
               onToggleTools={() => setToolsConnectionId((current) => current === connection.id ? null : connection.id)}
-              migratingCallback={migrateCallback.isPending && migrateCallback.variables === connection.id}
-              onMigrateCallback={() => void handleMigrateCallback(connection)}
-              revertingCallback={revertCallback.isPending && revertCallback.variables === connection.id}
-              onRevertCallback={() => void handleRevertCallback(connection)}
             />
           ))}
         </div>
@@ -1180,7 +1150,6 @@ function accessSummaryLabel(connection: ExternalMcpConnection): string {
 
 function ConnectionRow({
   connection,
-  externalMcpEngine,
   polling,
   connecting,
   errorMessage,
@@ -1190,13 +1159,8 @@ function ConnectionRow({
   removing,
   toolsOpen,
   onToggleTools,
-  migratingCallback,
-  onMigrateCallback,
-  revertingCallback,
-  onRevertCallback,
 }: {
   connection: ExternalMcpConnection;
-  externalMcpEngine: "enterprise" | "legacy";
   polling: boolean;
   connecting: boolean;
   errorMessage: string | null;
@@ -1206,33 +1170,14 @@ function ConnectionRow({
   removing: boolean;
   toolsOpen: boolean;
   onToggleTools: () => void;
-  migratingCallback: boolean;
-  onMigrateCallback: () => void;
-  revertingCallback: boolean;
-  onRevertCallback: () => void;
 }) {
-  const [copiedOAuthUrl, setCopiedOAuthUrl] = useState<"callback" | "shared-callback" | "metadata" | null>(null);
-  const [sharedCallbackConfirmed, setSharedCallbackConfirmed] = useState(false);
+  const [copiedOAuthUrl, setCopiedOAuthUrl] = useState<"callback" | "metadata" | null>(null);
   const isPerMember = connection.credentialMode === "per_member";
-  const callbackUpdateRequired = externalMcpEngine === "enterprise" && connection.oauthMigrationStatus === "legacy_manual_client";
-  const automaticCallbackMigrationPending = externalMcpEngine === "enterprise" && connection.oauthMigrationStatus === "unclassified";
-  const sharedCallbackAwaitingAuthorization = externalMcpEngine === "enterprise"
-    && connection.authType === "oauth"
-    && connection.oauthCallbackMode === "shared-v1"
-    && connection.oauthRegistrationSource === "pre-registered"
-    && (isPerMember ? !connection.connectedForMe : !connection.connected);
-  const showSharedCallbackSetup = callbackUpdateRequired || sharedCallbackAwaitingAuthorization;
   const needsOAuthConnect = connection.authType === "oauth"
-    && (!connection.connected || automaticCallbackMigrationPending)
-    && !callbackUpdateRequired
-    && !sharedCallbackAwaitingAuthorization
-    && (!isPerMember || automaticCallbackMigrationPending);
+    && !connection.connected
+    && !isPerMember;
 
   const canInspectTools = connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe;
-
-  useEffect(() => {
-    setSharedCallbackConfirmed(false);
-  }, [connection.id]);
 
   return (
     <div>
@@ -1273,8 +1218,6 @@ function ConnectionRow({
             </p>
             {connection.authType === "oauth" ? (
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
-                <span>{connection.oauthCallbackMode === "shared-v1" ? "Shared callback" : callbackUpdateRequired ? "Callback update required" : automaticCallbackMigrationPending ? "Callback migration pending" : "Previous callback"}</span>
-                <span>Registration: {connection.oauthRegistrationSource ?? "not registered"}</span>
                 {connection.authorizationServerIssuer ? <span className="max-w-full truncate">Issuer: {connection.authorizationServerIssuer}</span> : null}
                 {(connection.requestedScopes?.length ?? 0) > 0 ? <span>Scopes: {connection.requestedScopes?.join(", ")}</span> : null}
               </div>
@@ -1309,10 +1252,10 @@ function ConnectionRow({
             <DenButton
               variant="secondary"
               size="sm"
-              loading={connecting || polling || (automaticCallbackMigrationPending && migratingCallback)}
-              onClick={automaticCallbackMigrationPending ? onMigrateCallback : onConnect}
+              loading={connecting || polling}
+              onClick={onConnect}
             >
-              {automaticCallbackMigrationPending ? "Reconnect with shared callback" : "Connect"}
+              Connect
             </DenButton>
           ) : null}
           <DenButton
@@ -1327,42 +1270,6 @@ function ConnectionRow({
           </DenButton>
         </div>
       </div>
-      {showSharedCallbackSetup && connection.oauthSharedCallbackUrl ? (
-        <div className="border-t border-amber-200 bg-amber-50 px-6 py-4 text-[12px] leading-5 text-amber-950" data-testid={`mcp-callback-update-required-${connection.id}`}>
-          <p className="font-semibold">{callbackUpdateRequired ? "Callback update required" : "Shared callback awaiting authorization"}</p>
-          <ol className="mt-2 list-decimal space-y-2 pl-5">
-            <li>
-              Copy the new shared callback.
-              <div className="mt-1 flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-2">
-                <code className="min-w-0 break-all text-[11px]">{connection.oauthSharedCallbackUrl}</code>
-                <button
-                  type="button"
-                  className="shrink-0 font-medium underline"
-                  onClick={() => void copyTextToClipboard(connection.oauthSharedCallbackUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("shared-callback"))}
-                >
-                  {copiedOAuthUrl === "shared-callback" ? "Copied" : "Copy"}
-                </button>
-              </div>
-            </li>
-            <li>{callbackUpdateRequired ? "Add it to the external OAuth application without removing the old callback yet." : "Confirm this callback is still allowlisted in the external OAuth application."}</li>
-            <li>
-              <label className="mb-2 flex items-start gap-2 text-[11px] text-amber-900">
-                <input
-                  type="checkbox"
-                  checked={sharedCallbackConfirmed}
-                  onChange={(event) => setSharedCallbackConfirmed(event.target.checked)}
-                  className="mt-1"
-                />
-                <span>I added the shared callback to the OAuth app</span>
-              </label>
-              <DenButton variant="secondary" size="sm" loading={migratingCallback || connecting || polling} disabled={!sharedCallbackConfirmed} onClick={callbackUpdateRequired ? onMigrateCallback : onConnect}>
-                Reconnect using shared callback
-              </DenButton>
-              <p className="mt-1 text-[11px] text-amber-800">OpenWork preserves your manual client ID, secret, and access grants. You can restore the previous callback if the provider is not ready.</p>
-            </li>
-          </ol>
-        </div>
-      ) : null}
       {connection.authType === "oauth" && (connection.oauthCallbackUrl || connection.oauthClientMetadataUrl) ? (
         <div className="border-t border-gray-100 bg-gray-50/70 px-6 py-3 text-[11px] text-gray-600">
           {connection.oauthCallbackUrl ? (
@@ -1387,14 +1294,6 @@ function ConnectionRow({
               >
                 {copiedOAuthUrl === "metadata" ? "Copied" : "Copy"}
               </button>
-            </div>
-          ) : null}
-          {connection.oauthCallbackMode === "shared-v1" && connection.oauthRegistrationSource === "pre-registered" ? (
-            <div className="mt-2 border-t border-gray-200 pt-2">
-              <DenButton variant="secondary" size="sm" loading={revertingCallback} onClick={onRevertCallback}>
-                Revert to previous callback
-              </DenButton>
-              <p className="mt-1 text-[10px] text-gray-500">Use this recovery action when the provider still allowlists only the per-connection callback.</p>
             </div>
           ) : null}
         </div>
@@ -2020,11 +1919,14 @@ function AddConnectionDialog({
   const [copiedCallback, setCopiedCallback] = useState(false);
   const [copiedClientMetadata, setCopiedClientMetadata] = useState(false);
   const [requirements, setRequirements] = useState<McpRequirementsDiscovery | null>(null);
+  const [discoveryState, setDiscoveryState] = useState<"idle" | "waiting" | "checking" | "ready" | "error">("idle");
+  const [discoveryError, setDiscoveryError] = useState<unknown>(null);
   const [authorizationServerIssuer, setAuthorizationServerIssuer] = useState("");
   const [requestedScopes, setRequestedScopes] = useState<string[]>([]);
   const [accessMode, setAccessMode] = useState<AddConnectionAccessMode>("everyone");
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const discoveryRequestId = useRef(0);
 
   useEffect(() => {
     if (!open) return;
@@ -2041,6 +1943,9 @@ function AddConnectionDialog({
     setCopiedCallback(false);
     setCopiedClientMetadata(false);
     setRequirements(null);
+    setDiscoveryState("idle");
+    setDiscoveryError(null);
+    discoveryRequestId.current += 1;
     setAuthorizationServerIssuer("");
     setRequestedScopes([]);
     discoverRequirements.reset();
@@ -2072,17 +1977,63 @@ function AddConnectionDialog({
     : { orgWide: false, memberIds: accessMode === "people" ? selectedMemberIds : [], teamIds: accessMode === "teams" ? selectedTeamIds : [] };
   const accessIncomplete = accessMode === "teams" ? selectedTeamIds.length === 0 : accessMode === "people" ? selectedMemberIds.length === 0 : false;
 
-  async function discover() {
-    const result = await discoverRequirements.mutateAsync(url.trim());
+  function applyDiscoveredRequirements(result: McpRequirementsDiscovery) {
     setRequirements(result);
     if (result.authentication.kind === "none") setAuthType("none");
     else if (result.authentication.kind === "oauth") setAuthType("oauth");
     const servers = result.authentication.authorizationServers;
     setAuthorizationServerIssuer(servers.length === 1 ? servers[0].issuer : "");
     setRequestedScopes(result.authentication.recommendedScopes);
-    if (result.authentication.recommendedRegistrationMethod === "pre_registered") {
-      setShowOAuthClient(true);
+    setShowOAuthClient(Boolean(preset?.requiresOAuthClient) || result.authentication.recommendedRegistrationMethod === "pre_registered");
+  }
+
+  async function discover(targetUrl: string, requestId: number) {
+    setDiscoveryState("checking");
+    setDiscoveryError(null);
+    try {
+      const result = await discoverRequirements.mutateAsync(targetUrl);
+      if (discoveryRequestId.current !== requestId) return;
+      applyDiscoveredRequirements(result);
+      setDiscoveryState("ready");
+    } catch (discoveryFailure) {
+      if (discoveryRequestId.current !== requestId) return;
+      setDiscoveryError(discoveryFailure);
+      setDiscoveryState("error");
     }
+  }
+
+  useEffect(() => {
+    const requestId = discoveryRequestId.current + 1;
+    discoveryRequestId.current = requestId;
+    if (!open || oauthCallback) {
+      setDiscoveryState("idle");
+      return;
+    }
+
+    const targetUrl = url.trim();
+    setRequirements(null);
+    setAuthorizationServerIssuer("");
+    setRequestedScopes([]);
+    setDiscoveryError(null);
+
+    if (!isDiscoverableMcpUrl(targetUrl)) {
+      setDiscoveryState("idle");
+      return;
+    }
+
+    setDiscoveryState("waiting");
+    const timer = window.setTimeout(() => {
+      void discover(targetUrl, requestId);
+    }, MCP_REQUIREMENTS_DISCOVERY_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [open, oauthCallback, url]);
+
+  function retryDiscovery() {
+    const targetUrl = url.trim();
+    if (!isDiscoverableMcpUrl(targetUrl)) return;
+    const requestId = discoveryRequestId.current + 1;
+    discoveryRequestId.current = requestId;
+    void discover(targetUrl, requestId);
   }
 
   async function submit() {
@@ -2146,29 +2097,46 @@ function AddConnectionDialog({
         {oauthCallback ? (
           <>
             <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-              Almost done — add this callback URL to your OAuth app
+              Almost done — finish your OAuth app setup
             </h2>
             <p className="mt-2 text-[13px] leading-6 text-gray-600">
-              Copy this exact deployment-wide URL into your pre-registered app. Then close this dialog, choose Edit on the connection, and add the client ID and secret before anyone connects.
+              Choose the setup method your provider supports. Then close this dialog, choose Edit on the connection, and add credentials if your provider issued them.
             </p>
-            <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
-              <p className="break-all font-mono text-[12px] leading-5 text-gray-800">{oauthCallback}</p>
+            <div className="mt-4 flex items-start gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Callback URL — for pre-registered OAuth apps</p>
+                <p className="mt-1 text-[11px] leading-5 text-gray-600">Add this exact URL to providers such as Salesforce, then enter the provider's client ID and secret in OpenWork.</p>
+                <p className="mt-1 break-all font-mono text-[12px] leading-5 text-gray-800">{oauthCallback}</p>
+              </div>
+              <button
+                type="button"
+                onClick={copyOAuthCallback}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 shadow-sm transition-colors hover:border-gray-300 hover:text-gray-700"
+                aria-label="Copy callback URL"
+                title={copiedCallback ? "Copied" : "Copy callback URL"}
+              >
+                {copiedCallback ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+              </button>
             </div>
             {oauthClientMetadataUrl ? (
               <div className="mt-3 flex items-start gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
                 <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Client metadata URL</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Client metadata URL — for supported providers</p>
+                  <p className="mt-1 text-[11px] leading-5 text-gray-600">Give this URL to providers that support OAuth client metadata. They read the callback automatically, so do not paste this into a callback URL field.</p>
                   <p className="mt-1 break-all font-mono text-[12px] leading-5 text-gray-800">{oauthClientMetadataUrl}</p>
                 </div>
-                <DenButton variant="secondary" onClick={copyOAuthClientMetadata}>
-                  {copiedClientMetadata ? "Copied" : "Copy"}
-                </DenButton>
+                <button
+                  type="button"
+                  onClick={copyOAuthClientMetadata}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 shadow-sm transition-colors hover:border-gray-300 hover:text-gray-700"
+                  aria-label="Copy client metadata URL"
+                  title={copiedClientMetadata ? "Copied" : "Copy client metadata URL"}
+                >
+                  {copiedClientMetadata ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                </button>
               </div>
             ) : null}
-            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <DenButton variant="secondary" onClick={copyOAuthCallback}>
-                {copiedCallback ? "Copied" : "Copy"}
-              </DenButton>
+            <div className="mt-6 flex justify-end">
               <DenButton variant="primary" onClick={onClose}>
                 Done
               </DenButton>
@@ -2193,28 +2161,30 @@ function AddConnectionDialog({
             <DenInput
               value={url}
               onChange={(event) => {
+                discoveryRequestId.current += 1;
                 setUrl(event.target.value);
                 setRequirements(null);
+                setDiscoveryState("idle");
                 setAuthorizationServerIssuer("");
                 setRequestedScopes([]);
+                setDiscoveryError(null);
               }}
               placeholder="https://mcp.example.com/mcp"
               disabled={Boolean(preset)}
             />
-            <DenButton
-              className="mt-2"
-              variant="secondary"
-              size="sm"
-              loading={discoverRequirements.isPending}
-              disabled={!url.trim()}
-              onClick={() => void discover()}
-            >
-              Discover requirements
-            </DenButton>
-            {discoverRequirements.error ? (
-              <p className="mt-2 text-[12px] text-red-600" role="alert">
-                {discoverRequirements.error instanceof Error ? discoverRequirements.error.message : "Requirements discovery failed."}
+            {discoveryState === "waiting" || discoveryState === "checking" ? (
+              <p className="mt-2 flex items-center gap-2 text-[12px] text-gray-500" role="status">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Checking server requirements…
               </p>
+            ) : null}
+            {discoveryState === "error" ? (
+              <div className="mt-2 flex items-start justify-between gap-3 text-[12px] text-red-600" role="alert">
+                <p>{discoveryError instanceof Error ? discoveryError.message : "Requirements discovery failed."}</p>
+                <button type="button" className="shrink-0 font-medium underline underline-offset-2" onClick={retryDiscovery}>
+                  Retry
+                </button>
+              </div>
             ) : null}
           </div>
           {requirements ? (
@@ -2425,7 +2395,7 @@ function AddConnectionDialog({
           <DenButton
             variant="primary"
             loading={submitting}
-            disabled={!name.trim() || !url.trim() || (authType === "oauth" && (!requirements || (authorizationServers.length > 1 && !authorizationServerIssuer))) || (authType === "apikey" && !apiKey.trim()) || accessIncomplete}
+            disabled={!name.trim() || !url.trim() || !requirements || discoveryState !== "ready" || (authType === "oauth" && authorizationServers.length > 1 && !authorizationServerIssuer) || (authType === "apikey" && !apiKey.trim()) || accessIncomplete}
             onClick={() => void submit()}
           >
             {showOAuthClientFields ? "Create and show redirect URL" : "Add connection"}
