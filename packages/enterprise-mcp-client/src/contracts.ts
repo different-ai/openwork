@@ -3,6 +3,69 @@ import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprot
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import type { Tool } from "@modelcontextprotocol/sdk/types.js"
 
+export const MCP_CURRENT_PROTOCOL_VERSION = "2026-07-28"
+export const MCP_LEGACY_PROTOCOL_VERSION = "2025-11-25"
+
+export type McpSupportedProtocolVersion =
+  | typeof MCP_CURRENT_PROTOCOL_VERSION
+  | typeof MCP_LEGACY_PROTOCOL_VERSION
+
+export type McpProtocolPolicy =
+  | "auto"
+  | typeof MCP_CURRENT_PROTOCOL_VERSION
+  | typeof MCP_LEGACY_PROTOCOL_VERSION
+
+export type McpProtocolBinding = {
+  policy: McpProtocolPolicy
+  negotiatedVersion: McpSupportedProtocolVersion
+  serverName: string | null
+  serverVersion: string | null
+  capabilityHash: string
+  authorizationServerIssuer: string | null
+  establishedAt: string
+}
+
+export type McpProtocolWarning = {
+  code: string
+  message: string
+}
+
+export type McpProtocolStatus = {
+  policy: McpProtocolPolicy
+  negotiatedVersion: string | null
+  supportedVersions: string[]
+  currentCompatible: boolean
+  downgradeBlocked: boolean
+  serverInfo: {
+    name: string
+    version: string
+  } | null
+  capabilities: Record<string, unknown>
+  warnings: McpProtocolWarning[]
+}
+
+export type McpInputRequest = {
+  type: string
+  message?: string
+  schema?: unknown
+  [key: string]: unknown
+}
+
+export type McpCompleteResult<T> = {
+  resultType: "complete"
+  value: T
+}
+
+export type McpInputRequiredResult = {
+  resultType: "input_required"
+  requestState: unknown
+  inputRequests: Record<string, McpInputRequest>
+}
+
+export type McpNormalizedResult<T> =
+  | McpCompleteResult<T>
+  | McpInputRequiredResult
+
 /** Epoch milliseconds. The package never reads a database or environment clock. */
 export type EnterpriseMcpEpochMs = number
 

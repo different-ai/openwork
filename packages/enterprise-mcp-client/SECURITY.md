@@ -3,8 +3,11 @@
 - Document status: active reference implementation
 - Last code-and-document review: 2026-07-12
 - Review by: 2026-10-12, or sooner when the MCP SDK/protocol baseline changes
-Stable protocol evidence baseline: MCP 2025-11-25; provider support must still
-be verified against the deployed ServiceNow or Microsoft surface.
+Stable runtime protocol evidence baseline: MCP 2025-11-25. The package also
+contains SDK-independent boundary tests against the locked MCP 2026-07-28
+release candidate, but current-protocol traffic is not enabled. Provider
+support must still be verified against the deployed ServiceNow or Microsoft
+surface.
 
 This document is intentionally time-bounded. A reviewer must re-check the live
 SDK, MCP specification, provider documentation, and Den adapter before changing
@@ -44,8 +47,10 @@ Validation happens before secrets cross a boundary whenever possible:
   bounded OAuth state/code, positive timeouts and TTLs;
 - persistence: OAuth wire schemas, opaque revisions, finite expirations,
   matching authorization/client revisions, correct credential identity;
-- protocol: initialize first, bounded complete pagination, tool schemas,
-  provider `isError`, close within deadline;
+- protocol: the live legacy adapter initializes first; the current boundary
+  requires per-request identity/capabilities, validates routing metadata,
+  blocks silent downgrade, bounds cache identity/TTL, validates complete versus
+  input-required results, and applies bounded JSON Schema 2020-12 handling;
 - adapter: tenant/member scope, encrypted columns, same-row transaction locks,
   safe public origin, and guarded outbound requests.
 

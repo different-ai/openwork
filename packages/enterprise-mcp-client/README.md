@@ -10,6 +10,30 @@ Den uses this package as its single runtime for new and existing MCP
 connections. Existing OAuth registrations retain their stored callback URL;
 new registrations use Den's deployment-wide shared callback.
 
+## MCP 2026 core boundary
+
+The package exports an SDK-independent foundation for the locked
+`2026-07-28` release candidate while the live client continues to use the
+stable `2025-11-25` SDK lifecycle:
+
+- OpenWork-owned protocol policy, binding, status, and normalized-result types;
+- deterministic `server/discover` parsing and capability hashing;
+- fail-closed current/legacy selection with silent-downgrade protection;
+- stateless current request metadata and Streamable HTTP routing headers;
+- Base64-sentinel encoding and body/header validation for `Mcp-Name` and
+  `x-mcp-header`-derived `Mcp-Param-*` values;
+- tenant, connection, credential-owner, credential-revision, protocol, and
+  capability-hash-separated ephemeral caching; and
+- bounded JSON Schema 2020-12 composition and local-reference validation.
+
+These exports are protocol primitives, not a production feature flag. OpenWork
+must not advertise or send `2026-07-28` traffic until a stable official SDK,
+the current and legacy wire adapters, Den persistence, OpenCode compatibility,
+and the three-plane conformance suite are all present. Authentication, TLS,
+issuer, malformed metadata, and provider errors are never fallback signals;
+only an explicitly classified unsupported-version, method-not-found, or
+recognized legacy-lifecycle outcome is eligible for legacy negotiation.
+
 ## Reference architecture
 
 ```text
@@ -78,7 +102,16 @@ then silently writing credentials afterward.
   overwrite newer rotated credentials.
 - MCP `isError: true` is a failed provider operation, not a successful request.
 - Tool catalogs have page, item, cursor, name, schema depth, schema size, and
-  aggregate-byte ceilings.
+  aggregate-byte ceilings. JSON Schema 2020-12 composition branches, nodes,
+  local-reference depth, unresolved references, external references, and
+  reference cycles are also bounded or rejected.
+- Current-protocol routing metadata rejects mixed legacy sessions and
+  header/body mismatches. Unsafe routing values use the draft's Base64 sentinel
+  encoding, and tool annotations can produce only `Mcp-Param-*` headers.
+- Ephemeral protocol caches remain tenant- and credential-owner-scoped even
+  for provider-declared public results. Authorization or capability changes
+  can invalidate the relevant organization/connection/member slice without
+  relying on protocol sessions.
 - Diagnostic events contain phases, outcome, duration, and HTTP status only.
   They never contain tokens, API keys, codes, PKCE verifiers, URLs, tool
   arguments, provider bodies, or customer content; a failing sink is isolated.

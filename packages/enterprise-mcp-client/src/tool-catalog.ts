@@ -3,14 +3,21 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js"
 import type { Tool } from "@modelcontextprotocol/sdk/types.js"
 import { EnterpriseMcpCatalogError, type EnterpriseMcpCatalogErrorCode } from "./errors.js"
+import { assertEnterpriseMcpSchema } from "./bounded-schema.js"
+
+export {
+  ENTERPRISE_MCP_TOOL_SCHEMA_COMPOSITION_BRANCH_LIMIT,
+  ENTERPRISE_MCP_TOOL_SCHEMA_DEPTH_LIMIT,
+  ENTERPRISE_MCP_TOOL_SCHEMA_LIMIT_BYTES,
+  ENTERPRISE_MCP_TOOL_SCHEMA_NODE_LIMIT,
+  ENTERPRISE_MCP_TOOL_SCHEMA_REFERENCE_DEPTH_LIMIT,
+} from "./bounded-schema.js"
 
 export const ENTERPRISE_MCP_TOOL_PAGE_LIMIT = 20
 export const ENTERPRISE_MCP_TOOL_ITEM_LIMIT = 2_000
 export const ENTERPRISE_MCP_TOOL_NAME_LIMIT_BYTES = 512
 export const ENTERPRISE_MCP_TOOL_TITLE_LIMIT_BYTES = 4 * 1024
 export const ENTERPRISE_MCP_TOOL_DESCRIPTION_LIMIT_BYTES = 64 * 1024
-export const ENTERPRISE_MCP_TOOL_SCHEMA_LIMIT_BYTES = 512 * 1024
-export const ENTERPRISE_MCP_TOOL_SCHEMA_DEPTH_LIMIT = 64
 export const ENTERPRISE_MCP_CURSOR_LIMIT_BYTES = 16 * 1024
 export const ENTERPRISE_MCP_CATALOG_LIMIT_BYTES = 8 * 1024 * 1024
 
@@ -31,46 +38,12 @@ function assertStringLimit(
   }
 }
 
-function measureSchema(value: unknown): { bytes: number; depth: number; cyclic: boolean } {
-  type Frame = { value: unknown; depth: number; leaving?: object }
-  const stack: Frame[] = [{ value, depth: 0 }]
-  const active = new WeakSet<object>()
-  let maxDepth = 0
-  while (stack.length > 0) {
-    const frame = stack.pop()
-    if (!frame) break
-    if (frame.leaving) {
-      active.delete(frame.leaving)
-      continue
-    }
-    maxDepth = Math.max(maxDepth, frame.depth)
-    if (typeof frame.value !== "object" || frame.value === null) continue
-    if (active.has(frame.value)) return { bytes: 0, depth: maxDepth, cyclic: true }
-    active.add(frame.value)
-    stack.push({ value: null, depth: frame.depth, leaving: frame.value })
-    const children = Array.isArray(frame.value) ? frame.value : Object.values(frame.value)
-    for (const child of children) stack.push({ value: child, depth: frame.depth + 1 })
-  }
-  return { bytes: serializedBytes(value), depth: maxDepth, cyclic: false }
-}
-
-function assertSchema(schema: unknown): void {
-  const measurement = measureSchema(schema)
-  if (measurement.cyclic) throw new EnterpriseMcpCatalogError("MCP_CATALOG_SCHEMA_CYCLE")
-  if (measurement.depth > ENTERPRISE_MCP_TOOL_SCHEMA_DEPTH_LIMIT) {
-    throw new EnterpriseMcpCatalogError("MCP_CATALOG_SCHEMA_DEPTH_LIMIT")
-  }
-  if (measurement.bytes > ENTERPRISE_MCP_TOOL_SCHEMA_LIMIT_BYTES) {
-    throw new EnterpriseMcpCatalogError("MCP_CATALOG_SCHEMA_SIZE_LIMIT")
-  }
-}
-
 function assertTool(tool: Tool): void {
   assertStringLimit(tool.name, ENTERPRISE_MCP_TOOL_NAME_LIMIT_BYTES, "MCP_CATALOG_TOOL_NAME_LIMIT")
   assertStringLimit(tool.title, ENTERPRISE_MCP_TOOL_TITLE_LIMIT_BYTES, "MCP_CATALOG_TOOL_TITLE_LIMIT")
   assertStringLimit(tool.description, ENTERPRISE_MCP_TOOL_DESCRIPTION_LIMIT_BYTES, "MCP_CATALOG_TOOL_DESCRIPTION_LIMIT")
-  assertSchema(tool.inputSchema)
-  if (tool.outputSchema) assertSchema(tool.outputSchema)
+  assertEnterpriseMcpSchema(tool.inputSchema)
+  if (tool.outputSchema) assertEnterpriseMcpSchema(tool.outputSchema)
 }
 
 export async function collectEnterpriseMcpTools(input: {
