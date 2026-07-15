@@ -2097,15 +2097,15 @@ function AddConnectionDialog({
         {oauthCallback ? (
           <>
             <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-              Almost done — finish your OAuth app setup
+              Finish OAuth setup
             </h2>
             <p className="mt-2 text-[13px] leading-6 text-gray-600">
-              Choose the setup method your provider supports. Then close this dialog, choose Edit on the connection, and add credentials if your provider issued them.
+              Use the option supported by your provider.
             </p>
             <div className="mt-4 flex items-start gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
               <div className="min-w-0 flex-1">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Callback URL — for pre-registered OAuth apps</p>
-                <p className="mt-1 text-[11px] leading-5 text-gray-600">Add this exact URL to providers such as Salesforce, then enter the provider's client ID and secret in OpenWork.</p>
+                <p className="mt-1 text-[11px] leading-5 text-gray-600">Add this URL to the provider OAuth app.</p>
                 <p className="mt-1 break-all font-mono text-[12px] leading-5 text-gray-800">{oauthCallback}</p>
               </div>
               <button
@@ -2122,7 +2122,7 @@ function AddConnectionDialog({
               <div className="mt-3 flex items-start gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Client metadata URL — for supported providers</p>
-                  <p className="mt-1 text-[11px] leading-5 text-gray-600">Give this URL to providers that support OAuth client metadata. They read the callback automatically, so do not paste this into a callback URL field.</p>
+                  <p className="mt-1 text-[11px] leading-5 text-gray-600">Use only if the provider asks for a client metadata URL.</p>
                   <p className="mt-1 break-all font-mono text-[12px] leading-5 text-gray-800">{oauthClientMetadataUrl}</p>
                 </div>
                 <button
@@ -2147,9 +2147,6 @@ function AddConnectionDialog({
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
           {preset ? `Add ${preset.displayName}` : "Add a custom MCP server"}
         </h2>
-        <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          Enter the server URL first. OpenWork will discover its authentication, registration, scope, and tool requirements before saving.
-        </p>
 
         <div className="mt-5 space-y-4">
           <div>
@@ -2175,7 +2172,7 @@ function AddConnectionDialog({
             {discoveryState === "waiting" || discoveryState === "checking" ? (
               <p className="mt-2 flex items-center gap-2 text-[12px] text-gray-500" role="status">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Checking server requirements…
+                Checking…
               </p>
             ) : null}
             {discoveryState === "error" ? (
@@ -2187,36 +2184,6 @@ function AddConnectionDialog({
               </div>
             ) : null}
           </div>
-          {requirements ? (
-            <div className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4" data-testid="mcp-requirements-result">
-              <div>
-                <p className="text-[12px] font-semibold text-gray-900">Detected automatically</p>
-                <p className="mt-1 text-[12px] leading-5 text-gray-600">
-                  {requirements.server.initialize === "succeeded" ? "MCP initialized without authentication." : requirements.authentication.kind === "oauth" ? "OAuth authentication is required." : "Authentication requirements need review."}
-                  {requirements.tools.visibility === "available_without_auth" ? ` ${requirements.tools.count ?? 0} tools are visible before sign-in.` : " Tools require authentication before they can be listed."}
-                </p>
-                <p className="mt-1 text-[12px] text-gray-600">
-                  Registration: {requirements.authentication.recommendedRegistrationMethod === "client_metadata" ? "client metadata URL" : requirements.authentication.recommendedRegistrationMethod === "dynamic" ? "dynamic registration" : "pre-registered client"}.
-                  {requirements.authentication.refreshSupport === "supported" ? " Silent refresh is advertised." : " Silent refresh is not advertised."}
-                </p>
-              </div>
-              {requirements.manualRequirements.length > 0 ? (
-                <div>
-                  <p className="text-[12px] font-semibold text-gray-900">Administrator action required</p>
-                  <ul className="mt-1 space-y-1 text-[12px] leading-5 text-gray-600">
-                    {requirements.manualRequirements.map((requirement) => (
-                      <li key={requirement.code}>• {requirement.label}: {requirement.reason}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-              {requirements.warnings.length > 0 ? (
-                <div className="text-[12px] leading-5 text-amber-700">
-                  {requirements.warnings.map((warning) => <p key={warning.code}>{warning.message}</p>)}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
           {!preset ? (
             <div>
               <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</label>
@@ -2251,7 +2218,7 @@ function AddConnectionDialog({
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
               <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
               <p className="mt-1 text-[12px] leading-5 text-gray-500">
-                Create the connection to generate its exact callback URL. You can leave these fields empty, register or update the provider app with that URL, then add its credentials from Edit.
+                Add credentials now or after creating the connection.
               </p>
               <div className="mt-3 space-y-3">
                 <div>
