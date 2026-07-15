@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Marked, type Tokens } from "marked";
 import { markedEmoji } from "marked-emoji";
 import markedShiki from "marked-shiki";
@@ -15,6 +15,7 @@ import {
 } from "@shikijs/transformers";
 import { bundledLanguages, codeToHtml } from "shiki";
 
+import { getResolvedShikiTheme, subscribeToTheme } from "@/app/theme";
 import { applyTextHighlights } from "./text-highlights";
 
 function escapeHtml(value: string) {
@@ -175,7 +176,7 @@ const highlightedMarkdownParser = new Marked<string, string>({
       return codeToHtml(code, {
         lang: language,
         meta: { __raw: props.join(" ") },
-        theme: "github-light",
+        theme: getResolvedShikiTheme(),
         transformers: [
           transformerNotationDiff({ matchAlgorithm: "v3" }),
           transformerNotationHighlight({ matchAlgorithm: "v3" }),
@@ -197,11 +198,16 @@ function MarkdownBlockInner(props: {
   highlightQuery?: string;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const shikiTheme = useSyncExternalStore(
+    subscribeToTheme,
+    getResolvedShikiTheme,
+    getResolvedShikiTheme,
+  );
   const syncHtml = useMemo(() => {
     if (!props.text.trim()) return "";
     return markdownParser.parse(props.text, { async: false });
   }, [props.text]);
-  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
+  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; theme: string; html: string } | null>(null);
 
   useEffect(() => {
     if (props.streaming || !hasFencedCodeBlock(props.text)) {
@@ -211,14 +217,14 @@ function MarkdownBlockInner(props: {
 
     let cancelled = false;
     void highlightedMarkdownParser.parse(props.text, { async: true }).then((html) => {
-      if (!cancelled && html.trim()) setHighlightedHtml({ text: props.text, html });
+      if (!cancelled && html.trim()) setHighlightedHtml({ text: props.text, theme: shikiTheme, html });
     }).catch(() => {
       if (!cancelled) setHighlightedHtml(null);
     });
     return () => {
       cancelled = true;
     };
-  }, [props.streaming, props.text]);
+  }, [props.streaming, props.text, shikiTheme]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -230,7 +236,9 @@ function MarkdownBlockInner(props: {
     });
   }, [props.highlightQuery, props.streaming, props.text]);
 
-  const html = highlightedHtml?.text === props.text ? highlightedHtml.html : syncHtml;
+  const html = highlightedHtml?.text === props.text && highlightedHtml.theme === shikiTheme
+    ? highlightedHtml.html
+    : syncHtml;
 
   if (!html) return null;
 

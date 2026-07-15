@@ -1,5 +1,6 @@
+import { getResolvedShikiTheme, subscribeToTheme } from "@/app/theme"
 import { cn } from "@/lib/utils"
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useState, useSyncExternalStore } from "react"
 import { codeToHtml } from "shiki"
 
 export type CodeBlockProps = {
@@ -32,11 +33,17 @@ export type CodeBlockCodeProps = {
 function CodeBlockCode({
   code,
   language = "tsx",
-  theme = "github-light",
+  theme,
   className,
   ...props
 }: CodeBlockCodeProps) {
   const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null)
+  const resolvedTheme = useSyncExternalStore(
+    subscribeToTheme,
+    getResolvedShikiTheme,
+    getResolvedShikiTheme
+  )
+  const shikiTheme = theme ?? resolvedTheme
 
   useEffect(() => {
     let cancelled = false
@@ -49,7 +56,7 @@ function CodeBlockCode({
         return
       }
 
-      const html = await codeToHtml(code, { lang: language, theme })
+      const html = await codeToHtml(code, { lang: language, theme: shikiTheme })
       if (!cancelled) {
         setHighlightedHtml(html)
       }
@@ -60,7 +67,7 @@ function CodeBlockCode({
     return () => {
       cancelled = true
     }
-  }, [code, language, theme])
+  }, [code, language, shikiTheme])
 
   const classNames = cn(
     "w-full overflow-x-auto text-[13px] [&>pre]:px-4 [&>pre]:py-4",
