@@ -114,6 +114,8 @@ import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types
 import { useSessionProviderAuth } from "@/react-app/domains/connections/provider-auth/use-session-provider-auth";
 import { useMcpConnectedCount } from "@/react-app/domains/connections/use-mcp-connected-count";
 import { useSessionMcpMaintenance } from "@/react-app/domains/connections/use-session-mcp-maintenance";
+import { useCloudMcpSubmitReadiness } from "@/react-app/domains/connections/use-cloud-mcp-submit-readiness";
+import type { CloudMcpSubmissionResult } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { useRemoteAccessRestart } from "@/react-app/domains/workspace/remote-access-restart";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
@@ -387,18 +389,28 @@ export function SessionRoute() {
     onServerSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
     onHostInfo: setOpenworkServerHostInfoState,
   });
+  const cloudMcpProviderModel = useMemo(() => local.prefs.defaultModel
+    ? {
+        provider: local.prefs.defaultModel.providerID,
+        model: local.prefs.defaultModel.modelID,
+      }
+    : undefined, [local.prefs.defaultModel?.modelID, local.prefs.defaultModel?.providerID]);
   const sessionMcpMaintenance = useSessionMcpMaintenance({
     cloudSignedIn: denAuth.isSignedIn,
     client: selectedWorkspaceEndpoint?.client ?? null,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     opencodeClient,
     directory: selectedWorkspaceRoot,
-    providerModel: local.prefs.defaultModel
-      ? {
-          provider: local.prefs.defaultModel.providerID,
-          model: local.prefs.defaultModel.modelID,
-        }
-      : undefined,
+    providerModel: cloudMcpProviderModel,
+  });
+  const {
+    state: cloudMcpSubmissionState,
+    submit: submitWithCloudMcpReadiness,
+  } = useCloudMcpSubmitReadiness({
+    cloudSignedIn: denAuth.isSignedIn,
+    client: selectedWorkspaceEndpoint?.client ?? null,
+    workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
+    providerModel: cloudMcpProviderModel,
   });
   useEffect(() => {
     const toastId = `cloud-mcp-session-maintenance:${selectedWorkspaceEndpoint?.workspaceId ?? "none"}`;
@@ -906,11 +918,13 @@ export function SessionRoute() {
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins" | "providers") => {
         handleOpenSettings(section === "skills" ? "/settings/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : section === "providers" ? "/settings/ai" : "/settings/general");
       },
-      onSendDraft: async (draft: ComposerDraft, sessionId: string) => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
-        if (!targetSessionId) return;
+        if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
         const text = (draft.resolvedText ?? draft.text).trim();
-        if (!text && draft.attachments.length === 0) return;
+        if (!text && draft.attachments.length === 0) {
+          return { outcome: "cancelled", reason: "context_changed" };
+        }
         // One-shot provider selection on the first send whenever no user-added
         // provider is connected. The free default model being usable is the
         // normal case here, not a reason to skip the step.
@@ -923,67 +937,74 @@ export function SessionRoute() {
         ) {
           pendingProviderDraftRef.current = { draft, sessionId: targetSessionId };
           setProviderStepOpen(true);
-          return;
+          return { outcome: "accepted" };
         }
         if (selectedModelUnavailable) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
-        captureAnalyticsEvent("task_message_sent", {
-          mode: draft.mode ?? "prompt",
-          is_command: Boolean(draft.command),
-          attachment_count: draft.attachments.length,
-          text_length: text.length,
-          workspace_type: selectedWorkspace?.workspaceType ?? "unknown",
-          provider_id: local.prefs.defaultModel?.providerID ?? null,
-          model_id: local.prefs.defaultModel?.modelID ?? null,
-        });
-        markTaskRunStart(targetSessionId);
-        // Den org adoption signals (auth-gated inside; no-op when signed out).
-        // Lives here — the live send choke point — because its previous call
-        // site was in the orphaned actions-store and never fired.
-        const projectDimension = readWorkspaceProjectDimension(selectedWorkspaceId);
-        const telemetryDimensions = projectDimension
-          ? [{
-              type: "project",
-              label: projectDimension.label,
-            }]
-          : undefined;
-        trackSessionActive(targetSessionId, telemetryDimensions);
-        trackTaskStarted(targetSessionId, telemetryDimensions);
+        return submitWithCloudMcpReadiness({
+          skipGate: draft.mode === "shell",
+          send: async () => {
+            captureAnalyticsEvent("task_message_sent", {
+              mode: draft.mode ?? "prompt",
+              is_command: Boolean(draft.command),
+              attachment_count: draft.attachments.length,
+              text_length: text.length,
+              workspace_type: selectedWorkspace?.workspaceType ?? "unknown",
+              provider_id: local.prefs.defaultModel?.providerID ?? null,
+              model_id: local.prefs.defaultModel?.modelID ?? null,
+            });
+            markTaskRunStart(targetSessionId);
+            // Den org adoption signals (auth-gated inside; no-op when signed out).
+            // This remains inside the post-readiness send closure so a blocked
+            // Cloud submission cannot create a run or report that one started.
+            const projectDimension = readWorkspaceProjectDimension(selectedWorkspaceId);
+            const telemetryDimensions = projectDimension
+              ? [{
+                  type: "project",
+                  label: projectDimension.label,
+                }]
+              : undefined;
+            trackSessionActive(targetSessionId, telemetryDimensions);
+            trackTaskStarted(targetSessionId, telemetryDimensions);
 
-        if (draft.mode === "shell") {
-          await shellInSession(opencodeClient, targetSessionId, text);
-          return;
-        }
+            if (draft.mode === "shell") {
+              await shellInSession(opencodeClient, targetSessionId, text);
+              return;
+            }
 
-        if (draft.command) {
-          const result = await opencodeClient.session.command({
-            sessionID: targetSessionId,
-            command: draft.command.name,
-            arguments: draft.command.arguments,
-          });
-          if (result.error) {
-            throw new Error(serializeSDKError(result.error));
-          }
-          return;
-        }
+            if (draft.command) {
+              const result = await opencodeClient.session.command({
+                sessionID: targetSessionId,
+                command: draft.command.name,
+                arguments: draft.command.arguments,
+              });
+              if (result.error) {
+                throw new Error(serializeSDKError(result.error));
+              }
+              return;
+            }
 
-        const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
-        const envSystemContext = await buildOpenworkEnvSystemContext(client, {
-          cacheKey: targetSessionId,
-          runtimeKey: environmentRuntimeKey,
+            const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
+            const envSystemContext = await buildOpenworkEnvSystemContext(client, {
+              cacheKey: targetSessionId,
+              runtimeKey: environmentRuntimeKey,
+            });
+            const result = await opencodeClient.session.promptAsync({
+              sessionID: targetSessionId,
+              parts,
+              model: local.prefs.defaultModel ?? undefined,
+              agent: selectedAgent ?? undefined,
+              ...(modelVariantValue ? { variant: modelVariantValue } : {}),
+              ...(envSystemContext ? { system: envSystemContext } : {}),
+            });
+            if (result.error) {
+              throw new Error(serializeSDKError(result.error));
+            }
+          },
         });
-        const result = await opencodeClient.session.promptAsync({
-          sessionID: targetSessionId,
-          parts,
-          model: local.prefs.defaultModel ?? undefined,
-          agent: selectedAgent ?? undefined,
-          ...(modelVariantValue ? { variant: modelVariantValue } : {}),
-          ...(envSystemContext ? { system: envSystemContext } : {}),
-        });
-        if (result.error) {
-          throw new Error(serializeSDKError(result.error));
-        }
       },
+      cloudMcpSubmissionState,
+      onOpenConnect: () => navigate("/settings/connect"),
       onDraftChange: () => {
         // Draft persistence will be wired once the full React shell owns session state.
       },
@@ -1079,6 +1100,7 @@ export function SessionRoute() {
     listAgents,
     listSlashCommands,
     modelBehaviorOptions,
+    cloudMcpSubmissionState,
     modelLabel,
     modelVariantLabel,
     modelVariantValue,
@@ -1093,6 +1115,7 @@ export function SessionRoute() {
     selectedWorkspaceId,
     selectedWorkspaceRoot,
     sessionsByWorkspaceId,
+    submitWithCloudMcpReadiness,
     token,
   ]);
 
