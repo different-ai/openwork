@@ -286,13 +286,16 @@ export function McpConnectionsScreen() {
     }
   }
 
-  async function handleCreate(input: CreateMcpConnectionInput): Promise<CreatedMcpConnection> {
+  async function handleCreate(
+    input: CreateMcpConnectionInput,
+    options: { keepOpenForRedirect: boolean },
+  ): Promise<CreatedMcpConnection> {
     const authorizationWindow = input.authType === "oauth" && input.credentialMode === "shared" && !input.oauthClient
       ? openMcpAuthorizationWindow()
       : undefined;
     try {
       const created = await createConnection.mutateAsync(input);
-      if (input.oauthClient) {
+      if (options.keepOpenForRedirect) {
         return created;
       }
       setFormOpen(false);
@@ -1213,16 +1216,23 @@ function ConnectionRow({
   const isPerMember = connection.credentialMode === "per_member";
   const callbackUpdateRequired = externalMcpEngine === "enterprise" && connection.oauthMigrationStatus === "legacy_manual_client";
   const automaticCallbackMigrationPending = externalMcpEngine === "enterprise" && connection.oauthMigrationStatus === "unclassified";
+  const sharedCallbackAwaitingAuthorization = externalMcpEngine === "enterprise"
+    && connection.authType === "oauth"
+    && connection.oauthCallbackMode === "shared-v1"
+    && connection.oauthRegistrationSource === "pre-registered"
+    && (isPerMember ? !connection.connectedForMe : !connection.connected);
+  const showSharedCallbackSetup = callbackUpdateRequired || sharedCallbackAwaitingAuthorization;
   const needsOAuthConnect = connection.authType === "oauth"
     && (!connection.connected || automaticCallbackMigrationPending)
     && !callbackUpdateRequired
+    && !sharedCallbackAwaitingAuthorization
     && (!isPerMember || automaticCallbackMigrationPending);
 
   const canInspectTools = connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe;
 
   useEffect(() => {
     setSharedCallbackConfirmed(false);
-  }, [connection.id, connection.oauthCallbackMode]);
+  }, [connection.id]);
 
   return (
     <div>
@@ -1317,9 +1327,9 @@ function ConnectionRow({
           </DenButton>
         </div>
       </div>
-      {callbackUpdateRequired && connection.oauthSharedCallbackUrl ? (
+      {showSharedCallbackSetup && connection.oauthSharedCallbackUrl ? (
         <div className="border-t border-amber-200 bg-amber-50 px-6 py-4 text-[12px] leading-5 text-amber-950" data-testid={`mcp-callback-update-required-${connection.id}`}>
-          <p className="font-semibold">Callback update required</p>
+          <p className="font-semibold">{callbackUpdateRequired ? "Callback update required" : "Shared callback awaiting authorization"}</p>
           <ol className="mt-2 list-decimal space-y-2 pl-5">
             <li>
               Copy the new shared callback.
@@ -1334,7 +1344,7 @@ function ConnectionRow({
                 </button>
               </div>
             </li>
-            <li>Add it to the external OAuth application without removing the old callback yet.</li>
+            <li>{callbackUpdateRequired ? "Add it to the external OAuth application without removing the old callback yet." : "Confirm this callback is still allowlisted in the external OAuth application."}</li>
             <li>
               <label className="mb-2 flex items-start gap-2 text-[11px] text-amber-900">
                 <input
@@ -1345,7 +1355,7 @@ function ConnectionRow({
                 />
                 <span>I added the shared callback to the OAuth app</span>
               </label>
-              <DenButton variant="secondary" size="sm" loading={migratingCallback || connecting || polling} disabled={!sharedCallbackConfirmed} onClick={onMigrateCallback}>
+              <DenButton variant="secondary" size="sm" loading={migratingCallback || connecting || polling} disabled={!sharedCallbackConfirmed} onClick={callbackUpdateRequired ? onMigrateCallback : onConnect}>
                 Reconnect using shared callback
               </DenButton>
               <p className="mt-1 text-[11px] text-amber-800">OpenWork preserves your manual client ID, secret, and access grants. You can restore the previous callback if the provider is not ready.</p>
@@ -1827,14 +1837,14 @@ function EditConnectionDialog({
               }}
               className="text-left text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
             >
-              Replace a pre-registered OAuth app
+              {connection.oauthClientId ? "Replace the pre-registered OAuth app" : "Add the pre-registered OAuth app"}
             </button>
           ) : null}
 
           {!marketplaceManaged && authType === "oauth" && showOAuthClient ? (
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
               <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
-              <p className="mt-1 text-[12px] leading-5 text-gray-500">The client ID is safe to display. The saved client secret remains hidden.</p>
+              <p className="mt-1 text-[12px] leading-5 text-gray-500">Add the credentials after allowlisting the callback URL shown on the connection. The saved client secret remains hidden.</p>
               <div className="mt-3 space-y-3">
                 <div>
                   <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
@@ -1990,7 +2000,10 @@ function AddConnectionDialog({
   submitting: boolean;
   error: unknown;
   onClose: () => void;
-  onSubmit: (input: CreateMcpConnectionInput) => Promise<CreatedMcpConnection>;
+  onSubmit: (
+    input: CreateMcpConnectionInput,
+    options: { keepOpenForRedirect: boolean },
+  ) => Promise<CreatedMcpConnection>;
 }) {
   const { orgContext } = useOrgDashboard();
   const discoverRequirements = useDiscoverMcpConnectionRequirements();
@@ -2047,10 +2060,6 @@ function AddConnectionDialog({
   }
 
   const showOAuthClientFields = authType === "oauth" && (Boolean(preset?.requiresOAuthClient) || showOAuthClient);
-  const oauthClientRequired = authType === "oauth" && (
-    Boolean(preset?.requiresOAuthClient)
-    || requirements?.authentication.recommendedRegistrationMethod === "pre_registered"
-  );
   const authorizationServers = requirements?.authentication.authorizationServers ?? [];
   const selectedAuthorizationServer = authorizationServers.find((server) => server.issuer === authorizationServerIssuer);
   const requiredScopes = requirements?.authentication.requiredScopes ?? [];
@@ -2098,8 +2107,9 @@ function AddConnectionDialog({
       access,
     };
     try {
-      const created = await onSubmit(input);
-      if (input.oauthClient && created.links?.oauthCallback) {
+      const keepOpenForRedirect = authType === "oauth" && showOAuthClientFields;
+      const created = await onSubmit(input, { keepOpenForRedirect });
+      if (keepOpenForRedirect && created.links?.oauthCallback) {
         setOAuthCallback(created.links.oauthCallback);
         setOAuthClientMetadataUrl(created.oauthClientMetadataUrl ?? null);
         setCopiedCallback(false);
@@ -2139,7 +2149,7 @@ function AddConnectionDialog({
               Almost done — add this callback URL to your OAuth app
             </h2>
             <p className="mt-2 text-[13px] leading-6 text-gray-600">
-              Copy this exact deployment-wide URL into your pre-registered app before anyone connects.
+              Copy this exact deployment-wide URL into your pre-registered app. Then close this dialog, choose Edit on the connection, and add the client ID and secret before anyone connects.
             </p>
             <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
               <p className="break-all font-mono text-[12px] leading-5 text-gray-800">{oauthCallback}</p>
@@ -2271,11 +2281,11 @@ function AddConnectionDialog({
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
               <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
               <p className="mt-1 text-[12px] leading-5 text-gray-500">
-                Use a client registered by your administrator. After creation, OpenWork shows the exact callback URL to allowlist for the selected OAuth engine.
+                Create the connection to generate its exact callback URL. You can leave these fields empty, register or update the provider app with that URL, then add its credentials from Edit.
               </p>
               <div className="mt-3 space-y-3">
                 <div>
-                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID (optional for now)</label>
                   <DenInput
                     value={oauthClientId}
                     onChange={(event) => setOAuthClientId(event.target.value)}
@@ -2283,7 +2293,7 @@ function AddConnectionDialog({
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret</label>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret (optional for now)</label>
                   <DenInput
                     type="password"
                     value={oauthClientSecret}
@@ -2415,7 +2425,7 @@ function AddConnectionDialog({
           <DenButton
             variant="primary"
             loading={submitting}
-            disabled={!name.trim() || !url.trim() || (authType === "oauth" && (!requirements || (authorizationServers.length > 1 && !authorizationServerIssuer))) || (authType === "apikey" && !apiKey.trim()) || (oauthClientRequired && !oauthClientId.trim()) || accessIncomplete}
+            disabled={!name.trim() || !url.trim() || (authType === "oauth" && (!requirements || (authorizationServers.length > 1 && !authorizationServerIssuer))) || (authType === "apikey" && !apiKey.trim()) || accessIncomplete}
             onClick={() => void submit()}
           >
             {showOAuthClientFields ? "Create and show redirect URL" : "Add connection"}
