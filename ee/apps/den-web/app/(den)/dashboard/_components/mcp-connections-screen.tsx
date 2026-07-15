@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, Copy, Loader2, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -25,7 +25,6 @@ import { shouldShowMcpConnectionsStagingBanner } from "./mcp-connections-capabil
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { marketplaceQueryKeys, useMarketplaces } from "./marketplace-data";
 import {
-  type CreatedMcpConnection,
   type CreateMcpConnectionInput,
   type ExternalMcpAuthType,
   type ExternalMcpConnection,
@@ -58,6 +57,7 @@ const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
 const MCP_REQUIREMENTS_DISCOVERY_DELAY_MS = 500;
 const MCP_TOOL_PAGE_SIZE = 50;
+const MCP_OAUTH_REDIRECT_DOCS_URL = "https://openworklabs.com/docs/cloud/share-with-your-team/shared-mcp-connections#oauth-redirect-url";
 
 function isDiscoverableMcpUrl(value: string): boolean {
   try {
@@ -297,25 +297,21 @@ export function McpConnectionsScreen() {
 
   async function handleCreate(
     input: CreateMcpConnectionInput,
-    options: { keepOpenForRedirect: boolean },
-  ): Promise<CreatedMcpConnection> {
-    const authorizationWindow = input.authType === "oauth" && input.credentialMode === "shared" && !input.oauthClient
+    options: { startOAuth: boolean },
+  ): Promise<void> {
+    const authorizationWindow = options.startOAuth
       ? openMcpAuthorizationWindow()
       : undefined;
     try {
       const created = await createConnection.mutateAsync(input);
-      if (options.keepOpenForRedirect) {
-        return created;
-      }
       setFormOpen(false);
       setFormPreset(null);
       // Shared-credential OAuth: the admin authorizes the org's single account
       // right now. Per-member: nothing to authorize here — each granted person
       // connects their own account from Your Connections.
-      if (input.authType === "oauth" && input.credentialMode === "shared") {
+      if (options.startOAuth) {
         await handleConnectOAuth(created.id, authorizationWindow);
       }
-      return created;
     } catch (createError) {
       authorizationWindow?.close();
       throw createError;
@@ -1198,14 +1194,37 @@ function ConnectionRow({
   toolsOpen: boolean;
   onToggleTools: () => void;
 }) {
-  const [copiedOAuthUrl, setCopiedOAuthUrl] = useState<"callback" | "metadata" | null>(null);
   const isPerMember = connection.credentialMode === "per_member";
   const creatorAttribution = formatConnectionCreatorAttribution(connection.createdByName);
-  const needsOAuthConnect = connection.authType === "oauth"
-    && !connection.connected
-    && !isPerMember;
-
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const actionsTriggerRef = useRef<HTMLButtonElement>(null);
+  const canConnectOAuth = connection.authType === "oauth"
+    && (isPerMember ? !connection.connectedForMe : !connection.connected);
   const canInspectTools = connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe;
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      if (event.target instanceof Node && !actionsMenuRef.current?.contains(event.target)) {
+        setActionsOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setActionsOpen(false);
+      actionsTriggerRef.current?.focus();
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [actionsOpen]);
 
   return (
     <div data-testid={`mcp-connection-row-${connection.id}`}>
@@ -1255,28 +1274,7 @@ function ConnectionRow({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
-          <DenButton
-            variant="secondary"
-            size="sm"
-            icon={Pencil}
-            onClick={onEdit}
-            disabled={!connection.updatedAt}
-            aria-label={`Edit ${connection.name}`}
-            data-testid={`edit-mcp-connection-${connection.id}`}
-          >
-            Edit
-          </DenButton>
-          <DenButton
-            variant="secondary"
-            size="sm"
-            disabled={!canInspectTools}
-            onClick={onToggleTools}
-            title={canInspectTools ? "Inspect the tools this MCP exposes" : "Connect this account before inspecting tools"}
-          >
-            {toolsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            View tools
-          </DenButton>
-          {needsOAuthConnect ? (
+          {canConnectOAuth ? (
             <DenButton
               variant="secondary"
               size="sm"
@@ -1298,46 +1296,74 @@ function ConnectionRow({
               Disconnect
             </DenButton>
           ) : null}
-          <DenButton
-            variant="destructive"
-            size="sm"
-            icon={Trash2}
-            loading={removing}
-            onClick={onRemove}
-            aria-label={`Remove ${connection.name}`}
-          >
-            Remove
-          </DenButton>
+          <div ref={actionsMenuRef} className="relative">
+            <button
+              ref={actionsTriggerRef}
+              type="button"
+              onClick={() => setActionsOpen((current) => !current)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
+              aria-label={`More actions for ${connection.name}`}
+              aria-haspopup="menu"
+              aria-expanded={actionsOpen}
+              data-testid={`mcp-connection-more-${connection.id}`}
+            >
+              <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+            </button>
+            {actionsOpen ? (
+              <div
+                role="menu"
+                aria-label={`Actions for ${connection.name}`}
+                className="absolute right-0 top-10 z-30 w-44 overflow-hidden rounded-2xl border border-gray-100 bg-white p-1.5 text-[13px] shadow-xl shadow-gray-900/10"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActionsOpen(false);
+                    onEdit();
+                  }}
+                  disabled={!connection.updatedAt}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label={`Edit ${connection.name}`}
+                  data-testid={`edit-mcp-connection-${connection.id}`}
+                >
+                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActionsOpen(false);
+                    onToggleTools();
+                  }}
+                  disabled={!canInspectTools}
+                  title={canInspectTools ? "Inspect the tools this MCP exposes" : "Connect this account before inspecting tools"}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {toolsOpen ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
+                  {toolsOpen ? "Hide tools" : "View tools"}
+                </button>
+                <div className="my-1 border-t border-gray-100" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActionsOpen(false);
+                    onRemove();
+                  }}
+                  disabled={removing}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label={`Remove ${connection.name}`}
+                >
+                  {removing ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
+                  Remove
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
-      {connection.authType === "oauth" && (connection.oauthCallbackUrl || connection.oauthClientMetadataUrl) ? (
-        <div className="border-t border-gray-100 bg-gray-50/70 px-6 py-3 text-[11px] text-gray-600">
-          {connection.oauthCallbackUrl ? (
-            <div className="flex items-start justify-between gap-3">
-              <p className="min-w-0 break-all"><span className="font-semibold">Current callback:</span> {connection.oauthCallbackUrl}</p>
-              <button
-                type="button"
-                className="shrink-0 font-medium text-gray-900 underline"
-                onClick={() => void copyTextToClipboard(connection.oauthCallbackUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("callback"))}
-              >
-                {copiedOAuthUrl === "callback" ? "Copied" : "Copy"}
-              </button>
-            </div>
-          ) : null}
-          {connection.oauthClientMetadataUrl ? (
-            <div className="mt-1 flex items-start justify-between gap-3">
-              <p className="min-w-0 break-all"><span className="font-semibold">Client metadata:</span> {connection.oauthClientMetadataUrl}</p>
-              <button
-                type="button"
-                className="shrink-0 font-medium text-gray-900 underline"
-                onClick={() => void copyTextToClipboard(connection.oauthClientMetadataUrl ?? "").then((copied) => copied && setCopiedOAuthUrl("metadata"))}
-              >
-                {copiedOAuthUrl === "metadata" ? "Copied" : "Copy"}
-              </button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
       {toolsOpen && canInspectTools ? <McpToolCatalog connection={connection} /> : null}
     </div>
   );
@@ -1782,8 +1808,13 @@ function EditConnectionDialog({
 
           {!marketplaceManaged && authType === "oauth" && showOAuthClient ? (
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
-              <p className="mt-1 text-[12px] leading-5 text-gray-500">Add the credentials after allowlisting the callback URL shown on the connection. The saved client secret remains hidden.</p>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
+                <Link href={MCP_OAUTH_REDIRECT_DOCS_URL} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-gray-500 underline underline-offset-2 hover:text-gray-900">
+                  How redirect URLs work
+                </Link>
+              </div>
+              <p className="mt-1 text-[12px] leading-5 text-gray-500">Add the provider credentials here. The saved client secret remains hidden.</p>
               <div className="mt-3 space-y-3">
                 <div>
                   <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
@@ -1941,8 +1972,8 @@ function AddConnectionDialog({
   onClose: () => void;
   onSubmit: (
     input: CreateMcpConnectionInput,
-    options: { keepOpenForRedirect: boolean },
-  ) => Promise<CreatedMcpConnection>;
+    options: { startOAuth: boolean },
+  ) => Promise<void>;
 }) {
   const { orgContext } = useOrgDashboard();
   const discoverRequirements = useDiscoverMcpConnectionRequirements();
@@ -1954,10 +1985,6 @@ function AddConnectionDialog({
   const [showOAuthClient, setShowOAuthClient] = useState(Boolean(preset?.requiresOAuthClient));
   const [oauthClientId, setOAuthClientId] = useState("");
   const [oauthClientSecret, setOAuthClientSecret] = useState("");
-  const [oauthCallback, setOAuthCallback] = useState<string | null>(null);
-  const [oauthClientMetadataUrl, setOAuthClientMetadataUrl] = useState<string | null>(null);
-  const [copiedCallback, setCopiedCallback] = useState(false);
-  const [copiedClientMetadata, setCopiedClientMetadata] = useState(false);
   const [requirements, setRequirements] = useState<McpRequirementsDiscovery | null>(null);
   const [discoveryState, setDiscoveryState] = useState<"idle" | "waiting" | "checking" | "ready" | "error">("idle");
   const [discoveryError, setDiscoveryError] = useState<unknown>(null);
@@ -1978,10 +2005,6 @@ function AddConnectionDialog({
     setShowOAuthClient(Boolean(preset?.requiresOAuthClient));
     setOAuthClientId("");
     setOAuthClientSecret("");
-    setOAuthCallback(null);
-    setOAuthClientMetadataUrl(null);
-    setCopiedCallback(false);
-    setCopiedClientMetadata(false);
     setRequirements(null);
     setDiscoveryState("idle");
     setDiscoveryError(null);
@@ -2045,7 +2068,7 @@ function AddConnectionDialog({
   useEffect(() => {
     const requestId = discoveryRequestId.current + 1;
     discoveryRequestId.current = requestId;
-    if (!open || oauthCallback) {
+    if (!open) {
       setDiscoveryState("idle");
       return;
     }
@@ -2066,7 +2089,7 @@ function AddConnectionDialog({
       void discover(targetUrl, requestId);
     }, MCP_REQUIREMENTS_DISCOVERY_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [open, oauthCallback, url]);
+  }, [open, url]);
 
   function retryDiscovery() {
     const targetUrl = url.trim();
@@ -2098,29 +2121,14 @@ function AddConnectionDialog({
       access,
     };
     try {
-      const keepOpenForRedirect = authType === "oauth" && showOAuthClientFields;
-      const created = await onSubmit(input, { keepOpenForRedirect });
-      if (keepOpenForRedirect && created.links?.oauthCallback) {
-        setOAuthCallback(created.links.oauthCallback);
-        setOAuthClientMetadataUrl(created.oauthClientMetadataUrl ?? null);
-        setCopiedCallback(false);
-        setCopiedClientMetadata(false);
-      }
+      await onSubmit(input, {
+        startOAuth: authType === "oauth" && credentialMode === "shared" && !showOAuthClientFields,
+      });
     } catch {
       // The mutation's typed error is rendered by the dialog's error prop.
       // Consume the rejected promise so a clear validation failure does not
       // also become an opaque browser-level unhandled rejection.
     }
-  }
-
-  async function copyOAuthCallback() {
-    if (!oauthCallback) return;
-    if (await copyTextToClipboard(oauthCallback)) setCopiedCallback(true);
-  }
-
-  async function copyOAuthClientMetadata() {
-    if (!oauthClientMetadataUrl) return;
-    if (await copyTextToClipboard(oauthClientMetadataUrl)) setCopiedClientMetadata(true);
   }
 
   if (!open) {
@@ -2134,56 +2142,6 @@ function AddConnectionDialog({
         className="max-h-[calc(100dvh-3rem)] w-full max-w-md overflow-y-auto overscroll-contain rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
-        {oauthCallback ? (
-          <>
-            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-              Finish OAuth setup
-            </h2>
-            <p className="mt-2 text-[13px] leading-6 text-gray-600">
-              Use the option supported by your provider.
-            </p>
-            <div className="mt-4 flex items-start gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
-              <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Callback URL — for pre-registered OAuth apps</p>
-                <p className="mt-1 text-[11px] leading-5 text-gray-600">Add this URL to the provider OAuth app.</p>
-                <p className="mt-1 break-all font-mono text-[12px] leading-5 text-gray-800">{oauthCallback}</p>
-              </div>
-              <button
-                type="button"
-                onClick={copyOAuthCallback}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 shadow-sm transition-colors hover:border-gray-300 hover:text-gray-700"
-                aria-label="Copy callback URL"
-                title={copiedCallback ? "Copied" : "Copy callback URL"}
-              >
-                {copiedCallback ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
-              </button>
-            </div>
-            {oauthClientMetadataUrl ? (
-              <div className="mt-3 flex items-start gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Client metadata URL — for supported providers</p>
-                  <p className="mt-1 text-[11px] leading-5 text-gray-600">Use only if the provider asks for a client metadata URL.</p>
-                  <p className="mt-1 break-all font-mono text-[12px] leading-5 text-gray-800">{oauthClientMetadataUrl}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={copyOAuthClientMetadata}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 shadow-sm transition-colors hover:border-gray-300 hover:text-gray-700"
-                  aria-label="Copy client metadata URL"
-                  title={copiedClientMetadata ? "Copied" : "Copy client metadata URL"}
-                >
-                  {copiedClientMetadata ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
-                </button>
-              </div>
-            ) : null}
-            <div className="mt-6 flex justify-end">
-              <DenButton variant="primary" onClick={onClose}>
-                Done
-              </DenButton>
-            </div>
-          </>
-        ) : (
-          <>
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
           {preset ? `Add ${preset.displayName}` : "Add a custom MCP server"}
         </h2>
@@ -2256,9 +2214,14 @@ function AddConnectionDialog({
 
           {showOAuthClientFields ? (
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
+                <Link href={MCP_OAUTH_REDIRECT_DOCS_URL} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-gray-500 underline underline-offset-2 hover:text-gray-900">
+                  How redirect URLs work
+                </Link>
+              </div>
               <p className="mt-1 text-[12px] leading-5 text-gray-500">
-                Add credentials now or after creating the connection.
+                Register this Den instance's redirect URL with the provider, then add its credentials here.
               </p>
               <div className="mt-3 space-y-3">
                 <div>
@@ -2405,11 +2368,9 @@ function AddConnectionDialog({
             disabled={!name.trim() || !url.trim() || !requirements || discoveryState !== "ready" || (authType === "oauth" && authorizationServers.length > 1 && !authorizationServerIssuer) || (authType === "apikey" && !apiKey.trim()) || accessIncomplete}
             onClick={() => void submit()}
           >
-            {showOAuthClientFields ? "Create and show redirect URL" : "Add connection"}
+            Add connection
           </DenButton>
         </div>
-          </>
-        )}
       </div>
     </div>
   );

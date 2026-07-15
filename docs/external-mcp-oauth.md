@@ -64,11 +64,12 @@ accepts only transactions for that connection whose signed mode is
 `legacy-v1`. Version-one transactions already in flight remain bound to the
 legacy verifier for their original ten-minute lifetime.
 
-The dashboard shows the exact current callback for each connection and the
-deployment client metadata URL. It does not offer migration or rollback
-actions. Deleting and recreating a connection creates a new shared-callback
-registration and may remove access grants, per-member authorization state, and
-plugin or marketplace bindings.
+The dashboard links to the redirect URL documentation from pre-registered OAuth
+app forms instead of repeating callback and client-metadata URLs on every
+connection. It does not offer migration or rollback actions. Deleting and
+recreating a connection creates a new shared-callback registration and may
+remove access grants, per-member authorization state, and plugin or marketplace
+bindings.
 
 Changing the MCP server identity or selected issuer clears tokens and pending
 authorization state. An issuer change also clears the saved client registration
@@ -89,9 +90,9 @@ so a secret can never be sent to a newly selected issuer.
 - **Provider identity/verification page after authorize**: leave requested
   scopes empty only when the provider advertises the complete workable set, or
   edit the connection's requested scopes and reconnect.
-- **`redirect_uri did not match`**: copy the exact current callback shown on
-  the connection into the provider. Some providers take a short time to
-  propagate callback changes before authorization succeeds.
+- **`redirect_uri did not match`**: verify the exact callback derived from
+  `DEN_API_PUBLIC_URL` against the provider registration. Some providers take a
+  short time to propagate callback changes before authorization succeeds.
 
 OAuth logs and support data use phase/error codes and omit tokens, secrets,
 authorization codes, signed state, PKCE verifiers, and URL query strings.

@@ -10,19 +10,30 @@ const dataPath = fileURLToPath(
 )
 
 describe("MCP OAuth callback compatibility UI contract", () => {
-  test("shows only the callback information needed to configure OAuth", () => {
+  test("keeps callback compatibility out of connection rows", () => {
     const screen = readFileSync(screenPath, "utf8")
     const data = readFileSync(dataPath, "utf8")
 
-    expect(screen).toContain("Current callback:")
-    expect(screen).toContain("Client metadata:")
     expect(screen).toContain("onClick={onConnect}")
+    expect(screen).not.toContain("Current callback:")
+    expect(screen).not.toContain("Client metadata:")
     expect(screen).not.toContain("Callback update required")
     expect(screen).not.toContain("Reconnect using shared callback")
     expect(screen).not.toContain("Revert to previous callback")
     expect(data).not.toContain("/oauth/use-shared-callback")
     expect(data).not.toContain("/oauth/revert-shared-callback")
     expect(data).not.toContain("oauthMigrationStatus")
+  })
+
+  test("keeps connection rows focused on connect, disconnect, and a compact actions menu", () => {
+    const screen = readFileSync(screenPath, "utf8")
+
+    expect(screen).toContain('const canConnectOAuth = connection.authType === "oauth"')
+    expect(screen).toContain('isPerMember ? !connection.connectedForMe : !connection.connected')
+    expect(screen).toContain('aria-haspopup="menu"')
+    expect(screen).toContain('role="menu"')
+    expect(screen).toContain('More actions for ${connection.name}')
+    expect(screen).toContain('{toolsOpen ? "Hide tools" : "View tools"}')
   })
 
   test("edits requested scopes without forcing an immediate reconnect", () => {

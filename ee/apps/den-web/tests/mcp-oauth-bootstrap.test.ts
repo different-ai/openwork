@@ -7,18 +7,19 @@ const screenPath = fileURLToPath(
 )
 
 describe("pre-registered MCP OAuth bootstrap UI contract", () => {
-  test("creates the connection before provider client credentials exist", () => {
+  test("links to deployment redirect guidance before the connection is created", () => {
     const screen = readFileSync(screenPath, "utf8")
 
     expect(screen).toContain("Client ID (optional for now)")
-    expect(screen).toContain("keepOpenForRedirect")
     expect(screen).toContain("Add the pre-registered OAuth app")
-    expect(screen).toContain("Callback URL — for pre-registered OAuth apps")
-    expect(screen).toContain("Add this URL to the provider OAuth app")
-    expect(screen).toContain("Client metadata URL — for supported providers")
-    expect(screen).toContain("Use only if the provider asks for a client metadata URL")
-    expect(screen).toContain('aria-label="Copy callback URL"')
-    expect(screen).toContain('aria-label="Copy client metadata URL"')
+    expect(screen).toContain("How redirect URLs work")
+    expect(screen).toContain("#oauth-redirect-url")
+    expect(screen).toContain("Register this Den instance's redirect URL with the provider")
+    expect(screen).not.toContain("keepOpenForRedirect")
+    expect(screen).not.toContain("Finish OAuth setup")
+    expect(screen).not.toContain("Create and show redirect URL")
+    expect(screen).not.toContain('aria-label="Copy callback URL"')
+    expect(screen).not.toContain('aria-label="Copy client metadata URL"')
     expect(screen).not.toContain("oauthClientRequired && !oauthClientId.trim()")
   })
 
