@@ -679,7 +679,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const openworkServerSnapshot = useOpenworkServerStoreSnapshot(openworkServerStore);
   const connectionsSnapshot = useConnectionsStoreSnapshot(connectionsStore);
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
-  useExtensionsStoreSnapshot(extensionsStore);
+  const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
 
   const openworkServerStatusForMcp = openworkServerSnapshot.openworkServerStatus;
@@ -1732,14 +1732,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       quickConnect: connectionsStore.quickConnect,
       mcpServers: connectionsSnapshot.mcpServers,
       installedSkills: extensionsStore.skills(),
-      importedCloudPlugins: extensionsStore.importedCloudPlugins(),
-      pendingCloudPluginChanges: extensionsStore.pendingCloudPluginChanges(),
-      cloudMarketplaces: extensionsStore.cloudOrgMarketplaces(),
+      importedCloudPlugins: extensionsSnapshot.importedCloudPlugins,
+      pendingCloudPluginChanges: extensionsSnapshot.pendingCloudPluginChanges,
+      cloudMarketplaces: extensionsSnapshot.cloudOrgMarketplaces,
       orgMcpConnections: orgMcpConnections.connections,
       enablementContext,
       isBuiltInConnected: extensionController.isConnected,
     }),
-    [connectionsSnapshot.mcpServers, connectionsStore.quickConnect, enablementContext, extensionController, extensionsStore, orgMcpConnections.connections],
+    [connectionsSnapshot.mcpServers, connectionsStore.quickConnect, enablementContext, extensionController, extensionsSnapshot, extensionsStore, orgMcpConnections.connections],
   );
   const extensionItemsForExtensions = useMemo(
     () => extensionItems.items.filter((item) => item.source !== "org-connection"),
@@ -2065,7 +2065,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   // ("Rendered more/fewer hooks than during the previous render").
   const refreshConnectMarketplaceItems = useCallback(
     () => extensionsStore.refreshCloudOrgMarketplaces({ force: true }),
-    [extensionsStore],
+    [extensionsSnapshot.workspaceContextKey, extensionsStore],
   );
 
   if (route.redirectPath && !props.embedded) {

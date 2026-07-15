@@ -69,8 +69,28 @@ import { useOrgListWindow } from "./use-org-list-window";
 
 const RELOAD_AFTER_ONBOARDING_KEY = "openwork.reloadAfterOrgOnboarding";
 
+function subscribeToDenSettings(onStoreChange: () => void) {
+  window.addEventListener(denSettingsChangedEvent, onStoreChange);
+  return () => window.removeEventListener(denSettingsChangedEvent, onStoreChange);
+}
+
+function readDenSettingsSnapshot() {
+  const settings = readDenSettings();
+  return JSON.stringify({
+    baseUrl: settings.baseUrl,
+    authToken: settings.authToken ?? "",
+    activeOrgId: settings.activeOrgId ?? "",
+    activeOrgName: settings.activeOrgName ?? "",
+  });
+}
+
 function useDenClient() {
-  const settings = useMemo(() => readDenSettings(), []);
+  const settingsSnapshot = useSyncExternalStore(
+    subscribeToDenSettings,
+    readDenSettingsSnapshot,
+    readDenSettingsSnapshot,
+  );
+  const settings = useMemo(() => readDenSettings(), [settingsSnapshot]);
   const authToken = settings.authToken ?? "";
   const denClient = useMemo(
     () =>
@@ -267,6 +287,12 @@ export function OrgOnboardingPage() {
       navigate("/session", { replace: true });
     }
   }, [authToken, navigate, prepared]);
+
+  useEffect(() => {
+    if (authToken && orgId && prepared) {
+      navigate("/session", { replace: true });
+    }
+  }, [authToken, navigate, orgId, prepared]);
 
   const { data, error, isPending } = useQuery({
     queryKey: ["den-org-onboarding", settings.baseUrl, "orgs"],

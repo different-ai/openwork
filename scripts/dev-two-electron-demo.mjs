@@ -62,6 +62,21 @@ function profilePaths(runRoot, profile) {
   };
 }
 
+function packagedExecutable(profile) {
+  if (process.platform !== "darwin") return null;
+  const outputName = profile.label === "demo-a" ? "dist-electron-demo-a" : "dist-electron-demo-b";
+  const architectureDirectory = process.arch === "arm64" ? "mac-arm64" : "mac";
+  return path.join(
+    desktopRoot,
+    outputName,
+    architectureDirectory,
+    `${profile.appName}.app`,
+    "Contents",
+    "MacOS",
+    profile.appName,
+  );
+}
+
 export async function createDemoRun(root = demoRoot) {
   await mkdir(root, { recursive: true });
   const runRoot = await mkdtemp(path.join(root, "run-"));
@@ -82,6 +97,14 @@ export async function createDemoRun(root = demoRoot) {
     ]),
   ]);
   return { admin, consumer, runRoot };
+}
+
+export function existingDemoRun(runRoot) {
+  return {
+    admin: profilePaths(runRoot, appProfiles.admin),
+    consumer: profilePaths(runRoot, appProfiles.consumer),
+    runRoot,
+  };
 }
 
 function argValue(name, fallback) {
@@ -288,15 +311,21 @@ function prepareSharedElectronResources() {
   );
 }
 
-function startElectron(label, env, built) {
-  const command = built ? process.execPath : pnpmCmd;
-  const args = built
-    ? [
+function startElectron(profile, env, built, packaged) {
+  const packagedCommand = packaged ? packagedExecutable(profile) : null;
+  if (packaged && (!packagedCommand || !existsSync(packagedCommand))) {
+    throw new Error(`${profile.appName} is not packaged. Run pnpm demo:electron:build first.`);
+  }
+  const command = packagedCommand || (built ? process.execPath : pnpmCmd);
+  const args = packagedCommand
+    ? []
+    : built
+      ? [
         electronCli,
         ...(env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1" ? ["--use-mock-keychain"] : []),
         "./electron/main.mjs",
       ]
-    : ["dev:electron"];
+      : ["dev:electron"];
   const child = spawn(command, args, {
     cwd: built ? desktopRoot : repoRoot,
     env: { ...process.env, ...env },
@@ -308,7 +337,7 @@ function startElectron(label, env, built) {
     detached: process.platform !== "win32",
   });
 
-  const prefix = `[${label}]`;
+  const prefix = `[${profile.label}]`;
   child.once("error", (error) => {
     if (stopping) return;
     console.error(`${prefix} failed to start: ${error.message}`);
@@ -378,6 +407,7 @@ export function demoEnv(profile, paths, port, cdpPort) {
     VITE_DISABLE_OPENWORK_MODELS: "1",
     OPENWORK_ELECTRON_APP_IDENTIFIER: profile.appIdentifier,
     OPENWORK_ELECTRON_APP_NAME: profile.appName,
+    OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION: "1",
     OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort,
     OPENWORK_ELECTRON_SKIP_SHARED_PREPARE: "1",
     OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1",
@@ -393,12 +423,21 @@ export function demoEnv(profile, paths, port, cdpPort) {
 async function main() {
   if (flag("--help") || flag("-h")) {
     console.log(
-      `Usage: pnpm dev:electron:two [options]\n\nStarts two isolated Electron instances for a local Den demo.\n\nOptions:\n  --built                 Launch the prebuilt renderer without Vite\n  --reset                 Delete demo profile data before launching\n  --reset-only            Delete demo profile data and exit\n  --den-web-url <url>     Den Web URL (default: http://localhost:3005)\n  --den-api-url <url>     Den API URL (default: http://localhost:8788)\n  --admin-port <port>     Demo A Vite port (default: 5273)\n  --consumer-port <port>  Demo B Vite port (default: 5274)\n  --admin-cdp <port>      Demo A Electron CDP port (default: 9923)\n  --consumer-cdp <port>   Demo B Electron CDP port (default: 9924)\n`,
+      `Usage: pnpm dev:electron:two [options]\n\nStarts two isolated Electron instances for a local Den demo.\n\nOptions:\n  --built                 Launch the prebuilt renderer without Vite\n  --packaged              Launch the distinct Demo A and Demo B app bundles\n  --prepare-only          Create both profiles without opening the apps\n  --run-root <path>       Launch a profile pair previously created with --prepare-only\n  --reset                 Delete demo profile data before launching\n  --reset-only            Delete demo profile data and exit\n  --den-web-url <url>     Den Web URL (default: http://localhost:3005)\n  --den-api-url <url>     Den API URL (default: http://localhost:8788)\n  --admin-port <port>     Demo A Vite port (default: 5273)\n  --consumer-port <port>  Demo B Vite port (default: 5274)\n  --admin-cdp <port>      Demo A Electron CDP port (default: 9923)\n  --consumer-cdp <port>   Demo B Electron CDP port (default: 9924)\n`,
     );
     return;
   }
 
   const built = flag("--built");
+  const packaged = flag("--packaged");
+  const prepareOnly = flag("--prepare-only");
+  const requestedRunRoot = argValue("--run-root", "").trim();
+  if (packaged && !built) {
+    throw new Error("--packaged requires --built.");
+  }
+  if (prepareOnly && requestedRunRoot) {
+    throw new Error("--prepare-only cannot be combined with --run-root.");
+  }
   const denWebUrl = argValue("--den-web-url", "http://localhost:3005");
   const denApiUrl = argValue("--den-api-url", "http://localhost:8788");
   const adminPort = argValue(appProfiles.admin.portFlag, appProfiles.admin.port);
@@ -417,36 +456,67 @@ async function main() {
   }
   if (flag("--reset-only")) return;
 
+  if (prepareOnly) {
+    const preparedRun = await createDemoRun();
+    await writeBootstrap(
+      preparedRun.admin.bootstrapPath,
+      appProfiles.admin.requireSignin,
+      denWebUrl,
+      denApiUrl,
+      appProfiles.admin.appName,
+    );
+    await writeBootstrap(
+      preparedRun.consumer.bootstrapPath,
+      appProfiles.consumer.requireSignin,
+      denWebUrl,
+      denApiUrl,
+      appProfiles.consumer.appName,
+    );
+    console.log(preparedRun.runRoot);
+    return;
+  }
+
+  if (requestedRunRoot) {
+    await stopExistingDemoProcesses(portEntries.map(([, port]) => port));
+    await waitForDemoPortsAvailable(portEntries);
+  }
   await assertDemoPortsAvailable(portEntries);
 
   if (built && !existsSync(path.join(repoRoot, "apps", "app", "dist", "index.html"))) {
     throw new Error("The desktop renderer is not built. Run pnpm --filter @openwork/desktop build:electron first.");
   }
 
-  const demoRun = await createDemoRun();
-  await writeBootstrap(
-    demoRun.admin.bootstrapPath,
-    appProfiles.admin.requireSignin,
-    denWebUrl,
-    denApiUrl,
-    appProfiles.admin.appName,
-  );
-  await writeBootstrap(
-    demoRun.consumer.bootstrapPath,
-    appProfiles.consumer.requireSignin,
-    denWebUrl,
-    denApiUrl,
-    appProfiles.consumer.appName,
-  );
+  const demoRun = requestedRunRoot
+    ? existingDemoRun(path.resolve(requestedRunRoot))
+    : await createDemoRun();
+  if (!requestedRunRoot) {
+    await writeBootstrap(
+      demoRun.admin.bootstrapPath,
+      appProfiles.admin.requireSignin,
+      denWebUrl,
+      denApiUrl,
+      appProfiles.admin.appName,
+    );
+    await writeBootstrap(
+      demoRun.consumer.bootstrapPath,
+      appProfiles.consumer.requireSignin,
+      denWebUrl,
+      denApiUrl,
+      appProfiles.consumer.appName,
+    );
+  } else if (!existsSync(demoRun.admin.bootstrapPath) || !existsSync(demoRun.consumer.bootstrapPath)) {
+    throw new Error("--run-root must point to a profile pair created with --prepare-only.");
+  }
 
   if (!built) prepareSharedElectronResources();
 
   children = [
-    startElectron(appProfiles.admin.label, demoEnv(appProfiles.admin, demoRun.admin, adminPort, adminCdp), built),
+    startElectron(appProfiles.admin, demoEnv(appProfiles.admin, demoRun.admin, adminPort, adminCdp), built, packaged),
     startElectron(
-      appProfiles.consumer.label,
+      appProfiles.consumer,
       demoEnv(appProfiles.consumer, demoRun.consumer, consumerPort, consumerCdp),
       built,
+      packaged,
     ),
   ];
 

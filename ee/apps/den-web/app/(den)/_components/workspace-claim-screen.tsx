@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { Check, Copy, ExternalLink } from "lucide-react";
 import { getDesktopGrant } from "../_lib/desktop-handoff";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import {
@@ -325,26 +326,34 @@ export function WorkspaceClaimScreen({
   // or continue in the browser.
   if (claimedOrg) {
     return (
-      <section className="den-page py-4 lg:py-6">
-        <div className="den-frame grid max-w-[44rem] gap-6 p-6 md:p-8">
-          <div className="grid gap-2">
-            <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[16ch]">You own {claimedOrg.organizationName} now.</h1>
-            <p className="den-copy">
+      <section
+        className={`flex min-h-dvh w-full items-center justify-center px-5 py-8 ${isLoopback ? "bg-[#edf6ff]" : ""}`}
+        data-demo-claim={isLoopback ? "true" : undefined}
+      >
+        <div className={`den-frame mx-auto grid w-full max-w-[38rem] gap-7 p-7 text-center md:p-10 ${isLoopback ? "border-blue-200/80 bg-white/90 shadow-[0_28px_80px_-44px_rgba(37,99,235,0.45)]" : ""}`}>
+          <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-blue-600 text-white shadow-[0_12px_28px_-14px_rgba(37,99,235,0.8)]">
+            <Check className="size-6" strokeWidth={2.5} aria-hidden />
+          </div>
+
+          <div className="grid justify-items-center gap-3">
+            <p className={`den-eyebrow ${isLoopback ? "text-blue-700" : ""}`}>{isLoopback ? "Demo workspace ready" : "Workspace ready"}</p>
+            <h1 className="den-title-lg max-w-[22ch]">{claimedOrg.organizationName} is yours.</h1>
+            <p className="den-copy max-w-[46ch]">
               {isLoopback
-                ? "For an isolated development app, copy the code and paste it there. You can also open your installed OpenWork app directly."
-                : "If OpenWork is already open on this machine, sign it in automatically - no password to type again."}
+                ? "Copy the one-time code, then paste it into OpenWork to finish signing in."
+                : "Open the desktop app to finish signing in. You will not need to enter your password again."}
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="grid gap-3">
             {isLoopback ? (
               <button
                 type="button"
-                className="den-button-primary w-full sm:w-auto"
+                className="den-button-primary w-full bg-blue-600 shadow-[0_16px_34px_-18px_rgba(37,99,235,0.75)] hover:!bg-blue-700"
                 onClick={() => void handleCopySignInCode()}
                 disabled={handoffBusy || copyBusy}
               >
+                <Copy className="size-4" aria-hidden />
                 {copyBusy ? "Copying..." : codeCopied ? "Code copied" : "Copy sign-in code"}
               </button>
             ) : (
@@ -357,37 +366,45 @@ export function WorkspaceClaimScreen({
                 {handoffBusy ? "Opening OpenWork..." : "Open OpenWork"}
               </button>
             )}
-            {isLoopback ? (
+
+            <div className="flex flex-col items-center justify-center gap-2 text-sm sm:flex-row sm:gap-5">
+              {isLoopback ? (
+                <button
+                  type="button"
+                  className="inline-flex min-h-10 items-center gap-1.5 px-2 font-medium text-[var(--dls-text-primary)] transition hover:text-blue-700 disabled:opacity-60"
+                  onClick={() => void handleOpenDesktop()}
+                  disabled={handoffBusy || copyBusy}
+                >
+                  <ExternalLink className="size-3.5" aria-hidden />
+                  {handoffBusy ? "Opening OpenWork..." : "Open OpenWork"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="inline-flex min-h-10 items-center gap-1.5 px-2 font-medium text-[var(--dls-text-secondary)] transition hover:text-[var(--dls-text-primary)] disabled:opacity-60"
+                  onClick={() => void handleCopySignInCode()}
+                  disabled={handoffBusy || copyBusy}
+                >
+                  <Copy className="size-3.5" aria-hidden />
+                  {copyBusy ? "Copying..." : codeCopied ? "Code copied" : "Copy sign-in code"}
+                </button>
+              )}
+              <span className="hidden text-[var(--dls-border)] sm:inline" aria-hidden>•</span>
               <button
                 type="button"
-                className="den-button-secondary w-full sm:w-auto"
-                onClick={() => void handleOpenDesktop()}
+                className="min-h-10 px-2 font-medium text-[var(--dls-text-secondary)] transition hover:text-[var(--dls-text-primary)] disabled:opacity-60"
+                onClick={continueInBrowser}
                 disabled={handoffBusy || copyBusy}
               >
-                {handoffBusy ? "Opening OpenWork..." : "Open OpenWork"}
+                Continue in browser instead
               </button>
-            ) : (
-              <button
-                type="button"
-                className="den-button-secondary w-full sm:w-auto"
-                onClick={() => void handleCopySignInCode()}
-                disabled={handoffBusy || copyBusy}
-              >
-                {copyBusy ? "Copying..." : codeCopied ? "Code copied" : "Copy sign-in code"}
-              </button>
-            )}
-            <button
-              type="button"
-              className="den-button-secondary w-full sm:w-auto"
-              onClick={continueInBrowser}
-              disabled={handoffBusy || copyBusy}
-            >
-              Continue in browser instead
-            </button>
+            </div>
           </div>
 
           {codeCopied ? (
-            <p className="den-copy text-sm">In OpenWork, choose &quot;Paste sign-in code&quot; and paste it once.</p>
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
+              In OpenWork, choose &quot;Paste sign-in code&quot; and paste it once.
+            </div>
           ) : null}
 
           {handoffAttempted && !handoffError ? (

@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   createDemoRun,
   demoEnv,
+  existingDemoRun,
   parseDemoProcessIds,
   resetDemoData,
   resolveDemoRoot
@@ -74,6 +75,15 @@ test("creates fresh, independent folders for every demo launch", async context =
   }
 });
 
+test("reopens the same prepared profile pair without falling back to another profile", async context => {
+  const testRoot = await mkdtemp(path.join(os.tmpdir(), "openwork-demo-reopen-test-"));
+  context.after(() => rm(testRoot, { recursive: true, force: true }));
+  const prepared = await createDemoRun(testRoot);
+  const reopened = existingDemoRun(prepared.runRoot);
+
+  assert.deepEqual(reopened, prepared);
+});
+
 test("reset removes all prior demo runs from the configured root", async context => {
   const testRoot = await mkdtemp(
     path.join(os.tmpdir(), "openwork-demo-reset-test-")
@@ -113,6 +123,7 @@ test("points each Electron instance at its own profile folders", async context =
   assert.equal(adminEnv.LOCALAPPDATA, run.admin.localAppDataDir);
   assert.equal(adminEnv.OPENWORK_DEV_MODE, "1");
   assert.equal(adminEnv.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN, "1");
+  assert.equal(adminEnv.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION, "1");
   assert.equal(
     consumerEnv.OPENWORK_ELECTRON_USERDATA,
     run.consumer.userDataDir
