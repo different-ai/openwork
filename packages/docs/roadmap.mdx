@@ -42,6 +42,24 @@ What you configure in OpenWork should not stay trapped in one interface. OpenWor
 | Shared and per-user authentication | Live |
 | Git-based publishing and automatic sync | Building |
 
+## MCP spec compliance
+
+OpenWork implements the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization) on both sides of the wire: as an MCP client (the desktop app and OpenWork Cloud connections) and as an MCP server with its own authorization server (OpenWork Cloud). Items marked Building or Next track the 2026-07-28 MCP specification release.
+
+| Capability | What it does | Status |
+| --- | --- | --- |
+| OAuth 2.1 self-discovery | Connect to a compliant MCP server or enterprise MCP gateway with just its URL: `WWW-Authenticate` challenge, Protected Resource Metadata (RFC 9728), Authorization Server Metadata (RFC 8414), and Dynamic Client Registration (RFC 7591). | Live |
+| PKCE and resource indicators | PKCE (S256) enforced on all authorization flows, with RFC 8707 resource indicators on authorization and token requests. | Live |
+| Silent session renewal | Short-lived access tokens backed by rotating refresh grants with replay protection, so connections renew without re-prompting for login. | Live |
+| Manual client credentials fallback | Enter a client ID and secret for authorization servers that do not offer Dynamic Client Registration. | Live |
+| `application_type` declaration (SEP-837) | Declare native or web application type during Dynamic Client Registration for compatibility with OIDC-backed enterprise authorization servers. | Building |
+| Client ID Metadata Documents (SEP-991) | A single, stable HTTPS client identity for OpenWork that enterprises allowlist once, replacing per-connection registrations and wildcard redirect allowlists. | Building |
+| Issuer-bound credentials (SEP-2352) | Key stored client credentials to the issuing authorization server and re-register automatically when a server's authorization server changes. | Building |
+| Authorization hardening (SEP-2468, SEP-2207) | Validate the `iss` parameter on authorization responses (RFC 9207) and adopt clarified refresh-token scope semantics. | Next |
+| URL-based client IDs in OpenWork Cloud | Accept Client ID Metadata Document identities in the OpenWork Cloud authorization server. | Next |
+
+> Following the spec is what makes OpenWork drop-in compatible with enterprise MCP gateways: paste the gateway URL, sign in with your identity provider, and every downstream system it fronts becomes available.
+
 ## Central management
 
 OpenWork Cloud is the control plane for distributing capabilities, applying desktop policies, managing identity and access, and understanding adoption across the organization.

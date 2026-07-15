@@ -7,6 +7,10 @@ const port = Number(process.env.PORT || 3978);
 const issuer = process.env.ISSUER || `http://${host}:${port}`;
 const autoApprove = process.env.AUTO_APPROVE !== "0";
 const disableDcr = process.env.DISABLE_DCR === "1";
+// Strict mode rejects refresh tokens this instance did not issue (and
+// rotates on every refresh grant). Off by default: eval flows restart the
+// mock mid-scenario and legitimately present pre-restart refresh tokens.
+const strictRefreshTokens = process.env.STRICT_REFRESH_TOKENS === "1";
 const mockClientId = process.env.MOCK_CLIENT_ID || "mock-preregistered-client";
 const mockClientSecret = process.env.MOCK_CLIENT_SECRET || "mock-preregistered-secret";
 const extraToolName = (process.env.MOCK_EXTRA_TOOL_NAME || "").trim();
@@ -17,6 +21,7 @@ const extraToolResult = process.env.MOCK_EXTRA_TOOL_RESULT || "mock oauth mcp ok
 const clients = new Map();
 const codes = new Map();
 const tokens = new Set();
+const refreshTokens = new Set();
 const requests = [];
 const drafts = [];
 
@@ -220,9 +225,10 @@ async function registerClient(req, res) {
   json(res, 201, client);
 }
 
-async function issueToken(req, res) {
+async function issueToken(req, res, entry) {
   const form = await readForm(req);
   const grantType = form.grant_type || "authorization_code";
+  if (entry) entry.grantType = grantType;
   let grantedScope = "mcp:read mcp:write";
 
   if (grantType === "authorization_code") {
@@ -246,6 +252,19 @@ async function issueToken(req, res) {
         return;
       }
     }
+  } else if (grantType === "refresh_token") {
+    if (!requirePreregisteredTokenClient(req, res, form, null)) {
+      return;
+    }
+    if (strictRefreshTokens) {
+      if (!form.refresh_token || !refreshTokens.has(form.refresh_token)) {
+        json(res, 400, { error: "invalid_grant", error_description: "unknown refresh token" });
+        return;
+      }
+      // Rotate, like real providers (and the Den) do: the old refresh token
+      // dies with this exchange, so the client must persist the replacement.
+      refreshTokens.delete(form.refresh_token);
+    }
   } else if (!requirePreregisteredTokenClient(req, res, form, null)) {
     return;
   }
@@ -253,9 +272,11 @@ async function issueToken(req, res) {
   if (form.code) codes.delete(form.code);
   const accessToken = `mock-access-${randomUUID()}`;
   tokens.add(accessToken);
+  const refreshToken = `mock-refresh-${randomUUID()}`;
+  refreshTokens.add(refreshToken);
   json(res, 200, {
     access_token: accessToken,
-    refresh_token: `mock-refresh-${randomUUID()}`,
+    refresh_token: refreshToken,
     token_type: "Bearer",
     expires_in: 3600,
     scope: grantedScope,
@@ -370,7 +391,7 @@ async function handleMcp(req, res) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", issuer);
-    record(req, url);
+    const entry = record(req, url);
 
     if (req.method === "OPTIONS") {
       json(res, 204, {});
@@ -420,7 +441,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/token" && req.method === "POST") {
-      await issueToken(req, res);
+      await issueToken(req, res, entry);
+      return;
+    }
+
+    // Test hook: kill every live access token (refresh grants stay valid),
+    // so the next authenticated MCP call gets a 401 challenge — the same
+    // thing a client sees in production when its access token expires.
+    if (url.pathname === "/admin/expire-access-tokens" && req.method === "POST") {
+      const expired = tokens.size;
+      tokens.clear();
+      json(res, 200, { expired });
       return;
     }
 

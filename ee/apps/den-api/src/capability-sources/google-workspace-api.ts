@@ -5,6 +5,11 @@ export type GoogleWorkspaceAttachment = {
   size: number | null
 }
 
+export type GoogleWorkspaceAttachmentData = {
+  size: number
+  dataBase64: string
+}
+
 export type GoogleWorkspaceGmailMessage = {
   id: string
   threadId: string
@@ -187,6 +192,21 @@ export function extractGmailMessage(payloadJson: unknown): GoogleWorkspaceGmailM
     snippet,
     body,
     attachments: state.attachments,
+  }
+}
+
+/**
+ * Gmail's attachments.get returns base64url data. Normalize to standard
+ * base64 so callers can decode the bytes locally with any base64 decoder.
+ */
+export function extractGmailAttachmentData(json: unknown): GoogleWorkspaceAttachmentData | null {
+  const root = isRecord(json) ? json : {}
+  const data = readString(root, "data")
+  if (!data) return null
+  const bytes = Buffer.from(data, "base64url")
+  return {
+    size: readNumber(root, "size") ?? bytes.byteLength,
+    dataBase64: bytes.toString("base64"),
   }
 }
 

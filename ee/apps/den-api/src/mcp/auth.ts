@@ -140,9 +140,11 @@ function readTokenAudiences(payload: Record<string, unknown>) {
   return []
 }
 
-function hasExactMcpOauthAudience(payload: Record<string, unknown>) {
+function hasAcceptedMcpOauthAudience(payload: Record<string, unknown>) {
   const audiences = readTokenAudiences(payload)
-  return audiences.length === 1 && audiences[0] === DEN_MCP_OAUTH_RESOURCE
+  const userInfoAudience = `${getDenAuthIssuer(env.betterAuthUrl)}/oauth2/userinfo`
+  return audiences.includes(DEN_MCP_OAUTH_RESOURCE)
+    && audiences.every((audience) => audience === DEN_MCP_OAUTH_RESOURCE || audience === userInfoAudience)
 }
 
 function hasMatchingMcpResourceClaim(payload: Record<string, unknown>) {
@@ -152,7 +154,7 @@ function hasMatchingMcpResourceClaim(payload: Record<string, unknown>) {
 
 function readTokenResource(payload: Record<string, unknown>, source: McpTokenSource) {
   if (source === "jwt") {
-    return hasExactMcpOauthAudience(payload) && hasMatchingMcpResourceClaim(payload) ? DEN_MCP_OAUTH_RESOURCE : null
+    return hasAcceptedMcpOauthAudience(payload) && hasMatchingMcpResourceClaim(payload) ? DEN_MCP_OAUTH_RESOURCE : null
   }
 
   const resource = readStringClaim(payload, DEN_MCP_RESOURCE_CLAIM)
