@@ -104,7 +104,7 @@ test("ignores lifecycle requests and classifies a tools/call with no response as
   expect(diagnoseExternalMcpToolCall({ inspection, succeeded: false })).toEqual({
     status: "failed",
     layer: "network",
-    summary: "OpenWork sent tools/call but did not receive an HTTP response from the remote MCP.",
+    summary: "Den started tools/call but did not capture an HTTP response. This does not prove the remote MCP caused the failure.",
   })
 })
 
@@ -209,7 +209,41 @@ test("attributes a blocked or deadline-stopped tools/call to the right layer", (
   })).toEqual({
     status: "failed",
     layer: "network",
-    summary: "OpenWork sent tools/call but the remote MCP did not answer before OpenWork stopped waiting at its deadline.",
+    summary: "Den sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
+  })
+})
+
+test("attributes remote HTTP and downstream provider failures without crossing evidence boundaries", () => {
+  const request = {
+    method: "POST",
+    url: "https://mcp.example.test/rpc",
+    startedAt: new Date().toISOString(),
+    headers: [],
+    body: { text: "{}", bytes: 2, truncated: false },
+  }
+  const response = {
+    status: 504,
+    statusText: "Gateway Timeout",
+    durationMs: 500,
+    headers: [],
+    body: { text: "", bytes: 0, truncated: false },
+  }
+  expect(diagnoseExternalMcpToolCall({
+    inspection: { request, response },
+    succeeded: false,
+  })).toEqual({
+    status: "failed",
+    layer: "remote_http",
+    summary: "The remote MCP returned HTTP 504.",
+  })
+  expect(diagnoseExternalMcpToolCall({
+    inspection: { request, response: { ...response, status: 200, statusText: "OK" } },
+    succeeded: false,
+    diagnostic: { phase: "PROVIDER_EXECUTION" },
+  })).toEqual({
+    status: "failed",
+    layer: "mcp_tool",
+    summary: "The remote MCP responded, but the downstream provider rejected the operation.",
   })
 })
 
