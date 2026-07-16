@@ -658,6 +658,52 @@ describe("enterprise MCP OAuth persistence contract", () => {
     }))
   })
 
+  it("binds an equivalent root discovery alias while keeping callback issuer checks exact", async () => {
+    const canonicalIssuer = "https://vercel.example"
+    const discoveryState: OAuthDiscoveryState = {
+      authorizationServerUrl: "https://mcp.vercel.example",
+      authorizationServerMetadata: {
+        issuer: canonicalIssuer,
+        authorization_endpoint: `${canonicalIssuer}/oauth/authorize`,
+        token_endpoint: `${canonicalIssuer}/oauth/token`,
+        response_types_supported: ["code"],
+      },
+      resourceMetadata: {
+        resource: "https://mcp.vercel.example/",
+        authorization_servers: ["https://mcp.vercel.example"],
+      },
+    }
+    const persistence = new MemoryOAuthPersistence()
+    const provider = new EnterpriseMcpOAuthProvider({
+      redirectUri: "https://den.example.test/v1/mcp-connections/oauth/callback",
+      connectionId: "connection-1",
+      persistence,
+      flow: { kind: "connect", authorizationId: "signed-state" },
+      clientName: "OpenWork",
+      clock: { now: () => Date.now() },
+      lifecycle: { expiresAt: Date.now() + 30_000, signal: new AbortController().signal },
+      authorizationTransactionTtlMs: 600_000,
+      expirationSkewMs: 0,
+      oauthConfiguration: {
+        applicationType: "web",
+        authorizationServerIssuer: canonicalIssuer,
+      },
+    })
+
+    await assert.doesNotReject(provider.saveDiscoveryState(discoveryState))
+    assert.doesNotThrow(() => validateMcpAuthorizationResponseIssuer({
+      expectedIssuer: canonicalIssuer,
+      discoveryState,
+      responseIssuer: canonicalIssuer,
+    }))
+    assert.throws(() => validateMcpAuthorizationResponseIssuer({
+      expectedIssuer: canonicalIssuer,
+      discoveryState,
+      responseIssuer: `${canonicalIssuer}/`,
+    }), (error: unknown) => error instanceof EnterpriseMcpOAuthContractError
+      && error.code === "MCP_OAUTH_ISSUER_MISMATCH")
+  })
+
   it("rejects a non-HTTPS client metadata document before OAuth performs network work", async () => {
     let fetchCount = 0
     const client = createEnterpriseMcpClient({
@@ -913,6 +959,83 @@ describe("enterprise MCP OAuth persistence contract", () => {
     } finally {
       await server.close()
     }
+  })
+
+  it("starts OAuth when initialize is public but tool discovery requires authorization", async () => {
+    const origin = "https://api.descript.example"
+    const metadataUrl = "https://den.example.test/oauth/client-metadata.json"
+    const fetch: EnterpriseMcpFetch = async (url, init) => {
+      const target = new URL(url)
+      if (target.pathname === "/.well-known/oauth-protected-resource/v2/mcp") {
+        return Response.json({
+          resource: `${origin}/v2/mcp`,
+          authorization_servers: [origin],
+        })
+      }
+      if (target.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer: origin,
+          authorization_endpoint: `${origin}/oauth/authorize`,
+          token_endpoint: `${origin}/oauth/token`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          token_endpoint_auth_methods_supported: ["none"],
+          code_challenge_methods_supported: ["S256"],
+          client_id_metadata_document_supported: true,
+        })
+      }
+      if (target.pathname === "/v2/mcp") {
+        const body = typeof init?.body === "string" ? init.body : ""
+        if (!body) return new Response(null, { status: 202 })
+        const request = rpcRequestSchema.parse(JSON.parse(body))
+        if (request.method === "initialize") {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: { tools: {} },
+              serverInfo: { name: "descript-style-test", version: "1.0.0" },
+            },
+          })
+        }
+        if (request.method === "notifications/initialized") return new Response(null, { status: 202 })
+        if (request.method === "tools/list") {
+          return new Response(null, {
+            status: 401,
+            headers: {
+              "www-authenticate": `Bearer resource_metadata=\"${origin}/.well-known/oauth-protected-resource/v2/mcp\"`,
+            },
+          })
+        }
+      }
+      return new Response(null, { status: 404 })
+    }
+    const persistence = new MemoryOAuthPersistence()
+    const client = createEnterpriseMcpClient({ fetch })
+    const connection: EnterpriseMcpConnection = {
+      id: "oauth-public-initialize",
+      serverUrl: `${origin}/v2/mcp`,
+      authorization: {
+        type: "oauth",
+        persistence,
+        configuration: {
+          applicationType: "web",
+          clientMetadataUrl: metadataUrl,
+        },
+      },
+    }
+
+    const started = await client.connect({
+      connection,
+      redirectUri: "https://den.example.test/v1/mcp-connections/oauth/callback",
+      authorizationId: "signed-descript-state",
+    })
+
+    assert.equal(started.status, "needs_auth")
+    if (started.status !== "needs_auth") throw new Error("Expected OAuth authorization to be required.")
+    assert.equal(new URL(started.authorizeUrl).searchParams.get("client_id"), metadataUrl)
+    assert.equal(persistence.registration?.source, "client-metadata")
   })
 
   it("refreshes an expired enterprise OAuth credential and persists the replacement", async () => {

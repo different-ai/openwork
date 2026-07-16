@@ -363,6 +363,10 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               requestPhase: "mcp-initialize",
               outcome: "succeeded",
             })
+            // Some providers allow initialize before challenging on tools/list.
+            // Verify the first tool page so "connected" means the connection is
+            // authorized for the capability OpenWork will actually use.
+            await session.client.listTools(undefined, session.requestOptions)
             try {
               await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
             } catch (error) {
@@ -414,6 +418,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               requestPhase: "mcp-initialize",
               outcome: "succeeded",
             })
+            await session.client.listTools(undefined, session.requestOptions)
           } catch (error) {
             operationFailed = true
             if (exchangedTokens && credentialPort) {

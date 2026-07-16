@@ -180,4 +180,43 @@ describe("enterprise MCP requirements discovery", () => {
     assert.equal(result.authentication.recommendedRegistrationMethod, "pre_registered")
     assert.equal(result.warnings.some((warning) => warning.code === "oauth_issuer_mismatch"), false)
   })
+
+  it("accepts a root resource discovery alias with an equivalent trailing slash", async () => {
+    const fetch: EnterpriseMcpFetch = async (url) => {
+      const target = new URL(url)
+      if (target.origin === "https://mcp.vercel.example" && target.pathname === "/.well-known/oauth-protected-resource") {
+        return Response.json({
+          resource: "https://mcp.vercel.example/",
+          authorization_servers: ["https://mcp.vercel.example"],
+        })
+      }
+      if (target.origin === "https://mcp.vercel.example" && target.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer: "https://vercel.example",
+          authorization_endpoint: "https://vercel.example/oauth/authorize",
+          token_endpoint: "https://vercel.example/oauth/token",
+          registration_endpoint: "https://vercel.example/oauth/register",
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          token_endpoint_auth_methods_supported: ["none"],
+          code_challenge_methods_supported: ["S256"],
+        })
+      }
+      return new Response(null, {
+        status: 401,
+        headers: {
+          "www-authenticate": "Bearer resource_metadata=\"https://mcp.vercel.example/.well-known/oauth-protected-resource\"",
+        },
+      })
+    }
+
+    const result = await discoverConnectionRequirements({
+      serverUrl: "https://mcp.vercel.example",
+      fetch,
+    })
+
+    assert.equal(result.authentication.authorizationServers[0]?.issuer, "https://vercel.example")
+    assert.equal(result.authentication.recommendedRegistrationMethod, "dynamic")
+    assert.equal(result.warnings.some((warning) => warning.code === "oauth_issuer_mismatch"), false)
+  })
 })
