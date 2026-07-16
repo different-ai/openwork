@@ -117,7 +117,7 @@ app.get(
     if (env.marketingUrl) {
       return c.redirect(env.marketingUrl, 302)
     }
-    return c.json({ ok: true, service: "den-api", version: env.serviceVersion })
+    return c.json({ ok: true, service: "den-api" })
   },
 )
 
@@ -199,7 +199,7 @@ app.get(
       openapi: "3.1.0",
       info: {
         title: "Den API",
-        version: env.serviceVersion,
+        version: "dev",
         description: [
           "OpenAPI spec for the Den control plane API.",
           "",

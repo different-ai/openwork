@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 import { getAllowedDesktopVersionsFromMetadata, getRequireSsoFromMetadata } from "../../_lib/den-org";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { DenRuntimeVersion } from "../../_components/ui/den-runtime-version";
 import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
@@ -117,6 +116,7 @@ export function OrgSettingsScreen() {
   >(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [copiedOrgId, setCopiedOrgId] = useState(false);
+  const [denVersion, setDenVersion] = useState<string | null>(null);
 
   const currentAllowedDomains =
     orgContext?.organization.allowedEmailDomains ?? null;
@@ -149,6 +149,23 @@ export function OrgSettingsScreen() {
     publishedVersions: supportedDesktopVersionOptions,
   });
   const pageSuccess = orgSettingsCompletion?.message ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void requestJson("/health", { method: "GET" }, 5000)
+      .then(({ response, payload }) => {
+        const version = Object.getOwnPropertyDescriptor(payload ?? {}, "version")?.value;
+        if (!cancelled && response.ok && typeof version === "string" && version.trim()) {
+          setDenVersion(version.trim());
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!orgContext) {
@@ -336,7 +353,15 @@ export function OrgSettingsScreen() {
       description={(
         <span className="flex w-full items-baseline justify-between gap-4">
           <span>Control your organization&apos;s settings.</span>
-          <DenRuntimeVersion />
+          {denVersion ? (
+            <span
+              className="font-normal tabular-nums text-gray-300"
+              data-den-runtime-version={denVersion}
+              title={`Den API version ${denVersion}`}
+            >
+              Den {denVersion}
+            </span>
+          ) : null}
         </span>
       )}
       colors={["#D9F99D", "#0F172A", "#0F766E", "#FDE68A"]}

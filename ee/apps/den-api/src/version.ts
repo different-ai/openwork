@@ -6,10 +6,6 @@ function normalizeVersion(value: string | undefined | null) {
   return trimmed || null;
 }
 
-export function resolveDenApiVersion(value: string | undefined | null) {
-  return normalizeVersion(value) ?? "dev"
-}
-
 export const denApiAppVersion = {
   minAppVersion: MIN_SUPPORTED_DESKTOP_VERSION,
   latestAppVersion: normalizeVersion(BUILD_LATEST_APP_VERSION) ?? "0.0.0",

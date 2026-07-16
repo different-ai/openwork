@@ -2,10 +2,6 @@
 
 Hono-based Den control plane implementation (`den-api`, formerly `den-controller`).
 
-`GET /health` reports the running Den API version in its public payload. Release
-images bake the release version into `DEN_API_VERSION`; non-release CI images
-use the source revision, and local source runs report `dev` unless overridden.
-
 This package is the active Den control plane implementation.
 
 It carries the full migrated Den API route surface in a foldered Hono structure so agents can navigate one area at a time without scanning the whole service.

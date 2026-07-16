@@ -2,7 +2,7 @@ import os from "node:os"
 import path from "node:path"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
-import { denApiAppVersion, resolveDenApiVersion } from "./version.js"
+import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
@@ -450,7 +450,7 @@ export const env = {
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
   corsOrigins,
   apiPublicUrl,
-  serviceVersion: resolveDenApiVersion(parsed.DEN_API_VERSION),
+  serviceVersion: parsed.DEN_API_VERSION?.trim() || "dev",
   publicUrlTrustedOrigins,
   installerArtifactsDir: optionalString(parsed.OPENWORK_INSTALLER_ARTIFACTS_DIR),
   // Standard desktop release assets: the release tag to download from,
