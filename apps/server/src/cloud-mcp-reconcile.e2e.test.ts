@@ -243,8 +243,8 @@ async function reconcile(base: string, workspaceId = "ws_1", body: Record<string
   });
 }
 
-async function getHealth(base: string, workspaceId = "ws_1"): Promise<Response> {
-  return fetch(`${base}/workspace/${workspaceId}/mcp/openwork-cloud/health`, { headers: headers() });
+async function getHealth(base: string, workspaceId = "ws_1", query = ""): Promise<Response> {
+  return fetch(`${base}/workspace/${workspaceId}/mcp/openwork-cloud/health${query}`, { headers: headers() });
 }
 
 describe("openwork-cloud MCP strict reconcile", () => {
@@ -363,6 +363,24 @@ describe("openwork-cloud MCP strict reconcile", () => {
     expect(body.phase).toBe("ready");
     expect(body.usable).toBe(true);
     expect(delivery(body).appliedRevision).toBe(delivery(body).desiredRevision);
+  });
+
+  test("GET health runs the direct Cloud endpoint probe only when requested", async () => {
+    const root = await createRoot();
+    const mock = startMockOpencode({ initialConnected: true });
+    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)], root);
+    await writeRuntimeOpencodeConfig(openwork.config, "ws_1", (current) => ({
+      ...current,
+      mcp: { "openwork-cloud": cloudConfigForOpenwork(openwork.base) },
+    }));
+
+    const defaultBody = await responseRecord(await getHealth(openwork.base));
+    expect(defaultBody.phase).toBe("ready");
+    expect(mock.requests.filter((request) => request.pathname.endsWith("/mcp/agent")).length).toBe(0);
+
+    const probedBody = await responseRecord(await getHealth(openwork.base, "ws_1", "?probe=1"));
+    expect(probedBody.phase).toBe("ready");
+    expect(mock.requests.filter((request) => request.pathname.endsWith("/mcp/agent")).length).toBeGreaterThan(0);
   });
 
   test("health probe timeout is bounded", async () => {

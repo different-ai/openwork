@@ -1148,6 +1148,11 @@ function toolsFromDirectCloudTools(directTools: DirectCloudToolsSnapshot): ToolS
   return splitPresentMissing([], expectedTools());
 }
 
+function toolsFromEngineAttestation(): ToolSnapshot {
+  const expected = expectedTools();
+  return { expected, present: [...expected], missing: [] };
+}
+
 async function readDirectCloudTools(config: Record<string, unknown>): Promise<DirectCloudToolsSnapshot> {
   const url = readString(config.url);
   const authorization = authorizationHeader(config);
@@ -1546,6 +1551,7 @@ async function inspectOpenworkCloud(input: {
   directory: string | null;
   desiredConfig: Record<string, unknown>;
   providerModel?: CloudMcpProviderModelContext;
+  probe: boolean;
 }): Promise<Inspection> {
   const failures: CloudMcpFailure[] = [];
   const emptyTools = splitPresentMissing([], expectedTools());
@@ -1605,12 +1611,16 @@ async function inspectOpenworkCloud(input: {
   const ids = idsResult.data ?? [];
   const experimentalToolIds = experimentalToolIdsFromSplit(splitPresentMissing(ids, expectedTools()));
   const pluginCanaries = splitPresentMissing(ids, expectedCanaries());
-  const directTools = await readDirectCloudTools(input.desiredConfig);
-  // The engine is authoritative; a probe-only transport failure must stay diagnostic and not veto steering/delivery.
-  if (directTools.failure && directTools.failure.code !== "probe_unreachable") {
-    failures.push(directTools.failure);
+  const directTools = input.probe ? await readDirectCloudTools(input.desiredConfig) : emptyDirectTools;
+  if (input.probe) {
+    // The engine is authoritative; a probe-only transport failure must stay diagnostic and not veto steering/delivery.
+    if (directTools.failure && directTools.failure.code !== "probe_unreachable") {
+      failures.push(directTools.failure);
+    }
   }
-  const tools = toolsFromDirectCloudTools(directTools);
+  // OpenCode >=1.17 reports MCP "connected" only after initial tools/list succeeds;
+  // the engine is the single source of truth unless an on-demand probe is requested.
+  const tools = input.probe ? toolsFromDirectCloudTools(directTools) : toolsFromEngineAttestation();
 
   const providerProjection = input.providerModel
     ? await readProviderProjection({
@@ -1814,6 +1824,7 @@ export async function readOpenworkCloudMcpHealth(input: {
   directory: string | null;
   providerModel?: CloudMcpProviderModelContext;
   serverMetadata?: CloudMcpServerMetadata;
+  probe?: boolean;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
 }): Promise<CloudMcpHealth> {
   const checkedAt = new Date().toISOString();
@@ -1875,6 +1886,7 @@ export async function readOpenworkCloudMcpHealth(input: {
       directory: input.directory,
       desiredConfig: desired.config,
       providerModel: input.providerModel,
+      probe: input.probe === true,
     });
     failures.push(...inspection.failures);
   }
@@ -2019,13 +2031,22 @@ export async function reconcileOpenworkCloudMcp(input: {
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
 }): Promise<CloudMcpHealth> {
+  const readHealth = () => readOpenworkCloudMcpHealth({
+    config: input.config,
+    workspace: input.workspace,
+    directory: input.directory,
+    providerModel: input.providerModel,
+    serverMetadata: input.serverMetadata,
+    createWorkspaceOpencodeClient: input.createWorkspaceOpencodeClient,
+    probe: true,
+  });
   const configBody = input.body.config ?? input.body;
   const desiredConfig = canonicalizeCloudMcpConfig(normalizeCloudMcpConfig(configBody));
   const metadata = extractDesiredMetadata(input.body, desiredConfig);
   const validationProblem = strictCloudMcpDesiredConfigProblem(desiredConfig, metadata);
   if (validationProblem) {
     const validationFailure = failureFromValidationProblem(validationProblem);
-    return healthWithFailure(await readOpenworkCloudMcpHealth(input), validationFailure);
+    return healthWithFailure(await readHealth(), validationFailure);
   }
   const desiredRevision = calculateCloudMcpDesiredRevision(desiredConfig, metadata);
   await persistDesiredConfig(input.config, input.workspace.id, desiredConfig);
@@ -2040,7 +2061,7 @@ export async function reconcileOpenworkCloudMcp(input: {
       message: "Remote workspace has no exact OpenCode directory, so Cloud MCP readiness cannot be claimed.",
     });
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, directoryFailure);
-    return healthWithFailure(await readOpenworkCloudMcpHealth(input), directoryFailure);
+    return healthWithFailure(await readHealth(), directoryFailure);
   }
 
   if (!baseUrlConfigured(input.config, input.workspace)) {
@@ -2052,7 +2073,7 @@ export async function reconcileOpenworkCloudMcp(input: {
       message: "OpenCode base URL is missing for this workspace.",
     });
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, unconfiguredFailure);
-    return healthWithFailure(await readOpenworkCloudMcpHealth(input), unconfiguredFailure);
+    return healthWithFailure(await readHealth(), unconfiguredFailure);
   }
 
   cloudMcpDeliveryState.markRegistering(input.workspace, input.directory, desiredRevision);
@@ -2060,25 +2081,25 @@ export async function reconcileOpenworkCloudMcp(input: {
   if (registration.failures.length > 0) {
     const registrationError = registrationFailure(registration.failures);
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, registrationError);
-    return healthWithFailure(await readOpenworkCloudMcpHealth(input), registrationError);
+    return healthWithFailure(await readHealth(), registrationError);
   }
 
   const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
   const connectedFailure = await pollConnected({ opencode, directory: input.directory });
   if (connectedFailure) {
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, connectedFailure);
-    return healthWithFailure(await readOpenworkCloudMcpHealth(input), connectedFailure);
+    return healthWithFailure(await readHealth(), connectedFailure);
   }
 
-  const health = await readOpenworkCloudMcpHealth(input);
+  const health = await readHealth();
 
   if (health.firstFailure) {
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, health.firstFailure);
-    return healthWithFailure(await readOpenworkCloudMcpHealth(input), health.firstFailure);
+    return healthWithFailure(await readHealth(), health.firstFailure);
   }
 
   cloudMcpDeliveryState.markReady(input.workspace, input.directory, desiredRevision);
-  return readOpenworkCloudMcpHealth(input);
+  return readHealth();
 }
 
 export async function reconcilePersistedOpenworkCloudMcp(input: {

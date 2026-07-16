@@ -220,6 +220,7 @@ async function resolveCloudHealth(config: ServerConfig, options: ConnectSnapshot
     directory: resolved.directory,
     providerModel: options.providerModel,
     serverMetadata: options.serverMetadata,
+    probe: false,
     createWorkspaceOpencodeClient: options.createWorkspaceOpencodeClient,
   });
   return {

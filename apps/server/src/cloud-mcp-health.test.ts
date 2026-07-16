@@ -30,6 +30,10 @@ const roots: string[] = [];
 const stops: Array<() => void> = [];
 
 type DirectProbeMode = "ok" | "missing" | "unauthorized";
+type ReadHealthOptions = {
+  probe?: boolean;
+  beforeRead?: (directUrl: string) => void;
+};
 
 afterEach(async () => {
   globalThis.fetch = previousFetch;
@@ -113,7 +117,7 @@ function serverConfig(root: string, testWorkspace: WorkspaceInfo): ServerConfig 
   } satisfies ServerConfig;
 }
 
-async function readHealthForDirectProbe(mode: DirectProbeMode, beforeRead?: (directUrl: string) => void) {
+async function readHealthForDirectProbe(mode: DirectProbeMode, options: ReadHealthOptions = {}) {
   const root = await createRoot("openwork-cloud-health-");
   const engine = startMockOpencode(mode);
   const baseUrl = `http://127.0.0.1:${engine.port}`;
@@ -141,14 +145,27 @@ async function readHealthForDirectProbe(mode: DirectProbeMode, beforeRead?: (dir
       },
     },
   }));
-  beforeRead?.(directUrl);
+  options.beforeRead?.(directUrl);
   const health = await readOpenworkCloudMcpHealth({
     config,
     workspace: testWorkspace,
     directory: root,
+    probe: options.probe,
     createWorkspaceOpencodeClient: () => createOpencodeClient({ baseUrl }),
   });
   return { health, directUrl };
+}
+
+function watchDirectFetches(directUrl: string, onFetch: () => void): void {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === directUrl) onFetch();
+      return originalFetch(input, init);
+    },
+    { preconnect: originalFetch.preconnect },
+  );
 }
 
 function makeDirectProbeThrow(directUrl: string): void {
@@ -281,8 +298,31 @@ describe("cloud MCP health foundation", () => {
     expect(denies).toEqual([]);
   });
 
+  test("uses engine-attested tools by default without direct Cloud endpoint fetch", async () => {
+    let directFetchCount = 0;
+    const { health } = await readHealthForDirectProbe("ok", {
+      beforeRead: (directUrl) => watchDirectFetches(directUrl, () => {
+        directFetchCount += 1;
+      }),
+    });
+
+    expect(health.usable).toBe(true);
+    expect(health.phase).toBe("ready");
+    expect(health.tools.present.sort()).toEqual([...OPENWORK_CLOUD_EXPECTED_TOOLS].sort());
+    expect(health.tools.missing).toEqual([]);
+    expect(health.tools.direct.checked).toBe(false);
+    expect(directFetchCount).toBe(0);
+  });
+
+  test("default engine-attested health marks delivery applied", async () => {
+    const { health } = await readHealthForDirectProbe("ok");
+
+    expect(health.delivery.state).toBe("ready");
+    expect(health.delivery.appliedRevision).toBe(health.desired.revision);
+  });
+
   test("keeps Cloud usable when only the direct probe transport is unreachable", async () => {
-    const { health } = await readHealthForDirectProbe("ok", makeDirectProbeThrow);
+    const { health } = await readHealthForDirectProbe("ok", { probe: true, beforeRead: makeDirectProbeThrow });
 
     expect(health.usable).toBe(true);
     expect(health.phase).toBe("ready");
@@ -295,14 +335,14 @@ describe("cloud MCP health foundation", () => {
   });
 
   test("still fails closed when the direct probe receives HTTP 401", async () => {
-    const { health } = await readHealthForDirectProbe("unauthorized");
+    const { health } = await readHealthForDirectProbe("unauthorized", { probe: true });
 
     expect(health.usable).toBe(false);
     expect(health.firstFailure?.code).toBe("invalid_mcp_token");
   });
 
   test("still reports missing Cloud tools when tools/list completes without required tools", async () => {
-    const { health } = await readHealthForDirectProbe("missing");
+    const { health } = await readHealthForDirectProbe("missing", { probe: true });
 
     expect(health.usable).toBe(false);
     expect(health.firstFailure?.code).toBe("cloud_tools_missing");
