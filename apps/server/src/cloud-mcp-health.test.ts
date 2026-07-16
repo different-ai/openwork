@@ -27,6 +27,7 @@ const workspace: WorkspaceInfo = {
 const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
 const previousFetch = globalThis.fetch;
 const roots: string[] = [];
+const runtimeDbRoots: string[] = [];
 const stops: Array<() => void> = [];
 
 type DirectProbeMode = "ok" | "missing" | "unauthorized";
@@ -40,6 +41,13 @@ afterEach(async () => {
   cloudMcpDeliveryState.clear();
   while (stops.length) stops.pop()?.();
   while (roots.length) await rm(roots.pop() ?? "", { recursive: true, force: true });
+  if (process.platform === "win32") {
+    // Bun keeps runtime-opencode-config-store SQLite handles open for the process lifetime on Windows.
+    // Skip only those DB temp dirs; workspace roots and mock servers are still cleaned every test.
+    runtimeDbRoots.length = 0;
+  } else {
+    while (runtimeDbRoots.length) await rm(runtimeDbRoots.pop() ?? "", { recursive: true, force: true });
+  }
   if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
   else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
 });
@@ -48,6 +56,12 @@ async function createRoot(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   roots.push(root);
   return root;
+}
+
+async function createRuntimeDbPath(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  runtimeDbRoots.push(root);
+  return join(root, "runtime.sqlite");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -131,7 +145,7 @@ async function readHealthForDirectProbe(mode: DirectProbeMode, options: ReadHeal
     baseUrl,
   };
   const config = serverConfig(root, testWorkspace);
-  process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+  process.env.OPENWORK_RUNTIME_DB = await createRuntimeDbPath("openwork-cloud-health-runtime-");
   await writeRuntimeOpencodeConfig(config, testWorkspace.id, (current) => ({
     ...current,
     mcp: {
