@@ -78,6 +78,7 @@ export type ToolProps = {
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
   ) => Promise<ChatToolReconnectResult>
+  onReopenAuthorization?: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
   onRetry?: (action: ChatToolReconnectAction) => void | Promise<void>
 }
 
@@ -147,7 +148,15 @@ function reconnectAttribution(action: ChatToolReconnectAction, label: string): T
   }
 }
 
-const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect, onRetry }: ToolProps) => {
+const Tool = ({
+  title,
+  toolPart,
+  defaultOpen = false,
+  className,
+  onReconnect,
+  onReopenAuthorization,
+  onRetry,
+}: ToolProps) => {
   const { state, input } = toolPart
   const inFlight = isToolPartInFlight(toolPart)
   const isError = state === "output-error"
@@ -167,6 +176,9 @@ const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect, on
   ))
   const reconnectError = useChatMcpReconnectStore((store) => (
     reconnectKey ? store.records[reconnectKey]?.error ?? null : null
+  ))
+  const reconnectAuthorizeUrl = useChatMcpReconnectStore((store) => (
+    reconnectKey ? store.records[reconnectKey]?.authorizeUrl ?? null : null
   ))
   const setReconnectRecord = useChatMcpReconnectStore((store) => store.setRecord)
   const reconnectPresentation = reconnectAction
@@ -194,17 +206,48 @@ const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect, on
       await onRetry?.(reconnectAction)
       return
     }
-    if (reconnectState === "opening" || reconnectState === "authorization_opened") return
-    setReconnectRecord(reconnectKey, { phase: "opening", error: null })
+    if (reconnectState === "authorization_opened") {
+      if (!onReopenAuthorization) return
+      if (!reconnectAuthorizeUrl) {
+        setReconnectRecord(reconnectKey, {
+          phase: "failed",
+          error: `${reconnectAction.connectionName} sign-in is no longer pending. Try reconnecting again.`,
+          authorizeUrl: null,
+        })
+        return
+      }
+      try {
+        await onReopenAuthorization(reconnectAction, reconnectAuthorizeUrl)
+        setReconnectRecord(reconnectKey, {
+          phase: "authorization_opened",
+          error: null,
+          authorizeUrl: reconnectAuthorizeUrl,
+        })
+      } catch (error) {
+        setReconnectRecord(reconnectKey, {
+          phase: "failed",
+          error: error instanceof Error ? error.message : "Could not reopen sign-in.",
+          authorizeUrl: null,
+        })
+      }
+      return
+    }
+    if (reconnectState === "opening") return
+    setReconnectRecord(reconnectKey, { phase: "opening", error: null, authorizeUrl: null })
     try {
       const result = await onReconnect(reconnectAction, (progress) => {
-        setReconnectRecord(reconnectKey, { phase: progress, error: null })
+        setReconnectRecord(reconnectKey, {
+          phase: progress.phase,
+          error: null,
+          authorizeUrl: progress.phase === "authorization_opened" ? progress.authorizeUrl : null,
+        })
       })
-      setReconnectRecord(reconnectKey, { phase: result, error: null })
+      setReconnectRecord(reconnectKey, { phase: result, error: null, authorizeUrl: null })
     } catch (error) {
       setReconnectRecord(reconnectKey, {
         phase: "failed",
         error: error instanceof Error ? error.message : "Could not reconnect this account.",
+        authorizeUrl: null,
       })
     }
   }

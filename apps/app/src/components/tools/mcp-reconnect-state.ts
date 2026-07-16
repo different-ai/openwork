@@ -12,6 +12,7 @@ export type ChatMcpReconnectPhase =
 export type ChatMcpReconnectRecord = {
   phase: ChatMcpReconnectPhase
   error: string | null
+  authorizeUrl: string | null
 }
 
 type ChatMcpReconnectStore = {
@@ -20,7 +21,7 @@ type ChatMcpReconnectStore = {
   reset: () => void
 }
 
-const READY_RECORD: ChatMcpReconnectRecord = { phase: "ready", error: null }
+const READY_RECORD: ChatMcpReconnectRecord = { phase: "ready", error: null, authorizeUrl: null }
 
 export function chatMcpReconnectKey(toolCallId: string, connectionId: string): string {
   return `${toolCallId}:${connectionId}`
@@ -52,7 +53,7 @@ export function chatMcpReconnectPresentation(
     case "opening":
       return { badgeLabel: "Reconnect required", buttonLabel: "Opening sign-in…", disabled: true }
     case "authorization_opened":
-      return { badgeLabel: "Reconnect required", buttonLabel: "Finish in browser", disabled: true }
+      return { badgeLabel: "Reconnect required", buttonLabel: "Open sign-in again", disabled: false }
     case "connected":
       return { badgeLabel: "Reconnected", buttonLabel: "Try again", disabled: false }
     case "failed":

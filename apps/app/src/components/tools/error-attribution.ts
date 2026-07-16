@@ -12,7 +12,9 @@ export type ChatToolReconnectAction = {
   label: string
 }
 
-export type ChatToolReconnectProgress = "opening" | "authorization_opened"
+export type ChatToolReconnectProgress =
+  | { phase: "opening" }
+  | { phase: "authorization_opened"; authorizeUrl: string }
 export type ChatToolReconnectResult = "connected"
 
 const OPENWORK_CLOUD_CAPABILITY_TOOLS = new Set([

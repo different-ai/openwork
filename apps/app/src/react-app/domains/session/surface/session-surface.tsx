@@ -1319,7 +1319,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         sessionId: props.sessionId,
         connectionId: action.connectionId,
       });
-      onProgress("opening");
+      onProgress({ phase: "opening" });
       const result = await denClient.startMcpConnectionConnect(organizationId, action.connectionId);
       if (result.status === "connected") {
         recordInspectorEvent("mcp.chat_reconnect.completed", {
@@ -1333,7 +1333,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (!result.authorizeUrl) throw new Error(`Could not start ${action.connectionName} authorization.`);
 
       await openDesktopUrl(result.authorizeUrl);
-      onProgress("authorization_opened");
+      onProgress({ phase: "authorization_opened", authorizeUrl: result.authorizeUrl });
       await waitForFreshMcpAuthorization({
         connectionId: action.connectionId,
         connectionName: action.connectionName,
@@ -1358,6 +1358,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
       throw error;
     }
   }, [props.onOpenConnect, props.sessionId, props.workspaceId]);
+
+  const handleMcpReopenAuthorization = useCallback(async (
+    action: ChatToolReconnectAction,
+    authorizeUrl: string,
+  ) => {
+    await openDesktopUrl(authorizeUrl);
+    recordInspectorEvent("mcp.chat_reconnect.authorization_reopened", {
+      workspaceId: props.workspaceId,
+      sessionId: props.sessionId,
+      connectionId: action.connectionId,
+    });
+  }, [props.sessionId, props.workspaceId]);
 
   const handleMcpRetry = useCallback(async (action: ChatToolReconnectAction) => {
     const prompt = `The ${action.connectionName} connection is restored. Search for the capability again and retry the previous request. Before repeating any write action, confirm it did not already complete.`;
@@ -1560,6 +1572,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onForkAtMessage={handleForkAtMessage}
                       onEditUserMessage={handleEditUserMessage}
                       onMcpReconnect={handleMcpReconnect}
+                      onMcpReopenAuthorization={handleMcpReopenAuthorization}
                       onMcpRetry={handleMcpRetry}
                     >
                       <MessageList

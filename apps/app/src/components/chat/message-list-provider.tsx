@@ -25,6 +25,7 @@ interface MessageListContextValue {
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
   ) => Promise<ChatToolReconnectResult>
+  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
   onMcpRetry: (action: ChatToolReconnectAction) => void | Promise<void>
 }
 
@@ -44,6 +45,7 @@ interface MessageListProviderProps {
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
   ) => Promise<ChatToolReconnectResult>
+  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
   onMcpRetry: (action: ChatToolReconnectAction) => void | Promise<void>
   displaySuggestions: boolean
   providerConnectedCount: number
@@ -72,6 +74,7 @@ export function MessageListProvider({
   onForkAtMessage,
   onEditUserMessage,
   onMcpReconnect,
+  onMcpReopenAuthorization,
   onMcpRetry,
 }: MessageListProviderProps) {
   const value = React.useMemo(
@@ -89,6 +92,7 @@ export function MessageListProvider({
       onForkAtMessage,
       onEditUserMessage,
       onMcpReconnect,
+      onMcpReopenAuthorization,
       onMcpRetry,
     }),
     [
@@ -105,6 +109,7 @@ export function MessageListProvider({
       onForkAtMessage,
       onEditUserMessage,
       onMcpReconnect,
+      onMcpReopenAuthorization,
       onMcpRetry,
     ],
   )
