@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 import { getAllowedDesktopVersionsFromMetadata, getRequireSsoFromMetadata } from "../../_lib/den-org";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { DenRuntimeVersion } from "../../_components/ui/den-runtime-version";
 import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
@@ -332,7 +333,12 @@ export function OrgSettingsScreen() {
     <DashboardPageTemplate
       icon={SlidersHorizontal}
       title="Org settings"
-      description="Control your organization's settings."
+      description={(
+        <span className="inline-flex items-baseline gap-2">
+          <span>Control your organization&apos;s settings.</span>
+          <DenRuntimeVersion />
+        </span>
+      )}
       colors={["#D9F99D", "#0F172A", "#0F766E", "#FDE68A"]}
     >
       {orgContext && !orgContext.entitlements.orgControls ? (

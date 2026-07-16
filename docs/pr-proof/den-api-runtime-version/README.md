@@ -1,10 +1,10 @@
 # Den Web runtime version proof
 
-The fraimz flow signs in to Den Web, confirms that the dashboard sidebar shows
-the running Den version discreetly, and checks that the value matches the
-public Den API health response.
+The fraimz flow signs in to Den Web, confirms that Org settings shows the
+running Den version directly beside the page description in light gray, and
+checks that the value matches the public Den API health response.
 
-![Den dashboard sidebar showing version 0.17.31](./den-api-runtime-version.png)
+![Den Org settings showing version 0.17.31 beside the page description](./den-api-runtime-version.png)
 
 Run locally with Den API, Den Web, the seeded demo workspace, and a CDP browser
 available:
