@@ -357,7 +357,15 @@ export default {
             await ctx.waitFor("Boolean(document.querySelector('[data-testid=\"chat-mcp-reconnect-action\"]'))", { timeoutMs: 180_000, label: "inline MCP reconnect action" });
             await waitForAssistantToFinish(ctx).catch(() => undefined);
             await ctx.expectText("Reconnect required");
-            await ctx.expectText(`Reconnect ${CONNECTION_NAME}`);
+            const action = await ctx.eval(`(() => {
+              const button = document.querySelector('[data-testid="chat-mcp-reconnect-action"]');
+              return button ? {
+                label: (button.textContent ?? '').trim(),
+                accessibleLabel: button.getAttribute('aria-label'),
+              } : null;
+            })()`);
+            ctx.assert(action?.label === "Reconnect", `Expected the compact Reconnect label, received ${JSON.stringify(action?.label)}.`);
+            ctx.assert(action?.accessibleLabel === `Reconnect ${CONNECTION_NAME}`, "The compact action lost its connection-specific accessible label.");
             const actionCount = await ctx.eval("document.querySelectorAll('[data-testid=\"chat-mcp-reconnect-action\"]').length");
             ctx.assert(actionCount === 1, `Expected one reconnect action, found ${actionCount}.`);
             await ctx.eval("document.querySelector('[data-testid=\"chat-mcp-reconnect-action\"]')?.scrollIntoView({ block: 'center' })");
@@ -366,7 +374,7 @@ export default {
           screenshot: {
             name: "chat-mcp-reconnect-required",
             claim: "A real search_capabilities live probe encounters invalid-grant and offers a one-click reconnect for the exact connection in chat.",
-            requireText: ["Reconnect required", `Reconnect ${CONNECTION_NAME}`],
+            requireText: ["Reconnect required", "Reconnect"],
             rejectText: ["Something went wrong"],
           },
         });
