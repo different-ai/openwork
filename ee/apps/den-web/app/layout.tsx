@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { IBM_Plex_Mono, Inter } from "next/font/google";
 import { headers } from "next/headers";
 import Script from "next/script";
+import { getRequestBrandFavicon } from "./_lib/request-brand-favicon";
 import "./globals.css";
 
 const inter = Inter({
@@ -58,9 +59,6 @@ export async function generateMetadata(): Promise<Metadata> {
       description:
         "Share your OpenWork setup with your team and manage OpenWork Cloud from app.openworklabs.com.",
       images: ["/opengraph-image"]
-    },
-    icons: {
-      icon: "/openwork-mark.svg"
     }
   };
 }
@@ -78,12 +76,15 @@ posthog.init(${JSON.stringify(posthogKey)}, {
 });`
   : "";
 
-export default function RootLayout({
+export default async function RootLayout({
   children
 }: Readonly<{ children: React.ReactNode }>) {
+  const favicon = await getRequestBrandFavicon();
+
   return (
     <html lang="en" className={`${inter.variable} ${ibmPlexMono.variable}`}>
       <head>
+        <link key={favicon.href} rel="icon" href={favicon.href} type={favicon.type} />
         {posthogBootstrap ? (
           <Script id="posthog" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: posthogBootstrap }} />
         ) : null}

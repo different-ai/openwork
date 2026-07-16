@@ -529,6 +529,7 @@ export function OrgDashboardProvider({
         throw getRequestError(payload, response, `Failed to update organization (${response.status}).`);
       }
     });
+    router.refresh();
 
     if (shouldPublishOrgSettingsCompletion && pathnameRef.current === ORG_SETTINGS_PATH) {
       publishOrgSettingsCompletion();

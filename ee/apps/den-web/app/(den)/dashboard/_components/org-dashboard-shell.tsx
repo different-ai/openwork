@@ -48,7 +48,6 @@ import {
 import { useOrgListWindow } from "../../_lib/use-org-list-window";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
-import { BrandFavicon } from "./brand-favicon";
 import { OrgSelectionScreen } from "./org-selection-screen";
 import { UserProfileDialog } from "./user-profile-dialog";
 
@@ -640,8 +639,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col bg-[#fafafa] md:h-screen md:flex-row">
-      <BrandFavicon metadata={orgContext?.organization.metadata} />
-
       {/* Desktop sidebar — always visible at md+ */}
       <aside className="hidden shrink-0 border-r border-gray-100 bg-white md:flex md:min-h-screen md:w-[260px] md:flex-col">
         {sidebarContent}

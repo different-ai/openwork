@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { getBrandFavicon } from "../app/(den)/dashboard/_components/brand-favicon";
+import { getBrandFavicon } from "../app/(den)/_lib/brand-favicon";
 
-const faviconSource = readFileSync(
-  new URL("../app/(den)/dashboard/_components/brand-favicon.tsx", import.meta.url),
+const rootLayoutSource = readFileSync(
+  new URL("../app/layout.tsx", import.meta.url),
   "utf8",
 );
-const shellSource = readFileSync(
-  new URL("../app/(den)/dashboard/_components/org-dashboard-shell.tsx", import.meta.url),
+const requestFaviconSource = readFileSync(
+  new URL("../app/_lib/request-brand-favicon.ts", import.meta.url),
+  "utf8",
+);
+const orgProviderSource = readFileSync(
+  new URL("../app/(den)/dashboard/_providers/org-dashboard-provider.tsx", import.meta.url),
   "utf8",
 );
 
@@ -36,10 +40,16 @@ describe("Den dashboard brand favicon", () => {
       href: "/openwork-mark.svg",
       type: undefined,
     });
-    expect(faviconSource).toContain('return () => favicon.remove()');
   });
 
-  test("follows refreshed organization metadata in the dashboard shell", () => {
-    expect(shellSource).toContain('<BrandFavicon metadata={orgContext?.organization.metadata} />');
+  test("renders the request-scoped favicon before hydration and refreshes it after settings change", () => {
+    expect(rootLayoutSource).toContain("const favicon = await getRequestBrandFavicon()");
+    expect(rootLayoutSource).toContain('<link key={favicon.href} rel="icon" href={favicon.href} type={favicon.type} />');
+    expect(rootLayoutSource).not.toContain('icon: "/openwork-mark.svg"');
+    expect(requestFaviconSource).toContain('await fetch(`${apiBase}/v1/org`');
+    expect(requestFaviconSource).toContain('cache: "no-store"');
+    expect(orgProviderSource).toContain('await runMutation("update-organization-settings"');
+    expect(orgProviderSource).toContain("router.refresh()");
+    expect(requestFaviconSource).not.toContain("useEffect");
   });
 });
