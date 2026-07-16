@@ -269,6 +269,18 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
     expect(serverFetchCalls).toBe(0);
   });
 
+  test("fails open without server fetch when engine has an unknown openwork-cloud status", async () => {
+    const client = engineMcpClient({ data: { "openwork-cloud": { status: "starting" } } });
+    let serverFetchCalls = 0;
+    const serverFetch = async (): Promise<Response> => {
+      serverFetchCalls += 1;
+      return Response.json({ message: "unexpected" }, { status: 500 });
+    };
+
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(serverFetchCalls).toBe(0);
+  });
+
   test("falls back to server connect state when engine has no openwork-cloud entry", async () => {
     process.env.OPENWORK_SERVER_URL = "http://openwork.test";
     process.env.OPENWORK_SERVER_TOKEN = "test-token";

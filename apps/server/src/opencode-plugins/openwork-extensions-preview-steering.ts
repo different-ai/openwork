@@ -72,6 +72,10 @@ export type OpenWorkEngineMcpStatusSource = {
   directory?: string;
 };
 
+type EngineMcpStatusResult =
+  | { found: true; status: string | undefined }
+  | { found: false };
+
 type ProviderModel = {
   provider: string;
   model: string;
@@ -238,15 +242,15 @@ function engineStatusPayload(result: unknown): unknown {
   return result;
 }
 
-function readEngineMcpStatus(result: unknown): string | undefined {
+function readEngineMcpStatus(result: unknown): EngineMcpStatusResult {
   const entry = getRecordProperty(engineStatusPayload(result), OPENWORK_CLOUD_MCP_NAME);
-  if (entry === undefined) return undefined;
-  if (typeof entry === "string") return readString(entry);
-  return readNestedString(entry, ["status"]);
+  if (entry === undefined) return { found: false };
+  if (typeof entry === "string") return { found: true, status: readString(entry) };
+  return { found: true, status: readNestedString(entry, ["status"]) };
 }
 
-async function fetchEngineMcpStatus(input: unknown, engine: OpenWorkEngineMcpStatusSource): Promise<string | undefined> {
-  if (!engine.client) return undefined;
+async function fetchEngineMcpStatus(input: unknown, engine: OpenWorkEngineMcpStatusSource): Promise<EngineMcpStatusResult> {
+  if (!engine.client) return { found: false };
   const directory = readEngineDirectory(input, engine.directory);
   const request = directory ? { query: { directory } } : undefined;
   return readEngineMcpStatus(await engine.client.mcp.status(request));
@@ -330,7 +334,10 @@ export async function resolveOpenWorkExtensionDiscoveryInstruction(
       // prompt tool list, so tool-availability steering must come from that
       // same in-process MCP state. Server health probes may fail for reasons
       // (for example corporate TLS trust) that do not affect engine tools.
-      const instruction = composeSteeringFromEngineMcpStatus(await fetchEngineMcpStatus(input, engine));
+      const engineStatus = await fetchEngineMcpStatus(input, engine);
+      const instruction = engineStatus.found
+        ? composeSteeringFromEngineMcpStatus(engineStatus.status) ?? OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION
+        : null;
       if (instruction) return instruction;
     } catch {
       return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
