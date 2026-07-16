@@ -44,8 +44,11 @@ export default {
           claim: "The Cloud settings group shows OpenWork Connect with the alpha badge after Memory, and OpenWork Connect is the final item in the full settings sidebar.",
           action: async () => {
             await waitForSettingsShell(ctx);
+            await ctx.clickText("OpenWork Connect", { selector: "button", timeoutMs: 30_000 });
+            await ctx.waitFor("location.hash.includes('/settings/connect')", { timeoutMs: 30_000, label: "connect settings route" });
           },
           assert: async () => {
+            await ctx.expectHashIncludes("/settings/connect");
             const nav = await readSettingsSidebar(ctx);
             const cloud = findGroup(nav, "Cloud");
             const cloudLabels = cloud.items.map((item) => item.label);
@@ -68,6 +71,7 @@ export default {
             name: "settings-sidebar-openwork-connect-last",
             requireText: ["Cloud", "Memory", "OpenWork Connect", "ALPHA"],
             rejectText: ["Something went wrong"],
+            hashIncludes: "/settings/connect",
           },
         });
       },
