@@ -23,6 +23,10 @@ const extraToolName = (process.env.MOCK_EXTRA_TOOL_NAME || "").trim();
 const extraToolTitle = (process.env.MOCK_EXTRA_TOOL_TITLE || extraToolName).trim();
 const extraToolDescription = (process.env.MOCK_EXTRA_TOOL_DESCRIPTION || "Returns a fixed result from the mock OAuth MCP server.").trim();
 const extraToolResult = process.env.MOCK_EXTRA_TOOL_RESULT || "mock oauth mcp ok";
+const errorToolName = (process.env.MOCK_ERROR_TOOL_NAME || "").trim();
+const errorToolTitle = (process.env.MOCK_ERROR_TOOL_TITLE || errorToolName).trim();
+const errorToolDescription = (process.env.MOCK_ERROR_TOOL_DESCRIPTION || "Returns a provider policy error from the mock OAuth MCP server.").trim();
+const errorToolStatus = Number(process.env.MOCK_ERROR_TOOL_STATUS || 403);
 
 const clients = new Map();
 const codes = new Map();
@@ -368,9 +372,31 @@ function mcpResult(message) {
               },
             },
           }] : []),
+          ...(errorToolName ? [{
+            name: errorToolName,
+            title: errorToolTitle || errorToolName,
+            description: errorToolDescription,
+            inputSchema: { type: "object", properties: {} },
+          }] : []),
         ],
       };
     case "tools/call":
+      if (errorToolName && message.params?.name === errorToolName) {
+        return {
+          isError: true,
+          structuredContent: {
+            providerStatus: Number.isFinite(errorToolStatus) ? errorToolStatus : 403,
+            category: "provider_policy",
+            providerCode: "access_denied",
+          },
+          content: [
+            {
+              type: "text",
+              text: "The provider rejected this operation because administrator approval is required.",
+            },
+          ],
+        };
+      }
       if (extraToolName && message.params?.name === extraToolName) {
         return {
           content: [
@@ -498,6 +524,18 @@ const server = http.createServer(async (req, res) => {
       const expired = tokens.size;
       tokens.clear();
       json(res, 200, { expired });
+      return;
+    }
+
+    // Test hook: invalidate both access and refresh credentials. With
+    // STRICT_REFRESH_TOKENS=1 the next authenticated MCP operation follows
+    // the production-shaped 401 -> refresh -> invalid_grant path.
+    if (url.pathname === "/admin/expire-oauth-tokens" && req.method === "POST") {
+      const expiredAccessTokens = tokens.size;
+      const expiredRefreshTokens = refreshTokens.size;
+      tokens.clear();
+      refreshTokens.clear();
+      json(res, 200, { expiredAccessTokens, expiredRefreshTokens });
       return;
     }
 
