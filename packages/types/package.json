@@ -39,6 +39,11 @@
       "development": "./src/den/microsoft-365.ts",
       "default": "./src/den/microsoft-365.ts"
     },
+    "./den/mcp-connection-action": {
+      "types": "./src/den/mcp-connection-action.ts",
+      "development": "./src/den/mcp-connection-action.ts",
+      "default": "./src/den/mcp-connection-action.ts"
+    },
     "./workspace": {
       "types": "./src/workspace.ts",
       "development": "./src/workspace.ts",

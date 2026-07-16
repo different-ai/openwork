@@ -151,6 +151,9 @@ test("external capability failures preserve the safe MCP diagnostic envelope", (
     actionOwner: "network_admin",
     operatorAction: "Repair the certificate chain.",
     connectionStatus: {
+      version: 1,
+      kind: "connection_action",
+      source: "openwork-cloud",
       layer: "mcp_connection",
       connectionId: "emc_test",
       connectionName: "Knowledge Hub",

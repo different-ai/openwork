@@ -23,6 +23,7 @@ const state = {
   token: null,
   connectionId: null,
   workspaceId: null,
+  reconnectBaselineConnectedAt: null,
   mockChild: null,
   mockOutput: "",
 };
@@ -107,7 +108,10 @@ async function signInDemoOwner() {
     method: "POST",
     body: JSON.stringify({ email: DEMO_EMAIL, password: DEMO_PASSWORD }),
   });
-  return result.response.ok && typeof result.body.token === "string" ? result.body.token : null;
+  if (!result.response.ok || typeof result.body.token !== "string") {
+    throw new Error(`Demo owner sign-in failed: ${result.response.status} ${JSON.stringify(result.body).slice(0, 400)}`);
+  }
+  return result.body.token;
 }
 
 async function completeConnectionAuthorization() {
@@ -214,11 +218,23 @@ function windowLocationHasWorkspace(hash) {
 async function createFreshTask(ctx) {
   await ctx.navigateHash(`/workspace/${state.workspaceId}/session`);
   await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000, label: "desktop control API" });
-  await ctx.waitFor(
-    "window.__openworkControl.listActions().some((entry) => entry.id === 'session.create_task' && entry.disabled === false)",
-    { timeoutMs: 45_000, label: "new task action" },
-  );
-  await ctx.control("session.create_task");
+  let created = false;
+  let lastCreateError = null;
+  for (let attempt = 0; attempt < 5 && !created; attempt += 1) {
+    await ctx.waitFor(
+      "window.__openworkControl.listActions().some((entry) => entry.id === 'session.create_task' && entry.disabled === false)",
+      { timeoutMs: 45_000, label: "new task action" },
+    );
+    try {
+      await ctx.control("session.create_task");
+      created = true;
+    } catch (error) {
+      lastCreateError = error;
+      if (!String(error?.message ?? error).includes("Action is disabled")) throw error;
+      await sleep(500);
+    }
+  }
+  if (!created) throw lastCreateError ?? new Error("Could not create a fresh task.");
   await ctx.waitFor(
     "Boolean(document.querySelector('[contenteditable=\"true\"][data-lexical-editor=\"true\"]'))",
     { timeoutMs: 30_000, label: "task composer" },
@@ -288,6 +304,8 @@ export default {
         await completeConnectionAuthorization();
         const connected = await usableConnection();
         ctx.assert(connected?.connectedForMe === true, "Research Vault did not become connected for the signed-in member.");
+        ctx.assert(Boolean(connected.connectedAt), "The initial member authorization timestamp was missing.");
+        state.reconnectBaselineConnectedAt = connected.connectedAt;
 
         await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000, label: "desktop control API" });
         await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
@@ -355,9 +373,9 @@ export default {
       },
     },
     {
-      name: "Frame 2 — the chat button starts the real Den OAuth reconnect flow",
+      name: "Frame 2 — the chat button completes the real Den OAuth reconnect flow",
       run: async (ctx) => {
-        await ctx.prove("Clicking the chat action starts authorization for the exact Den connection", {
+        await ctx.prove("Clicking the chat action completes authorization for the exact Den connection", {
           voiceover: vo[1],
           action: async () => {
             const clickedAt = new Date().toISOString();
@@ -370,29 +388,69 @@ export default {
               return authorize && token ? entries : null;
             }, "The clicked chat action did not reach the provider authorize and token endpoints.", 45_000);
             ctx.log(`Reconnect provider requests: ${requests.filter((entry) => entry.at >= clickedAt).map((entry) => `${entry.method} ${entry.path}`).join(", ")}`);
+            await ctx.waitForText("Reconnected", { timeoutMs: 45_000 });
+            await ctx.waitForText("Try again", { timeoutMs: 10_000 });
           },
           assert: async () => {
             const connected = await waitFor(async () => {
               const connection = await usableConnection();
-              return connection?.connectedForMe === true ? connection : null;
-            }, "Den did not persist the reconnected member credential.", 30_000);
+              return connection?.connectedForMe === true
+                && connection.connectedAt
+                && connection.connectedAt !== state.reconnectBaselineConnectedAt
+                ? connection
+                : null;
+            }, "Den did not persist a fresh member authorization timestamp.", 30_000);
             ctx.assert(connected.id === state.connectionId, "Reconnect completed for a different connection.");
-            await ctx.expectText("Finish in browser");
+            await ctx.expectText("Reconnected");
+            await ctx.expectText("Try again");
           },
           screenshot: {
-            name: "chat-mcp-reconnect-authorization-opened",
-            claim: "The inline action called the real connection-specific Den route and opened a provider authorization that issued fresh tokens.",
-            requireText: ["Reconnect required", "Finish in browser"],
-            rejectText: ["Could not start", "Something went wrong"],
+            name: "chat-mcp-reconnect-completed",
+            claim: "The inline action called the exact connection-specific Den route and changed to Reconnected only after Den persisted a newer member authorization.",
+            requireText: ["Reconnected", "Try again"],
+            rejectText: ["Finish in browser", "Could not start", "Something went wrong"],
           },
         });
       },
     },
     {
-      name: "Frame 3 — the same real capability succeeds after reconnect",
+      name: "Frame 3 — retry is prepared safely without auto-replaying a tool",
+      run: async (ctx) => {
+        await ctx.prove("Try again drafts a guarded retry instead of auto-replaying a possible write", {
+          voiceover: vo[2],
+          action: async () => {
+            const sessionHash = await ctx.eval("window.location.hash");
+            await ctx.navigateHash(`/workspace/${state.workspaceId}/settings/extensions/mcp`);
+            await ctx.waitForText("Add Custom App", { timeoutMs: 30_000 });
+            await ctx.navigateHash(sessionHash.replace(/^#/, ""));
+            await ctx.waitForText("Reconnected", { timeoutMs: 30_000 });
+            await ctx.waitForText("Try again", { timeoutMs: 10_000 });
+            await ctx.trustedClick('[data-testid="chat-mcp-reconnect-action"]', { timeoutMs: 20_000 });
+            await ctx.waitFor(
+              `Boolean([...document.querySelectorAll('[contenteditable="true"][data-lexical-editor="true"]')].find((entry) => (entry.textContent ?? '').includes('Before repeating any write action')))`,
+              { timeoutMs: 20_000, label: "guarded retry draft" },
+            );
+            await ctx.eval(`([...document.querySelectorAll('[contenteditable="true"][data-lexical-editor="true"]')].find((entry) => (entry.textContent ?? '').includes('Before repeating any write action')))?.scrollIntoView({ block: 'center' })`);
+          },
+          assert: async () => {
+            await ctx.expectText("Reconnected");
+            await ctx.expectText("The Research Vault");
+            await ctx.expectText("Before repeating any write action");
+          },
+          screenshot: {
+            name: "chat-mcp-reconnect-safe-retry",
+            claim: "Try again prepares a visible retry draft that searches live state and warns against duplicating a write; it does not auto-send or replay the failed tool.",
+            requireText: ["Reconnected", "Before repeating any write action"],
+            rejectText: ["Something went wrong"],
+          },
+        });
+      },
+    },
+    {
+      name: "Frame 4 — the same real capability succeeds after reconnect",
       run: async (ctx) => {
         await ctx.prove("Fresh authorization repairs the capability used by desktop chat", {
-          voiceover: vo[2],
+          voiceover: vo[3],
           action: async () => {
             await createFreshTask(ctx);
             const exactCapability = `mcp:${state.connectionId}:mock_echo`;
@@ -417,10 +475,10 @@ export default {
       },
     },
     {
-      name: "Frame 4 — provider failures remain non-reconnect errors",
+      name: "Frame 5 — provider failures remain non-reconnect errors",
       run: async (ctx) => {
         await ctx.prove("A provider policy denial is attributed without creating a misleading reconnect action", {
-          voiceover: vo[3],
+          voiceover: vo[4],
           action: async () => {
             await createFreshTask(ctx);
             const exactCapability = `mcp:${state.connectionId}:${PROVIDER_ERROR_TOOL}`;

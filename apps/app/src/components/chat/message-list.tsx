@@ -136,7 +136,7 @@ class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }>
 }
 
 const ToolMessageInner = ({ part }: ToolMessageProps) => {
-  const { onMcpReconnect } = useMessageList()
+  const { onMcpReconnect, onMcpRetry } = useMessageList()
 
   if (isBashToolPart(part)) {
     return <BashTool part={part} />
@@ -194,7 +194,7 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <EnvVarRequestTool part={part} />
   }
 
-  return <Tool toolPart={part} onReconnect={onMcpReconnect} />
+  return <Tool toolPart={part} onReconnect={onMcpReconnect} onRetry={onMcpRetry} />
 }
 
 const isEmptyMessage = (message: UIMessage): boolean => message.parts.length === 0

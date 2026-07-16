@@ -1,3 +1,5 @@
+import { openworkCloudMcpInlineReconnectSchema } from "@openwork/types/den/mcp-connection-action"
+
 export type ToolErrorAttribution = {
   label: string
   confidence: "Confirmed" | "Inferred"
@@ -10,7 +12,8 @@ export type ChatToolReconnectAction = {
   label: string
 }
 
-export type ChatToolReconnectResult = "authorization_opened" | "connected"
+export type ChatToolReconnectProgress = "opening" | "authorization_opened"
+export type ChatToolReconnectResult = "connected"
 
 const OPENWORK_CLOUD_CAPABILITY_TOOLS = new Set([
   "openwork-cloud_search_capabilities",
@@ -89,11 +92,10 @@ export function reconnectActionFromChatToolResult(
   ]
   const reconnectTargets = new Map<string, { connectionId: string; connectionName: string }>()
   for (const connectionStatus of candidates) {
-    const action = isRecord(connectionStatus.action) ? connectionStatus.action : null
-    if (connectionStatus.state !== "reauth_required" || action?.type !== "reconnect") continue
-    const connectionId = stringValue(connectionStatus, "connectionId")
-    const connectionName = stringValue(connectionStatus, "connectionName")
-    if (connectionId && connectionName) reconnectTargets.set(connectionId, { connectionId, connectionName })
+    const parsedStatus = openworkCloudMcpInlineReconnectSchema.safeParse(connectionStatus)
+    if (!parsedStatus.success) continue
+    const { connectionId, connectionName } = parsedStatus.data
+    reconnectTargets.set(connectionId, { connectionId, connectionName })
   }
 
   // One tool row should never guess which of several connections the user

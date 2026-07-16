@@ -35,17 +35,27 @@ test("renders an inline reconnect button when Cloud capability discovery finds e
       matches: [{
         kind: "connection_status",
         connectionStatus: {
+          version: 1,
+          kind: "connection_action",
+          source: "openwork-cloud",
           connectionId: "emc_knowledge",
           connectionName: "Knowledge Hub",
+          authType: "oauth",
+          credentialMode: "per_member",
           state: "reauth_required",
-          action: { type: "reconnect", label: "Reconnect Knowledge Hub" },
+          actor: "member",
+          action: {
+            type: "reconnect",
+            surface: "openwork_your_connections",
+            retry: "search_capabilities",
+          },
         },
       }],
     }),
   }
 
   const html = renderToStaticMarkup(
-    <Tool toolPart={toolPart} onReconnect={async () => "authorization_opened"} />,
+    <Tool toolPart={toolPart} onReconnect={async () => "connected"} />,
   )
 
   expect(html).toContain("Reconnect required")

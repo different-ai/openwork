@@ -10,9 +10,15 @@ import {
   attributeChatToolError,
   reconnectActionFromChatToolResult,
   type ChatToolReconnectAction,
+  type ChatToolReconnectProgress,
   type ChatToolReconnectResult,
   type ToolErrorAttribution,
 } from "@/components/tools/error-attribution"
+import {
+  chatMcpReconnectKey,
+  chatMcpReconnectPresentation,
+  useChatMcpReconnectStore,
+} from "@/components/tools/mcp-reconnect-state"
 import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
 import {
@@ -30,7 +36,6 @@ import {
   Wrench,
 } from "lucide-react"
 import type { DynamicToolUIPart, ToolUIPart } from "ai"
-import { useState } from "react"
 
 function toolIcon(part: ToolPart) {
   const name = part.type === "dynamic-tool" ? part.toolName : part.type
@@ -67,7 +72,11 @@ export type ToolProps = {
   toolPart: ToolPart
   defaultOpen?: boolean
   className?: string
-  onReconnect?: (action: ChatToolReconnectAction) => Promise<ChatToolReconnectResult>
+  onReconnect?: (
+    action: ChatToolReconnectAction,
+    onProgress: (progress: ChatToolReconnectProgress) => void,
+  ) => Promise<ChatToolReconnectResult>
+  onRetry?: (action: ChatToolReconnectAction) => void | Promise<void>
 }
 
 const formatValue = (value: unknown): string => {
@@ -126,17 +135,17 @@ function DiffLines({ diff }: { diff: string }) {
   )
 }
 
-function reconnectAttribution(action: ChatToolReconnectAction): ToolErrorAttribution {
+function reconnectAttribution(action: ChatToolReconnectAction, label: string): ToolErrorAttribution {
   return {
-    label: "Reconnect required",
+    label,
     confidence: "Confirmed",
-    description: `${action.connectionName} rejected its saved authorization and needs to be reconnected.`,
+    description: label === "Reconnected"
+      ? `${action.connectionName} has a fresh authorization. Retry the request when ready.`
+      : `${action.connectionName} rejected its saved authorization and needs to be reconnected.`,
   }
 }
 
-const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect }: ToolProps) => {
-  const [reconnectState, setReconnectState] = useState<"idle" | "working" | ChatToolReconnectResult>("idle")
-  const [reconnectError, setReconnectError] = useState<string | null>(null)
+const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect, onRetry }: ToolProps) => {
   const { state, input } = toolPart
   const inFlight = isToolPartInFlight(toolPart)
   const isError = state === "output-error"
@@ -148,8 +157,21 @@ const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect }: 
   const reconnectAction = toolPart.type === "dynamic-tool" && reconnectResult !== undefined
     ? reconnectActionFromChatToolResult(toolPart.toolName, reconnectResult)
     : null
+  const reconnectKey = reconnectAction
+    ? chatMcpReconnectKey(toolPart.toolCallId, reconnectAction.connectionId)
+    : null
+  const reconnectState = useChatMcpReconnectStore((store) => (
+    reconnectKey ? store.records[reconnectKey]?.phase ?? "ready" : "ready"
+  ))
+  const reconnectError = useChatMcpReconnectStore((store) => (
+    reconnectKey ? store.records[reconnectKey]?.error ?? null : null
+  ))
+  const setReconnectRecord = useChatMcpReconnectStore((store) => store.setRecord)
+  const reconnectPresentation = reconnectAction
+    ? chatMcpReconnectPresentation(reconnectAction, reconnectState)
+    : null
   const errorAttribution = reconnectAction
-    ? reconnectAttribution(reconnectAction)
+    ? reconnectAttribution(reconnectAction, reconnectPresentation?.badgeLabel ?? "Reconnect required")
     : isError && toolPart.errorText
       ? attributeChatToolError(toolPart.errorText)
       : null
@@ -160,28 +182,29 @@ const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect }: 
   const Icon = toolIcon(toolPart)
 
   const handleReconnect = async () => {
-    if (!reconnectAction || !onReconnect || reconnectState === "working") return
-    setReconnectError(null)
-    setReconnectState("working")
+    if (!reconnectAction || !reconnectKey || !onReconnect) return
+    if (reconnectState === "connected") {
+      await onRetry?.(reconnectAction)
+      return
+    }
+    if (reconnectState === "opening" || reconnectState === "authorization_opened") return
+    setReconnectRecord(reconnectKey, { phase: "opening", error: null })
     try {
-      setReconnectState(await onReconnect(reconnectAction))
+      const result = await onReconnect(reconnectAction, (progress) => {
+        setReconnectRecord(reconnectKey, { phase: progress, error: null })
+      })
+      setReconnectRecord(reconnectKey, { phase: result, error: null })
     } catch (error) {
-      setReconnectState("idle")
-      setReconnectError(error instanceof Error ? error.message : "Could not start reconnection.")
+      setReconnectRecord(reconnectKey, {
+        phase: "failed",
+        error: error instanceof Error ? error.message : "Could not reconnect this account.",
+      })
     }
   }
 
-  const reconnectLabel = reconnectState === "working"
-    ? "Opening sign-in…"
-    : reconnectState === "authorization_opened"
-      ? "Finish in browser"
-      : reconnectState === "connected"
-        ? "Reconnected"
-        : reconnectAction?.label
-
   return (
     <Collapsible className={className} defaultOpen={defaultOpen}>
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 items-center gap-2" aria-live="polite">
         <CollapsibleTrigger
           className="group text-muted-foreground hover:text-foreground flex min-w-0 flex-1 cursor-pointer items-center justify-start gap-2 overflow-hidden text-start text-sm transition-colors"
         >
@@ -218,10 +241,10 @@ const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect }: 
             size="xs"
             className="shrink-0"
             data-testid="chat-mcp-reconnect-action"
-            disabled={reconnectState !== "idle"}
+            disabled={reconnectPresentation?.disabled}
             onClick={() => void handleReconnect()}
           >
-            {reconnectLabel}
+            {reconnectPresentation?.buttonLabel}
           </Button>
         ) : null}
       </div>

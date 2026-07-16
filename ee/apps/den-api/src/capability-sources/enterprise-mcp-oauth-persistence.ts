@@ -609,6 +609,9 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           Date.now(),
           (this.isPerMember ? account?.updatedAt.getTime() : connection.updatedAt.getTime()) ?? 0,
         ) + 1)
+        const connectedAt = account
+          ? new Date(Math.max(Date.now(), account.connectedAt.getTime() + 1))
+          : new Date()
         if (this.isPerMember && this.member) {
           if (account) {
             await tx
@@ -621,6 +624,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
                 expiresAt,
                 pendingCodeVerifier,
                 updatedAt,
+                ...(input.source === "authorization-code" ? { connectedAt } : {}),
               })
               .where(eq(ConnectedAccountTable.id, account.id))
           } else {

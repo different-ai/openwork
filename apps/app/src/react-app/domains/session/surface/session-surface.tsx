@@ -12,6 +12,7 @@ import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { t } from "@/i18n";
 import { readWorkspaceCloudImports, type CloudImportedPlugin } from "@/app/cloud/import-state";
 import { createDenClient, readDenSettings } from "@/app/lib/den";
+import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import type {
   OpenworkServerClient,
   OpenworkSessionSnapshot,
@@ -81,8 +82,15 @@ import { MessageList } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
 import type {
   ChatToolReconnectAction,
+  ChatToolReconnectProgress,
   ChatToolReconnectResult,
 } from "@/components/tools/error-attribution";
+import { useChatMcpReconnectStore } from "@/components/tools/mcp-reconnect-state";
+import {
+  isChatMcpReconnectScopeCurrent,
+  waitForFreshMcpAuthorization,
+  type ChatMcpReconnectScope,
+} from "./mcp-chat-reconnect";
 import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
 import type { ThreadStatus } from "@/lib/messages";
 import {
@@ -1267,8 +1275,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
     void typeComposerText(prompt);
   }, [typeComposerText]);
 
+  useEffect(() => {
+    const resetReconnectState = () => useChatMcpReconnectStore.getState().reset();
+    window.addEventListener(denSettingsChangedEvent, resetReconnectState);
+    return () => window.removeEventListener(denSettingsChangedEvent, resetReconnectState);
+  }, []);
+
   const handleMcpReconnect = useCallback(async (
     action: ChatToolReconnectAction,
+    onProgress: (progress: ChatToolReconnectProgress) => void,
   ): Promise<ChatToolReconnectResult> => {
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
@@ -1278,14 +1293,82 @@ export function SessionSurface(props: SessionSurfaceProps) {
       throw new Error("Sign in to OpenWork Cloud, then try reconnecting again.");
     }
 
-    const denClient = createDenClient({ baseUrl: settings.baseUrl, token });
-    const result = await denClient.startMcpConnectionConnect(organizationId, action.connectionId);
-    if (result.status === "connected") return "connected";
-    if (!result.authorizeUrl) throw new Error(`Could not start ${action.connectionName} authorization.`);
+    const scope: ChatMcpReconnectScope = {
+      baseUrl: settings.baseUrl,
+      token,
+      organizationId,
+    };
+    const currentScope = (): ChatMcpReconnectScope => {
+      const current = readDenSettings();
+      return {
+        baseUrl: current.baseUrl,
+        token: current.authToken?.trim() ?? "",
+        organizationId: current.activeOrgId?.trim() ?? "",
+      };
+    };
+    try {
+      const denClient = createDenClient({ baseUrl: settings.baseUrl, token });
+      const connections = await denClient.listMcpConnections(organizationId, "usable");
+      const connection = connections.find((entry) => entry.id === action.connectionId);
+      if (!connection || connection.authType !== "oauth" || connection.credentialMode !== "per_member") {
+        throw new Error(`${action.connectionName} is no longer available as your reconnectable account.`);
+      }
 
-    await openDesktopUrl(result.authorizeUrl);
-    return "authorization_opened";
-  }, [props.onOpenConnect]);
+      recordInspectorEvent("mcp.chat_reconnect.started", {
+        workspaceId: props.workspaceId,
+        sessionId: props.sessionId,
+        connectionId: action.connectionId,
+      });
+      onProgress("opening");
+      const result = await denClient.startMcpConnectionConnect(organizationId, action.connectionId);
+      if (result.status === "connected") {
+        recordInspectorEvent("mcp.chat_reconnect.completed", {
+          workspaceId: props.workspaceId,
+          sessionId: props.sessionId,
+          connectionId: action.connectionId,
+          completion: "already_connected",
+        });
+        return "connected";
+      }
+      if (!result.authorizeUrl) throw new Error(`Could not start ${action.connectionName} authorization.`);
+
+      await openDesktopUrl(result.authorizeUrl);
+      onProgress("authorization_opened");
+      await waitForFreshMcpAuthorization({
+        connectionId: action.connectionId,
+        connectionName: action.connectionName,
+        previousConnectedAt: connection.connectedAt,
+        listConnections: () => denClient.listMcpConnections(organizationId, "usable"),
+        isScopeCurrent: () => isChatMcpReconnectScopeCurrent(scope, currentScope()),
+      });
+      recordInspectorEvent("mcp.chat_reconnect.completed", {
+        workspaceId: props.workspaceId,
+        sessionId: props.sessionId,
+        connectionId: action.connectionId,
+        completion: "fresh_authorization",
+      });
+      return "connected";
+    } catch (error) {
+      recordInspectorEvent("mcp.chat_reconnect.failed", {
+        workspaceId: props.workspaceId,
+        sessionId: props.sessionId,
+        connectionId: action.connectionId,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+      throw error;
+    }
+  }, [props.onOpenConnect, props.sessionId, props.workspaceId]);
+
+  const handleMcpRetry = useCallback(async (action: ChatToolReconnectAction) => {
+    const prompt = `The ${action.connectionName} connection is restored. Search for the capability again and retry the previous request. Before repeating any write action, confirm it did not already complete.`;
+    await typeComposerText(prompt);
+    props.onDraftChange(buildDraft(prompt, attachments));
+    recordInspectorEvent("mcp.chat_reconnect.retry_drafted", {
+      workspaceId: props.workspaceId,
+      sessionId: props.sessionId,
+      connectionId: action.connectionId,
+    });
+  }, [attachments, buildDraft, props.onDraftChange, props.sessionId, props.workspaceId, typeComposerText]);
 
   const handleRevertToUserMessage = useCallback((messageId: string) => {
     void props.onRevertToMessage?.(messageId, props.sessionId);
@@ -1477,6 +1560,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onForkAtMessage={handleForkAtMessage}
                       onEditUserMessage={handleEditUserMessage}
                       onMcpReconnect={handleMcpReconnect}
+                      onMcpRetry={handleMcpRetry}
                     >
                       <MessageList
                         messages={renderedMessages}

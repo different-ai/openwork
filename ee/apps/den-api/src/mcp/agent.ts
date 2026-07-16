@@ -4,6 +4,7 @@ import { StreamableHTTPTransport } from "@hono/mcp"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
 import type { Hono } from "hono"
 import { z } from "zod"
 import { memberFacingMcpConnectionsEnabled } from "../capability-sources/external-mcp-rollout.js"
@@ -60,16 +61,10 @@ const externalMcpDiagnosticOutputSchema = z.object({
   jsonRpcCode: z.number().int().optional(),
 })
 
-const connectionStatusOutputSchema = z.object({
+const connectionStatusOutputSchema = openworkCloudMcpConnectionActionSchema.extend({
   layer: z.enum(["mcp_connection", "downstream_provider"]),
-  connectionId: z.string(),
-  connectionName: z.string(),
-  authType: z.enum(["oauth", "apikey", "none"]),
-  credentialMode: z.enum(["shared", "per_member"]),
-  state: z.enum(["needs_connection", "reauth_required", "provider_error"]),
   errorCode: z.enum(["not_connected", "invalid_refresh_token", "invalid_grant", "unauthorized", "provider_error"]),
   message: z.string(),
-  actor: z.enum(["openwork", "network_admin", "provider_admin", "organization_admin", "member"]),
   action: z.object({
     type: z.enum(["connect", "reconnect", "update_credentials", "inspect_connection", "fix_provider", "fix_network", "contact_openwork"]),
     label: z.string(),

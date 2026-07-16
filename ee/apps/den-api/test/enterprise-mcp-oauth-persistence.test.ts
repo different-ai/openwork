@@ -7,6 +7,7 @@ function seedRequiredEnv(): void {
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "local-dev-secret-not-for-production-use!!"
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
+  process.env.DEN_API_PUBLIC_URL = process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790"
   process.env.DEN_ALLOW_PRIVATE_MCP_URLS = "1"
 }
 
@@ -229,6 +230,70 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       .from(schema.OrgOAuthClientTable)
       .where(drizzle.eq(schema.OrgOAuthClientTable.providerId, oldIdentity.id))
     expect(clients).toEqual([])
+  })
+
+  test("advances a per-member connectedAt only after a fresh authorization callback commits", async () => {
+    const perMemberConnection = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP reconnect completion",
+      url: "https://mcp.example.test/reconnect",
+      authType: "oauth",
+      credentialMode: "per_member",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const persistence = new DenEnterpriseMcpOAuthPersistence(
+      perMemberConnection,
+      { orgMembershipId: memberId },
+    )
+    const reconnectContext = {
+      connectionId: perMemberConnection.id,
+      commitExpiresAt: Date.now() + 30_000,
+      signal: new AbortController().signal,
+    }
+    const registration = await persistence.clientRegistrations.save({
+      context: reconnectContext,
+      clientInformation: { client_id: "per-member-reconnect-client" },
+      source: "dynamic",
+    })
+    await persistence.authorizations.begin({
+      context: reconnectContext,
+      id: "signed-state-per-member-reconnect",
+      codeVerifier: "r".repeat(43),
+      expiresAt: Date.now() + 600_000,
+      clientRegistrationRevision: registration.revision,
+    })
+    const pending = await persistence.authorizations.load({
+      context: reconnectContext,
+      id: "signed-state-per-member-reconnect",
+    })
+    if (!pending) throw new Error("Expected a pending per-member reconnect.")
+    const beforeRows = await db
+      .select()
+      .from(schema.ConnectedAccountTable)
+      .where(drizzle.and(
+        drizzle.eq(schema.ConnectedAccountTable.orgMembershipId, memberId),
+        drizzle.eq(schema.ConnectedAccountTable.providerId, perMemberConnection.id),
+      ))
+      .limit(1)
+    const before = beforeRows[0]
+    if (!before) throw new Error("Expected the pending account row.")
+
+    await persistence.credentials.save({
+      context: reconnectContext,
+      tokens: { access_token: "fresh-member-access", token_type: "Bearer" },
+      source: "authorization-code",
+      authorization: pending.handle,
+      clientRegistrationRevision: registration.revision,
+    })
+
+    const afterRows = await db
+      .select()
+      .from(schema.ConnectedAccountTable)
+      .where(drizzle.eq(schema.ConnectedAccountTable.id, before.id))
+      .limit(1)
+    expect(afterRows[0]?.accessToken).toBe("fresh-member-access")
+    expect(afterRows[0]?.connectedAt.getTime()).toBeGreaterThan(before.connectedAt.getTime())
   })
 
   test("removes a denied per-member authorization and keeps repeated cleanup idempotent", async () => {
