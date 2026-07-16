@@ -107,7 +107,7 @@ function sendJson(response: ServerResponse, status: number, body: unknown, heade
   response.end(JSON.stringify(body))
 }
 
-async function sendMcpResponse(request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function sendMcpResponse(request: IncomingMessage, response: ServerResponse, options: { rejectToolsList?: boolean } = {}): Promise<void> {
   const parsed: unknown = JSON.parse(await requestBody(request))
   const rpc = rpcRequestSchema.parse(parsed)
   if (rpc.method === "notifications/initialized") {
@@ -128,6 +128,10 @@ async function sendMcpResponse(request: IncomingMessage, response: ServerRespons
     return
   }
   if (rpc.method === "tools/list") {
+    if (options.rejectToolsList) {
+      sendJson(response, 403, { error: "provider_tool_policy_denied" })
+      return
+    }
     sendJson(response, 200, {
       jsonrpc: "2.0",
       id: rpc.id,
@@ -142,6 +146,7 @@ async function sendMcpResponse(request: IncomingMessage, response: ServerRespons
 
 async function startOAuthMcpServer(options: {
   rejectAuthenticatedMcp?: boolean
+  rejectAuthenticatedToolsList?: boolean
   clientMetadataSupported?: boolean
   scopeLessChallenge?: boolean
 } = {}) {
@@ -222,7 +227,7 @@ async function startOAuthMcpServer(options: {
           sendJson(response, 403, { error: "provider_policy_denied" })
           return
         }
-        await sendMcpResponse(request, response)
+        await sendMcpResponse(request, response, { rejectToolsList: options.rejectAuthenticatedToolsList })
         return
       }
       sendJson(response, 404, { error: "not_found" })
@@ -1115,6 +1120,33 @@ describe("enterprise MCP OAuth persistence contract", () => {
         redirectUri,
         code: "approved-code",
         authorizationId: "signed-state",
+      }))
+      assert.equal(persistence.credential, undefined)
+      assert.equal(persistence.invalidationCount, 1)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it("invalidates exchanged tokens when callback initialization succeeds but tool discovery fails", async () => {
+    const server = await startOAuthMcpServer({ rejectAuthenticatedToolsList: true })
+    try {
+      const persistence = new MemoryOAuthPersistence()
+      const client = createEnterpriseMcpClient({ fetch, operationTimeoutMs: 5_000 })
+      const connection: EnterpriseMcpConnection = {
+        id: "oauth-tool-validation-failure",
+        serverUrl: `${server.origin}/mcp`,
+        authorization: { type: "oauth", persistence },
+      }
+      const redirectUri = "https://den.example.test/oauth-tool-validation-failure"
+      const started = await client.connect({ connection, redirectUri, authorizationId: "signed-tool-state" })
+      assert.equal(started.status, "needs_auth")
+
+      await assert.rejects(client.completeAuthorization({
+        connection,
+        redirectUri,
+        code: "approved-code",
+        authorizationId: "signed-tool-state",
       }))
       assert.equal(persistence.credential, undefined)
       assert.equal(persistence.invalidationCount, 1)
