@@ -938,7 +938,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["GitHub"],
       summary: "Import GitHub plugin into marketplace",
-      description: "Imports selected skills and remote MCP servers from a public GitHub plugin URL, then publishes one plugin into the chosen organization marketplace.",
+      description: "Imports selected skills and remote MCP servers from a public GitHub plugin URL, applies the requested access grants, and publishes one plugin into the chosen organization marketplace. Declared and known-server authentication requirements take precedence over the request-wide auth fallback. Read the resolved marketplace afterward to report cloud readiness and any administrator or member action.",
       responses: {
         200: jsonResponse("GitHub plugin MCPs imported successfully.", githubPluginMcpImportResponseSchema),
         400: jsonResponse("The GitHub plugin MCP import request was invalid.", invalidRequestSchema),
@@ -1178,8 +1178,8 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     paramValidator(marketplaceParamsSchema),
     describeRoute({
       tags: ["Marketplaces"],
-      summary: "Get marketplace resolved",
-      description: "Returns marketplace detail with plugins and derived source info.",
+      summary: "Get resolved marketplace plugin readiness",
+      description: "Returns marketplace detail with plugins, derived source info, and each plugin's cloud readiness or required setup state.",
       responses: {
         200: jsonResponse("Marketplace resolved detail returned successfully.", marketplaceResolvedResponseSchema),
         400: jsonResponse("The marketplace path parameters were invalid.", invalidRequestSchema),

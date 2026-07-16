@@ -129,6 +129,7 @@ describe("agent-configurable org connections policy", () => {
     const catalog = buildMcpCatalog(document)
     const previewMatches = searchCapabilities(catalog, "preview github plugin marketplace import", 10)
     const importMatches = searchCapabilities(catalog, "add github plugin to marketplace", 10)
+    const readinessMatches = searchCapabilities(catalog, "resolved marketplace plugin readiness", 10)
 
     expect(previewMatches).toContainEqual(expect.objectContaining({
       method: "POST",
@@ -142,6 +143,8 @@ describe("agent-configurable org connections policy", () => {
       bodySchema: expect.objectContaining({
         type: "object",
         properties: expect.objectContaining({
+          access: expect.objectContaining({ type: "object" }),
+          authType: expect.objectContaining({ type: "string" }),
           githubUrl: expect.objectContaining({ type: "string" }),
           marketplaceId: expect.objectContaining({ type: "string" }),
           selectedSkillKeys: expect.objectContaining({ type: "array" }),
@@ -149,6 +152,10 @@ describe("agent-configurable org connections policy", () => {
         }),
         required: expect.arrayContaining(["githubUrl", "marketplaceId"]),
       }),
+    }))
+    expect(readinessMatches).toContainEqual(expect.objectContaining({
+      method: "GET",
+      path: "/v1/marketplaces/{marketplaceId}/resolved",
     }))
   })
 
