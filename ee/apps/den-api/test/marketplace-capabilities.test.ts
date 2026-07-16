@@ -610,46 +610,46 @@ describe("marketplace capabilities source", () => {
     expect(result.result.hint).toContain("has not synced content")
   })
 
-  test("rollout gating hides marketplace search and makes execute unknown until mcpConnections is enabled", async () => {
-    const gatedOff = await seedMember()
-    const gatedOffCapability = await seedCapability({
-      owner: gatedOff,
+  test("org kill switch hides marketplace search and makes execute unknown", async () => {
+    const disabledMetadata = { capabilities: { mcpConnections: false } }
+    const disabledOrg = await seedMember({ metadata: disabledMetadata })
+    const disabledCapability = await seedCapability({
+      owner: disabledOrg,
       objectType: "skill",
       title: "Hidden Capability",
-      rawSourceText: "Do not expose while gated.",
+      rawSourceText: "Do not expose while disabled.",
     })
-    const disabled = memberFacingMcpConnectionsEnabled(null, { gatingEnabled: true })
+    const disabled = memberFacingMcpConnectionsEnabled(disabledMetadata, { gatingEnabled: true })
     expect(disabled).toBe(false)
     expect(await marketplaceCapabilities.searchMarketplaceCapabilities({
-      organizationId: gatedOff.organizationId,
-      member: gatedOff.member,
+      organizationId: disabledOrg.organizationId,
+      member: disabledOrg.member,
       query: "hidden",
       enabled: disabled,
     })).toEqual([])
-    const gatedExecute = await marketplaceCapabilities.executeMarketplaceCapability({
-      organizationId: gatedOff.organizationId,
-      member: gatedOff.member,
-      pluginId: gatedOffCapability.pluginId,
-      configObjectId: gatedOffCapability.configObjectId,
+    const disabledExecute = await marketplaceCapabilities.executeMarketplaceCapability({
+      organizationId: disabledOrg.organizationId,
+      member: disabledOrg.member,
+      pluginId: disabledCapability.pluginId,
+      configObjectId: disabledCapability.configObjectId,
       enabled: disabled,
     })
-    expect(gatedExecute.ok).toBe(false)
-    if (gatedExecute.ok) throw new Error("expected gated execute to fail")
-    expect(gatedExecute.error).toBe("unknown_capability")
+    expect(disabledExecute.ok).toBe(false)
+    if (disabledExecute.ok) throw new Error("expected disabled execute to fail")
+    expect(disabledExecute.error).toBe("unknown_capability")
 
-    const metadata = { capabilities: { mcpConnections: true } }
-    const gatedOn = await seedMember({ metadata })
+    const defaultOn = await seedMember()
     const visibleCapability = await seedCapability({
-      owner: gatedOn,
+      owner: defaultOn,
       objectType: "skill",
       title: "Visible Capability",
-      rawSourceText: "Expose while gated on.",
+      rawSourceText: "Expose by default.",
     })
-    const enabled = memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: true })
+    const enabled = memberFacingMcpConnectionsEnabled(null, { gatingEnabled: true })
     expect(enabled).toBe(true)
     const matches = await marketplaceCapabilities.searchMarketplaceCapabilities({
-      organizationId: gatedOn.organizationId,
-      member: gatedOn.member,
+      organizationId: defaultOn.organizationId,
+      member: defaultOn.member,
       query: "visible",
       enabled,
     })

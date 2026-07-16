@@ -35,7 +35,7 @@ import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
-import { createOrganizationInstallLink } from "./install-link-data";
+import { createOrganizationInstallLink } from "../../_lib/install-link-data";
 import { OrgMemberIdentity } from "./org-member-identity";
 
 type MembersTab = "members" | "teams" | "roles";

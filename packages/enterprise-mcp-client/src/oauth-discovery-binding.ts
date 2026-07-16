@@ -1,4 +1,5 @@
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
+import { isEquivalentOAuthResourceAlias } from "./oauth-resource-alias.js"
 
 type OAuthDiscoveryBindingState = Pick<OAuthDiscoveryState, "authorizationServerUrl"> & {
   authorizationServerMetadata?: { issuer?: string }
@@ -9,8 +10,8 @@ function isResourceScopedDiscoveryAlias(state: OAuthDiscoveryBindingState, expec
   const advertisedIssuers = state.resourceMetadata?.authorization_servers
   return state.authorizationServerUrl !== expectedIssuer
     && state.authorizationServerMetadata?.issuer === expectedIssuer
-    && state.resourceMetadata?.resource === state.authorizationServerUrl
-    && advertisedIssuers?.includes(state.authorizationServerUrl) === true
+    && isEquivalentOAuthResourceAlias(state.resourceMetadata?.resource, state.authorizationServerUrl)
+    && advertisedIssuers?.some((issuer) => isEquivalentOAuthResourceAlias(issuer, state.authorizationServerUrl)) === true
 }
 
 /**

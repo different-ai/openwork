@@ -275,7 +275,7 @@ export default {
               trigger: () => clickFocusedConnect(ctx),
             });
             await routeLocalSplitOriginCallback(ctx);
-            await ctx.waitForText("Connected", { timeoutMs: 30_000 });
+            await ctx.waitForText("You're connected", { timeoutMs: 30_000 });
             await ctx.switchBack();
             await waitForConnectedAsMaya(ctx);
           },
@@ -1135,7 +1135,10 @@ async function clickFocusedConnect(ctx) {
 }
 
 async function routeLocalSplitOriginCallback(ctx) {
-  await ctx.waitFor("window.location.pathname.includes('/connect/callback')", { timeoutMs: 30_000, label: "provider redirect to OpenWork callback" });
+  await ctx.waitFor(`(() => {
+    const path = window.location.pathname;
+    return path.includes('/connect/callback') || path === '/v1/mcp-connections/oauth/callback';
+  })()`, { timeoutMs: 30_000, label: "provider redirect to OpenWork callback" });
   const location = await ctx.eval(`({ origin: window.location.origin, pathname: window.location.pathname, search: window.location.search })`);
   if (!String(location.pathname).includes("/connect/callback") || location.origin === new URL(DEN_API_URL).origin) return;
   const callbackUrl = new URL(`${location.pathname}${location.search}`, DEN_API_URL).toString();

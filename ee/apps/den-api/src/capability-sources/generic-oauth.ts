@@ -64,7 +64,7 @@ export type OAuthStatePayload = {
   orgMembershipId: DenTypeId<"member">
   providerId: string
   binding?: string
-  callbackMode?: "shared-v1" | "legacy-v1"
+  callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
   authorizationServerIssuer?: string
   nonce: string
   iat?: number
@@ -77,7 +77,7 @@ export function createOAuthStateToken(input: {
   providerId: string
   binding?: string
   version?: 1 | 2
-  callbackMode?: "shared-v1" | "legacy-v1"
+  callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
   authorizationServerIssuer?: string
   secret: string
   ttlSeconds?: number
@@ -122,7 +122,7 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
       || typeof payload.providerId !== "string"
       || (payload.binding !== undefined && typeof payload.binding !== "string")
       || (payload.version !== undefined && payload.version !== 1 && payload.version !== 2)
-      || (payload.callbackMode !== undefined && payload.callbackMode !== "shared-v1" && payload.callbackMode !== "legacy-v1")
+      || (payload.callbackMode !== undefined && payload.callbackMode !== "shared-v1" && payload.callbackMode !== "isolated-v1" && payload.callbackMode !== "legacy-v1")
       || (payload.authorizationServerIssuer !== undefined && typeof payload.authorizationServerIssuer !== "string")
       || typeof payload.nonce !== "string"
       || (payload.iat !== undefined && typeof payload.iat !== "number")
@@ -130,7 +130,7 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
       || payload.exp < nowSeconds
       || (payload.version === 2 && (
         typeof payload.binding !== "string"
-        || (payload.callbackMode !== "shared-v1" && payload.callbackMode !== "legacy-v1")
+        || (payload.callbackMode !== "shared-v1" && payload.callbackMode !== "isolated-v1" && payload.callbackMode !== "legacy-v1")
         || typeof payload.iat !== "number"
       ))
     ) {

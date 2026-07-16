@@ -2,13 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { AlertTriangle, Check, Loader2, Plug, Wrench } from "lucide-react";
-import { DenButton } from "../../_components/ui/button";
+import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getOrgAccessFlags } from "../../_lib/den-org";
+import { getOrgAccessFlags, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IntegrationIcon } from "./integration-icon";
 import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "./mcp-connection-display";
+import { marketplaceConnectionNeedsAdminSetup } from "./mcp-connection-setup";
 import { openMcpAuthorizationWindow, safeMcpAuthorizationUrl } from "./mcp-authorization-url";
 import { MICROSOFT_365_DISPLAY_SCOPES } from "./microsoft-365-permissions";
 import {
@@ -17,6 +19,7 @@ import {
   isNativeProviderConnectionId,
   useDisconnectMyProviderAccount,
   useMcpConnections,
+  useMcpConnectionPresets,
   useStartMcpConnectionOAuth,
 } from "./mcp-connections-data";
 import { McpToolRunner } from "./mcp-tool-runner";
@@ -35,7 +38,8 @@ const OAUTH_POLL_TIMEOUT_MS = 90_000;
  */
 export function YourConnectionsScreen() {
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections("usable");
-  const { orgContext } = useOrgDashboard();
+  const { data: presets = [] } = useMcpConnectionPresets();
+  const { orgContext, orgSlug } = useOrgDashboard();
   const searchParams = useSearchParams();
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
@@ -146,11 +150,15 @@ export function YourConnectionsScreen() {
         </div>
       ) : (
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-          {visibleConnections.map((connection) => (
-            <YourConnectionRow
+          {visibleConnections.map((connection) => {
+            const needsAdminSetup = marketplaceConnectionNeedsAdminSetup(connection, presets);
+            const setupPluginId = connection.identityManagedBy[0]?.pluginId;
+            return <YourConnectionRow
               key={connection.id}
               connection={connection}
               isAdmin={access.isAdmin}
+              needsAdminSetup={needsAdminSetup}
+              setupHref={access.isAdmin && needsAdminSetup && setupPluginId ? getPluginRoute(orgSlug, setupPluginId) : null}
               highlighted={focusConnectionId === connection.id}
               rowRef={focusConnectionId === connection.id ? focusedRowRef : undefined}
               polling={pollingConnectionId === connection.id}
@@ -159,8 +167,8 @@ export function YourConnectionsScreen() {
               errorMessage={rowError?.connectionId === connection.id ? rowError.message : null}
               onConnect={() => void handleConnectMyAccount(connection.id)}
               onDisconnect={() => void handleDisconnectMyAccount(connection.id)}
-            />
-          ))}
+            />;
+          })}
         </div>
       )}
     </DashboardPageTemplate>
@@ -170,6 +178,8 @@ export function YourConnectionsScreen() {
 function YourConnectionRow({
   connection,
   isAdmin,
+  needsAdminSetup,
+  setupHref,
   polling,
   connecting,
   disconnecting,
@@ -181,6 +191,8 @@ function YourConnectionRow({
 }: {
   connection: ExternalMcpConnection;
   isAdmin: boolean;
+  needsAdminSetup: boolean;
+  setupHref: string | null;
   highlighted: boolean;
   rowRef?: React.Ref<HTMLDivElement>;
   polling: boolean;
@@ -191,11 +203,11 @@ function YourConnectionRow({
   onDisconnect: () => void;
 }) {
   const isPerMember = connection.credentialMode === "per_member";
-  const needsReconnect = connection.connectedForMe && connection.needsReconnect === true;
-  const needsMyConnect = isPerMember && !connection.connectedForMe;
-  const needsAdminConnect = isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
-  const canDisconnect = canDisconnectMyConnectionAccount(connection);
-  const canTestTools = isAdmin && !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
+  const needsReconnect = !needsAdminSetup && connection.connectedForMe && connection.needsReconnect === true;
+  const needsMyConnect = !needsAdminSetup && isPerMember && !connection.connectedForMe;
+  const needsAdminConnect = !needsAdminSetup && isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
+  const canDisconnect = !needsAdminSetup && canDisconnectMyConnectionAccount(connection);
+  const canTestTools = !needsAdminSetup && isAdmin && !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
   const [toolRunnerOpen, setToolRunnerOpen] = useState(false);
   const microsoftScopes = connection.id === "microsoft-365"
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
@@ -214,7 +226,11 @@ function YourConnectionRow({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
-              {needsReconnect ? (
+              {needsAdminSetup ? (
+                <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  Waiting for an admin to finish setup
+                </span>
+              ) : needsReconnect ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                   <AlertTriangle className="h-3 w-3" />
                   Reconnect to grant new permissions
@@ -265,6 +281,11 @@ function YourConnectionRow({
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {setupHref ? (
+            <Link href={setupHref} className={buttonVariants({ variant: "primary", size: "sm" })}>
+              Set up
+            </Link>
+          ) : null}
           {canTestTools ? (
             <DenButton
               variant="secondary"

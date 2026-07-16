@@ -121,24 +121,23 @@ export default {
     {
       name: "Frame 4",
       run: async (ctx) => {
-        await ctx.prove("Extensions Marketplace in Connect mode shows only desktop-installable marketplace content", {
+        await ctx.prove("Extensions Marketplace keeps organization marketplace plugins out of the legacy pane", {
           voiceover: vo[3],
           action: async () => {
             await openExtensionsMarketplace(ctx);
-            await waitForMarketplacePlugin(ctx, DESKTOP_PLUGIN_NAME);
           },
           assert: async () => {
             const proof = await readExtensionsMarketplaceState(ctx, DESKTOP_PLUGIN_NAME);
-            ctx.assert(proof.pageText.includes("installs on this machine"), "Filtered marketplace heading missing.");
-            ctx.assert(proof.pluginCardText.includes(DESKTOP_PLUGIN_NAME), `Desktop-only plugin missing: ${proof.pluginCardText}`);
-            ctx.assert(proof.pluginCardText.includes("Add"), `Install action missing: ${proof.pluginCardText}`);
+            ctx.assert(proof.pageText.includes("Extension Marketplace"), "Extensions Marketplace heading missing.");
             ctx.assert(!proof.pageText.includes(READY_PLUGIN_NAME), `Ready cloud plugin leaked into Extensions marketplace: ${proof.pageText}`);
+            ctx.assert(!proof.pageText.includes(NEEDS_SETUP_PLUGIN_NAME), `Needs-setup plugin leaked into Extensions marketplace: ${proof.pageText}`);
+            ctx.assert(!proof.pageText.includes(DESKTOP_PLUGIN_NAME), `Desktop-only plugin leaked into Extensions marketplace: ${proof.pageText}`);
           },
           screenshot: {
-            name: "connect-partition-extensions-desktop-filter",
-            claim: "Extensions Marketplace shows only desktop-installable marketplace content in Connect mode.",
-            requireText: ["installs on this machine", DESKTOP_PLUGIN_NAME, "Add"],
-            rejectText: [READY_PLUGIN_NAME, "Something went wrong"],
+            name: "connect-partition-extensions-no-den-plugins",
+            claim: "Extensions Marketplace no longer renders organization marketplace plugins as local installs.",
+            requireText: ["Extension Marketplace"],
+            rejectText: [READY_PLUGIN_NAME, NEEDS_SETUP_PLUGIN_NAME, DESKTOP_PLUGIN_NAME, "Something went wrong"],
           },
         });
       },
@@ -559,7 +558,7 @@ async function openExtensionsMarketplace(ctx) {
   await navigateToSettingsTab(ctx, "extensions");
   await ctx.waitForText("My Extensions", { timeoutMs: 30_000 });
   await ctx.clickText("Marketplace", { selector: "button", timeoutMs: 30_000 });
-  await ctx.waitForText("installs on this machine", { timeoutMs: 30_000 });
+  await ctx.waitForText("Extension Marketplace", { timeoutMs: 30_000 });
   await ctx.control("extensions.refresh-marketplace").catch(() => {});
 }
 
@@ -569,22 +568,11 @@ async function waitForConnectText(ctx, text) {
     const found = await ctx.eval(`document.body.innerText.includes(${JSON.stringify(text)})`);
     if (found) return;
     // The marketplace store serves a cached snapshot after remounts — force a
-    // refetch while polling, mirroring waitForMarketplacePlugin.
+    // refetch while polling.
     await ctx.control("extensions.refresh-marketplace").catch(() => {});
     await sleep(2_000);
   }
   ctx.assert(false, `Connect text did not render: ${text}`);
-}
-
-async function waitForMarketplacePlugin(ctx, name) {
-  const deadline = Date.now() + 90_000;
-  while (Date.now() < deadline) {
-    const found = await ctx.eval(`document.body.innerText.includes(${JSON.stringify(name)})`);
-    if (found) return;
-    await ctx.control("extensions.refresh-marketplace").catch(() => {});
-    await sleep(2_000);
-  }
-  ctx.assert(false, `Marketplace plugin did not render: ${name}`);
 }
 
 async function scrollConnectGroup(ctx, group) {

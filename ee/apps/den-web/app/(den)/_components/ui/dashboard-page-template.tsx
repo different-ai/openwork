@@ -1,6 +1,6 @@
 "use client";
 
-import type { ElementType } from "react";
+import type { ElementType, ReactNode } from "react";
 import { PaperMeshGradient } from "@openwork/ui/react";
 import { Dithering } from "@paper-design/shaders-react";
 
@@ -30,7 +30,7 @@ export type DashboardPageTemplateProps = {
   /** Page heading rendered large inside the card */
   title: string;
   /** One-liner rendered in gray below the card, above children */
-  description: string;
+  description: ReactNode;
   /**
    * Exactly 4 CSS hex colors for the mesh gradient.
    * Tip: vary hue across pages so each section feels distinct at a glance.

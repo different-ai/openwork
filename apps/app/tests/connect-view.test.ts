@@ -191,7 +191,7 @@ describe("Connect cloud-readiness row resolution", () => {
     })).toBe("needs_signin");
   });
 
-  test("filters Extensions marketplace rows to desktop-installable plugins in Connect mode", () => {
+  test("classifies desktop-only marketplace plugins for Connect exclusion", () => {
     expect(isDesktopInstallableMarketplacePlugin({ componentCounts: {}, cloudReadiness: { state: "desktop_only", hasInstructional: false, connections: [] } })).toBe(true);
     expect(isDesktopInstallableMarketplacePlugin({ componentCounts: {}, cloudReadiness: { state: "ready", hasInstructional: true, connections: [] } })).toBe(false);
     expect(isDesktopInstallableMarketplacePlugin({ componentCounts: { tool: 1 } })).toBe(true);

@@ -295,6 +295,13 @@
       "when": 1784202256830,
       "tag": "0042_superb_swarm",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "5",
+      "when": 1784239846173,
+      "tag": "0043_talented_meteorite",
+      "breakpoints": true
     }
   ]
 }

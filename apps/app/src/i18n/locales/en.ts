@@ -611,7 +611,7 @@ export default {
   "extensions.filter_apps": "Apps",
   "extensions.filter_plugins": "Plugins",
   "extensions.marketplace_active_cloud_label": "Active · runs in cloud",
-  "extensions.marketplace_description": "Browse built-in OpenWork extensions and organization marketplace extensions. Claude-compatible plugins are normalized into OpenWork extensions with installable resources such as skills, MCPs, commands, or tools.",
+  "extensions.marketplace_description": "Browse OpenWork built-ins and organization marketplace extensions. Built-ins stay local; organization marketplace extensions run through OpenWork Connect, while GitHub and Claude plugin imports live in local Extensions.",
   "extensions.marketplace_local_description": "Desktop-only and unsynced marketplace items stay installable here. Cloud-runnable apps are listed in Connect.",
   "extensions.marketplace_local_title": "From your marketplace — installs on this machine",
   "extensions.marketplace_runs_in_cloud": "Runs in cloud",

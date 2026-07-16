@@ -363,6 +363,13 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               requestPhase: "mcp-initialize",
               outcome: "succeeded",
             })
+            // Some providers allow initialize before challenging on tools/list.
+            // Probe only when the server advertised the tools capability: MCP
+            // servers are allowed to expose resources and/or prompts without
+            // implementing tools/list at all.
+            if (session.client.getServerCapabilities()?.tools) {
+              await session.client.listTools(undefined, session.requestOptions)
+            }
             try {
               await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
             } catch (error) {
@@ -414,8 +421,12 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               requestPhase: "mcp-initialize",
               outcome: "succeeded",
             })
+            if (session.client.getServerCapabilities()?.tools) {
+              await session.client.listTools(undefined, session.requestOptions)
+            }
           } catch (error) {
             operationFailed = true
+            let credentialCleanupError: unknown = null
             if (exchangedTokens && credentialPort) {
               try {
                 const cleanupController = new AbortController()
@@ -427,9 +438,19 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
                   },
                   reason: "post-authorization-validation-failed",
                 })
-              } catch {
-                // Credential cleanup must not replace the validation failure.
+              } catch (cleanupError) {
+                credentialCleanupError = cleanupError
               }
+            }
+            if (credentialCleanupError) {
+              throw new EnterpriseMcpClientError({
+                operationPhase: "authorization-callback",
+                requestPhase: session.observer.lastRequestPhase(),
+                cause: new AggregateError(
+                  [error, credentialCleanupError],
+                  "Post-authorization validation failed and the exchanged credentials could not be invalidated.",
+                ),
+              })
             }
             throw error
           } finally {

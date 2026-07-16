@@ -40,10 +40,15 @@ const COMPOSE_ARGS = ["compose", "-p", "openwork-den-local", "-f", "packaging/do
 const DEN_WEB_ORIGIN = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "http://localhost:3005").replace(/\/+$/, "");
 const DEN_TRUSTED_ORIGINS = `${DEN_BASE_URL},${DEN_WEB_ORIGIN},http://localhost:5173,http://127.0.0.1:5173`;
 
+// Override with OPENWORK_EVAL_DATABASE_URL to isolate a run from the shared
+// dev database (e.g. a dedicated schema on the same MySQL container).
+const DEN_DATABASE_URL = process.env.OPENWORK_EVAL_DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_den";
+const DEN_DATABASE_NAME = new URL(DEN_DATABASE_URL).pathname.replace(/^\//, "") || "openwork_den";
+
 const DEN_ENV = {
   OPENWORK_DEV_MODE: "1",
   PORT: String(DEN_API_INTERNAL_PORT),
-  DATABASE_URL: "mysql://root:password@127.0.0.1:3306/openwork_den",
+  DATABASE_URL: DEN_DATABASE_URL,
   DEN_DB_ENCRYPTION_KEY: "local-dev-db-encryption-key-please-change-1234567890",
   BETTER_AUTH_SECRET: "local-dev-secret-not-for-production-use!!",
   BETTER_AUTH_URL: DEN_BASE_URL,
@@ -151,7 +156,7 @@ async function ensureMysql(log) {
 async function mysqlQuery(sql) {
   const { stdout } = await run("docker", [
     "exec", MYSQL_CONTAINER,
-    "mysql", "-uroot", "-ppassword", "openwork_den", "-N", "-e", sql,
+    "mysql", "-uroot", "-ppassword", DEN_DATABASE_NAME, "-N", "-e", sql,
   ]);
   return stdout.trim();
 }

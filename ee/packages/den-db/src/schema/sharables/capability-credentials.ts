@@ -113,7 +113,7 @@ export type ExternalMcpAuthType = (typeof externalMcpAuthTypeValues)[number]
 export const externalMcpCredentialModeValues = ["shared", "per_member"] as const
 export type ExternalMcpCredentialMode = (typeof externalMcpCredentialModeValues)[number]
 
-export const externalMcpOAuthCallbackModeValues = ["shared-v1", "legacy-v1"] as const
+export const externalMcpOAuthCallbackModeValues = ["shared-v1", "isolated-v1", "legacy-v1"] as const
 export type ExternalMcpOAuthCallbackMode = (typeof externalMcpOAuthCallbackModeValues)[number]
 
 export type ExternalMcpOAuthConfiguration = {
@@ -261,6 +261,8 @@ export const PluginMcpRequirementBindingTable = mysqlTable(
     configObjectId: denTypeIdColumn("configObject", "config_object_id").notNull(),
     serverName: varchar("server_name", { length: 255 }).notNull(),
     externalMcpConnectionId: denTypeIdColumn("externalMcpConnection", "external_mcp_connection_id").notNull(),
+    requiredAuthType: mysqlEnum("required_auth_type", externalMcpAuthTypeValues),
+    connectionOwnedByPlugin: boolean("connection_owned_by_plugin").notNull().default(false),
     createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),

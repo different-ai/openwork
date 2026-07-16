@@ -499,6 +499,7 @@ type ConnectOrganizationRow =
       name: string;
       description: string;
       meta: string;
+      importedLocally: boolean;
       plugin: DenOrgPlugin;
     };
 
@@ -566,6 +567,7 @@ export function buildConnectRows(input: {
       name: item.plugin.name,
       description: item.plugin.description ?? "",
       meta: formatPluginConnectRowMeta(item.plugin),
+      importedLocally: Boolean(item.importedPlugin),
       plugin: item.plugin,
     }];
   });
@@ -608,7 +610,14 @@ function ConnectOrganizationRow(props: {
         iconSrc={pluginManifest?.icon?.src}
       />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-semibold text-dls-text">{row.name}</div>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="truncate text-sm font-semibold text-dls-text">{row.name}</span>
+          {row.kind === "plugin" && row.importedLocally ? (
+            <span className="shrink-0 rounded-md border border-amber-6/40 bg-amber-3/40 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
+              {t("connect.marketplace_local_copy_badge")}
+            </span>
+          ) : null}
+        </div>
         <div className="truncate text-xs text-dls-secondary">{row.meta}</div>
       </div>
       {row.group === "needs_signin" && connectableConnectionId ? (
@@ -619,7 +628,7 @@ function ConnectOrganizationRow(props: {
             className={needsReconnect ? "border border-amber-6 bg-amber-2 text-amber-11 hover:bg-amber-3" : undefined}
             onClick={() => props.onConnect(connectableConnectionId)}
           >
-            {connecting ? t("connect.waiting_for_browser") : needsReconnect ? t("mcp.org_connection_reconnect_action") : t("connect.row_action_connect")}
+            {connecting ? t("connect.waiting_for_browser") : needsReconnect ? t("mcp.org_connection_reconnect_action") : t("mcp.org_connection_connect_action")}
           </Button>
           {disconnectableConnectionId ? (
             <Button size="sm" variant="destructive" disabled={disconnecting} onClick={() => props.onDisconnect(disconnectableConnectionId)}>

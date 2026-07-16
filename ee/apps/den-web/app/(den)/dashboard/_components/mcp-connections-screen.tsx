@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
-import { DenButton } from "../../_components/ui/button";
+import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
@@ -21,6 +21,7 @@ import {
   type McpConnectionAccessMode,
 } from "./mcp-connection-editing";
 import { formatConnectionCreatorAttribution } from "./mcp-connection-display";
+import { marketplaceConnectionNeedsAdminSetup } from "./mcp-connection-setup";
 import { shouldShowMcpConnectionsStagingBanner } from "./mcp-connections-capability";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { marketplaceQueryKeys, useMarketplaces } from "./marketplace-data";
@@ -218,7 +219,7 @@ function importServerStatus(server: GithubPluginImportServer): string {
 }
 
 export function McpConnectionsScreen() {
-  const { orgContext } = useOrgDashboard();
+  const { orgContext, orgSlug } = useOrgDashboard();
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections();
   const { data: usableConnections = [] } = useMcpConnections("usable");
   const { data: presets = [] } = useMcpConnectionPresets();
@@ -528,10 +529,14 @@ export function McpConnectionsScreen() {
         </div>
       ) : (
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-          {connections.map((connection) => (
-            <ConnectionRow
+          {connections.map((connection) => {
+            const needsAdminSetup = marketplaceConnectionNeedsAdminSetup(connection, presets);
+            const setupPluginId = connection.identityManagedBy[0]?.pluginId;
+            return <ConnectionRow
               key={connection.id}
               connection={connection}
+              needsAdminSetup={needsAdminSetup}
+              setupHref={needsAdminSetup && setupPluginId ? getPluginRoute(orgSlug, setupPluginId) : null}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
@@ -546,8 +551,8 @@ export function McpConnectionsScreen() {
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
               toolsOpen={toolsConnectionId === connection.id}
               onToggleTools={() => setToolsConnectionId((current) => current === connection.id ? null : connection.id)}
-            />
-          ))}
+            />;
+          })}
         </div>
       )}
 
@@ -1169,6 +1174,8 @@ function accessSummaryLabel(connection: ExternalMcpConnection): string {
 
 function ConnectionRow({
   connection,
+  needsAdminSetup,
+  setupHref,
   polling,
   connecting,
   errorMessage,
@@ -1182,6 +1189,8 @@ function ConnectionRow({
   onToggleTools,
 }: {
   connection: ExternalMcpConnection;
+  needsAdminSetup: boolean;
+  setupHref: string | null;
   polling: boolean;
   connecting: boolean;
   errorMessage: string | null;
@@ -1199,9 +1208,10 @@ function ConnectionRow({
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement>(null);
-  const canConnectOAuth = connection.authType === "oauth"
+  const displayedConnected = connection.connected && !needsAdminSetup;
+  const canConnectOAuth = !needsAdminSetup && connection.authType === "oauth"
     && (isPerMember ? !connection.connectedForMe : !connection.connected);
-  const canInspectTools = connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe;
+  const canInspectTools = !needsAdminSetup && (connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe);
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -1234,12 +1244,16 @@ function ConnectionRow({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
-              {isPerMember ? (
+              {needsAdminSetup ? (
+                <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  Setup required
+                </span>
+              ) : isPerMember ? (
                 <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${connection.connected ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
                   <Users className="h-3 w-3" />
                   {connection.connected ? "Individual accounts connected" : "Not connected"}
                 </span>
-              ) : connection.connected ? (
+              ) : displayedConnected ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                   <Check className="h-3 w-3" />
                   Connected
@@ -1261,7 +1275,7 @@ function ConnectionRow({
               ) : null}
             </div>
             <p className="mt-0.5 truncate text-[12px] text-gray-500">
-              {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}{creatorAttribution ? ` · ${creatorAttribution}` : ""}
+              {connection.url}{needsAdminSetup ? "" : ` · ${formatMcpConnectedTimestamp(connection.connectedAt)}`}{creatorAttribution ? ` · ${creatorAttribution}` : ""}
             </p>
             {connection.authType === "oauth" ? (
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
@@ -1274,6 +1288,11 @@ function ConnectionRow({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
+          {setupHref ? (
+            <Link href={setupHref} className={buttonVariants({ variant: "primary", size: "sm" })}>
+              Set up
+            </Link>
+          ) : null}
           {canConnectOAuth ? (
             <DenButton
               variant="secondary"
@@ -1284,7 +1303,7 @@ function ConnectionRow({
               Connect
             </DenButton>
           ) : null}
-          {connection.connected ? (
+          {displayedConnected ? (
             <DenButton
               variant="secondary"
               size="sm"

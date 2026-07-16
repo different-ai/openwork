@@ -1,6 +1,6 @@
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { generateConnectLinkKeyPair, verifyConnectLinkToken } from "@openwork/connect-link/node"
-import { beforeAll, beforeEach, expect, mock, test } from "bun:test"
+import { afterAll, beforeAll, beforeEach, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import os from "node:os"
@@ -28,7 +28,6 @@ const connectKeyId = "owc-route-test"
 
 function defaultOrganizationMetadata(): Record<string, unknown> {
   return {
-    capabilities: { installLinks: true },
     brandAppName: "Acme Work",
     brandLogoUrl: "https://assets.blueyonder.test/wordmark.svg",
     brandIconUrl: "https://assets.blueyonder.test/icon.png",
@@ -37,7 +36,7 @@ function defaultOrganizationMetadata(): Record<string, unknown> {
 
 let role = "member"
 let isOwner = false
-let capabilityEnabled = true
+let installLinksCapabilityOverride: boolean | null = null
 let failInstallLinkInsert = false
 let sessionCreatedAt = new Date()
 let organizationMetadata = defaultOrganizationMetadata()
@@ -98,6 +97,18 @@ function insertedInstallLinks() {
   return insertedRows.filter((row) => isRecord(row) && typeof row.tokenHash === "string")
 }
 
+function organizationContextMetadata() {
+  if (installLinksCapabilityOverride === null) {
+    return organizationMetadata
+  }
+
+  const capabilities = isRecord(organizationMetadata.capabilities) ? organizationMetadata.capabilities : {}
+  return {
+    ...organizationMetadata,
+    capabilities: { ...capabilities, installLinks: installLinksCapabilityOverride },
+  }
+}
+
 mock.module("../src/orgs.js", () => ({
   getOrganizationContextForUser: (input: { organizationId: string; userId: string }) => Promise.resolve(
     input.organizationId === organizationId && input.userId === userId
@@ -107,10 +118,7 @@ mock.module("../src/orgs.js", () => ({
             name: "Acme Robotics",
             slug: "acme-robotics",
             logo: null,
-            metadata: {
-              ...organizationMetadata,
-              capabilities: { installLinks: capabilityEnabled },
-            },
+            metadata: organizationContextMetadata(),
           },
           currentMember: {
             id: memberId,
@@ -141,6 +149,7 @@ beforeAll(async () => {
   envModule = await import("../src/env.js")
   installLinkMintingModule = await import("../src/install-links.js")
   installLinkModule = await import("../src/routes/org/install-links.js")
+  mock.restore()
 })
 
 beforeEach(() => {
@@ -154,10 +163,14 @@ beforeEach(() => {
   revokedRows.length = 0
   role = "member"
   isOwner = false
-  capabilityEnabled = true
+  installLinksCapabilityOverride = null
   failInstallLinkInsert = false
   sessionCreatedAt = new Date()
   organizationMetadata = defaultOrganizationMetadata()
+})
+
+afterAll(() => {
+  mock.restore()
 })
 
 function createApp(options: {
@@ -254,13 +267,23 @@ test("explicit rotation still requires a fresh privileged session", async () => 
   expect(revokedRows).toHaveLength(0)
 })
 
-test("the organization capability still gates member install links", async () => {
-  capabilityEnabled = false
+test("explicit installLinks false kill switch refuses member install links", async () => {
+  installLinksCapabilityOverride = false
   const response = await mint(createApp())
 
   expect(response.status).toBe(403)
   await expect(response.json()).resolves.toEqual({ error: "capability_disabled", capability: "installLinks" })
   expect(insertedInstallLinks()).toHaveLength(0)
+})
+
+test("deprecated deployment gate stays inert when installLinks metadata is absent", async () => {
+  envModule.env.installLinksGatingEnabled = true
+  organizationMetadata = defaultOrganizationMetadata()
+  installLinksCapabilityOverride = null
+  const response = await mint(createApp())
+
+  expect(response.status).toBe(200)
+  expect(insertedInstallLinks()).toHaveLength(1)
 })
 
 test("invitation downloads mint the same org install page without storing the raw token", async () => {
