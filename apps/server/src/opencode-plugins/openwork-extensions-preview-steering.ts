@@ -132,16 +132,13 @@ export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
   "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_extension_list_actions to inspect available extension actions, then call the matching action with openwork_extension_call.";
 
 export const OPENWORK_CLOUD_CONNECTION_INSTRUCTION =
-  "The OpenWork Cloud connection is verified ready for this exact workspace/model. For email (Gmail), calendar, Google Drive, and org-connected services such as Notion, Linear, Slack, etc., FIRST call openwork-cloud_search_capabilities with 2-4 keyword variants, then call openwork-cloud_execute_capability with an exact returned name. Do not claim these are unavailable without searching. OpenWork extensions (openwork_extension_list_actions / openwork_extension_call) remain available for other local actions such as image generation, but do NOT use them for Google Workspace, and never direct the user to Settings > Extensions for Google Workspace; use Settings > Connect. A successful search proves OpenWork Cloud itself is authorized, so never tell the user to reconnect OpenWork Cloud because a downstream connector failed. If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly: use Your Connections for the member, the organization Connections dashboard for an org admin, or the provider admin console for a provider-side failure. After the requested human fixes that connector, search again in the same task. Do not try browser_* or openwork_ui_* workarounds or repeat the same call unchanged; results are live, not cached, so unchanged retries return the same error.";
-
-export const OPENWORK_CONNECT_DEGRADED_INSTRUCTION =
-  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud agent access is not ready for this exact workspace/model. Do not use OpenWork documentation tools, browser tools, or OpenWork UI tools as a substitute for performing an action against a connected service. Direct the user to Settings → Connect → Repair and test.`;
+  "The OpenWork Cloud connection is verified ready for this exact workspace/model. For email (Gmail), calendar, Google Drive, and org-connected services such as Notion, Linear, Slack, etc., FIRST call openwork-cloud_search_capabilities with 2-4 keyword variants, then call openwork-cloud_execute_capability with an exact returned name. Search before claiming these are unavailable. OpenWork extensions (openwork_extension_list_actions / openwork_extension_call) remain available for other local actions such as image generation; use OpenWork Cloud capabilities for Google Workspace. Settings > Connect is the relevant settings surface for Google Workspace. A successful search proves OpenWork Cloud itself is authorized, so a downstream connector failure does not mean OpenWork Cloud needs to be reconnected. If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly: use Your Connections for the member, the organization Connections dashboard for an org admin, or the provider admin console for a provider-side failure. After the requested human fixes that connector, search again in the same task because results are live, not cached, so unchanged retries return the same error.";
 
 export const OPENWORK_CONNECT_SIGN_IN_INSTRUCTION =
   `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud is not signed in or no desired agent access configuration exists for this workspace. Direct the user to sign in to OpenWork and connect the service in Settings → Connect.`;
 
 export const OPENWORK_CONNECT_DISABLED_INSTRUCTION =
-  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud agent access is explicitly disabled for this workspace. Explain that the user can enable agent access in Settings → Connect, then use Repair and test.`;
+  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud agent access is explicitly disabled for this workspace. Explain that the user can enable agent access in Settings → Connect.`;
 
 const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
 
@@ -288,35 +285,25 @@ async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch)
   };
 }
 
-function degradedInstruction(health: OpenWorkCloudHealthSummary | null): string {
-  if (!health?.firstFailure) return OPENWORK_CONNECT_DEGRADED_INSTRUCTION;
-  return `${OPENWORK_CONNECT_DEGRADED_INSTRUCTION} Current verified health: ${health.firstFailure.code}; ${health.firstFailure.recommendedAction}.`;
-}
-
 export function composeOpenWorkExtensionDiscoveryInstruction(state: OpenWorkExtensionConnectState | null): string {
   if (!state) return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
-  if (state.workspace?.resolution && state.workspace.resolution !== "resolved") return degradedInstruction(null);
+  if (state.workspace?.resolution && state.workspace.resolution !== "resolved") return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
   const health = state.cloudHealth;
   if (health?.usable === true && health.usableByCurrentModel !== false) return OPENWORK_CLOUD_CONNECTION_INSTRUCTION;
-  if (health?.phase === "engine_disabled" || health?.firstFailure?.code === "cloud_mcp_disabled") return OPENWORK_CONNECT_DISABLED_INSTRUCTION;
+  if (health?.phase === "engine_disabled" || health?.firstFailure?.code === "engine_disabled" || health?.firstFailure?.code === "cloud_mcp_disabled") return OPENWORK_CONNECT_DISABLED_INSTRUCTION;
   if (health) {
     if (!health.desired.present || health.firstFailure?.code === "cloud_mcp_missing") return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
-    if (health.engine?.status === "connected" && (health.firstFailure?.code === "probe_unreachable" || health.firstFailure?.code === "cloud_tools_missing")) {
-      // Field incident: the server probe may lack corporate CA trust, so fail open when the engine says MCP is connected.
-      return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
-    }
-    return degradedInstruction(health);
+    return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
   }
   if (!state.connectCatalogEnabled || state.googleWorkspace.legacyConfigured) return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
   return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
 }
 
-export function composeSteeringFromEngineMcpStatus(status: string | undefined): string | null {
+export function composeSteeringFromEngineMcpStatus(status: string | undefined): string {
   if (status === "connected") return OPENWORK_CLOUD_CONNECTION_INSTRUCTION;
   if (status === "disabled") return OPENWORK_CONNECT_DISABLED_INSTRUCTION;
   if (status === "needs_auth" || status === "needs_client_registration") return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
-  if (status === "failed") return OPENWORK_CONNECT_DEGRADED_INSTRUCTION;
-  return null;
+  return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
 }
 
 export function resetOpenWorkExtensionDiscoveryInstructionCacheForTests(): void {
@@ -335,10 +322,7 @@ export async function resolveOpenWorkExtensionDiscoveryInstruction(
       // same in-process MCP state. Server health probes may fail for reasons
       // (for example corporate TLS trust) that do not affect engine tools.
       const engineStatus = await fetchEngineMcpStatus(input, engine);
-      const instruction = engineStatus.found
-        ? composeSteeringFromEngineMcpStatus(engineStatus.status) ?? OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION
-        : null;
-      if (instruction) return instruction;
+      if (engineStatus.found) return composeSteeringFromEngineMcpStatus(engineStatus.status);
     } catch {
       return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
     }

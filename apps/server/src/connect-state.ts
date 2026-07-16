@@ -99,8 +99,8 @@ export function googleWorkspaceConnectGuidance(cloudHealthOrReady: CloudMcpHealt
   }
   if (cloudHealthOrReady && typeof cloudHealthOrReady !== "boolean" && cloudHealthOrReady.desired.present) {
     const failure = cloudHealthOrReady.firstFailure;
-    const suffix = failure ? ` Current health check: ${failure.code}; ${failure.recommendedAction}.` : "";
-    return `Google Workspace is connected through OpenWork Connect, but agent access is not ready for this exact workspace. Direct the user to Settings > Connect > Repair and test. Do not substitute docs, browser tools, or Settings > Extensions for the connected-service action.${suffix}`;
+    const suffix = failure ? ` Current health check: ${failure.code}.` : "";
+    return `Google Workspace is connected through OpenWork Connect, but agent access needs attention for this workspace. Direct the user to Settings > Connect.${suffix}`;
   }
   return "Google Workspace is not connected on this device. Direct the user to Settings > Connect to connect their account. Do not direct them to Settings > Extensions.";
 }

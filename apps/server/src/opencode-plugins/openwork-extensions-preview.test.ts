@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
+import { OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION } from "./openwork-extensions-preview-steering.js";
 
 const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
@@ -206,6 +207,27 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
     expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
     expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
+  });
+
+  test("uses neutral transform steering when the engine reports failed Cloud status", async () => {
+    const requests: unknown[] = [];
+    const mcp = {
+      result: { data: { "openwork-cloud": { status: "failed" } } },
+      async status(request: unknown) {
+        requests.push(request);
+        return this.result;
+      },
+    };
+    const plugin = await OpenWorkExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
+    const output: { system: string[] } = { system: [] };
+
+    await plugin["experimental.chat.system.transform"]({}, output);
+
+    expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
+    expect(output.system[0]).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(output.system[0]).not.toContain("not ready");
+    expect(output.system[0]).not.toContain("Repair and test");
+    expect(output.system[0]).not.toContain("Do not use OpenWork documentation tools");
   });
 
   test("reads a transcript by session id without opening the UI", async () => {
