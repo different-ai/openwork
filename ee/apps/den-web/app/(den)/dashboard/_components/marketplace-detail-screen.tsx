@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ArrowLeft, Check, GitBranch, Github, Globe, Loader2, Plus, Puzzle, Users, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, Plus, Puzzle, Users, X } from "lucide-react";
 import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -643,30 +643,22 @@ function MarketplacePluginCard({
                 {cloudReadinessLabel(plugin.cloudReadiness.state)}
               </span>
               {actionableConnections.length > 0 ? (
-                <div className="mt-2 space-y-2">
+                <div className="mt-2 space-y-1.5">
                   {actionableConnections.map((connection) => {
                     const preset = findPresetForRequirement(presets, connection);
                     const serviceName = serviceNameForRequirement(connection, preset);
                     const needsAdminSetup = pluginRequirementNeedsAdminSetup(connection);
                     const readinessAction = needsAdminSetup ? null : pluginReadinessConnectionAction(connection, isAdmin);
                     return (
-                      <div key={`${connection.configObjectId}:${connection.serverName}`} className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
-                        <div className="flex items-start gap-2.5">
+                      <div key={`${connection.configObjectId}:${connection.serverName}`} className="rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-2.5">
+                        <div className="flex flex-wrap items-center gap-2.5">
                           <IntegrationIcon name={serviceName} serviceUrl={connection.url} className="h-8 w-8 rounded-[10px]" imageClassName="h-4 w-4" />
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-1.5">
                               <p className="truncate text-[12.5px] font-semibold text-gray-900">{serviceName}</p>
                               <span className="rounded-full bg-white px-2 py-0.5 text-[10.5px] font-medium text-amber-700">Needs connection</span>
                             </div>
-                            <p className="mt-1 break-all font-mono text-[11px] leading-4 text-gray-500">
-                              Plugin-declared URL (read-only): {connection.url}
-                            </p>
-                            {readinessAction ? (
-                              <p className="mt-1 text-[11.5px] leading-4 text-amber-700">{readinessAction.note}</p>
-                            ) : null}
                           </div>
-                        </div>
-                        <div className="mt-2 flex justify-end">
                           {needsAdminSetup ? (
                             isAdmin ? (
                               <DenButton variant="secondary" size="sm" onClick={() => onSetup(connection)}>
@@ -684,6 +676,20 @@ function MarketplacePluginCard({
                             </Link>
                           ) : null}
                         </div>
+                        <details className="group/connection mt-2 border-t border-amber-100 pt-2">
+                          <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[11px] font-medium text-amber-800 transition hover:text-amber-950 [&::-webkit-details-marker]:hidden">
+                            Connection details
+                            <ChevronDown className="h-3 w-3 transition-transform group-open/connection:rotate-180" aria-hidden="true" />
+                          </summary>
+                          <div className="mt-2 rounded-lg border border-amber-100 bg-white/70 px-2.5 py-2">
+                            <p className="break-all font-mono text-[10.5px] leading-4 text-gray-500">
+                              Plugin-declared URL (read-only): {connection.url}
+                            </p>
+                            {readinessAction ? (
+                              <p className="mt-1 text-[11.5px] leading-4 text-amber-700">{readinessAction.note}</p>
+                            ) : null}
+                          </div>
+                        </details>
                       </div>
                     );
                   })}
