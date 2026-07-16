@@ -39,7 +39,7 @@ import {
   upsertOrgOAuthClient,
 } from "../../capability-sources/oauth-credentials.js"
 import { normalizeEntraTenantId, readProviderTenantId } from "../../capability-sources/oauth-tenant.js"
-import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
+import { CONNECTIONS_READ_SESSION_MAX_AGE_MS, ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const providerParamsSchema = z.object({
@@ -275,7 +275,11 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     paramValidator(providerParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can view an OAuth client configuration.")
+      const admin = ensureOrganizationAdmin(
+        c,
+        "Only workspace owners and admins can view an OAuth client configuration.",
+        CONNECTIONS_READ_SESSION_MAX_AGE_MS,
+      )
       if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
 
       const { providerId } = c.req.valid("param")
