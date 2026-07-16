@@ -59,6 +59,8 @@ test("renders an inline reconnect button when Cloud capability discovery finds e
   )
 
   expect(html).toContain("Reconnect required")
-  expect(html).toContain("Reconnect Knowledge Hub")
+  expect(html).toContain('aria-label="Reconnect Knowledge Hub"')
+  expect(html).toContain("Reconnect</button>")
+  expect(html).toContain("bg-amber-3/60")
   expect(html).toContain('data-testid="chat-mcp-reconnect-action"')
 })

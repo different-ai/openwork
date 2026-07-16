@@ -10,7 +10,7 @@ import {
 const action = {
   connectionId: "emc_research",
   connectionName: "Research Vault",
-  label: "Reconnect Research Vault",
+  label: "Reconnect",
 }
 
 beforeEach(() => useChatMcpReconnectStore.getState().reset())
@@ -28,6 +28,11 @@ describe("chat MCP reconnect state", () => {
   })
 
   test("presents a safe retry only after reconnection completes", () => {
+    expect(chatMcpReconnectPresentation(action, "ready")).toEqual({
+      badgeLabel: "Reconnect required",
+      buttonLabel: "Reconnect",
+      disabled: false,
+    })
     expect(chatMcpReconnectPresentation(action, "authorization_opened")).toEqual({
       badgeLabel: "Reconnect required",
       buttonLabel: "Finish in browser",

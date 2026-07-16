@@ -106,7 +106,7 @@ export function reconnectActionFromChatToolResult(
   // Keep the chat action concise and derived from the trusted connection
   // identity. Diagnostic operator guidance can be much longer than a button
   // label, and tool output must never get to inject arbitrary action copy.
-  return { connectionId, connectionName, label: `Reconnect ${connectionName}` }
+  return { connectionId, connectionName, label: "Reconnect" }
 }
 
 export function attributeChatToolError(errorText: string): ToolErrorAttribution | null {

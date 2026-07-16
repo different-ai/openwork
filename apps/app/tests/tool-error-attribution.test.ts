@@ -106,7 +106,7 @@ describe("chat tool error attribution", () => {
     expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", errorText)).toEqual({
       connectionId: "emc_knowledge",
       connectionName: "Knowledge Hub",
-      label: "Reconnect Knowledge Hub",
+      label: "Reconnect",
     })
   })
 
@@ -121,7 +121,7 @@ describe("chat tool error attribution", () => {
     expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output)).toEqual({
       connectionId: "emc_knowledge",
       connectionName: "Knowledge Hub",
-      label: "Reconnect Knowledge Hub",
+      label: "Reconnect",
     })
   })
 
@@ -136,7 +136,7 @@ describe("chat tool error attribution", () => {
     expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", errorText)).toEqual({
       connectionId: "emc_knowledge",
       connectionName: "Knowledge Hub",
-      label: "Reconnect Knowledge Hub",
+      label: "Reconnect",
     })
   })
 

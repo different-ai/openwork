@@ -25,11 +25,13 @@ import {
   Bot,
   ChevronDown,
   CircleAlert,
+  ExternalLink,
   FilePen,
   KeyRound,
   ListTodo,
   LoaderCircle,
   MessageCircleQuestion,
+  RefreshCcw,
   Search,
   Sparkles,
   SquareCode,
@@ -180,6 +182,11 @@ const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect, on
   const hasOutput = "output" in toolPart && toolPart.output !== undefined
   const inputDiff = getInputDiff(input)
   const Icon = toolIcon(toolPart)
+  const ReconnectIcon = reconnectState === "opening"
+    ? LoaderCircle
+    : reconnectState === "authorization_opened"
+      ? ExternalLink
+      : RefreshCcw
 
   const handleReconnect = async () => {
     if (!reconnectAction || !reconnectKey || !onReconnect) return
@@ -226,7 +233,16 @@ const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect, on
           ) : null}
           {errorAttribution ? (
             <span
-              className="border-border/70 text-muted-foreground shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-none"
+              className={cn(
+                "shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none transition-colors",
+                reconnectAction && reconnectState === "connected"
+                  ? "border-green-7/30 bg-green-3/50 text-green-11"
+                  : reconnectAction && reconnectState === "failed"
+                    ? "border-destructive/30 bg-destructive/5 text-destructive"
+                    : reconnectAction
+                      ? "border-amber-7/30 bg-amber-3/50 text-amber-11"
+                      : "border-border/70 text-muted-foreground",
+              )}
               title={`${errorAttribution.confidence}: ${errorAttribution.description}`}
               aria-label={`Error attribution: ${errorAttribution.label}. ${errorAttribution.confidence}.`}
             >
@@ -239,11 +255,25 @@ const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect, on
             type="button"
             variant="outline"
             size="xs"
-            className="shrink-0"
+            className={cn(
+              "h-7 shrink-0 gap-1.5 rounded-lg px-2.5 font-semibold shadow-none before:shadow-none",
+              reconnectState === "connected"
+                ? "border-green-7/40 bg-green-3/60 text-green-11 hover:border-green-7/60 hover:bg-green-4/70"
+                : reconnectState === "failed"
+                  ? "border-destructive/30 bg-destructive/5 text-destructive hover:border-destructive/50 hover:bg-destructive/10"
+                  : "border-amber-7/40 bg-amber-3/60 text-amber-11 hover:border-amber-7/60 hover:bg-amber-4/70",
+            )}
             data-testid="chat-mcp-reconnect-action"
             disabled={reconnectPresentation?.disabled}
+            title={`${reconnectPresentation?.buttonLabel} ${reconnectAction.connectionName}`}
+            aria-label={`${reconnectPresentation?.buttonLabel} ${reconnectAction.connectionName}`}
             onClick={() => void handleReconnect()}
           >
+            <ReconnectIcon
+              data-icon="inline-start"
+              className={cn("size-3.5", reconnectState === "opening" && "animate-spin")}
+              aria-hidden="true"
+            />
             {reconnectPresentation?.buttonLabel}
           </Button>
         ) : null}
