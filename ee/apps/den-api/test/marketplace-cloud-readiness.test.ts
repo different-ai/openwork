@@ -95,10 +95,13 @@ beforeAll(async () => {
   }))
   mock.module("../src/capability-sources/external-mcp-client-runtime.js", () => ({
     abandonExternalMcpAuth: unsupportedExternalMcpRuntimeMock,
+    abandonLegacyExternalMcpAuth: unsupportedExternalMcpRuntimeMock,
     callExternalMcpTool: unsupportedExternalMcpRuntimeMock,
     connectExternalMcp: connectExternalMcpMock,
     completeExternalMcpAuth: unsupportedExternalMcpRuntimeMock,
+    completeLegacyExternalMcpAuth: unsupportedExternalMcpRuntimeMock,
     externalMcpClientRuntimeName: "test external MCP runtime",
+    inspectExternalMcpToolCall: unsupportedExternalMcpRuntimeMock,
     listExternalMcpTools: unsupportedExternalMcpRuntimeMock,
   }))
   store = await import("../src/routes/org/plugin-system/store.js")
