@@ -28,6 +28,13 @@ export function requiredPluginMcpAuthType(input: {
   return preset?.authType ?? input.declaredAuthType
 }
 
+export function pluginMcpRequiresPreRegisteredOAuthClient(url: string): boolean {
+  const normalizedUrl = normalizedRemoteMcpUrl(url)
+  return normalizedUrl !== null && EXTERNAL_MCP_PRESETS.some((candidate) =>
+    normalizedRemoteMcpUrl(candidate.url) === normalizedUrl && candidate.requiresOAuthClient === true
+  )
+}
+
 export function resolveGithubPluginMcpImportAuthType(input: {
   declaredAuthType: "oauth" | null
   requestedAuthType: "none" | "oauth"

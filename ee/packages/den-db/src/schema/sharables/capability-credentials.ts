@@ -261,6 +261,8 @@ export const PluginMcpRequirementBindingTable = mysqlTable(
     configObjectId: denTypeIdColumn("configObject", "config_object_id").notNull(),
     serverName: varchar("server_name", { length: 255 }).notNull(),
     externalMcpConnectionId: denTypeIdColumn("externalMcpConnection", "external_mcp_connection_id").notNull(),
+    requiredAuthType: mysqlEnum("required_auth_type", externalMcpAuthTypeValues),
+    connectionOwnedByPlugin: boolean("connection_owned_by_plugin").notNull().default(false),
     createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),

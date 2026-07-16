@@ -339,12 +339,21 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
               },
             })
           }
-          const rpc: unknown = await request.json()
+          const body = await request.text()
+          if (!body) return new Response(null, { status: 202 })
+          const rpc: unknown = JSON.parse(body)
           if (typeof rpc !== "object" || rpc === null || !("method" in rpc)) {
             return Response.json({ error: "invalid_request" }, { status: 400 })
           }
           if (rpc.method === "notifications/initialized") return new Response(null, { status: 202 })
           const id = "id" in rpc && (typeof rpc.id === "string" || typeof rpc.id === "number") ? rpc.id : null
+          if (rpc.method === "tools/list") {
+            return Response.json({
+              jsonrpc: "2.0",
+              id,
+              result: { tools: [] },
+            })
+          }
           return Response.json({
             jsonrpc: "2.0",
             id,

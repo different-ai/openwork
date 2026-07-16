@@ -55,13 +55,21 @@ export function mcpAuthorizationPendingDocument(): string {
 }
 
 export function openMcpAuthorizationWindow(): Window {
-  const popup = window.open("", "openwork-mcp-authorization", "popup,width=600,height=760")
+  const popupName = `openwork-mcp-authorization-${crypto.randomUUID()}`
+  const popup = window.open("", popupName, "popup,width=600,height=760")
   if (!popup) {
     throw new Error("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.")
   }
-  popup.opener = null
-  popup.document.open()
-  popup.document.write(mcpAuthorizationPendingDocument())
-  popup.document.close()
+  try {
+    popup.opener = null
+    popup.document.open()
+    popup.document.write(mcpAuthorizationPendingDocument())
+    popup.document.close()
+  } catch {
+    // Browsers may disown or isolate a newly opened named window before its
+    // document becomes writable. The authorization redirect can still reuse
+    // this unique popup, so do not convert that browser hardening into a
+    // failed OAuth start.
+  }
   return popup
 }

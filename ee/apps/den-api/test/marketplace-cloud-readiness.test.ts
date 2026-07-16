@@ -546,15 +546,36 @@ describe("marketplace cloud readiness payload", () => {
     const configObjectId = plugin.configObjectIds[0]
     if (!configObjectId) throw new Error("missing config object")
 
-    const misclassified = await configurePluginMcp({
+    await expect(configurePluginMcp({
       authType: "none",
       configObjectId,
       credentialMode: "shared",
       org,
       pluginId: plugin.pluginId,
+    })).rejects.toMatchObject({ status: 409, error: "mcp_auth_type_mismatch" })
+
+    const oldConnectionId = createDenTypeId("externalMcpConnection")
+    await db.insert(ExternalMcpConnectionTable).values({
+      id: oldConnectionId,
+      organizationId: org.organizationId,
+      name: "Legacy misclassified Slack",
+      url,
+      authType: "none",
+      credentialMode: "shared",
+      connectedAt: new Date(),
+      createdByOrgMembershipId: org.memberId,
     })
-    const oldConnectionId = normalizeDenTypeId("externalMcpConnection", misclassified.connection.id)
-    expect(misclassified.connection).toMatchObject({ authType: "none", connected: true })
+    await db.insert(PluginMcpRequirementBindingTable).values({
+      id: createDenTypeId("pluginMcpRequirementBinding"),
+      organizationId: org.organizationId,
+      pluginId: plugin.pluginId,
+      configObjectId,
+      serverName: "slack",
+      externalMcpConnectionId: oldConnectionId,
+      requiredAuthType: "oauth",
+      connectionOwnedByPlugin: true,
+      createdByOrgMembershipId: org.memberId,
+    })
     expect(await listUsableConnectionIds({ org, memberId: org.memberId })).not.toContain(oldConnectionId)
 
     const before = await resolvedPlugin({ context: org.context, marketplaceId: org.marketplaceId, pluginId: plugin.pluginId })

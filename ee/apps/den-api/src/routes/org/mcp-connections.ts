@@ -52,7 +52,7 @@ import {
   listActiveExternalMcpConnectionBindings,
   listDirectExternalMcpConnectionAccess,
   listExternalMcpConnections,
-  listUsableExternalMcpConnections,
+  listVisibleExternalMcpConnections,
   markExternalMcpConnectionConnected,
   memberCanUseExternalMcpConnection,
   normalizeExternalMcpIdentityUrl,
@@ -72,6 +72,10 @@ import {
 } from "../../capability-sources/external-mcp-oauth-contract.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import { EXTERNAL_MCP_PRESETS } from "../../capability-sources/external-mcp-presets.js"
+import {
+  pluginMcpRequiresPreRegisteredOAuthClient,
+  requiredPluginMcpAuthType,
+} from "../../capability-sources/external-mcp-auth-policy.js"
 import {
   EXTERNAL_MCP_DIAGNOSTIC_PHASES,
   externalMcpDiagnosticForLog,
@@ -297,6 +301,13 @@ const connectionResponseSchema = z.object({
   requiredBy: z.array(requiredBySchema),
   /** Active plugin requirement bindings that own server/authentication identity. Derived server-side. */
   identityManagedBy: z.array(requiredBySchema).optional(),
+  /** Server-owned marketplace authentication policy; safe in both usable and manageable scopes. */
+  requiredAuthType: z.enum(["oauth", "apikey", "none"]).nullable().optional(),
+  authPolicyConfirmed: z.boolean().optional(),
+  authTypeMismatch: z.boolean().optional(),
+  oauthClientConfigured: z.boolean().optional(),
+  oauthClientRequired: z.boolean().optional(),
+  setupRequired: z.boolean().optional(),
   /** Present only for scope=manageable (admin) listings. */
   access: accessSummarySchema.nullable(),
   /** Public OAuth client id only. Client secrets and all other credentials are never returned. */
@@ -691,9 +702,10 @@ async function requiredByForConnections(input: {
 }): Promise<{
   requiredBy: Map<string, ConnectionRequiredBy[]>
   identityManagedBy: Map<string, ConnectionRequiredBy[]>
+  requiredAuthTypes: Map<string, Set<"apikey" | "none" | "oauth">>
 }> {
   const connectionIds = input.rows.map((row) => row.id)
-  if (connectionIds.length === 0) return { requiredBy: new Map(), identityManagedBy: new Map() }
+  if (connectionIds.length === 0) return { requiredBy: new Map(), identityManagedBy: new Map(), requiredAuthTypes: new Map() }
 
   const organizationId = input.context.organizationContext.organization.id
   const bindingRows = await listActiveExternalMcpConnectionBindings({ organizationId, connectionIds })
@@ -719,6 +731,7 @@ async function requiredByForConnections(input: {
 
   const grouped = new Map<string, Map<string, string>>()
   const identityManaged = new Map<string, Map<string, string>>()
+  const requiredAuthTypes = new Map<string, Set<"apikey" | "none" | "oauth">>()
   for (const row of bindingRows) {
     if (!visiblePluginIds.has(row.pluginId)) continue
     let plugins = grouped.get(row.connectionId)
@@ -733,6 +746,11 @@ async function requiredByForConnections(input: {
       identityManaged.set(row.connectionId, identityPlugins)
     }
     identityPlugins.set(row.pluginId, row.pluginName)
+    if (row.requiredAuthType) {
+      const values = requiredAuthTypes.get(row.connectionId) ?? new Set()
+      values.add(row.requiredAuthType)
+      requiredAuthTypes.set(row.connectionId, values)
+    }
   }
   for (const row of legacyRows) {
     if (!visiblePluginIds.has(row.pluginId)) continue
@@ -752,7 +770,7 @@ async function requiredByForConnections(input: {
   for (const [connectionId, plugins] of identityManaged) {
     identityManagedResult.set(connectionId, [...plugins].map(([pluginId, name]) => ({ pluginId, name })).sort((left, right) => left.name.localeCompare(right.name)))
   }
-  return { requiredBy: result, identityManagedBy: identityManagedResult }
+  return { requiredBy: result, identityManagedBy: identityManagedResult, requiredAuthTypes }
 }
 
 function oauthRegistrationSourceForClient(
@@ -776,6 +794,7 @@ async function toConnectionResponse(
     includeAccess: boolean
     identityManagedBy: ConnectionRequiredBy[]
     requiredBy: ConnectionRequiredBy[]
+    requiredAuthTypes: Set<"apikey" | "none" | "oauth">
   },
 ) {
   let connected = isConnectionConnected(row)
@@ -815,11 +834,24 @@ async function toConnectionResponse(
       teamIds: grants.flatMap((grant) => (grant.teamId ? [grant.teamId] : [])),
     }
   }
-  const oauthClient = options.includeAccess
+  const oauthClient = row.authType === "oauth" || options.includeAccess
     ? await getOrgOAuthClient(row.organizationId, row.id)
     : null
   const oauthRegistrationSource = oauthRegistrationSourceForClient(oauthClient)
   const callbackMode = row.oauthConfiguration?.callbackMode ?? null
+  const requiredAuthTypes = [...options.requiredAuthTypes]
+  const presetRequiredAuthType = requiredPluginMcpAuthType({ declaredAuthType: null, url: row.url })
+  if (requiredAuthTypes.length === 0 && presetRequiredAuthType) requiredAuthTypes.push(presetRequiredAuthType)
+  const authPolicyConfirmed = options.identityManagedBy.length === 0 || requiredAuthTypes.length > 0
+  const authTypeMismatch = requiredAuthTypes.some((requiredAuthType) => requiredAuthType !== row.authType)
+  const oauthClientRequired = row.authType === "oauth" && pluginMcpRequiresPreRegisteredOAuthClient(row.url)
+  const oauthClientConfigured = Boolean(oauthClient)
+  const setupRequired = options.identityManagedBy.length > 0 && (
+    !authPolicyConfirmed
+    || authTypeMismatch
+    || (oauthClientRequired && !oauthClientConfigured)
+    || (!connected && (row.authType === "apikey" || row.authType === "none"))
+  )
 
   return {
     id: row.id,
@@ -834,6 +866,12 @@ async function toConnectionResponse(
     connectedForMe,
     requiredBy: options.requiredBy,
     identityManagedBy: options.identityManagedBy,
+    requiredAuthType: requiredAuthTypes.length === 1 ? requiredAuthTypes[0] : null,
+    authPolicyConfirmed,
+    authTypeMismatch,
+    oauthClientConfigured,
+    oauthClientRequired,
+    setupRequired,
     access,
     ...(options.includeAccess ? {
       oauthClientId: oauthClient?.clientId ?? null,
@@ -1171,6 +1209,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             includeAccess: true,
             requiredBy: provenance.requiredBy.get(row.id) ?? [],
             identityManagedBy: provenance.identityManagedBy.get(row.id) ?? [],
+            requiredAuthTypes: provenance.requiredAuthTypes.get(row.id) ?? new Set(),
           })))
         return c.json({ connections })
       }
@@ -1182,7 +1221,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ connections: [] })
       }
 
-      const rows = await listUsableExternalMcpConnections({
+      const rows = await listVisibleExternalMcpConnections({
         organizationId: payload.organization.id,
         orgMembershipId: payload.currentMember.id,
         teamIds: memberTeams.map((team) => team.id),
@@ -1195,6 +1234,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           includeAccess: false,
           requiredBy: provenance.requiredBy.get(row.id) ?? [],
           identityManagedBy: provenance.identityManagedBy.get(row.id) ?? [],
+          requiredAuthTypes: provenance.requiredAuthTypes.get(row.id) ?? new Set(),
         })))
       // Native providers (e.g. google-workspace) join the same list once the
       // org saved an OAuth client for them — same card, same connect flow,
@@ -1538,6 +1578,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         includeAccess: true,
         requiredBy: [],
         identityManagedBy: [],
+        requiredAuthTypes: new Set(),
       })
       // The classical handoff: whoever created this (human or agent) gets
       // the link where members connect their own account, ready to share.
@@ -1775,6 +1816,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         includeAccess: true,
         requiredBy: provenance.requiredBy.get(result.connection.id) ?? [],
         identityManagedBy: provenance.identityManagedBy.get(result.connection.id) ?? [],
+        requiredAuthTypes: provenance.requiredAuthTypes.get(result.connection.id) ?? new Set(),
       })
       return c.json({
         ...response,
@@ -1837,6 +1879,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         includeAccess: true,
         requiredBy: provenance.requiredBy.get(connection.id) ?? [],
         identityManagedBy: provenance.identityManagedBy.get(connection.id) ?? [],
+        requiredAuthTypes: provenance.requiredAuthTypes.get(connection.id) ?? new Set(),
       }))
     },
   )

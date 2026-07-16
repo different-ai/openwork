@@ -260,13 +260,18 @@ describe("Your Connections focus and provenance helpers", () => {
     imported.authType = "none";
     imported.connected = true;
     imported.identityManagedBy = [{ pluginId: "plg_engineering", name: "Anthropic Engineering" }];
+    imported.requiredAuthType = "oauth";
+    imported.authTypeMismatch = true;
+    imported.setupRequired = true;
 
     expect(marketplaceConnectionNeedsAdminSetup(imported, [slackPreset])).toBe(true);
     expect(marketplaceConnectionNeedsAdminSetup({
       ...imported,
       authType: "oauth",
       connected: false,
-      oauthClientId: "configured-client",
+      oauthClientConfigured: true,
+      authTypeMismatch: false,
+      setupRequired: false,
     }, [slackPreset])).toBe(false);
   });
 

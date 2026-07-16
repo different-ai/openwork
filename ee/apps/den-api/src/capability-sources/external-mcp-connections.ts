@@ -34,6 +34,8 @@ export type ExternalMcpConnectionRow = typeof ExternalMcpConnectionTable.$inferS
 export type ExternalMcpConnectionAccessGrantRow = typeof ExternalMcpConnectionAccessGrantTable.$inferSelect
 export type ActiveExternalMcpConnectionBinding = {
   connectionId: DenTypeId<"externalMcpConnection">
+  requiredAuthType: "apikey" | "none" | "oauth" | null
+  connectionOwnedByPlugin: boolean
   pluginId: DenTypeId<"plugin">
   pluginName: string
 }
@@ -289,6 +291,7 @@ async function sourcedUsableExternalMcpConnections(input: {
   organizationId: OrganizationId
   orgMembershipId: OrgMembershipId
   teamIds: TeamId[]
+  includeAuthMismatches?: boolean
 }) {
   const rows = await db
     .selectDistinct({
@@ -356,7 +359,7 @@ async function sourcedUsableExternalMcpConnections(input: {
     const requiredAuthType = entry
       ? requiredPluginMcpAuthType({ declaredAuthType: declaredPluginMcpAuthType(entry.config), url: declaredUrl })
       : null
-    if (requiredAuthType && row.connection.authType !== requiredAuthType) return []
+    if (!input.includeAuthMismatches && requiredAuthType && row.connection.authType !== requiredAuthType) return []
     return normalizeExternalMcpIdentityUrl(row.connection.url) === normalizeExternalMcpIdentityUrl(declaredUrl)
       ? [row.connection]
       : []
@@ -393,6 +396,8 @@ export async function listActiveExternalMcpConnectionBindings(input: {
   return db
     .select({
       connectionId: PluginMcpRequirementBindingTable.externalMcpConnectionId,
+      requiredAuthType: PluginMcpRequirementBindingTable.requiredAuthType,
+      connectionOwnedByPlugin: PluginMcpRequirementBindingTable.connectionOwnedByPlugin,
       pluginId: PluginTable.id,
       pluginName: PluginTable.name,
     })
@@ -932,6 +937,25 @@ export async function listUsableExternalMcpConnections(input: {
   return [...byId.values()]
 }
 
+/**
+ * Member-facing configuration inventory. It preserves an accessible row when
+ * only its authentication policy is wrong so the UI can explain that an admin
+ * must repair it. Runtime/tool consumers continue to use
+ * listUsableExternalMcpConnections, which excludes the mismatch.
+ */
+export async function listVisibleExternalMcpConnections(input: {
+  organizationId: OrganizationId
+  orgMembershipId: OrgMembershipId
+  teamIds: TeamId[]
+}): Promise<ExternalMcpConnectionRow[]> {
+  const directConnections = await directlyUsableExternalMcpConnections(input)
+  const sourcedConnections = await sourcedUsableExternalMcpConnections({ ...input, includeAuthMismatches: true })
+  const byId = new Map<string, ExternalMcpConnectionRow>()
+  for (const connection of directConnections) byId.set(connection.id, connection)
+  for (const connection of sourcedConnections) byId.set(connection.id, connection)
+  return [...byId.values()]
+}
+
 export async function memberCanUseExternalMcpConnection(input: {
   connectionId: ExternalMcpConnectionId
   orgMembershipId: OrgMembershipId
@@ -986,6 +1010,56 @@ export async function deleteExternalMcpConnection(input: {
     await tx.delete(PluginMcpRequirementBindingTable).where(and(
       eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
       eq(PluginMcpRequirementBindingTable.externalMcpConnectionId, existing.id),
+    ))
+    await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
+    return true
+  })
+}
+
+export async function deleteExternalMcpConnectionIfUnreferenced(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+}): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: ExternalMcpConnectionTable.id })
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const existing = rows[0]
+    if (!existing) return false
+
+    const [binding] = await tx
+      .select({ id: PluginMcpRequirementBindingTable.id })
+      .from(PluginMcpRequirementBindingTable)
+      .where(and(
+        eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
+        eq(PluginMcpRequirementBindingTable.externalMcpConnectionId, existing.id),
+      ))
+      .limit(1)
+    const [directAccess] = await tx
+      .select({ id: ExternalMcpConnectionAccessGrantTable.id })
+      .from(ExternalMcpConnectionAccessGrantTable)
+      .where(and(
+        eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, existing.id),
+        isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
+      ))
+      .limit(1)
+    if (binding || directAccess) return false
+
+    await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, existing.id))
+    await tx.delete(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.providerId, existing.id),
+    ))
+    await tx.delete(OrgOAuthClientTable).where(and(
+      eq(OrgOAuthClientTable.organizationId, input.organizationId),
+      eq(OrgOAuthClientTable.providerId, existing.id),
     ))
     await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
     return true

@@ -310,6 +310,37 @@ describe("enterprise MCP client", () => {
     assert.ok(events.some((event) => event.requestPhase === "mcp-tool-execution" && event.outcome === "succeeded"))
   })
 
+  it("connects to a spec-legal MCP server that does not advertise tools", async () => {
+    let toolsListCalls = 0
+    const client = createEnterpriseMcpClient({
+      fetch: async (_url, init) => {
+        const body = requestText(init?.body)
+        if (!body) return new Response(null, { status: 202 })
+        const request = rpcRequestSchema.parse(JSON.parse(body))
+        if (request.method === "notifications/initialized") return new Response(null, { status: 202 })
+        if (request.method === "tools/list") {
+          toolsListCalls += 1
+          return Response.json({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } })
+        }
+        return Response.json({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            protocolVersion: "2025-06-18",
+            capabilities: { resources: {} },
+            serverInfo: { name: "resources-only", version: "1.0.0" },
+          },
+        })
+      },
+    })
+
+    assert.deepEqual(await client.connect({
+      connection: noAuthConnection(),
+      redirectUri: "https://den.example.test/callback",
+    }), { status: "connected" })
+    assert.equal(toolsListCalls, 0)
+  })
+
   it("sends Den's API key as a bearer credential", async () => {
     const client = createEnterpriseMcpClient({ fetch: mockMcpFetch({ expectedApiKey: "secret-test-key" }) })
     const result = await client.connect({
@@ -1123,6 +1154,36 @@ describe("enterprise MCP OAuth persistence contract", () => {
       }))
       assert.equal(persistence.credential, undefined)
       assert.equal(persistence.invalidationCount, 1)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it("reports credential invalidation failures alongside callback validation failures", async () => {
+    const server = await startOAuthMcpServer({ rejectAuthenticatedMcp: true })
+    try {
+      const persistence = new MemoryOAuthPersistence()
+      Object.defineProperty(persistence.credentials, "invalidate", {
+        value: async () => { throw new Error("credential store unavailable") },
+      })
+      const client = createEnterpriseMcpClient({ fetch, operationTimeoutMs: 5_000 })
+      const connection: EnterpriseMcpConnection = {
+        id: "oauth-cleanup-failure",
+        serverUrl: `${server.origin}/mcp`,
+        authorization: { type: "oauth", persistence },
+      }
+      const redirectUri = "https://den.example.test/oauth-cleanup-failure"
+      const started = await client.connect({ connection, redirectUri, authorizationId: "signed-state" })
+      assert.equal(started.status, "needs_auth")
+
+      await assert.rejects(client.completeAuthorization({
+        connection,
+        redirectUri,
+        code: "approved-code",
+        authorizationId: "signed-state",
+      }), (error: unknown) => error instanceof EnterpriseMcpClientError
+        && error.cause instanceof AggregateError
+        && error.cause.errors.some((cause) => cause instanceof Error && cause.message === "credential store unavailable"))
     } finally {
       await server.close()
     }

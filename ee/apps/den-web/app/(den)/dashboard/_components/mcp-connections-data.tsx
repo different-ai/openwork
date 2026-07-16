@@ -54,6 +54,12 @@ export type ExternalMcpConnection = {
   tenantId?: string | null;
   requiredBy: ExternalMcpRequiredBy[];
   identityManagedBy: ExternalMcpRequiredBy[];
+  requiredAuthType?: ExternalMcpAuthType | null;
+  authPolicyConfirmed?: boolean;
+  authTypeMismatch?: boolean;
+  oauthClientConfigured?: boolean;
+  oauthClientRequired?: boolean;
+  setupRequired?: boolean;
   access: ExternalMcpAccessSummary | null;
   oauthClientId?: string | null;
   oauthCallbackUrl?: string | null;

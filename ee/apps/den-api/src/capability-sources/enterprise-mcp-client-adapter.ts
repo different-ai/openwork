@@ -45,7 +45,10 @@ function toEnterpriseConnection(
           // CIMD client identifiers must be HTTPS URLs. Local HTTP development
           // still exposes the document for inspection, but falls back to DCR
           // or pre-registration instead of advertising a non-conforming ID.
-          clientMetadataUrl: new URL(metadataUrl).protocol === "https:" ? metadataUrl : undefined,
+          clientMetadataUrl: connection.oauthConfiguration?.callbackMode === "shared-v1"
+            && new URL(metadataUrl).protocol === "https:"
+            ? metadataUrl
+            : undefined,
           authorizationServerIssuer: connection.oauthConfiguration?.authorizationServerIssuer ?? undefined,
           requestedScopes: connection.oauthConfiguration?.requestedScopes ?? [],
         },
