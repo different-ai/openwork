@@ -20,6 +20,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
+import { declaredPluginMcpAuthType, requiredPluginMcpAuthType } from "./external-mcp-auth-policy.js"
 import { normalizeConnectedAccountScopes, normalizeOAuthClientExtra } from "./oauth-credentials.js"
 
 /**
@@ -352,6 +353,10 @@ async function sourcedUsableExternalMcpConnections(input: {
       .find((candidate) => candidate.name === row.binding.serverName)
     const declaredUrl = readString(entry?.config.url)
     if (!declaredUrl) return []
+    const requiredAuthType = entry
+      ? requiredPluginMcpAuthType({ declaredAuthType: declaredPluginMcpAuthType(entry.config), url: declaredUrl })
+      : null
+    if (requiredAuthType && row.connection.authType !== requiredAuthType) return []
     return normalizeExternalMcpIdentityUrl(row.connection.url) === normalizeExternalMcpIdentityUrl(declaredUrl)
       ? [row.connection]
       : []

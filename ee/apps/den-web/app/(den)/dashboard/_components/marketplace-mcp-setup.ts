@@ -139,6 +139,7 @@ export function pluginReadinessConnectionAction(
 
 export function pluginRequirementNeedsAdminSetup(connection: MarketplacePluginCloudReadinessConnection): boolean {
   if (connection.id === null) return true;
+  if (connection.authTypeMismatch === true) return true;
   if (connection.oauthClientRequired === true && connection.oauthClientConfigured === false) return true;
   return connection.connectedForMe === false && (connection.authType === "apikey" || connection.authType === "none");
 }

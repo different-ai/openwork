@@ -1,6 +1,6 @@
-import { EXTERNAL_MCP_PRESETS } from "../../../capability-sources/external-mcp-presets.js"
+import { EXTERNAL_MCP_PRESETS } from "./external-mcp-presets.js"
 
-export type GithubPluginMcpImportAuthType = "apikey" | "none" | "oauth"
+export type PluginMcpAuthType = "apikey" | "none" | "oauth"
 
 function normalizedRemoteMcpUrl(value: string) {
   try {
@@ -12,19 +12,26 @@ function normalizedRemoteMcpUrl(value: string) {
   }
 }
 
-export function declaredGithubPluginMcpAuthType(config: Record<string, unknown>): "oauth" | null {
+export function declaredPluginMcpAuthType(config: Record<string, unknown>): "oauth" | null {
   const oauth = config.oauth
   return oauth !== undefined && oauth !== null && oauth !== false ? "oauth" : null
+}
+
+export function requiredPluginMcpAuthType(input: {
+  declaredAuthType: "oauth" | null
+  url: string
+}): PluginMcpAuthType | null {
+  const normalizedUrl = normalizedRemoteMcpUrl(input.url)
+  const preset = normalizedUrl
+    ? EXTERNAL_MCP_PRESETS.find((candidate) => normalizedRemoteMcpUrl(candidate.url) === normalizedUrl)
+    : null
+  return preset?.authType ?? input.declaredAuthType
 }
 
 export function resolveGithubPluginMcpImportAuthType(input: {
   declaredAuthType: "oauth" | null
   requestedAuthType: "none" | "oauth"
   url: string
-}): GithubPluginMcpImportAuthType {
-  const normalizedUrl = normalizedRemoteMcpUrl(input.url)
-  const preset = normalizedUrl
-    ? EXTERNAL_MCP_PRESETS.find((candidate) => normalizedRemoteMcpUrl(candidate.url) === normalizedUrl)
-    : null
-  return preset?.authType ?? input.declaredAuthType ?? input.requestedAuthType
+}): PluginMcpAuthType {
+  return requiredPluginMcpAuthType(input) ?? input.requestedAuthType
 }

@@ -573,6 +573,7 @@ const pluginCloudReadinessSchema = z.object({
   hasInstructional: z.boolean(),
   connections: z.array(z.object({
     authType: z.enum(["oauth", "apikey", "none"]).optional(),
+    authTypeMismatch: z.boolean().optional(),
     configObjectId: configObjectIdSchema,
     id: z.string().nullable(),
     name: z.string(),
@@ -582,6 +583,7 @@ const pluginCloudReadinessSchema = z.object({
     connectedForMe: z.boolean().optional(),
     oauthClientConfigured: z.boolean().optional(),
     oauthClientRequired: z.boolean().optional(),
+    requiredAuthType: z.enum(["oauth", "apikey", "none"]).optional(),
   })),
 }).meta({ ref: "PluginArchPluginCloudReadiness" })
 

@@ -57,6 +57,7 @@ export type MarketplacePluginCloudReadinessState = "ready" | "needs_signin" | "n
 
 export type MarketplacePluginCloudReadinessConnection = {
   authType?: ExternalMcpAuthType;
+  authTypeMismatch?: boolean;
   configObjectId: string;
   id: string | null;
   name: string;
@@ -66,6 +67,7 @@ export type MarketplacePluginCloudReadinessConnection = {
   connectedForMe?: boolean;
   oauthClientConfigured?: boolean;
   oauthClientRequired?: boolean;
+  requiredAuthType?: ExternalMcpAuthType;
 };
 
 export type MarketplacePluginCloudReadiness = {
@@ -129,8 +131,12 @@ function parseCloudReadinessConnection(entry: unknown): MarketplacePluginCloudRe
   const authType = entry.authType === "oauth" || entry.authType === "apikey" || entry.authType === "none"
     ? entry.authType
     : null;
+  const requiredAuthType = entry.requiredAuthType === "oauth" || entry.requiredAuthType === "apikey" || entry.requiredAuthType === "none"
+    ? entry.requiredAuthType
+    : null;
   return {
     ...(authType ? { authType } : {}),
+    ...(typeof entry.authTypeMismatch === "boolean" ? { authTypeMismatch: entry.authTypeMismatch } : {}),
     configObjectId,
     id: typeof entry.id === "string" ? entry.id : null,
     name,
@@ -140,6 +146,7 @@ function parseCloudReadinessConnection(entry: unknown): MarketplacePluginCloudRe
     ...(typeof entry.connectedForMe === "boolean" ? { connectedForMe: entry.connectedForMe } : {}),
     ...(typeof entry.oauthClientConfigured === "boolean" ? { oauthClientConfigured: entry.oauthClientConfigured } : {}),
     ...(typeof entry.oauthClientRequired === "boolean" ? { oauthClientRequired: entry.oauthClientRequired } : {}),
+    ...(requiredAuthType ? { requiredAuthType } : {}),
   };
 }
 

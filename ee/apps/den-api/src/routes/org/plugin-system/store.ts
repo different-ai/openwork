@@ -97,10 +97,10 @@ import {
 } from "../../../mcp/plugin-mcp-requirement-bindings.js"
 import { openworkYourConnectionsUrl } from "../../../mcp/connection-navigation.js"
 import {
-  declaredGithubPluginMcpAuthType,
+  declaredPluginMcpAuthType,
   resolveGithubPluginMcpImportAuthType,
-  type GithubPluginMcpImportAuthType,
-} from "./github-plugin-mcp-auth.js"
+  type PluginMcpAuthType,
+} from "../../../capability-sources/external-mcp-auth-policy.js"
 
 type OrganizationId = PluginArchActorContext["organizationContext"]["organization"]["id"]
 const logger = appLogger.child({ component: "plugin_system_store" })
@@ -3551,7 +3551,7 @@ function mcpServerEntriesFromPayload(input: {
     }
 
     return githubPluginMcpImportServer({
-      authType: declaredGithubPluginMcpAuthType(config),
+      authType: declaredPluginMcpAuthType(config),
       connectionId: null,
       name,
       pluginKey: input.plugin.key,
@@ -4173,7 +4173,7 @@ function sortedUnique<TValue extends string>(values: TValue[]): TValue[] {
 }
 
 async function requireExistingExternalMcpConnectionMatchesImport(input: {
-  authType: GithubPluginMcpImportAuthType
+  authType: PluginMcpAuthType
   credentialMode: "per_member" | "shared"
   existingAuthType: "apikey" | "none" | "oauth"
   existingCredentialMode: "per_member" | "shared"
@@ -4190,7 +4190,7 @@ async function requireExistingExternalMcpConnectionMatchesImport(input: {
 
 async function ensureImportedExternalMcpConnection(input: {
   access: GithubPluginMcpImportAccess
-  authType: GithubPluginMcpImportAuthType
+  authType: PluginMcpAuthType
   context: PluginArchActorContext
   credentialMode: "per_member" | "shared"
   server: GithubPluginMcpImportServer

@@ -66,6 +66,7 @@ describe("marketplace MCP readiness parsing", () => {
             hasInstructional: true,
             connections: [{
               authType: "oauth",
+              authTypeMismatch: false,
               configObjectId: "cfg_slack",
               id: null,
               name: "slack",
@@ -73,6 +74,7 @@ describe("marketplace MCP readiness parsing", () => {
               url: "https://mcp.slack.com/mcp",
               oauthClientConfigured: false,
               oauthClientRequired: true,
+              requiredAuthType: "oauth",
             }],
           },
         }],
@@ -82,6 +84,7 @@ describe("marketplace MCP readiness parsing", () => {
 
     expect(parsed.plugins[0]?.cloudReadiness?.connections[0]).toEqual({
       authType: "oauth",
+      authTypeMismatch: false,
       configObjectId: "cfg_slack",
       id: null,
       name: "slack",
@@ -89,6 +92,7 @@ describe("marketplace MCP readiness parsing", () => {
       url: "https://mcp.slack.com/mcp",
       oauthClientConfigured: false,
       oauthClientRequired: true,
+      requiredAuthType: "oauth",
     });
   });
 
@@ -207,6 +211,13 @@ describe("marketplace MCP readiness parsing", () => {
 
     expect(pluginRequirementNeedsAdminSetup(requirement)).toBe(true);
     expect(pluginRequirementNeedsAdminSetup({ ...requirement, oauthClientConfigured: true })).toBe(false);
+    expect(pluginRequirementNeedsAdminSetup({
+      ...requirement,
+      authType: "none",
+      authTypeMismatch: true,
+      oauthClientConfigured: true,
+      requiredAuthType: "oauth",
+    })).toBe(true);
   });
 
   test("projects existing per-member disconnected requirements as Your Connections handoffs", () => {

@@ -1275,7 +1275,7 @@ function ConnectionRow({
               ) : null}
             </div>
             <p className="mt-0.5 truncate text-[12px] text-gray-500">
-              {connection.url} · {formatMcpConnectedTimestamp(connection.connectedAt)}{creatorAttribution ? ` · ${creatorAttribution}` : ""}
+              {connection.url}{needsAdminSetup ? "" : ` · ${formatMcpConnectedTimestamp(connection.connectedAt)}`}{creatorAttribution ? ` · ${creatorAttribution}` : ""}
             </p>
             {connection.authType === "oauth" ? (
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
@@ -1303,7 +1303,7 @@ function ConnectionRow({
               Connect
             </DenButton>
           ) : null}
-          {connection.connected ? (
+          {displayedConnected ? (
             <DenButton
               variant="secondary"
               size="sm"

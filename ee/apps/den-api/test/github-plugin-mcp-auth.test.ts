@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import {
-  declaredGithubPluginMcpAuthType,
+  declaredPluginMcpAuthType,
   resolveGithubPluginMcpImportAuthType,
-} from "../src/routes/org/plugin-system/github-plugin-mcp-auth.js"
+} from "../src/capability-sources/external-mcp-auth-policy.js"
 
 describe("GitHub plugin MCP authentication", () => {
   test("preserves an explicit OAuth declaration from the plugin", () => {
-    const declaredAuthType = declaredGithubPluginMcpAuthType({ oauth: { clientId: "public-client" } })
+    const declaredAuthType = declaredPluginMcpAuthType({ oauth: { clientId: "public-client" } })
 
     expect(declaredAuthType).toBe("oauth")
     expect(resolveGithubPluginMcpImportAuthType({
@@ -35,7 +35,7 @@ describe("GitHub plugin MCP authentication", () => {
   })
 
   test("uses the requested fallback only when the plugin and presets are silent", () => {
-    expect(declaredGithubPluginMcpAuthType({})).toBeNull()
+    expect(declaredPluginMcpAuthType({})).toBeNull()
     expect(resolveGithubPluginMcpImportAuthType({
       declaredAuthType: null,
       requestedAuthType: "none",
