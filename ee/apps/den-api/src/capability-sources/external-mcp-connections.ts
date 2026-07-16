@@ -464,6 +464,102 @@ export async function createExternalMcpConnection(input: {
   return created
 }
 
+/**
+ * Move a discovered OAuth connection from the shared callback to a callback
+ * unique to this connection. The caller must first verify that the server did
+ * not advertise RFC 9207 response issuers and that PKCE S256 is available.
+ */
+export async function isolateExternalMcpOAuthCallback(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+}): Promise<ExternalMcpConnectionRow> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = rows[0]
+    if (!connection || connection.authType !== "oauth" || !connection.oauthConfiguration) {
+      throw new Error("The OAuth connection no longer exists.")
+    }
+    if (connection.oauthConfiguration.callbackMode !== "shared-v1") return connection
+    const discovery = connection.oauthConfiguration.discovery
+    const metadata = isRecord(discovery) && isRecord(discovery.authorizationServerMetadata)
+      ? discovery.authorizationServerMetadata
+      : undefined
+    const pkceMethods = metadata?.code_challenge_methods_supported
+    if (
+      metadata === undefined
+      || metadata.authorization_response_iss_parameter_supported === true
+      || !Array.isArray(pkceMethods)
+      || !pkceMethods.includes("S256")
+    ) {
+      throw new Error("The OAuth discovery state does not permit an issuer-isolated callback.")
+    }
+
+    const clients = await tx
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(and(
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const clientExtra = normalizeOAuthClientExtra(clients[0]?.extra)
+    if (clients[0] && isSdkRegisteredOAuthClient(clientExtra)) {
+      await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.id, clients[0].id))
+    }
+
+    await tx.delete(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.providerId, input.connectionId),
+    ))
+    const updatedAt = new Date(Math.max(Date.now(), connection.updatedAt.getTime() + 1))
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        oauthConfiguration: {
+          ...connection.oauthConfiguration,
+          callbackMode: "isolated-v1",
+        },
+        accessToken: null,
+        refreshToken: null,
+        tokenType: null,
+        scope: null,
+        expiresAt: null,
+        pendingCodeVerifier: null,
+        connectedAt: null,
+        updatedAt,
+      })
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+
+    return {
+      ...connection,
+      oauthConfiguration: {
+        ...connection.oauthConfiguration,
+        callbackMode: "isolated-v1",
+      },
+      accessToken: null,
+      refreshToken: null,
+      tokenType: null,
+      scope: null,
+      expiresAt: null,
+      pendingCodeVerifier: null,
+      connectedAt: null,
+      updatedAt,
+    }
+  })
+}
+
 export async function listExternalMcpConnectionAccess(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
@@ -777,9 +873,11 @@ export async function updateExternalMcpConnection(
       input.oauthClient?.clientSecret !== undefined
       && existingClient?.clientSecret !== input.oauthClient.clientSecret,
     )
+    const clientExtraChanged = input.oauthClient?.extra !== undefined
+      && !isDeepStrictEqual(existingClientExtra, normalizeOAuthClientExtra(input.oauthClient.extra))
     const oauthClientChanged = identityChanged
       ? Boolean(existingClient || input.oauthClient)
-      : Boolean(input.oauthClient && (!existingClient || clientIdChanged || clientSecretChanged))
+      : Boolean(input.oauthClient && (!existingClient || clientIdChanged || clientSecretChanged || clientExtraChanged))
     const apiKeyChanged = input.apiKey !== undefined && existing.apiKey !== input.apiKey
     const rowFieldsChanged = existing.name !== input.name
       || existing.url !== input.url

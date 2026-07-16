@@ -65,7 +65,7 @@ export type ExternalMcpConnection = {
   oauthCallbackUrl?: string | null;
   oauthSharedCallbackUrl?: string | null;
   oauthClientMetadataUrl?: string | null;
-  oauthCallbackMode?: "shared-v1" | "legacy-v1" | null;
+  oauthCallbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1" | null;
   oauthRegistrationSource?: "pre-registered" | "client-metadata" | "dynamic" | null;
   authorizationServerIssuer?: string | null;
   requestedScopes?: string[];

@@ -203,6 +203,22 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
       const row = rows[0]
       if (!row) return undefined
       const extra = normalizeOAuthClientExtra(row.extra)
+      const registeredRedirectUri = typeof extra?.registeredRedirectUri === "string"
+        ? extra.registeredRedirectUri
+        : undefined
+      const currentRedirectUri = externalMcpCallbackUrl({
+        connectionId: this.connection.id,
+        callbackMode: this.connection.oauthConfiguration?.callbackMode ?? "legacy-v1",
+      })
+      if (
+        extra?.enterpriseMcpRegistrationSource === "pre-registered"
+        && registeredRedirectUri !== currentRedirectUri
+      ) {
+        throw new EnterpriseMcpOAuthContractError(
+          "MCP_OAUTH_CONFIGURATION_REQUIRED",
+          `The pre-registered OAuth client must allowlist the callback URL ${currentRedirectUri}.`,
+        )
+      }
       const clientInformation = restoredClientInformation({ ...row, extra })
       return {
         clientInformation,

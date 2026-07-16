@@ -113,7 +113,7 @@ export type ExternalMcpAuthType = (typeof externalMcpAuthTypeValues)[number]
 export const externalMcpCredentialModeValues = ["shared", "per_member"] as const
 export type ExternalMcpCredentialMode = (typeof externalMcpCredentialModeValues)[number]
 
-export const externalMcpOAuthCallbackModeValues = ["shared-v1", "legacy-v1"] as const
+export const externalMcpOAuthCallbackModeValues = ["shared-v1", "isolated-v1", "legacy-v1"] as const
 export type ExternalMcpOAuthCallbackMode = (typeof externalMcpOAuthCallbackModeValues)[number]
 
 export type ExternalMcpOAuthConfiguration = {

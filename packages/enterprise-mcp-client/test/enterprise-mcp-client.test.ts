@@ -653,6 +653,54 @@ describe("enterprise MCP OAuth persistence contract", () => {
       && error.code === "MCP_OAUTH_ISSUER_MISMATCH")
   })
 
+  it("uses a distinct redirect URI as the mix-up defense for servers that do not advertise response issuers", () => {
+    const expectedIssuer = "https://identity.example.test/tenant"
+    const discoveryState = {
+      authorizationServerUrl: expectedIssuer,
+      authorizationServerMetadata: {
+        issuer: expectedIssuer,
+        authorization_response_iss_parameter_supported: false,
+      },
+      resourceMetadata: { authorization_servers: [expectedIssuer] },
+    }
+
+    assert.deepEqual(validateMcpAuthorizationResponseIssuer({
+      expectedIssuer,
+      discoveryState,
+      mixUpDefense: "distinct-redirect-uri",
+    }), { defense: "distinct-redirect-uri" })
+    assert.deepEqual(validateMcpAuthorizationResponseIssuer({
+      expectedIssuer,
+      discoveryState,
+      responseIssuer: "stytch.com/project-live-provider-value",
+      mixUpDefense: "distinct-redirect-uri",
+    }), {
+      defense: "distinct-redirect-uri",
+      ignoredResponseIssuer: "stytch.com/project-live-provider-value",
+    })
+  })
+
+  it("never lets PKCE or an isolated callback override advertised RFC 9207 support", () => {
+    const expectedIssuer = "https://identity.example.test/tenant"
+    const discoveryState = {
+      authorizationServerUrl: expectedIssuer,
+      authorizationServerMetadata: {
+        issuer: expectedIssuer,
+        authorization_response_iss_parameter_supported: true,
+        code_challenge_methods_supported: ["S256"],
+      },
+      resourceMetadata: { authorization_servers: [expectedIssuer] },
+    }
+
+    assert.throws(() => validateMcpAuthorizationResponseIssuer({
+      expectedIssuer,
+      discoveryState,
+      responseIssuer: "https://attacker.example.test",
+      mixUpDefense: "distinct-redirect-uri",
+    }), (error: unknown) => error instanceof EnterpriseMcpOAuthContractError
+      && error.code === "MCP_OAUTH_ISSUER_MISMATCH")
+  })
+
   it("binds a resource-scoped discovery alias to its canonical callback issuer", async () => {
     const alias = "https://api.salesforce.example:443/platform/mcp/v1/platform/sobject-all"
     const canonicalIssuer = "https://login.salesforce.example"
