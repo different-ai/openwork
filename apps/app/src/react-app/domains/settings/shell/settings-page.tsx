@@ -234,7 +234,7 @@ function SettingsSidebarTabLabel({ tab }: { tab: SettingsTab }) {
  * surfaces (sidebar + compact section menu) must use this so they can't drift.
  */
 export function getCloudSettingsTabs(memoryEnabled: boolean): SettingsTab[] {
-  return memoryEnabled ? [...CLOUD_SETTINGS_TABS, "memory"] : CLOUD_SETTINGS_TABS;
+  return memoryEnabled ? ["cloud-account", "memory", "connect"] : CLOUD_SETTINGS_TABS;
 }
 
 type SettingsPageProps = {
