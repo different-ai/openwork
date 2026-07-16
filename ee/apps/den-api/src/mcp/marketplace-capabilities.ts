@@ -17,7 +17,8 @@ import {
   listUsableExternalMcpConnections,
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
-import { getConnectedAccount } from "../capability-sources/oauth-credentials.js"
+import { EXTERNAL_MCP_PRESETS } from "../capability-sources/external-mcp-presets.js"
+import { getConnectedAccount, getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
 import { resolvePluginArchGrantRole } from "../routes/org/plugin-system/access.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
@@ -114,6 +115,7 @@ export type MarketplaceConfigObjectExecutionMode = "desktop_only" | "instruction
 export type MarketplaceCloudReadinessState = "ready" | "needs_signin" | "needs_admin_setup" | "desktop_only" | "not_synced"
 
 export type MarketplaceCloudReadinessConnection = {
+  authType?: "apikey" | "none" | "oauth"
   configObjectId: string
   id: string | null
   name: string
@@ -121,6 +123,8 @@ export type MarketplaceCloudReadinessConnection = {
   url: string
   credentialMode?: "shared" | "per_member"
   connectedForMe?: boolean
+  oauthClientConfigured?: boolean
+  oauthClientRequired?: boolean
 }
 
 export type MarketplacePluginCloudReadiness = {
@@ -864,6 +868,7 @@ async function resolveMcpReadinessConnections(input: {
   organizationId: OrganizationId
 }): Promise<MarketplaceCloudReadinessConnection[]> {
   const connectedCache = new Map<string, boolean>()
+  const oauthClientConfiguredCache = new Map<string, boolean>()
   const output: MarketplaceCloudReadinessConnection[] = []
   const bindings = bindingByRequirement(await listPluginMcpRequirementBindings({
     organizationId: input.organizationId,
@@ -888,7 +893,18 @@ async function resolveMcpReadinessConnections(input: {
       connectedForMe = await connectedForMember({ connection: matched, member: input.member })
       connectedCache.set(matched.id, connectedForMe)
     }
+    let oauthClientConfigured: boolean | undefined
+    const preset = EXTERNAL_MCP_PRESETS.find((candidate) => comparablePluginMcpRequirementUrl(candidate.url) === comparablePluginMcpRequirementUrl(matched.url))
+    const oauthClientRequired = matched.authType === "oauth" && preset?.requiresOAuthClient === true
+    if (matched.authType === "oauth") {
+      oauthClientConfigured = oauthClientConfiguredCache.get(matched.id)
+      if (oauthClientConfigured === undefined) {
+        oauthClientConfigured = Boolean(await getOrgOAuthClient(input.organizationId, matched.id))
+        oauthClientConfiguredCache.set(matched.id, oauthClientConfigured)
+      }
+    }
     output.push({
+      authType: matched.authType,
       configObjectId: dependency.configObjectId,
       id: matched.id,
       name: matched.name,
@@ -896,6 +912,8 @@ async function resolveMcpReadinessConnections(input: {
       url: matched.url,
       credentialMode: matched.credentialMode,
       connectedForMe,
+      ...(oauthClientConfigured === undefined ? {} : { oauthClientConfigured }),
+      ...(matched.authType === "oauth" ? { oauthClientRequired } : {}),
     })
   }
 
@@ -998,7 +1016,9 @@ export async function resolveMarketplacePluginCloudReadiness(input: {
       return version ? mcpDependenciesForObject({ object, version }) : []
     })
     const connections = await resolveMcpReadinessConnections({ connections: usableConnections, dependencies, member: input.member, organizationId: input.organizationId })
-    const state = connections.some((connection) => connection.id === null || (connection.credentialMode === "shared" && connection.connectedForMe === false))
+    const state = connections.some((connection) => connection.id === null
+      || (connection.oauthClientRequired === true && connection.oauthClientConfigured === false)
+      || (connection.credentialMode === "shared" && connection.connectedForMe === false))
       ? "needs_admin_setup"
       : connections.some((connection) => connection.credentialMode === "per_member" && connection.connectedForMe === false)
         ? "needs_signin"

@@ -137,6 +137,12 @@ export function pluginReadinessConnectionAction(
   return null;
 }
 
+export function pluginRequirementNeedsAdminSetup(connection: MarketplacePluginCloudReadinessConnection): boolean {
+  if (connection.id === null) return true;
+  if (connection.oauthClientRequired === true && connection.oauthClientConfigured === false) return true;
+  return connection.connectedForMe === false && (connection.authType === "apikey" || connection.authType === "none");
+}
+
 export function pluginSetupActionLabel(preset: ExternalMcpPreset | null): string {
   return preset ? "Quick connect" : "Configure connection";
 }

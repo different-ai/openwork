@@ -572,6 +572,7 @@ const pluginCloudReadinessSchema = z.object({
   state: z.enum(["ready", "needs_signin", "needs_admin_setup", "desktop_only", "not_synced"]),
   hasInstructional: z.boolean(),
   connections: z.array(z.object({
+    authType: z.enum(["oauth", "apikey", "none"]).optional(),
     configObjectId: configObjectIdSchema,
     id: z.string().nullable(),
     name: z.string(),
@@ -579,6 +580,8 @@ const pluginCloudReadinessSchema = z.object({
     url: z.string(),
     credentialMode: z.enum(["shared", "per_member"]).optional(),
     connectedForMe: z.boolean().optional(),
+    oauthClientConfigured: z.boolean().optional(),
+    oauthClientRequired: z.boolean().optional(),
   })),
 }).meta({ ref: "PluginArchPluginCloudReadiness" })
 
@@ -822,7 +825,7 @@ export const marketplaceResolvedResponseSchema = pluginArchMutationResponseSchem
 )
 
 const githubPluginMcpImportServerSchema = z.object({
-  authType: z.literal("oauth"),
+  authType: z.literal("oauth").nullable(),
   connectionId: z.string().nullable(),
   name: z.string(),
   pluginKey: z.string(),

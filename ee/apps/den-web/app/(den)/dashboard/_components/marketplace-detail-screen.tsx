@@ -32,6 +32,7 @@ import { type ExternalMcpAuthType, type ExternalMcpCredentialMode, type External
 import {
   findPresetForRequirement,
   pluginReadinessConnectionAction,
+  pluginRequirementNeedsAdminSetup,
   pluginSetupActionLabel,
   pluginSetupAuthLabel,
   pluginSetupCredentialMode,
@@ -586,7 +587,7 @@ function MarketplacePluginCard({
     .filter(([, count]) => count > 0)
     .sort((a, b) => b[1] - a[1]);
   const actionableConnections = plugin.cloudReadiness?.connections.filter((connection) => (
-    connection.id === null || pluginReadinessConnectionAction(connection, isAdmin) !== null
+    pluginRequirementNeedsAdminSetup(connection) || pluginReadinessConnectionAction(connection, isAdmin) !== null
   )) ?? [];
 
   return (
@@ -646,7 +647,8 @@ function MarketplacePluginCard({
                   {actionableConnections.map((connection) => {
                     const preset = findPresetForRequirement(presets, connection);
                     const serviceName = serviceNameForRequirement(connection, preset);
-                    const readinessAction = pluginReadinessConnectionAction(connection, isAdmin);
+                    const needsAdminSetup = pluginRequirementNeedsAdminSetup(connection);
+                    const readinessAction = needsAdminSetup ? null : pluginReadinessConnectionAction(connection, isAdmin);
                     return (
                       <div key={`${connection.configObjectId}:${connection.serverName}`} className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
                         <div className="flex items-start gap-2.5">
@@ -665,7 +667,7 @@ function MarketplacePluginCard({
                           </div>
                         </div>
                         <div className="mt-2 flex justify-end">
-                          {connection.id === null ? (
+                          {needsAdminSetup ? (
                             isAdmin ? (
                               <DenButton variant="secondary" size="sm" onClick={() => onSetup(connection)}>
                                 {pluginSetupActionLabel(preset)}

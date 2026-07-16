@@ -91,10 +91,16 @@ import { getOrgOAuthClient, upsertOrgOAuthClient } from "../../../capability-sou
 import {
   deletePluginMcpRequirementBindingsByIds,
   deletePluginMcpRequirementBindingsForPluginConfigObject,
+  listPluginMcpRequirementBindings,
   upsertPluginMcpRequirementBinding,
   type PluginMcpRequirementBindingRow,
 } from "../../../mcp/plugin-mcp-requirement-bindings.js"
 import { openworkYourConnectionsUrl } from "../../../mcp/connection-navigation.js"
+import {
+  declaredGithubPluginMcpAuthType,
+  resolveGithubPluginMcpImportAuthType,
+  type GithubPluginMcpImportAuthType,
+} from "./github-plugin-mcp-auth.js"
 
 type OrganizationId = PluginArchActorContext["organizationContext"]["organization"]["id"]
 const logger = appLogger.child({ component: "plugin_system_store" })
@@ -220,7 +226,7 @@ type PluginMcpRequirementServer = {
 }
 
 type GithubPluginMcpImportServer = {
-  authType: "oauth"
+  authType: "oauth" | null
   connectionId: string | null
   name: string
   pluginKey: string
@@ -3454,7 +3460,7 @@ function mcpServerEntriesFromPayload(input: {
     parsed = JSON.parse(input.rawSourceText)
   } catch {
     return [githubPluginMcpImportServer({
-      authType: "oauth",
+      authType: null,
       connectionId: null,
       name: input.sourcePath,
       pluginKey: input.plugin.key,
@@ -3487,7 +3493,7 @@ function mcpServerEntriesFromPayload(input: {
 
     if (!url) {
       return githubPluginMcpImportServer({
-        authType: "oauth",
+        authType: null,
         connectionId: null,
         name,
         pluginKey: input.plugin.key,
@@ -3504,7 +3510,7 @@ function mcpServerEntriesFromPayload(input: {
       parsedUrl = new URL(url)
     } catch {
       return githubPluginMcpImportServer({
-        authType: "oauth",
+        authType: null,
         connectionId: null,
         name,
         pluginKey: input.plugin.key,
@@ -3518,7 +3524,7 @@ function mcpServerEntriesFromPayload(input: {
 
     if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
       return githubPluginMcpImportServer({
-        authType: "oauth",
+        authType: null,
         connectionId: null,
         name,
         pluginKey: input.plugin.key,
@@ -3532,7 +3538,7 @@ function mcpServerEntriesFromPayload(input: {
 
     if (type && type !== "http" && type !== "remote" && type !== "streamable-http" && type !== "sse") {
       return githubPluginMcpImportServer({
-        authType: "oauth",
+        authType: null,
         connectionId: null,
         name,
         pluginKey: input.plugin.key,
@@ -3545,7 +3551,7 @@ function mcpServerEntriesFromPayload(input: {
     }
 
     return githubPluginMcpImportServer({
-      authType: "oauth",
+      authType: declaredGithubPluginMcpAuthType(config),
       connectionId: null,
       name,
       pluginKey: input.plugin.key,
@@ -3801,6 +3807,13 @@ function mcpRequirementServerFromVersion(input: {
   }
 
   return { config: entry.config, name: entry.name, url }
+}
+
+function configVersionOwnsImportedExternalMcpConnection(version: ConfigObjectVersionRow) {
+  const spec = parseConfigObjectVersionSpec(version)
+  if (spec.externalMcpConnectionOwnedByPlugin === true) return true
+  const metadata = isRecord(spec.metadata) ? spec.metadata : null
+  return metadata?.externalMcpConnectionOwnedByPlugin === true
 }
 
 async function assertRemotePluginMcpUrl(url: string) {
@@ -4160,12 +4173,12 @@ function sortedUnique<TValue extends string>(values: TValue[]): TValue[] {
 }
 
 async function requireExistingExternalMcpConnectionMatchesImport(input: {
-  authType: "none" | "oauth"
+  authType: GithubPluginMcpImportAuthType
   credentialMode: "per_member" | "shared"
   existingAuthType: "apikey" | "none" | "oauth"
   existingCredentialMode: "per_member" | "shared"
 }) {
-  const expectedCredentialMode = input.authType === "none" ? "shared" : input.credentialMode
+  const expectedCredentialMode = input.authType === "oauth" ? input.credentialMode : "shared"
   if (input.existingAuthType !== input.authType || input.existingCredentialMode !== expectedCredentialMode) {
     throw new PluginArchRouteFailure(
       409,
@@ -4177,7 +4190,7 @@ async function requireExistingExternalMcpConnectionMatchesImport(input: {
 
 async function ensureImportedExternalMcpConnection(input: {
   access: GithubPluginMcpImportAccess
-  authType: "none" | "oauth"
+  authType: GithubPluginMcpImportAuthType
   context: PluginArchActorContext
   credentialMode: "per_member" | "shared"
   server: GithubPluginMcpImportServer
@@ -4199,9 +4212,7 @@ async function ensureImportedExternalMcpConnection(input: {
       existingAuthType: existing.authType,
       existingCredentialMode: existing.credentialMode,
     })
-    if (input.authType === "none") {
-      await markImportedExternalMcpConnectionConnected(existing.id)
-    }
+    if (input.authType === "none") await validateConfiguredPluginMcpConnection({ authType: input.authType, connection: existing })
     return { connection: existing, ownedByImportedPlugin: false }
   }
 
@@ -4209,13 +4220,18 @@ async function ensureImportedExternalMcpConnection(input: {
     access: { memberIds: [], orgWide: false, teamIds: [] },
     authType: input.authType,
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
-    credentialMode: input.authType === "none" ? "shared" : input.credentialMode,
+    credentialMode: input.authType === "oauth" ? input.credentialMode : "shared",
     name: externalMcpConnectionName({ pluginName: input.server.pluginName, serverName: input.server.name }),
     organizationId,
     url: serverUrl,
   })
   if (input.authType === "none") {
-    await markImportedExternalMcpConnectionConnected(created.id)
+    try {
+      await validateConfiguredPluginMcpConnection({ authType: input.authType, connection: created })
+    } catch (error) {
+      await deleteExternalMcpConnection({ connectionId: created.id, organizationId })
+      throw error
+    }
   }
   return { connection: created, ownedByImportedPlugin: true }
 }
@@ -4393,6 +4409,10 @@ export async function configureMarketplacePluginMcpRequirement(input: {
     organizationId,
     pluginId: requirement.plugin.id,
   })
+  const previousBinding = (await listPluginMcpRequirementBindings({
+    configObjectIds: [requirement.configObject.id],
+    organizationId,
+  })).find((candidate) => candidate.pluginId === requirement.plugin.id && candidate.serverName === server.name)
   const connectionResult = await createOrReusePluginMcpRequirementConnection({
     access,
     apiKey,
@@ -4436,6 +4456,33 @@ export async function configureMarketplacePluginMcpRequirement(input: {
     serverName: server.name,
   })
   await syncPluginMcpRequirementBindingAccess(binding)
+  const replacedOwnedConnectionId = previousBinding
+    && previousBinding.externalMcpConnectionId !== connection.id
+    && configVersionOwnsImportedExternalMcpConnection(version)
+    ? previousBinding.externalMcpConnectionId
+    : null
+  if (replacedOwnedConnectionId) {
+    const remainingBinding = await db
+      .select({ id: PluginMcpRequirementBindingTable.id })
+      .from(PluginMcpRequirementBindingTable)
+      .where(and(
+        eq(PluginMcpRequirementBindingTable.organizationId, organizationId),
+        eq(PluginMcpRequirementBindingTable.externalMcpConnectionId, replacedOwnedConnectionId),
+      ))
+      .limit(1)
+    const directAccess = await db
+      .select({ id: ExternalMcpConnectionAccessGrantTable.id })
+      .from(ExternalMcpConnectionAccessGrantTable)
+      .where(and(
+        eq(ExternalMcpConnectionAccessGrantTable.organizationId, organizationId),
+        eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, replacedOwnedConnectionId),
+        isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
+      ))
+      .limit(1)
+    if (!remainingBinding[0] && !directAccess[0]) {
+      await deleteExternalMcpConnection({ connectionId: replacedOwnedConnectionId, organizationId })
+    }
+  }
   const refreshedConnection = await getExternalMcpConnection({ connectionId: connection.id, organizationId })
 
   return {
@@ -4540,9 +4587,14 @@ export async function importGithubPluginMcps(input: {
   const imported: Array<{ connectionId: string; name: string; url: string }> = []
   const importedSkills: Array<{ name: string; skillId: SkillId; sourcePath: string }> = []
   for (const server of supportedServers) {
+    const authType = resolveGithubPluginMcpImportAuthType({
+      declaredAuthType: server.authType,
+      requestedAuthType: input.authType,
+      url: server.url ?? "",
+    })
     const importedConnection = await ensureImportedExternalMcpConnection({
       access,
-      authType: input.authType,
+      authType,
       context: input.context,
       credentialMode: input.credentialMode,
       server,
