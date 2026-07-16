@@ -913,8 +913,8 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     jsonValidator(githubPluginMcpImportPreviewSchema),
     describeRoute({
       tags: ["GitHub"],
-      summary: "Preview GitHub plugin MCP import",
-      description: "Reads a public GitHub plugin URL and returns remote MCP servers that can be imported as Den External MCP Connections.",
+      summary: "Preview GitHub plugin marketplace import",
+      description: "Reads a public GitHub plugin URL and returns skills and remote MCP servers that can be imported into an organization marketplace.",
       responses: {
         200: jsonResponse("GitHub plugin MCP import preview returned successfully.", githubPluginMcpImportPreviewResponseSchema),
         400: jsonResponse("The GitHub plugin MCP import preview request was invalid.", invalidRequestSchema),
@@ -937,8 +937,8 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     jsonValidator(githubPluginMcpImportSchema),
     describeRoute({
       tags: ["GitHub"],
-      summary: "Import GitHub plugin MCPs",
-      description: "Creates/reuses Den External MCP Connections for selected remote MCP servers from a public GitHub plugin URL and publishes one marketplace plugin that references them.",
+      summary: "Import GitHub plugin into marketplace",
+      description: "Imports selected skills and remote MCP servers from a public GitHub plugin URL, then publishes one plugin into the chosen organization marketplace.",
       responses: {
         200: jsonResponse("GitHub plugin MCPs imported successfully.", githubPluginMcpImportResponseSchema),
         400: jsonResponse("The GitHub plugin MCP import request was invalid.", invalidRequestSchema),

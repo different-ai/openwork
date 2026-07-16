@@ -106,6 +106,8 @@ test("agent MCP server exposes steering instructions during initialize", async (
 
   expect(client.getInstructions()).toBe(agentModule.AGENT_MCP_INSTRUCTIONS)
   expect(client.getInstructions()).toContain("search_capabilities and execute_capability")
+  expect(client.getInstructions()).toContain("add a public GitHub plugin to an organization marketplace")
+  expect(client.getInstructions()).toContain("Preview first")
   expect(client.getInstructions()).toContain("Gmail read/search")
   expect(client.getInstructions()).toContain("Settings > Connect")
   expect(client.getInstructions()).toContain("Never tell the user to reconnect OpenWork Cloud")
