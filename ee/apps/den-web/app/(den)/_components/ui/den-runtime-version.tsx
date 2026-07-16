@@ -14,7 +14,7 @@ export function parseDenRuntimeVersion(value: unknown) {
 export function DenRuntimeVersionLabel({ version }: { version: string }) {
   return (
     <span
-      className="font-medium tabular-nums text-gray-400"
+      className="font-normal tabular-nums text-gray-300"
       data-den-runtime-version={version}
       title={`Den API version ${version}`}
     >

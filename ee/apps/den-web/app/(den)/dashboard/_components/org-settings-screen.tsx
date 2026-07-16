@@ -334,7 +334,7 @@ export function OrgSettingsScreen() {
       icon={SlidersHorizontal}
       title="Org settings"
       description={(
-        <span className="inline-flex items-baseline gap-2">
+        <span className="flex w-full items-baseline justify-between gap-4">
           <span>Control your organization&apos;s settings.</span>
           <DenRuntimeVersion />
         </span>

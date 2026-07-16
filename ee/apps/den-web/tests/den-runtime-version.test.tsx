@@ -19,7 +19,8 @@ describe("Den runtime version", () => {
 
     expect(markup).toContain("Den 0.17.31");
     expect(markup).toContain('data-den-runtime-version="0.17.31"');
-    expect(markup).toContain("text-gray-400");
+    expect(markup).toContain("font-normal");
+    expect(markup).toContain("text-gray-300");
     expect(markup).toContain("<span");
   });
 });

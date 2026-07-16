@@ -38,7 +38,7 @@ export default {
               deviceScaleFactor: 1,
               mobile: false,
             });
-            await ctx.client.send("Page.navigate", { url: webBaseUrl });
+            await ctx.client.send("Page.navigate", { url: `${webBaseUrl}/dashboard/org-settings` });
             await ctx.waitFor("document.readyState === 'complete'", {
               timeoutMs: 30_000,
               label: "Den Web landing page",
@@ -85,6 +85,7 @@ export default {
               const bounds = element.getBoundingClientRect();
               const description = element.previousElementSibling;
               const descriptionBounds = description?.getBoundingClientRect();
+              const parentBounds = element.parentElement?.getBoundingClientRect();
               return {
                 text: element.textContent?.trim() ?? '',
                 version: element.getAttribute('data-den-runtime-version'),
@@ -95,11 +96,13 @@ export default {
                 descriptionText: description?.textContent?.trim() ?? '',
                 descriptionRight: descriptionBounds ? Math.round(descriptionBounds.right) : null,
                 descriptionTop: descriptionBounds ? Math.round(descriptionBounds.top) : null,
+                right: Math.round(bounds.right),
+                parentRight: parentBounds ? Math.round(parentBounds.right) : null,
               };
             })()`);
             witness(ctx, label?.text === `Den ${expectedVersion}` && label?.version === expectedVersion, "The inline label reports the running Den version", label);
-            witness(ctx, label?.descriptionText === "Control your organization's settings." && label?.parentDisplay === "inline-flex" && label?.left > label?.descriptionRight && Math.abs(label?.top - label?.descriptionTop) <= 2, "The version sits directly to the right of the Org settings description", label);
-            witness(ctx, label?.color === "rgb(156, 163, 175)", "The version uses the light-gray metadata color", label);
+            witness(ctx, label?.descriptionText === "Control your organization's settings." && label?.parentDisplay === "flex" && label?.left > label?.descriptionRight && Math.abs(label?.top - label?.descriptionTop) <= 2 && Math.abs(label?.right - label?.parentRight) <= 1, "The version aligns to the far right of the Org settings description row", label);
+            witness(ctx, label?.color === "rgb(209, 213, 219)", "The version uses the discreet light-gray metadata color", label);
           },
           screenshot: {
             name: "den-web-org-settings-runtime-version",
