@@ -1,15 +1,17 @@
-# Den API runtime version proof
+# Den Web runtime version proof
 
-The fraimz flow drives a browser to the public Den `GET /health` endpoint and
-asserts that the response is healthy, identifies `den-api`, and reports the
-expected running version.
+The fraimz flow signs in to Den Web, confirms that the dashboard sidebar shows
+the running Den version discreetly, and checks that the value matches the
+public Den API health response.
 
-![Den API health response reporting version 0.17.31](./den-api-runtime-version.png)
+![Den dashboard sidebar showing version 0.17.31](./den-api-runtime-version.png)
 
-Run locally with a Den API and CDP browser available:
+Run locally with Den API, Den Web, the seeded demo workspace, and a CDP browser
+available:
 
 ```bash
-OPENWORK_EVAL_DEN_API_URL=http://127.0.0.1:37300 \
+OPENWORK_EVAL_DEN_API_URL=http://127.0.0.1:37305 \
+OPENWORK_EVAL_DEN_WEB_URL=http://127.0.0.1:37304 \
 OPENWORK_EVAL_DEN_API_VERSION=0.17.31 \
 pnpm fraimz --flow den-api-runtime-version --cdp-url http://127.0.0.1:37309
 ```

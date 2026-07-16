@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { SidebarBrandMark } from "../app/(den)/dashboard/_components/org-dashboard-shell";
+import {
+  DenRuntimeVersionLabel,
+  SidebarBrandMark,
+  parseDenRuntimeVersion,
+} from "../app/(den)/dashboard/_components/org-dashboard-shell";
 
 const managedIconUrl = "https://den.example.test/v1/brand-assets/org_acme/icon/version.png";
 const managedIconMetadata = JSON.stringify({
@@ -50,5 +54,24 @@ describe("Den dashboard sidebar brand icon", () => {
     expect(markup).toContain('aria-label="OpenWork"');
     expect(markup).toContain('data-sidebar-brand-icon="fallback"');
     expect(markup).not.toContain("<img");
+  });
+});
+
+describe("Den dashboard runtime version", () => {
+  test("reads a non-empty version from the public health payload", () => {
+    expect(parseDenRuntimeVersion({ version: " 0.17.31 " })).toBe("0.17.31");
+    expect(parseDenRuntimeVersion({ version: " " })).toBeNull();
+    expect(parseDenRuntimeVersion(null)).toBeNull();
+  });
+
+  test("renders the version as discreet sidebar metadata", () => {
+    const markup = renderToStaticMarkup(
+      <DenRuntimeVersionLabel version="0.17.31" />,
+    );
+
+    expect(markup).toContain("Den 0.17.31");
+    expect(markup).toContain('data-den-runtime-version="0.17.31"');
+    expect(markup).toContain("text-[10px]");
+    expect(markup).toContain("text-gray-400");
   });
 });
