@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  CONNECT_EXCHANGE_TIMEOUT_MS,
   createConnectExchangeRequestStore,
   createConnectLinkReplayGuard,
   desktopBootstrapFromConnectClaims,
@@ -312,4 +313,30 @@ test("exchange retries retain one request id across desktop restarts", async () 
   const reloaded = createConnectExchangeRequestStore({ filePath });
   assert.equal(await reloaded.getOrCreate("abcdefghijklmnopqrstuvwxyz123456"), firstId);
   assert.notEqual(await reloaded.getOrCreate("zyxwvutsrqponmlkjihgfedcba654321"), firstId);
+});
+
+test("an applied exchange clears its request id so later replays are rejected", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "connect-exchange-clear-test-"));
+  const filePath = path.join(dir, "requests.json");
+  const store = createConnectExchangeRequestStore({ filePath });
+  const code = "abcdefghijklmnopqrstuvwxyz123456";
+  const keptCode = "zyxwvutsrqponmlkjihgfedcba654321";
+  const originalId = await store.getOrCreate(code);
+  const keptId = await store.getOrCreate(keptCode);
+
+  await store.clear(code);
+
+  const reloaded = createConnectExchangeRequestStore({ filePath });
+  assert.notEqual(await reloaded.getOrCreate(code), originalId);
+  assert.equal(await reloaded.getOrCreate(keptCode), keptId);
+});
+
+test("the Electron exchange timeout mirror matches the workspace deadline policy", async () => {
+  const policySource = await readFile(
+    new URL("../../../packages/types/src/operation-deadlines.ts", import.meta.url),
+    "utf8",
+  );
+  const match = policySource.match(/denHandoffExchangeMs:\s*([\d_]+)/);
+  assert.ok(match, "denHandoffExchangeMs not found in operation-deadlines.ts");
+  assert.equal(CONNECT_EXCHANGE_TIMEOUT_MS, Number(match[1].replaceAll("_", "")));
 });

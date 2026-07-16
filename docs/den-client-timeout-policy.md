@@ -28,11 +28,13 @@ long-running Den calls to complete normally.
 
 The product source of truth is `@openwork/types/operation-deadlines`. The
 standalone Electron connect-link module mirrors the 35-second handoff value
-because packaged Electron code has no runtime workspace-package dependency.
+because packaged Electron code has no runtime workspace-package dependency;
+`connect-link.test.mjs` asserts the mirror matches the policy source.
 
 | Operation | Budget | Purpose and owner |
 | --- | ---: | --- |
 | Den session restoration | 35 seconds | Bounds the startup `checking` state. Failure becomes signed-in service unavailable; it does not become signed out. |
+| Install-connect preview | 10 seconds | Read-only lookup that fills the connect confirmation dialog. Short because the user is staring at an empty dialog, and freely retryable because nothing is consumed. |
 | One-time desktop handoff or install-connect exchange | 35 seconds | Bounds the visible sign-in/connect action. A stable request ID makes a retry recover the committed result safely. |
 | One Cloud MCP server health or reconcile operation | 60 seconds | Lets the server complete bounded engine registration, polling, and health probes. The server returns `cloud_mcp_deadline_exceeded` when this budget is exhausted. |
 | One Cloud MCP client transport | 65 seconds | Gives the server five seconds to return its structured 60-second result. It is not an independent product retry window. |
@@ -65,6 +67,22 @@ the work:
    endpoint fetches, and response parsing.
 
 Stopping the UI wait without cancelling the underlying request is not allowed.
+
+Each budget has exactly one timer owner. When a workflow passes its signal
+down, the callee must not mint a second timer for the same budget; the signal
+already carries both the deadline and cancellation.
+
+When the deadline elapses inside the Electron main proxy, main rejects with
+the `openwork_desktop_fetch_deadline_exceeded` marker
+(`DESKTOP_FETCH_DEADLINE_EXCEEDED` in `@openwork/types/desktop-ipc`). Clients
+classify deadline failures from that marker or their own timeout signal —
+never from wall-clock arithmetic — so caller cancellation and network failures
+keep their own errors.
+
+This contract relies on `AbortSignal.any` and `AbortSignal.timeout`
+(Chromium 116+ / Node 20.3+ / Bun 1.1+ / Safari 17.4+ / Firefox 124+). The
+packaged desktop app and the OpenWork server clear this floor; keep it in
+mind if the web bundle must support older browsers.
 
 ## Retry and mutation rules
 

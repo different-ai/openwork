@@ -480,6 +480,9 @@ describe("openwork-cloud MCP strict reconcile", () => {
 
     const body = await responseRecord(await reconcile(openwork.base));
     expect(firstFailure(body).code).toBe("cloud_tools_missing");
+    // The reused health read predates markFailed, so the response must
+    // re-stamp delivery instead of reporting the stale "registering" state.
+    expect(delivery(body).state).toBe("failed");
     expect(requireRecord(requireRecord(body.tools, "tools").direct, "direct").missing).toEqual(["execute_capability"]);
     expect(requireArray(requireRecord(body.tools, "tools").present, "tools.present")).toEqual([]);
     expect(mock.requests.filter((request) => request.method === "POST" && request.pathname === "/mcp").length).toBe(1);

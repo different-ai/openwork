@@ -1514,6 +1514,36 @@ function applyNativeTheme(mode) {
 }
 
 const desktopFetchControllers = new Map();
+const desktopFetchWatchedSenders = new Set();
+
+// Mirrors DESKTOP_FETCH_DEADLINE_EXCEEDED in @openwork/types/desktop-ipc.
+// Electron keeps zero runtime workspace dependencies, so this boundary owns
+// its local copy; the renderer matches on the message substring.
+const DESKTOP_FETCH_DEADLINE_ERROR = "openwork_desktop_fetch_deadline_exceeded";
+
+/**
+ * Registers a proxied fetch controller and installs at most one `destroyed`
+ * hook per webContents, so many concurrent fetches from one renderer cannot
+ * accumulate listeners.
+ *
+ * @param {import("electron").WebContents} sender
+ * @param {string} requestKey
+ * @param {AbortController} controller
+ */
+function trackDesktopFetch(sender, requestKey, controller) {
+  desktopFetchControllers.set(requestKey, controller);
+  if (desktopFetchWatchedSenders.has(sender.id)) return;
+  desktopFetchWatchedSenders.add(sender.id);
+  const senderPrefix = `${sender.id}:`;
+  sender.once("destroyed", () => {
+    desktopFetchWatchedSenders.delete(sender.id);
+    for (const [key, tracked] of desktopFetchControllers) {
+      if (!key.startsWith(senderPrefix)) continue;
+      desktopFetchControllers.delete(key);
+      tracked.abort("renderer_destroyed");
+    }
+  });
+}
 
 // Desktop IPC command registry. Every command invokable from the renderer's
 // desktopBridge Proxy (apps/app/src/app/lib/desktop.ts) has exactly one
@@ -1699,10 +1729,18 @@ const desktopCommandHandlers = {
   "connectLinkAccept": async (event, ...args) => {
       // The renderer passes the raw URL back after the user confirmed; claims
       // shaped in the renderer are never trusted (desktop-ipc trust boundary).
-      const verified = await acceptConnectLink(String(args[0] ?? ""));
+      const rawConnectUrl = String(args[0] ?? "");
+      const verified = await acceptConnectLink(rawConnectUrl);
       if (verified.ok === false) return verified;
       if (verified.transport === "exchange") {
         const config = await persistConnectLinkClaims(verified.claims);
+        // The bootstrap is applied, so drop the recovery request id: a later
+        // replay of this link must be rejected, not recovered. Best-effort —
+        // a failed cleanup only widens recovery until the grant expires.
+        const appliedExchange = extractConnectExchange(rawConnectUrl);
+        if (appliedExchange) {
+          await connectExchangeRequestStore.clear(appliedExchange.code).catch(() => undefined);
+        }
         return { ok: true, config };
       }
       if (await connectLinkReplayGuard.has(verified.claims.jti)) {
@@ -2041,9 +2079,7 @@ const desktopCommandHandlers = {
       const requestId = typeof init.requestId === "string" ? init.requestId : "";
       const requestKey = requestId ? `${event.sender.id}:${requestId}` : "";
       const controller = requestKey ? new AbortController() : null;
-      if (requestKey && controller) desktopFetchControllers.set(requestKey, controller);
-      const abortOnRendererDestroyed = () => controller?.abort("renderer_destroyed");
-      if (controller) event.sender.once("destroyed", abortOnRendererDestroyed);
+      if (requestKey && controller) trackDesktopFetch(event.sender, requestKey, controller);
       const timeoutSignal = Number.isFinite(timeoutMs) && timeoutMs > 0
         ? AbortSignal.timeout(timeoutMs)
         : null;
@@ -2058,8 +2094,13 @@ const desktopCommandHandlers = {
           headers: Array.from(response.headers.entries()),
           body: await response.text(),
         };
+      } catch (error) {
+        // Report deadline exhaustion distinctly so the renderer can classify
+        // the failure without wall-clock heuristics. Renderer cancellation and
+        // network failures keep their original error.
+        if (timeoutSignal?.aborted) throw new Error(DESKTOP_FETCH_DEADLINE_ERROR);
+        throw error;
       } finally {
-        if (controller) event.sender.removeListener("destroyed", abortOnRendererDestroyed);
         if (requestKey) desktopFetchControllers.delete(requestKey);
       }
   },

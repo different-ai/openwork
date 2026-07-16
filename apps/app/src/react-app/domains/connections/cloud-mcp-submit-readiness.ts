@@ -346,10 +346,11 @@ export async function ensureCloudMcpSubmissionReadiness(input: {
 }): Promise<CloudMcpSubmissionReadinessResult> {
   const retryDelaysMs = input.retryDelaysMs ?? CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS;
   const maxAttempts = 1 + retryDelaysMs.length;
-  const timeoutSignal = AbortSignal.timeout(OPENWORK_OPERATION_DEADLINES.cloudMcpSubmissionMs);
-  const signal = input.signal
-    ? AbortSignal.any([input.signal, timeoutSignal])
-    : timeoutSignal;
+  // The submission workflow owns the 135-second budget. A caller-provided
+  // signal already carries that deadline plus cancellation, so minting a
+  // second timer here would create the overlapping-deadline pattern this
+  // policy removes; the local timer exists only for signal-less callers.
+  const signal = input.signal ?? AbortSignal.timeout(OPENWORK_OPERATION_DEADLINES.cloudMcpSubmissionMs);
   const wait = input.wait ?? waitForDelay;
   let lastAssessment: CloudMcpSubmissionReadinessAssessment = {
     ready: false,
@@ -370,10 +371,12 @@ export async function ensureCloudMcpSubmissionReadiness(input: {
       }
       lastAssessment = assessCloudMcpSubmissionReadiness({ health, providerModel: input.providerModel });
     } catch (error) {
-      const callerDeadlineExceeded = input.signal?.aborted
-        && isTimeoutAbortReason(input.signal.reason);
-      if (input.signal?.aborted && !callerDeadlineExceeded && !timeoutSignal.aborted) throw error;
-      deadlineExceeded = timeoutSignal.aborted || callerDeadlineExceeded === true;
+      // Deadline exhaustion becomes a structured failure; any other abort is a
+      // caller cancellation (context change, unmount) and must propagate.
+      if (signal.aborted && !isTimeoutAbortReason(signal.reason)) throw error;
+      // Only workflow-deadline exhaustion ends the loop; a transport-level
+      // deadline error still leaves room in the window for the one repair.
+      deadlineExceeded = signal.aborted;
       lastAssessment = errorAssessment(error, deadlineExceeded);
     }
     input.onAttempt?.({ phase, attempt: index + 1, maxAttempts, assessment: lastAssessment });

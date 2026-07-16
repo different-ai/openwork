@@ -17,6 +17,7 @@ import {
 } from "./den-session-events";
 import {
   desktopFetchViaMain,
+  isDesktopFetchDeadlineError,
   getDesktopBootstrapConfig as getDesktopBootstrapConfigFromShell,
   setDesktopBootstrapConfig as setDesktopBootstrapConfigInShell,
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
@@ -1862,7 +1863,11 @@ async function requestJsonRaw<T>(
     });
     text = await response.text();
   } catch (error) {
-    if (timeoutSignal?.aborted || (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs)) {
+    // Caller cancellation (context change, sign-out) must keep its own error;
+    // only this request's deadline — whether it fired in the renderer or in
+    // the Electron main proxy — becomes the structured deadline failure.
+    const callerAborted = options.signal?.aborted === true && !timeoutSignal?.aborted;
+    if (!callerAborted && (timeoutSignal?.aborted || isDesktopFetchDeadlineError(error))) {
       throw new DenRequestDeadlineError();
     }
     throw error;

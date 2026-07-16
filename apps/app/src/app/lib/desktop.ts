@@ -27,6 +27,7 @@ export type {
   CacheResetResult,
 } from "./desktop-types";
 
+import { DESKTOP_FETCH_DEADLINE_EXCEEDED } from "./desktop-types";
 import type {
   BrandIconApplyResult,
   BrandIconState,
@@ -344,6 +345,15 @@ export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
   }
   return desktopFetchThroughMain(input, init);
 };
+
+/**
+ * True when a main-process proxied fetch failed because its deadline elapsed
+ * in main. IPC rejection wrapping loses error names, so this matches the
+ * structured message marker instead of relying on wall-clock heuristics.
+ */
+export function isDesktopFetchDeadlineError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes(DESKTOP_FETCH_DEADLINE_EXCEEDED);
+}
 
 export async function desktopFetchViaMain(input: RequestInfo | URL, init?: RequestInit, deadlineAtMs?: number): Promise<Response> {
   return desktopFetchThroughMain(input, init, { deadlineAtMs });

@@ -10,7 +10,7 @@ import {
   AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
   requestAgentContextDiagnosticsPayload,
 } from "./agent-context-diagnostics-transport";
-import { desktopFetch, desktopFetchAgentContextDiagnostics, desktopFetchWithDeadline } from "./desktop";
+import { desktopFetch, desktopFetchAgentContextDiagnostics, desktopFetchWithDeadline, isDesktopFetchDeadlineError } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
@@ -1167,7 +1167,9 @@ async function fetchWithTimeout(
   try {
     return await fetchImpl(url, { ...init, signal });
   } catch (error) {
-    if (timeoutSignal.aborted) throw new OpenworkServerDeadlineError();
+    if (timeoutSignal.aborted || isDesktopFetchDeadlineError(error)) {
+      throw new OpenworkServerDeadlineError();
+    }
     throw error;
   }
 }
@@ -1196,7 +1198,12 @@ async function requestJson<T>(
     });
     text = await response.text();
   } catch (error) {
-    if (timeoutSignal.aborted) throw new OpenworkServerDeadlineError();
+    // Caller cancellation keeps its own error; only this request's deadline —
+    // renderer-side or in the Electron main proxy — is a deadline failure.
+    const callerAborted = options.signal?.aborted === true && !timeoutSignal.aborted;
+    if (!callerAborted && (timeoutSignal.aborted || isDesktopFetchDeadlineError(error))) {
+      throw new OpenworkServerDeadlineError();
+    }
     throw error;
   }
   const json = text ? JSON.parse(text) : null;

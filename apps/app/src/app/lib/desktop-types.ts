@@ -42,6 +42,8 @@ export type {
   WorkspaceUpdateRemoteInput,
 } from "@openwork/types/desktop-ipc";
 
+export { DESKTOP_FETCH_DEADLINE_EXCEEDED } from "@openwork/types/desktop-ipc";
+
 // Canonical wire shape shared with openwork-server and the desktop bridge.
 // Single source of truth: packages/types/src/workspace.ts.
 export type WorkspaceInfo = WorkspaceWire;

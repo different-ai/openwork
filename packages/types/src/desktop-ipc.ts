@@ -291,6 +291,14 @@ export type CacheResetResult = {
   errors: string[];
 };
 
+/**
+ * Message marker thrown by the Electron main process when a proxied fetch
+ * exceeds its deadline. The renderer matches on this substring because IPC
+ * rejection wrapping does not preserve error names. Electron keeps zero
+ * runtime workspace dependencies, so main.mjs mirrors this literal.
+ */
+export const DESKTOP_FETCH_DEADLINE_EXCEEDED = "openwork_desktop_fetch_deadline_exceeded";
+
 export type DesktopFetchInit = {
   method?: string;
   headers?: Record<string, string>;

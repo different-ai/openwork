@@ -201,6 +201,10 @@ export async function syncCloudControlMcpInBackground(input: {
     orgId,
     workspaceId,
   };
+  // A signal means a deadline-owning workflow (pre-send preparation) invoked
+  // this sync, so the list read gets the Cloud MCP transport budget. Without
+  // one this is background maintenance, which keeps the default client
+  // timeout instead of borrowing an interactive budget.
   const listed = await input.client.listMcp(workspaceId, {
     signal: input.signal,
     timeoutMs: input.signal ? OPENWORK_OPERATION_DEADLINES.cloudMcpTransportMs : undefined,

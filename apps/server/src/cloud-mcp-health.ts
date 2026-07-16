@@ -2142,7 +2142,12 @@ export async function reconcileOpenworkCloudMcp(input: {
 
   if (health.firstFailure) {
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, health.firstFailure);
-    return healthWithFailure(health, health.firstFailure);
+    // Reuse the health we already read instead of a second full probe pass,
+    // but re-stamp delivery so it reflects the failed state we just recorded.
+    return {
+      ...healthWithFailure(health, health.firstFailure),
+      delivery: cloudMcpDeliveryState.snapshot(input.workspace, input.directory, desiredRevision),
+    };
   }
 
   cloudMcpDeliveryState.markReady(input.workspace, input.directory, desiredRevision);

@@ -18,8 +18,12 @@ const DEFAULT_CLOCK_SKEW_SECONDS = 60;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const CONNECT_EXCHANGE_CODE_PATTERN = /^[A-Za-z0-9_-]{24,128}$/;
 // Mirrors OPENWORK_OPERATION_DEADLINES.denHandoffExchangeMs. Electron keeps
-// zero runtime workspace dependencies, so this boundary owns its local copy.
-const CONNECT_EXCHANGE_TIMEOUT_MS = 35_000;
+// zero runtime workspace dependencies, so this boundary owns its local copy;
+// connect-link.test.mjs asserts the mirror stays in sync with the policy.
+export const CONNECT_EXCHANGE_TIMEOUT_MS = 35_000;
+// Preview is a read-only lookup that blocks the connect dialog before the
+// user accepts, so it keeps a short bound and stays freely retryable.
+const CONNECT_PREVIEW_TIMEOUT_MS = 10_000;
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 const REPLAY_GUARD_MAX_ENTRIES = 512;
 const EXCHANGE_REQUEST_MAX_ENTRIES = 128;
@@ -351,7 +355,11 @@ export async function resolveConnectExchangeUrl(rawUrl, options) {
   endpoint.hash = "";
 
   let response;
-  const timeoutSignal = AbortSignal.timeout(CONNECT_EXCHANGE_TIMEOUT_MS);
+  // Preview only fills the confirmation dialog, so it keeps the short
+  // pre-acceptance bound; the exchange gets the full one-time-action budget.
+  const timeoutSignal = AbortSignal.timeout(
+    options.mode === "exchange" ? CONNECT_EXCHANGE_TIMEOUT_MS : CONNECT_PREVIEW_TIMEOUT_MS,
+  );
   try {
     // Preview is read-only and exchange is idempotent by requestId, so both can
     // be cancelled at the end of the visible workflow without creating an
@@ -545,23 +553,55 @@ export function createConnectExchangeRequestStore(options) {
     return cache;
   }
 
+  /**
+   * @template T
+   * @param {() => Promise<T>} task
+   * @returns {Promise<T>}
+   */
+  function enqueue(task) {
+    const operation = writeQueue.then(task);
+    writeQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  async function persist(entries) {
+    await mkdir(path.dirname(options.filePath), { recursive: true });
+    await writeFile(options.filePath, `${JSON.stringify(entries, null, 2)}\n`, "utf8");
+  }
+
   return {
     /** @param {string} code */
     async getOrCreate(code) {
       const fingerprint = createHash("sha256").update(code).digest("hex");
-      const operation = writeQueue.then(async () => {
+      return enqueue(async () => {
         const entries = await load();
         const existing = entries.find((entry) => entry.fingerprint === fingerprint);
         if (existing) return existing.requestId;
         const requestId = randomUUID();
         entries.push({ fingerprint, requestId });
         while (entries.length > EXCHANGE_REQUEST_MAX_ENTRIES) entries.shift();
-        await mkdir(path.dirname(options.filePath), { recursive: true });
-        await writeFile(options.filePath, `${JSON.stringify(entries, null, 2)}\n`, "utf8");
+        await persist(entries);
         return requestId;
       });
-      writeQueue = operation.then(() => undefined, () => undefined);
-      return operation;
+    },
+
+    /**
+     * Drops the request id once its exchange result has been applied, so a
+     * later replay of the same link is rejected instead of recovered. Matches
+     * the browser handoff flow, which clears its record after sign-in
+     * persists.
+     *
+     * @param {string} code
+     */
+    async clear(code) {
+      const fingerprint = createHash("sha256").update(code).digest("hex");
+      return enqueue(async () => {
+        const entries = await load();
+        const index = entries.findIndex((entry) => entry.fingerprint === fingerprint);
+        if (index === -1) return;
+        entries.splice(index, 1);
+        await persist(entries);
+      });
     },
   };
 }
