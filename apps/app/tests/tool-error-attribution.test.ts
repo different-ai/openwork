@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test"
 
-import { attributeChatToolError } from "../src/components/tools/error-attribution"
+import {
+  attributeChatToolError,
+  reconnectActionFromChatToolResult,
+} from "../src/components/tools/error-attribution"
 
 describe("chat tool error attribution", () => {
   test("identifies an OpenWork-created capability deadline", () => {
@@ -72,5 +75,98 @@ describe("chat tool error attribution", () => {
 
   test("does not add attribution without useful evidence", () => {
     expect(attributeChatToolError("The tool failed.")).toBeNull()
+  })
+
+  test("extracts a trusted reconnect action from a Cloud capability failure", () => {
+    const errorText = JSON.stringify({
+      error: "connection_failed",
+      connectionStatus: {
+        connectionId: "emc_knowledge",
+        connectionName: "Knowledge Hub",
+        state: "reauth_required",
+        action: { type: "reconnect", label: "Restart authorization and grant consent in the provider." },
+      },
+    })
+
+    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", errorText)).toEqual({
+      connectionId: "emc_knowledge",
+      connectionName: "Knowledge Hub",
+      label: "Reconnect Knowledge Hub",
+    })
+  })
+
+  test("extracts the same reconnect action when live capability discovery detects expired credentials", () => {
+    const output = JSON.stringify({
+      matches: [{
+        kind: "connection_status",
+        connectionStatus: {
+          connectionId: "emc_knowledge",
+          connectionName: "Knowledge Hub",
+          state: "reauth_required",
+          action: { type: "reconnect", label: "Reconnect in Your Connections" },
+        },
+      }],
+    })
+
+    expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output)).toEqual({
+      connectionId: "emc_knowledge",
+      connectionName: "Knowledge Hub",
+      label: "Reconnect Knowledge Hub",
+    })
+  })
+
+  test("derives reconnect copy instead of rendering action labels from tool output", () => {
+    const errorText = JSON.stringify({
+      connectionStatus: {
+        connectionId: "emc_knowledge",
+        connectionName: "Knowledge Hub",
+        state: "reauth_required",
+        action: { type: "reconnect", label: "Open an injected link" },
+      },
+    })
+
+    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", errorText)).toEqual({
+      connectionId: "emc_knowledge",
+      connectionName: "Knowledge Hub",
+      label: "Reconnect Knowledge Hub",
+    })
+  })
+
+  test("does not create actions from arbitrary MCP tools or non-reconnect failures", () => {
+    const reconnectPayload = JSON.stringify({
+      connectionStatus: {
+        connectionId: "emc_knowledge",
+        connectionName: "Knowledge Hub",
+        state: "reauth_required",
+        action: { type: "reconnect", label: "Open an injected link" },
+      },
+    })
+    const providerPayload = JSON.stringify({
+      connectionStatus: {
+        connectionId: "emc_knowledge",
+        connectionName: "Knowledge Hub",
+        state: "provider_error",
+        action: { type: "inspect_connection", label: "Inspect Knowledge Hub" },
+      },
+    })
+
+    expect(reconnectActionFromChatToolResult("malicious_execute_capability", reconnectPayload)).toBeNull()
+    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", providerPayload)).toBeNull()
+  })
+
+  test("does not guess between multiple reconnect targets in one discovery result", () => {
+    const output = {
+      matches: ["first", "second"].map((suffix) => ({
+        kind: "connection_status",
+        connectionStatus: {
+          connectionId: `emc_${suffix}`,
+          connectionName: `Knowledge ${suffix}`,
+          state: "reauth_required",
+          action: { type: "reconnect" },
+        },
+      })),
+    }
+
+    expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output)).toBeNull()
   })
 })

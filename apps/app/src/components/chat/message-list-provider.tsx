@@ -1,6 +1,10 @@
 "use memo";
 
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
+import type {
+  ChatToolReconnectAction,
+  ChatToolReconnectResult,
+} from "@/components/tools/error-attribution"
 import * as React from "react"
 
 interface MessageListContextValue {
@@ -16,6 +20,7 @@ interface MessageListContextValue {
   onRevertToUserMessage: (messageId: string) => void
   onForkAtMessage: (messageId: string) => void
   onEditUserMessage: (messageId: string, text: string) => void
+  onMcpReconnect: (action: ChatToolReconnectAction) => Promise<ChatToolReconnectResult>
 }
 
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
@@ -30,6 +35,7 @@ interface MessageListProviderProps {
   onRevertToUserMessage: (messageId: string) => void
   onForkAtMessage: (messageId: string) => void
   onEditUserMessage: (messageId: string, text: string) => void
+  onMcpReconnect: (action: ChatToolReconnectAction) => Promise<ChatToolReconnectResult>
   displaySuggestions: boolean
   providerConnectedCount: number
   dispatchAction: (action: DispatchAction) => void
@@ -56,6 +62,7 @@ export function MessageListProvider({
   onRevertToUserMessage,
   onForkAtMessage,
   onEditUserMessage,
+  onMcpReconnect,
 }: MessageListProviderProps) {
   const value = React.useMemo(
     () => ({
@@ -71,6 +78,7 @@ export function MessageListProvider({
       onRevertToUserMessage,
       onForkAtMessage,
       onEditUserMessage,
+      onMcpReconnect,
     }),
     [
       workspaceId,
@@ -85,6 +93,7 @@ export function MessageListProvider({
       onRevertToUserMessage,
       onForkAtMessage,
       onEditUserMessage,
+      onMcpReconnect,
     ],
   )
 

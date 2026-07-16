@@ -11,6 +11,7 @@ import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { t } from "@/i18n";
 import { readWorkspaceCloudImports, type CloudImportedPlugin } from "@/app/cloud/import-state";
+import { createDenClient, readDenSettings } from "@/app/lib/den";
 import type {
   OpenworkServerClient,
   OpenworkSessionSnapshot,
@@ -39,7 +40,7 @@ import type {
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
-import { desktopBridge } from "@/app/lib/desktop";
+import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { PaperGrainGradient } from "@openwork/ui/react";
@@ -78,6 +79,10 @@ import {
 } from "./composer-state-store";
 import { MessageList } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
+import type {
+  ChatToolReconnectAction,
+  ChatToolReconnectResult,
+} from "@/components/tools/error-attribution";
 import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
 import type { ThreadStatus } from "@/lib/messages";
 import {
@@ -1262,6 +1267,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
     void typeComposerText(prompt);
   }, [typeComposerText]);
 
+  const handleMcpReconnect = useCallback(async (
+    action: ChatToolReconnectAction,
+  ): Promise<ChatToolReconnectResult> => {
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    const organizationId = settings.activeOrgId?.trim() ?? "";
+    if (!token || !organizationId) {
+      props.onOpenConnect();
+      throw new Error("Sign in to OpenWork Cloud, then try reconnecting again.");
+    }
+
+    const denClient = createDenClient({ baseUrl: settings.baseUrl, token });
+    const result = await denClient.startMcpConnectionConnect(organizationId, action.connectionId);
+    if (result.status === "connected") return "connected";
+    if (!result.authorizeUrl) throw new Error(`Could not start ${action.connectionName} authorization.`);
+
+    await openDesktopUrl(result.authorizeUrl);
+    return "authorization_opened";
+  }, [props.onOpenConnect]);
+
   const handleRevertToUserMessage = useCallback((messageId: string) => {
     void props.onRevertToMessage?.(messageId, props.sessionId);
   }, [props.onRevertToMessage, props.sessionId]);
@@ -1451,6 +1476,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onRevertToUserMessage={handleRevertToUserMessage}
                       onForkAtMessage={handleForkAtMessage}
                       onEditUserMessage={handleEditUserMessage}
+                      onMcpReconnect={handleMcpReconnect}
                     >
                       <MessageList
                         messages={renderedMessages}

@@ -345,7 +345,12 @@ export function buildExternalConnectionStatus(input: {
   diagnostic?: ExternalMcpDiagnostic
 }): ExternalConnectionStatus {
   const connectionName = input.connection.name
-  const diagnosticAction = input.diagnostic
+  // Once the failure is classified as reauthentication, credential ownership
+  // is the source of truth for who can repair it. A generic HTTP 400 during a
+  // refresh may classify the raw diagnostic as provider_admin, but routing a
+  // per-member expired token to a provider console contradicts the
+  // reauth_required state and prevents the client from offering reconnect.
+  const diagnosticAction = input.diagnostic && input.state !== "reauth_required"
     ? diagnosticConnectionAction({ connection: input.connection, state: input.state, diagnostic: input.diagnostic })
     : null
   if (input.state === "provider_error") {
@@ -800,6 +805,8 @@ export async function executeExternalCapability(input: {
     })
     return { ok: true, result }
   } catch (error) {
+    const message = upstreamErrorMessage(error)
+    const authErrorCode = externalMcpAuthErrorCode(error, message)
     if (error instanceof ExternalMcpDiagnosticError) {
       console.error("external_mcp_capability_execute_failed", {
         connectionId: connection.id,
@@ -816,6 +823,30 @@ export async function executeExternalCapability(input: {
         diagnostic: error.diagnostic,
         actionOwner: error.diagnostic.actionOwner,
         operatorAction: error.diagnostic.operatorAction,
+        ...(authErrorCode
+          ? {
+              connectionStatus: buildExternalConnectionStatus({
+                connection,
+                state: "reauth_required",
+                errorCode: authErrorCode,
+                message,
+                diagnostic: error.diagnostic,
+              }),
+            }
+          : {}),
+      }
+    }
+    if (authErrorCode) {
+      return {
+        ok: false,
+        error: "connection_failed",
+        message,
+        connectionStatus: buildExternalConnectionStatus({
+          connection,
+          state: "reauth_required",
+          errorCode: authErrorCode,
+          message,
+        }),
       }
     }
     throw error

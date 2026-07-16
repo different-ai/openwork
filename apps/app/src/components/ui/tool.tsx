@@ -5,7 +5,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { attributeChatToolError } from "@/components/tools/error-attribution"
+import { Button } from "@/components/ui/button"
+import {
+  attributeChatToolError,
+  reconnectActionFromChatToolResult,
+  type ChatToolReconnectAction,
+  type ChatToolReconnectResult,
+  type ToolErrorAttribution,
+} from "@/components/tools/error-attribution"
 import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
 import {
@@ -23,6 +30,7 @@ import {
   Wrench,
 } from "lucide-react"
 import type { DynamicToolUIPart, ToolUIPart } from "ai"
+import { useState } from "react"
 
 function toolIcon(part: ToolPart) {
   const name = part.type === "dynamic-tool" ? part.toolName : part.type
@@ -59,6 +67,7 @@ export type ToolProps = {
   toolPart: ToolPart
   defaultOpen?: boolean
   className?: string
+  onReconnect?: (action: ChatToolReconnectAction) => Promise<ChatToolReconnectResult>
 }
 
 const formatValue = (value: unknown): string => {
@@ -117,50 +126,108 @@ function DiffLines({ diff }: { diff: string }) {
   )
 }
 
-const Tool = ({ title, toolPart, defaultOpen = false, className }: ToolProps) => {
+function reconnectAttribution(action: ChatToolReconnectAction): ToolErrorAttribution {
+  return {
+    label: "Reconnect required",
+    confidence: "Confirmed",
+    description: `${action.connectionName} rejected its saved authorization and needs to be reconnected.`,
+  }
+}
+
+const Tool = ({ title, toolPart, defaultOpen = false, className, onReconnect }: ToolProps) => {
+  const [reconnectState, setReconnectState] = useState<"idle" | "working" | ChatToolReconnectResult>("idle")
+  const [reconnectError, setReconnectError] = useState<string | null>(null)
   const { state, input } = toolPart
   const inFlight = isToolPartInFlight(toolPart)
   const isError = state === "output-error"
-  const errorAttribution = isError && toolPart.errorText
-    ? attributeChatToolError(toolPart.errorText)
+  const reconnectResult = isError && toolPart.errorText
+    ? toolPart.errorText
+    : state === "output-available" && "output" in toolPart
+      ? toolPart.output
+      : undefined
+  const reconnectAction = toolPart.type === "dynamic-tool" && reconnectResult !== undefined
+    ? reconnectActionFromChatToolResult(toolPart.toolName, reconnectResult)
     : null
+  const errorAttribution = reconnectAction
+    ? reconnectAttribution(reconnectAction)
+    : isError && toolPart.errorText
+      ? attributeChatToolError(toolPart.errorText)
+      : null
   const label = title ?? getToolActivityLabel(toolPart)
   const hasInput = input !== null && input !== undefined
   const hasOutput = "output" in toolPart && toolPart.output !== undefined
   const inputDiff = getInputDiff(input)
   const Icon = toolIcon(toolPart)
 
+  const handleReconnect = async () => {
+    if (!reconnectAction || !onReconnect || reconnectState === "working") return
+    setReconnectError(null)
+    setReconnectState("working")
+    try {
+      setReconnectState(await onReconnect(reconnectAction))
+    } catch (error) {
+      setReconnectState("idle")
+      setReconnectError(error instanceof Error ? error.message : "Could not start reconnection.")
+    }
+  }
+
+  const reconnectLabel = reconnectState === "working"
+    ? "Opening sign-in…"
+    : reconnectState === "authorization_opened"
+      ? "Finish in browser"
+      : reconnectState === "connected"
+        ? "Reconnected"
+        : reconnectAction?.label
+
   return (
     <Collapsible className={className} defaultOpen={defaultOpen}>
-      <CollapsibleTrigger
-        className="group text-muted-foreground hover:text-foreground flex w-full min-w-0 cursor-pointer items-center justify-start gap-2 overflow-hidden text-start text-sm transition-colors"
-      >
-        <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
-          <span className="transition-opacity group-hover:opacity-0">
-            {inFlight ? (
-              <LoaderCircle className="size-4 animate-spin" />
-            ) : isError ? (
-              <CircleAlert className="text-destructive size-4" />
-            ) : (
-              <Icon className="size-3.5" />
-            )}
+      <div className="flex min-w-0 items-center gap-2">
+        <CollapsibleTrigger
+          className="group text-muted-foreground hover:text-foreground flex min-w-0 flex-1 cursor-pointer items-center justify-start gap-2 overflow-hidden text-start text-sm transition-colors"
+        >
+          <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
+            <span className="transition-opacity group-hover:opacity-0">
+              {inFlight ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : isError ? (
+                <CircleAlert className="text-destructive size-4" />
+              ) : (
+                <Icon className="size-3.5" />
+              )}
+            </span>
+            <ChevronDown className="absolute size-4 opacity-0 transition-opacity group-hover:opacity-100 group-data-panel-open:rotate-180" />
           </span>
-          <ChevronDown className="absolute size-4 opacity-0 transition-opacity group-hover:opacity-100 group-data-panel-open:rotate-180" />
-        </span>
-        <span className="min-w-0 truncate">{label}</span>
-        {isError && !errorAttribution ? (
-          <span className="text-destructive shrink-0 text-xs">failed</span>
-        ) : null}
-        {errorAttribution ? (
-          <span
-            className="border-border/70 text-muted-foreground shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-none"
-            title={`${errorAttribution.confidence}: ${errorAttribution.description}`}
-            aria-label={`Error attribution: ${errorAttribution.label}. ${errorAttribution.confidence}.`}
+          <span className="min-w-0 truncate">{label}</span>
+          {isError && !errorAttribution ? (
+            <span className="text-destructive shrink-0 text-xs">failed</span>
+          ) : null}
+          {errorAttribution ? (
+            <span
+              className="border-border/70 text-muted-foreground shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-none"
+              title={`${errorAttribution.confidence}: ${errorAttribution.description}`}
+              aria-label={`Error attribution: ${errorAttribution.label}. ${errorAttribution.confidence}.`}
+            >
+              {errorAttribution.label}
+            </span>
+          ) : null}
+        </CollapsibleTrigger>
+        {reconnectAction && onReconnect ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            className="shrink-0"
+            data-testid="chat-mcp-reconnect-action"
+            disabled={reconnectState !== "idle"}
+            onClick={() => void handleReconnect()}
           >
-            {errorAttribution.label}
-          </span>
+            {reconnectLabel}
+          </Button>
         ) : null}
-      </CollapsibleTrigger>
+      </div>
+      {reconnectError ? (
+        <p className="mt-1 text-xs text-destructive" role="alert">{reconnectError}</p>
+      ) : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden text-sm transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
         <div className="bg-muted mt-2 flex flex-col gap-2 rounded-lg p-2 text-xs">
           {hasInput ? (
