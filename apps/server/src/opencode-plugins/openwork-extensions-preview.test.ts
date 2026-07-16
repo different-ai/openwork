@@ -190,6 +190,24 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
   });
 
+  test("uses the factory engine client as transform steering source of truth", async () => {
+    const requests: unknown[] = [];
+    const mcp = {
+      result: { data: { "openwork-cloud": { status: "connected" } } },
+      async status(request: unknown) {
+        requests.push(request);
+        return this.result;
+      },
+    };
+    const plugin = await OpenWorkExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
+    const output: { system: string[] } = { system: [] };
+
+    await plugin["experimental.chat.system.transform"]({}, output);
+
+    expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
+    expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
+  });
+
   test("reads a transcript by session id without opening the UI", async () => {
     startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview();

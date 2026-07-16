@@ -55,6 +55,23 @@ export type OpenWorkCloudHealthSummary = {
 
 type OpenWorkFetch = (url: string, init?: RequestInit) => Promise<Response>;
 
+type EngineMcpStatusRequest = {
+  query?: {
+    directory?: string;
+  };
+};
+
+export type OpenWorkEngineMcpStatusClient = {
+  mcp: {
+    status: (request?: EngineMcpStatusRequest) => Promise<unknown>;
+  };
+};
+
+export type OpenWorkEngineMcpStatusSource = {
+  client?: OpenWorkEngineMcpStatusClient;
+  directory?: string;
+};
+
 type ProviderModel = {
   provider: string;
   model: string;
@@ -121,6 +138,8 @@ export const OPENWORK_CONNECT_SIGN_IN_INSTRUCTION =
 
 export const OPENWORK_CONNECT_DISABLED_INSTRUCTION =
   `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud agent access is explicitly disabled for this workspace. Explain that the user can enable agent access in Settings → Connect, then use Repair and test.`;
+
+const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -204,6 +223,35 @@ function errorMessage(payload: unknown, fallback: string): string {
   return getStringProperty(payload, "message") ?? getStringProperty(payload, "code") ?? fallback;
 }
 
+function readEngineDirectory(input: unknown, fallback?: string): string | undefined {
+  const context = readContext(input);
+  return context.directory ?? context.worktree ?? readString(fallback);
+}
+
+function engineStatusPayload(result: unknown): unknown {
+  if (!isRecord(result)) return result;
+  const data = result.data;
+  if (data !== undefined) return data;
+  if (result.error !== undefined) throw new Error("OpenCode MCP status request failed");
+  const responseOk = getRecordProperty(result.response, "ok");
+  if (responseOk === false) throw new Error("OpenCode MCP status request failed");
+  return result;
+}
+
+function readEngineMcpStatus(result: unknown): string | undefined {
+  const entry = getRecordProperty(engineStatusPayload(result), OPENWORK_CLOUD_MCP_NAME);
+  if (entry === undefined) return undefined;
+  if (typeof entry === "string") return readString(entry);
+  return readNestedString(entry, ["status"]);
+}
+
+async function fetchEngineMcpStatus(input: unknown, engine: OpenWorkEngineMcpStatusSource): Promise<string | undefined> {
+  if (!engine.client) return undefined;
+  const directory = readEngineDirectory(input, engine.directory);
+  const request = directory ? { query: { directory } } : undefined;
+  return readEngineMcpStatus(await engine.client.mcp.status(request));
+}
+
 async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch): Promise<OpenWorkExtensionConnectState> {
   const { url, token } = requireOpenWorkServer();
   const context = readContext(input);
@@ -259,11 +307,35 @@ export function composeOpenWorkExtensionDiscoveryInstruction(state: OpenWorkExte
   return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
 }
 
+export function composeSteeringFromEngineMcpStatus(status: string | undefined): string | null {
+  if (status === "connected") return OPENWORK_CLOUD_CONNECTION_INSTRUCTION;
+  if (status === "disabled") return OPENWORK_CONNECT_DISABLED_INSTRUCTION;
+  if (status === "needs_auth" || status === "needs_client_registration") return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
+  if (status === "failed") return OPENWORK_CONNECT_DEGRADED_INSTRUCTION;
+  return null;
+}
+
 export function resetOpenWorkExtensionDiscoveryInstructionCacheForTests(): void {
   // Retained for older tests; steering is deliberately uncached so repair is observed immediately.
 }
 
-export async function resolveOpenWorkExtensionDiscoveryInstruction(input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
+export async function resolveOpenWorkExtensionDiscoveryInstruction(
+  input?: unknown,
+  fetcher: OpenWorkFetch = fetch,
+  engine: OpenWorkEngineMcpStatusSource = {},
+): Promise<string> {
+  if (engine.client) {
+    try {
+      // Invariant: the OpenCode engine owns MCP registration and builds the
+      // prompt tool list, so tool-availability steering must come from that
+      // same in-process MCP state. Server health probes may fail for reasons
+      // (for example corporate TLS trust) that do not affect engine tools.
+      const instruction = composeSteeringFromEngineMcpStatus(await fetchEngineMcpStatus(input, engine));
+      if (instruction) return instruction;
+    } catch {
+      return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+    }
+  }
   try {
     return composeOpenWorkExtensionDiscoveryInstruction(await fetchOpenWorkConnectState(input, fetcher));
   } catch {
