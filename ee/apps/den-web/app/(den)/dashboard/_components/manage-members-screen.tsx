@@ -860,7 +860,11 @@ export function ManageMembersScreen() {
                                 type="button"
                                 onClick={async () => {
                                   const inviteUrl = new URL(getJoinOrgRoute(inviteToken), window.location.origin).toString();
-                                  await navigator.clipboard.writeText(inviteUrl);
+                                  try {
+                                    await navigator.clipboard.writeText(inviteUrl);
+                                  } catch {
+                                    // clipboard unavailable — best-effort
+                                  }
                                   setOpenMemberMenuId(null);
                                 }}
                                 className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50"

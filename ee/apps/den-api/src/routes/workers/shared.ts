@@ -392,7 +392,18 @@ export async function getWorkerTokensAndConnect(worker: WorkerRow) {
   }
 
   const instance = await getLatestWorkerInstance(worker.id)
-  const connect = await resolveConnectUrlFromCandidates(worker.id, instance?.url ?? null, clientToken)
+  const workerUrl = instance?.url ?? null
+
+  const internalHost = env.workerInternalHost
+  const externalHost = env.workerExternalHost
+  function externalize(u: string | null) {
+    return u && internalHost && externalHost && u.includes(internalHost)
+      ? u.replace(internalHost, externalHost)
+      : u
+  }
+
+  const connect = await resolveConnectUrlFromCandidates(worker.id, workerUrl, clientToken)
+  const fixedConnect = connect ? { ...connect, openworkUrl: externalize(connect.openworkUrl) } : null
 
   return {
     tokens: {
@@ -400,7 +411,7 @@ export async function getWorkerTokensAndConnect(worker: WorkerRow) {
       host: hostToken,
       client: clientToken,
     },
-    connect: connect ?? (instance?.url ? { openworkUrl: instance.url, workspaceId: null } : null),
+    connect: fixedConnect ?? (workerUrl ? { openworkUrl: externalize(workerUrl), workspaceId: null } : null),
   }
 }
 
