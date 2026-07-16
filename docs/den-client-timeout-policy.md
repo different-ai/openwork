@@ -1,37 +1,83 @@
-# Den client timeout policy
+# Den and Cloud operation deadline policy
 
-OpenWork must not invent an availability failure while Den or a Den-connected
-server operation is still running. This policy applies to the React app,
-Electron shell, and the local OpenWork server boundary used by Cloud MCP.
+OpenWork uses operation deadlines only where it can cancel the work it starts
+and explain the outcome to the user. There is no global Den HTTP timeout.
+Ordinary Den calls may take as long as their owning product flow permits.
 
-## Standard
+## Why this exists
 
-| Operation | Client deadline | Owner |
-| --- | --- | --- |
-| Interactive Den API request | None | Den and the network transport return the authoritative result. |
-| Desktop install-connect preview or exchange | None | Den returns the authoritative result. |
-| Cloud session restoration before submission | None | The session request resolves, fails, or is cancelled when app context changes. |
-| Cloud MCP health or reconcile request | None | The OpenWork server owns its bounded stage probes and returns structured health. |
-| OAuth completion polling | One visible workflow window | The poll loop may stop, but it must not abort or race an in-flight Den request. |
-| Best-effort telemetry or sign-out cleanup | A local bound is allowed | Failure must be swallowed and must never become a user-visible Den error. |
+PR #957 introduced a 12-second timeout around every Den client request while
+adding the first desktop Den session bootstrap. The code and PR history do not
+record a Den-specific service limit. The surrounding behavior shows the goal
+was to prevent a failed or unreachable control plane from leaving the desktop
+in an indefinite loading state.
 
-Do not wrap an interactive request in `Promise.race`, `AbortSignal.timeout`, or
-another caller deadline. Nested deadlines are not cancellation: the outer
-caller can report failure while the inner operation continues and may still
-mutate server state.
+That guard later became unsafe for two reasons:
 
-## Current intentional bounds
+- the renderer used `Promise.race`, so it could report failure while Electron
+  main and Den continued processing the request;
+- newer workflows added independent 10-, 12-, 60-, and 120-second bounds, so
+  an outer timer could expire before the server's intentional retry or probe
+  sequence had finished.
 
-- Organization MCP OAuth polling stops after 90 seconds. This is a human
-  workflow window, not an HTTP request timeout; individual Den polls are not
-  aborted.
-- Telemetry ingestion stops after 5 seconds. It is fire-and-forget and all
-  failures are swallowed.
-- Pre-sign-out cleanup yields after 5 seconds so cleanup cannot trap a user in
-  a signed-in state. Cleanup failures are swallowed.
-- Server-owned Cloud MCP probes use their own bounded stage deadlines and
-  return structured failures. The app does not add a competing deadline around
-  the overall health or reconcile request.
+The replacement preserves the original UX goal at the workflow boundary,
+where the app knows what the user is waiting for, while allowing unrelated or
+long-running Den calls to complete normally.
 
-Asset fetches, local runtime startup probes, and non-Den clients have separate
-availability and resource-safety requirements and are outside this policy.
+## Standard operation budgets
+
+The product source of truth is `@openwork/types/operation-deadlines`. The
+standalone Electron connect-link module mirrors the 35-second handoff value
+because packaged Electron code has no runtime workspace-package dependency.
+
+| Operation | Budget | Purpose and owner |
+| --- | ---: | --- |
+| Den session restoration | 35 seconds | Bounds the startup `checking` state. Failure becomes signed-in service unavailable; it does not become signed out. |
+| One-time desktop handoff or install-connect exchange | 35 seconds | Bounds the visible sign-in/connect action. A stable request ID makes a retry recover the committed result safely. |
+| One Cloud MCP server health or reconcile operation | 60 seconds | Lets the server complete bounded engine registration, polling, and health probes. The server returns `cloud_mcp_deadline_exceeded` when this budget is exhausted. |
+| One Cloud MCP client transport | 65 seconds | Gives the server five seconds to return its structured 60-second result. It is not an independent product retry window. |
+| Complete pre-send Cloud MCP preparation | 135 seconds | Covers one health check, one one-second delay, and one repair. No further client retries run. |
+
+The ordering is intentional:
+
+```text
+5-second stage probe < 60-second server operation < 65-second transport
+2 transports + 1-second repair delay <= 135-second submission workflow
+```
+
+Do not add another timeout around one of these operations. Extend the owning
+workflow budget when the product requirement changes, and keep every inner
+budget strictly smaller than its caller.
+
+## Cancellation contract
+
+Deadlines and context changes use the same `AbortSignal` from the workflow to
+the work:
+
+1. The React submission coordinator aborts when the workspace/model changes
+   or the component unmounts.
+2. The OpenWork client forwards the signal to fetch and keeps the absolute
+   deadline through response-body parsing.
+3. Electron assigns the request an ID. Renderer cancellation invokes the
+   matching main-process cancellation command, which aborts `electronNet.fetch`.
+4. The OpenWork server combines client disconnect with its 60-second operation
+   signal and passes it to engine registration, polling, SDK probes, Cloud MCP
+   endpoint fetches, and response parsing.
+
+Stopping the UI wait without cancelling the underlying request is not allowed.
+
+## Retry and mutation rules
+
+- A submission performs one read-only health check followed by at most one
+  reconcile repair. Server polling is part of that repair and is not another
+  client retry.
+- One-time grant exchanges are retryable only with a stable idempotency ID.
+  Den stores only its SHA-256 hash and returns the original claims/session for
+  the same grant and ID. A different ID still receives the replay error.
+- A deadline means "the operation did not produce a result in its supported
+  window," not "Den is down" and not "the user is signed out."
+
+Best-effort telemetry, sign-out cleanup, OAuth polling, local runtime probes,
+and large file transfers have separate product semantics. Their existing
+bounds are not Den availability policy and must not be reused for interactive
+Den or Cloud MCP work.

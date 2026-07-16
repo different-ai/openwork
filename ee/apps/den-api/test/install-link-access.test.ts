@@ -465,7 +465,7 @@ test("zero-config install config mints a short-lived exchange without storing th
   expect(JSON.stringify(grant)).not.toContain(code)
 })
 
-test("keyless preview is read-only and exchange consumes the grant once", async () => {
+test("keyless preview is read-only and exchange safely recovers one committed request", async () => {
   const code = "abcdefghijklmnopqrstuvwxyz123456"
   const claims = {
     iss: "http://127.0.0.1:8790",
@@ -480,22 +480,29 @@ test("keyless preview is read-only and exchange consumes the grant once", async 
     requireSignin: true,
   }
   let consumed = false
+  let consumedRequestId: string | undefined
   const app = createApp({
     grantOverrides: {
       previewConnectGrant: () => Promise.resolve(consumed
         ? { ok: false, code: "replayed" }
         : { ok: true, claims }),
-      consumeConnectGrant: () => {
-        if (consumed) return Promise.resolve({ ok: false, code: "replayed" })
+      consumeConnectGrant: (_code, requestId) => {
+        if (consumed) {
+          return Promise.resolve(requestId && requestId === consumedRequestId
+            ? { ok: true, claims }
+            : { ok: false, code: "replayed" })
+        }
         consumed = true
+        consumedRequestId = requestId
         return Promise.resolve({ ok: true, claims })
       },
     },
   })
-  const request = (mode: "preview" | "exchange") => app.request(`http://den.local/v1/install-connect/${mode}`, {
+  const requestId = "2643c618-00ce-4da6-b28f-a6b63ab98822"
+  const request = (mode: "preview" | "exchange", exchangeRequestId = requestId) => app.request(`http://den.local/v1/install-connect/${mode}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ code, ...(mode === "exchange" ? { requestId: exchangeRequestId } : {}) }),
   })
 
   const firstPreview = await request("preview")
@@ -504,7 +511,9 @@ test("keyless preview is read-only and exchange consumes the grant once", async 
   const exchange = await request("exchange")
   expect(exchange.status).toBe(200)
   expect(consumed).toBe(true)
-  const replay = await request("exchange")
+  const recovered = await request("exchange")
+  expect(recovered.status).toBe(200)
+  const replay = await request("exchange", "50e0ebc9-a499-4399-a16a-1f128dd6f203")
   expect(replay.status).toBe(409)
   await expect(replay.json()).resolves.toEqual({ error: "connect_grant_replayed" })
 })

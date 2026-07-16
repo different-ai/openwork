@@ -2,6 +2,7 @@ import {
   normalizeDesktopConfig,
   type DesktopConfig as SharedDesktopConfig,
 } from "@openwork/types/den/desktop-policies";
+import { OPENWORK_OPERATION_DEADLINES } from "@openwork/types/operation-deadlines";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -15,7 +16,6 @@ import {
   dispatchDenSettingsChanged,
 } from "./den-session-events";
 import {
-  desktopFetch,
   desktopFetchViaMain,
   getDesktopBootstrapConfig as getDesktopBootstrapConfigFromShell,
   setDesktopBootstrapConfig as setDesktopBootstrapConfigInShell,
@@ -1790,16 +1790,16 @@ function getBillingSummary(payload: unknown): DenBillingSummary | null {
 // loopback port than the renderer) through the Electron main process so the
 // renderer never issues a blocked preflight. Same-origin requests can use the
 // renderer's own fetch.
-const resolveFetch = (url: string): FetchLike => {
+const resolveFetch = (url: string, deadlineAtMs?: number): FetchLike => {
   if (!isDesktopRuntime()) return globalThis.fetch;
   try {
     if (typeof window !== "undefined" && new URL(url).origin === window.location.origin) {
-      return desktopFetch;
+      return globalThis.fetch;
     }
   } catch {
     // fall through to the main-process proxy on unparseable URLs
   }
-  return (input, init) => desktopFetchViaMain(input, init);
+  return (input, init) => desktopFetchViaMain(input, init, deadlineAtMs);
 };
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -1808,8 +1808,19 @@ type DenRequestOptions = {
   method?: string;
   token?: string | null;
   body?: unknown;
+  deadlineMs?: number;
+  signal?: AbortSignal;
   organizationId?: string | null;
 };
+
+export class DenRequestDeadlineError extends Error {
+  readonly code = "den_request_deadline_exceeded";
+
+  constructor() {
+    super("OpenWork Cloud did not respond before the operation deadline.");
+    this.name = "DenRequestDeadlineError";
+  }
+}
 
 async function requestJsonRaw<T>(
   input: string | DenBaseUrls,
@@ -1831,17 +1842,32 @@ async function requestJsonRaw<T>(
     headers["Content-Type"] = "application/json";
   }
 
-  // Interactive Den requests intentionally have no client deadline. Den and
-  // its owning server-side stages must return the authoritative result; a
-  // caller-side race would only manufacture an error while work continues.
-  const response = await resolveFetch(url)(url, {
-    method: options.method ?? "GET",
-    headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    credentials: "include",
-  });
+  const deadlineMs = options.deadlineMs;
+  const hasDeadline = deadlineMs !== undefined && Number.isFinite(deadlineMs) && deadlineMs > 0;
+  const deadlineAtMs = hasDeadline ? Date.now() + deadlineMs : undefined;
+  const timeoutSignal = hasDeadline && deadlineMs !== undefined ? AbortSignal.timeout(deadlineMs) : null;
+  const signal = options.signal && timeoutSignal
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : options.signal ?? timeoutSignal ?? undefined;
 
-  const text = await response.text();
+  let response: Response;
+  let text: string;
+  try {
+    response = await resolveFetch(url, deadlineAtMs)(url, {
+      method: options.method ?? "GET",
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      credentials: "include",
+      signal,
+    });
+    text = await response.text();
+  } catch (error) {
+    if (timeoutSignal?.aborted || (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs)) {
+      throw new DenRequestDeadlineError();
+    }
+    throw error;
+  }
+
   let json: T | null = null;
   try {
     json = text ? (JSON.parse(text) as T) : null;
@@ -1932,10 +1958,11 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       });
     },
 
-    async getSession(): Promise<DenUser> {
+    async getSession(requestOptions?: { deadlineMs?: number }): Promise<DenUser> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/me", {
         method: "GET",
         token,
+        deadlineMs: requestOptions?.deadlineMs,
       });
       const user = getUser(payload);
       if (!user) {
@@ -1977,10 +2004,17 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return snapshot;
     },
 
-    async exchangeDesktopHandoff(grant: string): Promise<DenDesktopHandoffExchange> {
+    async exchangeDesktopHandoff(
+      grant: string,
+      requestOptions?: { requestId?: string; deadlineMs?: number },
+    ): Promise<DenDesktopHandoffExchange> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/auth/desktop-handoff/exchange", {
         method: "POST",
-        body: { grant },
+        deadlineMs: requestOptions?.deadlineMs ?? OPENWORK_OPERATION_DEADLINES.denHandoffExchangeMs,
+        body: {
+          grant,
+          ...(requestOptions?.requestId ? { requestId: requestOptions.requestId } : {}),
+        },
       });
       return { user: getUser(payload), token: getToken(payload) };
     },
@@ -2040,12 +2074,13 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       }
     },
 
-    async mintMcpToken(orgId: string): Promise<DenMcpToken> {
+    async mintMcpToken(orgId: string, options?: { signal?: AbortSignal }): Promise<DenMcpToken> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/mcp/token", {
         method: "POST",
         token,
         organizationId: orgId,
         body: { scopes: ["mcp:read", "mcp:write"] },
+        signal: options?.signal,
       });
       const minted = getMcpToken(payload);
       if (!minted) {
@@ -2248,6 +2283,7 @@ export type DenMcpTokenMintContext = {
   baseUrl: string;
   authToken: string | null;
   orgId: string | null;
+  signal?: AbortSignal;
 };
 
 export async function mintCloudControlMcpToken(context?: DenMcpTokenMintContext): Promise<DenMcpToken | null> {
@@ -2261,5 +2297,7 @@ export async function mintCloudControlMcpToken(context?: DenMcpTokenMintContext)
     baseUrl: settings.baseUrl,
     token,
   });
-  return client.mintMcpToken(orgId);
+  return client.mintMcpToken(orgId, {
+    signal: "signal" in settings ? settings.signal : undefined,
+  });
 }

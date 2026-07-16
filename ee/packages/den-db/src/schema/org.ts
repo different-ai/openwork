@@ -12,6 +12,7 @@ export const DesktopHandoffGrantTable = mysqlTable(
     session_token: text("session_token").notNull(),
     expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
     consumed_at: timestamp("consumed_at", { fsp: 3 }),
+    consumed_request_id_hash: varchar("consumed_request_id_hash", { length: 64 }),
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [

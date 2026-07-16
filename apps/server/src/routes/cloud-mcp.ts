@@ -1,4 +1,5 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { OPENWORK_OPERATION_DEADLINES } from "@openwork/types/operation-deadlines";
 import {
   OPENWORK_CLOUD_MCP_NAME,
   readOpenworkCloudMcpHealth,
@@ -74,6 +75,27 @@ function assertStrictBody(body: Record<string, unknown>, workspace: WorkspaceInf
   }
 }
 
+async function runCloudMcpRoute<T>(
+  request: Request,
+  task: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const timeoutSignal = AbortSignal.timeout(OPENWORK_OPERATION_DEADLINES.cloudMcpServerMs);
+  const signal = AbortSignal.any([request.signal, timeoutSignal]);
+  try {
+    return await task(signal);
+  } catch (error) {
+    if (timeoutSignal.aborted) {
+      throw new ApiError(
+        504,
+        "cloud_mcp_deadline_exceeded",
+        "Connected service readiness did not finish within the server operation deadline.",
+        { retryable: true, stage: "engine_delivery" },
+      );
+    }
+    throw error;
+  }
+}
+
 export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): void {
   const {
     routes,
@@ -92,7 +114,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
   addRoute(routes, "GET", "/workspace/:id/mcp/openwork-cloud/health", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     assertExactWorkspace(ctx.params.id, workspace);
-    const health = await readOpenworkCloudMcpHealth({
+    const health = await runCloudMcpRoute(ctx.request, (signal) => readOpenworkCloudMcpHealth({
       config,
       workspace,
       directory: resolveOpencodeDirectory(workspace),
@@ -100,7 +122,8 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       serverMetadata,
       probe: probeFromQuery(ctx.url),
       createWorkspaceOpencodeClient,
-    });
+      signal,
+    }));
     return jsonResponse(health);
   });
 
@@ -114,7 +137,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       throw new ApiError(400, "invalid_payload", "JSON object body is required");
     }
     assertStrictBody(body, workspace);
-    const health = await reconcileOpenworkCloudMcp({
+    const health = await runCloudMcpRoute(ctx.request, (signal) => reconcileOpenworkCloudMcp({
       config,
       workspace,
       directory: resolveOpencodeDirectory(workspace),
@@ -123,7 +146,8 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       serverMetadata,
       createWorkspaceOpencodeClient,
       registerRuntimeMcp,
-    });
+      signal,
+    }));
     return jsonResponse(health);
   });
 }

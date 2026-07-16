@@ -34,10 +34,12 @@ export type CloudMcpClient = {
   getOpenworkCloudMcpHealth: (
     workspaceId: string,
     providerModel?: OpenworkCloudMcpProviderModelContext,
+    requestOptions?: { signal?: AbortSignal },
   ) => Promise<OpenworkCloudMcpHealth>;
   reconcileOpenworkCloudMcp: (
     workspaceId: string,
     payload: OpenworkCloudMcpReconcilePayload,
+    requestOptions?: { signal?: AbortSignal },
   ) => Promise<OpenworkCloudMcpHealth>;
 };
 
@@ -83,6 +85,7 @@ type CloudMcpReconcilerInput = {
   refreshMarginMs: number;
   now?: number;
   configuredEnabled?: boolean | null;
+  signal?: AbortSignal;
 };
 
 type OpenCodeDisconnectClient = {
@@ -243,7 +246,12 @@ function writeUsableMarker(input: {
 }
 
 async function probeHealth(input: CloudMcpReconcilerInput, scope: CloudMcpScope, options?: { writeFreshnessMarker?: boolean }): Promise<CloudMcpOperationResult> {
-  const health = await input.client.getOpenworkCloudMcpHealth(scope.workspaceId, input.context.providerModel);
+  input.signal?.throwIfAborted();
+  const health = await input.client.getOpenworkCloudMcpHealth(
+    scope.workspaceId,
+    input.context.providerModel,
+    { signal: input.signal },
+  );
   const marker = options?.writeFreshnessMarker ? readCloudMcpSyncMarker(scope) : null;
   const markerWritten = options?.writeFreshnessMarker === true
     ? writeUsableMarker({ health, scope, expiresAt: marker?.expiresAt ?? null })
@@ -262,12 +270,17 @@ async function mintAndPost(input: CloudMcpReconcilerInput, scope: CloudMcpScope)
     baseUrl: scope.denBaseUrl,
     authToken: input.context.denAuthToken,
     orgId: scope.orgId,
+    signal: input.signal,
   });
   if (!token) return { health: null, token: null };
   const payload = buildOpenworkCloudMcpReconcilePayload({ context: { ...input.context, ...scope }, token });
   if (!payload) return { health: null, token };
   return {
-    health: await input.client.reconcileOpenworkCloudMcp(scope.workspaceId, payload),
+    health: await input.client.reconcileOpenworkCloudMcp(
+      scope.workspaceId,
+      payload,
+      { signal: input.signal },
+    ),
     token,
   };
 }
@@ -284,7 +297,11 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
     now: input.now ?? Date.now(),
     refreshMarginMs: input.refreshMarginMs,
   })) {
-    const health = await input.client.getOpenworkCloudMcpHealth(scope.workspaceId, input.context.providerModel);
+    const health = await input.client.getOpenworkCloudMcpHealth(
+      scope.workspaceId,
+      input.context.providerModel,
+      { signal: input.signal },
+    );
     if (health.usable) return { status: "unchanged", health, attempts: 0, markerWritten: false, reminted: false };
   }
 
@@ -316,6 +333,7 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
 }
 
 export async function runOpenworkCloudMcpReconciler(input: CloudMcpReconcilerInput): Promise<CloudMcpOperationResult> {
+  input.signal?.throwIfAborted();
   const scope = normalizedContextScope(input.context);
   if (!scope) return { status: "skipped", health: null, skippedReason: "missing_workspace", attempts: 0, markerWritten: false, reminted: false };
   const prerequisite = shouldSkipForPrerequisite(input, scope);

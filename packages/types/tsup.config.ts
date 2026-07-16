@@ -9,6 +9,7 @@ export default defineConfig({
     "den/egress-diagnostics": "src/den/egress-diagnostics.ts",
     "den/inference": "src/den/inference.ts",
     "den/microsoft-365": "src/den/microsoft-365.ts",
+    "operation-deadlines": "src/operation-deadlines.ts",
   },
   tsconfig: "./tsconfig.json",
   format: ["esm"],

@@ -137,10 +137,11 @@ function requiredDecision(input?: {
 function preparation(input: {
   check: () => Promise<OpenworkCloudMcpHealth | null>;
   repair: () => Promise<OpenworkCloudMcpHealth | null>;
-}): () => Promise<CloudMcpSubmissionPreparationResult> {
-  return async () => {
+}): (signal: AbortSignal) => Promise<CloudMcpSubmissionPreparationResult> {
+  return async (signal) => {
     const result = await ensureCloudMcpSubmissionReadiness({
       providerModel: PROVIDER_MODEL,
+      signal,
       check: input.check,
       repair: input.repair,
       retryDelaysMs: [0],
@@ -203,7 +204,7 @@ describe("Cloud MCP pre-send readiness", () => {
     expect(runs).toBe(1);
   });
 
-  test("a cached Cloud session waits for auth restoration without a caller deadline and sends exactly once", async () => {
+  test("a cached Cloud session waits inside the submission workflow and sends exactly once", async () => {
     const coordinator = createCloudMcpSubmissionCoordinator();
     const checking = requiredDecision({ authStatus: "checking", hasSessionToken: true });
     const signedIn = requiredDecision();
@@ -218,9 +219,10 @@ describe("Cloud MCP pre-send readiness", () => {
     let runs = 0;
     const input = {
       scopeKey: checking.scopeKey,
-      prepare: async (): Promise<CloudMcpSubmissionPreparationResult> => {
+      prepare: async (signal: AbortSignal): Promise<CloudMcpSubmissionPreparationResult> => {
         const resolution = await resolveCloudMcpSubmissionAuth({
           decision: checking,
+          signal,
           waitForResolution: () => authResolution,
         });
         if (resolution.outcome === "failed") {
@@ -236,7 +238,7 @@ describe("Cloud MCP pre-send readiness", () => {
             return health();
           },
           repair: async () => health(),
-        })();
+        })(signal);
       },
       send: async () => {
         runs += 1;
@@ -371,9 +373,13 @@ describe("Cloud MCP pre-send readiness", () => {
     });
     const sentContexts: string[] = [];
 
+    let originalSignal: AbortSignal | null = null;
     const originalResult = coordinator.submit({
       scopeKey: original.scopeKey,
-      prepare: () => originalPreparation,
+      prepare: (signal) => {
+        originalSignal = signal;
+        return originalPreparation;
+      },
       send: async () => {
         sentContexts.push("workspace_a/gpt-5");
       },
@@ -390,5 +396,6 @@ describe("Cloud MCP pre-send readiness", () => {
     await expect(originalResult).resolves.toEqual({ outcome: "cancelled", reason: "context_changed" });
     await expect(replacementResult).resolves.toEqual({ outcome: "sent", bypassed: false });
     expect(sentContexts).toEqual(["workspace_b/gpt-5-mini"]);
+    expect(originalSignal?.aborted).toBe(true);
   });
 });

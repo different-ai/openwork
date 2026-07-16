@@ -5,11 +5,12 @@ import {
   type AgentContextDiagnosticsReport,
   type AgentContextDiagnosticsRequest,
 } from "@openwork/types/agent-context-diagnostics";
+import { OPENWORK_OPERATION_DEADLINES } from "@openwork/types/operation-deadlines";
 import {
   AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
   requestAgentContextDiagnosticsPayload,
 } from "./agent-context-diagnostics-transport";
-import { desktopFetch, desktopFetchAgentContextDiagnostics } from "./desktop";
+import { desktopFetch, desktopFetchAgentContextDiagnostics, desktopFetchWithDeadline } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
@@ -1081,6 +1082,15 @@ export class OpenworkServerError extends Error {
   }
 }
 
+export class OpenworkServerDeadlineError extends Error {
+  readonly code = "openwork_client_deadline_exceeded";
+
+  constructor() {
+    super("The OpenWork server did not return the complete response before the operation deadline.");
+    this.name = "OpenworkServerDeadlineError";
+  }
+}
+
 function buildHeaders(
   token?: string,
   hostToken?: string,
@@ -1122,20 +1132,20 @@ function isStreamUrl(url: string): boolean {
   return OPENWORK_STREAM_URL_RE.test(url);
 }
 
-const resolveFetch = (url?: string) => {
+const resolveFetch = (url?: string, deadlineAtMs?: number) => {
   if (!isDesktopRuntime()) return globalThis.fetch;
   if (url && isStreamUrl(url)) {
     return typeof window !== "undefined" ? window.fetch.bind(window) : globalThis.fetch;
+  }
+  if (deadlineAtMs !== undefined) {
+    return (input: RequestInfo | URL, init?: RequestInit) =>
+      desktopFetchWithDeadline(input, init ?? {}, deadlineAtMs);
   }
   return desktopFetch;
 };
 
 const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;
 const ENGINE_RELOAD_TIMEOUT_MS = 60_000;
-// Den-connected Cloud MCP operations already have server-owned probe
-// deadlines. A second client deadline can only hide the structured server
-// result while the underlying operation continues.
-const NO_CLIENT_TIMEOUT = null;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -1143,60 +1153,52 @@ async function fetchWithTimeout(
   fetchImpl: FetchLike,
   url: string,
   init: RequestInit,
-  timeoutMs: number | null,
+  timeoutMs: number,
 ) {
-  if (timeoutMs === null || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return fetchImpl(url, init);
   }
 
-  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const signal = controller?.signal;
-  const initWithSignal = signal && !init.signal ? { ...init, signal } : init;
-
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      try {
-        controller?.abort();
-      } catch {
-        // ignore
-      }
-      reject(new Error("Request timed out."));
-    }, timeoutMs);
-  });
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, timeoutSignal])
+    : timeoutSignal;
 
   try {
-    return await Promise.race([fetchImpl(url, initWithSignal), timeoutPromise]);
+    return await fetchImpl(url, { ...init, signal });
   } catch (error) {
-    const name = (error && typeof error === "object" && "name" in error ? (error as any).name : "") as string;
-    if (name === "AbortError") {
-      throw new Error("Request timed out.");
-    }
+    if (timeoutSignal.aborted) throw new OpenworkServerDeadlineError();
     throw error;
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
 async function requestJson<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number | null } = {},
+  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch(url);
-  const response = await fetchWithTimeout(
-    fetchImpl,
-    url,
-    {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS;
+  const deadlineAtMs = Date.now() + timeoutMs;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : timeoutSignal;
+  const fetchImpl = resolveFetch(url, deadlineAtMs);
+  let response: Response;
+  let text: string;
+  try {
+    response = await fetchImpl(url, {
       method: options.method ?? "GET",
       headers: buildHeaders(options.token, options.hostToken),
       body: options.body ? JSON.stringify(options.body) : undefined,
-    },
-    options.timeoutMs === null ? null : options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
-  );
-
-  const text = await response.text();
+      signal,
+    });
+    text = await response.text();
+  } catch (error) {
+    if (timeoutSignal.aborted) throw new OpenworkServerDeadlineError();
+    throw error;
+  }
   const json = text ? JSON.parse(text) : null;
 
   if (!response.ok) {
@@ -1775,13 +1777,22 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           method: "DELETE",
         },
       ),
-    listMcp: (workspaceId: string) =>
+    listMcp: (workspaceId: string, requestOptions?: { signal?: AbortSignal; timeoutMs?: number }) =>
       requestJson<{ items: OpenworkMcpItem[]; engineSync?: OpenworkMcpEngineSync | null }>(
         baseUrl,
         `/workspace/${workspaceId}/mcp`,
-        { token, hostToken },
+        {
+          token,
+          hostToken,
+          signal: requestOptions?.signal,
+          timeoutMs: requestOptions?.timeoutMs,
+        },
       ),
-    getOpenworkCloudMcpHealth: (workspaceId: string, providerModel?: OpenworkCloudMcpProviderModelContext) => {
+    getOpenworkCloudMcpHealth: (
+      workspaceId: string,
+      providerModel?: OpenworkCloudMcpProviderModelContext,
+      requestOptions?: { signal?: AbortSignal },
+    ) => {
       const query = new URLSearchParams();
       if (providerModel?.provider.trim() && providerModel.model.trim()) {
         query.set("provider", providerModel.provider.trim());
@@ -1791,10 +1802,19 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       return requestJson<OpenworkCloudMcpHealth>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/health${suffix}`,
-        { token, hostToken, timeoutMs: NO_CLIENT_TIMEOUT },
+        {
+          token,
+          hostToken,
+          timeoutMs: OPENWORK_OPERATION_DEADLINES.cloudMcpTransportMs,
+          signal: requestOptions?.signal,
+        },
       );
     },
-    reconcileOpenworkCloudMcp: (workspaceId: string, payload: OpenworkCloudMcpReconcilePayload) =>
+    reconcileOpenworkCloudMcp: (
+      workspaceId: string,
+      payload: OpenworkCloudMcpReconcilePayload,
+      requestOptions?: { signal?: AbortSignal },
+    ) =>
       requestJson<OpenworkCloudMcpHealth>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/reconcile`,
@@ -1803,7 +1823,8 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "POST",
           body: payload,
-          timeoutMs: NO_CLIENT_TIMEOUT,
+          timeoutMs: OPENWORK_OPERATION_DEADLINES.cloudMcpTransportMs,
+          signal: requestOptions?.signal,
         },
       ),
     runAgentContextDiagnostics: async (

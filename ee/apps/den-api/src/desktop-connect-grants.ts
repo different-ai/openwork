@@ -27,12 +27,18 @@ function hashConnectGrantCode(code: string) {
   return createHash("sha256").update(code).digest("hex")
 }
 
-function validateGrantRow(row: DesktopConnectGrantRow | undefined, now: Date): DesktopConnectGrantResult {
+function validateGrantRow(
+  row: DesktopConnectGrantRow | undefined,
+  now: Date,
+  requestIdHash?: string,
+): DesktopConnectGrantResult {
   if (!row || row.installLink.revokedAt || (row.installLink.expiresAt && row.installLink.expiresAt <= now)) {
     return { ok: false, code: "invalid_token" }
   }
   if (row.grant.consumedAt) {
-    return { ok: false, code: "replayed" }
+    if (!requestIdHash || row.grant.consumedNonce !== requestIdHash) {
+      return { ok: false, code: "replayed" }
+    }
   }
   if (row.grant.expiresAt <= now) {
     return { ok: false, code: "expired" }
@@ -101,23 +107,32 @@ export async function previewDesktopConnectGrant(code: string): Promise<DesktopC
   return validateGrantRow(row, now)
 }
 
-export async function consumeDesktopConnectGrant(code: string): Promise<DesktopConnectGrantResult> {
+export async function consumeDesktopConnectGrant(
+  code: string,
+  requestId?: string,
+): Promise<DesktopConnectGrantResult> {
   const codeHash = hashConnectGrantCode(code)
+  const requestIdHash = requestId
+    ? createHash("sha256").update(requestId).digest("hex")
+    : undefined
   const now = new Date()
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [row] = await tx
       .select({ grant: DesktopConnectGrantTable, installLink: InstallLinkTable })
       .from(DesktopConnectGrantTable)
       .innerJoin(InstallLinkTable, eq(DesktopConnectGrantTable.installLinkId, InstallLinkTable.id))
       .where(eq(DesktopConnectGrantTable.codeHash, codeHash))
       .limit(1)
-    const available = validateGrantRow(row, now)
+    const available = validateGrantRow(row, now, requestIdHash)
     if (!available.ok) {
+      return available
+    }
+    if (row?.grant.consumedAt) {
       return available
     }
 
     const consumedAt = new Date()
-    const consumedNonce = randomBytes(16).toString("base64url")
+    const consumedNonce = requestIdHash ?? randomBytes(16).toString("base64url")
     await tx
       .update(DesktopConnectGrantTable)
       .set({ consumedAt, consumedNonce })
@@ -140,6 +155,16 @@ export async function consumeDesktopConnectGrant(code: string): Promise<DesktopC
       )
       .limit(1)
 
-    return claimed ? available : { ok: false, code: "replayed" }
+    const replayed: DesktopConnectGrantResult = { ok: false, code: "replayed" }
+    return claimed ? available : replayed
   })
+
+  if (result.ok || !requestIdHash || result.code !== "replayed") return result
+  const [row] = await db
+    .select({ grant: DesktopConnectGrantTable, installLink: InstallLinkTable })
+    .from(DesktopConnectGrantTable)
+    .innerJoin(InstallLinkTable, eq(DesktopConnectGrantTable.installLinkId, InstallLinkTable.id))
+    .where(eq(DesktopConnectGrantTable.codeHash, codeHash))
+    .limit(1)
+  return validateGrantRow(row, new Date(), requestIdHash)
 }

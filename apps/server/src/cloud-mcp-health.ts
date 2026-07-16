@@ -135,7 +135,7 @@ export type CloudMcpRuntimeRegistrar = (
   config: ServerConfig,
   workspace: WorkspaceInfo,
   onlyNames?: string[],
-  options?: { throwOnFailure?: boolean },
+  options?: { throwOnFailure?: boolean; signal?: AbortSignal },
 ) => Promise<CloudMcpRuntimeRegistrationResult>;
 
 export type CloudMcpServerMetadata = {
@@ -944,27 +944,37 @@ function thrownOpencodeFailure(stage: CloudMcpFailureStage, path: string, error:
   });
 }
 
-async function withEngineProbeTimeout<T>(task: () => Promise<T>): Promise<T> {
+async function runAbortable<T>(task: (signal: AbortSignal) => Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
   return await new Promise<T>((resolve, reject) => {
-    const timeoutMs = engineProbeTimeoutMs();
-    const handle = setTimeout(() => {
-      reject(new Error(`OpenCode health probe timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    task()
-      .then(resolve, reject)
-      .finally(() => clearTimeout(handle));
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    task(signal).then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
   });
 }
 
-async function withCloudEndpointProbeTimeout(task: (signal: AbortSignal) => Promise<Response>): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutMs = engineProbeTimeoutMs();
-  const handle = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await task(controller.signal);
-  } finally {
-    clearTimeout(handle);
-  }
+async function withEngineProbeTimeout<T>(
+  task: (signal: AbortSignal) => Promise<T>,
+  parentSignal?: AbortSignal,
+): Promise<T> {
+  const timeoutSignal = AbortSignal.timeout(engineProbeTimeoutMs());
+  const signal = parentSignal ? AbortSignal.any([parentSignal, timeoutSignal]) : timeoutSignal;
+  return runAbortable(task, signal);
+}
+
+async function withCloudEndpointProbeTimeout<T>(
+  task: (signal: AbortSignal) => Promise<T>,
+  parentSignal?: AbortSignal,
+): Promise<T> {
+  const timeoutSignal = AbortSignal.timeout(engineProbeTimeoutMs());
+  const signal = parentSignal ? AbortSignal.any([parentSignal, timeoutSignal]) : timeoutSignal;
+  return runAbortable(task, signal);
 }
 
 function parseJsonOrText(raw: string): unknown {
@@ -1070,14 +1080,17 @@ async function mcpJsonRpcPost(input: {
   url: string;
   headers: Record<string, string>;
   body: unknown;
+  signal?: AbortSignal;
 }): Promise<{ response: Response; payload: unknown }> {
-  const response = await withCloudEndpointProbeTimeout((signal) => externalFetch(input.url, {
-    method: "POST",
-    headers: input.headers,
-    body: JSON.stringify(input.body),
-    signal,
-  }));
-  return { response, payload: await readMcpJsonRpcPayload(response) };
+  return withCloudEndpointProbeTimeout(async (signal) => {
+    const response = await externalFetch(input.url, {
+      method: "POST",
+      headers: input.headers,
+      body: JSON.stringify(input.body),
+      signal,
+    });
+    return { response, payload: await readMcpJsonRpcPayload(response) };
+  }, input.signal);
 }
 
 function directToolsFromNames(names: string[]): DirectCloudToolsSnapshot {
@@ -1122,7 +1135,7 @@ function toolsFromEngineAttestation(): ToolSnapshot {
   return { expected, present: [...expected], missing: [] };
 }
 
-async function readDirectCloudTools(config: Record<string, unknown>): Promise<DirectCloudToolsSnapshot> {
+async function readDirectCloudTools(config: Record<string, unknown>, signal?: AbortSignal): Promise<DirectCloudToolsSnapshot> {
   const url = readString(config.url);
   const authorization = authorizationHeader(config);
   const endpoint = url ? sanitizeDiagnosticString(url) : null;
@@ -1144,6 +1157,7 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
     const initialized = await mcpJsonRpcPost({
       url,
       headers: baseHeaders,
+      signal,
       body: {
         id: 1,
         jsonrpc: "2.0",
@@ -1172,15 +1186,16 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
       ...(sessionId ? { "mcp-session-id": sessionId } : {}),
       ...(protocolVersion ? { "mcp-protocol-version": protocolVersion } : {}),
     };
-    await withCloudEndpointProbeTimeout((signal) => externalFetch(url, {
+    await withCloudEndpointProbeTimeout((probeSignal) => externalFetch(url, {
       method: "POST",
       headers: sessionHeaders,
       body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }),
-      signal,
-    }));
+      signal: probeSignal,
+    }), signal);
     const listed = await mcpJsonRpcPost({
       url,
       headers: sessionHeaders,
+      signal,
       body: { id: 2, jsonrpc: "2.0", method: "tools/list", params: {} },
     });
     if (!listed.response.ok) {
@@ -1203,6 +1218,7 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
     }
     return directToolsFromNames(toolNames.names);
   } catch (error) {
+    signal?.throwIfAborted();
     // Field incident (corporate Windows, TLS interception): a probe transport
     // failure must never be reported as missing tools — the engine's own MCP
     // connection uses a different network stack and is authoritative.
@@ -1221,12 +1237,17 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
 async function readMcpStatus(
   opencode: WorkspaceOpencodeClient,
   directory: string | null,
+  signal?: AbortSignal,
 ): Promise<{ data?: Record<string, McpStatus>; failure?: CloudMcpFailure }> {
   try {
-    const result = await withEngineProbeTimeout(() => opencode.mcp.status(locationParams(directory)));
+    const result = await withEngineProbeTimeout(
+      (probeSignal) => opencode.mcp.status(locationParams(directory), { signal: probeSignal }),
+      signal,
+    );
     if (result.data) return { data: result.data };
     return { failure: opencodeRequestFailure("engine_delivery", "/mcp", result.response, result.error) };
   } catch (error) {
+    signal?.throwIfAborted();
     return { failure: thrownOpencodeFailure("engine_delivery", "/mcp", error) };
   }
 }
@@ -1234,12 +1255,17 @@ async function readMcpStatus(
 async function readToolIds(
   opencode: WorkspaceOpencodeClient,
   directory: string | null,
+  signal?: AbortSignal,
 ): Promise<{ data?: ToolIds; failure?: CloudMcpFailure }> {
   try {
-    const result = await withEngineProbeTimeout(() => opencode.tool.ids(locationParams(directory)));
+    const result = await withEngineProbeTimeout(
+      (probeSignal) => opencode.tool.ids(locationParams(directory), { signal: probeSignal }),
+      signal,
+    );
     if (result.data) return { data: result.data };
     return { failure: opencodeRequestFailure("tool_registration", "/experimental/tool/ids", result.response, result.error) };
   } catch (error) {
+    signal?.throwIfAborted();
     return { failure: thrownOpencodeFailure("tool_registration", "/experimental/tool/ids", error) };
   }
 }
@@ -1249,15 +1275,19 @@ async function readProviderProjection(input: {
   directory: string | null;
   providerModel: CloudMcpProviderModelContext;
   experimentalToolIdsIncludeMcpTools: boolean | null;
+  signal?: AbortSignal;
 }): Promise<ProviderProjectionSnapshot> {
   let experimentalSplit: ToolSnapshot | null = null;
   let experimentalError: unknown;
   try {
-    const result = await withEngineProbeTimeout(() => input.opencode.tool.list({
-      ...locationParams(input.directory),
-      provider: input.providerModel.provider,
-      model: input.providerModel.model,
-    }));
+    const result = await withEngineProbeTimeout(
+      (probeSignal) => input.opencode.tool.list({
+        ...locationParams(input.directory),
+        provider: input.providerModel.provider,
+        model: input.providerModel.model,
+      }, { signal: probeSignal }),
+      input.signal,
+    );
     if (!result.data) {
       experimentalError = opencodeRequestFailure("provider_projection", "/experimental/tool", result.response, result.error).details;
     } else {
@@ -1274,6 +1304,7 @@ async function readProviderProjection(input: {
       }
     }
   } catch (error) {
+    input.signal?.throwIfAborted();
     experimentalError = thrownOpencodeFailure("provider_projection", "/experimental/tool", error).details;
   }
 
@@ -1306,6 +1337,7 @@ async function readProviderProjection(input: {
     providerModel: input.providerModel,
     experimentalSplit,
     experimentalError,
+    signal: input.signal,
   });
 }
 
@@ -1315,9 +1347,13 @@ async function readProviderCapability(input: {
   providerModel: CloudMcpProviderModelContext;
   experimentalSplit: ToolSnapshot | null;
   experimentalError: unknown;
+  signal?: AbortSignal;
 }): Promise<ProviderProjectionSnapshot> {
   try {
-    const result = await withEngineProbeTimeout(() => input.opencode.provider.list(locationParams(input.directory)));
+    const result = await withEngineProbeTimeout(
+      (probeSignal) => input.opencode.provider.list(locationParams(input.directory), { signal: probeSignal }),
+      input.signal,
+    );
     if (!result.data) {
       const projectionFailure = opencodeRequestFailure("provider_projection", "/provider", result.response, result.error);
       return {
@@ -1369,6 +1405,7 @@ async function readProviderCapability(input: {
       ...(projectionFailure ? { failure: projectionFailure } : {}),
     };
   } catch (error) {
+    input.signal?.throwIfAborted();
     const projectionFailure = thrownOpencodeFailure("provider_projection", "/provider", error);
     return {
       checked: true,
@@ -1493,9 +1530,15 @@ function readVersionFromHealthPayload(payload: unknown): string | null {
   return typeof payload.version === "string" ? sanitizeDiagnosticString(payload.version) : null;
 }
 
-async function readOpencodeVersion(opencode: WorkspaceOpencodeClient): Promise<CloudMcpCompatibilitySnapshot["opencode"]> {
+async function readOpencodeVersion(
+  opencode: WorkspaceOpencodeClient,
+  signal?: AbortSignal,
+): Promise<CloudMcpCompatibilitySnapshot["opencode"]> {
   try {
-    const result = await withEngineProbeTimeout(() => opencode.global.health());
+    const result = await withEngineProbeTimeout(
+      (probeSignal) => opencode.global.health({ signal: probeSignal }),
+      signal,
+    );
     if (result.data) {
       return { expectedVersion: null, actualVersion: readVersionFromHealthPayload(result.data), probe: "ok" };
     }
@@ -1506,6 +1549,7 @@ async function readOpencodeVersion(opencode: WorkspaceOpencodeClient): Promise<C
       error: sanitizeDiagnosticValue({ status: result.response.status, error: result.error }),
     };
   } catch (error) {
+    signal?.throwIfAborted();
     return {
       expectedVersion: null,
       actualVersion: null,
@@ -1521,6 +1565,7 @@ async function inspectOpenworkCloud(input: {
   desiredConfig: Record<string, unknown>;
   providerModel?: CloudMcpProviderModelContext;
   probe: boolean;
+  signal?: AbortSignal;
 }): Promise<Inspection> {
   const failures: CloudMcpFailure[] = [];
   const emptyTools = splitPresentMissing([], expectedTools());
@@ -1528,8 +1573,9 @@ async function inspectOpenworkCloud(input: {
   const emptyCanaries = splitPresentMissing([], expectedCanaries());
   const uncheckedExperimentalToolIds = experimentalToolIdsNotChecked();
   const uncheckedExperimentalProviderTools = experimentalProviderToolsFromProjection(providerProjectionNotChecked(input.providerModel));
-  const opencodeVersion = await readOpencodeVersion(input.opencode);
-  const statusResult = await readMcpStatus(input.opencode, input.directory);
+  input.signal?.throwIfAborted();
+  const opencodeVersion = await readOpencodeVersion(input.opencode, input.signal);
+  const statusResult = await readMcpStatus(input.opencode, input.directory, input.signal);
   if (statusResult.failure) {
     failures.push(statusResult.failure);
     return {
@@ -1562,7 +1608,7 @@ async function inspectOpenworkCloud(input: {
     };
   }
 
-  const idsResult = await readToolIds(input.opencode, input.directory);
+  const idsResult = await readToolIds(input.opencode, input.directory, input.signal);
   if (idsResult.failure) {
     failures.push(idsResult.failure);
     return {
@@ -1580,7 +1626,7 @@ async function inspectOpenworkCloud(input: {
   const ids = idsResult.data ?? [];
   const experimentalToolIds = experimentalToolIdsFromSplit(splitPresentMissing(ids, expectedTools()));
   const pluginCanaries = splitPresentMissing(ids, expectedCanaries());
-  const directTools = input.probe ? await readDirectCloudTools(input.desiredConfig) : emptyDirectTools;
+  const directTools = input.probe ? await readDirectCloudTools(input.desiredConfig, input.signal) : emptyDirectTools;
   if (input.probe) {
     // The engine is authoritative; a probe-only transport failure must stay diagnostic and not veto steering/delivery.
     if (directTools.failure && directTools.failure.code !== "probe_unreachable") {
@@ -1597,6 +1643,7 @@ async function inspectOpenworkCloud(input: {
         directory: input.directory,
         providerModel: input.providerModel,
         experimentalToolIdsIncludeMcpTools: experimentalToolIds.includesMcpTools,
+        signal: input.signal,
       })
     : providerProjectionNotChecked(input.providerModel);
   const experimentalProviderTools = experimentalProviderToolsFromProjection(providerProjection);
@@ -1794,8 +1841,10 @@ export async function readOpenworkCloudMcpHealth(input: {
   providerModel?: CloudMcpProviderModelContext;
   serverMetadata?: CloudMcpServerMetadata;
   probe?: boolean;
+  signal?: AbortSignal;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
 }): Promise<CloudMcpHealth> {
+  input.signal?.throwIfAborted();
   const checkedAt = new Date().toISOString();
   const desired = await readDesiredState({ config: input.config, workspace: input.workspace, directory: input.directory });
   let delivery = cloudMcpDeliveryState.snapshot(input.workspace, input.directory, desired.revision);
@@ -1850,12 +1899,14 @@ export async function readOpenworkCloudMcpHealth(input: {
     failures: [],
   };
   if (desired.present && desired.config && !desired.validationProblem && input.directory && baseUrlConfigured(input.config, input.workspace)) {
+    input.signal?.throwIfAborted();
     inspection = await inspectOpenworkCloud({
       opencode: input.createWorkspaceOpencodeClient(input.config, input.workspace),
       directory: input.directory,
       desiredConfig: desired.config,
       providerModel: input.providerModel,
       probe: input.probe === true,
+      signal: input.signal,
     });
     failures.push(...inspection.failures);
   }
@@ -1867,12 +1918,14 @@ export async function readOpenworkCloudMcpHealth(input: {
   }
 
   const firstFailure = chooseFirstFailure(failures);
+  input.signal?.throwIfAborted();
   const compatibility = await compatibilitySnapshot({
     serverMetadata: input.serverMetadata,
     appMetadata: desired.metadata.app,
     directory: input.directory,
     inspection,
   });
+  input.signal?.throwIfAborted();
   return {
     schemaVersion: 1,
     phase: phaseFromFailure(firstFailure),
@@ -1953,19 +2006,32 @@ function registrationFailure(failures: CloudMcpRuntimeRegistrationFailure[]): Cl
   });
 }
 
-async function wait(ms: number): Promise<void> {
+async function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   if (ms === 0) return;
-  await new Promise((resolve) => setTimeout(resolve, ms));
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(handle);
+      reject(signal?.reason);
+    };
+    const handle = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
 }
 
 async function pollConnected(input: {
   opencode: WorkspaceOpencodeClient;
   directory: string | null;
+  signal?: AbortSignal;
 }): Promise<CloudMcpFailure | null> {
   let lastFailure: CloudMcpFailure | null = null;
   for (const delay of POLL_DELAYS_MS) {
-    await wait(delay);
-    const statusResult = await readMcpStatus(input.opencode, input.directory);
+    await wait(delay, input.signal);
+    const statusResult = await readMcpStatus(input.opencode, input.directory, input.signal);
     if (statusResult.failure) {
       lastFailure = statusResult.failure;
       continue;
@@ -1999,7 +2065,9 @@ export async function reconcileOpenworkCloudMcp(input: {
   serverMetadata?: CloudMcpServerMetadata;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
+  signal?: AbortSignal;
 }): Promise<CloudMcpHealth> {
+  input.signal?.throwIfAborted();
   const readHealth = () => readOpenworkCloudMcpHealth({
     config: input.config,
     workspace: input.workspace,
@@ -2008,6 +2076,7 @@ export async function reconcileOpenworkCloudMcp(input: {
     serverMetadata: input.serverMetadata,
     createWorkspaceOpencodeClient: input.createWorkspaceOpencodeClient,
     probe: true,
+    signal: input.signal,
   });
   const configBody = input.body.config ?? input.body;
   const desiredConfig = canonicalizeCloudMcpConfig(normalizeCloudMcpConfig(configBody));
@@ -2046,7 +2115,12 @@ export async function reconcileOpenworkCloudMcp(input: {
   }
 
   cloudMcpDeliveryState.markRegistering(input.workspace, input.directory, desiredRevision);
-  const registration = await input.registerRuntimeMcp(input.config, input.workspace, [OPENWORK_CLOUD_MCP_NAME], { throwOnFailure: false });
+  const registration = await input.registerRuntimeMcp(
+    input.config,
+    input.workspace,
+    [OPENWORK_CLOUD_MCP_NAME],
+    { throwOnFailure: false, signal: input.signal },
+  );
   if (registration.failures.length > 0) {
     const registrationError = registrationFailure(registration.failures);
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, registrationError);
@@ -2054,7 +2128,11 @@ export async function reconcileOpenworkCloudMcp(input: {
   }
 
   const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
-  const connectedFailure = await pollConnected({ opencode, directory: input.directory });
+  const connectedFailure = await pollConnected({
+    opencode,
+    directory: input.directory,
+    signal: input.signal,
+  });
   if (connectedFailure) {
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, connectedFailure);
     return healthWithFailure(await readHealth(), connectedFailure);
@@ -2064,7 +2142,7 @@ export async function reconcileOpenworkCloudMcp(input: {
 
   if (health.firstFailure) {
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, health.firstFailure);
-    return healthWithFailure(await readHealth(), health.firstFailure);
+    return healthWithFailure(health, health.firstFailure);
   }
 
   cloudMcpDeliveryState.markReady(input.workspace, input.directory, desiredRevision);
@@ -2079,6 +2157,7 @@ export async function reconcilePersistedOpenworkCloudMcp(input: {
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
   trigger?: string;
+  signal?: AbortSignal;
 }): Promise<CloudMcpHealth> {
   const runtimeConfig = await readRuntimeOpencodeConfig(input.config, input.workspace.id);
   const desiredConfig = runtimeMcpMap(runtimeConfig)[OPENWORK_CLOUD_MCP_NAME];

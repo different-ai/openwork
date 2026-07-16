@@ -323,6 +323,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.17.11
         version: 1.17.11
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
@@ -342,9 +345,6 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
-      '@openwork/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13

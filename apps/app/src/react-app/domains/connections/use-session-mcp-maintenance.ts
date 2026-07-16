@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { OPENWORK_OPERATION_DEADLINES } from "@openwork/types/operation-deadlines";
 
 import {
   mintCloudControlMcpToken,
@@ -179,8 +180,10 @@ export async function syncCloudControlMcpInBackground(input: {
   settings?: DenSettings;
   mintToken?: () => Promise<DenMcpToken | null>;
   providerModel?: OpenworkCloudMcpProviderModelContext;
+  signal?: AbortSignal;
 }): Promise<CloudMcpBackgroundSyncResult> {
   const workspaceId = input.workspaceId.trim();
+  input.signal?.throwIfAborted();
   const settings = input.settings ?? readDenSettings();
   const orgId = settings.activeOrgId?.trim() ?? "";
   if (!workspaceId) {
@@ -198,7 +201,10 @@ export async function syncCloudControlMcpInBackground(input: {
     orgId,
     workspaceId,
   };
-  const listed = await input.client.listMcp(workspaceId);
+  const listed = await input.client.listMcp(workspaceId, {
+    signal: input.signal,
+    timeoutMs: input.signal ? OPENWORK_OPERATION_DEADLINES.cloudMcpTransportMs : undefined,
+  });
   const configured = listed.items.find((entry) => entry.name === CLOUD_MCP_SERVER_NAME);
   if (configured?.config.enabled === false) {
     return { outcome: "skipped", status: "skipped", reason: "disabled", health: null };
@@ -233,6 +239,7 @@ export async function syncCloudControlMcpInBackground(input: {
     refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
     now: input.now,
     configuredEnabled: configured === undefined ? null : configured.config.enabled !== false,
+    signal: input.signal,
   });
   if (result.health?.usable) {
     return {

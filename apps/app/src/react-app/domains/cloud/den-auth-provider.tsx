@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { OPENWORK_OPERATION_DEADLINES } from "@openwork/types/operation-deadlines";
 import {
   createContext,
   useCallback,
@@ -125,7 +126,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       const nextUser = await createDenClient({
         baseUrl: settings.baseUrl,
         token,
-      }).getSession();
+      }).getSession({ deadlineMs: OPENWORK_OPERATION_DEADLINES.denSessionRestoreMs });
 
       if (currentRun !== refreshTokenRef.current) return;
 

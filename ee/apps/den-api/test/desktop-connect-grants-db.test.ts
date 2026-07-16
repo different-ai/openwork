@@ -115,10 +115,23 @@ test("MySQL grants preview across pods and allow exactly one concurrent consumer
     .where(drizzle.eq(schema.DesktopConnectGrantTable.installLinkId, installLinkId))
   expect(remaining).toHaveLength(1)
 
+  const replacementCode = codeFrom(replacement.connectUrl)
+  const requestId = crypto.randomUUID()
+  const recoveredAttempts = await Promise.all([
+    grants.consumeDesktopConnectGrant(replacementCode, requestId),
+    grants.consumeDesktopConnectGrant(replacementCode, requestId),
+    grants.consumeDesktopConnectGrant(replacementCode, requestId),
+  ])
+  expect(recoveredAttempts.every((result) => result.ok)).toBe(true)
+  await expect(grants.consumeDesktopConnectGrant(replacementCode, crypto.randomUUID())).resolves.toEqual({
+    ok: false,
+    code: "replayed",
+  })
+
   await db.update(schema.InstallLinkTable)
     .set({ revokedAt: new Date() })
     .where(drizzle.eq(schema.InstallLinkTable.id, installLinkId))
-  await expect(grants.previewDesktopConnectGrant(codeFrom(replacement.connectUrl))).resolves.toEqual({
+  await expect(grants.previewDesktopConnectGrant(replacementCode)).resolves.toEqual({
     ok: false,
     code: "invalid_token",
   })

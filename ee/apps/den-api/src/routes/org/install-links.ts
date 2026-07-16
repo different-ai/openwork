@@ -57,6 +57,7 @@ const installLinkQuerySchema = z.object({
 
 const connectGrantBodySchema = z.object({
   code: z.string().trim().regex(CONNECT_GRANT_CODE_PATTERN),
+  requestId: z.string().trim().uuid().optional(),
 })
 
 const connectGrantResponseSchema = z.object({
@@ -466,7 +467,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         const input = c.req.valid("json")
         const result = mode === "preview"
           ? await installer.previewConnectGrant(input.code)
-          : await installer.consumeConnectGrant(input.code)
+          : await installer.consumeConnectGrant(input.code, input.requestId)
         if (result.ok) {
           return c.json({ claims: result.claims })
         }

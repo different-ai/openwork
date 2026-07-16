@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, AuthUserTable, DesktopHandoffGrantTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -18,6 +18,7 @@ const createGrantSchema = z.object({
 
 const exchangeGrantSchema = z.object({
   grant: z.string().trim().min(12).max(128),
+  requestId: z.string().trim().uuid().optional(),
 })
 
 const desktopHandoffGrantResponseSchema = z.object({
@@ -215,11 +216,15 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     jsonValidator(exchangeGrantSchema),
     async (c) => {
     const input = c.req.valid("json")
+    const requestIdHash = input.requestId
+      ? createHash("sha256").update(input.requestId).digest("hex")
+      : null
 
     const now = new Date()
     const exchange = await db.transaction(async (tx) => {
       const rows = await tx
         .select({
+          grant: DesktopHandoffGrantTable,
           session: AuthSessionTable,
           user: AuthUserTable,
         })
@@ -229,7 +234,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         .where(
           and(
             eq(DesktopHandoffGrantTable.id, input.grant),
-            isNull(DesktopHandoffGrantTable.consumed_at),
             gt(DesktopHandoffGrantTable.expires_at, now),
             gt(AuthSessionTable.expiresAt, now),
           ),
@@ -241,10 +245,26 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         return null
       }
 
+      if (row.grant.consumed_at) {
+        if (!requestIdHash || row.grant.consumed_request_id_hash !== requestIdHash) {
+          return null
+        }
+        return {
+          token: row.session.token,
+          user: {
+            id: row.user.id,
+            email: row.user.email,
+            name: row.user.name,
+          },
+        }
+      }
+
       const consumedAt = new Date()
+      const claimHash = requestIdHash
+        ?? createHash("sha256").update(randomBytes(24).toString("base64url")).digest("hex")
       await tx
         .update(DesktopHandoffGrantTable)
-        .set({ consumed_at: consumedAt })
+        .set({ consumed_at: consumedAt, consumed_request_id_hash: claimHash })
         .where(
           and(
             eq(DesktopHandoffGrantTable.id, input.grant),
@@ -259,7 +279,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         .where(
           and(
             eq(DesktopHandoffGrantTable.id, input.grant),
-            eq(DesktopHandoffGrantTable.consumed_at, consumedAt),
+            eq(DesktopHandoffGrantTable.consumed_request_id_hash, claimHash),
           ),
         )
         .limit(1)
@@ -278,14 +298,45 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       }
     })
 
-    if (!exchange) {
+    let resolvedExchange = exchange
+    if (!resolvedExchange && requestIdHash) {
+      const [recovered] = await db
+        .select({
+          session: AuthSessionTable,
+          user: AuthUserTable,
+        })
+        .from(DesktopHandoffGrantTable)
+        .innerJoin(AuthSessionTable, eq(DesktopHandoffGrantTable.session_token, AuthSessionTable.token))
+        .innerJoin(AuthUserTable, eq(DesktopHandoffGrantTable.user_id, AuthUserTable.id))
+        .where(
+          and(
+            eq(DesktopHandoffGrantTable.id, input.grant),
+            eq(DesktopHandoffGrantTable.consumed_request_id_hash, requestIdHash),
+            gt(DesktopHandoffGrantTable.expires_at, now),
+            gt(AuthSessionTable.expiresAt, now),
+          ),
+        )
+        .limit(1)
+      if (recovered) {
+        resolvedExchange = {
+          token: recovered.session.token,
+          user: {
+            id: recovered.user.id,
+            email: recovered.user.email,
+            name: recovered.user.name,
+          },
+        }
+      }
+    }
+
+    if (!resolvedExchange) {
       return c.json({
         error: "grant_not_found",
         message: "This desktop sign-in link is missing, expired, or already used.",
       }, 404)
     }
 
-    return c.json(exchange)
+    return c.json(resolvedExchange)
     },
   )
 }

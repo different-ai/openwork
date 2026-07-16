@@ -32,6 +32,7 @@ import { createApplicationMenu } from "./app-menu.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import {
+  createConnectExchangeRequestStore,
   createConnectLinkReplayGuard,
   extractConnectExchange,
   resolveConnectExchangeUrl,
@@ -933,6 +934,9 @@ const workspaceStore = createWorkspaceStore({
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
   filePath: path.join(app.getPath("userData"), "connect-link-seen.json"),
 });
+const connectExchangeRequestStore = createConnectExchangeRequestStore({
+  filePath: path.join(app.getPath("userData"), "connect-exchange-requests.json"),
+});
 
 /**
  * @param {string} rawUrl
@@ -958,10 +962,12 @@ async function previewConnectLink(rawUrl) {
 }
 
 async function acceptConnectLink(rawUrl) {
-  if (extractConnectExchange(rawUrl)) {
+  const exchange = extractConnectExchange(rawUrl);
+  if (exchange) {
     return resolveConnectExchangeUrl(rawUrl, {
       mode: "exchange",
       fetcher: electronNet.fetch,
+      requestId: await connectExchangeRequestStore.getOrCreate(exchange.code),
       allowInsecureLoopback: isDevMode,
     });
   }
@@ -1507,6 +1513,8 @@ function applyNativeTheme(mode) {
   return true;
 }
 
+const desktopFetchControllers = new Map();
+
 // Desktop IPC command registry. Every command invokable from the renderer's
 // desktopBridge Proxy (apps/app/src/app/lib/desktop.ts) has exactly one
 // entry here; handlers receive the ipcMain event followed by the renderer
@@ -2025,17 +2033,43 @@ const desktopCommandHandlers = {
           init.agentContextDiagnostics.deadlineAtMs,
         );
       }
-      const timeoutMs = Number(init.timeoutMs);
-      const response = await electronNet.fetch(url, {
-        ...requestInit,
-        signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
-      });
-      return {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Array.from(response.headers.entries()),
-        body: await response.text(),
-      };
+      const deadlineAtMs = Number(init.deadlineAtMs);
+      const legacyTimeoutMs = Number(init.timeoutMs);
+      const timeoutMs = Number.isFinite(deadlineAtMs) && deadlineAtMs > 0
+        ? Math.max(1, deadlineAtMs - Date.now())
+        : legacyTimeoutMs;
+      const requestId = typeof init.requestId === "string" ? init.requestId : "";
+      const requestKey = requestId ? `${event.sender.id}:${requestId}` : "";
+      const controller = requestKey ? new AbortController() : null;
+      if (requestKey && controller) desktopFetchControllers.set(requestKey, controller);
+      const abortOnRendererDestroyed = () => controller?.abort("renderer_destroyed");
+      if (controller) event.sender.once("destroyed", abortOnRendererDestroyed);
+      const timeoutSignal = Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? AbortSignal.timeout(timeoutMs)
+        : null;
+      const signal = controller && timeoutSignal
+        ? AbortSignal.any([controller.signal, timeoutSignal])
+        : controller?.signal ?? timeoutSignal ?? undefined;
+      try {
+        const response = await electronNet.fetch(url, { ...requestInit, signal });
+        return {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Array.from(response.headers.entries()),
+          body: await response.text(),
+        };
+      } finally {
+        if (controller) event.sender.removeListener("destroyed", abortOnRendererDestroyed);
+        if (requestKey) desktopFetchControllers.delete(requestKey);
+      }
+  },
+  "__fetchCancel": async (event, ...args) => {
+      const requestId = String(args[0] ?? "").trim();
+      if (!requestId) return false;
+      const controller = desktopFetchControllers.get(`${event.sender.id}:${requestId}`);
+      if (!controller) return false;
+      controller.abort("renderer_cancelled");
+      return true;
   },
   "__homeDir": async (event, ...args) => {
       return os.homedir();

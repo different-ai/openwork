@@ -1,0 +1,1 @@
+ALTER TABLE `desktop_handoff_grant` ADD `consumed_request_id_hash` varchar(64);

@@ -49,6 +49,11 @@
       "development": "./src/desktop-ipc.ts",
       "default": "./src/desktop-ipc.ts"
     },
+    "./operation-deadlines": {
+      "types": "./src/operation-deadlines.ts",
+      "development": "./src/operation-deadlines.ts",
+      "default": "./src/operation-deadlines.ts"
+    },
     "./connect-link": {
       "types": "./src/connect-link.ts",
       "development": "./src/connect-link.ts",

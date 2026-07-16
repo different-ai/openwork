@@ -295,6 +295,11 @@ export type DesktopFetchInit = {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
+  /** Correlates renderer cancellation with the main-process fetch. */
+  requestId?: string;
+  /** Absolute renderer/main-process deadline for the complete response body. */
+  deadlineAtMs?: number;
+  /** @deprecated Prefer deadlineAtMs so elapsed IPC time cannot reset the budget. */
   timeoutMs?: number;
   agentContextDiagnostics?: {
     deadlineAtMs: number;
@@ -538,6 +543,7 @@ export type DesktopCommandMap = {
   __getApplicationsForFile: { args: [target: string]; result: { name: string; appPath: string; icon: string | null }[] };
   __openWithApp: { args: [target: string, appPath: string]; result: unknown };
   __fetch: { args: [url: string, init?: DesktopFetchInit]; result: DesktopFetchResult };
+  __fetchCancel: { args: [requestId: string]; result: boolean };
   __homeDir: { args: []; result: string };
   __joinPath: { args: [...segments: string[]]; result: string };
   __setZoomFactor: { args: [factor: number]; result: boolean };

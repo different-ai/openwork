@@ -3352,9 +3352,10 @@ async function syncRuntimeMcpToOpencodeEngine(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   onlyNames?: string[],
-  options?: { throwOnFailure?: boolean },
+  options?: { throwOnFailure?: boolean; signal?: AbortSignal },
   serverState?: EngineMcpServerState | null,
 ): Promise<EngineMcpSyncResult> {
+  options?.signal?.throwIfAborted();
   const activeState = activeEngineMcpServerState(config, serverState);
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const baseUrl = connection.baseUrl?.trim() ?? "";
@@ -3401,7 +3402,13 @@ async function syncRuntimeMcpToOpencodeEngine(
   const failures: EngineMcpSyncFailure[] = [];
   const registrations: EngineMcpRegistrationResult[] = [];
   for (const [name, mcpConfig] of entries) {
-    const registration = await postMcpEntryWithRetry(url, headers, name, mcpConfig);
+    const registration = await postMcpEntryWithRetry(
+      url,
+      headers,
+      name,
+      mcpConfig,
+      options?.signal,
+    );
     registrations.push(registration);
     if (registration.failure) failures.push(registration.failure);
   }
@@ -3450,17 +3457,35 @@ async function postMcpEntryWithRetry(
   headers: Record<string, string>,
   name: string,
   mcpConfig: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<EngineMcpRegistrationResult> {
   let failure: EngineMcpSyncFailure | null = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, engineMcpSyncRetryDelayMs()));
+    signal?.throwIfAborted();
+    if (attempt > 0) {
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(handle);
+          reject(signal?.reason);
+        };
+        const handle = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, engineMcpSyncRetryDelayMs());
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+      });
+    }
     try {
       // Runtime MCP registration targets the managed loopback engine.
+      const requestTimeoutSignal = AbortSignal.timeout(15_000);
       const response = await loopbackFetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({ name, config: mcpConfig }),
-        signal: AbortSignal.timeout(15_000),
+        signal: signal
+          ? AbortSignal.any([signal, requestTimeoutSignal])
+          : requestTimeoutSignal,
       });
       if (response.ok) {
         // OpenCode's dynamic registration endpoint historically treats every
@@ -3484,6 +3509,7 @@ async function postMcpEntryWithRetry(
       };
       if (response.status < 500) return { name, status: "failed", failure };
     } catch {
+      signal?.throwIfAborted();
       failure = {
         name,
         registrationStatus: "failed",

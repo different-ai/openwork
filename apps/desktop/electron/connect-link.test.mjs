@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  createConnectExchangeRequestStore,
   createConnectLinkReplayGuard,
   desktopBootstrapFromConnectClaims,
   extractConnectExchange,
@@ -129,7 +130,7 @@ test("resolves a keyless exchange through the exact HTTPS Den endpoint", async (
   assert.equal(calls[0].url, `${apiBaseUrl}/v1/install-connect/preview`);
   assert.deepEqual(JSON.parse(calls[0].init.body), { code });
   assert.equal(calls[0].init.redirect, "error");
-  assert.equal(calls[0].init.signal, undefined);
+  assert.ok(calls[0].init.signal instanceof AbortSignal);
   assert.deepEqual(desktopBootstrapFromConnectClaims(result.claims), {
     baseUrl: "https://openwork.acme.example.com",
     apiBaseUrl,
@@ -138,6 +139,27 @@ test("resolves a keyless exchange through the exact HTTPS Den endpoint", async (
     brandLogoUrl: "https://assets.acme.example.com/wordmark.svg",
     brandIconUrl: "https://assets.acme.example.com/icon.png",
   });
+});
+
+test("sends the stable request id only when consuming a keyless exchange", async () => {
+  const code = "abcdefghijklmnopqrstuvwxyz123456";
+  const requestId = "2643c618-00ce-4da6-b28f-a6b63ab98822";
+  const apiBaseUrl = "https://api.openwork.acme.example.com";
+  const rawUrl = `openwork://connect?code=${code}&apiBaseUrl=${encodeURIComponent(apiBaseUrl)}`;
+  let body = null;
+
+  const result = await resolveConnectExchangeUrl(rawUrl, {
+    mode: "exchange",
+    requestId,
+    nowEpochSeconds: NOW,
+    fetcher: (_url, init) => {
+      body = JSON.parse(init.body);
+      return Promise.resolve(Response.json({ claims: claims({ iss: apiBaseUrl }) }));
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(body, { code, requestId });
 });
 
 test("persists accepted connect branding before applying its icon", async () => {
@@ -278,4 +300,16 @@ test("replay guard is persistent, atomic, and bounded", async () => {
   }
   const persisted = JSON.parse(await readFile(filePath, "utf8"));
   assert.ok(persisted.length <= 512);
+});
+
+test("exchange retries retain one request id across desktop restarts", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "connect-exchange-request-test-"));
+  const filePath = path.join(dir, "requests.json");
+  const first = createConnectExchangeRequestStore({ filePath });
+  const firstId = await first.getOrCreate("abcdefghijklmnopqrstuvwxyz123456");
+  assert.equal(await first.getOrCreate("abcdefghijklmnopqrstuvwxyz123456"), firstId);
+
+  const reloaded = createConnectExchangeRequestStore({ filePath });
+  assert.equal(await reloaded.getOrCreate("abcdefghijklmnopqrstuvwxyz123456"), firstId);
+  assert.notEqual(await reloaded.getOrCreate("zyxwvutsrqponmlkjihgfedcba654321"), firstId);
 });

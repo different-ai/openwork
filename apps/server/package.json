@@ -47,6 +47,7 @@
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.17.11",
+    "@openwork/types": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "drizzle-orm": "^0.45.1",
     "jsonc-parser": "^3.2.1",
@@ -55,7 +56,6 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@openwork/types": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/minimatch": "^5.1.2",
     "@types/node": "^22.10.2",

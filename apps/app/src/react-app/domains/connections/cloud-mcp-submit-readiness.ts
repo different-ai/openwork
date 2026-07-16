@@ -1,3 +1,4 @@
+import { OPENWORK_OPERATION_DEADLINES } from "@openwork/types/operation-deadlines";
 import type {
   OpenworkCloudMcpFailure,
   OpenworkCloudMcpHealth,
@@ -5,7 +6,9 @@ import type {
 } from "../../../app/lib/openwork-server";
 import type { CloudMcpUserState } from "./cloud-mcp-user-state";
 
-export const CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS = [1_000, 3_000];
+// One repair is deliberate: reconcile already performs bounded polling, so
+// more client retries only duplicate work and create overlapping deadlines.
+export const CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS = [1_000];
 
 const REQUIRED_DIRECT_TOOL_IDS = ["search_capabilities", "execute_capability"];
 const REQUIRED_PROJECTED_TOOL_IDS = [
@@ -173,7 +176,8 @@ function authResolutionIssue(): CloudMcpSubmissionIssue {
 export async function resolveCloudMcpSubmissionAuth(
   input: {
     decision: CloudMcpSubmissionGateDecision;
-    waitForResolution: () => Promise<CloudMcpSubmissionGateDecision>;
+    signal?: AbortSignal;
+    waitForResolution: (signal?: AbortSignal) => Promise<CloudMcpSubmissionGateDecision>;
   },
 ): Promise<CloudMcpSubmissionAuthResolution> {
   if (input.decision.mode !== "waiting_for_auth") {
@@ -181,7 +185,9 @@ export async function resolveCloudMcpSubmissionAuth(
   }
 
   try {
-    const decision = await input.waitForResolution();
+    input.signal?.throwIfAborted();
+    const decision = await input.waitForResolution(input.signal);
+    input.signal?.throwIfAborted();
     if (decision.mode === "waiting_for_auth") {
       return { outcome: "failed", issue: authResolutionIssue() };
     }
@@ -273,7 +279,33 @@ export function assessCloudMcpSubmissionReadiness(input: {
   return { ready: true, health };
 }
 
-function errorAssessment(): CloudMcpSubmissionReadinessAssessment {
+function isDeadlineError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error.code === "cloud_mcp_deadline_exceeded"
+      || error.code === "openwork_client_deadline_exceeded");
+}
+
+function isTimeoutAbortReason(reason: unknown): boolean {
+  return typeof reason === "object"
+    && reason !== null
+    && "name" in reason
+    && reason.name === "TimeoutError";
+}
+
+function errorAssessment(error?: unknown, deadlineExceeded = false): CloudMcpSubmissionReadinessAssessment {
+  if (deadlineExceeded || isDeadlineError(error)) {
+    return {
+      ready: false,
+      health: null,
+      issue: genericSubmissionIssue({
+        code: "cloud_mcp_submission_timeout",
+        message: "OpenWork stopped waiting for connected service readiness after the full preparation window.",
+        recommendedAction: "Retry. If this repeats, open Settings → Connect to inspect the failing stage.",
+      }),
+    };
+  }
   return {
     ready: false,
     health: null,
@@ -284,17 +316,41 @@ function errorAssessment(): CloudMcpSubmissionReadinessAssessment {
   };
 }
 
+async function waitForDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  if (delayMs <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      clearTimeout(handle);
+      cleanup();
+      reject(signal.reason);
+    };
+    const handle = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
+
 export async function ensureCloudMcpSubmissionReadiness(input: {
   providerModel: OpenworkCloudMcpProviderModelContext;
-  check: () => Promise<OpenworkCloudMcpHealth | null>;
-  repair: () => Promise<OpenworkCloudMcpHealth | null>;
+  signal?: AbortSignal;
+  check: (signal: AbortSignal) => Promise<OpenworkCloudMcpHealth | null>;
+  repair: (signal: AbortSignal) => Promise<OpenworkCloudMcpHealth | null>;
   retryDelaysMs?: number[];
-  wait?: (delayMs: number) => Promise<void>;
+  wait?: (delayMs: number, signal: AbortSignal) => Promise<void>;
   onAttempt?: (attempt: CloudMcpSubmissionAttempt) => void;
 }): Promise<CloudMcpSubmissionReadinessResult> {
   const retryDelaysMs = input.retryDelaysMs ?? CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS;
   const maxAttempts = 1 + retryDelaysMs.length;
-  const wait = input.wait ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  const timeoutSignal = AbortSignal.timeout(OPENWORK_OPERATION_DEADLINES.cloudMcpSubmissionMs);
+  const signal = input.signal
+    ? AbortSignal.any([input.signal, timeoutSignal])
+    : timeoutSignal;
+  const wait = input.wait ?? waitForDelay;
   let lastAssessment: CloudMcpSubmissionReadinessAssessment = {
     ready: false,
     health: null,
@@ -303,21 +359,28 @@ export async function ensureCloudMcpSubmissionReadiness(input: {
 
   for (let index = 0; index < maxAttempts; index += 1) {
     const phase = index === 0 ? "readiness" : "repair";
-    if (index > 0) await wait(retryDelaysMs[index - 1] ?? 0);
+    let deadlineExceeded = false;
     try {
-      const health = await (index === 0 ? input.check() : input.repair());
+      signal.throwIfAborted();
+      if (index > 0) await wait(retryDelaysMs[index - 1] ?? 0, signal);
+      const health = await (index === 0 ? input.check(signal) : input.repair(signal));
+      signal.throwIfAborted();
       if (health && healthShowsExplicitDisable(health)) {
         return { outcome: "bypass", health, attempts: index + 1, reason: "disabled" };
       }
       lastAssessment = assessCloudMcpSubmissionReadiness({ health, providerModel: input.providerModel });
-    } catch {
-      lastAssessment = errorAssessment();
+    } catch (error) {
+      const callerDeadlineExceeded = input.signal?.aborted
+        && isTimeoutAbortReason(input.signal.reason);
+      if (input.signal?.aborted && !callerDeadlineExceeded && !timeoutSignal.aborted) throw error;
+      deadlineExceeded = timeoutSignal.aborted || callerDeadlineExceeded === true;
+      lastAssessment = errorAssessment(error, deadlineExceeded);
     }
     input.onAttempt?.({ phase, attempt: index + 1, maxAttempts, assessment: lastAssessment });
     if (lastAssessment.ready) {
       return { outcome: "ready", health: lastAssessment.health, attempts: index + 1 };
     }
-    if (!lastAssessment.issue.retryable || index === maxAttempts - 1) {
+    if (deadlineExceeded || !lastAssessment.issue.retryable || index === maxAttempts - 1) {
       return {
         outcome: "failed",
         health: lastAssessment.health,
@@ -344,7 +407,7 @@ type SubmissionCoordinatorState =
 
 type SubmissionCoordinatorInput = {
   scopeKey: string;
-  prepare?: () => Promise<CloudMcpSubmissionPreparationResult>;
+  prepare?: (signal: AbortSignal) => Promise<CloudMcpSubmissionPreparationResult>;
   send: () => Promise<void>;
   onState?: (state: SubmissionCoordinatorState) => void;
 };
@@ -380,12 +443,13 @@ export function createCloudMcpSubmissionCoordinator(): CloudMcpSubmissionCoordin
     if (active) cancel("context_changed");
 
     const id = ++nextId;
+    const controller = new AbortController();
     let resolveCancellation: ((result: CloudMcpSubmissionPreparationResult) => void) | null = null;
     const cancellation = new Promise<CloudMcpSubmissionPreparationResult>((resolve) => {
       resolveCancellation = resolve;
     });
     if (input.prepare) input.onState?.({ status: "checking" });
-    const preparation = input.prepare?.() ?? Promise.resolve<CloudMcpSubmissionPreparationResult>({ outcome: "bypass" });
+    const preparation = input.prepare?.(controller.signal) ?? Promise.resolve<CloudMcpSubmissionPreparationResult>({ outcome: "bypass" });
 
     const task = (async (): Promise<CloudMcpSubmissionResult> => {
       const prepared = await Promise.race([preparation, cancellation]);
@@ -414,6 +478,7 @@ export function createCloudMcpSubmissionCoordinator(): CloudMcpSubmissionCoordin
       promise: task,
       cancel: (reason) => {
         resolveCancellation?.({ outcome: "cancelled", reason });
+        controller.abort(reason);
       },
       ...(input.onState ? { onState: input.onState } : {}),
     };

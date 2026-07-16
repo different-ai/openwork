@@ -6,7 +6,7 @@
 // packages/connect-link/src/node.ts. Compact JWS, EdDSA/Ed25519 via node:crypto.
 
 import { Buffer } from "node:buffer";
-import { createPublicKey, verify } from "node:crypto";
+import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -17,8 +17,12 @@ const CONNECT_LINK_ROUTE = "connect";
 const DEFAULT_CLOCK_SKEW_SECONDS = 60;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const CONNECT_EXCHANGE_CODE_PATTERN = /^[A-Za-z0-9_-]{24,128}$/;
+// Mirrors OPENWORK_OPERATION_DEADLINES.denHandoffExchangeMs. Electron keeps
+// zero runtime workspace dependencies, so this boundary owns its local copy.
+const CONNECT_EXCHANGE_TIMEOUT_MS = 35_000;
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 const REPLAY_GUARD_MAX_ENTRIES = 512;
+const EXCHANGE_REQUEST_MAX_ENTRIES = 128;
 
 /**
  * @param {string} value
@@ -324,6 +328,7 @@ export function verifyConnectLinkUrl(rawUrl, options) {
  * @param {{
  *   mode: "preview" | "exchange",
  *   fetcher: (url: string, init: object) => Promise<Response>,
+ *   requestId?: string,
  *   nowEpochSeconds?: number,
  *   allowInsecureLoopback?: boolean,
  * }} options
@@ -346,17 +351,29 @@ export async function resolveConnectExchangeUrl(rawUrl, options) {
   endpoint.hash = "";
 
   let response;
+  const timeoutSignal = AbortSignal.timeout(CONNECT_EXCHANGE_TIMEOUT_MS);
   try {
-    // The connect exchange is interactive Den work. Do not race it with a
-    // desktop-only deadline that can report "unavailable" while Den continues.
+    // Preview is read-only and exchange is idempotent by requestId, so both can
+    // be cancelled at the end of the visible workflow without creating an
+    // ambiguous one-time-grant result.
     response = await options.fetcher(endpoint.toString(), {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ code: exchange.code }),
+      body: JSON.stringify({
+        code: exchange.code,
+        ...(options.mode === "exchange" && options.requestId ? { requestId: options.requestId } : {}),
+      }),
       redirect: "error",
+      signal: timeoutSignal,
     });
   } catch {
-    return { ok: false, code: "unavailable", message: "The organization server could not be reached." };
+    return {
+      ok: false,
+      code: "unavailable",
+      message: timeoutSignal.aborted
+        ? "The organization server is taking longer than expected. Retry to safely continue."
+        : "The organization server could not be reached.",
+    };
   }
 
   if (response.status === 409) {
@@ -490,6 +507,58 @@ export function createConnectLinkReplayGuard(options) {
         await mkdir(path.dirname(options.filePath), { recursive: true });
         await writeFile(options.filePath, `${JSON.stringify(entries, null, 2)}\n`, "utf8");
         return true;
+      });
+      writeQueue = operation.then(() => undefined, () => undefined);
+      return operation;
+    },
+  };
+}
+
+/**
+ * Persists a random request id per exchange code hash. If Den commits an
+ * exchange but its response is lost, retrying from a restarted desktop uses
+ * the same id and recovers the committed claims instead of reporting replay.
+ *
+ * @param {{ filePath: string }} options
+ */
+export function createConnectExchangeRequestStore(options) {
+  /** @type {{ fingerprint: string, requestId: string }[] | null} */
+  let cache = null;
+  let writeQueue = Promise.resolve();
+
+  async function load() {
+    if (cache) return cache;
+    try {
+      const raw = await readFile(options.filePath, "utf8");
+      const parsed = JSON.parse(raw);
+      cache = Array.isArray(parsed)
+        ? parsed.filter((entry) => (
+            entry
+            && typeof entry === "object"
+            && typeof entry.fingerprint === "string"
+            && typeof entry.requestId === "string"
+          ))
+        : [];
+    } catch {
+      cache = [];
+    }
+    return cache;
+  }
+
+  return {
+    /** @param {string} code */
+    async getOrCreate(code) {
+      const fingerprint = createHash("sha256").update(code).digest("hex");
+      const operation = writeQueue.then(async () => {
+        const entries = await load();
+        const existing = entries.find((entry) => entry.fingerprint === fingerprint);
+        if (existing) return existing.requestId;
+        const requestId = randomUUID();
+        entries.push({ fingerprint, requestId });
+        while (entries.length > EXCHANGE_REQUEST_MAX_ENTRIES) entries.shift();
+        await mkdir(path.dirname(options.filePath), { recursive: true });
+        await writeFile(options.filePath, `${JSON.stringify(entries, null, 2)}\n`, "utf8");
+        return requestId;
       });
       writeQueue = operation.then(() => undefined, () => undefined);
       return operation;

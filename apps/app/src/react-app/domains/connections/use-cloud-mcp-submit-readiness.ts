@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { OPENWORK_OPERATION_DEADLINES } from "@openwork/types/operation-deadlines";
 
 import { readDenSettings } from "../../../app/lib/den";
 import { recordInspectorEvent } from "../../../app/lib/app-inspector";
@@ -172,10 +173,22 @@ export function useCloudMcpSubmitReadiness(
     for (const resolve of waiters) resolve();
   }, []);
 
-  const waitForAuthResolution = useCallback((): Promise<void> => {
+  const waitForAuthResolution = useCallback((signal?: AbortSignal): Promise<void> => {
     if (authStatusRef.current !== "checking") return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      authWaitersRef.current.add(resolve);
+    signal?.throwIfAborted();
+    return new Promise<void>((resolve, reject) => {
+      const finish = () => {
+        authWaitersRef.current.delete(finish);
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      const onAbort = () => {
+        authWaitersRef.current.delete(finish);
+        reject(signal?.reason);
+      };
+      authWaitersRef.current.add(finish);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
     });
   }, []);
 
@@ -183,10 +196,12 @@ export function useCloudMcpSubmitReadiness(
     const initialSnapshot = gateSnapshotRef.current;
     const capturedScopeKey = initialSnapshot.decision.scopeKey;
     const gateRequired = !submission.skipGate && initialSnapshot.decision.mode !== "bypass";
-    let prepare: (() => Promise<CloudMcpSubmissionPreparationResult>) | undefined;
+    let prepare: ((signal: AbortSignal) => Promise<CloudMcpSubmissionPreparationResult>) | undefined;
 
     if (gateRequired) {
-      prepare = async () => {
+      prepare = async (cancellationSignal) => {
+        const timeoutSignal = AbortSignal.timeout(OPENWORK_OPERATION_DEADLINES.cloudMcpSubmissionMs);
+        const signal = AbortSignal.any([cancellationSignal, timeoutSignal]);
         let activeSnapshot = initialSnapshot;
         let resolvedDecision: CloudMcpSubmissionGateDecision = initialSnapshot.decision;
 
@@ -197,8 +212,9 @@ export function useCloudMcpSubmitReadiness(
           });
           const authResolution = await resolveCloudMcpSubmissionAuth({
             decision: resolvedDecision,
-            waitForResolution: async () => {
-              await waitForAuthResolution();
+            signal,
+            waitForResolution: async (authSignal) => {
+              await waitForAuthResolution(authSignal);
               return gateSnapshotRef.current.decision;
             },
           });
@@ -241,14 +257,20 @@ export function useCloudMcpSubmitReadiness(
         }
         const result = await ensureCloudMcpSubmissionReadiness({
           providerModel,
-          check: () => client.getOpenworkCloudMcpHealth(activeWorkspaceId, providerModel),
-          repair: async () => {
+          signal,
+          check: (operationSignal) => client.getOpenworkCloudMcpHealth(
+            activeWorkspaceId,
+            providerModel,
+            { signal: operationSignal },
+          ),
+          repair: async (operationSignal) => {
             const repaired = await syncCloudControlMcpInBackground({
               client,
               workspaceId: activeWorkspaceId,
               providerModel,
               settings,
               force: true,
+              signal: operationSignal,
             });
             return repaired.health;
           },

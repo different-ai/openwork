@@ -34,6 +34,7 @@ import type {
   DesktopCommandInvokers,
   DesktopCommandName,
   DesktopCommandResult,
+  DesktopFetchResult,
   EvalRelaunchResult,
   WorkspaceList,
 } from "./desktop-types";
@@ -262,6 +263,7 @@ function isLoopbackUrl(input: RequestInfo | URL): boolean {
 }
 
 type DesktopFetchMainOptions = {
+  deadlineAtMs?: number;
   timeoutMs?: number;
   agentContextDiagnosticsDeadlineAtMs?: number;
 };
@@ -300,15 +302,29 @@ async function desktopFetchThroughMain(
   }
 
   const diagnosticsDeadlineAtMs = options.agentContextDiagnosticsDeadlineAtMs;
-  const result = await invokeElectronHelper("__fetch", url, {
-    method,
-    headers,
-    body,
-    timeoutMs: options.timeoutMs,
-    agentContextDiagnostics: diagnosticsDeadlineAtMs === undefined
-      ? undefined
-      : { deadlineAtMs: diagnosticsDeadlineAtMs },
-  });
+  const signal = init?.signal ?? (typeof Request !== "undefined" && input instanceof Request ? input.signal : undefined);
+  signal?.throwIfAborted();
+  const requestId = crypto.randomUUID();
+  const cancelMainFetch = () => {
+    void invokeElectronHelper("__fetchCancel", requestId).catch(() => undefined);
+  };
+  signal?.addEventListener("abort", cancelMainFetch, { once: true });
+  let result: DesktopFetchResult;
+  try {
+    result = await invokeElectronHelper("__fetch", url, {
+      method,
+      headers,
+      body,
+      requestId,
+      deadlineAtMs: options.deadlineAtMs,
+      timeoutMs: options.timeoutMs,
+      agentContextDiagnostics: diagnosticsDeadlineAtMs === undefined
+        ? undefined
+        : { deadlineAtMs: diagnosticsDeadlineAtMs },
+    });
+  } finally {
+    signal?.removeEventListener("abort", cancelMainFetch);
+  }
 
   // Response constructor rejects bodies for null-body status codes, so we
   // must pass null instead of an empty string for those.
@@ -329,8 +345,17 @@ export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
   return desktopFetchThroughMain(input, init);
 };
 
-export async function desktopFetchViaMain(input: RequestInfo | URL, init?: RequestInit, timeoutMs?: number): Promise<Response> {
-  return desktopFetchThroughMain(input, init, { timeoutMs });
+export async function desktopFetchViaMain(input: RequestInfo | URL, init?: RequestInit, deadlineAtMs?: number): Promise<Response> {
+  return desktopFetchThroughMain(input, init, { deadlineAtMs });
+}
+
+export async function desktopFetchWithDeadline(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  deadlineAtMs: number,
+): Promise<Response> {
+  if (isLoopbackUrl(input)) return globalThis.fetch(input, init);
+  return desktopFetchThroughMain(input, init, { deadlineAtMs });
 }
 
 export async function desktopFetchAgentContextDiagnostics(
