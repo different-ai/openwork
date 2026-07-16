@@ -211,12 +211,6 @@ export function useCloudMcpSubmitReadiness(
               outcome: "failed",
               code: authResolution.issue.code,
             });
-            if (authResolution.issue.code === "cloud_mcp_auth_resolution_timeout") {
-              recordInspectorEvent("cloud_mcp.submission_timeout", {
-                workspaceId: activeSnapshot.workspaceId,
-                stage: "auth_resolution",
-              });
-            }
             return { outcome: "failed", issue: authResolution.issue };
           }
 
@@ -283,15 +277,6 @@ export function useCloudMcpSubmitReadiness(
                 retryable: issue?.retryable ?? null,
               },
             );
-            if (issue?.code === "cloud_mcp_submission_timeout") {
-              recordInspectorEvent("cloud_mcp.submission_timeout", {
-                workspaceId: activeWorkspaceId,
-                provider: providerModel.provider,
-                model: providerModel.model,
-                attempt: attempt.attempt,
-                maxAttempts: attempt.maxAttempts,
-              });
-            }
           },
         });
         if (currentScopeKeyRef.current !== capturedScopeKey) {

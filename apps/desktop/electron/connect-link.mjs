@@ -347,12 +347,13 @@ export async function resolveConnectExchangeUrl(rawUrl, options) {
 
   let response;
   try {
+    // The connect exchange is interactive Den work. Do not race it with a
+    // desktop-only deadline that can report "unavailable" while Den continues.
     response = await options.fetcher(endpoint.toString(), {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ code: exchange.code }),
       redirect: "error",
-      signal: AbortSignal.timeout(10_000),
     });
   } catch {
     return { ok: false, code: "unavailable", message: "The organization server could not be reached." };

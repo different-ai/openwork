@@ -129,6 +129,7 @@ test("resolves a keyless exchange through the exact HTTPS Den endpoint", async (
   assert.equal(calls[0].url, `${apiBaseUrl}/v1/install-connect/preview`);
   assert.deepEqual(JSON.parse(calls[0].init.body), { code });
   assert.equal(calls[0].init.redirect, "error");
+  assert.equal(calls[0].init.signal, undefined);
   assert.deepEqual(desktopBootstrapFromConnectClaims(result.claims), {
     baseUrl: "https://openwork.acme.example.com",
     apiBaseUrl,

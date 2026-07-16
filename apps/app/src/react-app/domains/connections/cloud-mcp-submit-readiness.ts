@@ -6,8 +6,6 @@ import type {
 import type { CloudMcpUserState } from "./cloud-mcp-user-state";
 
 export const CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS = [1_000, 3_000];
-export const CLOUD_MCP_SUBMISSION_ATTEMPT_TIMEOUT_MS = 12_000;
-export const CLOUD_MCP_AUTH_RESOLUTION_TIMEOUT_MS = 12_000;
 
 const REQUIRED_DIRECT_TOOL_IDS = ["search_capabilities", "execute_capability"];
 const REQUIRED_PROJECTED_TOOL_IDS = [
@@ -164,14 +162,10 @@ export function decideCloudMcpSubmissionGate(
   return { mode: "required", scopeKey };
 }
 
-function authResolutionIssue(input?: { timedOut?: boolean }): CloudMcpSubmissionIssue {
+function authResolutionIssue(): CloudMcpSubmissionIssue {
   return genericSubmissionIssue({
-    code: input?.timedOut
-      ? "cloud_mcp_auth_resolution_timeout"
-      : "cloud_mcp_auth_resolution_failed",
-    message: input?.timedOut
-      ? "OpenWork timed out while restoring connected service access."
-      : "OpenWork could not finish restoring connected service access.",
+    code: "cloud_mcp_auth_resolution_failed",
+    message: "OpenWork could not finish restoring connected service access.",
     recommendedAction: "Retry or open Settings → Connect.",
   });
 }
@@ -180,7 +174,6 @@ export async function resolveCloudMcpSubmissionAuth(
   input: {
     decision: CloudMcpSubmissionGateDecision;
     waitForResolution: () => Promise<CloudMcpSubmissionGateDecision>;
-    timeoutMs?: number;
   },
 ): Promise<CloudMcpSubmissionAuthResolution> {
   if (input.decision.mode !== "waiting_for_auth") {
@@ -188,18 +181,13 @@ export async function resolveCloudMcpSubmissionAuth(
   }
 
   try {
-    const decision = await withTimeout(
-      input.waitForResolution,
-      input.timeoutMs ?? CLOUD_MCP_AUTH_RESOLUTION_TIMEOUT_MS,
-    );
+    const decision = await input.waitForResolution();
     if (decision.mode === "waiting_for_auth") {
       return { outcome: "failed", issue: authResolutionIssue() };
     }
     return { outcome: "resolved", decision };
-  } catch (error) {
-    const timedOut = error instanceof Error
-      && error.message === "cloud_mcp_submission_timeout";
-    return { outcome: "failed", issue: authResolutionIssue({ timedOut }) };
+  } catch {
+    return { outcome: "failed", issue: authResolutionIssue() };
   }
 }
 
@@ -285,37 +273,14 @@ export function assessCloudMcpSubmissionReadiness(input: {
   return { ready: true, health };
 }
 
-function timeoutIssue(): CloudMcpSubmissionIssue {
-  return genericSubmissionIssue({
-    code: "cloud_mcp_submission_timeout",
-    message: "OpenWork timed out while preparing connected service tools.",
-  });
-}
-
-async function withTimeout<T>(task: () => Promise<T>, timeoutMs: number): Promise<T> {
-  if (timeoutMs <= 0) return task();
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<T>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error("cloud_mcp_submission_timeout")), timeoutMs);
-  });
-  try {
-    return await Promise.race([task(), timeout]);
-  } finally {
-    if (timer !== null) clearTimeout(timer);
-  }
-}
-
-function errorAssessment(error: unknown): CloudMcpSubmissionReadinessAssessment {
-  const timedOut = error instanceof Error && error.message === "cloud_mcp_submission_timeout";
+function errorAssessment(): CloudMcpSubmissionReadinessAssessment {
   return {
     ready: false,
     health: null,
-    issue: timedOut
-      ? timeoutIssue()
-      : genericSubmissionIssue({
-          code: "cloud_mcp_submission_check_failed",
-          message: "OpenWork could not check connected service tools before sending.",
-        }),
+    issue: genericSubmissionIssue({
+      code: "cloud_mcp_submission_check_failed",
+      message: "OpenWork could not check connected service tools before sending.",
+    }),
   };
 }
 
@@ -324,13 +289,11 @@ export async function ensureCloudMcpSubmissionReadiness(input: {
   check: () => Promise<OpenworkCloudMcpHealth | null>;
   repair: () => Promise<OpenworkCloudMcpHealth | null>;
   retryDelaysMs?: number[];
-  attemptTimeoutMs?: number;
   wait?: (delayMs: number) => Promise<void>;
   onAttempt?: (attempt: CloudMcpSubmissionAttempt) => void;
 }): Promise<CloudMcpSubmissionReadinessResult> {
   const retryDelaysMs = input.retryDelaysMs ?? CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS;
   const maxAttempts = 1 + retryDelaysMs.length;
-  const timeoutMs = input.attemptTimeoutMs ?? CLOUD_MCP_SUBMISSION_ATTEMPT_TIMEOUT_MS;
   const wait = input.wait ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
   let lastAssessment: CloudMcpSubmissionReadinessAssessment = {
     ready: false,
@@ -342,13 +305,13 @@ export async function ensureCloudMcpSubmissionReadiness(input: {
     const phase = index === 0 ? "readiness" : "repair";
     if (index > 0) await wait(retryDelaysMs[index - 1] ?? 0);
     try {
-      const health = await withTimeout(index === 0 ? input.check : input.repair, timeoutMs);
+      const health = await (index === 0 ? input.check() : input.repair());
       if (health && healthShowsExplicitDisable(health)) {
         return { outcome: "bypass", health, attempts: index + 1, reason: "disabled" };
       }
       lastAssessment = assessCloudMcpSubmissionReadiness({ health, providerModel: input.providerModel });
-    } catch (error) {
-      lastAssessment = errorAssessment(error);
+    } catch {
+      lastAssessment = errorAssessment();
     }
     input.onAttempt?.({ phase, attempt: index + 1, maxAttempts, assessment: lastAssessment });
     if (lastAssessment.ready) {

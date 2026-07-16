@@ -144,7 +144,6 @@ function preparation(input: {
       check: input.check,
       repair: input.repair,
       retryDelaysMs: [0],
-      attemptTimeoutMs: 0,
     });
     if (result.outcome === "ready") return { outcome: "ready" };
     if (result.outcome === "bypass") return { outcome: "bypass" };
@@ -204,7 +203,7 @@ describe("Cloud MCP pre-send readiness", () => {
     expect(runs).toBe(1);
   });
 
-  test("a cached Cloud session waits for auth restoration and sends exactly once", async () => {
+  test("a cached Cloud session waits for auth restoration without a caller deadline and sends exactly once", async () => {
     const coordinator = createCloudMcpSubmissionCoordinator();
     const checking = requiredDecision({ authStatus: "checking", hasSessionToken: true });
     const signedIn = requiredDecision();
@@ -223,7 +222,6 @@ describe("Cloud MCP pre-send readiness", () => {
         const resolution = await resolveCloudMcpSubmissionAuth({
           decision: checking,
           waitForResolution: () => authResolution,
-          timeoutMs: 0,
         });
         if (resolution.outcome === "failed") {
           return { outcome: "failed", issue: resolution.issue };
@@ -254,35 +252,6 @@ describe("Cloud MCP pre-send readiness", () => {
     await expect(first).resolves.toEqual({ outcome: "sent", bypassed: false });
     await expect(second).resolves.toEqual({ outcome: "sent", bypassed: false });
     expect({ checks, runs }).toEqual({ checks: 1, runs: 1 });
-  });
-
-  test("an auth restoration timeout creates no run", async () => {
-    const coordinator = createCloudMcpSubmissionCoordinator();
-    const checking = requiredDecision({ authStatus: "checking", hasSessionToken: true });
-    let runs = 0;
-    const result = await coordinator.submit({
-      scopeKey: checking.scopeKey,
-      prepare: async () => {
-        const resolution = await resolveCloudMcpSubmissionAuth({
-          decision: checking,
-          waitForResolution: () => new Promise<CloudMcpSubmissionGateDecision>(() => undefined),
-          timeoutMs: 1,
-        });
-        if (resolution.outcome === "failed") {
-          return { outcome: "failed", issue: resolution.issue };
-        }
-        return { outcome: "ready" };
-      },
-      send: async () => {
-        runs += 1;
-      },
-    });
-
-    expect(result).toMatchObject({
-      outcome: "blocked",
-      issue: { code: "cloud_mcp_auth_resolution_timeout" },
-    });
-    expect(runs).toBe(0);
   });
 
   test("a permanent injection failure creates no run and preserves the exact draft", async () => {

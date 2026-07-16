@@ -1132,6 +1132,10 @@ const resolveFetch = (url?: string) => {
 
 const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;
 const ENGINE_RELOAD_TIMEOUT_MS = 60_000;
+// Den-connected Cloud MCP operations already have server-owned probe
+// deadlines. A second client deadline can only hide the structured server
+// result while the underlying operation continues.
+const NO_CLIENT_TIMEOUT = null;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -1139,9 +1143,9 @@ async function fetchWithTimeout(
   fetchImpl: FetchLike,
   url: string,
   init: RequestInit,
-  timeoutMs: number,
+  timeoutMs: number | null,
 ) {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  if (timeoutMs === null || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return fetchImpl(url, init);
   }
 
@@ -1177,7 +1181,7 @@ async function fetchWithTimeout(
 async function requestJson<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
+  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number | null } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch(url);
@@ -1189,7 +1193,7 @@ async function requestJson<T>(
       headers: buildHeaders(options.token, options.hostToken),
       body: options.body ? JSON.stringify(options.body) : undefined,
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    options.timeoutMs === null ? null : options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
   );
 
   const text = await response.text();
@@ -1321,8 +1325,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     status: 6_000,
     diagnostics: AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
     config: 10_000,
-    cloudMcpHealth: 12_000,
-    cloudMcpReconcile: 60_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
     binary: 60_000,
@@ -1789,7 +1791,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       return requestJson<OpenworkCloudMcpHealth>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/health${suffix}`,
-        { token, hostToken, timeoutMs: timeouts.cloudMcpHealth },
+        { token, hostToken, timeoutMs: NO_CLIENT_TIMEOUT },
       );
     },
     reconcileOpenworkCloudMcp: (workspaceId: string, payload: OpenworkCloudMcpReconcilePayload) =>
@@ -1801,7 +1803,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "POST",
           body: payload,
-          timeoutMs: timeouts.cloudMcpReconcile,
+          timeoutMs: NO_CLIENT_TIMEOUT,
         },
       ),
     runAgentContextDiagnostics: async (
