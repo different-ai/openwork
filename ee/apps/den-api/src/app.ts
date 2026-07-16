@@ -39,6 +39,7 @@ type AppVariables = RequestIdVariables & AuthContextVariables & Partial<UserOrga
 const healthResponseSchema = z.object({
   ok: z.literal(true),
   service: z.literal("den-api"),
+  version: z.string(),
 }).meta({ ref: "DenApiHealthResponse" })
 
 const readinessResponseSchema = z.object({
@@ -116,7 +117,7 @@ app.get(
     if (env.marketingUrl) {
       return c.redirect(env.marketingUrl, 302)
     }
-    return c.json({ ok: true, service: "den-api" })
+    return c.json({ ok: true, service: "den-api", version: env.serviceVersion })
   },
 )
 
@@ -139,7 +140,7 @@ app.get(
   }),
   publicRoute,
   (c) => {
-    return c.json({ ok: true, service: "den-api" })
+    return c.json({ ok: true, service: "den-api", version: env.serviceVersion })
   },
 )
 
@@ -198,7 +199,7 @@ app.get(
       openapi: "3.1.0",
       info: {
         title: "Den API",
-        version: "dev",
+        version: env.serviceVersion,
         description: [
           "OpenAPI spec for the Den control plane API.",
           "",
