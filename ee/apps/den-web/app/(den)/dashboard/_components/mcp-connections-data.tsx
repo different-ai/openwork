@@ -462,6 +462,44 @@ export type UpdateMcpConnectionInput = {
   access: McpConnectionAccessInput;
 };
 
+export type McpConnectionResolution = {
+  resolution: "preset" | "discovered" | "not_found";
+  attempted: string[];
+  reason?: string;
+  preset?: ExternalMcpPreset;
+  match?: {
+    url: string;
+    suggestedName: string;
+    discovery: McpRequirementsDiscovery;
+  };
+};
+
+/**
+ * Smart resolution for the add-connection flow: sends whatever the admin
+ * typed (URL, bare host, or product name) and gets back a matched preset or
+ * a probed endpoint with its requirements discovery inline.
+ */
+export function useResolveMcpConnection() {
+  const { orgId } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (query: string): Promise<McpConnectionResolution> => {
+      const { response, payload } = await requestJson(
+        "/v1/mcp-connections/resolve",
+        {
+          method: "POST",
+          headers: getOrgScopeHeaders(requireOrgId(orgId)),
+          body: JSON.stringify({ query }),
+        },
+        30000,
+      );
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to look up the MCP server (${response.status}).`);
+      }
+      return payload as McpConnectionResolution;
+    },
+  });
+}
+
 export function useDiscoverMcpConnectionRequirements() {
   const { orgId } = useOrgDashboard();
   return useMutation({

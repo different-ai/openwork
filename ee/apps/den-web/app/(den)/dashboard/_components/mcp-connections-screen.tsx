@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Sparkles, Trash2, Users, Wrench } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -31,6 +31,7 @@ import {
   type ExternalMcpCredentialMode,
   type ExternalMcpPreset,
   type ExternalMcpTool,
+  type McpConnectionResolution,
   type McpRequirementsDiscovery,
   type McpConnectionAccessInput,
   type UpdatedMcpConnection,
@@ -45,17 +46,27 @@ import {
   useMcpConnections,
   useMcpConnectionTools,
   useNativeProviderClient,
+  useResolveMcpConnection,
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
   useTelegramConnection,
   useUpdateMcpConnection,
 } from "./mcp-connections-data";
+import {
+  classifySmartAddInput,
+  filterPresetSuggestions,
+  planSmartAdd,
+  smartAddAuthLabel,
+} from "./mcp-connection-smart-add";
 import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
 import { TelegramDialog } from "./telegram-dialog";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
 const MCP_REQUIREMENTS_DISCOVERY_DELAY_MS = 500;
+// Smart resolve fans out server-side probes, so it debounces longer than the
+// single-URL requirements discovery.
+const SMART_RESOLVE_DELAY_MS = 800;
 const MCP_TOOL_PAGE_SIZE = 50;
 const MCP_OAUTH_REDIRECT_DOCS_URL = "https://openworklabs.com/docs/cloud/share-with-your-team/shared-mcp-connections#oauth-redirect-url";
 
@@ -412,7 +423,7 @@ export function McpConnectionsScreen() {
             </span>
             <span>
               <span className="block text-[14px] font-semibold text-gray-900">MCP server</span>
-              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Connect one remote MCP server by URL.</span>
+              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Paste a URL or just type a name — we&apos;ll figure out the rest.</span>
             </span>
           </button>
           <button
@@ -554,6 +565,7 @@ export function McpConnectionsScreen() {
       <AddConnectionDialog
         open={formOpen}
         preset={formPreset}
+        presets={presets}
         submitting={createConnection.isPending}
         error={createConnection.error}
         onClose={() => {
@@ -1960,6 +1972,7 @@ function EditConnectionDialog({
 function AddConnectionDialog({
   open,
   preset,
+  presets,
   submitting,
   error,
   onClose,
@@ -1967,6 +1980,7 @@ function AddConnectionDialog({
 }: {
   open: boolean;
   preset: ExternalMcpPreset | null;
+  presets: ExternalMcpPreset[];
   submitting: boolean;
   error: unknown;
   onClose: () => void;
@@ -1977,6 +1991,18 @@ function AddConnectionDialog({
 }) {
   const { orgContext } = useOrgDashboard();
   const discoverRequirements = useDiscoverMcpConnectionRequirements();
+  const resolveConnection = useResolveMcpConnection();
+  // "smart": one input, we find and check the server. "advanced": the full
+  // form — reachable any time through the Advanced setup link, and the
+  // landing view for preset tiles (they arrive prefilled already).
+  const [view, setView] = useState<"smart" | "advanced">(preset ? "advanced" : "smart");
+  const [smartQuery, setSmartQuery] = useState("");
+  const [smartState, setSmartState] = useState<"idle" | "waiting" | "resolving" | "done" | "error">("idle");
+  const [smartError, setSmartError] = useState<unknown>(null);
+  const [resolution, setResolution] = useState<McpConnectionResolution | null>(null);
+  const [smartName, setSmartName] = useState("");
+  const smartRequestId = useRef(0);
+  const smartResolveDelayRef = useRef(SMART_RESOLVE_DELAY_MS);
   const [name, setName] = useState(preset?.displayName ?? "");
   const [url, setUrl] = useState(preset?.url ?? "");
   const [authType, setAuthType] = useState<ExternalMcpAuthType>(preset?.authType ?? "oauth");
@@ -1997,6 +2023,14 @@ function AddConnectionDialog({
 
   useEffect(() => {
     if (!open) return;
+    setView(preset ? "advanced" : "smart");
+    setSmartQuery("");
+    setSmartState("idle");
+    setSmartError(null);
+    setResolution(null);
+    setSmartName("");
+    smartRequestId.current += 1;
+    smartResolveDelayRef.current = SMART_RESOLVE_DELAY_MS;
     setName(preset?.displayName ?? "");
     setUrl(preset?.url ?? "");
     setAuthType(preset?.authType ?? "oauth");
@@ -2068,7 +2102,9 @@ function AddConnectionDialog({
   useEffect(() => {
     const requestId = discoveryRequestId.current + 1;
     discoveryRequestId.current = requestId;
-    if (!open) {
+    // The smart view carries its own discovery inside the resolve result;
+    // per-URL discovery only runs while the full form is visible.
+    if (!open || view !== "advanced") {
       setDiscoveryState("idle");
       return;
     }
@@ -2089,7 +2125,108 @@ function AddConnectionDialog({
       void discover(targetUrl, requestId);
     }, MCP_REQUIREMENTS_DISCOVERY_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [open, url]);
+  }, [open, url, view]);
+
+  async function resolveSmart(query: string, requestId: number) {
+    setSmartState("resolving");
+    try {
+      const result = await resolveConnection.mutateAsync(query.trim());
+      if (smartRequestId.current !== requestId) return;
+      setResolution(result);
+      setSmartName(result.match?.suggestedName ?? result.preset?.displayName ?? "");
+      setSmartState("done");
+    } catch (resolveFailure) {
+      if (smartRequestId.current !== requestId) return;
+      setSmartError(resolveFailure);
+      setSmartState("error");
+    }
+  }
+
+  useEffect(() => {
+    if (!open || view !== "smart") return;
+    const requestId = smartRequestId.current + 1;
+    smartRequestId.current = requestId;
+    setResolution(null);
+    setSmartError(null);
+    const kind = classifySmartAddInput(smartQuery);
+    if (kind === "empty" || kind === "invalid") {
+      setSmartState("idle");
+      return;
+    }
+    setSmartState("waiting");
+    const delay = smartResolveDelayRef.current;
+    smartResolveDelayRef.current = SMART_RESOLVE_DELAY_MS;
+    const timer = window.setTimeout(() => {
+      void resolveSmart(smartQuery, requestId);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [open, view, smartQuery]);
+
+  // Suggestions stay visible until a concrete match card renders — after a
+  // not_found in particular, "noti" should still offer Notion.
+  const presetSuggestions = useMemo(
+    () => (view === "smart" && !(smartState === "done" && resolution?.match) ? filterPresetSuggestions(presets, smartQuery) : []),
+    [presets, smartQuery, view, smartState, resolution],
+  );
+
+  function selectPresetSuggestion(suggestion: ExternalMcpPreset) {
+    // Suggestion taps resolve immediately — the debounce exists for typing.
+    smartResolveDelayRef.current = 0;
+    setSmartQuery(suggestion.displayName);
+  }
+
+  const smartMatch = smartState === "done" ? resolution?.match ?? null : null;
+  const smartPlan = smartMatch
+    ? planSmartAdd(smartMatch.discovery, { name: smartName.trim() || smartMatch.suggestedName, url: smartMatch.url })
+    : null;
+  // A curated preset can demand org-level input (Slack's pre-registered OAuth
+  // app, Exa's API key) even when the live probe alone would look one-click.
+  const smartBlockers = smartPlan
+    ? smartPlan.readiness !== "one_click"
+      ? smartPlan.reasons
+      : resolution?.preset?.requiresOAuthClient
+        ? ["This provider needs a pre-registered OAuth app."]
+        : resolution?.preset?.authType === "apikey"
+          ? ["This provider needs your org's API key."]
+          : []
+    : [];
+  const smartOneClick = smartPlan?.readiness === "one_click" && smartBlockers.length === 0 ? smartPlan : null;
+
+  function transferToAdvanced() {
+    discoveryRequestId.current += 1;
+    if (smartMatch) {
+      setName(smartName.trim() || smartMatch.suggestedName);
+      setUrl(smartMatch.url);
+      if (resolution?.preset) {
+        setAuthType(resolution.preset.authType);
+        setShowOAuthClient(Boolean(resolution.preset.requiresOAuthClient));
+      } else if (smartMatch.discovery.authentication.kind === "manual_bearer") {
+        setAuthType("apikey");
+      }
+    } else if (resolution?.preset) {
+      setName(resolution.preset.displayName);
+      setUrl(resolution.preset.url);
+      setAuthType(resolution.preset.authType);
+      setShowOAuthClient(Boolean(resolution.preset.requiresOAuthClient));
+    } else {
+      const kind = classifySmartAddInput(smartQuery);
+      if (kind === "url") setUrl(smartQuery.trim());
+      else if (kind === "domain") setUrl(`https://${smartQuery.trim()}`);
+      else if (kind === "name") setName(smartQuery.trim());
+    }
+    setView("advanced");
+  }
+
+  async function submitSmart() {
+    if (!smartOneClick) return;
+    try {
+      await onSubmit(smartOneClick.input, {
+        startOAuth: smartOneClick.input.authType === "oauth" && smartOneClick.input.credentialMode === "shared",
+      });
+    } catch {
+      // The mutation's typed error is rendered by the dialog's error prop.
+    }
+  }
 
   function retryDiscovery() {
     const targetUrl = url.trim();
@@ -2142,6 +2279,166 @@ function AddConnectionDialog({
         className="max-h-[calc(100dvh-3rem)] w-full max-w-md overflow-y-auto overscroll-contain rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
+        {view === "smart" ? (
+          <>
+            <h2 className="flex items-center gap-2 text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+              <Sparkles className="h-4 w-4 text-gray-400" />
+              Add a connection
+            </h2>
+            <p className="mt-1.5 text-[13px] leading-5 text-gray-500">
+              Paste a server URL — or just type a name like <span className="font-medium text-gray-700">vercel</span> — and we&apos;ll find and check it for you.
+            </p>
+
+            <div className="mt-5">
+              <DenInput
+                autoFocus
+                value={smartQuery}
+                onChange={(event) => setSmartQuery(event.target.value)}
+                placeholder="vercel — or https://mcp.vercel.com/mcp"
+                data-testid="smart-add-query-input"
+              />
+            </div>
+
+            {presetSuggestions.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {presetSuggestions.map((suggestion) => (
+                  <button
+                    key={suggestion.presetId}
+                    type="button"
+                    onClick={() => selectPresetSuggestion(suggestion)}
+                    className="flex items-center gap-2 rounded-full border border-gray-200 py-1.5 pl-2 pr-3 text-[12px] font-medium text-gray-700 transition hover:border-gray-400 hover:text-gray-950"
+                  >
+                    <IntegrationIcon name={suggestion.displayName} serviceUrl={suggestion.url} className="h-5 w-5 rounded-md" imageClassName="h-3.5 w-3.5" />
+                    {suggestion.displayName}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {smartState === "waiting" || smartState === "resolving" ? (
+              <div className="mt-4 flex items-center gap-2.5 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3.5 text-[13px] text-gray-500" role="status">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {smartState === "resolving" ? "Checking the server…" : "Looking it up…"}
+              </div>
+            ) : null}
+
+            {smartState === "error" ? (
+              <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 px-4 py-3.5 text-[13px] text-red-700" role="alert">
+                {smartError instanceof Error ? smartError.message : "The lookup failed. Try again, or set the server up manually."}
+              </div>
+            ) : null}
+
+            {smartState === "done" && resolution?.resolution === "not_found" ? (
+              <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3.5 text-[13px] leading-5 text-gray-600">
+                {resolution.reason ?? `We couldn't find an MCP server for "${smartQuery.trim()}". Double-check the address, or set it up manually below.`}
+              </div>
+            ) : null}
+
+            {smartMatch ? (
+              <div data-testid="smart-add-result-card" className="mt-4 rounded-2xl border border-gray-200 p-4">
+                <div className="flex items-start gap-3">
+                  <IntegrationIcon name={smartName || smartMatch.suggestedName} serviceUrl={smartMatch.url} />
+                  <div className="min-w-0 flex-1">
+                    <DenInput
+                      value={smartName}
+                      onChange={(event) => setSmartName(event.target.value)}
+                      placeholder={smartMatch.suggestedName || "Connection name"}
+                      aria-label="Connection name"
+                    />
+                    <p className="mt-1.5 truncate text-[12px] text-gray-500">{smartMatch.url}</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] font-medium">
+                  <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">{smartAddAuthLabel(smartMatch.discovery)}</span>
+                  {typeof smartMatch.discovery.tools.count === "number" && smartMatch.discovery.tools.count > 0 ? (
+                    <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">
+                      {smartMatch.discovery.tools.count} tool{smartMatch.discovery.tools.count === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                  {smartOneClick ? (
+                    <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700">Ready to add</span>
+                  ) : null}
+                </div>
+                {smartOneClick && smartOneClick.input.authType === "oauth" ? (
+                  <p className="mt-3 text-[12px] leading-5 text-gray-500">
+                    Everyone in the org gets this connection, and each person signs in with their own account. Fine-tune who and how under More options.
+                  </p>
+                ) : null}
+                {smartBlockers.length > 0 ? (
+                  <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2.5 text-[12px] leading-5 text-amber-800">
+                    Needs a little more setup: {smartBlockers.join(" · ")}
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={transferToAdvanced}
+                  className="mt-3 text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
+                >
+                  {smartOneClick ? "More options" : "Continue setup"}
+                </button>
+              </div>
+            ) : null}
+
+            {smartState === "done" && !smartMatch && resolution?.preset ? (
+              <div className="mt-4 rounded-2xl border border-gray-200 p-4">
+                <div className="flex items-start gap-3">
+                  <IntegrationIcon name={resolution.preset.displayName} serviceUrl={resolution.preset.url} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[14px] font-semibold text-gray-900">{resolution.preset.displayName}</p>
+                    <p className="mt-0.5 truncate text-[12px] text-gray-500">{resolution.preset.url}</p>
+                  </div>
+                </div>
+                <p className="mt-3 text-[12px] leading-5 text-gray-500">{resolution.preset.description}</p>
+                <button
+                  type="button"
+                  onClick={transferToAdvanced}
+                  className="mt-3 text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
+                >
+                  Continue setup
+                </button>
+              </div>
+            ) : null}
+
+            {error ? (
+              <p className="mt-3 text-[13px] text-red-600">{error instanceof Error ? error.message : "Failed to add connection."}</p>
+            ) : null}
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                type="button"
+                onClick={transferToAdvanced}
+                className="text-left text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
+              >
+                Advanced setup
+              </button>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                <DenButton variant="secondary" onClick={onClose} disabled={submitting}>
+                  Cancel
+                </DenButton>
+                <DenButton
+                  variant="primary"
+                  loading={submitting}
+                  disabled={!smartOneClick}
+                  onClick={() => void submitSmart()}
+                  data-testid="smart-add-submit"
+                >
+                  Add connection
+                </DenButton>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+        {!preset ? (
+          <button
+            type="button"
+            onClick={() => setView("smart")}
+            className="mb-2 flex items-center gap-1 text-[12px] font-medium text-gray-500 transition hover:text-gray-900"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Quick add
+          </button>
+        ) : null}
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
           {preset ? `Add ${preset.displayName}` : "Add a custom MCP server"}
         </h2>
@@ -2371,6 +2668,8 @@ function AddConnectionDialog({
             Add connection
           </DenButton>
         </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -73,6 +73,14 @@ import {
 import type { MemberTeamSummary } from "../../orgs.js"
 import { EXTERNAL_MCP_PRESETS } from "../../capability-sources/external-mcp-presets.js"
 import {
+  MAX_RESOLVE_QUERY_LENGTH,
+  classifyResolveQuery,
+  discoveryQualifiesAsMcp,
+  matchPresetForQuery,
+  resolveCandidateUrls,
+  suggestConnectionName,
+} from "../../capability-sources/external-mcp-resolve.js"
+import {
   EXTERNAL_MCP_DIAGNOSTIC_PHASES,
   externalMcpDiagnosticForLog,
   externalMcpDiagnosticForResponse,
@@ -91,6 +99,10 @@ const connectionParamsSchema = idParamSchema("connectionId", "externalMcpConnect
 const logger = appLogger.child({ component: "mcp_connections" })
 const MANUAL_MCP_TOOL_REQUEST_MAX_BYTES = 1024 * 1024
 const externalMcpDiscoveryFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
+
+// Smart-resolve probes several candidate endpoints concurrently, so each one
+// gets a tighter deadline than a single-URL discovery.
+const MCP_RESOLVE_PROBE_TIMEOUT_MS = 8_000
 
 const accessInputSchema = z.object({
   orgWide: z.boolean().optional().default(false),
@@ -448,6 +460,25 @@ const presetResponseSchema = z.object({
 const presetListResponseSchema = z.object({
   presets: z.array(presetResponseSchema),
 }).meta({ ref: "ExternalMcpPresetListResponse" })
+
+const resolveConnectionBodySchema = z.object({
+  /** Free-form: a full URL, a bare host, or a product name like "vercel". */
+  query: z.string().min(1).max(MAX_RESOLVE_QUERY_LENGTH),
+}).meta({ ref: "ExternalMcpResolveInput" })
+
+const resolveConnectionResponseSchema = z.object({
+  resolution: z.enum(["preset", "discovered", "not_found"]),
+  /** Candidate endpoint URLs that were probed, in preference order. */
+  attempted: z.array(z.string()),
+  /** Why the query produced no candidates (only for not_found). */
+  reason: z.string().optional(),
+  preset: presetResponseSchema.optional(),
+  match: z.object({
+    url: z.string(),
+    suggestedName: z.string(),
+    discovery: requirementsDiscoveryResponseSchema,
+  }).optional(),
+}).meta({ ref: "ExternalMcpResolveResult" })
 
 const connectStartResponseSchema = z.object({
   status: z.enum(["connected", "needs_auth"]),
@@ -1134,6 +1165,69 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     orgMemberRoute(),
     async (c) => {
       return c.json({ presets: EXTERNAL_MCP_PRESETS })
+    },
+  )
+
+  app.post(
+    "/v1/mcp-connections/resolve",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "Resolve a free-form query to an MCP server",
+      description: "Admin-only, side-effect-free smart resolution for the add-connection flow. Accepts a URL, a bare host, or a product name (\"vercel\"), matches curated presets, probes bounded well-known endpoint candidates through the SSRF-guarded discovery fetch, and returns the winning URL with its requirements discovery. It performs no client registration, credential write, or connection creation.",
+      responses: {
+        200: jsonResponse("Resolution result (not_found is a successful outcome).", resolveConnectionResponseSchema),
+        400: jsonResponse("Invalid request.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can resolve MCP servers.", forbiddenSchema),
+      },
+    }),
+    orgMemberRoute(),
+    jsonValidator(resolveConnectionBodySchema),
+    async (c) => {
+      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can resolve MCP servers.")
+      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+      const { query } = c.req.valid("json")
+
+      const classification = classifyResolveQuery(query)
+      if (classification.kind === "invalid") {
+        return c.json({ resolution: "not_found" as const, attempted: [], reason: classification.reason })
+      }
+
+      const preset = matchPresetForQuery(query, EXTERNAL_MCP_PRESETS)
+      const candidates = preset ? [preset.url] : resolveCandidateUrls(classification)
+      const guessed = !preset && classification.kind === "name"
+      const probes = await Promise.all(candidates.map(async (candidateUrl) => {
+        try {
+          const discovery = await discoverConnectionRequirements({
+            serverUrl: candidateUrl,
+            fetch: externalMcpDiscoveryFetch,
+            timeoutMs: MCP_RESOLVE_PROBE_TIMEOUT_MS,
+          })
+          return { url: candidateUrl, discovery }
+        } catch {
+          // A candidate that cannot even be fetched (guard rejection, bad
+          // URL) simply loses to the other candidates.
+          return null
+        }
+      }))
+      const match = probes.find((probe) => probe !== null && discoveryQualifiesAsMcp(probe.discovery, { guessed })) ?? null
+
+      if (preset) {
+        return c.json({
+          resolution: "preset" as const,
+          attempted: candidates,
+          preset,
+          ...(match ? { match: { url: match.url, suggestedName: preset.displayName, discovery: match.discovery } } : {}),
+        })
+      }
+      if (!match) {
+        return c.json({ resolution: "not_found" as const, attempted: candidates })
+      }
+      return c.json({
+        resolution: "discovered" as const,
+        attempted: candidates,
+        match: { url: match.url, suggestedName: suggestConnectionName(match.url), discovery: match.discovery },
+      })
     },
   )
 
