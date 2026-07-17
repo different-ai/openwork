@@ -581,6 +581,20 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     expect(blocked.status).toBe(409)
     expect(await responseRecord(blocked)).toMatchObject({ error: "marketplace_managed" })
 
+    const beforeClientConfiguration = await currentConnection(connection.id)
+    const configuredClient = await humanRequest({
+      connectionId: connection.id,
+      body: updateBody(beforeClientConfiguration, {
+        oauthClient: { clientId: "marketplace-client", clientSecret: "marketplace-secret" },
+      }),
+    })
+    expect(configuredClient.status).toBe(200)
+    expect(JSON.stringify(await responseRecord(configuredClient))).not.toContain("marketplace-secret")
+    expect(await oauthCredentials.getOrgOAuthClient(organizationId, connection.id)).toMatchObject({
+      clientId: "marketplace-client",
+      clientSecret: "marketplace-secret",
+    })
+
     const fresh = await currentConnection(connection.id)
     const apiOrderedConfiguration = oauthConfigurationInApiOrder(fresh)
     expect(Object.keys(fresh.oauthConfiguration ?? {})).not.toEqual(Object.keys(apiOrderedConfiguration))

@@ -1,11 +1,18 @@
 import { describe, expect, test } from "bun:test";
 
 import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "../app/(den)/dashboard/_components/mcp-connection-display";
+import {
+  connectionNeedsOAuthClientConfiguration,
+  marketplaceConnectionNeedsAdminSetup,
+  marketplaceConnectionSetupTarget,
+} from "../app/(den)/dashboard/_components/mcp-connection-setup";
 import type { ExternalMcpConnection, ExternalMcpPreset, ExternalMcpRequiredBy } from "../app/(den)/dashboard/_components/mcp-connections-data";
 import { parseMarketplaceResolvedPayload, type MarketplacePluginCloudReadinessConnection } from "../app/(den)/dashboard/_components/marketplace-data";
+import { pluginMcpEntries } from "../app/(den)/dashboard/_components/plugin-data";
 import {
   findPresetForRequirement,
   pluginReadinessConnectionAction,
+  pluginRequirementNeedsAdminSetup,
   pluginSetupAuthType,
   pluginSetupCredentialMode,
   pluginSetupInitialState,
@@ -24,6 +31,7 @@ function connection(input: { id: string; name: string; requiredBy?: ExternalMcpR
     connectedAt: null,
     connectedForMe: false,
     requiredBy: input.requiredBy ?? [],
+    identityManagedBy: [],
     access: null,
   };
 }
@@ -39,6 +47,37 @@ function requirement(url: string): MarketplacePluginCloudReadinessConnection {
 }
 
 describe("marketplace MCP readiness parsing", () => {
+  test("treats marketplace-created URL MCPs as remote", () => {
+    expect(pluginMcpEntries({
+      description: "Linear",
+      id: "cfg_linear",
+      normalizedPayload: {
+        mcpServers: {
+          linear: { type: "remote", url: "https://mcp.linear.app/mcp" },
+        },
+      },
+      title: "Linear",
+    })).toEqual([{
+      configObjectId: "cfg_linear",
+      description: "Linear",
+      id: "cfg_linear",
+      name: "Linear",
+      serverName: "linear",
+      toolCount: 0,
+      transport: "http",
+      url: "https://mcp.linear.app/mcp",
+    }]);
+  });
+
+  test("keeps command-based MCPs desktop only", () => {
+    expect(pluginMcpEntries({
+      description: "Local Linear",
+      id: "cfg_local_linear",
+      normalizedPayload: { command: "npx" },
+      title: "Linear",
+    })[0]?.transport).toBe("stdio");
+  });
+
   test("preserves cloud readiness connection provenance fields", () => {
     const parsed = parseMarketplaceResolvedPayload({
       item: {
@@ -62,11 +101,16 @@ describe("marketplace MCP readiness parsing", () => {
             state: "needs_admin_setup",
             hasInstructional: true,
             connections: [{
+              authType: "oauth",
+              authTypeMismatch: false,
               configObjectId: "cfg_slack",
               id: null,
               name: "slack",
               serverName: "slack",
               url: "https://mcp.slack.com/mcp",
+              oauthClientConfigured: false,
+              oauthClientRequired: true,
+              requiredAuthType: "oauth",
             }],
           },
         }],
@@ -75,11 +119,16 @@ describe("marketplace MCP readiness parsing", () => {
     });
 
     expect(parsed.plugins[0]?.cloudReadiness?.connections[0]).toEqual({
+      authType: "oauth",
+      authTypeMismatch: false,
       configObjectId: "cfg_slack",
       id: null,
       name: "slack",
       serverName: "slack",
       url: "https://mcp.slack.com/mcp",
+      oauthClientConfigured: false,
+      oauthClientRequired: true,
+      requiredAuthType: "oauth",
     });
   });
 
@@ -152,10 +201,10 @@ describe("marketplace MCP readiness parsing", () => {
     const apiKey = pluginSetupSuccessCopy({ authType: "apikey", credentialMode: "shared", pluginName: "Search Ops", serviceName: "Exa" });
     const noAuth = pluginSetupSuccessCopy({ authType: "none", credentialMode: "shared", pluginName: "Docs Ops", serviceName: "Context7" });
 
-    expect(perMember.body).toContain("Assigned users connect their own account");
-    expect(perMember.linkLabel).toBe("Open Your Connections");
-    expect(shared.body).toContain("Connect the organization account");
-    expect(shared.linkLabel).toBe("Connect organization account");
+    expect(perMember.body).toContain("Use Connect to authorize an account");
+    expect(perMember.linkLabel).toBeNull();
+    expect(shared.body).toContain("Use Connect to authorize the organization account");
+    expect(shared.linkLabel).toBeNull();
     expect(apiKey.body).toContain("ready");
     expect(apiKey.linkLabel).toBeNull();
     expect(noAuth.body).toContain("No user sign-in is needed");
@@ -175,14 +224,39 @@ describe("marketplace MCP readiness parsing", () => {
 
     expect(pluginReadinessConnectionAction(requirement, true)).toEqual({
       connectionId: "emc_shared_slack",
-      label: "Connect organization account",
-      note: "An admin connects one organization account from Your Connections. OAuth starts only after an admin clicks Connect there.",
+      label: "Connect",
+      note: "Authorize one organization account without leaving this page.",
       type: "connect_org",
     });
     expect(pluginReadinessConnectionAction(requirement, false)).toBeNull();
   });
 
-  test("projects existing per-member disconnected requirements as Your Connections handoffs", () => {
+  test("keeps imported OAuth requirements in admin setup until their required client exists", () => {
+    const requirement: MarketplacePluginCloudReadinessConnection = {
+      authType: "oauth",
+      configObjectId: "cfg_slack",
+      id: "emc_shared_slack",
+      name: "Support Operations / slack",
+      serverName: "slack",
+      url: "https://mcp.slack.com/mcp",
+      credentialMode: "per_member",
+      connectedForMe: false,
+      oauthClientConfigured: false,
+      oauthClientRequired: true,
+    };
+
+    expect(pluginRequirementNeedsAdminSetup(requirement)).toBe(true);
+    expect(pluginRequirementNeedsAdminSetup({ ...requirement, oauthClientConfigured: true })).toBe(false);
+    expect(pluginRequirementNeedsAdminSetup({
+      ...requirement,
+      authType: "none",
+      authTypeMismatch: true,
+      oauthClientConfigured: true,
+      requiredAuthType: "oauth",
+    })).toBe(true);
+  });
+
+  test("projects existing per-member disconnected requirements as in-place connect actions", () => {
     const requirement: MarketplacePluginCloudReadinessConnection = {
       configObjectId: "cfg_slack",
       id: "emc_member_slack",
@@ -195,20 +269,74 @@ describe("marketplace MCP readiness parsing", () => {
 
     expect(pluginReadinessConnectionAction(requirement, true)).toEqual({
       connectionId: "emc_member_slack",
-      label: "Open Your Connections",
-      note: "Assigned members connect individually from Your Connections. This link only focuses the connection; it will not start OAuth.",
+      label: "Connect",
+      note: "Authorize your account without leaving this page.",
       type: "connect_member",
     });
     expect(pluginReadinessConnectionAction(requirement, false)).toEqual({
       connectionId: "emc_member_slack",
-      label: "Connect your account",
-      note: "Connect your own account from Your Connections. OAuth starts only after you click Connect there.",
+      label: "Connect",
+      note: "Authorize your account without leaving this page.",
       type: "connect_member",
     });
   });
 });
 
 describe("Your Connections focus and provenance helpers", () => {
+  test("blocks member OAuth until an admin repairs a marketplace-managed Slack connection", () => {
+    const slackPreset: ExternalMcpPreset = {
+      presetId: "slack",
+      displayName: "Slack",
+      description: "Slack",
+      url: "https://mcp.slack.com/mcp",
+      authType: "oauth",
+      requiresOAuthClient: true,
+    };
+    const imported = connection({ id: "emc_slack", name: "Anthropic Engineering / slack" });
+    imported.authType = "none";
+    imported.connected = true;
+    imported.identityManagedBy = [{ pluginId: "plg_engineering", name: "Anthropic Engineering" }];
+    imported.requiredAuthType = "oauth";
+    imported.authTypeMismatch = true;
+    imported.setupRequired = true;
+
+    expect(marketplaceConnectionNeedsAdminSetup(imported, [slackPreset])).toBe(true);
+    expect(connectionNeedsOAuthClientConfiguration({
+      ...imported,
+      authType: "oauth",
+      oauthClientConfigured: false,
+      oauthClientRequired: true,
+    })).toBe(true);
+    expect(marketplaceConnectionSetupTarget(imported, [slackPreset], false)).toBeNull();
+    expect(marketplaceConnectionSetupTarget(imported, [slackPreset], true)).toEqual({
+      connectionId: "emc_slack",
+      pluginId: "plg_engineering",
+    });
+
+    const configured = {
+      ...imported,
+      authType: "oauth",
+      connected: false,
+      oauthClientConfigured: true,
+      authTypeMismatch: false,
+      setupRequired: false,
+    } satisfies ExternalMcpConnection;
+    expect(marketplaceConnectionNeedsAdminSetup(configured, [slackPreset])).toBe(false);
+    expect(connectionNeedsOAuthClientConfiguration(configured)).toBe(false);
+    expect(marketplaceConnectionSetupTarget(configured, [slackPreset], true)).toBeNull();
+  });
+
+  test("turns a connect-time pre-registered client requirement into connection setup", () => {
+    const discoveredAtConnect = connection({ id: "emc_hubspot", name: "Sales / hubspot" });
+    discoveredAtConnect.url = "https://mcp.hubspot.com/anthropic";
+    discoveredAtConnect.connected = false;
+    discoveredAtConnect.oauthClientConfigured = false;
+    discoveredAtConnect.oauthClientRequired = false;
+
+    expect(connectionNeedsOAuthClientConfiguration(discoveredAtConnect)).toBe(false);
+    expect(connectionNeedsOAuthClientConfiguration(discoveredAtConnect, true)).toBe(true);
+  });
+
   test("focuses only authorized returned connection ids", () => {
     const connections = [
       connection({ id: "emc_one", name: "Support Operations / slack" }),

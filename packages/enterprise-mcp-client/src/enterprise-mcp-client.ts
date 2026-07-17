@@ -18,6 +18,7 @@ import type {
   EnterpriseMcpLifecycle,
   EnterpriseMcpListToolsInput,
   EnterpriseMcpOperationPhase,
+  EnterpriseMcpRequestPhase,
 } from "./contracts.js"
 import { EnterpriseMcpClientError, EnterpriseMcpToolResultError } from "./errors.js"
 import { EnterpriseMcpOAuthProvider } from "./oauth-provider.js"
@@ -158,6 +159,23 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
 
   function failureRequestPhase(observer: EnterpriseMcpRequestObserver) {
     return observer.lastFailedRequestPhase() ?? observer.lastRequestPhase()
+  }
+
+  function isMcpResourceRequest(phase: EnterpriseMcpRequestPhase): boolean {
+    return phase === "mcp-initialize"
+      || phase === "mcp-tool-discovery"
+      || phase === "mcp-tool-execution"
+      || phase === "endpoint-request"
+  }
+
+  async function invalidateTerminallyRejectedCredential(session: Session): Promise<void> {
+    if (!session.oauthProvider) return
+    const failure = session.observer.lastRequestFailure()
+    if (!failure || !isMcpResourceRequest(failure.requestPhase)) return
+    const rejected = failure.httpStatus === 401
+      || (failure.httpStatus === 403 && (failure.bearerChallenge || failure.insufficientScope))
+    if (!rejected) return
+    await session.oauthProvider.invalidateCredentials("tokens")
   }
 
   function createSession(input: {
@@ -305,32 +323,37 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       ...input,
       flow: { kind: "runtime" },
       operation: async (session) => {
-        await session.client.connect(session.transport, session.requestOptions)
-        emitDiagnostic({
-          kind: "operation",
-          connectionId: input.connection.id,
-          operationPhase: input.operationPhase,
-          requestPhase: "mcp-initialize",
-          outcome: "succeeded",
-        })
-        let operationFailed = false
         try {
-          return await input.operation(session)
-        } catch (error) {
-          operationFailed = true
-          throw error
-        } finally {
+          await session.client.connect(session.transport, session.requestOptions)
+          emitDiagnostic({
+            kind: "operation",
+            connectionId: input.connection.id,
+            operationPhase: input.operationPhase,
+            requestPhase: "mcp-initialize",
+            outcome: "succeeded",
+          })
+          let operationFailed = false
           try {
-            await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+            return await input.operation(session)
           } catch (error) {
-            if (!operationFailed) {
-              throw new EnterpriseMcpClientError({
-                operationPhase: "shutdown",
-                requestPhase: session.observer.lastRequestPhase(),
-                cause: error,
-              })
+            operationFailed = true
+            throw error
+          } finally {
+            try {
+              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+            } catch (error) {
+              if (!operationFailed) {
+                throw new EnterpriseMcpClientError({
+                  operationPhase: "shutdown",
+                  requestPhase: session.observer.lastRequestPhase(),
+                  cause: error,
+                })
+              }
             }
           }
+        } catch (error) {
+          await invalidateTerminallyRejectedCredential(session)
+          throw error
         }
       },
     })
@@ -363,6 +386,13 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               requestPhase: "mcp-initialize",
               outcome: "succeeded",
             })
+            // Some providers allow initialize before challenging on tools/list.
+            // Probe only when the server advertised the tools capability: MCP
+            // servers are allowed to expose resources and/or prompts without
+            // implementing tools/list at all.
+            if (session.client.getServerCapabilities()?.tools) {
+              await session.client.listTools(undefined, session.requestOptions)
+            }
             try {
               await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
             } catch (error) {
@@ -414,8 +444,12 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               requestPhase: "mcp-initialize",
               outcome: "succeeded",
             })
+            if (session.client.getServerCapabilities()?.tools) {
+              await session.client.listTools(undefined, session.requestOptions)
+            }
           } catch (error) {
             operationFailed = true
+            let credentialCleanupError: unknown = null
             if (exchangedTokens && credentialPort) {
               try {
                 const cleanupController = new AbortController()
@@ -427,9 +461,19 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
                   },
                   reason: "post-authorization-validation-failed",
                 })
-              } catch {
-                // Credential cleanup must not replace the validation failure.
+              } catch (cleanupError) {
+                credentialCleanupError = cleanupError
               }
+            }
+            if (credentialCleanupError) {
+              throw new EnterpriseMcpClientError({
+                operationPhase: "authorization-callback",
+                requestPhase: session.observer.lastRequestPhase(),
+                cause: new AggregateError(
+                  [error, credentialCleanupError],
+                  "Post-authorization validation failed and the exchanged credentials could not be invalidated.",
+                ),
+              })
             }
             throw error
           } finally {

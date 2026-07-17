@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
+import { createOrganizationInstallLink } from "../_lib/install-link-data";
 import { isMobileUserAgent } from "../_lib/platform";
 
 const OPENWORK_DOWNLOAD_URL = "https://openworklabs.com/download";
@@ -34,29 +35,14 @@ const capabilities = [
 ];
 
 type JoinOrgSuccessProps = {
+  organizationId: string;
   organizationName: string;
   onContinueInBrowser: () => void;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function getOpenworkUrl(payload: unknown): string | null {
-  if (!isRecord(payload)) {
-    return null;
-  }
-
-  const url = payload.openworkUrl;
-  return typeof url === "string" && url.trim() ? url.trim() : null;
-}
-
-export function JoinOrgSuccess({ organizationName, onContinueInBrowser }: JoinOrgSuccessProps) {
+export function JoinOrgSuccess({ organizationId, organizationName, onContinueInBrowser }: JoinOrgSuccessProps) {
   const [isMobile, setIsMobile] = useState<boolean | null>(null);
-  const [handoffBusy, setHandoffBusy] = useState(false);
-  const [handoffAttempted, setHandoffAttempted] = useState(false);
-  const [copyBusy, setCopyBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [installBusy, setInstallBusy] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -65,58 +51,16 @@ export function JoinOrgSuccess({ organizationName, onContinueInBrowser }: JoinOr
     setIsMobile(isMobileUserAgent());
   }, []);
 
-  async function createDesktopHandoff() {
-    const { response, payload } = await requestJson(
-      "/v1/auth/desktop-handoff",
-      {
-        method: "POST",
-        body: JSON.stringify({ desktopScheme: "openwork" }),
-      },
-      12000,
-    );
-
-    if (!response.ok) {
-      throw new Error(getErrorMessage(payload, `Could not prepare a desktop sign-in link (${response.status}).`));
-    }
-
-    const openworkUrl = getOpenworkUrl(payload);
-    if (!openworkUrl) {
-      throw new Error("Desktop sign-in succeeded, but no app link was returned.");
-    }
-
-    return openworkUrl;
-  }
-
-  async function handleOpenOpenWork() {
-    setHandoffBusy(true);
-    setHandoffAttempted(true);
+  async function handleGetApp() {
+    setInstallBusy(true);
     setActionError(null);
 
     try {
-      window.location.assign(await createDesktopHandoff());
+      window.location.assign(await createOrganizationInstallLink(organizationId));
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Could not open OpenWork.");
+      setActionError(error instanceof Error ? error.message : "Could not prepare your download.");
     } finally {
-      setHandoffBusy(false);
-    }
-  }
-
-  async function handleCopySignInLink() {
-    setCopyBusy(true);
-    setCopied(false);
-    setActionError(null);
-
-    try {
-      if (!navigator.clipboard) {
-        throw new Error("Clipboard is not available in this browser.");
-      }
-      await navigator.clipboard.writeText(await createDesktopHandoff());
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Could not copy the sign-in link.");
-    } finally {
-      setCopyBusy(false);
+      setInstallBusy(false);
     }
   }
 
@@ -183,35 +127,24 @@ export function JoinOrgSuccess({ organizationName, onContinueInBrowser }: JoinOr
               <button
                 type="button"
                 className="den-button-primary w-full sm:w-auto"
-                onClick={() => void handleOpenOpenWork()}
-                disabled={handoffBusy}
-                data-testid="join-org-open-openwork"
+                onClick={() => void handleGetApp()}
+                disabled={installBusy}
+                data-testid="join-org-get-app"
               >
-                {handoffBusy ? "Opening OpenWork..." : "Open OpenWork"}
+                {installBusy ? "Preparing your download..." : "Get the desktop app"}
               </button>
-              <a
-                href={OPENWORK_DOWNLOAD_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="den-button-secondary w-full sm:w-auto"
-                data-testid="join-org-download"
-              >
-                Download the desktop app
-              </a>
+              {actionError ? (
+                <a
+                  href={OPENWORK_DOWNLOAD_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="den-button-secondary w-full sm:w-auto"
+                  data-testid="join-org-download"
+                >
+                  Download the desktop app
+                </a>
+              ) : null}
             </div>
-
-            <button
-              type="button"
-              className="w-fit text-sm text-[var(--dls-text-secondary)] underline-offset-4 hover:underline"
-              onClick={() => void handleCopySignInLink()}
-              disabled={copyBusy}
-            >
-              {copyBusy ? "Copying..." : copied ? "Copied sign-in link" : "Copy sign-in link"}
-            </button>
-
-            {handoffAttempted && !actionError ? (
-              <p className="den-copy text-sm">Opening OpenWork now. If nothing happens, download the app or copy the sign-in link.</p>
-            ) : null}
           </div>
         )}
 

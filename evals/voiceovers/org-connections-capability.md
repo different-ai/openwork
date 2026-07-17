@@ -15,6 +15,6 @@ The old `DEN_MCP_CONNECTIONS_GATING_ENABLED` deployment flag is inert.
 
 4. The org dashboard now has Connections in the sidebar, and I publish the Notion preset for the whole team in a couple of clicks.
 
-5. On the member's desktop, the organization's Notion connection appears under extensions, ready to use.
+5. On the member's desktop, OpenWork Connect shows the organization's Notion connection under Needs your sign-in, ready for that member to connect.
 
-6. Uncheck the capability and everything goes uniformly dark again — dashboard and desktop agree, because every surface reads the same switch.
+6. Uncheck the capability and everything goes uniformly dark again — dashboard navigation disappears and the Connect org row is gone, because every surface reads the same switch.

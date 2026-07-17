@@ -840,6 +840,7 @@ export function AppSidebar(props: AppSidebarProps) {
           <SidebarBuildIdentifier />
         </SidebarFooter>
         <SidebarRail
+          className="before:pointer-events-none before:absolute before:inset-y-0 before:left-[calc(50%+1px)] before:right-0 before:content-[''] group-data-[state=expanded]:before:bg-sidebar"
           aria-label={props.onStartResize ? t("session.resize_workspace_column") : undefined}
           title={props.onStartResize ? t("session.resize_workspace_column") : undefined}
           onClick={props.onStartResize ? (event) => {

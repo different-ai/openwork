@@ -230,6 +230,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           build-args: |
+            ${{ matrix.image == 'openwork-den-api' && format('DEN_API_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
             ${{ matrix.image == 'openwork-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
             ${{ matrix.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
 
@@ -246,6 +247,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           build-args: |
+            ${{ matrix.image == 'openwork-den-api' && format('DEN_API_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
             ${{ matrix.image == 'openwork-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
             ${{ matrix.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
             ${{ matrix.image == 'openwork-den-api' && format('DEN_SENTRY_UPLOAD_BUILD_ID={0}-{1}', github.run_id, github.run_attempt) || '' }}

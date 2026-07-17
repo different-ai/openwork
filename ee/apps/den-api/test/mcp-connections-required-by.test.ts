@@ -203,6 +203,7 @@ beforeAll(async () => {
       id: createDenTypeId("externalMcpConnectionAccessGrant"),
       organizationId,
       externalMcpConnectionId: sharedConnectionId,
+      requiredAuthType: "oauth",
       orgMembershipId: null,
       teamId: null,
       orgWide: true,
@@ -226,6 +227,7 @@ beforeAll(async () => {
       configObjectId: createDenTypeId("configObject"),
       serverName: "slack",
       externalMcpConnectionId: sharedConnectionId,
+      requiredAuthType: "oauth",
       createdByOrgMembershipId: adminMemberId,
       createdAt: now,
       updatedAt: now,
@@ -237,6 +239,7 @@ beforeAll(async () => {
       configObjectId: createDenTypeId("configObject"),
       serverName: "slack",
       externalMcpConnectionId: sharedConnectionId,
+      requiredAuthType: "oauth",
       createdByOrgMembershipId: adminMemberId,
       createdAt: now,
       updatedAt: now,
@@ -253,6 +256,13 @@ beforeAll(async () => {
       updatedAt: now,
     },
   ])
+  await db.insert(schema.OrgOAuthClientTable).values({
+    id: createDenTypeId("orgOAuthClient"),
+    organizationId,
+    providerId: sharedConnectionId,
+    clientId: "configured-slack-client",
+    createdByOrgMembershipId: adminMemberId,
+  })
   await db.insert(schema.ConfigObjectTable).values([
     {
       id: visibleLegacyConfigObjectId,
@@ -350,6 +360,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await db.delete(schema.PluginMcpRequirementBindingTable).where(drizzle.eq(schema.PluginMcpRequirementBindingTable.organizationId, organizationId))
   await db.delete(schema.ExternalMcpConnectionAccessGrantTable).where(drizzle.eq(schema.ExternalMcpConnectionAccessGrantTable.organizationId, organizationId))
+  await db.delete(schema.OrgOAuthClientTable).where(drizzle.eq(schema.OrgOAuthClientTable.organizationId, organizationId))
   await db.delete(schema.ExternalMcpConnectionTable).where(drizzle.eq(schema.ExternalMcpConnectionTable.organizationId, organizationId))
   await db.delete(schema.ConfigObjectVersionTable).where(drizzle.eq(schema.ConfigObjectVersionTable.organizationId, organizationId))
   await db.delete(schema.PluginConfigObjectTable).where(drizzle.eq(schema.PluginConfigObjectTable.organizationId, organizationId))
@@ -399,6 +410,12 @@ test("usable MCP connections include only visible plugin requirement provenance 
   expect(rows.map((row) => row.id)).toContain(sharedConnectionId)
   expect(rows.map((row) => row.id)).toContain(legacyConnectionId)
   expect(requiredByNames(findConnection(rows, sharedConnectionId))).toEqual(["Support Operations", "Support Triage"])
+  expect(findConnection(rows, sharedConnectionId)).toMatchObject({
+    oauthClientConfigured: true,
+    oauthClientRequired: true,
+    requiredAuthType: "oauth",
+    setupRequired: false,
+  })
   expect(requiredByNames(findConnection(rows, legacyConnectionId))).toEqual(["Support Operations"])
 })
 

@@ -1,16 +1,16 @@
-# org-capability-flags — Features ship dark, then light up one org at a time
+# org-capability-flags — Install links are default-on, with an org kill switch
 
 Per-organization capability flags. Platform admins control them from the
-/admin backoffice; every capability defaults to OFF for every org. Flags
-live in the org metadata JSON — no schema change, no deploy. Each org reads
-its own flags from the /v1/org payload, so a feature can check its flag the
-moment it ships. The first key, `installLinks`, ships dark: nothing reads
-it until the install-links PR lands.
+/admin backoffice; install links now default ON for every org, and the stored
+`metadata.capabilities.installLinks: false` value is the org-level kill switch.
+The old `DEN_INSTALL_LINKS_GATING_ENABLED` deployment flag is inert. Each org
+reads the effective state from the /v1/org payload, so `/admin` and workspace
+surfaces agree.
 
-1. Priya, a platform admin, opens the /admin backoffice and right on Acme's card there's a new Capabilities section — every flag starts off, for every org.
+1. Priya clears Acme's stored override, opens /admin, and the Install links checkbox is already checked — the admin API and Acme's own /v1/org payload both say install links are on by default.
 
-2. She flips Install links on for Acme — just Acme. No deploy, no environment variable, one checkbox in the backoffice.
+2. She unchecks Install links for Acme — one org-level kill switch, no deploy — and the admin API shows Acme off while every other organization's effective state stays exactly as it was.
 
-3. Acme's own workspace now reports the capability as on — the /v1/org payload Acme's admins already read carries the flag, so any feature can read it the moment it ships.
+3. Acme's own workspace reads the same dark state through /v1/org while the kill switch is on, so workspace admins stop seeing install-link affordances without changing anyone else.
 
-4. She flips it back off and Acme reports dark again — org-by-org control of shipped-but-dark features, all from one screen.
+4. She checks Install links again and Acme immediately reports on through both /admin and /v1/org — the kill switch is reversible and scoped to one organization.

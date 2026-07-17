@@ -95,10 +95,13 @@ beforeAll(async () => {
   }))
   mock.module("../src/capability-sources/external-mcp-client-runtime.js", () => ({
     abandonExternalMcpAuth: unsupportedExternalMcpRuntimeMock,
+    abandonLegacyExternalMcpAuth: unsupportedExternalMcpRuntimeMock,
     callExternalMcpTool: unsupportedExternalMcpRuntimeMock,
     connectExternalMcp: connectExternalMcpMock,
     completeExternalMcpAuth: unsupportedExternalMcpRuntimeMock,
+    completeLegacyExternalMcpAuth: unsupportedExternalMcpRuntimeMock,
     externalMcpClientRuntimeName: "test external MCP runtime",
+    inspectExternalMcpToolCall: unsupportedExternalMcpRuntimeMock,
     listExternalMcpTools: unsupportedExternalMcpRuntimeMock,
   }))
   store = await import("../src/routes/org/plugin-system/store.js")
@@ -523,6 +526,95 @@ describe("marketplace cloud readiness payload", () => {
     const resolved = await resolvedPlugin({ context: org.context, marketplaceId: org.marketplaceId, pluginId: plugin.pluginId })
     expect(resolved.cloudReadiness?.state).toBe("ready")
     expect(resolved.cloudReadiness?.connections[0]).toMatchObject({ id: connectionId, credentialMode: "shared", connectedForMe: true })
+  })
+
+  test("misclassified Slack bindings stay blocked until an admin repairs OAuth setup", async () => {
+    const org = await seedOrg()
+    const url = "https://mcp.slack.com/mcp"
+    const plugin = await seedPlugin({
+      org,
+      name: "Imported Slack Plugin",
+      components: [{
+        objectType: "mcp",
+        title: "Slack MCP",
+        normalizedPayloadJson: {
+          externalMcpConnectionOwnedByPlugin: true,
+          mcpServers: { slack: { url } },
+        },
+      }],
+    })
+    const configObjectId = plugin.configObjectIds[0]
+    if (!configObjectId) throw new Error("missing config object")
+
+    await expect(configurePluginMcp({
+      authType: "none",
+      configObjectId,
+      credentialMode: "shared",
+      org,
+      pluginId: plugin.pluginId,
+    })).rejects.toMatchObject({ status: 409, error: "mcp_auth_type_mismatch" })
+
+    const oldConnectionId = createDenTypeId("externalMcpConnection")
+    await db.insert(ExternalMcpConnectionTable).values({
+      id: oldConnectionId,
+      organizationId: org.organizationId,
+      name: "Legacy misclassified Slack",
+      url,
+      authType: "none",
+      credentialMode: "shared",
+      connectedAt: new Date(),
+      createdByOrgMembershipId: org.memberId,
+    })
+    await db.insert(PluginMcpRequirementBindingTable).values({
+      id: createDenTypeId("pluginMcpRequirementBinding"),
+      organizationId: org.organizationId,
+      pluginId: plugin.pluginId,
+      configObjectId,
+      serverName: "slack",
+      externalMcpConnectionId: oldConnectionId,
+      requiredAuthType: "oauth",
+      connectionOwnedByPlugin: true,
+      createdByOrgMembershipId: org.memberId,
+    })
+    expect(await listUsableConnectionIds({ org, memberId: org.memberId })).not.toContain(oldConnectionId)
+
+    const before = await resolvedPlugin({ context: org.context, marketplaceId: org.marketplaceId, pluginId: plugin.pluginId })
+    expect(before.cloudReadiness).toMatchObject({
+      state: "needs_admin_setup",
+      connections: [{
+        authType: "none",
+        authTypeMismatch: true,
+        id: oldConnectionId,
+        oauthClientConfigured: false,
+        oauthClientRequired: true,
+        requiredAuthType: "oauth",
+      }],
+    })
+
+    const repaired = await store.configureMarketplacePluginMcpRequirement({
+      authType: "oauth",
+      configObjectId,
+      context: org.context,
+      credentialMode: "per_member",
+      oauthClient: { clientId: "slack-client", clientSecret: "slack-secret" },
+      pluginId: plugin.pluginId,
+      serverName: "slack",
+    })
+    expect(repaired.connection.id).not.toBe(oldConnectionId)
+    expect(await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, oldConnectionId))).toHaveLength(0)
+
+    const after = await resolvedPlugin({ context: org.context, marketplaceId: org.marketplaceId, pluginId: plugin.pluginId })
+    expect(after.cloudReadiness).toMatchObject({
+      state: "needs_signin",
+      connections: [{
+        authType: "oauth",
+        authTypeMismatch: false,
+        id: repaired.connection.id,
+        oauthClientConfigured: true,
+        oauthClientRequired: true,
+        requiredAuthType: "oauth",
+      }],
+    })
   })
 
   test("unmatched MCP dependencies need admin setup and include declared connection details", async () => {

@@ -58,6 +58,7 @@ const EnvSchema = z.object({
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   DEN_API_PUBLIC_URL: z.string().optional(),
+  DEN_API_VERSION: z.string().optional(),
   OPENWORK_INSTALLER_ARTIFACTS_DIR: z.string().optional(),
   OPENWORK_INSTALLER_RELEASE_TAG: z.string().optional(),
   OPENWORK_INSTALLER_RELEASE_REPO: z.string().optional(),
@@ -305,9 +306,10 @@ const polarFeatureGateEnabled =
 const planGatingEnabled =
   (parsed.DEN_PLAN_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
-// Hosted deployments normally enable plan gating and retain per-org rollout.
-// Self-hosted deployments default to no gating, so install links work without
-// access to the hosted platform-admin control plane. An explicit setting wins.
+// Deprecated compatibility knob for organization install links. The environment
+// variable is still parsed so existing deployment configs keep starting, but
+// organizationInstallLinksEnabled ignores this value: install links are
+// default-on unless org metadata explicitly disables them.
 const installLinksGatingEnabled =
   (parsed.DEN_INSTALL_LINKS_GATING_ENABLED ?? String(planGatingEnabled)).toLowerCase() === "true"
 
@@ -448,6 +450,7 @@ export const env = {
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
   corsOrigins,
   apiPublicUrl,
+  serviceVersion: parsed.DEN_API_VERSION?.trim() || "dev",
   publicUrlTrustedOrigins,
   installerArtifactsDir: optionalString(parsed.OPENWORK_INSTALLER_ARTIFACTS_DIR),
   // Standard desktop release assets: the release tag to download from,

@@ -913,8 +913,8 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     jsonValidator(githubPluginMcpImportPreviewSchema),
     describeRoute({
       tags: ["GitHub"],
-      summary: "Preview GitHub plugin MCP import",
-      description: "Reads a public GitHub plugin URL and returns remote MCP servers that can be imported as Den External MCP Connections.",
+      summary: "Preview GitHub plugin marketplace import",
+      description: "Reads a public GitHub plugin URL and returns skills and remote MCP servers that can be imported into an organization marketplace.",
       responses: {
         200: jsonResponse("GitHub plugin MCP import preview returned successfully.", githubPluginMcpImportPreviewResponseSchema),
         400: jsonResponse("The GitHub plugin MCP import preview request was invalid.", invalidRequestSchema),
@@ -937,8 +937,8 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     jsonValidator(githubPluginMcpImportSchema),
     describeRoute({
       tags: ["GitHub"],
-      summary: "Import GitHub plugin MCPs",
-      description: "Creates/reuses Den External MCP Connections for selected remote MCP servers from a public GitHub plugin URL and publishes one marketplace plugin that references them.",
+      summary: "Create a plugin from GitHub",
+      description: "Creates one plugin from selected skills and remote MCP servers in a public GitHub plugin URL, applies the requested access grants, and optionally publishes it into an organization marketplace. Declared and known-server authentication requirements take precedence over the request-wide auth fallback.",
       responses: {
         200: jsonResponse("GitHub plugin MCPs imported successfully.", githubPluginMcpImportResponseSchema),
         400: jsonResponse("The GitHub plugin MCP import request was invalid.", invalidRequestSchema),
@@ -957,8 +957,10 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
           authType: body.authType,
           context,
           credentialMode: body.credentialMode,
+          description: body.description,
           githubUrl: body.githubUrl,
           marketplaceId: body.marketplaceId,
+          name: body.name,
           selectedSkillKeys: body.selectedSkillKeys,
           selectedServerKeys: body.selectedServerKeys,
           selectedServerNames: body.selectedServerNames,
@@ -1178,8 +1180,8 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     paramValidator(marketplaceParamsSchema),
     describeRoute({
       tags: ["Marketplaces"],
-      summary: "Get marketplace resolved",
-      description: "Returns marketplace detail with plugins and derived source info.",
+      summary: "Get resolved marketplace plugin readiness",
+      description: "Returns marketplace detail with plugins, derived source info, and each plugin's cloud readiness or required setup state.",
       responses: {
         200: jsonResponse("Marketplace resolved detail returned successfully.", marketplaceResolvedResponseSchema),
         400: jsonResponse("The marketplace path parameters were invalid.", invalidRequestSchema),

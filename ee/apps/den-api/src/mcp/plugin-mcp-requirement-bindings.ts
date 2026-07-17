@@ -1,5 +1,9 @@
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { ExternalMcpConnectionAccessGrantTable, PluginMcpRequirementBindingTable } from "@openwork-ee/den-db/schema"
+import {
+  ExternalMcpConnectionAccessGrantTable,
+  type ExternalMcpAuthType,
+  PluginMcpRequirementBindingTable,
+} from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 
@@ -32,6 +36,8 @@ export async function upsertPluginMcpRequirementBinding(input: {
   organizationId: OrganizationId
   pluginId: PluginId
   serverName: string
+  requiredAuthType: ExternalMcpAuthType | null
+  connectionOwnedByPlugin: boolean
 }): Promise<PluginMcpRequirementBindingRow> {
   const serverName = input.serverName.trim()
   const existing = await db
@@ -51,12 +57,16 @@ export async function upsertPluginMcpRequirementBinding(input: {
       .update(PluginMcpRequirementBindingTable)
       .set({
         externalMcpConnectionId: input.externalMcpConnectionId,
+        requiredAuthType: input.requiredAuthType,
+        connectionOwnedByPlugin: input.connectionOwnedByPlugin,
         updatedAt: now,
       })
       .where(eq(PluginMcpRequirementBindingTable.id, existing[0].id))
     return {
       ...existing[0],
       externalMcpConnectionId: input.externalMcpConnectionId,
+      requiredAuthType: input.requiredAuthType,
+      connectionOwnedByPlugin: input.connectionOwnedByPlugin,
       updatedAt: now,
     }
   }
@@ -68,6 +78,8 @@ export async function upsertPluginMcpRequirementBinding(input: {
     configObjectId: input.configObjectId,
     serverName,
     externalMcpConnectionId: input.externalMcpConnectionId,
+    requiredAuthType: input.requiredAuthType,
+    connectionOwnedByPlugin: input.connectionOwnedByPlugin,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
     createdAt: now,
     updatedAt: now,
