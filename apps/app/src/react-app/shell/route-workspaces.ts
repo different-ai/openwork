@@ -7,6 +7,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkWorkspaceInfo } from "@/app/lib/openwork-server";
 import type { WorkspaceInfo } from "@/app/lib/desktop-types";
+import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { WorkspaceSessionGroup } from "@/app/types";
 import {
   normalizeDirectoryPath,
@@ -42,6 +43,19 @@ export function filterSessionsForRouteWorkspace(
   return sessions.filter(
     (session) => normalizeDirectoryPath(session.directory ?? "") === workspaceRoot,
   );
+}
+
+export type RouteWorkspaceSessionEndpoint = Pick<
+  ResolvedWorkspaceEndpoint,
+  "client" | "workspaceId"
+>;
+
+export async function loadRouteWorkspaceSessions(
+  workspace: RouteWorkspace,
+  endpoint: RouteWorkspaceSessionEndpoint,
+): Promise<RouteSession[]> {
+  const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
+  return filterSessionsForRouteWorkspace(workspace, response.items ?? []);
 }
 
 export function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {

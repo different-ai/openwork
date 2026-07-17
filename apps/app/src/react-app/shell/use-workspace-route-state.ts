@@ -41,8 +41,8 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import {
   classifyRouteSessionReadError,
   describeRouteError,
-  filterSessionsForRouteWorkspace,
   isTransientStartupError,
+  loadRouteWorkspaceSessions,
   mapDesktopWorkspace,
   mergeRouteWorkspaces,
   orderRouteWorkspaces,
@@ -236,9 +236,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           }));
         }
         try {
-          const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
-          const fetchedItems = response.items ?? [];
-          const items = filterSessionsForRouteWorkspace(workspace, fetchedItems);
+          const items = await loadRouteWorkspaceSessions(workspace, endpoint);
           setSessionsByWorkspaceId((current) => {
             const nextItems = mergeFetchedSessionsWithPending(workspace.id, items, current[workspace.id] ?? []);
             const next = { ...current, [workspace.id]: nextItems };

@@ -60,7 +60,7 @@ export default {
           assert: async () => {
             const settings = readFileSync(path.join(APP, "src/react-app/shell/settings-route.tsx"), "utf8");
             witness(ctx, settings.includes("const endpoint = resolveWorkspaceEndpoint(workspace"), "Settings resolves each workspace independently");
-            witness(ctx, settings.includes("endpoint.client.listSessions(endpoint.workspaceId"), "Settings calls the owning server with its workspace ID");
+            witness(ctx, settings.includes("loadRouteWorkspaceSessions(workspace, endpoint)"), "Settings calls the owning server with its workspace ID");
             witness(ctx, !settings.includes("serverWorkspaceIds.has(workspace.id)"), "Desktop-managed remote rows are no longer discarded by the local-server membership gate");
           },
         });
@@ -75,9 +75,9 @@ export default {
             const helper = readFileSync(path.join(APP, "src/react-app/shell/route-workspaces.ts"), "utf8");
             const sessionRoute = readFileSync(path.join(APP, "src/react-app/shell/use-workspace-route-state.ts"), "utf8");
             const settings = readFileSync(path.join(APP, "src/react-app/shell/settings-route.tsx"), "utf8");
-            witness(ctx, helper.includes("filterSessionsForRouteWorkspace"), "The filtering contract has one shared implementation");
-            witness(ctx, sessionRoute.includes("filterSessionsForRouteWorkspace(workspace, fetchedItems)"), "Session consumes the shared rule");
-            witness(ctx, settings.includes("filterSessionsForRouteWorkspace(workspace, response.items ?? [])"), "Settings consumes the shared rule");
+            witness(ctx, helper.includes("loadRouteWorkspaceSessions"), "The endpoint request and filtering contract have one shared implementation");
+            witness(ctx, sessionRoute.includes("loadRouteWorkspaceSessions(workspace, endpoint)"), "Session consumes the shared rule");
+            witness(ctx, settings.includes("loadRouteWorkspaceSessions(workspace, endpoint)"), "Settings consumes the shared rule");
           },
         });
       },

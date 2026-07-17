@@ -47,10 +47,10 @@ import {
   describeRouteError,
   describeWorkspaceCreateError,
   downloadWorkspaceJson,
-  filterSessionsForRouteWorkspace,
   folderNameFromPath,
   getSessionStatus,
   isActiveSessionStatus,
+  loadRouteWorkspaceSessions,
   mapDesktopWorkspace,
   mergeRouteWorkspaces,
   orderRouteWorkspaces,
@@ -1220,8 +1220,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                   : "OpenWork server is unavailable for this workspace.",
               );
             }
-            const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
-            const items = filterSessionsForRouteWorkspace(workspace, response.items ?? []);
+            const items = await loadRouteWorkspaceSessions(workspace, endpoint);
             return {
               workspaceId: workspace.id,
               sessions: items,
