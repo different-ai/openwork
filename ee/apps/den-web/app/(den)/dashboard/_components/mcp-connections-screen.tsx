@@ -21,7 +21,10 @@ import {
   type McpConnectionAccessMode,
 } from "./mcp-connection-editing";
 import { formatConnectionCreatorAttribution } from "./mcp-connection-display";
-import { marketplaceConnectionNeedsAdminSetup } from "./mcp-connection-setup";
+import {
+  connectionNeedsOAuthClientConfiguration,
+  marketplaceConnectionNeedsAdminSetup,
+} from "./mcp-connection-setup";
 import { shouldShowMcpConnectionsStagingBanner } from "./mcp-connections-capability";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { marketplaceQueryKeys, useMarketplaces } from "./marketplace-data";
@@ -36,6 +39,7 @@ import {
   type McpIssuerReview,
   type McpRequirementsDiscovery,
   type McpConnectionAccessInput,
+  McpOAuthConfigurationRequiredError,
   type UpdatedMcpConnection,
   type UpdateMcpConnectionInput,
   formatMcpConnectedTimestamp,
@@ -246,6 +250,7 @@ export function McpConnectionsScreen() {
   const [formOpen, setFormOpen] = useState(false);
   const [formPreset, setFormPreset] = useState<ExternalMcpPreset | null>(null);
   const [editingConnection, setEditingConnection] = useState<ExternalMcpConnection | null>(null);
+  const [configuringOAuthClient, setConfiguringOAuthClient] = useState(false);
   const [issuerReviewConnection, setIssuerReviewConnection] = useState<ExternalMcpConnection | null>(null);
   const [issuerReviewPreview, setIssuerReviewPreview] = useState<McpIssuerReview | null>(null);
   const [pluginDialogOpen, setPluginDialogOpen] = useState(false);
@@ -257,6 +262,7 @@ export function McpConnectionsScreen() {
   const telegramConnection = useTelegramConnection(true);
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
+  const [oauthClientConfigurationRequiredIds, setOAuthClientConfigurationRequiredIds] = useState<string[]>([]);
   const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
   const [connectionActionNotice, setConnectionActionNotice] = useState<string | null>(null);
   const [toolsConnectionId, setToolsConnectionId] = useState<string | null>(null);
@@ -304,6 +310,12 @@ export function McpConnectionsScreen() {
       pollUntilConnected(connectionId);
     } catch (connectError) {
       authorizationWindow?.close();
+      if (connectError instanceof McpOAuthConfigurationRequiredError) {
+        setOAuthClientConfigurationRequiredIds((current) => current.includes(connectionId)
+          ? current
+          : [...current, connectionId]);
+        return;
+      }
       setConnectionActionError({
         connectionId,
         message: connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.",
@@ -338,7 +350,9 @@ export function McpConnectionsScreen() {
     setConnectionActionError(null);
     setConnectionActionNotice(null);
     const updated = await updateConnection.mutateAsync(input);
+    setOAuthClientConfigurationRequiredIds((current) => current.filter((connectionId) => connectionId !== input.connectionId));
     setEditingConnection(null);
+    setConfiguringOAuthClient(false);
     setConnectionActionNotice(updated.reconnectionRequired
       ? `${updated.name} was saved securely. Reconnect it before the new identity can be used.`
       : updated.identityChanged
@@ -576,18 +590,31 @@ export function McpConnectionsScreen() {
       ) : (
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
           {connections.map((connection) => {
-            const needsAdminSetup = marketplaceConnectionNeedsAdminSetup(connection, presets);
+            const connectAttemptRequiresConfiguration = oauthClientConfigurationRequiredIds.includes(connection.id);
+            const needsOAuthClientConfiguration = connectionNeedsOAuthClientConfiguration(
+              connection,
+              connectAttemptRequiresConfiguration,
+            );
+            const needsPluginSetup = marketplaceConnectionNeedsAdminSetup(connection, presets)
+              && !needsOAuthClientConfiguration;
             const setupPluginId = connection.identityManagedBy[0]?.pluginId;
             return <ConnectionRow
               key={connection.id}
               connection={connection}
-              needsAdminSetup={needsAdminSetup}
-              setupHref={needsAdminSetup && setupPluginId ? getPluginRoute(orgSlug, setupPluginId) : null}
+              needsPluginSetup={needsPluginSetup}
+              needsOAuthClientConfiguration={needsOAuthClientConfiguration}
+              setupHref={needsPluginSetup && setupPluginId ? getPluginRoute(orgSlug, setupPluginId) : null}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
               onEdit={() => {
                 updateConnection.reset();
+                setConfiguringOAuthClient(false);
+                setEditingConnection(connection);
+              }}
+              onConfigure={() => {
+                updateConnection.reset();
+                setConfiguringOAuthClient(true);
                 setEditingConnection(connection);
               }}
               onReviewIssuer={() => void handleOpenIssuerReview(connection)}
@@ -617,10 +644,12 @@ export function McpConnectionsScreen() {
 
       <EditConnectionDialog
         connection={editingConnection}
+        configureOAuthClient={configuringOAuthClient}
         submitting={updateConnection.isPending}
         error={updateConnection.error}
         onClose={() => {
           updateConnection.reset();
+          setConfiguringOAuthClient(false);
           setEditingConnection(null);
         }}
         onSubmit={handleUpdate}
@@ -1349,12 +1378,14 @@ function accessSummaryLabel(connection: ExternalMcpConnection): string {
 
 function ConnectionRow({
   connection,
-  needsAdminSetup,
+  needsPluginSetup,
+  needsOAuthClientConfiguration,
   setupHref,
   polling,
   connecting,
   errorMessage,
   onEdit,
+  onConfigure,
   onReviewIssuer,
   onConnect,
   onDisconnect,
@@ -1365,12 +1396,14 @@ function ConnectionRow({
   onToggleTools,
 }: {
   connection: ExternalMcpConnection;
-  needsAdminSetup: boolean;
+  needsPluginSetup: boolean;
+  needsOAuthClientConfiguration: boolean;
   setupHref: string | null;
   polling: boolean;
   connecting: boolean;
   errorMessage: string | null;
   onEdit: () => void;
+  onConfigure: () => void;
   onReviewIssuer: () => void;
   onConnect: () => void;
   onDisconnect: () => void;
@@ -1385,10 +1418,11 @@ function ConnectionRow({
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement>(null);
-  const displayedConnected = connection.connected && !needsAdminSetup;
-  const canConnectOAuth = !needsAdminSetup && !connection.issuerReviewRequired && connection.authType === "oauth"
+  const setupRequired = needsPluginSetup || needsOAuthClientConfiguration;
+  const displayedConnected = connection.connected && !setupRequired;
+  const canConnectOAuth = !setupRequired && !connection.issuerReviewRequired && connection.authType === "oauth"
     && (isPerMember ? !connection.connectedForMe : !connection.connected);
-  const canInspectTools = !needsAdminSetup && !connection.issuerReviewRequired
+  const canInspectTools = !setupRequired && !connection.issuerReviewRequired
     && (connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe);
 
   useEffect(() => {
@@ -1422,7 +1456,7 @@ function ConnectionRow({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
-              {needsAdminSetup ? (
+              {setupRequired ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   Setup required
                 </span>
@@ -1458,7 +1492,7 @@ function ConnectionRow({
               ) : null}
             </div>
             <p className="mt-0.5 truncate text-[12px] text-gray-500">
-              {connection.url}{needsAdminSetup ? "" : ` · ${formatMcpConnectedTimestamp(connection.connectedAt)}`}{creatorAttribution ? ` · ${creatorAttribution}` : ""}
+              {connection.url}{setupRequired ? "" : ` · ${formatMcpConnectedTimestamp(connection.connectedAt)}`}{creatorAttribution ? ` · ${creatorAttribution}` : ""}
             </p>
             {connection.authType === "oauth" ? (
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
@@ -1471,6 +1505,11 @@ function ConnectionRow({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
+          {needsOAuthClientConfiguration ? (
+            <DenButton variant="primary" size="sm" onClick={onConfigure}>
+              Configure
+            </DenButton>
+          ) : null}
           {setupHref ? (
             <Link href={setupHref} className={buttonVariants({ variant: "primary", size: "sm" })}>
               Set up
@@ -1813,12 +1852,14 @@ const ACCESS_MODE_OPTIONS: SegmentedControlOption<AddConnectionAccessMode>[] = [
 
 function EditConnectionDialog({
   connection,
+  configureOAuthClient,
   submitting,
   error,
   onClose,
   onSubmit,
 }: {
   connection: ExternalMcpConnection | null;
+  configureOAuthClient: boolean;
   submitting: boolean;
   error: unknown;
   onClose: () => void;
@@ -1846,7 +1887,7 @@ function EditConnectionDialog({
     setAuthType(connection.authType);
     setCredentialMode(connection.credentialMode);
     setApiKey("");
-    setShowOAuthClient(Boolean(connection.oauthClientId));
+    setShowOAuthClient(configureOAuthClient || Boolean(connection.oauthClientId));
     setOAuthClientId(connection.oauthClientId ?? "");
     setOAuthClientSecret("");
     setRequestedScopesText((connection.requestedScopes ?? []).join(" "));
@@ -1854,7 +1895,7 @@ function EditConnectionDialog({
     setSelectedTeamIds(connection.access?.teamIds ?? []);
     setSelectedMemberIds(connection.access?.memberIds ?? []);
     setConfirmingIdentityChange(false);
-  }, [connection]);
+  }, [configureOAuthClient, connection]);
 
   const teams = useMemo(() => orgContext?.teams ?? [], [orgContext?.teams]);
   const members = useMemo(
@@ -1884,6 +1925,7 @@ function EditConnectionDialog({
       ? selectedMemberIds.length === 0
       : false;
   const replacementApiKeyRequired = authType === "apikey" && identityChanged && !apiKey.trim();
+  const oauthClientIdRequired = configureOAuthClient && authType === "oauth" && !oauthClientId.trim();
 
   function toggle(list: string[], id: string): string[] {
     return list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id];
@@ -1907,7 +1949,7 @@ function EditConnectionDialog({
       authType,
       credentialMode: proposedCredentialMode,
       ...(!marketplaceManaged && authType === "apikey" && trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
-      ...(!marketplaceManaged && authType === "oauth" && showOAuthClient && trimmedClientId
+      ...(authType === "oauth" && showOAuthClient && trimmedClientId
         ? {
           oauthClient: {
             clientId: trimmedClientId,
@@ -1935,15 +1977,19 @@ function EditConnectionDialog({
         onClick={(event) => event.stopPropagation()}
         data-testid="edit-mcp-connection-dialog"
       >
-        <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Edit MCP connection</h2>
+        <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+          {configureOAuthClient ? "Configure MCP connection" : "Edit MCP connection"}
+        </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          Update how this server is presented and who can use it. Saved credentials are never shown here.
+          {configureOAuthClient
+            ? "Add the OAuth app credentials this server requires before anyone connects."
+            : "Update how this server is presented and who can use it. Saved credentials are never shown here."}
         </p>
 
         {marketplaceManaged ? (
           <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-[12px] leading-5 text-blue-800" data-testid="marketplace-managed-identity-note">
             <p className="font-semibold text-blue-900">Server and authentication are managed by {marketplaceIdentityOwnerNames(marketplaceOwners)}.</p>
-            <p className="mt-1">Change those values in the marketplace plugin definition. You can still rename this connection and edit its direct assignments here.</p>
+            <p className="mt-1">Configure organization OAuth credentials here. Change the server URL or authentication type in the marketplace plugin definition.</p>
           </div>
         ) : null}
 
@@ -2000,7 +2046,7 @@ function EditConnectionDialog({
             </div>
           ) : null}
 
-          {!marketplaceManaged && authType === "oauth" && !showOAuthClient ? (
+          {authType === "oauth" && !showOAuthClient ? (
             <button
               type="button"
               onClick={() => {
@@ -2013,7 +2059,7 @@ function EditConnectionDialog({
             </button>
           ) : null}
 
-          {!marketplaceManaged && authType === "oauth" && showOAuthClient ? (
+          {authType === "oauth" && showOAuthClient ? (
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
@@ -2024,7 +2070,9 @@ function EditConnectionDialog({
               <p className="mt-1 text-[12px] leading-5 text-gray-500">Add the provider credentials here. The saved client secret remains hidden.</p>
               <div className="mt-3 space-y-3">
                 <div>
-                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">
+                    Client ID{configureOAuthClient ? " (required)" : ""}
+                  </label>
                   <DenInput
                     value={oauthClientId}
                     onChange={(event) => {
@@ -2034,7 +2082,9 @@ function EditConnectionDialog({
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Replacement client secret (optional)</label>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">
+                    {connection.oauthClientId ? "Replacement client secret (optional)" : "Client secret (optional)"}
+                  </label>
                   <DenInput
                     type="password"
                     value={oauthClientSecret}
@@ -2152,7 +2202,7 @@ function EditConnectionDialog({
           <DenButton
             variant="primary"
             loading={submitting}
-            disabled={!connection.updatedAt || !name.trim() || !url.trim() || replacementApiKeyRequired || accessIncomplete}
+            disabled={!connection.updatedAt || !name.trim() || !url.trim() || replacementApiKeyRequired || oauthClientIdRequired || accessIncomplete}
             onClick={() => void submit()}
             data-testid="save-mcp-connection-edit"
           >

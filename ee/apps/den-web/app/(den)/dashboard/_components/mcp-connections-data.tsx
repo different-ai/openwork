@@ -307,6 +307,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+export class McpOAuthConfigurationRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "McpOAuthConfigurationRequiredError";
+  }
+}
+
+function oauthConfigurationRequiredMessage(payload: unknown): string | null {
+  if (!isRecord(payload) || payload.error !== "mcp_oauth_configuration_required") return null;
+  return typeof payload.message === "string" && payload.message.trim()
+    ? payload.message
+    : "This MCP server requires a pre-registered OAuth client before it can connect.";
+}
+
 function parseInspectionHeaders(value: unknown): ExternalMcpInspectionHeader[] | null {
   if (!Array.isArray(value)) return null;
   const headers: ExternalMcpInspectionHeader[] = [];
@@ -690,6 +704,10 @@ export function useStartMcpConnectionOAuth() {
         20000,
       );
       if (!response.ok) {
+        const configurationRequiredMessage = oauthConfigurationRequiredMessage(payload);
+        if (configurationRequiredMessage) {
+          throw new McpOAuthConfigurationRequiredError(configurationRequiredMessage);
+        }
         throw getRequestError(payload, response, `Failed to start OAuth (${response.status}).`);
       }
       return payload as { status: "connected" | "needs_auth"; authorizeUrl: string | null };

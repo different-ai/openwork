@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
 import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "../app/(den)/dashboard/_components/mcp-connection-display";
-import { marketplaceConnectionNeedsAdminSetup, marketplaceConnectionSetupTarget } from "../app/(den)/dashboard/_components/mcp-connection-setup";
+import {
+  connectionNeedsOAuthClientConfiguration,
+  marketplaceConnectionNeedsAdminSetup,
+  marketplaceConnectionSetupTarget,
+} from "../app/(den)/dashboard/_components/mcp-connection-setup";
 import type { ExternalMcpConnection, ExternalMcpPreset, ExternalMcpRequiredBy } from "../app/(den)/dashboard/_components/mcp-connections-data";
 import { parseMarketplaceResolvedPayload, type MarketplacePluginCloudReadinessConnection } from "../app/(den)/dashboard/_components/marketplace-data";
 import { pluginMcpEntries } from "../app/(den)/dashboard/_components/plugin-data";
@@ -297,6 +301,12 @@ describe("Your Connections focus and provenance helpers", () => {
     imported.setupRequired = true;
 
     expect(marketplaceConnectionNeedsAdminSetup(imported, [slackPreset])).toBe(true);
+    expect(connectionNeedsOAuthClientConfiguration({
+      ...imported,
+      authType: "oauth",
+      oauthClientConfigured: false,
+      oauthClientRequired: true,
+    })).toBe(true);
     expect(marketplaceConnectionSetupTarget(imported, [slackPreset], false)).toBeNull();
     expect(marketplaceConnectionSetupTarget(imported, [slackPreset], true)).toEqual({
       connectionId: "emc_slack",
@@ -312,7 +322,19 @@ describe("Your Connections focus and provenance helpers", () => {
       setupRequired: false,
     } satisfies ExternalMcpConnection;
     expect(marketplaceConnectionNeedsAdminSetup(configured, [slackPreset])).toBe(false);
+    expect(connectionNeedsOAuthClientConfiguration(configured)).toBe(false);
     expect(marketplaceConnectionSetupTarget(configured, [slackPreset], true)).toBeNull();
+  });
+
+  test("turns a connect-time pre-registered client requirement into connection setup", () => {
+    const discoveredAtConnect = connection({ id: "emc_hubspot", name: "Sales / hubspot" });
+    discoveredAtConnect.url = "https://mcp.hubspot.com/anthropic";
+    discoveredAtConnect.connected = false;
+    discoveredAtConnect.oauthClientConfigured = false;
+    discoveredAtConnect.oauthClientRequired = false;
+
+    expect(connectionNeedsOAuthClientConfiguration(discoveredAtConnect)).toBe(false);
+    expect(connectionNeedsOAuthClientConfiguration(discoveredAtConnect, true)).toBe(true);
   });
 
   test("focuses only authorized returned connection ids", () => {

@@ -1935,7 +1935,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         || connection.authType !== body.authType
         || connection.credentialMode !== body.credentialMode
         || body.apiKey !== undefined
-        || body.oauthClient !== undefined
         || body.authorizationServerIssuer !== undefined
         || body.requestedScopes !== undefined
       const activeBindings = await listActiveExternalMcpConnectionBindings({

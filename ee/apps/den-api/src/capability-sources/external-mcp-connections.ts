@@ -1017,7 +1017,6 @@ export async function updateExternalMcpConnection(
       || existing.authType !== input.authType
       || existing.credentialMode !== input.credentialMode
       || input.apiKey !== undefined
-      || input.oauthClient !== undefined
       || oauthConfigurationChanged
     if (activeBindings.length > 0 && marketplaceOwnedFieldsChanged) {
       return { status: "marketplace_managed" }

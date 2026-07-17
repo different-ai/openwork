@@ -7,6 +7,15 @@ export function marketplaceConnectionNeedsAdminSetup(
   return connection.identityManagedBy.length > 0 && connection.setupRequired === true;
 }
 
+export function connectionNeedsOAuthClientConfiguration(
+  connection: ExternalMcpConnection,
+  connectAttemptRequiresConfiguration = false,
+): boolean {
+  return connection.authType === "oauth"
+    && connection.oauthClientConfigured !== true
+    && (connection.oauthClientRequired === true || connectAttemptRequiresConfiguration);
+}
+
 export function marketplaceConnectionSetupTarget(
   connection: ExternalMcpConnection,
   presets: ExternalMcpPreset[],
