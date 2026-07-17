@@ -423,7 +423,7 @@ export function McpConnectionsScreen() {
             </span>
             <span>
               <span className="block text-[14px] font-semibold text-gray-900">MCP server</span>
-              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Paste a URL or just type a name — we&apos;ll figure out the rest.</span>
+              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Paste a server URL and we&apos;ll check it for you.</span>
             </span>
           </button>
           <button
@@ -569,17 +569,11 @@ export function McpConnectionsScreen() {
       <AddConnectionDialog
         open={formOpen}
         preset={formPreset}
-        presets={presets}
-        existingConnectionUrls={connections.map((connection) => connection.url)}
         submitting={createConnection.isPending}
         error={createConnection.error}
         onClose={() => {
           setFormOpen(false);
           setFormPreset(null);
-        }}
-        onSelectPreset={(selectedPreset) => {
-          createConnection.reset();
-          setFormPreset(selectedPreset);
         }}
         onSubmit={handleCreate}
       />
@@ -1995,22 +1989,16 @@ function EditConnectionDialog({
 function AddConnectionDialog({
   open,
   preset,
-  presets,
-  existingConnectionUrls,
   submitting,
   error,
   onClose,
-  onSelectPreset,
   onSubmit,
 }: {
   open: boolean;
   preset: ExternalMcpPreset | null;
-  presets: ExternalMcpPreset[];
-  existingConnectionUrls: string[];
   submitting: boolean;
   error: unknown;
   onClose: () => void;
-  onSelectPreset: (preset: ExternalMcpPreset | null) => void;
   onSubmit: (
     input: CreateMcpConnectionInput,
     options: { startOAuth: boolean },
@@ -2019,10 +2007,9 @@ function AddConnectionDialog({
   const { orgContext } = useOrgDashboard();
   const discoverRequirements = useDiscoverMcpConnectionRequirements();
   const resolveConnection = useResolveMcpConnection();
-  // The picker keeps known services separate from the custom URL path.
-  // Presets land in their prefilled form; Custom MCP uses discovery first.
-  const [view, setView] = useState<"picker" | "smart" | "advanced">(preset ? "advanced" : "picker");
-  const [presetFilter, setPresetFilter] = useState("");
+  // Preset quick-add cards land in their prefilled form. The generic MCP
+  // action opens directly on URL discovery.
+  const [view, setView] = useState<"smart" | "advanced">(preset ? "advanced" : "smart");
   const [smartQuery, setSmartQuery] = useState("");
   const [smartState, setSmartState] = useState<"idle" | "waiting" | "resolving" | "done" | "error">("idle");
   const [smartError, setSmartError] = useState<unknown>(null);
@@ -2050,8 +2037,7 @@ function AddConnectionDialog({
 
   useEffect(() => {
     if (!open) return;
-    setView(preset ? "advanced" : "picker");
-    setPresetFilter("");
+    setView(preset ? "advanced" : "smart");
     setSmartQuery("");
     setSmartState("idle");
     setSmartError(null);
@@ -2084,15 +2070,6 @@ function AddConnectionDialog({
     () => (orgContext?.members ?? []).filter((member) => Boolean(member.userId)),
     [orgContext?.members],
   );
-  const filteredPresets = useMemo(() => {
-    const query = presetFilter.trim().toLowerCase();
-    if (!query) return presets;
-    return presets.filter((service) => (
-      service.displayName.toLowerCase().includes(query)
-      || service.description.toLowerCase().includes(query)
-      || service.url.toLowerCase().includes(query)
-    ));
-  }, [presetFilter, presets]);
 
   function toggle(list: string[], id: string): string[] {
     return list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id];
@@ -2303,97 +2280,11 @@ function AddConnectionDialog({
         className="max-h-[calc(100dvh-3rem)] w-full max-w-md overflow-y-auto overscroll-contain rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
-        {view === "picker" ? (
+        {view === "smart" ? (
           <>
-            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-              Add a connection
-            </h2>
-            <p className="mt-1.5 text-[13px] leading-5 text-gray-500">
-              Choose a service, or connect an MCP server by URL.
-            </p>
-
-            <button
-              type="button"
-              onClick={() => setView("smart")}
-              className="group mt-5 flex w-full items-center gap-3 rounded-2xl border border-gray-200 px-3.5 py-3 text-left transition hover:border-gray-400 hover:bg-gray-50"
-              data-testid="select-custom-mcp"
-            >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-900 text-white">
-                <Server className="h-4 w-4" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[14px] font-semibold text-gray-950">Custom MCP</span>
-                <span className="mt-0.5 block truncate text-[12px] text-gray-500">Connect with a server URL</span>
-              </span>
-              <span className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] font-semibold text-gray-800 shadow-sm transition group-hover:border-gray-300">
-                Add
-              </span>
-            </button>
-
-            <div className="mt-5">
-              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400">
-                Services
-              </label>
-              <DenInput
-                aria-label="Filter services"
-                icon={Search}
-                value={presetFilter}
-                onChange={(event) => setPresetFilter(event.target.value)}
-                placeholder="Search services"
-              />
-            </div>
-
-            <div
-              className="mt-3 max-h-[min(42vh,340px)] space-y-2 overflow-y-auto overscroll-contain pr-1"
-              data-testid="mcp-service-picker"
-            >
-              {filteredPresets.map((service) => {
-                const alreadyAdded = existingConnectionUrls.includes(service.url);
-                return (
-                  <button
-                    key={service.presetId}
-                    type="button"
-                    disabled={alreadyAdded}
-                    onClick={() => onSelectPreset(service)}
-                    className="group flex w-full items-center gap-3 rounded-2xl border border-gray-200 px-3.5 py-3 text-left transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <IntegrationIcon name={service.displayName} serviceUrl={service.url} className="h-10 w-10 rounded-xl" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[14px] font-semibold text-gray-950">{service.displayName}</span>
-                      <span className="mt-0.5 block truncate text-[12px] text-gray-500">{service.description}</span>
-                    </span>
-                    <span className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] font-semibold text-gray-800 shadow-sm transition group-hover:border-gray-300">
-                      {alreadyAdded ? "Added" : "Add"}
-                    </span>
-                  </button>
-                );
-              })}
-              {filteredPresets.length === 0 ? (
-                <p className="rounded-2xl border border-dashed border-gray-200 px-4 py-6 text-center text-[13px] text-gray-500">
-                  No services match “{presetFilter.trim()}”.
-                </p>
-              ) : null}
-            </div>
-
-            <div className="mt-5 flex justify-end">
-              <DenButton variant="secondary" onClick={onClose}>
-                Cancel
-              </DenButton>
-            </div>
-          </>
-        ) : view === "smart" ? (
-          <>
-            <button
-              type="button"
-              onClick={() => setView("picker")}
-              className="mb-2 flex items-center gap-1 text-[12px] font-medium text-gray-500 transition hover:text-gray-900"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              All connections
-            </button>
             <h2 className="flex items-center gap-2 text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
               <Server className="h-4 w-4 text-gray-400" />
-              Custom MCP
+              Add an MCP server
             </h2>
             <p className="mt-1.5 text-[13px] leading-5 text-gray-500">
               Paste the MCP server URL and we&apos;ll find and check its authentication requirements.
@@ -2523,17 +2414,16 @@ function AddConnectionDialog({
           </>
         ) : (
           <>
-        <button
-          type="button"
-          onClick={() => {
-            if (preset) onSelectPreset(null);
-            else setView("smart");
-          }}
-          className="mb-2 flex items-center gap-1 text-[12px] font-medium text-gray-500 transition hover:text-gray-900"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          {preset ? "All connections" : "Custom MCP"}
-        </button>
+        {!preset ? (
+          <button
+            type="button"
+            onClick={() => setView("smart")}
+            className="mb-2 flex items-center gap-1 text-[12px] font-medium text-gray-500 transition hover:text-gray-900"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            MCP server
+          </button>
+        ) : null}
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
           {preset ? `Add ${preset.displayName}` : "Add a custom MCP server"}
         </h2>
