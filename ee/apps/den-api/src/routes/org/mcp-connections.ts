@@ -52,7 +52,6 @@ import {
   disconnectExternalMcpMemberAccount,
   externalMcpIdentityBinding,
   getExternalMcpConnection,
-  isolateExternalMcpOAuthCallback,
   listActiveExternalMcpConnectionBindings,
   listDirectExternalMcpConnectionAccess,
   listExternalMcpConnections,
@@ -672,21 +671,11 @@ function oauthAuthorizationServerMetadata(connection: ExternalMcpConnectionRow):
   return discovery.authorizationServerMetadata
 }
 
-function requiresIsolatedOAuthCallback(connection: ExternalMcpConnectionRow): boolean {
+function usesPinnedSharedOAuthCallback(connection: ExternalMcpConnectionRow): boolean {
   const metadata = oauthAuthorizationServerMetadata(connection)
   return connection.oauthConfiguration?.callbackMode === "shared-v1"
     && metadata !== undefined
     && metadata.authorization_response_iss_parameter_supported !== true
-}
-
-function assertIsolatedOAuthCallbackSafety(connection: ExternalMcpConnectionRow): void {
-  const methods = oauthAuthorizationServerMetadata(connection)?.code_challenge_methods_supported
-  if (!Array.isArray(methods) || !methods.includes("S256")) {
-    throw new EnterpriseMcpOAuthContractError(
-      "MCP_OAUTH_CONFIGURATION_REQUIRED",
-      "This authorization server omits response issuers and cannot use the isolated callback because it does not advertise PKCE S256.",
-    )
-  }
 }
 
 function parseJsonObject(value: string | null): Record<string, unknown> | null {
@@ -1106,6 +1095,7 @@ async function handleExternalMcpOAuthCallback(input: {
       ? (url.searchParams.get("iss") ?? "")
       : undefined
     try {
+      const usesPinnedSharedCallback = usesPinnedSharedOAuthCallback(connection)
       const validation = validateMcpAuthorizationResponseIssuer({
         expectedIssuer: configuredIssuer,
         discoveryState: connection.oauthConfiguration?.discovery,
@@ -1114,7 +1104,9 @@ async function handleExternalMcpOAuthCallback(input: {
           ? "distinct-redirect-uri"
           : callbackMode === "legacy-v1"
             ? "legacy"
-            : "response-issuer",
+            : usesPinnedSharedCallback
+              ? "pinned-transaction"
+              : "response-issuer",
       })
       if (validation.ignoredResponseIssuer !== undefined) {
         logger.warn("external_mcp_connect_callback_untrusted_issuer_ignored", {
@@ -2340,7 +2332,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             member,
             c.get("requestId"),
           )
-          return { result, signedState }
+          return { result }
         }
 
         let started: Awaited<ReturnType<typeof beginAuthorization>>
@@ -2414,19 +2406,13 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             organizationId: payload.organization.id,
             connectionId: externalMcpConnectionId,
           })
-          if (discovered && requiresIsolatedOAuthCallback(discovered)) {
-            assertIsolatedOAuthCallbackSafety(discovered)
-            await abandonExternalMcpAuth(discovered, started.signedState, member, c.get("requestId"))
-            connection = await isolateExternalMcpOAuthCallback({
-              organizationId: payload.organization.id,
-              connectionId: externalMcpConnectionId,
-            })
-            logger.info("external_mcp_oauth_isolated_callback_selected", {
+          if (discovered && usesPinnedSharedOAuthCallback(discovered)) {
+            connection = discovered
+            logger.info("external_mcp_oauth_pinned_shared_callback_selected", {
               connection_id: connection.id,
               organization_id: payload.organization.id,
               authorization_server_issuer: connection.oauthConfiguration?.authorizationServerIssuer,
             })
-            started = await beginAuthorization(connection)
           }
         }
 

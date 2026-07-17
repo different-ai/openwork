@@ -349,9 +349,8 @@ test("callback isolation replaces SDK registration state and exposes the scoped 
   })
 })
 
-test("connect start selects an isolated callback before sending the user to a legacy authorization server", async () => {
+test("connect start keeps the shared callback for a pre-registered confidential client without response issuer support", async () => {
   let origin = ""
-  const registeredRedirects: string[][] = []
   const server = Bun.serve({
     port: 0,
     async fetch(incoming) {
@@ -367,39 +366,26 @@ test("connect start selects an isolated callback before sending the user to a le
           issuer: origin,
           authorization_endpoint: `${origin}/authorize`,
           token_endpoint: `${origin}/token`,
-          registration_endpoint: `${origin}/register`,
           response_types_supported: ["code"],
           grant_types_supported: ["authorization_code"],
-          code_challenge_methods_supported: ["S256"],
-          token_endpoint_auth_methods_supported: ["none"],
+          token_endpoint_auth_methods_supported: ["client_secret_basic"],
         })
-      }
-      if (url.pathname === "/register") {
-        const metadata: unknown = await incoming.json()
-        const redirectUris = isRecord(metadata) && isStringArray(metadata.redirect_uris)
-          ? metadata.redirect_uris
-          : []
-        registeredRedirects.push(redirectUris)
-        return Response.json({
-          client_id: `dynamic-client-${registeredRedirects.length}`,
-          token_endpoint_auth_method: "none",
-          redirect_uris: redirectUris,
-        }, { status: 201 })
       }
       if (url.pathname === "/token") {
         const form = new URLSearchParams(await incoming.text())
+        expect(incoming.headers.get("authorization")).toBe(`Basic ${btoa("confidential-client:confidential-secret")}`)
         expect(form.get("grant_type")).toBe("authorization_code")
-        expect(form.get("code")).toBe("isolated-authorization-code")
+        expect(form.get("code")).toBe("shared-authorization-code")
         expect(form.get("code_verifier")?.length).toBeGreaterThanOrEqual(43)
         return Response.json({
-          access_token: "isolated-access-token",
-          refresh_token: "isolated-refresh-token",
+          access_token: "shared-access-token",
+          refresh_token: "shared-refresh-token",
           token_type: "Bearer",
           expires_in: 3_600,
         })
       }
       if (url.pathname === "/mcp") {
-        if (incoming.headers.get("authorization") === "Bearer isolated-access-token") {
+        if (incoming.headers.get("authorization") === "Bearer shared-access-token") {
           if (incoming.method !== "POST") return new Response(null, { status: 405 })
           const rpc: unknown = await incoming.json()
           if (!isRecord(rpc)) return Response.json({ error: "invalid_request" }, { status: 400 })
@@ -414,7 +400,7 @@ test("connect start selects an isolated callback before sending the user to a le
             result: {
               protocolVersion: "2025-06-18",
               capabilities: { tools: {} },
-              serverInfo: { name: "isolated-callback-test", version: "1.0.0" },
+              serverInfo: { name: "shared-callback-test", version: "1.0.0" },
             },
           })
         }
@@ -433,40 +419,48 @@ test("connect start selects an isolated callback before sending the user to a le
   try {
     const connection = await createExternalMcpConnection({
       organizationId,
-      name: "Automatic isolated callback MCP",
+      name: "Pinned shared callback MCP",
       url: `${origin}/mcp`,
       authType: "oauth",
       credentialMode: "shared",
       createdByOrgMembershipId: memberId,
       access: { orgWide: true, memberIds: [], teamIds: [] },
     })
+    const sharedCallback = new URL(
+      "/v1/mcp-connections/oauth/callback",
+      process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790",
+    ).toString()
+    await upsertOrgOAuthClient({
+      organizationId,
+      providerId: connection.id,
+      clientId: "confidential-client",
+      clientSecret: "confidential-secret",
+      extra: {
+        enterpriseMcpRegistrationSource: "pre-registered",
+        registrationContractVersion: 2,
+        registeredRedirectUri: sharedCallback,
+      },
+      createdByOrgMembershipId: memberId,
+    })
     const response = await request(`/v1/mcp-connections/${connection.id}/connect/start`)
     expect(response.status).toBe(200)
     const body: unknown = await response.json()
     if (!isRecord(body) || typeof body.authorizeUrl !== "string") throw new Error("Expected an OAuth authorize URL.")
     const authorizeUrl = new URL(body.authorizeUrl)
-    const isolatedCallback = new URL(
-      `/v1/mcp-connections/${connection.id}/connect/callback`,
-      process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790",
-    ).toString()
-    expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(isolatedCallback)
-    expect(registeredRedirects).toHaveLength(2)
-    expect(registeredRedirects[0]).toEqual([
-      new URL("/v1/mcp-connections/oauth/callback", process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790").toString(),
-    ])
-    expect(registeredRedirects[1]).toEqual([isolatedCallback])
+    expect(authorizeUrl.searchParams.get("client_id")).toBe("confidential-client")
+    expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256")
+    expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(sharedCallback)
 
     const rows = await db
       .select()
       .from(schema.ExternalMcpConnectionTable)
       .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
       .limit(1)
-    expect(rows[0]?.oauthConfiguration?.callbackMode).toBe("isolated-v1")
+    expect(rows[0]?.oauthConfiguration?.callbackMode).toBe("shared-v1")
 
-    const callbackUrl = new URL(isolatedCallback)
-    callbackUrl.searchParams.set("code", "isolated-authorization-code")
+    const callbackUrl = new URL(sharedCallback)
+    callbackUrl.searchParams.set("code", "shared-authorization-code")
     callbackUrl.searchParams.set("state", authorizeUrl.searchParams.get("state") ?? "")
-    callbackUrl.searchParams.set("iss", "stytch.com/project-live-provider-value")
     const callbackResponse = await app.fetch(new Request(callbackUrl))
     expect(callbackResponse.status).toBe(200)
     expect(await callbackResponse.text()).toContain("You're connected")
@@ -476,8 +470,8 @@ test("connect start selects an isolated callback before sending the user to a le
       .from(schema.ExternalMcpConnectionTable)
       .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
       .limit(1)
-    expect(connectedRows[0]?.accessToken).toBe("isolated-access-token")
-    expect(connectedRows[0]?.refreshToken).toBe("isolated-refresh-token")
+    expect(connectedRows[0]?.accessToken).toBe("shared-access-token")
+    expect(connectedRows[0]?.refreshToken).toBe("shared-refresh-token")
   } finally {
     server.stop(true)
   }

@@ -12,6 +12,7 @@ function optionalString(value: unknown): string | undefined {
 export type McpAuthorizationResponseMixUpDefense =
   | "response-issuer"
   | "distinct-redirect-uri"
+  | "pinned-transaction"
   | "legacy"
 
 export type McpAuthorizationResponseIssuerValidation = {
@@ -21,10 +22,13 @@ export type McpAuthorizationResponseIssuerValidation = {
 
 /**
  * Validate the OAuth mix-up defense before a code is sent to a token endpoint
- * or a provider error is acted upon. Shared callbacks require RFC 9207 issuer
- * identification. A caller may instead prove an issuer-specific redirect URI
- * per RFC 9700; only then may an unadvertised provider `iss` be treated as
- * untrusted compatibility data. Exact issuer comparisons are never normalized.
+ * or a provider error is acted upon. Shared callbacks normally use RFC 9207
+ * issuer identification. A caller may instead prove an issuer-specific
+ * redirect URI per RFC 9700, or explicitly select the narrower
+ * pinned-transaction compatibility posture after verifying a signed,
+ * expiring state token that binds the connection, callback mode, and selected
+ * issuer to a single-use server-side authorization record. Exact issuer
+ * comparisons are never normalized.
  */
 export function validateMcpAuthorizationResponseIssuer(input: {
   expectedIssuer?: string | null

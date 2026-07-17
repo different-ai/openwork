@@ -680,6 +680,31 @@ describe("enterprise MCP OAuth persistence contract", () => {
     })
   })
 
+  it("supports a pinned authorization transaction when a provider omits response issuers", () => {
+    const expectedIssuer = "https://identity.example.test/tenant"
+    const discoveryState = {
+      authorizationServerUrl: expectedIssuer,
+      authorizationServerMetadata: {
+        issuer: expectedIssuer,
+        authorization_response_iss_parameter_supported: false,
+      },
+      resourceMetadata: { authorization_servers: [expectedIssuer] },
+    }
+
+    assert.deepEqual(validateMcpAuthorizationResponseIssuer({
+      expectedIssuer,
+      discoveryState,
+      mixUpDefense: "pinned-transaction",
+    }), { defense: "pinned-transaction" })
+    assert.throws(() => validateMcpAuthorizationResponseIssuer({
+      expectedIssuer,
+      discoveryState,
+      responseIssuer: "https://attacker.example.test",
+      mixUpDefense: "pinned-transaction",
+    }), (error: unknown) => error instanceof EnterpriseMcpOAuthContractError
+      && error.code === "MCP_OAUTH_ISSUER_MISMATCH")
+  })
+
   it("never lets PKCE or an isolated callback override advertised RFC 9207 support", () => {
     const expectedIssuer = "https://identity.example.test/tenant"
     const discoveryState = {
