@@ -532,6 +532,20 @@ export type UpdatedMcpConnection = ExternalMcpConnection & {
   reconnectionRequired: boolean;
 };
 
+export type McpConnectionOAuthStartErrorCode =
+  | "mcp_oauth_configuration_required"
+  | "mcp_oauth_issuer_mismatch";
+
+export class McpConnectionOAuthStartError extends Error {
+  readonly code: McpConnectionOAuthStartErrorCode;
+
+  constructor(code: McpConnectionOAuthStartErrorCode, message: string) {
+    super(message);
+    this.name = "McpConnectionOAuthStartError";
+    this.code = code;
+  }
+}
+
 export function useCreateMcpConnection() {
   const queryClient = useQueryClient();
   const { orgId, runReauthableAction } = useOrgDashboard();
@@ -625,6 +639,16 @@ export function useStartMcpConnectionOAuth() {
         20000,
       );
       if (!response.ok) {
+        if (
+          isRecord(payload)
+          && typeof payload.message === "string"
+          && (
+            payload.error === "mcp_oauth_configuration_required"
+            || payload.error === "mcp_oauth_issuer_mismatch"
+          )
+        ) {
+          throw new McpConnectionOAuthStartError(payload.error, payload.message);
+        }
         throw getRequestError(payload, response, `Failed to start OAuth (${response.status}).`);
       }
       return payload as { status: "connected" | "needs_auth"; authorizeUrl: string | null };

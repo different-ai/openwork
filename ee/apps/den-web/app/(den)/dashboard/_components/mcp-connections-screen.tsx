@@ -32,6 +32,8 @@ import {
   type ExternalMcpCredentialMode,
   type ExternalMcpPreset,
   type ExternalMcpTool,
+  McpConnectionOAuthStartError,
+  type McpConnectionOAuthStartErrorCode,
   type McpConnectionResolution,
   type McpRequirementsDiscovery,
   type McpConnectionAccessInput,
@@ -252,7 +254,11 @@ export function McpConnectionsScreen() {
   const telegramConnection = useTelegramConnection(true);
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
-  const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
+  const [connectionActionError, setConnectionActionError] = useState<{
+    connectionId: string;
+    code: McpConnectionOAuthStartErrorCode | null;
+    message: string;
+  } | null>(null);
   const [connectionActionNotice, setConnectionActionNotice] = useState<string | null>(null);
   const [toolsConnectionId, setToolsConnectionId] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -301,6 +307,7 @@ export function McpConnectionsScreen() {
       authorizationWindow?.close();
       setConnectionActionError({
         connectionId,
+        code: connectError instanceof McpConnectionOAuthStartError ? connectError.code : null,
         message: connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.",
       });
     }
@@ -362,6 +369,7 @@ export function McpConnectionsScreen() {
     } catch (disconnectError) {
       setConnectionActionError({
         connectionId: connection.id,
+        code: null,
         message: disconnectError instanceof Error ? disconnectError.message : "Failed to disconnect the MCP connection.",
       });
     }
@@ -550,6 +558,7 @@ export function McpConnectionsScreen() {
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
+              errorCode={connectionActionError?.connectionId === connection.id ? connectionActionError.code : null}
               onEdit={() => {
                 updateConnection.reset();
                 setEditingConnection(connection);
@@ -1195,6 +1204,7 @@ function ConnectionRow({
   polling,
   connecting,
   errorMessage,
+  errorCode,
   onEdit,
   onConnect,
   onDisconnect,
@@ -1210,6 +1220,7 @@ function ConnectionRow({
   polling: boolean;
   connecting: boolean;
   errorMessage: string | null;
+  errorCode: McpConnectionOAuthStartErrorCode | null;
   onEdit: () => void;
   onConnect: () => void;
   onDisconnect: () => void;
@@ -1225,7 +1236,9 @@ function ConnectionRow({
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement>(null);
   const displayedConnected = connection.connected && !needsAdminSetup;
-  const canConnectOAuth = !needsAdminSetup && connection.authType === "oauth"
+  const configurationRequired = errorCode === "mcp_oauth_configuration_required"
+    || errorCode === "mcp_oauth_issuer_mismatch";
+  const canConnectOAuth = !needsAdminSetup && !configurationRequired && connection.authType === "oauth"
     && (isPerMember ? !connection.connectedForMe : !connection.connected);
   const canInspectTools = !needsAdminSetup && (connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe);
 
@@ -1308,6 +1321,11 @@ function ConnectionRow({
             <Link href={setupHref} className={buttonVariants({ variant: "primary", size: "sm" })}>
               Set up
             </Link>
+          ) : null}
+          {configurationRequired ? (
+            <DenButton variant="primary" size="sm" onClick={onEdit}>
+              Configure
+            </DenButton>
           ) : null}
           {canConnectOAuth ? (
             <DenButton

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { z } from "zod"
-import { discoverConnectionRequirements, type EnterpriseMcpFetch } from "../src/index.js"
+import {
+  discoverConnectionRequirements,
+  selectRecoverableAuthorizationServerIssuer,
+  type EnterpriseMcpFetch,
+} from "../src/index.js"
 
 const rpcRequestSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
@@ -179,6 +183,10 @@ describe("enterprise MCP requirements discovery", () => {
     assert.deepEqual(result.authentication.recommendedScopes, ["mcp_api", "refresh_token"])
     assert.equal(result.authentication.recommendedRegistrationMethod, "pre_registered")
     assert.equal(result.warnings.some((warning) => warning.code === "oauth_issuer_mismatch"), false)
+    assert.equal(selectRecoverableAuthorizationServerIssuer({
+      selectedIssuer: resource,
+      requirements: result,
+    }), "https://login.salesforce.example")
   })
 
   it("accepts a root resource discovery alias with an equivalent trailing slash", async () => {
@@ -218,6 +226,14 @@ describe("enterprise MCP requirements discovery", () => {
     assert.equal(result.authentication.authorizationServers[0]?.issuer, "https://vercel.example")
     assert.equal(result.authentication.recommendedRegistrationMethod, "dynamic")
     assert.equal(result.warnings.some((warning) => warning.code === "oauth_issuer_mismatch"), false)
+    assert.equal(selectRecoverableAuthorizationServerIssuer({
+      selectedIssuer: "https://mcp.vercel.example",
+      requirements: result,
+    }), "https://vercel.example")
+    assert.equal(selectRecoverableAuthorizationServerIssuer({
+      selectedIssuer: "https://unrelated.example",
+      requirements: result,
+    }), undefined)
   })
 
   it("accepts an authorization-server root issuer with an equivalent trailing slash", async () => {
@@ -259,5 +275,9 @@ describe("enterprise MCP requirements discovery", () => {
     assert.equal(result.authentication.authorizationServers[0]?.issuer, "https://api.close.example")
     assert.equal(result.authentication.recommendedRegistrationMethod, "dynamic")
     assert.equal(result.warnings.some((warning) => warning.code === "oauth_issuer_mismatch"), false)
+    assert.equal(selectRecoverableAuthorizationServerIssuer({
+      selectedIssuer: "https://api.close.example/",
+      requirements: result,
+    }), "https://api.close.example")
   })
 })

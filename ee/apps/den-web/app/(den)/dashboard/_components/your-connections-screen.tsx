@@ -6,7 +6,7 @@ import Link from "next/link";
 import { AlertTriangle, Check, Loader2, Plug, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getOrgAccessFlags, getPluginRoute } from "../../_lib/den-org";
+import { getMcpConnectionsRoute, getOrgAccessFlags, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IntegrationIcon } from "./integration-icon";
 import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "./mcp-connection-display";
@@ -17,6 +17,8 @@ import {
   canDisconnectMyConnectionAccount,
   type ExternalMcpConnection,
   isNativeProviderConnectionId,
+  McpConnectionOAuthStartError,
+  type McpConnectionOAuthStartErrorCode,
   useDisconnectMyProviderAccount,
   useMcpConnections,
   useMcpConnectionPresets,
@@ -49,7 +51,11 @@ export function YourConnectionsScreen() {
   const startOAuth = useStartMcpConnectionOAuth();
   const disconnectProvider = useDisconnectMyProviderAccount();
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
-  const [rowError, setRowError] = useState<{ connectionId: string; message: string } | null>(null);
+  const [rowError, setRowError] = useState<{
+    connectionId: string;
+    code: McpConnectionOAuthStartErrorCode | null;
+    message: string;
+  } | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const focusedRowRef = useRef<HTMLDivElement | null>(null);
   const focusConnectionId = trustedConnectionFocusId(connections, searchParams.get("connectionId"));
@@ -108,6 +114,7 @@ export function YourConnectionsScreen() {
       authorizationWindow?.close();
       setRowError({
         connectionId,
+        code: connectError instanceof McpConnectionOAuthStartError ? connectError.code : null,
         message: connectError instanceof Error ? connectError.message : "Failed to connect account.",
       });
     }
@@ -121,6 +128,7 @@ export function YourConnectionsScreen() {
     } catch (disconnectError) {
       setRowError({
         connectionId,
+        code: null,
         message: disconnectError instanceof Error ? disconnectError.message : "Failed to disconnect account.",
       });
     }
@@ -152,19 +160,29 @@ export function YourConnectionsScreen() {
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
           {visibleConnections.map((connection) => {
             const needsAdminSetup = marketplaceConnectionNeedsAdminSetup(connection, presets);
+            const connectionError = rowError?.connectionId === connection.id ? rowError : null;
+            const recoveryRequired = connectionError?.code === "mcp_oauth_configuration_required"
+              || connectionError?.code === "mcp_oauth_issuer_mismatch";
             const setupPluginId = connection.identityManagedBy[0]?.pluginId;
             return <YourConnectionRow
               key={connection.id}
               connection={connection}
               isAdmin={access.isAdmin}
               needsAdminSetup={needsAdminSetup}
-              setupHref={access.isAdmin && needsAdminSetup && setupPluginId ? getPluginRoute(orgSlug, setupPluginId) : null}
+              recoveryRequired={recoveryRequired}
+              setupHref={access.isAdmin
+                ? recoveryRequired
+                  ? getMcpConnectionsRoute(orgSlug)
+                  : needsAdminSetup && setupPluginId
+                    ? getPluginRoute(orgSlug, setupPluginId)
+                    : null
+                : null}
               highlighted={focusConnectionId === connection.id}
               rowRef={focusConnectionId === connection.id ? focusedRowRef : undefined}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               disconnecting={disconnectProvider.isPending && disconnectProvider.variables === connection.id}
-              errorMessage={rowError?.connectionId === connection.id ? rowError.message : null}
+              errorMessage={connectionError?.message ?? null}
               onConnect={() => void handleConnectMyAccount(connection.id)}
               onDisconnect={() => void handleDisconnectMyAccount(connection.id)}
             />;
@@ -179,6 +197,7 @@ function YourConnectionRow({
   connection,
   isAdmin,
   needsAdminSetup,
+  recoveryRequired,
   setupHref,
   polling,
   connecting,
@@ -192,6 +211,7 @@ function YourConnectionRow({
   connection: ExternalMcpConnection;
   isAdmin: boolean;
   needsAdminSetup: boolean;
+  recoveryRequired: boolean;
   setupHref: string | null;
   highlighted: boolean;
   rowRef?: React.Ref<HTMLDivElement>;
@@ -203,11 +223,12 @@ function YourConnectionRow({
   onDisconnect: () => void;
 }) {
   const isPerMember = connection.credentialMode === "per_member";
-  const needsReconnect = !needsAdminSetup && connection.connectedForMe && connection.needsReconnect === true;
-  const needsMyConnect = !needsAdminSetup && isPerMember && !connection.connectedForMe;
-  const needsAdminConnect = !needsAdminSetup && isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
-  const canDisconnect = !needsAdminSetup && canDisconnectMyConnectionAccount(connection);
-  const canTestTools = !needsAdminSetup && isAdmin && !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
+  const setupBlocked = needsAdminSetup || recoveryRequired;
+  const needsReconnect = !setupBlocked && connection.connectedForMe && connection.needsReconnect === true;
+  const needsMyConnect = !setupBlocked && isPerMember && !connection.connectedForMe;
+  const needsAdminConnect = !setupBlocked && isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
+  const canDisconnect = !setupBlocked && canDisconnectMyConnectionAccount(connection);
+  const canTestTools = !setupBlocked && isAdmin && !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
   const [toolRunnerOpen, setToolRunnerOpen] = useState(false);
   const microsoftScopes = connection.id === "microsoft-365"
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
@@ -226,7 +247,7 @@ function YourConnectionRow({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
-              {needsAdminSetup ? (
+              {setupBlocked ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   Waiting for an admin to finish setup
                 </span>
@@ -283,7 +304,7 @@ function YourConnectionRow({
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {setupHref ? (
             <Link href={setupHref} className={buttonVariants({ variant: "primary", size: "sm" })}>
-              Set up
+              {recoveryRequired ? "Configure" : "Set up"}
             </Link>
           ) : null}
           {canTestTools ? (

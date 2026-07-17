@@ -20,6 +20,30 @@ const DEFAULT_MAX_TOOLS = 100
 const MAX_RESPONSE_BYTES = 1024 * 1024
 const MAX_TOOL_PAGES = 5
 
+/**
+ * Select a canonical issuer only when fresh requirements discovery proves
+ * that a stale configured value is either the same root issuer alias or the
+ * protected resource's own discovery alias. Ambiguous and partially invalid
+ * discovery results remain manual failures.
+ */
+export function selectRecoverableAuthorizationServerIssuer(input: {
+  selectedIssuer: string
+  requirements: Pick<EnterpriseMcpConnectionRequirements, "authentication" | "warnings">
+}): string | undefined {
+  if (
+    input.requirements.authentication.kind !== "oauth"
+    || input.requirements.authentication.authorizationServers.length !== 1
+    || input.requirements.warnings.some((warning) => warning.code === "oauth_issuer_mismatch")
+  ) return undefined
+
+  const canonicalIssuer = input.requirements.authentication.authorizationServers[0]?.issuer
+  if (!canonicalIssuer || canonicalIssuer === input.selectedIssuer) return undefined
+  if (isEquivalentOAuthDiscoveryAlias(input.selectedIssuer, canonicalIssuer)) return canonicalIssuer
+  return isEquivalentOAuthDiscoveryAlias(input.selectedIssuer, input.requirements.authentication.resource)
+    ? canonicalIssuer
+    : undefined
+}
+
 function boundedResponse(response: Response): Response {
   const advertisedLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(advertisedLength) && advertisedLength > MAX_RESPONSE_BYTES) {
