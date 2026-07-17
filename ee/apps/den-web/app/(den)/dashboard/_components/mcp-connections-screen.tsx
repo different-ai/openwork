@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, Minus, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -65,7 +65,7 @@ import {
   smartAddAuthLabel,
 } from "./mcp-connection-smart-add";
 import {
-  areAllOptionalScopesSelected,
+  getOptionalScopeSelectionState,
   OPTIONAL_SCOPE_BULK_TOGGLE_THRESHOLD,
   toggleAllOptionalScopes,
 } from "./mcp-scope-selection";
@@ -2316,7 +2316,7 @@ function AddConnectionDialog({
     ?? authorizationServers[0]?.scopesSupported
     ?? [];
   const optionalScopes = availableScopes.filter((scope) => !requiredScopes.includes(scope));
-  const allOptionalScopesSelected = areAllOptionalScopesSelected(requestedScopes, optionalScopes);
+  const optionalScopeSelectionState = getOptionalScopeSelectionState(requestedScopes, optionalScopes);
   const access: McpConnectionAccessInput = accessMode === "everyone"
     ? { orgWide: true, memberIds: [], teamIds: [] }
     : { orgWide: false, memberIds: accessMode === "people" ? selectedMemberIds : [], teamIds: accessMode === "teams" ? selectedTeamIds : [] };
@@ -2786,35 +2786,31 @@ function AddConnectionDialog({
 
           {authType === "oauth" && requirements && (requiredScopes.length > 0 || optionalScopes.length > 0) ? (
             <div>
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <p className="text-[12px] font-medium text-gray-700">Permissions</p>
+              <p className="mb-1.5 text-[12px] font-medium text-gray-700">Permissions</p>
+              <div className="space-y-2 rounded-2xl border border-gray-100 bg-gray-50 p-3 text-[12px]">
                 {optionalScopes.length > OPTIONAL_SCOPE_BULK_TOGGLE_THRESHOLD ? (
                   <button
                     type="button"
-                    role="switch"
-                    aria-checked={allOptionalScopesSelected}
-                    aria-label="All optional permissions"
+                    role="checkbox"
+                    aria-checked={optionalScopeSelectionState === "some" ? "mixed" : optionalScopeSelectionState === "all"}
                     data-testid="toggle-all-optional-permissions"
                     onClick={() => setRequestedScopes((current) => toggleAllOptionalScopes(current, optionalScopes))}
-                    className="inline-flex shrink-0 items-center gap-2 rounded-full border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-gray-600 shadow-sm transition hover:border-gray-300 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900/10"
+                    className="flex w-full items-center gap-2 border-b border-gray-200 pb-2 text-left font-medium text-gray-700 transition hover:text-gray-950 focus:outline-none focus:ring-2 focus:ring-gray-900/10"
                   >
-                    <span>All optional</span>
                     <span
                       aria-hidden="true"
-                      className={`relative h-5 w-9 rounded-full transition-colors ${
-                        allOptionalScopesSelected ? "bg-gray-900" : "bg-gray-200"
+                      className={`flex h-4 w-4 items-center justify-center rounded border transition ${
+                        optionalScopeSelectionState === "none"
+                          ? "border-gray-300 bg-white"
+                          : "border-blue-600 bg-blue-600 text-white"
                       }`}
                     >
-                      <span
-                        className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                          allOptionalScopesSelected ? "translate-x-4" : "translate-x-0"
-                        }`}
-                      />
+                      {optionalScopeSelectionState === "all" ? <Check className="h-3 w-3" strokeWidth={3} /> : null}
+                      {optionalScopeSelectionState === "some" ? <Minus className="h-3 w-3" strokeWidth={3} /> : null}
                     </span>
+                    <span>{optionalScopeSelectionState === "all" ? "Deselect all" : "Select all"}</span>
                   </button>
                 ) : null}
-              </div>
-              <div className="space-y-2 rounded-2xl border border-gray-100 bg-gray-50 p-3 text-[12px]">
                 {requiredScopes.map((scope) => (
                   <label key={scope} className="flex items-center gap-2 text-gray-700">
                     <input type="checkbox" checked disabled />

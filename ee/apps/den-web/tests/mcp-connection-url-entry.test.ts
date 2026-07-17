@@ -37,7 +37,9 @@ describe("MCP URL entry UI contract", () => {
     const screen = readFileSync(screenPath, "utf8");
 
     expect(screen).toContain("optionalScopes.length > OPTIONAL_SCOPE_BULK_TOGGLE_THRESHOLD");
-    expect(screen).toContain('aria-label="All optional permissions"');
+    expect(screen).toContain('role="checkbox"');
+    expect(screen).toContain('"mixed"');
+    expect(screen).toContain('"Deselect all" : "Select all"');
     expect(screen).toContain('data-testid="toggle-all-optional-permissions"');
     expect(screen).toContain("toggleAllOptionalScopes(current, optionalScopes)");
   });

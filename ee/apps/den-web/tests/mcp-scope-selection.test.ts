@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  areAllOptionalScopesSelected,
+  getOptionalScopeSelectionState,
   OPTIONAL_SCOPE_BULK_TOGGLE_THRESHOLD,
   toggleAllOptionalScopes,
 } from "../app/(den)/dashboard/_components/mcp-scope-selection";
@@ -22,17 +22,24 @@ describe("MCP optional scope selection", () => {
     const optionalScopes = ["optional.one", "optional.two"];
     const selectedScopes = ["required", "optional.one", "optional.two", "provider.default"];
 
-    expect(areAllOptionalScopesSelected(selectedScopes, optionalScopes)).toBe(true);
+    expect(getOptionalScopeSelectionState(selectedScopes, optionalScopes)).toBe("all");
     expect(toggleAllOptionalScopes(selectedScopes, optionalScopes)).toEqual([
       "required",
       "provider.default",
     ]);
   });
 
-  test("treats a partial selection as not all selected", () => {
-    expect(areAllOptionalScopesSelected(
+  test("reports a mixed state for partial selections", () => {
+    expect(getOptionalScopeSelectionState(
       ["optional.one"],
       ["optional.one", "optional.two"],
-    )).toBe(false);
+    )).toBe("some");
+  });
+
+  test("reports an empty state when no optional scopes are selected", () => {
+    expect(getOptionalScopeSelectionState(
+      ["required"],
+      ["optional.one", "optional.two"],
+    )).toBe("none");
   });
 });
