@@ -101,7 +101,10 @@ export async function createManagedOpencodeServer(options: {
   });
 
   const url = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`Timeout waiting for OpenCode server after ${options.timeoutMs ?? 15000}ms`)), options.timeoutMs ?? 15000);
+    const timeout = setTimeout(() => {
+      try { child.kill("SIGTERM"); } catch { /* already exited */ }
+      reject(new Error(`Timeout waiting for OpenCode server after ${options.timeoutMs ?? 15000}ms`));
+    }, options.timeoutMs ?? 15000);
     let output = "";
     const done = (value: string) => {
       clearTimeout(timeout);
@@ -109,6 +112,7 @@ export async function createManagedOpencodeServer(options: {
     };
     const fail = (error: Error) => {
       clearTimeout(timeout);
+      try { child.kill("SIGTERM"); } catch { /* already exited */ }
       reject(error);
     };
     child.stdout?.on("data", (chunk) => {
