@@ -36,6 +36,10 @@ function shouldRunRouteDbCoverage() {
   return testFiles.length <= 2 && testFiles.some((argument) => argument.endsWith("admin-organization-capabilities.test.ts"))
 }
 
+function isRouteDatabase(value: unknown) {
+  return isRecord(value) && "query" in value
+}
+
 function testDatabase() {
   if (!db || !schema || !drizzle) {
     throw new Error("test database not initialized")
@@ -100,12 +104,25 @@ beforeAll(async () => {
   }
 
   seedRequiredEnv()
-  const [dbModule, schemaModule, drizzleModule, adminRoutesModule] = await Promise.all([
-    import("../src/db.js"),
-    import("@openwork-ee/den-db/schema"),
-    import("@openwork-ee/den-db/drizzle"),
-    import("../src/routes/admin/index.js"),
-  ])
+  let adminRoutesModule: typeof import("../src/routes/admin/index.js")
+  let dbModule: typeof import("../src/db.js")
+  let schemaModule: typeof import("@openwork-ee/den-db/schema")
+  let drizzleModule: typeof import("@openwork-ee/den-db/drizzle")
+  try {
+    [dbModule, schemaModule, drizzleModule] = await Promise.all([
+      import("../src/db.js"),
+      import("@openwork-ee/den-db/schema"),
+      import("@openwork-ee/den-db/drizzle"),
+    ])
+    if (!isRouteDatabase(dbModule.db)) {
+      routeTestUnavailable = "aggregate suite run; db module is mocked by another route test"
+      return
+    }
+    adminRoutesModule = await import("../src/routes/admin/index.js")
+  } catch (error) {
+    routeTestUnavailable = errorMessage(error)
+    return
+  }
   db = dbModule.db
   schema = schemaModule
   drizzle = drizzleModule
@@ -161,7 +178,7 @@ afterAll(async () => {
   await cleanup()
 })
 
-test("admin capability routes show effective Connect defaults while preserving raw overrides", async () => {
+test("admin capability routes show effective defaults while preserving raw overrides", async () => {
   if (routeTestUnavailable) {
     console.warn(`admin capability route DB coverage skipped: ${routeTestUnavailable}`)
     return
@@ -169,12 +186,12 @@ test("admin capability routes show effective Connect defaults while preserving r
 
   const getAbsent = await routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`)
   expect(getAbsent.status).toBe(200)
-  await expect(getAbsent.json()).resolves.toMatchObject({ capabilities: { installLinks: false, mcpConnections: true } })
+  await expect(getAbsent.json()).resolves.toMatchObject({ capabilities: { installLinks: true, mcpConnections: true } })
 
   const listAbsent = await routeApp().request(`http://den.local/v1/admin/organizations?search=${organizationId}`)
   expect(listAbsent.status).toBe(200)
   await expect(listAbsent.json()).resolves.toMatchObject({
-    organizations: [{ id: organizationId, capabilities: { installLinks: false, mcpConnections: true } }],
+    organizations: [{ id: organizationId, capabilities: { installLinks: true, mcpConnections: true } }],
   })
 
   const enableInstallLinks = await putCapabilities({ installLinks: true })

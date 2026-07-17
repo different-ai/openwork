@@ -57,6 +57,10 @@ function accountRecord(email: string, sub: string, scopes: string[] = ["openid"]
   };
 }
 
+function base64Url(text: string): string {
+  return Buffer.from(text, "utf8").toString("base64url");
+}
+
 const previousEnv = {
   devMode: process.env.OPENWORK_DEV_MODE,
   plaintextVault: process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT,
@@ -298,6 +302,7 @@ describe("Google Workspace extension", () => {
     }, { directory: workspaceRoot });
     expect(result?.ok).toBe(true);
     expect(result?.result).toMatchObject({ id: "draft-1" });
+    expect(result?.result).toMatchObject({ draftUrl: "https://mail.google.com/mail/u/0/#drafts?compose=draft-message-1", threadUrl: null });
     expect(requests[0]?.url).toBe("https://gmail.googleapis.com/gmail/v1/users/me/drafts");
     const raw = requests[0]?.body.match(/"raw":"([^"]+)"/)?.[1] ?? "";
     const decoded = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
@@ -309,6 +314,66 @@ describe("Google Workspace extension", () => {
     expect(decoded).toContain("Content-Type: application/pdf; name=\"acme-invoice-2026-001.pdf\"");
     expect(decoded).toContain("Content-Disposition: attachment; filename=\"acme-invoice-2026-001.pdf\"");
     expect(decoded).toContain(Buffer.from("%PDF-1.4\ninvoice bytes\n", "utf8").toString("base64"));
+  });
+
+  test("gmail_create_draft rejects reply-looking subjects", async () => {
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", {
+      to: ["sam@acme.test"],
+      subject: "Re: Project update",
+      body: "Thanks",
+    }, {})).rejects.toThrow(
+      new ApiError(400, "invalid_payload", "Subject looks like a reply. Use gmail_create_reply_draft instead so the Gmail thread is preserved."),
+    );
+  });
+
+  test("gmail_create_draft strips conservative markdown from prose", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one")],
+    });
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(input instanceof Request ? input.url : input), body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "draft-message-1" } }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    await callGoogleWorkspaceExtensionAction(config, "gmail_create_draft", {
+      to: ["sam@acme.test"],
+      subject: "Project update",
+      body: [
+        "# Status update",
+        "",
+        "Please **review** the __terms__ and `confirm` before launch.",
+        "",
+        "- **Keep list marker**",
+        "> **Keep quoted text**",
+        "```",
+        "# keep fenced heading",
+        "```",
+      ].join("\n"),
+    }, {});
+
+    const raw = requests[0]?.body.match(/"raw":"([^"]+)"/)?.[1] ?? "";
+    const decoded = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    expect(decoded).toContain([
+      "Status update",
+      "",
+      "Please review the terms and confirm before launch.",
+      "",
+      "- **Keep list marker**",
+      "> **Keep quoted text**",
+      "```",
+      "# keep fenced heading",
+      "```",
+    ].join("\n"));
   });
 
   test("gmail_create_reply_draft rejects accounts without the gmail.readonly scope", async () => {
@@ -342,6 +407,7 @@ describe("Google Workspace extension", () => {
       async (input: string | URL | Request, init?: RequestInit) => {
         const url = String(input instanceof Request ? input.url : input);
         if (url.includes("/messages/m1")) {
+          expect(url).toContain("format=full");
           return new Response(JSON.stringify({
             id: "m1",
             threadId: "thread-1",
@@ -353,7 +419,9 @@ describe("Google Workspace extension", () => {
                 { name: "From", value: "Alice <alice@example.com>" },
                 { name: "To", value: "One <one@example.com>, Bob <bob@example.com>" },
                 { name: "Cc", value: "Carol <carol@example.com>" },
+                { name: "Date", value: "Thu, 16 Jul 2026 15:21:00 +0000" },
               ],
+              parts: [{ mimeType: "text/plain", body: { data: base64Url("Original line\n> previous quote") } }],
             },
           }), { status: 200 });
         }
@@ -365,7 +433,11 @@ describe("Google Workspace extension", () => {
 
     const result = await callGoogleWorkspaceExtensionAction(config, "gmail_create_reply_draft", { messageId: "m1", body: "Thanks for the update.", replyAll: true }, {});
     expect(result?.ok).toBe(true);
-    expect(result?.result).toMatchObject({ id: "draft-1" });
+    expect(result?.result).toMatchObject({
+      id: "draft-1",
+      draftUrl: "https://mail.google.com/mail/u/0/#drafts?compose=draft-message-1",
+      threadUrl: "https://mail.google.com/mail/u/0/#all/thread-1",
+    });
     expect(requests[0]?.url).toBe("https://gmail.googleapis.com/gmail/v1/users/me/drafts");
     expect(requests[0]?.body).toContain('"threadId":"thread-1"');
     const raw = requests[0]?.body.match(/"raw":"([^"]+)"/)?.[1] ?? "";
@@ -375,7 +447,13 @@ describe("Google Workspace extension", () => {
     expect(decoded).toContain("Subject: Re: Project update");
     expect(decoded).toContain("In-Reply-To: <message-1@example.com>");
     expect(decoded).toContain("References: <root@example.com> <message-1@example.com>");
-    expect(decoded).toContain("Thanks for the update.");
+    expect(decoded).toContain([
+      "Thanks for the update.",
+      "",
+      "On Thu, 16 Jul 2026 at 15:21 UTC, Alice <alice@example.com> wrote:",
+      "> Original line",
+      "> > previous quote",
+    ].join("\n"));
     expect(decoded).not.toContain("one@example.com");
   });
 

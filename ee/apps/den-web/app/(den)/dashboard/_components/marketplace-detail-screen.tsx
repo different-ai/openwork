@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ArrowLeft, Check, GitBranch, Github, Globe, Loader2, Plus, Puzzle, Users, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, Plug, Plus, Puzzle, Users, X } from "lucide-react";
 import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -32,6 +32,7 @@ import { type ExternalMcpAuthType, type ExternalMcpCredentialMode, type External
 import {
   findPresetForRequirement,
   pluginReadinessConnectionAction,
+  pluginRequirementNeedsAdminSetup,
   pluginSetupActionLabel,
   pluginSetupAuthLabel,
   pluginSetupCredentialMode,
@@ -212,7 +213,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
               </p>
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid items-start gap-3 md:grid-cols-2">
               {plugins.map((plugin) => (
                 <MarketplacePluginCard
                   key={plugin.id}
@@ -586,11 +587,62 @@ function MarketplacePluginCard({
     .filter(([, count]) => count > 0)
     .sort((a, b) => b[1] - a[1]);
   const actionableConnections = plugin.cloudReadiness?.connections.filter((connection) => (
-    connection.id === null || pluginReadinessConnectionAction(connection, isAdmin) !== null
+    pluginRequirementNeedsAdminSetup(connection) || pluginReadinessConnectionAction(connection, isAdmin) !== null
   )) ?? [];
+  const connectionRows = actionableConnections.map((connection) => {
+    const preset = findPresetForRequirement(presets, connection);
+    const serviceName = serviceNameForRequirement(connection, preset);
+    const needsAdminSetup = pluginRequirementNeedsAdminSetup(connection);
+    const readinessAction = needsAdminSetup ? null : pluginReadinessConnectionAction(connection, isAdmin);
+    return (
+      <div key={`${connection.configObjectId}:${connection.serverName}`} className="px-3 py-2.5">
+        <div className="flex items-center gap-2">
+          <IntegrationIcon name={serviceName} serviceUrl={connection.url} className="h-7 w-7 rounded-lg" imageClassName="h-3.5 w-3.5" />
+          <p className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-gray-900">{serviceName}</p>
+          {needsAdminSetup ? (
+            isAdmin ? (
+              <DenButton
+                variant="secondary"
+                size="sm"
+                icon={Plug}
+                className="h-7 shrink-0 px-2.5 text-[11px]"
+                onClick={() => onSetup(connection)}
+              >
+                Connect
+              </DenButton>
+            ) : (
+              <span className="shrink-0 text-[11px] font-medium text-gray-500">Admin setup needed</span>
+            )
+          ) : readinessAction ? (
+            <Link
+              href={yourConnectionsFocusRoute(orgSlug, readinessAction.connectionId)}
+              className={buttonVariants({ variant: "secondary", size: "sm", className: "h-7 shrink-0 px-2.5 text-[11px]" })}
+            >
+              <Plug className="h-3 w-3" aria-hidden="true" />
+              Connect
+            </Link>
+          ) : null}
+        </div>
+        <details className="group/connection ml-9 mt-1">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[10.5px] text-gray-400 transition hover:text-gray-600 [&::-webkit-details-marker]:hidden">
+            Details
+            <ChevronDown className="h-2.5 w-2.5 transition-transform group-open/connection:rotate-180" aria-hidden="true" />
+          </summary>
+          <div className="mt-1.5 rounded-lg bg-gray-50 px-2.5 py-2">
+            <p className="break-all font-mono text-[10px] leading-4 text-gray-500">
+              Plugin-declared URL (read-only): {connection.url}
+            </p>
+            {readinessAction ? (
+              <p className="mt-1 text-[11px] leading-4 text-gray-600">{readinessAction.note}</p>
+            ) : null}
+          </div>
+        </details>
+      </div>
+    );
+  });
 
   return (
-    <div className="group block overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]">
+    <div className="group block self-start overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]">
       <div className="flex items-stretch">
         <div className="relative w-[64px] shrink-0 overflow-hidden">
           <StaticSeededGradient seed={plugin.id} className="absolute inset-0" />
@@ -638,55 +690,36 @@ function MarketplacePluginCard({
 
           {plugin.cloudReadiness ? (
             <div className="mt-3 border-t border-gray-50 pt-3">
-              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${plugin.cloudReadiness.state === "ready" ? "bg-emerald-50 text-emerald-700" : plugin.cloudReadiness.state === "needs_admin_setup" ? "bg-amber-50 text-amber-700" : "bg-gray-50 text-gray-600"}`}>
-                {cloudReadinessLabel(plugin.cloudReadiness.state)}
-              </span>
               {actionableConnections.length > 0 ? (
-                <div className="mt-2 space-y-2">
-                  {actionableConnections.map((connection) => {
-                    const preset = findPresetForRequirement(presets, connection);
-                    const serviceName = serviceNameForRequirement(connection, preset);
-                    const readinessAction = pluginReadinessConnectionAction(connection, isAdmin);
-                    return (
-                      <div key={`${connection.configObjectId}:${connection.serverName}`} className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
-                        <div className="flex items-start gap-2.5">
-                          <IntegrationIcon name={serviceName} serviceUrl={connection.url} className="h-8 w-8 rounded-[10px]" imageClassName="h-4 w-4" />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <p className="truncate text-[12.5px] font-semibold text-gray-900">{serviceName}</p>
-                              <span className="rounded-full bg-white px-2 py-0.5 text-[10.5px] font-medium text-amber-700">Needs connection</span>
-                            </div>
-                            <p className="mt-1 break-all font-mono text-[11px] leading-4 text-gray-500">
-                              Plugin-declared URL (read-only): {connection.url}
-                            </p>
-                            {readinessAction ? (
-                              <p className="mt-1 text-[11.5px] leading-4 text-amber-700">{readinessAction.note}</p>
-                            ) : null}
-                          </div>
-                        </div>
-                        <div className="mt-2 flex justify-end">
-                          {connection.id === null ? (
-                            isAdmin ? (
-                              <DenButton variant="secondary" size="sm" onClick={() => onSetup(connection)}>
-                                {pluginSetupActionLabel(preset)}
-                              </DenButton>
-                            ) : (
-                              <span className="text-[12px] font-medium text-amber-700">Ask an admin to configure</span>
-                            )
-                          ) : readinessAction ? (
-                            <Link
-                              href={yourConnectionsFocusRoute(orgSlug, readinessAction.connectionId)}
-                              className={buttonVariants({ variant: "secondary", size: "sm" })}
-                            >
-                              {readinessAction.label}
-                            </Link>
-                          ) : null}
-                        </div>
+                actionableConnections.length > 1 ? (
+                  <details className="group/actions overflow-hidden rounded-xl border border-gray-100 bg-gray-50/70">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
+                      <div className="min-w-0">
+                        <p className="text-[12px] font-semibold text-gray-900">{actionableConnections.length} MCPs require action</p>
+                        <p className="mt-0.5 text-[10.5px] text-gray-500">Connect these services to use this plugin.</p>
                       </div>
-                    );
-                  })}
-                </div>
-              ) : null}
+                      <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-gray-600">
+                        <span className="group-open/actions:hidden">Show MCPs</span>
+                        <span className="hidden group-open/actions:inline">Hide MCPs</span>
+                        <ChevronDown className="h-3 w-3 transition-transform group-open/actions:rotate-180" aria-hidden="true" />
+                      </span>
+                    </summary>
+                    <div className="divide-y divide-gray-100 border-t border-gray-100 bg-white">{connectionRows}</div>
+                  </details>
+                ) : (
+                  <div className="overflow-hidden rounded-xl border border-gray-100 bg-gray-50/70">
+                    <div className="px-3 py-2.5">
+                      <p className="text-[12px] font-semibold text-gray-900">MCP requires action</p>
+                      <p className="mt-0.5 text-[10.5px] text-gray-500">Connect this service to use this plugin.</p>
+                    </div>
+                    <div className="border-t border-gray-100 bg-white">{connectionRows}</div>
+                  </div>
+                )
+              ) : (
+                <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${plugin.cloudReadiness.state === "ready" ? "bg-emerald-50 text-emerald-700" : plugin.cloudReadiness.state === "needs_admin_setup" ? "bg-amber-50 text-amber-700" : "bg-gray-50 text-gray-600"}`}>
+                  {cloudReadinessLabel(plugin.cloudReadiness.state)}
+                </span>
+              )}
             </div>
           ) : null}
         </div>

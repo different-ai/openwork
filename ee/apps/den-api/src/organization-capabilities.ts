@@ -3,10 +3,10 @@ import { z } from "zod"
 /**
  * Per-organization capability flags ("org capabilities").
  *
- * Capabilities let platform admins enable shipped-but-dark features
- * org-by-org from the /admin backoffice. Legacy callers treat capabilities as
- * opt-in/default-off; member-facing Connect additionally treats an explicit
- * `metadata.capabilities.mcpConnections: false` as its default-on kill switch.
+ * Capabilities let platform admins manage feature switches org-by-org from the
+ * /admin backoffice. The helpers here expose the raw stored booleans;
+ * feature-specific rollout helpers can layer effective default-on kill-switch
+ * semantics for member-facing surfaces.
  *
  * Storage rides the existing organization metadata JSON column — the same
  * home as `limits`, `plan`, and `requireSso` — so no schema change is needed.
@@ -69,7 +69,7 @@ export function readOrganizationCapabilityOverrides(metadata: MetadataInput): Pa
   return capabilities
 }
 
-/** Whether the organization has an explicit opt-in for the capability. */
+/** Whether the organization stores an explicit literal true for the capability. */
 export function organizationHasCapability(metadata: MetadataInput, key: OrganizationCapabilityKey): boolean {
   return normalizeOrganizationCapabilities(metadata)[key]
 }

@@ -95,6 +95,7 @@ export function AuthPanel({
   lockEmail = false,
   hideSocialAuth = false,
   hideEmailField = false,
+  hideLockedEmailSummary = false,
   emailFirstFlow = false,
   eyebrow = "Account",
   bare = false,
@@ -108,6 +109,7 @@ export function AuthPanel({
   lockEmail?: boolean;
   hideSocialAuth?: boolean;
   hideEmailField?: boolean;
+  hideLockedEmailSummary?: boolean;
   emailFirstFlow?: boolean;
   eyebrow?: string;
   // When true the panel renders without its own `den-frame`/padding, so a parent
@@ -269,7 +271,7 @@ export function AuthPanel({
       : visibleAuthMode === "sign-in"
       ? resolvedSignInContent
       : resolvedSignUpContent;
-  const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField);
+  const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField && !hideLockedEmailSummary);
   const shellClass = (gap: string, padding: string) =>
     bare ? `grid ${gap}` : `den-frame grid ${gap} ${padding}`;
   // The segmented tabs are the primary sign-in/sign-up switch. Hide them for the

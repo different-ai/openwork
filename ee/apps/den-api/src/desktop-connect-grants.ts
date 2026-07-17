@@ -27,6 +27,19 @@ function hashConnectGrantCode(code: string) {
   return createHash("sha256").update(code).digest("hex")
 }
 
+// MariaDB (Debian's default-mysql-server) aliases JSON to LONGTEXT, so the
+// driver returns this column as a string instead of a parsed object.
+function grantClaimsInput(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value
+  }
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
 function validateGrantRow(row: DesktopConnectGrantRow | undefined, now: Date): DesktopConnectGrantResult {
   if (!row || row.installLink.revokedAt || (row.installLink.expiresAt && row.installLink.expiresAt <= now)) {
     return { ok: false, code: "invalid_token" }
@@ -37,7 +50,7 @@ function validateGrantRow(row: DesktopConnectGrantRow | undefined, now: Date): D
   if (row.grant.expiresAt <= now) {
     return { ok: false, code: "expired" }
   }
-  const claims = connectLinkClaimsSchema.safeParse(row.grant.claims)
+  const claims = connectLinkClaimsSchema.safeParse(grantClaimsInput(row.grant.claims))
   return claims.success
     ? { ok: true, claims: claims.data }
     : { ok: false, code: "invalid_token" }

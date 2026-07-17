@@ -1,15 +1,34 @@
+import { openworkCloudMcpInlineReconnectSchema } from "@openwork/types/den/mcp-connection-action"
+
 export type ToolErrorAttribution = {
   label: string
   confidence: "Confirmed" | "Inferred"
   description: string
 }
 
+export type ChatToolReconnectAction = {
+  connectionId: string
+  connectionName: string
+  label: string
+}
+
+export type ChatToolReconnectProgress = "opening" | "authorization_opened"
+export type ChatToolReconnectResult = "connected"
+
+const OPENWORK_CLOUD_CAPABILITY_TOOLS = new Set([
+  "openwork-cloud_search_capabilities",
+  "openwork-cloud_execute_capability",
+])
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function parseErrorRecord(errorText: string): Record<string, unknown> | null {
-  const trimmed = errorText.trim()
+function parseResultRecord(result: unknown): Record<string, unknown> | null {
+  if (isRecord(result)) return result
+  if (typeof result !== "string") return null
+
+  const trimmed = result.trim()
   const jsonStart = trimmed.indexOf("{")
   const jsonEnd = trimmed.lastIndexOf("}")
   const candidates = [
@@ -30,7 +49,7 @@ function parseErrorRecord(errorText: string): Record<string, unknown> | null {
 }
 
 function diagnosticFromError(errorText: string): Record<string, unknown> | null {
-  const parsed = parseErrorRecord(errorText)
+  const parsed = parseResultRecord(errorText)
   if (!parsed) return null
   return isRecord(parsed.diagnostic) ? parsed.diagnostic : parsed
 }
@@ -47,6 +66,47 @@ function numberValue(record: Record<string, unknown> | null, key: string): numbe
 
 function confirmed(label: string, description: string): ToolErrorAttribution {
   return { label, confidence: "Confirmed", description }
+}
+
+export function reconnectActionFromChatToolResult(
+  toolName: string,
+  result: unknown,
+): ChatToolReconnectAction | null {
+  // Tool output is otherwise untrusted. Only the two canonical OpenWork Cloud
+  // capability tools may turn a structured Den response into a UI action.
+  // Discovery is included because it performs a live connection probe before
+  // the agent can safely proceed to execution.
+  if (!OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)) return null
+
+  const parsed = parseResultRecord(result)
+  if (!parsed) return null
+
+  const candidates = [
+    ...(isRecord(parsed.connectionStatus) ? [parsed.connectionStatus] : []),
+    ...(Array.isArray(parsed.matches)
+      ? parsed.matches
+        .filter(isRecord)
+        .map((match) => match.connectionStatus)
+        .filter(isRecord)
+      : []),
+  ]
+  const reconnectTargets = new Map<string, { connectionId: string; connectionName: string }>()
+  for (const connectionStatus of candidates) {
+    const parsedStatus = openworkCloudMcpInlineReconnectSchema.safeParse(connectionStatus)
+    if (!parsedStatus.success) continue
+    const { connectionId, connectionName } = parsedStatus.data
+    reconnectTargets.set(connectionId, { connectionId, connectionName })
+  }
+
+  // One tool row should never guess which of several connections the user
+  // intended to authorize. Multi-connection search results remain descriptive.
+  if (reconnectTargets.size !== 1) return null
+  const [{ connectionId, connectionName }] = reconnectTargets.values()
+
+  // Keep the chat action concise and derived from the trusted connection
+  // identity. Diagnostic operator guidance can be much longer than a button
+  // label, and tool output must never get to inject arbitrary action copy.
+  return { connectionId, connectionName, label: "Reconnect" }
 }
 
 export function attributeChatToolError(errorText: string): ToolErrorAttribution | null {

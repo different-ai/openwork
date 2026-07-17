@@ -150,6 +150,26 @@ test("external capability failures preserve the safe MCP diagnostic envelope", (
     message: "Connection failed. Diagnostic reference: req_test.",
     actionOwner: "network_admin",
     operatorAction: "Repair the certificate chain.",
+    connectionStatus: {
+      version: 1,
+      kind: "connection_action",
+      source: "openwork-cloud",
+      layer: "mcp_connection",
+      connectionId: "emc_test",
+      connectionName: "Knowledge Hub",
+      authType: "oauth",
+      credentialMode: "per_member",
+      state: "reauth_required",
+      errorCode: "invalid_grant",
+      message: "Authorization expired.",
+      actor: "member",
+      action: {
+        type: "reconnect",
+        label: "Reconnect Knowledge Hub",
+        surface: "openwork_your_connections",
+        retry: "search_capabilities",
+      },
+    },
     diagnostic: {
       referenceId: "req_test",
       phase: "NETWORK_TLS",
@@ -171,6 +191,11 @@ test("external capability failures preserve the safe MCP diagnostic envelope", (
       referenceId: "req_test",
       phase: "NETWORK_TLS",
       actionOwner: "network_admin",
+    },
+    connectionStatus: {
+      connectionId: "emc_test",
+      state: "reauth_required",
+      action: { type: "reconnect" },
     },
   })
 })

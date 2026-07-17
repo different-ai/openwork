@@ -30,6 +30,7 @@ import { adminRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
+import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
 import { normalizeOrganizationCapabilities, readOrganizationCapabilityOverrides } from "../../organization-capabilities.js"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../../organization-limits.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -259,9 +260,8 @@ function normalizeMetadata(input: Record<string, unknown> | string | null | unde
 }
 
 function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unknown> | string | null | undefined): ReturnType<typeof normalizeOrganizationCapabilities> {
-  const capabilities = normalizeOrganizationCapabilities(metadata)
   return {
-    installLinks: capabilities.installLinks,
+    installLinks: organizationInstallLinksEnabled(metadata, { gatingEnabled: false }),
     mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
   }
 }

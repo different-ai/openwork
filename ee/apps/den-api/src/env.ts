@@ -306,9 +306,10 @@ const polarFeatureGateEnabled =
 const planGatingEnabled =
   (parsed.DEN_PLAN_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
-// Hosted deployments normally enable plan gating and retain per-org rollout.
-// Self-hosted deployments default to no gating, so install links work without
-// access to the hosted platform-admin control plane. An explicit setting wins.
+// Deprecated compatibility knob for organization install links. The environment
+// variable is still parsed so existing deployment configs keep starting, but
+// organizationInstallLinksEnabled ignores this value: install links are
+// default-on unless org metadata explicitly disables them.
 const installLinksGatingEnabled =
   (parsed.DEN_INSTALL_LINKS_GATING_ENABLED ?? String(planGatingEnabled)).toLowerCase() === "true"
 
