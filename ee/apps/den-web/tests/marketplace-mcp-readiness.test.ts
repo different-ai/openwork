@@ -4,6 +4,7 @@ import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } f
 import { marketplaceConnectionNeedsAdminSetup } from "../app/(den)/dashboard/_components/mcp-connection-setup";
 import type { ExternalMcpConnection, ExternalMcpPreset, ExternalMcpRequiredBy } from "../app/(den)/dashboard/_components/mcp-connections-data";
 import { parseMarketplaceResolvedPayload, type MarketplacePluginCloudReadinessConnection } from "../app/(den)/dashboard/_components/marketplace-data";
+import { pluginMcpEntries } from "../app/(den)/dashboard/_components/plugin-data";
 import {
   findPresetForRequirement,
   pluginReadinessConnectionAction,
@@ -42,6 +43,37 @@ function requirement(url: string): MarketplacePluginCloudReadinessConnection {
 }
 
 describe("marketplace MCP readiness parsing", () => {
+  test("treats marketplace-created URL MCPs as remote", () => {
+    expect(pluginMcpEntries({
+      description: "Linear",
+      id: "cfg_linear",
+      normalizedPayload: {
+        mcpServers: {
+          linear: { type: "remote", url: "https://mcp.linear.app/mcp" },
+        },
+      },
+      title: "Linear",
+    })).toEqual([{
+      configObjectId: "cfg_linear",
+      description: "Linear",
+      id: "cfg_linear",
+      name: "Linear",
+      serverName: "linear",
+      toolCount: 0,
+      transport: "http",
+      url: "https://mcp.linear.app/mcp",
+    }]);
+  });
+
+  test("keeps command-based MCPs desktop only", () => {
+    expect(pluginMcpEntries({
+      description: "Local Linear",
+      id: "cfg_local_linear",
+      normalizedPayload: { command: "npx" },
+      title: "Linear",
+    })[0]?.transport).toBe("stdio");
+  });
+
   test("preserves cloud readiness connection provenance fields", () => {
     const parsed = parseMarketplaceResolvedPayload({
       item: {

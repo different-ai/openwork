@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, FileText, Puzzle, Server, Store, Terminal, Users, Webhook } from "lucide-react";
+import { ArrowLeft, FileText, Plug, Puzzle, Server, Store, Terminal, Users, Webhook } from "lucide-react";
 import { PaperMeshGradient } from "@openwork/ui/react";
 
-import { getPluginsRoute } from "../../_lib/den-org";
+import { buttonVariants } from "../../_components/ui/button";
+import { getMarketplaceRoute, getOrgAccessFlags, getPluginsRoute, getYourConnectionsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type DenPlugin,
@@ -16,10 +17,14 @@ import {
   formatPluginTimestamp,
   usePlugin,
 } from "./plugin-data";
+import { useMarketplace, type MarketplacePluginCloudReadinessConnection } from "./marketplace-data";
+import { pluginReadinessConnectionAction, pluginRequirementNeedsAdminSetup } from "./marketplace-mcp-setup";
 
 export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
-  const { orgSlug } = useOrgDashboard();
+  const { orgContext, orgSlug } = useOrgDashboard();
   const { data: plugin, isLoading, error } = usePlugin(pluginId);
+  const marketplaceId = plugin?.marketplaces?.[0]?.id ?? null;
+  const { data: marketplace } = useMarketplace(marketplaceId);
 
   if (isLoading && !plugin) {
     return (
@@ -42,6 +47,18 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
   }
 
   const marketplaces = plugin.marketplaces ?? [];
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.roles ?? [],
+  );
+  const readiness = marketplace?.plugins.find((entry) => entry.id === plugin.id)?.cloudReadiness;
+  const readinessConnection = (mcp: PluginMcp): MarketplacePluginCloudReadinessConnection | null => (
+    readiness?.connections.find((connection) => (
+      connection.configObjectId === (mcp.configObjectId ?? mcp.id)
+        && connection.serverName === (mcp.serverName ?? mcp.name)
+    )) ?? null
+  );
   const missingLabels: string[] = [];
   if (plugin.skills.length === 0) missingLabels.push("skills");
   if (plugin.agents.length === 0) missingLabels.push("agents");
@@ -115,7 +132,17 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
         <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={renderAgentRow} />
         <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={renderCommandRow} />
         <PrimitiveSection icon={Webhook} label="Hooks" items={plugin.hooks} render={renderHookRow} />
-        <PrimitiveSection icon={Server} label="MCP Servers" items={plugin.mcps} render={renderMcpRow} />
+        <PrimitiveSection
+          icon={Server}
+          label="MCP Servers"
+          items={plugin.mcps}
+          render={(mcp) => renderMcpRow(mcp, {
+            isAdmin: access.isAdmin,
+            marketplaceHref: marketplaceId ? `${getMarketplaceRoute(orgSlug, marketplaceId)}#plugin-${encodeURIComponent(plugin.id)}` : null,
+            orgSlug,
+            readiness: readinessConnection(mcp),
+          })}
+        />
       </div>
 
       {missingLabels.length > 0 ? (
@@ -201,7 +228,21 @@ function renderHookRow(hook: PluginHook) {
   );
 }
 
-function renderMcpRow(mcp: PluginMcp) {
+function renderMcpRow(mcp: PluginMcp, input: {
+  isAdmin: boolean;
+  marketplaceHref: string | null;
+  orgSlug: string | null;
+  readiness: MarketplacePluginCloudReadinessConnection | null;
+}) {
+  const readinessAction = input.readiness
+    ? pluginReadinessConnectionAction(input.readiness, input.isAdmin)
+    : null;
+  const setupHref = input.readiness && pluginRequirementNeedsAdminSetup(input.readiness)
+    ? input.marketplaceHref
+    : readinessAction
+      ? `${getYourConnectionsRoute(input.orgSlug)}?connectionId=${encodeURIComponent(readinessAction.connectionId)}`
+      : null;
+
   return (
     <div
       key={mcp.id}
@@ -213,9 +254,17 @@ function renderMcpRow(mcp: PluginMcp) {
           <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{mcp.description}</p>
         ) : null}
       </div>
-      <span className="shrink-0 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
-        {mcp.transport} · {mcp.toolCount} tool{mcp.toolCount === 1 ? "" : "s"}
-      </span>
+      <div className="flex shrink-0 items-center gap-2">
+        <span className="rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
+          {mcp.transport === "stdio" ? "Desktop only" : "Remote"} · {mcp.toolCount} tool{mcp.toolCount === 1 ? "" : "s"}
+        </span>
+        {setupHref ? (
+          <Link href={setupHref} className={buttonVariants({ variant: "secondary", size: "sm", className: "h-8 px-3 text-[12px]" })}>
+            <Plug className="h-3.5 w-3.5" aria-hidden />
+            Connect
+          </Link>
+        ) : null}
+      </div>
     </div>
   );
 }
