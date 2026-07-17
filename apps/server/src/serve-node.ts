@@ -48,6 +48,40 @@ function endResponse(nodeRes: ServerResponse, chunk?: string): void {
   nodeRes.end(chunk);
 }
 
+function trackClientDisconnect(
+  nodeReq: IncomingMessage,
+  nodeRes: ServerResponse,
+  abortController: AbortController,
+): () => void {
+  const abortRequest = () => {
+    if (!abortController.signal.aborted) {
+      abortController.abort();
+    }
+  };
+  const abortIncompleteRequest = () => {
+    if (!nodeReq.complete) {
+      abortRequest();
+    }
+  };
+  const abortIncompleteResponse = () => {
+    if (!nodeRes.writableFinished) {
+      abortRequest();
+    }
+  };
+
+  nodeReq.once("aborted", abortRequest);
+  nodeReq.once("error", abortRequest);
+  nodeReq.once("close", abortIncompleteRequest);
+  nodeRes.once("close", abortIncompleteResponse);
+
+  return () => {
+    nodeReq.off("aborted", abortRequest);
+    nodeReq.off("error", abortRequest);
+    nodeReq.off("close", abortIncompleteRequest);
+    nodeRes.off("close", abortIncompleteResponse);
+  };
+}
+
 async function waitForDrainOrClose(nodeRes: ServerResponse): Promise<void> {
   if (!isResponseWritable(nodeRes)) return;
 
@@ -79,7 +113,12 @@ async function waitForDrainOrClose(nodeRes: ServerResponse): Promise<void> {
 /**
  * Convert a Node.js IncomingMessage into a Web API Request.
  */
-function toWebRequest(nodeReq: IncomingMessage, hostname: string, port: number): Request {
+function toWebRequest(
+  nodeReq: IncomingMessage,
+  hostname: string,
+  port: number,
+  signal: AbortSignal,
+): Request {
   const url = `http://${hostname}:${port}${nodeReq.url ?? "/"}`;
   const method = nodeReq.method ?? "GET";
   const headers = new Headers();
@@ -106,6 +145,7 @@ function toWebRequest(nodeReq: IncomingMessage, hostname: string, port: number):
     method,
     headers,
     body,
+    signal,
     // @ts-expect-error duplex is required for streaming request bodies in Node
     duplex: hasBody ? "half" : undefined,
   });
@@ -167,8 +207,11 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
       console.error("[serve-node] Response stream error:", error);
     });
 
+    const abortController = new AbortController();
+    const stopTrackingClient = trackClientDisconnect(nodeReq, nodeRes, abortController);
+
     try {
-      const webReq = toWebRequest(nodeReq, hostname, boundPort);
+      const webReq = toWebRequest(nodeReq, hostname, boundPort, abortController.signal);
       const webRes = await fetchHandler(webReq);
       await writeWebResponse(webRes, nodeRes);
     } catch (error) {
@@ -184,6 +227,8 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
         nodeRes.writeHead(500, { "Content-Type": "application/json" });
       }
       endResponse(nodeRes, JSON.stringify({ error: "internal_error" }));
+    } finally {
+      stopTrackingClient();
     }
   });
 
