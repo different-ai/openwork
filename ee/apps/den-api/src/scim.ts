@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer"
-import { and, count, desc, eq, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimProviderTable, ScimSyncEventTable } from "@openwork-ee/den-db/schema"
+import { and, count, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
+import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, ScimSyncEventTable, ScimUserTombstoneTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { auth } from "./auth.js"
 import { db } from "./db.js"
@@ -9,6 +9,9 @@ import { appLogger } from "./observability/logger.js"
 import { SCIM_SYNC_FAILURE_RECORDED_OPERATIONAL_MARKER } from "./operational-log-markers.js"
 import { removeOrganizationMember } from "./orgs.js"
 import { verifyStoredScimToken } from "./scim-token-storage.js"
+import { reconcileScimGroupsForUser } from "./scim-groups.js"
+import { deleteGlobalAuthUser } from "./user-deletion.js"
+import { shouldDeleteGlobalUser } from "./scim-deprovisioning.js"
 
 type OrganizationId = typeof MemberTable.$inferSelect.organizationId
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -107,6 +110,14 @@ async function syncExternalIdentityForProvider(input: {
     return false
   }
 
+  if (input.resource.active === false) {
+    const deleted = await deleteScimProvisionedAccessForProvider({
+      provider: input.provider,
+      userId,
+    })
+    return deleted.ok
+  }
+
   const existingRows = await db
     .select()
     .from(ExternalIdentityTable)
@@ -115,6 +126,19 @@ async function syncExternalIdentityForProvider(input: {
 
   const existing = existingRows[0] ?? null
   const now = new Date()
+  const externalId = maybeString(input.resource.externalId)
+  const email = maybeString(asRecord(asArray(input.resource.emails)?.[0])?.value)
+    ?? maybeString(input.resource.userName)
+  await db
+    .delete(ScimUserTombstoneTable)
+    .where(and(
+      eq(ScimUserTombstoneTable.organizationId, input.provider.organizationId),
+      or(
+        eq(ScimUserTombstoneTable.deprovisionedUserId, userId),
+        externalId ? eq(ScimUserTombstoneTable.externalId, externalId) : eq(ScimUserTombstoneTable.deprovisionedUserId, userId),
+        email ? eq(ScimUserTombstoneTable.email, email.toLowerCase()) : eq(ScimUserTombstoneTable.deprovisionedUserId, userId),
+      ),
+    ))
   const payload = {
     organizationId: input.provider.organizationId,
     userId,
@@ -122,9 +146,9 @@ async function syncExternalIdentityForProvider(input: {
     scimProviderId: input.provider.providerId,
     ssoProviderId: existing?.ssoProviderId ?? null,
     remoteId: existing?.remoteId ?? null,
-    externalId: maybeString(input.resource.externalId),
+    externalId,
     userName: maybeString(input.resource.userName),
-    email: maybeString(asRecord(asArray(input.resource.emails)?.[0])?.value),
+    email,
     displayName: maybeString(input.resource.displayName) ?? maybeString(asRecord(input.resource.name)?.formatted),
     nameJson: asRecord(input.resource.name),
     emailsJson: asArray(input.resource.emails),
@@ -139,6 +163,7 @@ async function syncExternalIdentityForProvider(input: {
       .update(ExternalIdentityTable)
       .set(payload)
       .where(eq(ExternalIdentityTable.id, existing.id))
+    await reconcileScimGroupsForUser({ provider: input.provider, userId })
     return true
   }
 
@@ -146,6 +171,7 @@ async function syncExternalIdentityForProvider(input: {
     id: createDenTypeId("externalIdentity"),
     ...payload,
   })
+  await reconcileScimGroupsForUser({ provider: input.provider, userId })
   return true
 }
 
@@ -302,6 +328,18 @@ export async function deleteOrganizationScimConnection(organizationId: Organizat
 }
 
 async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typeof ScimProviderTable.$inferSelect) {
+  const groupRows = await db
+    .select({ id: ScimGroupTable.id })
+    .from(ScimGroupTable)
+    .where(eq(ScimGroupTable.providerId, connection.providerId))
+  if (groupRows.length > 0) {
+    await db
+      .delete(ScimGroupMemberTable)
+      .where(inArray(ScimGroupMemberTable.groupId, groupRows.map((group) => group.id)))
+  }
+  await db.delete(ScimGroupTable).where(eq(ScimGroupTable.providerId, connection.providerId))
+  await db.delete(ScimUserTombstoneTable).where(eq(ScimUserTombstoneTable.providerId, connection.providerId))
+
   await db
     .update(ExternalIdentityTable)
     .set({
@@ -357,6 +395,20 @@ export async function deleteScimProvisionedAccessForProvider(input: {
 
   const account = accountRows[0] ?? null
   const member = memberRows[0] ?? null
+  const [userRows, identityRows] = await Promise.all([
+    db.select().from(AuthUserTable).where(eq(AuthUserTable.id, input.userId)).limit(1),
+    db
+      .select()
+      .from(ExternalIdentityTable)
+      .where(and(
+        eq(ExternalIdentityTable.organizationId, input.provider.organizationId),
+        eq(ExternalIdentityTable.userId, input.userId),
+      ))
+      .limit(1),
+  ])
+  const user = userRows[0] ?? null
+  const identity = identityRows[0] ?? null
+  const tombstoneEmail = (identity?.email ?? user?.email ?? "").trim().toLowerCase() || null
 
   if (member) {
     const removed = await removeOrganizationMember({
@@ -367,6 +419,26 @@ export async function deleteScimProvisionedAccessForProvider(input: {
       return { ok: false as const, status: 409, body: { detail: removed.message } }
     }
   }
+
+  await db
+    .insert(ScimUserTombstoneTable)
+    .values({
+      id: createDenTypeId("scimUserTombstone"),
+      organizationId: input.provider.organizationId,
+      providerId: input.provider.providerId,
+      deprovisionedUserId: input.userId,
+      externalId: identity?.externalId ?? account?.accountId ?? null,
+      email: tombstoneEmail,
+      deprovisionedAt: new Date(),
+    })
+    .onDuplicateKeyUpdate({
+      set: {
+        providerId: input.provider.providerId,
+        externalId: identity?.externalId ?? account?.accountId ?? null,
+        email: tombstoneEmail,
+        deprovisionedAt: new Date(),
+      },
+    })
 
   await db.transaction(async (tx) => {
     if (account) {
@@ -385,9 +457,22 @@ export async function deleteScimProvisionedAccessForProvider(input: {
         lastScimSyncAt: new Date(),
       })
       .where(and(eq(ExternalIdentityTable.organizationId, input.provider.organizationId), eq(ExternalIdentityTable.userId, input.userId)))
+    await tx
+      .update(ScimGroupMemberTable)
+      .set({ userId: null, orgMembershipId: null, teamMemberId: null, updatedAt: new Date() })
+      .where(eq(ScimGroupMemberTable.userId, input.userId))
   })
 
-  return { ok: true as const }
+  const otherActiveMembershipRows = await db
+    .select({ value: count() })
+    .from(MemberTable)
+    .where(and(eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
+  const deleteUser = shouldDeleteGlobalUser(Number(otherActiveMembershipRows[0]?.value ?? 0))
+  if (deleteUser && user) {
+    await deleteGlobalAuthUser(input.userId)
+  }
+
+  return { ok: true as const, userDeleted: deleteUser && Boolean(user) }
 }
 
 export async function deleteScimProvisionedAccess(input: {

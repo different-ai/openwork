@@ -303,6 +303,53 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     expect(grants.map((grant) => grant.orgMembershipId)).toEqual([memberId])
   })
 
+  test("scope-only edits preserve discovery and connected OAuth credentials", async () => {
+    const created = await createConnection({ name: "Scoped OAuth", authType: "oauth", credentialMode: "shared" })
+    const issuer = "https://identity.example.test/tenant"
+    const discovery = {
+      authorizationServerUrl: issuer,
+      authorizationServerMetadata: {
+        issuer,
+        authorization_endpoint: `${issuer}/authorize`,
+        token_endpoint: `${issuer}/token`,
+        scopes_supported: ["records.read", "records.write"],
+      },
+      resourceMetadata: {
+        resource: created.url,
+        authorization_servers: [issuer],
+        scopes_supported: ["records.read", "records.write"],
+      },
+    }
+    await db.update(schema.ExternalMcpConnectionTable).set({
+      oauthConfiguration: {
+        version: 1,
+        authorizationServerIssuer: issuer,
+        requestedScopes: ["records.read"],
+        callbackMode: "shared-v1",
+        discovery,
+      },
+      accessToken: "scoped-access-token",
+      refreshToken: "scoped-refresh-token",
+      connectedAt: new Date(),
+    }).where(drizzle.eq(schema.ExternalMcpConnectionTable.id, created.id))
+    const before = await currentConnection(created.id)
+
+    const response = await humanRequest({
+      connectionId: created.id,
+      body: updateBody(before, { requestedScopes: ["records.read", "records.write"] }),
+    })
+    expect(response.status).toBe(200)
+    expect(await responseRecord(response)).toMatchObject({ reconnectionRequired: false })
+    expect(await currentConnection(created.id)).toMatchObject({
+      accessToken: "scoped-access-token",
+      refreshToken: "scoped-refresh-token",
+      oauthConfiguration: {
+        requestedScopes: ["records.read", "records.write"],
+        discovery,
+      },
+    })
+  })
+
   test("URL change clears shared and per-member OAuth identity state", async () => {
     const created = await createConnection({ name: "Personal OAuth", authType: "oauth", credentialMode: "per_member" })
     await db.update(schema.ExternalMcpConnectionTable).set({
@@ -534,6 +581,20 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     expect(blocked.status).toBe(409)
     expect(await responseRecord(blocked)).toMatchObject({ error: "marketplace_managed" })
 
+    const beforeClientConfiguration = await currentConnection(connection.id)
+    const configuredClient = await humanRequest({
+      connectionId: connection.id,
+      body: updateBody(beforeClientConfiguration, {
+        oauthClient: { clientId: "marketplace-client", clientSecret: "marketplace-secret" },
+      }),
+    })
+    expect(configuredClient.status).toBe(200)
+    expect(JSON.stringify(await responseRecord(configuredClient))).not.toContain("marketplace-secret")
+    expect(await oauthCredentials.getOrgOAuthClient(organizationId, connection.id)).toMatchObject({
+      clientId: "marketplace-client",
+      clientSecret: "marketplace-secret",
+    })
+
     const fresh = await currentConnection(connection.id)
     const apiOrderedConfiguration = oauthConfigurationInApiOrder(fresh)
     expect(Object.keys(fresh.oauthConfiguration ?? {})).not.toEqual(Object.keys(apiOrderedConfiguration))
@@ -628,5 +689,152 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
       error: "invalid_request",
       message: "This connection changed after authorization started. Start the connection flow again.",
     })
+  })
+})
+
+describe.serial("MCP connection disconnect", () => {
+  function postDisconnect(connectionId: string, suffix = "/disconnect", token = adminToken) {
+    return app.fetch(new Request(`http://den-api.local/v1/mcp-connections/${connectionId}${suffix}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    }))
+  }
+
+  test("manageable lists expose safe creator attribution", async () => {
+    const created = await createConnection({ name: "Creator Attribution MCP", authType: "oauth", credentialMode: "per_member" })
+    const response = await app.fetch(new Request("http://den-api.local/v1/mcp-connections?scope=manageable", {
+      headers: { authorization: `Bearer ${adminToken}` },
+    }))
+    expect(response.status).toBe(200)
+    const body = await responseRecord(response)
+    const list = body.connections
+    if (!Array.isArray(list)) throw new Error("Manageable MCP list did not include connections")
+    const row = list.find((entry) => isRecord(entry) && entry.id === created.id)
+    if (!isRecord(row)) throw new Error("Created MCP connection was missing from manageable list")
+    expect(row.createdByName).toBe("MCP Edit Admin")
+  })
+
+  test("admin disconnect clears credentials without removing configuration or grants", async () => {
+    const shared = await createConnection({ name: "Disconnect Shared OAuth", authType: "oauth", credentialMode: "shared" })
+    await db.update(schema.ExternalMcpConnectionTable).set({
+      accessToken: "shared-access",
+      refreshToken: "shared-refresh",
+      tokenType: "Bearer",
+      scope: "read write",
+      expiresAt: new Date(Date.now() + 60_000),
+      pendingCodeVerifier: "shared-pkce",
+      connectedAt: new Date(),
+    }).where(drizzle.eq(schema.ExternalMcpConnectionTable.id, shared.id))
+    await oauthCredentials.upsertOrgOAuthClient({
+      organizationId,
+      providerId: shared.id,
+      clientId: "disconnect-shared-client",
+      clientSecret: "disconnect-shared-secret",
+      extra: { enterpriseMcpRegistrationSource: "pre-registered" },
+      createdByOrgMembershipId: adminMemberId,
+    })
+
+    const apiKey = await createConnection({ name: "Disconnect API Key", authType: "apikey", credentialMode: "shared", apiKey: "disconnect-api-key" })
+    const perMember = await createConnection({ name: "Disconnect Members", authType: "oauth", credentialMode: "per_member" })
+    await oauthCredentials.upsertConnectedAccount({
+      organizationId,
+      orgMembershipId: adminMemberId,
+      providerId: perMember.id,
+      accessToken: "admin-access",
+      refreshToken: "admin-refresh",
+      pendingCodeVerifier: "admin-pkce",
+    })
+    await oauthCredentials.upsertConnectedAccount({
+      organizationId,
+      orgMembershipId: memberId,
+      providerId: perMember.id,
+      accessToken: "member-access",
+      refreshToken: "member-refresh",
+      pendingCodeVerifier: "member-pkce",
+    })
+
+    expect((await postDisconnect(shared.id)).status).toBe(200)
+    expect((await postDisconnect(apiKey.id)).status).toBe(200)
+    expect((await postDisconnect(perMember.id)).status).toBe(200)
+
+    const sharedAfter = await currentConnection(shared.id)
+    expect(sharedAfter.accessToken).toBeNull()
+    expect(sharedAfter.refreshToken).toBeNull()
+    expect(sharedAfter.tokenType).toBeNull()
+    expect(sharedAfter.scope).toBeNull()
+    expect(sharedAfter.expiresAt).toBeNull()
+    expect(sharedAfter.pendingCodeVerifier).toBeNull()
+    expect(sharedAfter.connectedAt).toBeNull()
+    expect(await oauthCredentials.getOrgOAuthClient(organizationId, shared.id)).toMatchObject({ clientId: "disconnect-shared-client" })
+
+    expect((await currentConnection(apiKey.id)).apiKey).toBeNull()
+    const accounts = await db.select().from(schema.ConnectedAccountTable).where(drizzle.and(
+      drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId),
+      drizzle.eq(schema.ConnectedAccountTable.providerId, perMember.id),
+    ))
+    expect(accounts).toEqual([])
+    for (const connection of [shared, apiKey, perMember]) {
+      const grants = await connections.listExternalMcpConnectionAccess({ organizationId, connectionId: connection.id })
+      expect(grants.length).toBeGreaterThan(0)
+      expect(await currentConnection(connection.id)).toMatchObject({ name: connection.name, url: connection.url })
+    }
+  })
+
+  test("member disconnect removes only that member's per-member external MCP account", async () => {
+    const connection = await createConnection({ name: "Disconnect Mine", authType: "oauth", credentialMode: "per_member" })
+    await oauthCredentials.upsertConnectedAccount({
+      organizationId,
+      orgMembershipId: adminMemberId,
+      providerId: connection.id,
+      accessToken: "admin-stays",
+    })
+    await oauthCredentials.upsertConnectedAccount({
+      organizationId,
+      orgMembershipId: memberId,
+      providerId: connection.id,
+      accessToken: "member-goes",
+    })
+
+    const response = await postDisconnect(connection.id, "/disconnect-my-account", memberToken)
+    expect(response.status).toBe(200)
+    expect(await oauthCredentials.getConnectedAccount({ organizationId, orgMembershipId: memberId, providerId: connection.id })).toBeNull()
+    expect(await oauthCredentials.getConnectedAccount({ organizationId, orgMembershipId: adminMemberId, providerId: connection.id })).toMatchObject({
+      accessToken: "admin-stays",
+    })
+  })
+
+  test("late OAuth callbacks cannot recreate credentials after disconnect clears pending authorization", async () => {
+    const shared = await createConnection({ name: "Late Shared OAuth", authType: "oauth", credentialMode: "shared" })
+    await db.update(schema.ExternalMcpConnectionTable).set({ pendingCodeVerifier: "shared-late-pkce" }).where(drizzle.eq(schema.ExternalMcpConnectionTable.id, shared.id))
+    const staleShared = await currentConnection(shared.id)
+    expect((await postDisconnect(shared.id)).status).toBe(200)
+    await expect(connections.saveExternalMcpTokensForIdentity({
+      connection: staleShared,
+      accessToken: "late-shared-access",
+      expectedPendingCodeVerifier: "shared-late-pkce",
+    })).resolves.toBe(false)
+    expect((await currentConnection(shared.id)).accessToken).toBeNull()
+
+    const perMember = await createConnection({ name: "Late Member OAuth", authType: "oauth", credentialMode: "per_member" })
+    await oauthCredentials.upsertConnectedAccount({
+      organizationId,
+      orgMembershipId: memberId,
+      providerId: perMember.id,
+      pendingCodeVerifier: "member-late-pkce",
+    })
+    const stalePerMember = await currentConnection(perMember.id)
+    const disconnected = await connections.disconnectExternalMcpMemberAccount({
+      organizationId,
+      connectionId: perMember.id,
+      orgMembershipId: memberId,
+    })
+    expect(disconnected).toEqual({ status: "disconnected" })
+    await expect(connections.upsertConnectedAccountForExternalMcpIdentity({
+      connection: stalePerMember,
+      orgMembershipId: memberId,
+      expectedPendingCodeVerifier: "member-late-pkce",
+      changes: { accessToken: "late-member-access" },
+    })).resolves.toBe(false)
+    expect(await oauthCredentials.getConnectedAccount({ organizationId, orgMembershipId: memberId, providerId: perMember.id })).toBeNull()
   })
 })

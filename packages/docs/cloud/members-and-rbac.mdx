@@ -56,6 +56,12 @@ When this is enabled, OpenWork Cloud only lets people join with email addresses 
 
 You can use teams to control access to marketplaces and LLM providers without assigning people one by one.
 
+### Manage teams with SCIM Groups
+
+Organizations using SCIM can open `SCIM` and enable **Create teams from SCIM groups**. OpenWork then creates a team for each provisioned Group and keeps its membership synchronized from the identity provider. These teams are labeled **Managed by SCIM** and must be changed in the identity provider; manually created teams and memberships remain independent.
+
+When SCIM deprovisions a user, OpenWork retains a disconnected member record for organization history. The global user is deleted only when they have no other active organization memberships. Reactivate the user through SCIM before they can regain SAML access.
+
 ## Use custom roles when needed
 
 1. Open `Members -> Roles`.

@@ -12,6 +12,7 @@ import {
   ConnectedAccountTable,
   ExternalMcpConnectionTable,
   OrgOAuthClientTable,
+  type ExternalMcpCredentialHealth,
   type ExternalMcpOAuthConfiguration,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
@@ -35,6 +36,23 @@ import { externalMcpCallbackUrl } from "./external-mcp-oauth-contract.js"
 import { normalizeConnectedAccountScopes, normalizeOAuthClientExtra } from "./oauth-credentials.js"
 
 const MAX_PENDING_AUTHORIZATIONS = 8
+
+function credentialHealth(
+  status: ExternalMcpCredentialHealth["status"],
+  reason: ExternalMcpCredentialHealth["reason"],
+): ExternalMcpCredentialHealth {
+  return { version: 1, status, reason, checkedAt: new Date().toISOString() }
+}
+
+function invalidCredentialHealth(
+  reason: "expired" | "provider-rejected" | "post-authorization-validation-failed",
+): ExternalMcpCredentialHealth {
+  if (reason === "expired") return credentialHealth("reconnect_required", "credential_expired")
+  if (reason === "post-authorization-validation-failed") {
+    return credentialHealth("reconnect_required", "post_authorization_validation_failed")
+  }
+  return credentialHealth("reconnect_required", "authorization_rejected")
+}
 
 const oauthDiscoveryStateSchema = z.object({
   authorizationServerUrl: z.string().url(),
@@ -203,6 +221,22 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
       const row = rows[0]
       if (!row) return undefined
       const extra = normalizeOAuthClientExtra(row.extra)
+      const registeredRedirectUri = typeof extra?.registeredRedirectUri === "string"
+        ? extra.registeredRedirectUri
+        : undefined
+      const currentRedirectUri = externalMcpCallbackUrl({
+        connectionId: this.connection.id,
+        callbackMode: this.connection.oauthConfiguration?.callbackMode ?? "legacy-v1",
+      })
+      if (
+        extra?.enterpriseMcpRegistrationSource === "pre-registered"
+        && registeredRedirectUri !== currentRedirectUri
+      ) {
+        throw new EnterpriseMcpOAuthContractError(
+          "MCP_OAUTH_CONFIGURATION_REQUIRED",
+          `The pre-registered OAuth client must allowlist the callback URL ${currentRedirectUri}.`,
+        )
+      }
       const clientInformation = restoredClientInformation({ ...row, extra })
       return {
         clientInformation,
@@ -381,7 +415,12 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         const { discovery: _discovery, ...configuration } = connection.oauthConfiguration
         await tx
           .update(ExternalMcpConnectionTable)
-          .set({ oauthConfiguration: configuration })
+          .set({
+            oauthConfiguration: configuration,
+            ...(input.reason === "issuer-mismatch"
+              ? { oauthIssuerReviewRequiredAt: new Date() }
+              : {}),
+          })
           .where(eq(ExternalMcpConnectionTable.id, connection.id))
         assertCommitActive(input.context)
       })
@@ -609,6 +648,9 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           Date.now(),
           (this.isPerMember ? account?.updatedAt.getTime() : connection.updatedAt.getTime()) ?? 0,
         ) + 1)
+        const connectedAt = account
+          ? new Date(Math.max(Date.now(), account.connectedAt.getTime() + 1))
+          : new Date()
         if (this.isPerMember && this.member) {
           if (account) {
             await tx
@@ -620,7 +662,9 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
                 scopes: input.tokens.scope ? input.tokens.scope.split(" ") : null,
                 expiresAt,
                 pendingCodeVerifier,
+                credentialHealth: credentialHealth("ready", null),
                 updatedAt,
+                ...(input.source === "authorization-code" ? { connectedAt } : {}),
               })
               .where(eq(ConnectedAccountTable.id, account.id))
           } else {
@@ -635,6 +679,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
               scopes: input.tokens.scope ? input.tokens.scope.split(" ") : null,
               expiresAt,
               pendingCodeVerifier,
+              credentialHealth: credentialHealth("ready", null),
             })
           }
         } else {
@@ -647,6 +692,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
               scope: input.tokens.scope ?? null,
               expiresAt,
               pendingCodeVerifier,
+              credentialHealth: credentialHealth("ready", null),
               updatedAt,
               connectedAt: new Date(),
             })
@@ -679,7 +725,14 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         if (this.isPerMember && this.member) {
           await tx
             .update(ConnectedAccountTable)
-            .set({ accessToken: null, refreshToken: null, tokenType: null, scopes: null, expiresAt: null })
+            .set({
+              accessToken: null,
+              refreshToken: null,
+              tokenType: null,
+              scopes: null,
+              expiresAt: null,
+              credentialHealth: invalidCredentialHealth(input.reason),
+            })
             .where(and(
               eq(ConnectedAccountTable.organizationId, this.connection.organizationId),
               eq(ConnectedAccountTable.orgMembershipId, this.member.orgMembershipId),
@@ -695,6 +748,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
               scope: null,
               expiresAt: null,
               connectedAt: null,
+              credentialHealth: invalidCredentialHealth(input.reason),
             })
             .where(eq(ExternalMcpConnectionTable.id, connection.id))
         }

@@ -39,15 +39,49 @@ On `Your Connections`, an unconnected One org account connection shows
 `Waiting for an admin to connect` to members. Workspace owners and admins get a
 `Connect` button on that row so they can finish the org account sign-in there.
 
+## OAuth redirect URL
+
+An OAuth redirect URL, also called a callback URL, is the exact address where
+the provider sends the browser after a person approves access. It belongs to
+your specific Den deployment; it is not the MCP server URL or the client
+metadata URL.
+
+New MCP connections on one Den instance share this redirect URL:
+
+```text
+<DEN_API_PUBLIC_URL>/v1/mcp-connections/oauth/callback
+```
+
+For the hosted OpenWork Cloud instance, the dashboard is
+`https://app.openworklabs.com` and its public Den API origin is
+`https://api.openworklabs.com`. Register this exact redirect URL with the OAuth
+provider:
+
+```text
+https://api.openworklabs.com/v1/mcp-connections/oauth/callback
+```
+
+For a self-hosted instance whose public Den API is
+`https://api.openwork.example.com`, register:
+
+```text
+https://api.openwork.example.com/v1/mcp-connections/oauth/callback
+```
+
+Use the exact scheme, hostname, optional path prefix, and port configured in
+`DEN_API_PUBLIC_URL`. Providers compare redirect URLs exactly. Existing
+connections created with an older per-connection callback keep that registered
+URL automatically; do not change it just to reconnect.
+
 ## Slack
 
 Slack's MCP server requires a pre-registered Slack OAuth app.
 
 1. Create or open a Slack app in [Slack API apps](https://api.slack.com/apps).
-2. In OpenWork Cloud, add the Slack connection and paste the app's client ID
+2. Add this Den instance's OAuth redirect URL to the Slack app's
+   `OAuth & Permissions` redirect URLs.
+3. In OpenWork Cloud, add the Slack connection and paste the app's client ID
    and client secret.
-3. Copy the OAuth redirect URL OpenWork shows after creating the connection,
-   then add it to the Slack app's `OAuth & Permissions` redirect URLs.
 4. Members open `Your Connections` and connect their own Slack account.
 
 For the advanced local desktop-only setup, see

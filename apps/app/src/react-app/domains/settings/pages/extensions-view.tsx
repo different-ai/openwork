@@ -4,7 +4,6 @@ import { Cpu } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
-import { useConnectEnabled } from "@/react-app/domains/cloud/desktop-config-provider";
 import { shouldShowExtensionsMarketplacePane } from "@/react-app/domains/settings/connect-delivery";
 
 import { PluginsView, type PluginsExtensionsStore } from "./plugins-view";
@@ -51,8 +50,7 @@ export type ExtensionsViewProps = {
 
 export function ExtensionsView(props: ExtensionsViewProps) {
   const [view, setView] = useState<"my" | "marketplace">("my");
-  const connectEnabled = useConnectEnabled();
-  const showMarketplacePane = shouldShowExtensionsMarketplacePane(connectEnabled);
+  const showMarketplacePane = shouldShowExtensionsMarketplacePane();
   const activeView = showMarketplacePane ? view : "my";
   const pluginCount = useMemo(
     () => props.extensions.pluginList().length,
@@ -76,15 +74,6 @@ export function ExtensionsView(props: ExtensionsViewProps) {
           {t("common.refresh")}
         </Button>
       </div>
-
-      {connectEnabled === true ? (
-        <div className="flex flex-col gap-2 rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-sm text-dls-secondary sm:flex-row sm:items-center sm:justify-between">
-          <span>{t("extensions.connect_marketplace_split_hint")}</span>
-          <Button size="sm" variant="outline" className="w-fit" onClick={props.onOpenConnect}>
-            {t("extensions.open_connect")}
-          </Button>
-        </div>
-      ) : null}
 
       {showMarketplacePane ? (
         <div className="flex w-fit rounded-xl border border-dls-border bg-dls-surface p-1">

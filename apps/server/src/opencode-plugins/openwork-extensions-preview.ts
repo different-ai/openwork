@@ -6,6 +6,7 @@ import {
   OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
   resolveOpenWorkExtensionDiscoveryInstruction,
   type OpenCodeContext,
+  type OpenWorkEngineMcpStatusClient,
 } from "./openwork-extensions-preview-steering.js";
 
 type ExtensionActionPayload = {
@@ -164,6 +165,20 @@ function optionalStringProperty(value: unknown, key: string): string | undefined
   if (!isRecord(value)) return undefined;
   const property = value[key];
   return typeof property === "string" && property.trim().length > 0 ? property : undefined;
+}
+
+type OpenWorkEngineMcpStatusFunction = OpenWorkEngineMcpStatusClient["mcp"]["status"];
+
+function isOpenWorkEngineMcpStatusFunction(value: unknown): value is OpenWorkEngineMcpStatusFunction {
+  return typeof value === "function";
+}
+
+function readEngineMcpStatusClient(value: unknown): OpenWorkEngineMcpStatusClient | undefined {
+  const client = isRecord(value) ? value.client : undefined;
+  const mcp = isRecord(client) ? client.mcp : undefined;
+  const status = isRecord(mcp) ? mcp.status : undefined;
+  if (!isOpenWorkEngineMcpStatusFunction(status)) return undefined;
+  return { mcp: { status: (request) => status.call(mcp, request) } };
 }
 
 function normalizeOpenCodeContext(value: unknown): OpenCodeContext {
@@ -650,9 +665,15 @@ function contextPayload(context: OpenCodeContext) {
 export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
   const uiControlEnabled = uiControlToolsEnabled();
   const factoryContext = normalizeOpenCodeContext(factoryInput);
+  const engineMcpStatusClient = readEngineMcpStatusClient(factoryInput);
+  const engineMcpStatusDirectory = factoryContext.directory ?? factoryContext.worktree;
   return {
   "experimental.chat.system.transform": async (input: unknown, output: { system: string[] }) => {
-    output.system.push(await resolveOpenWorkExtensionDiscoveryInstruction(mergeTransformInputWithFactoryContext(input, factoryContext)));
+    const mergedInput = mergeTransformInputWithFactoryContext(input, factoryContext);
+    output.system.push(await resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
+      client: engineMcpStatusClient,
+      directory: engineMcpStatusDirectory,
+    }));
     output.system.push(OPENWORK_SESSION_MEMORY_INSTRUCTION);
     output.system.push(OPENWORK_BROWSER_INSTRUCTION);
     if (uiControlEnabled) output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);

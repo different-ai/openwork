@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  buildOpenworkRuntimeConfig,
   keepOpenworkRuntimeConfigFileFresh,
   openworkRuntimeConfigFilePath,
   writeOpenworkRuntimeConfigFile,
@@ -126,5 +127,47 @@ describe("openwork runtime config file", () => {
     const parsed = await readConfigFile(config);
     const mcp = (parsed.mcp ?? {}) as Record<string, Record<string, unknown>>;
     expect(mcp.other).toBeUndefined();
+  });
+
+  test("builds byte-stable config for repeated snapshots", async () => {
+    const { config } = await setup();
+    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
+      ...current,
+      mcp: { posthog: { type: "remote", url: "https://mcp.posthog.com/mcp" } },
+    }));
+
+    const first = await buildOpenworkRuntimeConfig(config, "ws_1");
+    const second = await buildOpenworkRuntimeConfig(config, "ws_1");
+
+    expect(second).toBe(first);
+  });
+
+  test("builds byte-stable config for equivalent snapshots with different key order", async () => {
+    const { config } = await setup();
+    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({
+      mcp: {
+        zeta: { url: "https://z.example/mcp", type: "remote" },
+        alpha: { type: "remote", url: "https://a.example/mcp" },
+      },
+      provider: {
+        zeta: { npm: "@ai-sdk/openai-compatible", name: "Zeta" },
+        alpha: { name: "Alpha", npm: "@ai-sdk/openai-compatible" },
+      },
+    }));
+    const first = await buildOpenworkRuntimeConfig(config, "ws_1");
+
+    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({
+      provider: {
+        alpha: { npm: "@ai-sdk/openai-compatible", name: "Alpha" },
+        zeta: { name: "Zeta", npm: "@ai-sdk/openai-compatible" },
+      },
+      mcp: {
+        alpha: { url: "https://a.example/mcp", type: "remote" },
+        zeta: { type: "remote", url: "https://z.example/mcp" },
+      },
+    }));
+    const second = await buildOpenworkRuntimeConfig(config, "ws_1");
+
+    expect(second).toBe(first);
   });
 });

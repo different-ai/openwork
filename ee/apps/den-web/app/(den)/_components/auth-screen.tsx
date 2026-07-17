@@ -1,28 +1,12 @@
 "use client";
 
-import { PaperMeshGradient } from "@openwork/ui/react";
 import { Dithering } from "@paper-design/shaders-react";
-import { Bot, Boxes, Share, type LucideIcon } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { isSamePathname } from "../_lib/client-route";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
 import { useDenFlow } from "../_providers/den-flow-provider";
 import { AuthPanel } from "./auth-panel";
-
-function Feature({ icon: Icon, title, body }: { icon: LucideIcon; title: string; body: string }) {
-  return (
-    <div className="flex flex-col items-start gap-3.5 px-4 py-5 sm:px-5">
-      <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/15 bg-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-md">
-        <Icon className="h-[18px] w-[18px] text-white" strokeWidth={1.75} />
-      </span>
-      <div className="min-w-0">
-        <p className="m-0 text-[13px] font-medium leading-tight text-white">{title}</p>
-        <p className="m-0 mt-1 text-[11.5px] leading-snug text-white/60">{body}</p>
-      </div>
-    </div>
-  );
-}
 
 function SessionStatusPanel({ mode }: { mode: "checking" | "redirecting" }) {
   const status = mode === "checking"
@@ -90,11 +74,10 @@ export function AuthScreen() {
   }, [hasResolvedSession, pathname, resolveUserLandingRoute, router]);
 
   return (
-    <section className="den-page flex w-full items-start py-3 sm:py-4 lg:min-h-[calc(100vh-2.5rem)] lg:items-center">
-      <div className="den-frame relative w-full overflow-hidden">
-        <div className="grid lg:grid-cols-[2fr_1fr]">
-          {/* Brand panel — hidden on mobile; form-only on small screens */}
-          <div className="relative hidden min-h-[220px] overflow-hidden px-6 py-7 sm:px-8 sm:py-9 md:px-10 md:py-10 lg:block lg:min-h-[560px]">
+    <section className="den-page flex min-h-[calc(100vh-2.5rem)] w-full items-center justify-center py-3 sm:py-4">
+      <div className="den-frame relative mx-auto w-full max-w-[600px] overflow-hidden" data-testid="auth-landing-frame">
+        <div className="grid lg:grid-cols-[1fr_5fr]">
+          <div className="relative hidden min-h-[520px] overflow-hidden lg:block" data-testid="auth-landing-visual">
             <div className="absolute inset-0 z-0">
               <Dithering
                 speed={0}
@@ -106,68 +89,12 @@ export function AuthScreen() {
                 colorBack="#00000000"
                 colorFront="#FEFEFE"
                 style={{ backgroundColor: "#142033", width: "100%", height: "100%" }}
-              >
-                <PaperMeshGradient
-                  speed={0.1}
-                  distortion={0.8}
-                  swirl={0.1}
-                  grainMixer={0}
-                  grainOverlay={0}
-                  frame={176868.9}
-                  colors={["#0F172A", "#1E40AF", "#4C1D95", "#0F766E"]}
-                  style={{ width: "100%", height: "100%" }}
-                />
-              </Dithering>
-            </div>
-
-            <div className="relative z-10 flex h-full flex-col">
-              <div className="flex items-center gap-3">
-                <img src="/openwork-logo-transparent.svg" alt="OpenWork" className="h-9 w-auto" />
-                <span className="text-[13px] font-medium text-white/80">OpenWork Cloud</span>
-              </div>
-
-              {/* Spacers split the space below the logo ~1:2, so the headline
-                  starts about a third of the way down and the features sit at
-                  the bottom. */}
-              <div className="flex-[1]" aria-hidden />
-
-              <div className="grid gap-3 sm:gap-4">
-                <h1 className="max-w-[13ch] text-[2rem] font-semibold leading-[0.95] tracking-[-0.06em] text-white sm:text-[2.35rem] md:text-[3rem]">
-                  One setup, every seat.
-                </h1>
-                <p className="max-w-[34rem] text-[14px] leading-6 text-white/80 sm:text-[15px] sm:leading-7">
-                  Configure once. Your whole team gets the same tools, agents, and providers.
-                </p>
-              </div>
-
-              <div className="flex-[2]" aria-hidden />
-
-              <div className="overflow-hidden rounded-[1.5rem] border border-white/10 bg-white/[0.06] backdrop-blur-md">
-                <div className="grid divide-y divide-white/10 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-                  <Feature
-                    icon={Share}
-                    title="Shared config"
-                    body="Set once, push to the org."
-                  />
-                  <Feature
-                    icon={Bot}
-                    title="Cloud agents"
-                    body="Keep running while you're away."
-                  />
-                  <Feature
-                    icon={Boxes}
-                    title="Your models"
-                    body="Bring your own provider."
-                  />
-                </div>
-              </div>
+              />
             </div>
           </div>
 
-          {/* Auth form */}
-          <div className="flex flex-col justify-center border-[var(--dls-border)] px-5 py-6 sm:px-7 sm:py-8 md:px-9 md:py-10 lg:border-l">
-            {/* Mobile-only brand header — desktop shows the logo in the gradient panel */}
-            <div className="mb-6 flex items-center gap-2 lg:hidden">
+          <div className="flex flex-col justify-center border-[var(--dls-border)] px-5 py-6 sm:px-7 sm:py-8 md:px-9 md:py-10 lg:border-l" data-testid="auth-landing-form">
+            <div className="mb-6 flex items-center gap-2 lg:hidden" data-testid="auth-landing-mobile-brand">
               <img src="/openwork-mark.svg" alt="OpenWork" className="h-7 w-auto" />
               <span className="text-[1.15rem] font-semibold tracking-tight text-[var(--dls-text-primary)]">
                 OpenWork

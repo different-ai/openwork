@@ -10,6 +10,8 @@ import {
   DenApiError,
   ensureDenActiveOrganization,
   initializeDenBootstrapConfig,
+  isDenSessionRevokedError,
+  mergePassiveDenSettings,
   normalizeDenBaseUrl,
   readDenSettings,
   resolveDenBaseUrls,
@@ -150,13 +152,15 @@ export function useDenSession({
 
   const syncCurrentDenSettings = React.useCallback(() => {
     const resolved = resolveDenBaseUrls(baseUrl);
-    writeDenSettings({
-      baseUrl: resolved.baseUrl,
-      authToken: authToken || null,
-      activeOrgId: activeOrgId || null,
-      activeOrgSlug: activeOrg?.slug ?? null,
-      activeOrgName: activeOrg?.name ?? null,
-    });
+    writeDenSettings(
+      mergePassiveDenSettings(readDenSettings(), {
+        baseUrl: resolved.baseUrl,
+        authToken: authToken || null,
+        activeOrgId: activeOrgId || null,
+        activeOrgSlug: activeOrg?.slug ?? null,
+        activeOrgName: activeOrg?.name ?? null,
+      }),
+    );
   }, [activeOrg, activeOrgId, authToken, baseUrl]);
 
   React.useEffect(() => {
@@ -366,7 +370,7 @@ export function useDenSession({
       })
       .catch(async (error) => {
         if (cancelled) return;
-        if (error instanceof DenApiError && error.status === 401) {
+        if (isDenSessionRevokedError(error)) {
           await clearSignedInState();
         }
         // A timeout, offline state, or server failure does not invalidate the

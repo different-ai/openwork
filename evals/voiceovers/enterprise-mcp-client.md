@@ -1,11 +1,10 @@
 # Enterprise MCP client
 
-1. Start Den without `DEN_ENABLE_ENTERPRISE_MCP_CLIENT` and confirm startup
-   identifies the current Den MCP client.
-2. Connect to the same MCP test server through the existing Den connection API
-   and confirm the current behavior is unchanged.
-3. Restart Den with `DEN_ENABLE_ENTERPRISE_MCP_CLIENT=true` and confirm startup
-   identifies `@openwork/enterprise-mcp-client`.
+1. Start Den and confirm startup identifies `@openwork/enterprise-mcp-client`.
+2. Reconnect an existing OAuth connection and confirm it uses the callback URL
+   stored on that connection.
+3. Create a new OAuth connection and confirm it uses the deployment-wide
+   shared callback.
 4. Connect without credentials, with an API key, and through OAuth; confirm the
    same Den API response shapes and credential ownership rules.
 5. Start two OAuth authorizations for one connection and confirm their signed
@@ -18,5 +17,5 @@
    expired client secret, expired token without refresh, token exchange, MCP
    initialization, tool discovery, and tool execution; confirm each result
    identifies the failing phase without exposing credentials.
-9. Drain in-flight browser authorizations, restart without the flag, and confirm
-   rollback requires no schema or credential migration.
+9. Confirm both the shared callback and the per-connection compatibility route
+   reject state created for the other callback mode.

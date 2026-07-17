@@ -92,6 +92,7 @@ export const ConnectedAccountTable = mysqlTable(
      * tokens are saved.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
+    credentialHealth: json("credential_health").$type<ExternalMcpCredentialHealth>(),
     connectedAt: timestamp("connected_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()
@@ -113,7 +114,7 @@ export type ExternalMcpAuthType = (typeof externalMcpAuthTypeValues)[number]
 export const externalMcpCredentialModeValues = ["shared", "per_member"] as const
 export type ExternalMcpCredentialMode = (typeof externalMcpCredentialModeValues)[number]
 
-export const externalMcpOAuthCallbackModeValues = ["shared-v1", "legacy-v1"] as const
+export const externalMcpOAuthCallbackModeValues = ["shared-v1", "isolated-v1", "legacy-v1"] as const
 export type ExternalMcpOAuthCallbackMode = (typeof externalMcpOAuthCallbackModeValues)[number]
 
 export type ExternalMcpOAuthConfiguration = {
@@ -127,6 +128,17 @@ export type ExternalMcpOAuthConfiguration = {
    * issuer/resource discovery to be cached before a client registration exists.
    */
   discovery?: Record<string, unknown>
+}
+
+export type ExternalMcpCredentialHealth = {
+  version: 1
+  status: "ready" | "reconnect_required"
+  reason:
+    | "authorization_rejected"
+    | "credential_expired"
+    | "post_authorization_validation_failed"
+    | null
+  checkedAt: string
 }
 
 /**
@@ -186,6 +198,13 @@ export const ExternalMcpConnectionTable = mysqlTable(
      * connect/callback. Cleared once tokens are saved.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
+    credentialHealth: json("credential_health").$type<ExternalMcpCredentialHealth>(),
+    /**
+     * Set when live discovery no longer matches the selected OAuth issuer.
+     * The mismatch remains fail-closed until an administrator explicitly
+     * confirms one of the issuers currently advertised by the resource.
+     */
+    oauthIssuerReviewRequiredAt: timestamp("oauth_issuer_review_required_at", { fsp: 3 }),
     connectedAt: timestamp("connected_at", { fsp: 3 }),
     createdByOrgMembershipId: denTypeIdColumn(
       "member",
@@ -261,6 +280,8 @@ export const PluginMcpRequirementBindingTable = mysqlTable(
     configObjectId: denTypeIdColumn("configObject", "config_object_id").notNull(),
     serverName: varchar("server_name", { length: 255 }).notNull(),
     externalMcpConnectionId: denTypeIdColumn("externalMcpConnection", "external_mcp_connection_id").notNull(),
+    requiredAuthType: mysqlEnum("required_auth_type", externalMcpAuthTypeValues),
+    connectionOwnedByPlugin: boolean("connection_owned_by_plugin").notNull().default(false),
     createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),

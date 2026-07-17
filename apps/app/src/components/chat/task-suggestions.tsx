@@ -20,13 +20,28 @@ const BROWSER_PROMPT =
 
 const ORGANIZATION_PROMPT_TITLES = ["Organization prompt 1", "Organization prompt 2", "Organization prompt 3"]
 
+export function resolveOrganizationPromptCardContent(input: {
+  prompt: string
+  description?: string
+  index: number
+}) {
+  const title = input.description?.trim()
+  return {
+    title: title || ORGANIZATION_PROMPT_TITLES[input.index] || "Organization prompt",
+    description: input.prompt,
+    selectionPrompt: input.prompt,
+  }
+}
+
 interface TaskSuggestionsProps {
   className?: string
 }
 
 export function TaskSuggestions({ className }: TaskSuggestionsProps) {
   const { displaySuggestions, providerConnectedCount, dispatchAction, setPrompt } = useMessageList()
-  const organizationPrompts = useOrgRestrictions().onboardingPrompts
+  const orgRestrictions = useOrgRestrictions()
+  const organizationPrompts = orgRestrictions.onboardingPrompts
+  const organizationPromptDescriptions = orgRestrictions.onboardingPromptDescriptions
 
   if (!displaySuggestions) {
     return null
@@ -70,17 +85,24 @@ export function TaskSuggestions({ className }: TaskSuggestionsProps) {
         ) : null}
 
         {hasOrganizationPrompts ? (
-          organizationPrompts.map((prompt, index) => (
-            <DescriptiveButton key={`${index}-${prompt}`} orientation="vertical" onClick={() => setPrompt(prompt)}>
-              <DescriptiveButtonIcon>
-                <SparklesIcon className="size-6 text-purple-10" aria-hidden />
-              </DescriptiveButtonIcon>
-              <DescriptiveButtonContent>
-                <DescriptiveButtonTitle>{ORGANIZATION_PROMPT_TITLES[index] ?? "Organization prompt"}</DescriptiveButtonTitle>
-                <DescriptiveButtonDescription>{prompt}</DescriptiveButtonDescription>
-              </DescriptiveButtonContent>
-            </DescriptiveButton>
-          ))
+          organizationPrompts.map((prompt, index) => {
+            const card = resolveOrganizationPromptCardContent({
+              prompt,
+              description: organizationPromptDescriptions?.[index],
+              index,
+            })
+            return (
+              <DescriptiveButton key={`${index}-${prompt}`} orientation="vertical" onClick={() => setPrompt(card.selectionPrompt)}>
+                <DescriptiveButtonIcon>
+                  <SparklesIcon className="size-6 text-purple-10" aria-hidden />
+                </DescriptiveButtonIcon>
+                <DescriptiveButtonContent>
+                  <DescriptiveButtonTitle>{card.title}</DescriptiveButtonTitle>
+                  <DescriptiveButtonDescription>{card.description}</DescriptiveButtonDescription>
+                </DescriptiveButtonContent>
+              </DescriptiveButton>
+            )
+          })
         ) : (
           <>
             <DescriptiveButton orientation="vertical" onClick={() => setPrompt(CSV_PROMPT)}>

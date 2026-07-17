@@ -9,6 +9,7 @@ import {
   writeCloudMcpSyncMarker,
 } from "../src/react-app/domains/connections/cloud-mcp-user-state";
 import {
+  buildOpenworkCloudMcpReconcilePayload,
   cloudMcpDisplaySummary,
   cloudMcpFailureStageLabel,
   isCloudMcpAuthTokenFailure,
@@ -132,6 +133,21 @@ function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | nu
 
 describe("OpenWork Cloud MCP reconciler", () => {
   beforeEach(() => installStorageStub());
+
+  test("uses the minted web proxy resource instead of a stale direct API fallback", () => {
+    const payload = buildOpenworkCloudMcpReconcilePayload({
+      context: {
+        ...context,
+        fallbackUrl: "https://api.openwork.test/mcp/agent",
+      },
+      token: {
+        ...token,
+        resource: "https://app.openwork.test/api/den/mcp",
+      },
+    });
+
+    expect(payload?.config.url).toBe("https://app.openwork.test/api/den/mcp/agent");
+  });
 
   test("Test now performs only GET health", async () => {
     const values = new Map<string, string>();

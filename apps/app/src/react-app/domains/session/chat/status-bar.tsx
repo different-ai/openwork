@@ -22,6 +22,7 @@ import { useShellConfig } from "../../../shell/shell-config";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { readDenSettings } from "../../../../app/lib/den";
 import {
+  openWorkConnectAttentionTitle,
   resolveOpenWorkConnectStatus,
   type OpenWorkConnectStatus,
 } from "../../connections/openwork-connect-status";
@@ -30,6 +31,7 @@ import {
   getOpenWorkModelsActionUrl,
   hasOpenWorkModelsProvider,
   hideOpenWorkModelsPromo,
+  useOpenWorkModelsPromoEligibility,
   isOpenWorkModelsPromoHidden,
   markOpenWorkModelsPromoShown,
   OPENWORK_MODELS_PROMO_SHOW_DELAY_MS,
@@ -102,6 +104,7 @@ function OpenWorkConnectIndicator(props: {
           <button
             type="button"
             data-testid="openwork-connect-status"
+            title={openWorkConnectAttentionTitle(props.status.description)}
             className="rounded-md px-1.5 py-1 transition-colors hover:bg-muted"
           />
         )}
@@ -224,6 +227,7 @@ export type StatusBarProps = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
   developerMode: boolean;
+  showConnectionStatus?: boolean;
   settingsOpen: boolean;
   onSendFeedback: () => void;
   onOpenSettings: () => void;
@@ -246,6 +250,7 @@ export function StatusBar(props: StatusBarProps) {
   const feedbackButtonRef = useRef<HTMLButtonElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const [openWorkModelsHintVisible, setOpenWorkModelsHintVisible] = useState(false);
+  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
   const hasOpenWorkModels = useMemo(
     () => hasOpenWorkModelsProvider(props.providerConnectedIds),
     [props.providerConnectedIds],
@@ -280,7 +285,7 @@ export function StatusBar(props: StatusBarProps) {
   }, []);
 
   useEffect(() => {
-    if (!shellConfig.cloudSignin || hasOpenWorkModels) {
+    if (!openWorkModelsPromoEligible || !shellConfig.cloudSignin || hasOpenWorkModels) {
       setOpenWorkModelsHintVisible(false);
       return;
     }
@@ -305,7 +310,7 @@ export function StatusBar(props: StatusBarProps) {
       }
       window.clearInterval(interval);
     };
-  }, [denAuth.status, hasOpenWorkModels, shellConfig.cloudSignin]);
+  }, [denAuth.status, hasOpenWorkModels, openWorkModelsPromoEligible, shellConfig.cloudSignin]);
 
   useEffect(() => {
     if (!openWorkModelsHintVisible) return;
@@ -364,18 +369,20 @@ export function StatusBar(props: StatusBarProps) {
     <div className="border-t border-border bg-background">
       <div className="flex h-8 items-center justify-between gap-3 px-4 md:px-6">
         <div className="flex min-w-0 items-center gap-3">
-          <StatusIndicator
-            clientConnected={props.clientConnected}
-            openworkServerStatus={props.openworkServerStatus}
-            developerMode={props.developerMode}
-            loading={props.loading}
-            initializing={initializing}
-            reloadBusy={props.reloadBusy}
-            reloadError={props.reloadError}
-          />
+          {props.showConnectionStatus !== false ? (
+            <StatusIndicator
+              clientConnected={props.clientConnected}
+              openworkServerStatus={props.openworkServerStatus}
+              developerMode={props.developerMode}
+              loading={props.loading}
+              initializing={initializing}
+              reloadBusy={props.reloadBusy}
+              reloadError={props.reloadError}
+            />
+          ) : null}
           {openWorkConnectStatus ? (
             <>
-              <span className="h-3.5 w-px shrink-0 bg-border" />
+              {props.showConnectionStatus !== false ? <span className="h-3.5 w-px shrink-0 bg-border" /> : null}
               <OpenWorkConnectIndicator
                 status={openWorkConnectStatus}
                 onRunDiagnostics={() => navigate("/settings/connect")}

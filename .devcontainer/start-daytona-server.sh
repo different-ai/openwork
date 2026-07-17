@@ -119,7 +119,10 @@ echo "==> Pushing Den DB schema..."
 pnpm --filter @openwork-ee/den-db db:push > /tmp/den-db-push.log 2>&1
 
 echo "==> Starting Den API on :$DEN_API_PORT..."
-pkill -f "ee/apps/den-api/src/main.ts" >/dev/null 2>&1 || true
+# The den-api process cmdline is "tsx watch src/main.ts" (cwd-relative), so a
+# pattern anchored on the repo path never matches and restarts silently keep
+# the old server alive on the port. main.ts is unique to den-api here.
+pkill -f "tsx watch src/main.ts" >/dev/null 2>&1 || true
 nohup env \
   PORT="$DEN_API_PORT" \
   DATABASE_URL="$DATABASE_URL" \
@@ -133,6 +136,7 @@ nohup env \
   PROVISIONER_MODE="$DEN_PROVISIONER_MODE" \
   WORKER_URL_TEMPLATE="$DEN_WORKER_URL_TEMPLATE" \
   DAYTONA_WORKER_PROXY_BASE_URL="$DAYTONA_WORKER_PROXY_BASE_URL" \
+  DEN_ORG_MODE="${DEN_ORG_MODE:-multi_org}" \
   OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
   NODE_OPTIONS="--conditions=development" \
   pnpm --filter @openwork-ee/den-api exec tsx watch src/main.ts > /tmp/den-api.log 2>&1 &
@@ -140,7 +144,7 @@ nohup env \
 wait_for_http "http://127.0.0.1:$DEN_API_PORT/health" "Den API" 180
 
 echo "==> Starting worker proxy on :$DEN_WORKER_PROXY_PORT..."
-pkill -f "ee/apps/den-worker-proxy/src/server.ts" >/dev/null 2>&1 || true
+pkill -f "tsx watch src/server.ts" >/dev/null 2>&1 || true
 nohup env \
   PORT="$DEN_WORKER_PROXY_PORT" \
   DATABASE_URL="$DATABASE_URL" \

@@ -11,7 +11,9 @@ describe("native provider tool catalog UI", () => {
     const connectionsScreen = source("../app/(den)/dashboard/_components/your-connections-screen.tsx");
     const catalog = source("../app/(den)/dashboard/_components/mcp-tool-catalog.tsx");
 
-    expect(connectionsScreen).toContain("const canViewTools = nativeProvider || canTestTools")
+    expect(connectionsScreen).toContain(
+      "const canViewTools = !needsAdminSetup && (nativeProvider || canTestTools)",
+    )
     expect(connectionsScreen).toContain("toggle-native-provider-tool-catalog")
     expect(connectionsScreen).toContain("<McpToolCatalog connection={connection} />")
     expect(catalog).toContain("Viewing this catalog does not run a tool")

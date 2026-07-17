@@ -297,7 +297,7 @@ describe("buildNativeProviderEntry", () => {
     })
   })
 
-  test("external connection list rows omit native reconnect fields", async () => {
+  test("external connection list rows keep reconnect state without native missing features", async () => {
     const seeded = await seedMember("ExternalRows")
     const connection = await createExternalMcpConnection({
       organizationId: seeded.organizationId,
@@ -325,7 +325,10 @@ describe("buildNativeProviderEntry", () => {
     if (!isRecord(row)) {
       throw new Error("External connection row was missing.")
     }
-    expect(Object.hasOwn(row, "needsReconnect")).toBe(false)
+    expect(row).toMatchObject({
+      needsReconnect: false,
+      reconnectActionOwner: null,
+    })
     expect(Object.hasOwn(row, "missingFeatures")).toBe(false)
   })
 

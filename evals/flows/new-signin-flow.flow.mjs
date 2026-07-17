@@ -19,7 +19,7 @@ export default {
             await openSignedOutRoot(ctx);
           },
           assert: async () => {
-            await ctx.expectText("Continue to OpenWork.", { timeoutMs: 30_000 });
+            await ctx.expectText("Start using OpenWork", { timeoutMs: 30_000 });
             const actual = await readAuthSurface(ctx);
             ctx.assert(actual.emailInputs === 1, `Expected one email field, got ${JSON.stringify(actual)}`);
             ctx.assert(actual.passwordInputs === 0, `Expected no password field, got ${JSON.stringify(actual)}`);
@@ -29,7 +29,7 @@ export default {
           },
           screenshot: {
             name: "email-first-start",
-            requireText: ["Continue to OpenWork.", "EMAIL", "Next"],
+            requireText: ["Start using OpenWork", "EMAIL", "Next"],
             rejectText: ["Password", "Continue with Google", "Create account"],
           },
         });
@@ -204,7 +204,7 @@ async function openSignedOutRoot(ctx) {
     return true;
   })()`);
   await ctx.waitFor(
-    `(() => document.body.innerText.includes('Continue to OpenWork.') && Boolean(document.querySelector('input[type="email"]')))()`,
+    `(() => document.body.innerText.includes('Start using OpenWork') && Boolean(document.querySelector('input[type="email"]')))()`,
     { timeoutMs: 30_000, label: "email-first auth panel" },
   );
 }

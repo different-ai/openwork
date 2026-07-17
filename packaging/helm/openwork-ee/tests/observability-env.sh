@@ -61,7 +61,7 @@ cat > "$otel_values" <<'YAML'
 inference:
   enabled: true
 config:
-  denApiNodeOptions: --use-openssl-ca --max-old-space-size=4096
+  denApiNodeOptions: --max-old-space-size=4096
 observability:
   backend: otel
   otel:
@@ -83,8 +83,8 @@ denWeb:
     CUSTOM_DEN_WEB_ENV: web
 YAML
 helm template openwork-ee "$chart_dir" -f "$otel_values" > "$otel_rendered"
-assert_contains "$otel_rendered" 'DEN_API_NODE_OPTIONS: "--use-openssl-ca --max-old-space-size=4096"'
-assert_contains "$otel_rendered" 'value: "--use-openssl-ca --max-old-space-size=4096"'
+assert_contains "$otel_rendered" 'DEN_API_NODE_OPTIONS: "--max-old-space-size=4096"'
+assert_contains "$otel_rendered" 'value: "--max-old-space-size=4096"'
 assert_count "$otel_rendered" 'name: DEN_OBSERVABILITY_BACKEND' 2
 assert_count "$otel_rendered" 'value: "otel"' 2
 assert_count "$otel_rendered" 'name: OTEL_EXPORTER_OTLP_HEADERS' 2

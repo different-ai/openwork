@@ -13,8 +13,8 @@ import {
 import {
   clearDenSession,
   createDenClient,
-  DenApiError,
   ensureDenActiveOrganization,
+  isDenSessionRevokedError,
   readDenBootstrapConfig,
   readDenSettings,
   setDenBootstrapConfig,
@@ -45,9 +45,7 @@ export const DEN_AUTH_UNAVAILABLE_RETRY_INTERVAL_MS = 30_000;
 export function resolveDenAuthFailureStatus(
   error: unknown,
 ): Extract<DenAuthStatus, "signed_out" | "unavailable"> {
-  return error instanceof DenApiError && error.status === 401
-    ? "signed_out"
-    : "unavailable";
+  return isDenSessionRevokedError(error) ? "signed_out" : "unavailable";
 }
 
 export function hasRetainedDenSession(status: DenAuthStatus): boolean {
@@ -221,6 +219,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       requireSignin: bootstrap.requireSignin,
       ...(bootstrap.brandAppName ? { brandAppName: bootstrap.brandAppName } : {}),
       ...(bootstrap.brandLogoUrl ? { brandLogoUrl: bootstrap.brandLogoUrl } : {}),
+      ...(bootstrap.brandIconUrl ? { brandIconUrl: bootstrap.brandIconUrl } : {}),
       ...(bootstrap.claimLinks ? { claimLinks: bootstrap.claimLinks } : {}),
       handoff: null,
       ...(bootstrap.prepared ? { prepared: bootstrap.prepared } : {}),

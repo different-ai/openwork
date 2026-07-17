@@ -77,6 +77,65 @@ app.kubernetes.io/component: {{ .component }}
 {{- default (printf "http://%s:%v" (include "openwork-ee.inferenceServiceName" .) .Values.inference.service.port) .Values.config.internal.inferenceProxyBaseUrl -}}
 {{- end -}}
 
+{{- define "openwork-ee.customCa.mountPath" -}}
+/etc/openwork/custom-ca
+{{- end -}}
+
+{{- define "openwork-ee.customCa.filePath" -}}
+{{ include "openwork-ee.customCa.mountPath" . }}/ca-bundle.pem
+{{- end -}}
+
+{{- define "openwork-ee.customCa.validate" -}}
+{{- if .Values.customCa.enabled -}}
+{{- if and .Values.customCa.existingSecret .Values.customCa.existingConfigMap -}}
+{{- fail "customCa.existingSecret and customCa.existingConfigMap are mutually exclusive when customCa.enabled=true" -}}
+{{- end -}}
+{{- if not (or .Values.customCa.existingSecret .Values.customCa.existingConfigMap) -}}
+{{- fail "customCa.existingSecret or customCa.existingConfigMap is required when customCa.enabled=true" -}}
+{{- end -}}
+{{- if not .Values.customCa.key -}}
+{{- fail "customCa.key is required when customCa.enabled=true" -}}
+{{- end -}}
+{{- if hasKey .Values.denApi.env "NODE_EXTRA_CA_CERTS" -}}
+{{- fail "denApi.env.NODE_EXTRA_CA_CERTS conflicts with customCa.enabled=true; remove it and use customCa instead" -}}
+{{- end -}}
+{{- if hasKey .Values.denWeb.env "NODE_EXTRA_CA_CERTS" -}}
+{{- fail "denWeb.env.NODE_EXTRA_CA_CERTS conflicts with customCa.enabled=true; remove it and use customCa instead" -}}
+{{- end -}}
+{{- if hasKey .Values.inference.env "NODE_EXTRA_CA_CERTS" -}}
+{{- fail "inference.env.NODE_EXTRA_CA_CERTS conflicts with customCa.enabled=true; remove it and use customCa instead" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "openwork-ee.customCa.volume" -}}
+- name: custom-ca
+  {{- if .Values.customCa.existingSecret }}
+  secret:
+    secretName: {{ .Values.customCa.existingSecret | quote }}
+    items:
+      - key: {{ .Values.customCa.key | quote }}
+        path: ca-bundle.pem
+  {{- else }}
+  configMap:
+    name: {{ .Values.customCa.existingConfigMap | quote }}
+    items:
+      - key: {{ .Values.customCa.key | quote }}
+        path: ca-bundle.pem
+  {{- end }}
+{{- end -}}
+
+{{- define "openwork-ee.customCa.volumeMount" -}}
+- name: custom-ca
+  mountPath: {{ include "openwork-ee.customCa.mountPath" . | quote }}
+  readOnly: true
+{{- end -}}
+
+{{- define "openwork-ee.customCa.env" -}}
+- name: NODE_EXTRA_CA_CERTS
+  value: {{ include "openwork-ee.customCa.filePath" . | quote }}
+{{- end -}}
+
 {{- define "openwork-ee.observabilityBackend" -}}
 {{- $backend := default "none" .Values.observability.backend -}}
 {{- if not (has $backend (list "none" "otel" "sentry")) -}}

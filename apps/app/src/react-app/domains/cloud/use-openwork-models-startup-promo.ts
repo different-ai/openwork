@@ -12,6 +12,7 @@ import {
   getOpenWorkModelsActionUrl,
   hasOpenWorkModelsProvider,
   hideOpenWorkModelsPromo,
+  useOpenWorkModelsPromoEligibility,
   isOpenWorkModelsPromoHidden,
   markOpenWorkModelsStartupPromoShown,
   openWorkModelsPromoChangedEvent,
@@ -23,20 +24,15 @@ export type UseOpenWorkModelsStartupPromoInput = {
   clientReady: boolean;
   workspaceId: string;
   providerConnectedIds: string[];
-  /**
-   * Defers the auto-open while another onboarding surface (welcome modal,
-   * provider selection step) is showing, so the promo never overlaps them.
-   * The promo schedules normally once this flips back to false.
-   */
-  suppressed?: boolean;
 };
 
 export function useOpenWorkModelsStartupPromo(input: UseOpenWorkModelsStartupPromoInput) {
-  const { clientReady, workspaceId, providerConnectedIds, suppressed } = input;
+  const { clientReady, workspaceId, providerConnectedIds } = input;
   const navigate = useNavigate();
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const { config: shellConfig } = useShellConfig();
+  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
 
   const [open, setOpen] = useState(false);
   const [promoHidden, setPromoHidden] = useState(isOpenWorkModelsPromoHidden);
@@ -54,7 +50,10 @@ export function useOpenWorkModelsStartupPromo(input: UseOpenWorkModelsStartupPro
   );
 
   useEffect(() => {
-    if (suppressed) return;
+    if (!openWorkModelsPromoEligible) {
+      setOpen(false);
+      return;
+    }
     if (!shellConfig.cloudSignin || promoHidden || hasOpenWorkModels) return;
     if (denAuth.status === "checking" || !clientReady || !workspaceId) return;
     if (wasOpenWorkModelsStartupPromoShown() || scheduledRef.current) return;
@@ -65,7 +64,7 @@ export function useOpenWorkModelsStartupPromo(input: UseOpenWorkModelsStartupPro
       setOpen(true);
     }, 900);
     return () => window.clearTimeout(timeout);
-  }, [clientReady, denAuth.status, hasOpenWorkModels, promoHidden, shellConfig.cloudSignin, suppressed, workspaceId]);
+  }, [clientReady, denAuth.status, hasOpenWorkModels, openWorkModelsPromoEligible, promoHidden, shellConfig.cloudSignin, workspaceId]);
 
   const subscribe = useCallback(() => {
     setOpen(false);

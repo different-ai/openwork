@@ -3,7 +3,7 @@
 import { Download } from "lucide-react";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { createOrganizationInstallLink } from "./install-link-data";
+import { createOrganizationInstallLink } from "../../_lib/install-link-data";
 
 export function OrganizationDownloadCard({
   organizationId,

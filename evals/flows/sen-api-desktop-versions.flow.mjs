@@ -28,7 +28,7 @@ async function openDesktopVersionSettings(ctx) {
     location.reload();
     return true;
   }).catch(() => true)`, { awaitPromise: true });
-  await ctx.waitFor(`document.body.innerText.includes('Continue to OpenWork.') && Boolean(document.querySelector('input[type="email"]'))`, {
+  await ctx.waitFor(`document.body.innerText.includes('Start using OpenWork') && Boolean(document.querySelector('input[type="email"]'))`, {
     timeoutMs: 30_000,
     label: "email-first sign-in",
   });

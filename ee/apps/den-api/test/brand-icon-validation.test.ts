@@ -1,6 +1,6 @@
 import { deflateSync } from "node:zlib"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { afterEach, beforeAll, expect, mock, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 import { BRAND_ICON_FETCH_USER_AGENT, validateBrandIconUrl } from "../src/brand-icon-validation.js"
 
@@ -48,10 +48,6 @@ mock.module("../src/auth.js", () => ({
       setActiveOrganization: () => Promise.resolve(),
     },
   },
-}))
-
-mock.module("../src/capability-sources/external-mcp-rollout.js", () => ({
-  memberFacingMcpConnectionsEnabled: () => true,
 }))
 
 mock.module("../src/db.js", () => ({
@@ -147,6 +143,10 @@ afterEach(() => {
   })
   fetchCalls = []
   updateOrganizationSettingsCalls.length = 0
+})
+
+afterAll(() => {
+  mock.restore()
 })
 
 function installFetchResponse(response: Response) {

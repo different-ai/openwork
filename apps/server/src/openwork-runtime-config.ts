@@ -121,8 +121,26 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, stableJsonValue(value[key])]),
+  );
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(stableJsonValue(value));
+}
+
 export async function buildOpenworkRuntimeConfig(config?: ServerConfig, workspaceId?: string): Promise<string> {
-  return JSON.stringify(await buildOpenworkRuntimeConfigObject(config, workspaceId));
+  return stableStringify(await buildOpenworkRuntimeConfigObject(config, workspaceId));
 }
 
 export function openworkRuntimeConfigFilePath(config: ServerConfig): string {

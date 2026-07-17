@@ -247,6 +247,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
   let autoUpdaterLoaded = false;
   let checkedUpdateVersion = null;
   let checkedUpdateTargetVersion = null;
+  let updateDownloaded = false;
 
   function sendToRenderer(channel, data) {
     try {
@@ -279,7 +280,11 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
         // bundles (see enableSquirrelDirectContentsWrite for why).
         await enableSquirrelDirectContentsWrite();
         autoUpdaterInstance.on("error", (err) => {
+          updateDownloaded = false;
           console.warn("[updater] error", err);
+        });
+        autoUpdaterInstance.on("update-downloaded", () => {
+          updateDownloaded = true;
         });
         // Forward download progress to the renderer so the UI can show
         // incremental bytes instead of staying stuck at 0.
@@ -310,6 +315,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     const channel = await writeElectronUpdaterChannel(app, rawChannel);
     checkedUpdateVersion = null;
     checkedUpdateTargetVersion = null;
+    updateDownloaded = false;
     const updater = await ensureAutoUpdater();
     if (updater) {
       return applyElectronUpdaterFeed(app, updater);
@@ -343,6 +349,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       const available = Boolean(info?.version && isVersionNewer(info.version, currentVersion));
       checkedUpdateVersion = available ? info.version : null;
       checkedUpdateTargetVersion = available ? targetVersion : null;
+      if (!available) updateDownloaded = false;
       return {
         available,
         currentVersion,
@@ -354,6 +361,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     } catch (error) {
       checkedUpdateVersion = null;
       checkedUpdateTargetVersion = null;
+      updateDownloaded = false;
       return {
         available: false,
         reason: String(error?.message ?? error),
@@ -388,13 +396,16 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       // download applies cleanly on quit.
       await cleanStaleUpdaterState(app);
       await updater.downloadUpdate();
+      updateDownloaded = true;
       return { ok: true };
     } catch (error) {
+      updateDownloaded = false;
       return { ok: false, reason: String(error?.message ?? error) };
     }
   });
 
   ipcMain.handle("openwork:updater:installAndRestart", async () => {
+    if (!updateDownloaded) return { ok: false, reason: "update-not-downloaded" };
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
