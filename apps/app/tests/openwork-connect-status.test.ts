@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { resolveOpenWorkConnectStatus } from "../src/react-app/domains/connections/openwork-connect-status";
+import {
+  openWorkConnectAttentionTitle,
+  resolveOpenWorkConnectStatus,
+} from "../src/react-app/domains/connections/openwork-connect-status";
 import type { SessionCloudMcpMaintenanceState } from "../src/react-app/domains/connections/use-session-mcp-maintenance";
 
 function maintenance(
@@ -23,6 +26,11 @@ function maintenance(
 }
 
 describe("OpenWork Connect status", () => {
+  test("labels the diagnosed message as one possible issue for native tooltips", () => {
+    expect(openWorkConnectAttentionTitle("Connected service tools could not be verified."))
+      .toBe("One possible issue: Connected service tools could not be verified.");
+  });
+
   test("is hidden while signed out", () => {
     expect(resolveOpenWorkConnectStatus(false, maintenance("ready"))).toBeNull();
   });

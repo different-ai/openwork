@@ -8,6 +8,11 @@ export function formatRequiredBy(requiredBy: ExternalMcpRequiredBy[]): string | 
   return `Required by ${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
+export function formatConnectionCreatorAttribution(createdByName: string | null | undefined): string | null {
+  const name = createdByName?.trim();
+  return name ? `Added by ${name}` : null;
+}
+
 export function trustedConnectionFocusId(connections: ExternalMcpConnection[], requestedConnectionId: string | null): string | null {
   if (!requestedConnectionId) return null;
   return connections.some((connection) => connection.id === requestedConnectionId) ? requestedConnectionId : null;

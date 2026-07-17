@@ -116,6 +116,7 @@ export function OrgSettingsScreen() {
   >(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [copiedOrgId, setCopiedOrgId] = useState(false);
+  const [denVersion, setDenVersion] = useState<string | null>(null);
 
   const currentAllowedDomains =
     orgContext?.organization.allowedEmailDomains ?? null;
@@ -148,6 +149,23 @@ export function OrgSettingsScreen() {
     publishedVersions: supportedDesktopVersionOptions,
   });
   const pageSuccess = orgSettingsCompletion?.message ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void requestJson("/health", { method: "GET" }, 5000)
+      .then(({ response, payload }) => {
+        const version = Object.getOwnPropertyDescriptor(payload ?? {}, "version")?.value;
+        if (!cancelled && response.ok && typeof version === "string" && version.trim()) {
+          setDenVersion(version.trim());
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!orgContext) {
@@ -332,7 +350,20 @@ export function OrgSettingsScreen() {
     <DashboardPageTemplate
       icon={SlidersHorizontal}
       title="Org settings"
-      description="Control your organization's settings."
+      description={(
+        <span className="flex w-full items-baseline justify-between gap-4">
+          <span>Control your organization&apos;s settings.</span>
+          {denVersion ? (
+            <span
+              className="font-normal tabular-nums text-gray-300"
+              data-den-runtime-version={denVersion}
+              title={`Den API version ${denVersion}`}
+            >
+              Den {denVersion}
+            </span>
+          ) : null}
+        </span>
+      )}
       colors={["#D9F99D", "#0F172A", "#0F766E", "#FDE68A"]}
     >
       {orgContext && !orgContext.entitlements.orgControls ? (

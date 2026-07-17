@@ -20,11 +20,15 @@ import {
   readDenBootstrapConfig,
   readDenSettings,
   resolveDenBaseUrls,
+  setDenBootstrapConfig,
   writeDenSettings,
+  type DenDesktopConfig,
   type DenOrgLlmProvider,
   type DenOrgMarketplace,
   type DenOrgSummary,
 } from "@/app/lib/den";
+import { applyBrandAppName, applyBrandIcon, relaunchDesktopApp } from "@/app/lib/desktop";
+import { isAlphaUpdateAllowed, resolveFreshStableDesktopUpdate } from "@/app/lib/version-gate";
 import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { usePlatform } from "../../kernel/platform";
@@ -66,8 +70,67 @@ import {
   RadioGroupItem,
 } from "@/components/ui/radio-group"
 import { useOrgListWindow } from "./use-org-list-window";
+import { useDesktopConfig } from "./desktop-config-provider";
+import {
+  hasWorkspaceBranding,
+  workspaceBrandingFingerprint,
+} from "./workspace-branding-restart";
 
 const RELOAD_AFTER_ONBOARDING_KEY = "openwork.reloadAfterOrgOnboarding";
+const APPLIED_BRANDING_FINGERPRINT_KEY = "openwork.den.appliedBrandingFingerprint";
+const BRANDING_RESTART_RESUME_KEY = "openwork.den.brandingRestartResume";
+
+type BrandingRestartState = {
+  fingerprint: string;
+  updateReady: boolean;
+  warning: string | null;
+};
+
+type OnboardingUpdaterBridge = NonNullable<Window["__OPENWORK_ELECTRON__"]>["updater"];
+
+declare global {
+  interface Window {
+    __openworkOnboardingUpdaterEvalBridge?: OnboardingUpdaterBridge;
+  }
+}
+
+function onboardingUpdaterBridge(): OnboardingUpdaterBridge | undefined {
+  if (import.meta.env.DEV && window.__openworkOnboardingUpdaterEvalBridge) {
+    return window.__openworkOnboardingUpdaterEvalBridge;
+  }
+  return window.__OPENWORK_ELECTRON__?.updater;
+}
+
+async function stageOnboardingUpdate(
+  desktopConfig: DenDesktopConfig,
+): Promise<boolean> {
+  const updater = onboardingUpdaterBridge();
+  if (!updater?.getChannel || !updater.check || !updater.download) return false;
+
+  const channelState = await updater.getChannel();
+  let targetVersion: string | undefined;
+  if (channelState.channel === "stable") {
+    const selection = await resolveFreshStableDesktopUpdate({
+      currentVersion: channelState.currentVersion,
+      refreshDesktopConfig: async () => desktopConfig,
+    });
+    if (selection?.kind !== "update") return false;
+    targetVersion = selection.targetVersion;
+  }
+
+  const update = await updater.check(channelState.channel, targetVersion);
+  if (!update.available || update.reason) return false;
+  if (
+    channelState.channel === "alpha" &&
+    update.latestVersion &&
+    !(await isAlphaUpdateAllowed(update.latestVersion, desktopConfig))
+  ) {
+    return false;
+  }
+
+  const download = await updater.download();
+  return download.ok;
+}
 
 function subscribeToDenSettings(onStoreChange: () => void) {
   window.addEventListener(denSettingsChangedEvent, onStoreChange);
@@ -294,6 +357,13 @@ export function OrgOnboardingPage() {
     }
   }, [authToken, navigate, orgId, prepared]);
 
+  useEffect(() => {
+    if (!authToken || !orgId) return;
+    if (window.localStorage.getItem(BRANDING_RESTART_RESUME_KEY) !== orgId) return;
+    window.localStorage.removeItem(BRANDING_RESTART_RESUME_KEY);
+    navigate("/session", { replace: true });
+  }, [authToken, navigate, orgId]);
+
   const { data, error, isPending } = useQuery({
     queryKey: ["den-org-onboarding", settings.baseUrl, "orgs"],
     enabled: Boolean(authToken),
@@ -371,6 +441,7 @@ export function ResourceSelectionPage() {
   const platform = usePlatform();
   const { markRouteReady } = useBootState();
   const { authToken, denClient, orgId, orgName, settings } = useDenClient();
+  const { refreshFresh } = useDesktopConfig();
 
   const prepared = usePreparedBootstrap();
 
@@ -379,6 +450,8 @@ export function ResourceSelectionPage() {
     modelId: string;
     label: string;
   } | null>(null);
+  const [preparingBranding, setPreparingBranding] = useState(false);
+  const [brandingRestart, setBrandingRestart] = useState<BrandingRestartState | null>(null);
 
   // Redirect if no auth or no org — can't show onboarding without them
   useEffect(() => {
@@ -412,7 +485,7 @@ export function ResourceSelectionPage() {
     }),
   });
 
-  const handleContinue = useCallback(() => {
+  const finishOnboarding = useCallback(() => {
     // If user picked a default model, write it
     if (selectedDefault) {
       writeStoredDefaultModel({
@@ -431,8 +504,156 @@ export function ResourceSelectionPage() {
     navigate("/session", { replace: true });
   }, [navigate, providers, selectedDefault]);
 
+  const handleContinue = useCallback(async () => {
+    if (!window.__OPENWORK_ELECTRON__?.shell?.relaunch) {
+      finishOnboarding();
+      return;
+    }
+
+    setPreparingBranding(true);
+    try {
+      const desktopConfig = await refreshFresh();
+      if (!hasWorkspaceBranding(desktopConfig)) {
+        finishOnboarding();
+        return;
+      }
+
+      const fingerprint = workspaceBrandingFingerprint(orgId, desktopConfig);
+      if (window.localStorage.getItem(APPLIED_BRANDING_FINGERPRINT_KEY) === fingerprint) {
+        finishOnboarding();
+        return;
+      }
+
+      const bootstrap = readDenBootstrapConfig();
+      await setDenBootstrapConfig({
+        ...bootstrap,
+        brandAppName: desktopConfig.brandAppName ?? null,
+        brandLogoUrl: desktopConfig.brandLogoUrl ?? null,
+        brandIconUrl: desktopConfig.brandIconUrl ?? null,
+      });
+      const [, iconResult] = await Promise.all([
+        applyBrandAppName(desktopConfig.brandAppName ?? null),
+        applyBrandIcon(desktopConfig.brandIconUrl ?? null),
+      ]);
+
+      let updateReady = false;
+      let warning = desktopConfig.brandIconUrl && !iconResult.ok
+        ? "The workspace app icon could not be prepared."
+        : null;
+      try {
+        updateReady = await stageOnboardingUpdate(desktopConfig);
+      } catch (error) {
+        warning ??= error instanceof Error ? error.message : "The application update could not be prepared.";
+      }
+      setBrandingRestart({ fingerprint, updateReady, warning });
+    } catch (error) {
+      setBrandingRestart({
+        fingerprint: workspaceBrandingFingerprint(orgId, {}),
+        updateReady: false,
+        warning: error instanceof Error ? error.message : "Workspace branding could not be prepared.",
+      });
+    } finally {
+      setPreparingBranding(false);
+    }
+  }, [finishOnboarding, orgId, refreshFresh]);
+
+  const restartWithBranding = useCallback(async () => {
+    if (!brandingRestart) return;
+    window.localStorage.setItem(APPLIED_BRANDING_FINGERPRINT_KEY, brandingRestart.fingerprint);
+    window.localStorage.setItem(BRANDING_RESTART_RESUME_KEY, orgId);
+    if (brandingRestart.updateReady) {
+      const result = await onboardingUpdaterBridge()?.installAndRestart?.();
+      if (result?.ok) return;
+    }
+    await relaunchDesktopApp();
+  }, [brandingRestart, orgId]);
+
+  const continueWithoutRestart = useCallback(() => {
+    if (brandingRestart) {
+      window.localStorage.setItem(APPLIED_BRANDING_FINGERPRINT_KEY, brandingRestart.fingerprint);
+    }
+    finishOnboarding();
+  }, [brandingRestart, finishOnboarding]);
+
   const totalModels = providers.reduce((sum, provider) => sum + provider.models.length, 0);
   const hasResources = providers.length > 0 || marketplaces.length > 0;
+
+  if (preparingBranding) {
+    return (
+      <Page>
+        <PageBackground />
+        <PageTitlebarRegion />
+        <PageContainer>
+          <PageHeader>
+            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
+              <BuildingOffice2Icon className="size-7 text-foreground" />
+            </div>
+            <PageTitle>Preparing workspace identity</PageTitle>
+            <PageDescription>
+              Applying {orgName || "your workspace"}&apos;s branding and checking for an application update.
+            </PageDescription>
+          </PageHeader>
+          <PageContent>
+            <PageLoading>
+              <PageLoadingSpinner />
+              <PageLoadingDescription>Preparing workspace...</PageLoadingDescription>
+            </PageLoading>
+          </PageContent>
+        </PageContainer>
+      </Page>
+    );
+  }
+
+  if (brandingRestart) {
+    return (
+      <Page>
+        <PageBackground />
+        <PageTitlebarRegion />
+        <PageContainer>
+          <PageHeader>
+            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
+              <BuildingOffice2Icon className="size-7 text-foreground" />
+            </div>
+            <PageTitle>Workspace identity is ready</PageTitle>
+            <PageDescription>
+              Restart OpenWork once to finish applying {orgName || "your workspace"}&apos;s name and app icon everywhere.
+            </PageDescription>
+            {brandingRestart.updateReady ? (
+              <div className="mx-auto flex w-fit items-center gap-2 rounded-full border border-green-6/30 bg-green-2/30 px-3 py-1 text-xs font-semibold text-green-11">
+                <CheckCircle2 className="size-3.5" />
+                Application update downloaded
+              </div>
+            ) : null}
+            {brandingRestart.warning ? (
+              <Alert>
+                <CircleAlert />
+                <AlertDescription>
+                  {brandingRestart.warning} You can still continue to the workspace.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+          </PageHeader>
+          <PageContent>
+            <details className="mx-auto w-full max-w-md rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-sm">
+              <summary className="cursor-pointer font-medium">Why restart?</summary>
+              <p className="mt-2 text-muted-foreground">
+                Restarting refreshes the workspace name and icon across your operating system and installs the prepared application update.
+              </p>
+            </details>
+          </PageContent>
+          <PageFooter>
+            <Button type="button" variant="outline" onClick={continueWithoutRestart}>
+              Continue without restarting
+            </Button>
+            <Button type="button" size="lg" onClick={() => void restartWithBranding()}>
+              Restart OpenWork
+              <ArrowRight data-icon="inline-end" />
+            </Button>
+          </PageFooter>
+        </PageContainer>
+      </Page>
+    );
+  }
 
   return (
     <Page>
@@ -563,10 +784,14 @@ export function ResourceSelectionPage() {
             className="w-fit"
             type="button"
             size="lg"
-            onClick={handleContinue}
-            disabled={loading}
+            onClick={() => void handleContinue()}
+            disabled={loading || preparingBranding}
           >
-            {hasResources ? "Continue to workspace" : "Continue"}
+            {preparingBranding
+              ? "Preparing workspace..."
+              : hasResources
+                ? "Continue to workspace"
+                : "Continue"}
             <ArrowRight data-icon="inline-end" />
           </Button>
         </PageFooter>

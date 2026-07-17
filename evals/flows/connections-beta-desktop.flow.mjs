@@ -187,6 +187,15 @@ async function navigateToExtensionsMarketplace(ctx) {
   await ctx.waitFor("document.body.innerText.includes('Extension Marketplace')", { timeoutMs: 20_000, label: "marketplace view" });
 }
 
+async function navigateToConnectSettings(ctx) {
+  await closeStaleDialogs(ctx);
+  const workspaceId = await ctx.eval("(window.location.hash.match(/\\/workspace\\/([^/]+)/) ?? [])[1] ?? null");
+  ctx.assert(Boolean(workspaceId), "No workspace id in URL.");
+  await ctx.navigateHash(`/workspace/${workspaceId}/settings/connect`);
+  await ctx.waitFor("window.location.hash.includes('/settings/connect')", { timeoutMs: 30_000, label: "connect settings route" });
+  await ctx.waitFor("document.body.innerText.includes('Connect')", { timeoutMs: 30_000, label: "connect settings view" });
+}
+
 async function clickRefreshIfAvailable(ctx) {
   const clicked = await ctx.eval(`(() => {
     const buttons = [...document.querySelectorAll('button')].filter((button) => button.textContent.trim() === 'Refresh' && !button.disabled);
@@ -196,12 +205,13 @@ async function clickRefreshIfAvailable(ctx) {
   if (clicked) await sleep(2_000);
 }
 
-async function waitForMarketplaceCard(ctx, name) {
+async function waitForConnectConnectionRow(ctx, name) {
   const deadline = Date.now() + 90_000;
   let refreshed = false;
   while (Date.now() < deadline) {
     const found = await ctx.eval(`(() => {
-      return [...document.querySelectorAll('button')].some((button) => button.querySelector('h4')?.textContent.trim() === ${JSON.stringify(name)});
+      return [...document.querySelectorAll('[data-testid="connect-organization-row"]')]
+        .some((row) => (row.textContent ?? '').includes(${JSON.stringify(name)}));
     })()`);
     if (found) return;
     if (!refreshed && Date.now() > deadline - 60_000) {
@@ -210,21 +220,36 @@ async function waitForMarketplaceCard(ctx, name) {
     }
     await sleep(2_000);
   }
-  ctx.assert(false, `Marketplace card did not render: ${name}`);
+  ctx.assert(false, `Connect organization row did not render: ${name}`);
 }
 
-async function clickExtensionCard(ctx, name) {
-  const clicked = await ctx.eval(`(() => {
-    const button = [...document.querySelectorAll('button')].find((entry) => entry.querySelector('h4')?.textContent.trim() === ${JSON.stringify(name)});
-    button?.click();
-    return Boolean(button);
+async function readConnectConnectionState(ctx, name) {
+  return ctx.eval(`(() => {
+    const compact = (entry) => (entry?.textContent ?? '').replace(/\\s+/g, ' ').trim();
+    const row = [...document.querySelectorAll('[data-testid="connect-organization-row"]')]
+      .find((entry) => compact(entry).includes(${JSON.stringify(name)}));
+    return {
+      pageText: document.body.innerText,
+      rowText: compact(row),
+    };
   })()`);
-  ctx.assert(clicked, `Extension card not found: ${name}`);
+}
+
+async function readExtensionsMarketplaceState(ctx, name) {
+  return ctx.eval(`(() => {
+    const text = document.body.innerText;
+    const filterOptions = [...document.querySelectorAll('select option')].map((option) => option.textContent.trim());
+    return {
+      text,
+      hasConnection: text.includes(${JSON.stringify(name)}),
+      filterOptions,
+    };
+  })()`);
 }
 
 export default {
   id: "connections-beta-desktop",
-  title: "Desktop Marketplace: alpha org connections are labeled and last",
+  title: "Desktop Connect: alpha org connections appear only in Connect",
   kind: "user-facing",
   spec: "evals/voiceovers/connections-beta-desktop.md",
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
@@ -262,46 +287,30 @@ export default {
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("The org tool appears in the Marketplace, last and wearing Alpha", {
+        await ctx.prove("The org tool appears in Connect as needing the member's sign-in", {
           voiceover: vo[1],
           action: async () => {
-            await navigateToExtensionsMarketplace(ctx);
-            await waitForMarketplaceCard(ctx, CONNECTION_NAME);
-            // The claim is about the LAST card: scroll it into the picture and
-            // let the marketplace load toast clear so the frame shows it.
+            await navigateToConnectSettings(ctx);
+            await waitForConnectConnectionRow(ctx, CONNECTION_NAME);
             await ctx.eval(`(() => {
-              const card = [...document.querySelectorAll('button')].find((button) => button.querySelector('h4')?.textContent.trim() === ${JSON.stringify(CONNECTION_NAME)});
-              card?.scrollIntoView({ block: 'center' });
-              return true;
+              const row = [...document.querySelectorAll('[data-testid="connect-organization-row"]')]
+                .find((entry) => (entry.textContent ?? '').includes(${JSON.stringify(CONNECTION_NAME)}));
+              row?.scrollIntoView({ block: 'center' });
+              return Boolean(row);
             })()`);
-            await ctx.waitFor(
-              "!document.body.innerText.includes('marketplace extensions for')",
-              { timeoutMs: 10_000, label: "marketplace load toast cleared" },
-            ).catch(() => {});
             await sleep(500);
           },
           assert: async () => {
-            const proof = await ctx.eval(`(() => {
-              const compact = (entry) => (entry?.textContent ?? '').replace(/\\s+/g, ' ').trim();
-              const card = [...document.querySelectorAll('button')].find((button) => button.querySelector('h4')?.textContent.trim() === ${JSON.stringify(CONNECTION_NAME)});
-              const grid = card?.closest('.grid') ?? null;
-              const cards = grid ? [...grid.querySelectorAll('button')].filter((button) => button.querySelector('h4')) : [];
-              const select = [...document.querySelectorAll('select')].find((entry) => [...entry.options].some((option) => option.textContent.trim() === 'Organization MCP Connections'));
-              return {
-                cardText: compact(card),
-                lastCardText: compact(cards[cards.length - 1]),
-                filterOptions: select ? [...select.options].map((option) => option.textContent.trim()) : [],
-              };
-            })()`);
-            ctx.assert(proof.cardText.includes(CONNECTION_NAME), `Marketplace card not found: ${JSON.stringify(proof)}`);
-            ctx.assert(proof.cardText.includes("Alpha"), `Marketplace card must include the Alpha pill: ${proof.cardText}`);
-            ctx.assert(proof.lastCardText.includes(CONNECTION_NAME), `Org connection must be the last marketplace card: ${proof.lastCardText}`);
-            ctx.assert(proof.filterOptions[proof.filterOptions.length - 1] === "Organization MCP Connections", `Marketplace filter order was wrong: ${JSON.stringify(proof.filterOptions)}`);
+            const proof = await readConnectConnectionState(ctx, CONNECTION_NAME);
+            ctx.assert(proof.pageText.includes("From your organization"), "Connect organization section missing.");
+            ctx.assert(proof.pageText.includes("NEEDS YOUR SIGN-IN"), `Needs-your-sign-in group missing: ${proof.pageText.slice(0, 300)}`);
+            ctx.assert(proof.rowText.includes(CONNECTION_NAME), `Connect row not found: ${JSON.stringify(proof)}`);
+            ctx.assert(proof.rowText.includes("Connect your account"), `Connect row action missing: ${proof.rowText}`);
           },
           screenshot: {
-            name: "connections-beta-desktop-marketplace-last",
-            claim: "The Marketplace shows the alpha org MCP connection as the last card and the last marketplace filter option.",
-            requireText: [CONNECTION_NAME, "Alpha"],
+            name: "connections-beta-desktop-connect-row",
+            claim: "OpenWork Connect shows the org MCP connection under Needs your sign-in with Connect your account.",
+            requireText: ["From your organization", "NEEDS YOUR SIGN-IN", CONNECTION_NAME, "Connect your account"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -310,31 +319,22 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        await ctx.prove("The detail modal says Alpha before anyone connects", {
+        await ctx.prove("Extensions Marketplace no longer lists org MCP connections", {
           voiceover: vo[2],
           action: async () => {
-            await clickExtensionCard(ctx, CONNECTION_NAME);
-            await ctx.waitFor("document.body.innerText.includes('Release stage')", { timeoutMs: 15_000, label: "detail modal release stage" });
+            await navigateToExtensionsMarketplace(ctx);
           },
           assert: async () => {
-            const modal = await ctx.eval(`(() => {
-              const roots = [...document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"]')];
-              const root = roots.find((entry) => entry.textContent.includes(${JSON.stringify(CONNECTION_NAME)}))
-                ?? [...document.querySelectorAll('div')].find((entry) => entry.textContent.includes(${JSON.stringify(CONNECTION_NAME)}) && entry.textContent.includes('Release stage'));
-              const text = (root?.textContent ?? '').replace(/\\s+/g, ' ').trim();
-              const betaPill = root ? [...root.querySelectorAll('span')].some((span) => span.textContent.trim() === 'Alpha') : false;
-              return { text, betaPill };
-            })()`);
-            ctx.assert(modal.text.includes(CONNECTION_NAME), `Detail modal missing connection name: ${modal.text}`);
-            ctx.assert(modal.betaPill, "Detail modal missing Alpha pill.");
-            ctx.assert(/Release stage\s*Alpha/.test(modal.text), `Detail modal missing Release stage Alpha row: ${modal.text}`);
-            ctx.assert(modal.text.includes("Connect your account"), `Detail modal missing connect label: ${modal.text}`);
+            const proof = await readExtensionsMarketplaceState(ctx, CONNECTION_NAME);
+            ctx.assert(proof.text.includes("Extension Marketplace"), "Extensions Marketplace did not render.");
+            ctx.assert(!proof.hasConnection, `Extensions Marketplace rendered org connection: ${proof.text}`);
+            ctx.assert(!proof.filterOptions.includes("Organization MCP Connections"), `Org MCP filter leaked: ${JSON.stringify(proof.filterOptions)}`);
           },
           screenshot: {
-            name: "connections-beta-desktop-detail-modal",
-            claim: "The org MCP connection detail modal shows Alpha, Release stage, and Connect your account before authorization.",
-            requireText: [CONNECTION_NAME, "Release stage", "Alpha"],
-            rejectText: ["Something went wrong"],
+            name: "connections-beta-desktop-extensions-absent",
+            claim: "Extensions Marketplace stays local-only and has no org MCP connection card or filter.",
+            requireText: ["Extension Marketplace"],
+            rejectText: [CONNECTION_NAME, "Organization MCP Connections", "Something went wrong"],
           },
         });
         await closeStaleDialogs(ctx);

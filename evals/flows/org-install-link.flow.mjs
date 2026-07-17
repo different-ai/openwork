@@ -83,30 +83,29 @@ export default {
             action: async () => {
               await ensureAdminToken(ctx);
               await ensureOrgId(ctx);
-              // Capability affordances (setup, not demo): install links ship
-              // dark for every org, so a platform admin has to light Acme up
-              // before Alex can mint. Witness the gate first — with the
-              // capability forced off, the mint API refuses — then enable it
-              // through the same admin API a platform admin uses.
+              // Capability affordances (setup, not demo): install links are
+              // default-on, but a platform admin can kill-switch one org. Force
+              // that kill switch on first, witness the mint API refuse, then
+              // clear it so Alex mints through the default-on path.
               await ensurePlatformAdmin(ctx);
               await setCapabilityViaAdminApi(ctx, { installLinks: false });
               const refused = await attemptMintInstallLink(ctx);
               ctx.assert(
                 refused.response.status === 403,
-                `Mint with the capability off returned ${refused.response.status}, expected 403.`,
+                `Mint with the install-link kill switch on returned ${refused.response.status}, expected 403.`,
               );
               ctx.assert(
                 refused.body?.error === "capability_disabled" && refused.body?.capability === "installLinks",
                 `Mint refusal body was ${JSON.stringify(refused.body).slice(0, 300)}, expected capability_disabled/installLinks.`,
               );
               ctx.output(
-                "mint-refused-while-capability-off",
+                "mint-refused-while-kill-switch-on",
                 JSON.stringify({ status: refused.response.status, body: refused.body }, null, 2),
               );
-              await setCapabilityViaAdminApi(ctx, { installLinks: true });
+              await setCapabilityViaAdminApi(ctx, { installLinks: null });
               ctx.output(
-                "capability-enabled-by-platform-admin",
-                `${PLATFORM_ADMIN_EMAIL} enabled installLinks for Acme via PUT /v1/admin/organizations/:id/capabilities — the platform-admin enablement every org needs before install links appear.`,
+                "install-link-kill-switch-cleared",
+                `${PLATFORM_ADMIN_EMAIL} cleared Acme's installLinks override via PUT /v1/admin/organizations/:id/capabilities — with no stored false kill switch, install links are on by default.`,
               );
               await signInToDenWeb(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
               await goToDenWeb(ctx, "/dashboard/members");

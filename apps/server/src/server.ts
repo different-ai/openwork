@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, writeFile, rm } from "node:fs/promises";
+import { readFile, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
@@ -57,6 +57,7 @@ import {
   type WorkspaceExportSensitiveMode,
 } from "./workspace-export-safety.js";
 import { serve, type ServeResult } from "./serve-node.js";
+import { externalFetch, loopbackFetch } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
@@ -75,6 +76,7 @@ import {
   mergeOpencodeConfigs,
   mergeRuntimeProviderUpdate,
   readRuntimeOpencodeConfig,
+  runtimeDisabledProviderList,
   runtimeMcpMap,
   type RuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
@@ -86,7 +88,8 @@ import {
   seedOpenworkWorkspaceConfigIfEmpty,
   writeOpenworkWorkspaceConfig,
 } from "./openwork-workspace-config-store.js";
-import { buildOpenworkRuntimeConfigObject } from "./openwork-runtime-config.js";
+import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath } from "./openwork-runtime-config.js";
+import { readLegacyConfigSweepState } from "./legacy-config-sweep.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -306,6 +309,70 @@ function runtimeConfigKeys(config: RuntimeOpencodeConfig): string[] {
   return keys;
 }
 
+function parseDisabledProvidersPayload(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new ApiError(400, "invalid_payload", "providers must be an array of non-empty strings");
+  }
+  const providers: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string" || !entry.trim()) {
+      throw new ApiError(400, "invalid_payload", "providers must be an array of non-empty strings");
+    }
+    const provider = entry.trim();
+    if (!providers.includes(provider)) providers.push(provider);
+  }
+  return providers;
+}
+
+function redactBearerTokens(value: string): string {
+  return value.replace(/Bearer\s+\S+/g, "Bearer [redacted]");
+}
+
+function redactManagedRuntimeValue(value: unknown, path: string[], insideMcpHeaders: boolean): unknown {
+  if (typeof value === "string") return insideMcpHeaders ? "[redacted]" : redactBearerTokens(value);
+  if (Array.isArray(value)) {
+    return value.map((entry, index) => redactManagedRuntimeValue(entry, [...path, String(index)], insideMcpHeaders));
+  }
+  if (!isRecord(value)) return value;
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => {
+      const childInsideMcpHeaders = insideMcpHeaders || (path.length === 2 && path[0] === "mcp" && key === "headers");
+      return [key, redactManagedRuntimeValue(child, [...path, key], childInsideMcpHeaders)];
+    }),
+  );
+}
+
+function redactManagedRuntimeConfigContent(content: string): string {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    return JSON.stringify(redactManagedRuntimeValue(parsed, [], false), null, 2);
+  } catch {
+    return redactBearerTokens(content);
+  }
+}
+
+async function readManagedRuntimeConfigDebug(config: ServerConfig): Promise<{
+  managedFilePath: string;
+  managedFileRebuiltAt: number | null;
+  managedFileContentRedacted: string | null;
+}> {
+  const managedFilePath = openworkRuntimeConfigFilePath(config);
+  try {
+    const [metadata, content] = await Promise.all([
+      stat(managedFilePath),
+      readFile(managedFilePath, "utf8"),
+    ]);
+    return {
+      managedFilePath,
+      managedFileRebuiltAt: metadata.mtimeMs,
+      managedFileContentRedacted: redactManagedRuntimeConfigContent(content),
+    };
+  } catch {
+    return { managedFilePath, managedFileRebuiltAt: null, managedFileContentRedacted: null };
+  }
+}
+
 function userOpencodeConfigKeys(config: Record<string, unknown>): string[] {
   return Object.keys(config).filter((key) => key !== "$schema").sort();
 }
@@ -471,7 +538,7 @@ async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown)
 }
 
 async function createManagedVoiceSession(config: { baseUrl: string; apiKey: string }, input: unknown) {
-  const response = await fetch(`${config.baseUrl}/voice/realtime/session`, {
+  const response = await externalFetch(`${config.baseUrl}/voice/realtime/session`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
@@ -515,7 +582,7 @@ async function createManagedVoiceSession(config: { baseUrl: string; apiKey: stri
 async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
   const model = readStringField(input, "model") || OPENWORK_VOICE_REALTIME_MODEL;
   const sessionContext = readStringField(input, "sessionContext").slice(0, 6_000);
-  const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+  const response = await externalFetch("https://api.openai.com/v1/realtime/client_secrets", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1032,8 +1099,9 @@ async function proxyOpencodeRequest(input: {
   const body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
+  // Managed OpenCode proxy traffic is loopback/engine I/O; keep streaming on Node fetch.
   if (isSessionCommandProxyRequest(method, proxyPath)) {
-    void fetch(targetUrl, {
+    void loopbackFetch(targetUrl, {
       method,
       headers,
       body,
@@ -1042,7 +1110,7 @@ async function proxyOpencodeRequest(input: {
     });
     return jsonResponse({ ok: true, accepted: true });
   }
-  const response = await fetch(targetUrl, {
+  const response = await loopbackFetch(targetUrl, {
     method,
     headers,
     body,
@@ -1464,6 +1532,7 @@ function createRoutes(
     ensureWritable,
     requireClientScope,
     resolveWorkspace,
+    resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
   });
@@ -1901,6 +1970,27 @@ function createRoutes(
     return jsonResponse({ migrated: true, keys, legacyKeys: legacy.keys, userOpencodeKeys: user.keys, updatedAt, legacyError: openworkError });
   });
 
+  addRoute(routes, "POST", "/workspace/:id/runtime-config/disabled-providers", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const providers = parseDisabledProvidersPayload(body.providers);
+    const result = await writeRuntimeOpencodeConfig(config, workspace.id, (current) => ({
+      ...current,
+      disabled_providers: providers,
+    }));
+
+    if (result.changed) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(openworkRuntimeConfigFilePath(config)));
+    }
+
+    return jsonResponse({
+      ok: true,
+      disabledProviders: runtimeDisabledProviderList(result.config),
+    });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/runtime-config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const runtime = await readRuntimeOpencodeConfig(config, workspace.id);
@@ -1914,14 +2004,19 @@ function createRoutes(
     const persistedOpencode = await readOpencodeConfig(workspace.path);
     const globalOpencodePath = resolveOpencodeConfigFilePath("global", workspace.path);
     const rawGlobalOpencode = await readRawOpencodeConfig(globalOpencodePath);
-    const globalOpencode = (await readJsoncFile(globalOpencodePath, {} as Record<string, unknown>, { allowInvalid: true })).data;
+    const emptyGlobalOpencode: Record<string, unknown> = {};
+    const globalOpencode = (await readJsoncFile(globalOpencodePath, emptyGlobalOpencode, { allowInvalid: true })).data;
     const effectiveRuntime = await buildOpenworkRuntimeConfigObject(config, workspace.id);
     const user = userRuntimeConfigFromOpencodeConfig(persistedOpencode);
+    const managedFile = await readManagedRuntimeConfigDebug(config);
+    const sweep = await readLegacyConfigSweepState(config);
 
     return jsonResponse({
       runtime,
       runtimeKeys: runtimeConfigKeys(runtime),
       effectiveRuntime,
+      ...managedFile,
+      sweep,
       sources: {
         projectOpencode: {
           path: opencodeConfigPath(workspace.path),
@@ -2786,7 +2881,7 @@ async function resolveWorkspaceForInspection(config: ServerConfig, id: string): 
   return { ...workspace, path: resolvedWorkspace };
 }
 
-async function resolveWorkspace(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
+async function resolveWorkspaceWithoutBootstrap(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
   const workspaceId = id.trim();
   const aliasWorkspaceId = workspaceId.startsWith("rem_") ? workspaceId.slice("rem_".length) : "";
   const configuredWorkspace =
@@ -2801,6 +2896,12 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
     throw new ApiError(403, "workspace_unauthorized", "Workspace is not authorized");
   }
   const workspace = { ...configuredWorkspace, path: resolvedWorkspace };
+  return workspace;
+}
+
+async function resolveWorkspace(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
+  const workspace = await resolveWorkspaceWithoutBootstrap(config, id);
+  const resolvedWorkspace = workspace.path;
   if (!config.readOnly) {
     const ensured = await ensureWorkspaceFiles(resolvedWorkspace, workspace.preset ?? "starter");
     const bootstrapReloadReasons = new Set<ReloadReason>(ensured.reloadReasons);
@@ -3035,7 +3136,7 @@ async function fetchRuntimeControl(path: string, init?: { method?: string; body?
   if (!control) {
     throw new ApiError(501, "runtime_upgrade_unavailable", "Worker runtime control is not configured on this host");
   }
-  const response = await fetch(`${control.baseUrl}${path}`, {
+  const response = await externalFetch(`${control.baseUrl}${path}`, {
     method: init?.method ?? "GET",
     headers: {
       "Content-Type": "application/json",
@@ -3192,7 +3293,8 @@ async function reloadOpencodeEngine(
 
   let response: Response;
   try {
-    response = await fetch(targetUrl, { method: "POST", headers });
+    // OpenCode reload targets the managed loopback engine; CA trust is irrelevant.
+    response = await loopbackFetch(targetUrl, { method: "POST", headers });
   } catch (error) {
     throw new ApiError(
       503,
@@ -3360,7 +3462,8 @@ async function postMcpEntryWithRetry(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, engineMcpSyncRetryDelayMs()));
     try {
-      const response = await fetch(url, {
+      // Runtime MCP registration targets the managed loopback engine.
+      const response = await loopbackFetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({ name, config: mcpConfig }),
@@ -4032,7 +4135,8 @@ async function disconnectMcpFromOpencodeEngine(
   const headers: Record<string, string> = {};
   if (connection.authHeader) headers.Authorization = connection.authHeader;
 
-  const response = await fetch(url, { method: "POST", headers, signal: AbortSignal.timeout(15_000) });
+  // MCP disconnect targets the managed loopback engine.
+  const response = await loopbackFetch(url, { method: "POST", headers, signal: AbortSignal.timeout(15_000) });
   if (!response.ok) {
     const body = parseOpencodeErrorBody(await response.text());
     throw new ApiError(502, "opencode_mcp_disconnect_failed", `Failed to disconnect MCP ${name} from the engine`, {

@@ -96,7 +96,7 @@ type InstallPlatform = z.infer<typeof installPlatformSchema>
 
 export type InstallExperienceDependencies = {
   resolveConfiguredArtifact: typeof resolveConfiguredInstallerArtifact
-  resolveDirectUrl: (platform: InstallPlatform) => string
+  resolveDirectUrl: (platform: InstallPlatform, releaseTag: string) => string
   mintConnectGrant: typeof mintDesktopConnectGrant
   previewConnectGrant: typeof previewDesktopConnectGrant
   consumeConnectGrant: typeof consumeDesktopConnectGrant
@@ -104,9 +104,9 @@ export type InstallExperienceDependencies = {
 
 const defaultInstallerDependencies: InstallExperienceDependencies = {
   resolveConfiguredArtifact: resolveConfiguredInstallerArtifact,
-  resolveDirectUrl: (platform) => {
-    const fileName = desktopReleaseAssetName(platform, env.installerReleaseTag)
-    return fileName ? installerReleaseAssetUrl(fileName) : OPENWORK_DOWNLOAD_URL
+  resolveDirectUrl: (platform, releaseTag) => {
+    const fileName = desktopReleaseAssetName(platform, releaseTag)
+    return fileName ? installerReleaseAssetUrl(fileName, { releaseTag }) : OPENWORK_DOWNLOAD_URL
   },
   mintConnectGrant: mintDesktopConnectGrant,
   previewConnectGrant: previewDesktopConnectGrant,
@@ -170,6 +170,100 @@ function buildInstallConfig(input: { organization: { name: string; logo: string 
   })
 }
 
+type ComparableVersion = {
+  release: number[]
+  prerelease: string[]
+}
+
+function parseComparableVersion(value: string): ComparableVersion | null {
+  const normalized = value.trim().replace(/^v/i, "")
+  const [withoutBuild] = normalized.split("+", 1)
+  if (!withoutBuild) {
+    return null
+  }
+
+  const [releasePart, prereleasePart = ""] = withoutBuild.split("-", 2)
+  const release = releasePart.split(".").map((part) => Number(part))
+  if (release.length !== 3 || release.some((part) => !Number.isInteger(part) || part < 0)) {
+    return null
+  }
+
+  const prerelease = prereleasePart
+    .split(".")
+    .flatMap((part) => {
+      const trimmed = part.trim()
+      return trimmed ? [trimmed] : []
+    })
+  return { release, prerelease }
+}
+
+function comparePrerelease(left: string[], right: string[]) {
+  if (!left.length && !right.length) return 0
+  if (!left.length) return 1
+  if (!right.length) return -1
+
+  const count = Math.max(left.length, right.length)
+  for (let index = 0; index < count; index += 1) {
+    const leftPart = left[index]
+    const rightPart = right[index]
+    if (leftPart === undefined) return -1
+    if (rightPart === undefined) return 1
+
+    const leftNumeric = /^\d+$/.test(leftPart) ? Number(leftPart) : null
+    const rightNumeric = /^\d+$/.test(rightPart) ? Number(rightPart) : null
+    if (leftNumeric !== null && rightNumeric !== null) {
+      if (leftNumeric !== rightNumeric) return leftNumeric < rightNumeric ? -1 : 1
+      continue
+    }
+    if (leftNumeric !== null) return -1
+    if (rightNumeric !== null) return 1
+
+    const comparison = leftPart.localeCompare(rightPart)
+    if (comparison !== 0) return comparison < 0 ? -1 : 1
+  }
+  return 0
+}
+
+function compareVersions(left: string, right: string) {
+  const parsedLeft = parseComparableVersion(left)
+  const parsedRight = parseComparableVersion(right)
+  if (!parsedLeft || !parsedRight) return null
+
+  for (let index = 0; index < 3; index += 1) {
+    const leftPart = parsedLeft.release[index]
+    const rightPart = parsedRight.release[index]
+    if (leftPart === undefined || rightPart === undefined) return null
+    if (leftPart !== rightPart) return leftPart < rightPart ? -1 : 1
+  }
+  return comparePrerelease(parsedLeft.prerelease, parsedRight.prerelease)
+}
+
+function maxAllowedDesktopVersion(versions: string[]) {
+  let maxVersion: string | null = null
+  for (const version of versions) {
+    if (maxVersion === null) {
+      maxVersion = version
+      continue
+    }
+    const comparison = compareVersions(version, maxVersion)
+    if (comparison !== null && comparison > 0) {
+      maxVersion = version
+    }
+  }
+  return maxVersion
+}
+
+function installerReleaseTagForMetadata(metadataInput: unknown) {
+  const metadata = normalizeOrganizationMetadata(organizationMetadataInput(metadataInput)).metadata
+  const allowedVersions = metadata.allowedDesktopVersions
+  if (!allowedVersions?.length) {
+    return env.installerReleaseTag
+  }
+
+  const maxVersion = maxAllowedDesktopVersion(allowedVersions)
+  return maxVersion ? `v${maxVersion}` : env.installerReleaseTag
+}
+
 async function resolveInstallConfigForToken(token: string, request: Request) {
   const tokenHash = hashInstallLinkToken(token)
   const now = new Date()
@@ -193,6 +287,7 @@ async function resolveInstallConfigForToken(token: string, request: Request) {
   return {
     config: buildInstallConfig({ organization: row.organization, request }),
     installLinkId: row.installLink.id,
+    installerReleaseTag: installerReleaseTagForMetadata(row.organization.metadata),
   }
 }
 
@@ -200,8 +295,8 @@ function contentDisposition(filename: string) {
   return `attachment; filename="${filename.replace(/["\\]/g, "-")}"`
 }
 
-function artifactFileName(platform: InstallPlatform) {
-  return desktopReleaseAssetName(platform, env.installerReleaseTag)
+function artifactFileName(platform: InstallPlatform, releaseTag: string) {
+  return desktopReleaseAssetName(platform, releaseTag)
 }
 
 function installerContentType(platform: InstallPlatform) {
@@ -421,7 +516,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       }
 
       const platform = platformResult.data.platform
-      const fileName = artifactFileName(platform)
+      const fileName = artifactFileName(platform, resolved.installerReleaseTag)
       if (!fileName) {
         return c.json({ error: "invalid_request", details: [{ message: "Unsupported installer platform." }] }, 400)
       }
@@ -441,7 +536,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
           }
         })
       }
-      return c.redirect(installer.resolveDirectUrl(platform), 302)
+      return c.redirect(installer.resolveDirectUrl(platform, resolved.installerReleaseTag), 302)
     },
   )
 }

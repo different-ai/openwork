@@ -6,7 +6,9 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { DEN_MCP_FIRST_PARTY_CLIENT_ID, DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX, DEN_MCP_RESOURCE } from "../../auth.js"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { hashOpaqueMcpSecret } from "../../mcp/auth.js"
+import { deriveFirstPartyMcpTokenResourceFromRequest } from "../../mcp/resource.js"
 import { resolveMcpTokenScopes } from "../../mcp/scopes.js"
 import { DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS } from "../../mcp/token-lifetime.js"
 import {
@@ -50,6 +52,11 @@ const organizationRequiredSchema = z.object({
 }).meta({ ref: "McpTokenOrganizationRequiredError" })
 
 type McpRouteVariables = AuthContextVariables & Partial<OrganizationContextVariables>
+
+const firstPartyMcpTokenTrustedOrigins = Array.from(new Set([
+  env.betterAuthUrl,
+  ...env.publicUrlTrustedOrigins,
+]))
 
 export function registerMcpTokenRoutes<T extends { Variables: McpRouteVariables }>(app: Hono<T>) {
   app.post(
@@ -111,7 +118,10 @@ export function registerMcpTokenRoutes<T extends { Variables: McpRouteVariables 
         expiresAt: expiresAt.toISOString(),
         organizationId: normalizeDenTypeId("organization", orgId),
         scopes,
-        resource: DEN_MCP_RESOURCE,
+        resource: deriveFirstPartyMcpTokenResourceFromRequest(c.req.raw, {
+          fallback: DEN_MCP_RESOURCE,
+          trustedOrigins: firstPartyMcpTokenTrustedOrigins,
+        }),
       })
     },
   )

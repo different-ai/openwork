@@ -6,17 +6,9 @@ The package owns the provider-neutral MCP/OAuth lifecycle. A composition root
 supplies networking, persistence, tenancy/authorization, diagnostics, and the
 clock. Den is one adapter; it is not embedded in the package architecture.
 
-The implementation is additive. Den uses the enterprise client by default:
-
-```bash
-DEN_ENABLE_ENTERPRISE_MCP_CLIENT=true pnpm dev:den
-```
-
-The enterprise runtime is Den's default. Set the flag to `false` only as a
-temporary emergency rollback while the legacy implementation remains present.
-
-Only `true`, `false`, or an unset value are valid. An invalid value fails Den
-startup, and there is no request-time fallback that could hide an error.
+Den uses this package as its single runtime for new and existing MCP
+connections. Existing OAuth registrations retain their stored callback URL;
+new registrations use Den's deployment-wide shared callback.
 
 ## Reference architecture
 
@@ -70,9 +62,11 @@ then silently writing credentials afterward.
 - `discoverConnectionRequirements` performs bounded, side-effect-free MCP,
   protected-resource, authorization-server, and unauthenticated tool discovery.
   It never performs DCR or writes application state.
-- `scopes_supported` is treated as an availability declaration. The client
-  requests challenge-required plus administrator-selected scopes and includes
-  `offline_access` only when refresh support is advertised.
+- `scopes_supported` is treated as an availability declaration while an
+  administrator or challenge selects scopes. When neither selects any, the
+  client falls back to the provider-advertised set so providers with a
+  scope-less challenge still receive a usable authorization request. It
+  includes `offline_access` only when refresh support is advertised.
 - New DCR client secrets are stored only in Den's encrypted client-secret
   column. Unencrypted JSON metadata excludes `client_secret` and
   `registration_access_token`.
@@ -96,19 +90,15 @@ See [SECURITY.md](./SECURITY.md) for the expiration/validation contract and
 incorporated, delegated to Den, or intentionally kept outside this server-side
 package.
 
-## Rollout boundary
+## Runtime boundary
 
 The package covers Den's outbound server-side remote MCP client only. It does
 not change local/direct engine MCP, the incoming OpenWork Cloud meta-MCP,
 desktop UI, or provider-specific tenant administration.
 
-Rollback is one restart with the feature flag set to `false`. No schema
-migration or token copy is required; both implementations use the existing
-encrypted credential records through separate code paths.
-
-Do not toggle the implementation while a browser authorization is in flight.
-The current client stores one raw verifier; the enterprise client stores a
-versioned state-bound transaction envelope in the same encrypted transient
-field. Neither path guesses how to reinterpret the other's pending value.
-Wait for callbacks to finish or expire, then toggle and restart. Durable client
-registrations and tokens remain compatible.
+Den uses this package as its only remote MCP OAuth runtime. New connections use
+the deployment-wide shared callback. Existing connection rows retain their
+stored callback mode and reconnect with that exact redirect URI, so no callback
+migration, credential rewrite, or token copy is required. Version-one legacy
+authorizations already in flight remain valid only through their original
+per-connection callback and normal expiration window.

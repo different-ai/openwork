@@ -273,28 +273,28 @@ Known regressions this catches:
 - Hidden state not re-rendering after the custom extension-state event.
 - `Show hidden` acting like a destructive uninstall instead of a reversible view preference.
 
-## Flow 9 — Cloud marketplace appears in Extensions Marketplace
+## Flow 9 — Organization marketplace is Connect-only
 
-**Why**: Organization marketplaces are now reached from Extensions ->
-Marketplace, not Cloud settings. This flow verifies the marketplace import path
-still works from the new IA.
+**Why**: Organization marketplace extensions now run through OpenWork Connect,
+not local marketplace installs. This flow verifies cloud delivery stays visible
+without exposing the retired Add/import path.
 
 Steps:
 1. Sign in to OpenWork Cloud with an org that has a marketplace plugin.
-2. Open Settings -> Extensions.
-3. Click `Marketplace`.
-4. Verify marketplace packages are visible in one searchable list.
-5. Click `Refresh` in the Marketplace view.
-6. Add an available package.
+2. Open Settings -> Connect and verify the org extension appears under From your organization.
+3. Open Settings -> Marketplace and verify the same package says `Runs in cloud`.
+4. Confirm no `Add`, `Install`, or `Update` action is shown for the org package.
+5. Open Settings -> Extensions -> Marketplace.
+6. Confirm the org package is absent there.
 
 Pass criteria:
-- Cloud sidebar does not show a separate Marketplace item.
-- The marketplace package is visible from Settings -> Extensions -> Marketplace.
-- Add succeeds and reports the number of imported files.
-- The imported package appears in My Extensions.
+- The marketplace package is visible in Connect as organization cloud content.
+- The organization Marketplace presents the package as cloud-active.
+- No local Add/Install/Update action is available for the org package.
+- Extensions Marketplace stays local-only and does not list the org package.
 - Existing Cloud Account, Providers, and Workers settings remain available.
 
 Known regressions this catches:
-- Marketplace still only reachable through Cloud settings.
-- Marketplace import losing the active org context after moving into Extensions.
-- Extensions refresh not refreshing cloud marketplace data.
+- Org marketplace packages leaking back into local Extensions.
+- The retired local marketplace import path reappearing.
+- Connect delivery losing the active org context.

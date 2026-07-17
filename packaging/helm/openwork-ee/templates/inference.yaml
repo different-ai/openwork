@@ -1,3 +1,4 @@
+{{- include "openwork-ee.customCa.validate" . }}
 {{- if .Values.inference.enabled }}
 apiVersion: v1
 kind: Service
@@ -54,6 +55,10 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.customCa.enabled }}
+      volumes:
+        {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+      {{- end }}
       containers:
         - name: inference
           image: "{{ .Values.inference.image.repository }}:{{ default .Values.image.tag .Values.inference.image.tag }}"
@@ -61,6 +66,10 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.inference.containerPort }}
+          {{- if .Values.customCa.enabled }}
+          volumeMounts:
+            {{- include "openwork-ee.customCa.volumeMount" . | nindent 12 }}
+          {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "openwork-ee.configName" . }}
@@ -69,6 +78,9 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.inference.containerPort | quote }}
+            {{- if .Values.customCa.enabled }}
+            {{- include "openwork-ee.customCa.env" . | nindent 12 }}
+            {{- end }}
             {{- range $key, $value := .Values.inference.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

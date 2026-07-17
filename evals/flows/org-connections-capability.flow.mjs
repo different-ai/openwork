@@ -182,26 +182,23 @@ export default {
     {
       name: "Frame 5",
       run: async (ctx) => {
-        await ctx.prove("The desktop extensions view shows Acme's Notion org connection as available to connect", {
+        await ctx.prove("OpenWork Connect shows Acme's Notion org connection as available to connect", {
           voiceover: vo[4],
           action: async () => {
-            await remountDesktopExtensions(ctx);
-            await openDesktopMarketplace(ctx);
-            await clickDesktopRefreshIfAvailable(ctx);
-            await waitForDesktopOrgConnection(ctx, NOTION_NAME);
-            // The org card renders below the built-in extensions; bring it
-            // into the viewport so the frame visually shows the claim.
+            await remountDesktopConnect(ctx);
+            await waitForDesktopConnectOrgConnection(ctx, NOTION_NAME);
             await ctx.eval(`(() => {
-              const leaf = [...document.querySelectorAll("*")]
-                .find((el) => el.children.length === 0 && (el.textContent ?? "").includes("Available from your organization"));
-              leaf?.scrollIntoView({ block: "center" });
-              return Boolean(leaf);
+              const row = [...document.querySelectorAll('[data-testid="connect-organization-row"]')]
+                .find((entry) => (entry.textContent ?? '').includes(${JSON.stringify(NOTION_NAME)}));
+              row?.scrollIntoView({ block: "center" });
+              return Boolean(row);
             })()`);
             await new Promise((resolve) => setTimeout(resolve, 500));
           },
           assert: async () => {
             await ctx.expectText(NOTION_NAME, { timeoutMs: 30_000 });
-            await ctx.expectText("Available from your organization", { timeoutMs: 30_000 });
+            await ctx.expectText("NEEDS YOUR SIGN-IN", { timeoutMs: 30_000 });
+            await ctx.expectText("Connect your account", { timeoutMs: 30_000 });
 
             const usable = await fetchMcpConnections(ctx, "usable");
             const notion = usable.find((connection) => connection.name === NOTION_NAME);
@@ -210,8 +207,8 @@ export default {
             ctx.output("desktop-usable-notion", JSON.stringify({ notion }, null, 2));
           },
           screenshot: {
-            name: "desktop-shows-notion-org-connection",
-            requireText: ["Notion", "Available from your organization"],
+            name: "desktop-connect-shows-notion-org-connection",
+            requireText: ["From your organization", "NEEDS YOUR SIGN-IN", "Notion", "Connect your account"],
           },
         });
       },
@@ -219,10 +216,10 @@ export default {
     {
       name: "Frame 6",
       run: async (ctx) => {
-        await withClient(ctx, ADMIN_CDP_URL, async () => {
-          await ctx.prove("Turning the capability back off removes Connections from den-web again", {
-            voiceover: vo[5],
-            action: async () => {
+        await ctx.prove("Turning the capability back off removes Notion from OpenWork Connect", {
+          voiceover: vo[5],
+          action: async () => {
+            await withClient(ctx, ADMIN_CDP_URL, async () => {
               await signInToDenWebWithoutOrg(ctx, PLATFORM_ADMIN_EMAIL, PLATFORM_ADMIN_PASSWORD);
               await openAdminOrganizationsForAcme(ctx);
               const checked = await readAcmeMcpConnectionsCheckbox(ctx);
@@ -239,34 +236,29 @@ export default {
                 const links = [...nav.querySelectorAll('a')];
                 return !links.some((link) => (link.textContent ?? '').includes('Your Connections') || (link.getAttribute('href') ?? '').includes('/mcp-connections'));
               })()`, { timeoutMs: 30_000, label: "Connections nav removed" });
-            },
-            assert: async () => {
-              const admin = await fetchAdminCapabilities(ctx);
-              ctx.assert(admin.mcpConnections === false, "Admin API still reported mcpConnections on after turning it off.");
+            });
+            await remountDesktopConnect(ctx);
+            await waitForDesktopConnectOrgConnectionGone(ctx, NOTION_NAME);
+          },
+          assert: async () => {
+            const admin = await fetchAdminCapabilities(ctx);
+            ctx.assert(admin.mcpConnections === false, "Admin API still reported mcpConnections on after turning it off.");
 
-              const orgView = await fetchOrgCapabilities(ctx);
-              ctx.assert(orgView.mcpConnections === false, "/v1/org still reported mcpConnections on after turning it off.");
+            const orgView = await fetchOrgCapabilities(ctx);
+            ctx.assert(orgView.mcpConnections === false, "/v1/org still reported mcpConnections on after turning it off.");
 
-              const nav = await readDashboardNav(ctx);
-              assertNoConnectionsNav(ctx, nav);
-              ctx.output("mcp-connections-off-again", JSON.stringify({ admin, orgView, nav }, null, 2));
-            },
-            screenshot: {
-              name: "dashboard-mcp-connections-off-again",
-              requireText: ["Dashboard"],
-              rejectText: ["Your Connections"],
-            },
-          });
+            const visible = await desktopConnectOrgConnectionVisible(ctx, NOTION_NAME);
+            ctx.assert(!visible, "Notion org connection row still rendered in OpenWork Connect after disabling the capability.");
+            const usable = await fetchMcpConnections(ctx, "usable");
+            ctx.assert(usable.length === 0, `Usable MCP connections were still visible after turning the capability off: ${JSON.stringify(usable)}`);
+            ctx.output("mcp-connections-off-again", JSON.stringify({ admin, orgView, usable }, null, 2));
+          },
+          screenshot: {
+            name: "desktop-connect-notion-off-again",
+            requireText: ["Connect"],
+            rejectText: [NOTION_NAME, "NEEDS YOUR SIGN-IN", "Something went wrong"],
+          },
         });
-
-        await remountDesktopExtensions(ctx);
-        await clickDesktopRefreshIfAvailable(ctx);
-        await waitForDesktopOrgCardsGone(ctx);
-        await ctx.expectNoText("Available from your organization");
-
-        const usable = await fetchMcpConnections(ctx, "usable");
-        ctx.assert(usable.length === 0, `Usable MCP connections were still visible after turning the capability off: ${JSON.stringify(usable)}`);
-        ctx.output("desktop-usable-off-again", JSON.stringify({ connections: usable }, null, 2));
       },
     },
   ],
@@ -841,20 +833,19 @@ async function openDesktopExtensions(ctx) {
   );
 }
 
-async function openDesktopMarketplace(ctx) {
-  await ctx.clickText("Marketplace", { selector: "button", timeoutMs: 30_000 });
-  await ctx.waitFor("document.body.innerText.includes('Extension Marketplace')", {
-    timeoutMs: 30_000,
-    label: "desktop extension marketplace",
-  });
+async function openDesktopConnect(ctx) {
+  await closeDesktopDialogs(ctx);
+  await ctx.navigateHash("/settings/connect");
+  await ctx.waitFor("window.location.hash.includes('/settings/connect')", { timeoutMs: 30_000, label: "desktop connect route" });
+  await ctx.waitFor("document.body.innerText.includes('Connect')", { timeoutMs: 60_000, label: "desktop connect view" });
 }
 
-async function remountDesktopExtensions(ctx) {
+async function remountDesktopConnect(ctx) {
   await closeDesktopDialogs(ctx);
   await ctx.eval("location.reload()");
   await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000, label: "desktop control API after reload" });
   await completeDesktopCloudOnboardingIfNeeded(ctx);
-  await openDesktopExtensions(ctx);
+  await openDesktopConnect(ctx);
 }
 
 async function clickDesktopRefreshIfAvailable(ctx) {
@@ -885,18 +876,29 @@ async function waitForDesktopOrgCardsGone(ctx) {
   ctx.assert(false, "Organization MCP cards did not disappear from desktop extensions.");
 }
 
-async function waitForDesktopOrgConnection(ctx, name) {
+async function desktopConnectOrgConnectionVisible(ctx, name) {
+  return ctx.eval(`(() => {
+    return [...document.querySelectorAll('[data-testid="connect-organization-row"]')]
+      .some((row) => (row.textContent ?? '').includes(${JSON.stringify(name)}));
+  })()`);
+}
+
+async function waitForDesktopConnectOrgConnection(ctx, name) {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
-    const found = await ctx.eval(`(() => {
-      const text = document.body.innerText;
-      return text.includes(${JSON.stringify(name)}) && text.includes('Available from your organization');
-    })()`);
-    if (found) {
-      return;
-    }
-    await clickDesktopRefreshIfAvailable(ctx);
+    if (await desktopConnectOrgConnectionVisible(ctx, name)) return;
+    await ctx.control("extensions.refresh-marketplace").catch(() => {});
     await sleep(2_000);
   }
-  ctx.assert(false, `${name} org MCP connection did not render in desktop extensions.`);
+  ctx.assert(false, `${name} org MCP connection did not render in OpenWork Connect.`);
+}
+
+async function waitForDesktopConnectOrgConnectionGone(ctx, name) {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    if (!(await desktopConnectOrgConnectionVisible(ctx, name))) return;
+    await ctx.control("extensions.refresh-marketplace").catch(() => {});
+    await sleep(1_000);
+  }
+  ctx.assert(false, `${name} org MCP connection did not disappear from OpenWork Connect.`);
 }

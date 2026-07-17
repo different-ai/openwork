@@ -7,7 +7,8 @@ import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
-import { getBillingRoute } from "../../_lib/den-org";
+import { getBillingRoute, getCustomLlmProvidersRoute } from "../../_lib/den-org";
+import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 type InferenceWindowType = "five_hour" | "weekly" | "monthly";
@@ -226,6 +227,7 @@ function ModelsValueProp(props: {
 
 export function InferenceScreen() {
   const router = useRouter();
+  const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const { activeOrg, orgContext, refreshOrgData, runReauthableAction } = useOrgDashboard();
   const [status, setStatus] = useState<InferenceStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -234,6 +236,15 @@ export function InferenceScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const isOwner = orgContext?.currentMember.isOwner === true;
+  // OpenWork Models are a hosted OpenWork Cloud offering; self-hosted
+  // (single-org) deployments manage their own LLM providers instead.
+  const isSelfHosted = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
+  const activeOrgSlug = activeOrg?.slug ?? null;
+
+  useEffect(() => {
+    if (!isSelfHosted) return;
+    router.replace(getCustomLlmProvidersRoute(activeOrgSlug));
+  }, [isSelfHosted, activeOrgSlug, router]);
 
   async function loadStatus() {
     setLoading(true);
@@ -322,6 +333,10 @@ export function InferenceScreen() {
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to update inference settings.");
     }
+  }
+
+  if (isSelfHosted) {
+    return null;
   }
 
   const enabled = status?.enabled === true;

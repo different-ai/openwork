@@ -8,8 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { initializeDenBootstrapConfig } from "./app/lib/den";
 import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { bootstrapTheme } from "./app/theme";
-import { isDesktopRuntime, isDesktopWorkspaceRecoveryDisabled } from "./app/utils";
-import { resetFirstRunClientState } from "./react-app/shell/session-memory";
+import { isDesktopRuntime } from "./app/utils";
 import { initLocale } from "./i18n";
 import { getReactQueryClient } from "./react-app/infra/query-client";
 import {
@@ -20,14 +19,6 @@ import { AppProviders } from "./react-app/shell/providers";
 import { AppRoot } from "./react-app/shell/app-root";
 import { startDeepLinkBridge } from "./react-app/shell/startup-deep-links";
 import "./app/index.css";
-
-// OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY resets backend workspace state
-// but not the renderer's localStorage; wipe the renderer's first-run memory
-// here (before any provider/component reads it) so the flag actually produces a
-// fresh first run — loader, auto session, provider step — on every launch.
-if (isDesktopWorkspaceRecoveryDisabled()) {
-  resetFirstRunClientState();
-}
 
 bootstrapTheme();
 initLocale();

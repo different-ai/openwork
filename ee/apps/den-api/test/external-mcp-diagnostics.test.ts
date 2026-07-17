@@ -667,6 +667,17 @@ describe("external MCP diagnostics", () => {
     expect(html).not.toContain("Bearer hidden")
   })
 
+  test("successful callbacks stay in the browser without opening the desktop app", () => {
+    const html = connectCallbackPage({ ok: true, name: "Enterprise MCP <test>" })
+
+    expect(html).toContain("You're connected")
+    expect(html).toContain("Enterprise MCP &lt;test&gt; is connected to OpenWork.")
+    expect(html).toContain("window.close()")
+    expect(html).toContain("Close window")
+    expect(html).not.toContain("openwork://")
+    expect(html).not.toContain("Open OpenWork")
+  })
+
   test("exhausts paginated tool catalogs exactly once", async () => {
     const { collectExternalMcpToolPages } = await import("../src/capability-sources/external-mcp-client.js")
     const diagnostic = new ExternalMcpDiagnosticTracker("req_pages")

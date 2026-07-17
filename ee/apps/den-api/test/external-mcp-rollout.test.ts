@@ -1,79 +1,76 @@
 import { describe, expect, test } from "bun:test"
 import { memberFacingMcpConnectionsEnabled } from "../src/capability-sources/external-mcp-rollout.js"
 
+type MetadataInput = Parameters<typeof memberFacingMcpConnectionsEnabled>[0]
+
+function expectWithDeprecatedGate(metadata: MetadataInput, expected: boolean) {
+  for (const gatingEnabled of [false, true]) {
+    expect(memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled })).toBe(expected)
+  }
+}
+
 describe("memberFacingMcpConnectionsEnabled", () => {
-  test("gating disabled: enabled for every org, regardless of metadata", () => {
-    for (const metadata of [
-      null,
-      undefined,
-      "",
-      "{}",
-      "not json",
-      { capabilities: { mcpConnections: false } },
-      { connectEnabled: false },
-      { mcpConnectionsEnabled: false },
-    ]) {
-      expect(memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false })).toBe(true)
+  test("C1: absent, empty, and unparseable metadata are enabled by default", () => {
+    for (const metadata of [null, undefined, "", "{}", "not json", "[]", {}, JSON.stringify({ limits: { members: 5 } })]) {
+      expectWithDeprecatedGate(metadata, true)
     }
   })
 
-  test("gating enabled: disabled unless the org has connect enabled", () => {
+  test("C2/C3: capability true enables and capability false disables", () => {
     for (const metadata of [
-      null,
-      undefined,
-      "",
-      "{}",
-      "not json",
-      "[]",
-      JSON.stringify({ limits: { members: 5 } }),
+      { capabilities: { mcpConnections: true } },
+      JSON.stringify({ capabilities: { mcpConnections: true } }),
+      JSON.stringify({ limits: { members: 100 }, plan: { tier: "team" }, capabilities: { mcpConnections: true } }),
+    ]) {
+      expectWithDeprecatedGate(metadata, true)
+    }
+
+    for (const metadata of [
+      { capabilities: { mcpConnections: false } },
       JSON.stringify({ capabilities: { mcpConnections: false } }),
-      JSON.stringify({ capabilities: { mcpConnections: "true" } }),
-      JSON.stringify({ connectEnabled: false }),
-      JSON.stringify({ connectEnabled: "yes" }),
-      JSON.stringify({ mcpConnectionsEnabled: false }),
-      JSON.stringify({ mcpConnectionsEnabled: "yes" }),
-      { capabilities: { mcpConnections: false } },
-      { capabilities: { mcpConnections: "true" } },
-      { connectEnabled: false },
-      { connectEnabled: "yes" },
-      { mcpConnectionsEnabled: false },
-      { mcpConnectionsEnabled: "yes" },
-      {},
     ]) {
-      expect(memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: true })).toBe(false)
+      expectWithDeprecatedGate(metadata, false)
     }
   })
 
-  test("gating enabled: orgs with the mcpConnections capability are enabled", () => {
-    expect(memberFacingMcpConnectionsEnabled(JSON.stringify({ capabilities: { mcpConnections: true } }), { gatingEnabled: true })).toBe(true)
-    expect(memberFacingMcpConnectionsEnabled({ capabilities: { mcpConnections: true } }, { gatingEnabled: true })).toBe(true)
-    expect(
-      memberFacingMcpConnectionsEnabled(
-        JSON.stringify({ limits: { members: 100 }, plan: { tier: "team" }, capabilities: { mcpConnections: true } }),
-        { gatingEnabled: true },
-      ),
-    ).toBe(true)
+  test("C4: alias false disables when capability is absent", () => {
+    for (const metadata of [
+      { connectEnabled: false },
+      { mcpConnectionsEnabled: false },
+      { connectEnabled: false, mcpConnectionsEnabled: false },
+      JSON.stringify({ connectEnabled: false }),
+      JSON.stringify({ mcpConnectionsEnabled: false }),
+    ]) {
+      expectWithDeprecatedGate(metadata, false)
+    }
   })
 
-  test("gating enabled: orgs with connectEnabled are enabled", () => {
-    expect(memberFacingMcpConnectionsEnabled(JSON.stringify({ connectEnabled: true }), { gatingEnabled: true })).toBe(true)
-    expect(memberFacingMcpConnectionsEnabled({ connectEnabled: true }, { gatingEnabled: true })).toBe(true)
-    expect(
-      memberFacingMcpConnectionsEnabled(
-        JSON.stringify({ limits: { members: 100 }, plan: { tier: "team" }, connectEnabled: true }),
-        { gatingEnabled: true },
-      ),
-    ).toBe(true)
+  test("C5: alias true enables", () => {
+    for (const metadata of [
+      { connectEnabled: true },
+      { mcpConnectionsEnabled: true },
+      JSON.stringify({ connectEnabled: true }),
+      JSON.stringify({ mcpConnectionsEnabled: true }),
+    ]) {
+      expectWithDeprecatedGate(metadata, true)
+    }
   })
 
-  test("gating enabled: orgs with the legacy mcpConnectionsEnabled alias are enabled", () => {
-    expect(memberFacingMcpConnectionsEnabled(JSON.stringify({ mcpConnectionsEnabled: true }), { gatingEnabled: true })).toBe(true)
-    expect(memberFacingMcpConnectionsEnabled({ mcpConnectionsEnabled: true }, { gatingEnabled: true })).toBe(true)
-    expect(
-      memberFacingMcpConnectionsEnabled(
-        JSON.stringify({ limits: { members: 100 }, plan: { tier: "team" }, mcpConnectionsEnabled: true }),
-        { gatingEnabled: true },
-      ),
-    ).toBe(true)
+  test("C6: capability outranks aliases, and any alias true outranks alias false", () => {
+    expectWithDeprecatedGate({ capabilities: { mcpConnections: true }, connectEnabled: false }, true)
+    expectWithDeprecatedGate({ capabilities: { mcpConnections: false }, connectEnabled: true }, false)
+    expectWithDeprecatedGate({ connectEnabled: true, mcpConnectionsEnabled: false }, true)
+  })
+
+  test("C7: non-boolean values are ignored and fall through to default on", () => {
+    for (const metadata of [
+      { capabilities: { mcpConnections: "true" } },
+      { connectEnabled: "yes" },
+      { mcpConnectionsEnabled: "true" },
+      JSON.stringify({ capabilities: { mcpConnections: "true" }, connectEnabled: "yes", mcpConnectionsEnabled: "false" }),
+      JSON.stringify({ capabilities: { mcpConnections: 1 }, connectEnabled: 0, mcpConnectionsEnabled: null }),
+    ]) {
+      expectWithDeprecatedGate(metadata, true)
+    }
   })
 })

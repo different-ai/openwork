@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   normalizeDesktopPolicyDocumentWrite,
   resolveDesktopPolicyDocumentWrite,
+  selectEffectiveOnboardingPromptConfig,
   selectEffectiveOnboardingPrompts,
 } from "@openwork/types/den/desktop-policies";
 import { createDenClient, normalizeDenDesktopConfig } from "../src/app/lib/den";
@@ -63,11 +64,20 @@ describe("Den desktop config client", () => {
   test("normalizes organization onboarding prompts from desktop config", () => {
     expect(normalizeDenDesktopConfig({
       onboardingPrompts: [" First task ", "Second task", "Third task"],
+      onboardingPromptDescriptions: [" First card ", "Second card", ""],
     }).onboardingPrompts).toEqual(["First task", "Second task", "Third task"]);
+    expect(normalizeDenDesktopConfig({
+      onboardingPrompts: [" First task ", "Second task", "Third task"],
+      onboardingPromptDescriptions: [" First card ", "Second card", ""],
+    }).onboardingPromptDescriptions).toEqual(["First card", "Second card", ""]);
 
     expect(normalizeDenDesktopConfig({
       onboardingPrompts: ["First task", "   "],
     }).onboardingPrompts).toBeUndefined();
+    expect(normalizeDenDesktopConfig({
+      onboardingPrompts: ["First task", "Second task", "Third task"],
+      onboardingPromptDescriptions: ["Mismatched", "Descriptions"],
+    }).onboardingPromptDescriptions).toBeUndefined();
   });
 
   test("selects targeted onboarding prompts by priority before default fallback", () => {
@@ -129,12 +139,32 @@ describe("Den desktop config client", () => {
         },
       ],
     })).toEqual(["Policy A", "Policy A follow-up"]);
+
+    expect(selectEffectiveOnboardingPromptConfig({
+      defaultPolicy: {
+        onboardingPrompts: defaultPrompts,
+        onboardingPromptDescriptions: ["Default card", "Default follow-up card"],
+      },
+      assignedPolicies: [{
+        id: "policy_with_descriptions",
+        priority: 20,
+        createdAt: "2026-01-04T00:00:00.000Z",
+        policy: {
+          onboardingPrompts: ["Targeted task", "Targeted follow-up"],
+          onboardingPromptDescriptions: ["Targeted card", "Targeted follow-up card"],
+        },
+      }],
+    })).toEqual({
+      onboardingPrompts: ["Targeted task", "Targeted follow-up"],
+      onboardingPromptDescriptions: ["Targeted card", "Targeted follow-up card"],
+    });
   });
 
   test("applies desktop policy prompt write semantics", () => {
     const existingPolicy = {
       allowZenModel: true,
       onboardingPrompts: ["Existing prompt", "Existing follow-up"],
+      onboardingPromptDescriptions: ["Existing card", "Existing follow-up card"],
     };
 
     expect(resolveDesktopPolicyDocumentWrite({
@@ -144,6 +174,7 @@ describe("Den desktop config client", () => {
     })).toEqual({
       allowZenModel: false,
       onboardingPrompts: ["Existing prompt", "Existing follow-up"],
+      onboardingPromptDescriptions: ["Existing card", "Existing follow-up card"],
     });
 
     expect(resolveDesktopPolicyDocumentWrite({
@@ -159,9 +190,24 @@ describe("Den desktop config client", () => {
     })).toEqual({ onboardingPrompts: ["Replacement", "Replacement follow-up"] });
 
     expect(resolveDesktopPolicyDocumentWrite({
+      value: {
+        onboardingPrompts: [" Replacement ", "Replacement follow-up"],
+        onboardingPromptDescriptions: [" Replacement card ", ""],
+      },
+      existingPolicy,
+      preserveExistingOnboardingPrompts: true,
+    })).toEqual({
+      onboardingPrompts: ["Replacement", "Replacement follow-up"],
+      onboardingPromptDescriptions: ["Replacement card", ""],
+    });
+
+    expect(resolveDesktopPolicyDocumentWrite({
       value: { onboardingPrompts: null },
     })).toEqual({});
 
-    expect(normalizeDesktopPolicyDocumentWrite({ onboardingPrompts: null })).toEqual({ onboardingPrompts: null });
+    expect(normalizeDesktopPolicyDocumentWrite({ onboardingPrompts: null })).toEqual({
+      onboardingPrompts: null,
+      onboardingPromptDescriptions: null,
+    });
   });
 });

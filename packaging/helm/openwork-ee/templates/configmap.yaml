@@ -8,7 +8,6 @@ data:
   CI: "true"
   NODE_ENV: "production"
   OPENWORK_DEV_MODE: {{ .Values.config.openworkDevMode | quote }}
-  DEN_ENABLE_ENTERPRISE_MCP_CLIENT: {{ .Values.config.enterpriseMcpClientEnabled | quote }}
   DEN_API_NODE_OPTIONS: {{ .Values.config.denApiNodeOptions | quote }}
   DB_MODE: {{ .Values.config.databaseMode | quote }}
   DEN_ORG_MODE: {{ .Values.config.tenancy.mode | quote }}

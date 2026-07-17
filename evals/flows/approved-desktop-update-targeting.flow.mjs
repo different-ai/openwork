@@ -61,7 +61,7 @@ async function signInAndOpenOrgSettings(ctx) {
 
 async function setChecked(ctx, version, checked) {
   await ctx.waitFor(`(() => {
-    const input = document.querySelector(${JSON.stringify(`input[aria-label="Allow desktop version ${version}"]`)});
+    const input = document.querySelector(${JSON.stringify(`input[aria-label="Allow desktop version v${version}"]`)});
     if (!input) return false;
     input.scrollIntoView({ block: 'center' });
     if (input.checked !== ${checked}) input.click();
@@ -72,11 +72,12 @@ async function setChecked(ctx, version, checked) {
 async function configureDesktopEval(ctx, input) {
   await ctx.eval(`(() => {
     const metadata = {
-      minAppVersion: '0.11.207',
-      latestAppVersion: '0.17.24',
-      publishedDesktopVersions: ['0.17.22', '0.17.23', '0.17.24'],
+      minAppVersion: '0.17.0',
+      latestAppVersion: '0.17.2',
+      publishedDesktopVersions: ['0.17.0', '0.17.1', '0.17.2'],
     };
-    window.__approvedUpdateEval ??= { currentVersion: '0.17.22', checks: [], metadataReads: 0 };
+    const latestVersion = ${JSON.stringify(input.latestVersion ?? null)} ?? metadata.latestAppVersion;
+    window.__approvedUpdateEval ??= { currentVersion: '0.17.0', checks: [], metadataReads: 0 };
     if (${input.reset === true}) {
       window.__approvedUpdateEval.checks = [];
       window.__approvedUpdateEval.metadataReads = 0;
@@ -97,10 +98,11 @@ async function configureDesktopEval(ctx, input) {
       check: async (channel, targetVersion) => {
         window.__approvedUpdateEval.checks.push({ channel, targetVersion, currentVersion: window.__approvedUpdateEval.currentVersion });
         if (window.__approvedUpdateEval.delayMs) await new Promise((resolve) => setTimeout(resolve, window.__approvedUpdateEval.delayMs));
+        const resolvedVersion = targetVersion ?? latestVersion;
         return {
-          available: Boolean(targetVersion),
+          available: Boolean(resolvedVersion && resolvedVersion !== window.__approvedUpdateEval.currentVersion),
           currentVersion: window.__approvedUpdateEval.currentVersion,
-          latestVersion: targetVersion ?? null,
+          latestVersion: resolvedVersion ?? null,
           channel: 'stable',
           feedUrl: targetVersion ? 'https://github.com/different-ai/openwork/releases/download/v' + targetVersion : 'eval://stable',
           releaseDate: '2026-07-13T18:43:13.427Z',
@@ -150,65 +152,76 @@ async function openDesktopUpdates(ctx) {
     label: "desktop eval bridges",
   });
   await ensureDesktopSession(ctx);
+  await ctx.eval("localStorage.setItem('openwork.react.settings.update-auto-check', '0')");
   await ctx.navigateHash("/settings/updates");
   await ctx.waitForText("Check now", { timeoutMs: 30_000 });
+  await setAutomaticChecks(ctx, false);
+}
+
+async function setAutomaticChecks(ctx, checked) {
+  const desired = String(checked);
+  await ctx.waitFor("Boolean(document.querySelector('[aria-label=\"Check automatically\"]'))", {
+    timeoutMs: 5_000,
+    label: "automatic checks toggle",
+  });
   await ctx.eval(`(() => {
     const toggle = document.querySelector('[aria-label="Check automatically"]');
-    if (toggle?.getAttribute('aria-checked') === 'true') toggle.click();
-    return true;
+    if (!toggle) return;
+    toggle.scrollIntoView({ block: 'center' });
+    if (toggle.getAttribute('aria-checked') !== ${JSON.stringify(desired)}) toggle.click();
   })()`);
-  await ctx.waitFor("document.querySelector('[aria-label=\"Check automatically\"]')?.getAttribute('aria-checked') === 'false'", {
+  await ctx.waitFor(`document.querySelector('[aria-label="Check automatically"]')?.getAttribute('aria-checked') === ${JSON.stringify(desired)}`, {
     timeoutMs: 5_000,
-    label: "automatic checks disabled for deterministic manual-check proof",
+    label: `automatic checks ${checked ? "enabled" : "disabled"}`,
   });
 }
 
 export default {
   id: FLOW_ID,
-  title: "Manual desktop checks refresh Den policy and install the highest approved published release",
+  title: "Automatic stable desktop checks install the highest approved published release",
   kind: "user-facing",
   requiredEnv: ["OPENWORK_EVAL_WEB_CDP_ADMIN"],
   steps: [
     {
       name: "Frame 1 — Den exposes real published versions",
       run: async (ctx) => withClient(ctx, ADMIN_CDP_URL, async () => {
-        await ctx.prove("Den shows the published 0.17.22–0.17.24 releases and saves 0.17.23 as the approved target", {
+        await ctx.prove("Den shows the published 0.17.0–0.17.2 releases and saves 0.17.1 as the approved target", {
           voiceover: vo[0],
           action: async () => {
             await signInAndOpenOrgSettings(ctx);
-            await setChecked(ctx, "0.17.22", false);
-            await setChecked(ctx, "0.17.23", true);
-            await setChecked(ctx, "0.17.24", false);
+            await setChecked(ctx, "0.17.0", false);
+            await setChecked(ctx, "0.17.1", true);
+            await setChecked(ctx, "0.17.2", false);
             await clickExact(ctx, "Save settings", "button");
           },
           assert: async () => {
             await sleep(500);
-            const state = await ctx.eval(`(() => Object.fromEntries(['0.17.22', '0.17.23', '0.17.24'].map((version) => {
-              const input = document.querySelector('input[aria-label="Allow desktop version ' + version + '"]');
-              return [version, input?.checked ?? null];
+            const state = await ctx.eval(`(() => Object.fromEntries(['0.17.0', '0.17.1', '0.17.2'].map((version) => {
+              const input = document.querySelector('input[aria-label="Allow desktop version v' + version + '"]');
+              return [version, { checked: input?.checked ?? null, disabled: input?.disabled ?? null }];
             })))()`);
-            ctx.assert(state["0.17.22"] === false && state["0.17.23"] === true && state["0.17.24"] === false, JSON.stringify(state));
-            await ctx.eval(`document.querySelector('input[aria-label="Allow desktop version 0.17.23"]')?.closest('div.grid.gap-3')?.scrollIntoView({ block: 'center' })`);
+            ctx.assert(state["0.17.0"]?.checked === false && state["0.17.1"]?.checked === true && state["0.17.2"]?.checked === false && state["0.17.2"]?.disabled === true, JSON.stringify(state));
+            await ctx.eval(`document.querySelector('input[aria-label="Allow desktop version v0.17.1"]')?.scrollIntoView({ block: 'center' })`);
           },
-          screenshot: { name: "den-approved-01723", requireText: ["Allowed Desktop Versions", "0.17.22", "0.17.23", "0.17.24"] },
+          screenshot: { name: "den-approved-0171", requireText: ["Allowed Desktop Versions", "0.17.0", "0.17.1", "0.17.2"] },
         });
       }),
     },
     {
-      name: "Frame 2 — Manual check refreshes stale policy",
+      name: "Frame 2 — Automatic check probes the blocked latest release",
       run: async (ctx) => {
-        await ctx.prove("Check now refreshes the cached organization policy and Den release inventory", {
+        await ctx.prove("Check automatically starts from the normal stable latest check and reads Den release inventory only after org policy blocks it", {
           voiceover: vo[1],
           action: async () => {
             await openDesktopUpdates(ctx);
             await configureDesktopEval(ctx, {
-              currentVersion: "0.17.22",
-              staleConfig: { allowedDesktopVersions: ["0.17.22"] },
-              freshConfig: { allowedDesktopVersions: ["0.17.23"] },
+              currentVersion: "0.17.0",
+              staleConfig: { allowedDesktopVersions: ["0.17.1"] },
+              freshConfig: { allowedDesktopVersions: ["0.17.1"] },
               delayMs: 1_500,
               reset: true,
             });
-            await ctx.clickText("Check now");
+            await setAutomaticChecks(ctx, true);
           },
           assert: async () => {
             await ctx.waitFor("window.__approvedUpdateEval.metadataReads > 0", {
@@ -218,106 +231,29 @@ export default {
             await ctx.expectText("Checking for updates…");
             const reads = await ctx.eval("window.__approvedUpdateEval.metadataReads");
             ctx.assert(reads > 0, `expected a fresh metadata request, got ${reads}`);
+            const checks = await ctx.eval("window.__approvedUpdateEval.checks.map((entry) => ({ channel: entry.channel, targetVersion: entry.targetVersion ?? null }))");
+            ctx.assert(checks.some((entry) => entry.targetVersion === null), JSON.stringify(checks));
           },
-          screenshot: { name: "desktop-checking-fresh-policy", requireText: ["Updates", "Checking for updates…"] },
+          screenshot: { name: "desktop-automatic-checking-latest", requireText: ["Updates", "Checking for updates…", "Check automatically"] },
         });
       },
     },
     {
       name: "Frame 3 — Highest approved release wins",
       run: async (ctx) => {
-        await ctx.prove("A 0.17.22 desktop offers approved 0.17.23 instead of unapproved latest 0.17.24", {
+        await ctx.prove("A 0.17.0 desktop offers approved 0.17.1 instead of unapproved latest 0.17.2", {
           voiceover: vo[2],
           action: async () => {
-            await ctx.waitForText("Update available: v0.17.23", { timeoutMs: 10_000 });
+            await ctx.waitForText("Update available: v0.17.1", { timeoutMs: 10_000 });
           },
           assert: async () => {
-            const lastCheck = await ctx.eval("window.__approvedUpdateEval.checks.at(-1)");
-            ctx.assert(lastCheck?.targetVersion === "0.17.23", JSON.stringify(lastCheck));
+            const checks = await ctx.eval("window.__approvedUpdateEval.checks.map((entry) => ({ channel: entry.channel, targetVersion: entry.targetVersion ?? null }))");
+            const lastCheck = checks.at(-1);
+            ctx.assert(checks.some((entry) => entry.targetVersion === null), JSON.stringify(checks));
+            ctx.assert(lastCheck?.targetVersion === "0.17.1", JSON.stringify(lastCheck));
             await ctx.expectText("Download");
           },
-          screenshot: { name: "desktop-offers-approved-01723", requireText: ["Update available: v0.17.23", "Download"], rejectText: ["v0.17.24"] },
-        });
-      },
-    },
-    {
-      name: "Frame 4 — Newer release is visibly blocked",
-      run: async (ctx) => {
-        await ctx.prove("On 0.17.23, OpenWork explains that 0.17.24 exists but still needs organization approval", {
-          voiceover: vo[3],
-          action: async () => {
-            await configureDesktopEval(ctx, {
-              currentVersion: "0.17.23",
-              staleConfig: { allowedDesktopVersions: ["0.17.23"] },
-              freshConfig: { allowedDesktopVersions: ["0.17.23"] },
-            });
-            await ctx.clickText("Check now");
-          },
-          assert: async () => {
-            await ctx.expectText("Update available: v0.17.24");
-            await ctx.expectText("OpenWork 0.17.24 is available, but your organization has not approved it yet. Ask an organization administrator to enable this version.");
-          },
-          screenshot: { name: "desktop-01724-needs-admin", requireText: ["Update available: v0.17.24", "Ask an organization administrator"] },
-        });
-      },
-    },
-    {
-      name: "Frame 5 — Next check sees new approval",
-      run: async (ctx) => {
-        await ctx.prove("The next manual check immediately offers 0.17.24 after the administrator approves it", {
-          voiceover: vo[4],
-          action: async () => {
-            await configureDesktopEval(ctx, {
-              currentVersion: "0.17.23",
-              staleConfig: { allowedDesktopVersions: ["0.17.23"] },
-              freshConfig: { allowedDesktopVersions: ["0.17.24"] },
-            });
-            await ctx.clickText("Check now");
-          },
-          assert: async () => {
-            await ctx.expectText("Download");
-            await ctx.expectText("Update available: v0.17.24");
-            const lastCheck = await ctx.eval("window.__approvedUpdateEval.checks.at(-1)");
-            ctx.assert(lastCheck?.targetVersion === "0.17.24", JSON.stringify(lastCheck));
-          },
-          screenshot: { name: "desktop-offers-newly-approved-01724", requireText: ["Update available: v0.17.24", "Download"], rejectText: ["has not approved"] },
-        });
-      },
-    },
-    {
-      name: "Frame 6 — Unrestricted latest, never downgrade",
-      run: async (ctx) => {
-        await ctx.prove("Unrestricted organizations receive latest while an older approved version never triggers a downgrade", {
-          voiceover: vo[5],
-          action: async () => {
-            await configureDesktopEval(ctx, {
-              currentVersion: "0.17.22",
-              staleConfig: {},
-              freshConfig: {},
-            });
-            await ctx.clickText("Check now");
-            await ctx.waitFor("(() => { const check = window.__approvedUpdateEval.checks.at(-1); return check?.currentVersion === '0.17.22' && check?.targetVersion === '0.17.24'; })()", {
-              timeoutMs: 10_000,
-              label: "unrestricted latest updater target",
-            });
-            const unrestrictedCheck = await ctx.eval("window.__approvedUpdateEval.checks.at(-1)");
-            ctx.assert(unrestrictedCheck?.targetVersion === "0.17.24", JSON.stringify(unrestrictedCheck));
-
-            await configureDesktopEval(ctx, {
-              currentVersion: "0.17.25",
-              staleConfig: { allowedDesktopVersions: ["0.17.24"] },
-              freshConfig: { allowedDesktopVersions: ["0.17.24"] },
-            });
-            await ctx.clickText("Check now");
-          },
-          assert: async () => {
-            await ctx.expectText("You're up to date");
-            await sleep(250);
-            const checks = await ctx.eval("window.__approvedUpdateEval.checks");
-            ctx.assert(checks.some((entry) => entry.targetVersion === "0.17.24"), JSON.stringify(checks));
-            ctx.assert(!checks.some((entry) => entry.currentVersion === "0.17.25"), `downgrade check reached updater: ${JSON.stringify(checks)}`);
-          },
-          screenshot: { name: "desktop-never-downgrades", requireText: ["You're up to date", "Check now"] },
+          screenshot: { name: "desktop-offers-approved-0171", requireText: ["Update available: v0.17.1", "Download"], rejectText: ["v0.17.2"] },
         });
       },
     },

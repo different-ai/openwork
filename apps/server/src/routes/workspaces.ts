@@ -3,6 +3,7 @@ import { basename, dirname, resolve } from "node:path";
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
 import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "../opencode-connection.js";
+import { externalFetch } from "../server-fetch.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { ensureDir, exists, shortId } from "../utils.js";
 import { defaultWorkspaceOpenworkConfig, ensureWorkspaceFiles } from "../workspace-init.js";
@@ -133,7 +134,7 @@ async function fetchOpenworkWorkspaceList(hostUrl: string, token: string, hostTo
   if (hostToken) headers.set("X-OpenWork-Host-Token", hostToken);
 
   try {
-    const response = await fetch(url, { headers, signal: controller.signal });
+    const response = await externalFetch(url, { headers, signal: controller.signal });
     if (!response.ok) {
       throw new ApiError(
         502,

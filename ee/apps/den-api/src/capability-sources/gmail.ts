@@ -32,14 +32,21 @@ function base64MimeContent(content: Buffer): string {
 // Generated prose is sometimes hard-wrapped before it reaches Gmail. Those
 // literal breaks become visible after send, especially on narrow screens.
 function normalizeDraftBody(body: string): string {
-  return body.replace(/\r\n?/g, "\n").replace(/[^\n]+(?:\n[^\n]+)+/g, (block) => {
+  return body.replace(/\r\n?/g, "\n").replace(/[^\n]+(?:\n[^\n]+)*/g, (block) => {
     const lines = block.split("\n")
     const hasStructure = lines.some((line) => {
       const trimmed = line.trimStart()
       return trimmed.length !== line.length || /^(?:[-*+•]\s|\d+[.)]\s|>|```|~~~)/.test(trimmed)
     })
+    if (hasStructure) return block
+
+    const cleanedLines = lines.map((line) => line
+      .replace(/^#{1,6}\s+/, "")
+      .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+      .replace(/__([^_\n]+)__/g, "$1")
+      .replace(/`([^`\n]+)`/g, "$1"))
     const looksHardWrapped = lines.slice(0, -1).every((line) => line.trimEnd().length >= HARD_WRAP_MIN_LINE_LENGTH)
-    return hasStructure || !looksHardWrapped ? block : lines.map((line) => line.trim()).join(" ")
+    return lines.length > 1 && looksHardWrapped ? cleanedLines.map((line) => line.trim()).join(" ") : cleanedLines.join("\n")
   })
 }
 

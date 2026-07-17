@@ -6,6 +6,10 @@ export type OpenWorkConnectStatus = {
   description: string;
 };
 
+export function openWorkConnectAttentionTitle(description: string): string {
+  return `One possible issue: ${description}`;
+}
+
 export function resolveOpenWorkConnectStatus(
   signedIn: boolean,
   maintenance: SessionCloudMcpMaintenanceState | undefined,

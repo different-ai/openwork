@@ -2,7 +2,7 @@ diff --git a/dist/cjs/client/auth.js b/dist/cjs/client/auth.js
 index c2e4fa91d26f5336889f6afa416147db75fc4872..06d3da7e716ad00bbe17315835a3ce6c2c4b6d8f 100644
 --- a/dist/cjs/client/auth.js
 +++ b/dist/cjs/client/auth.js
-@@ -246,7 +246,26 @@ async function authInternal(provider, { serverUrl, authorizationCode, scope, res
+@@ -246,7 +246,33 @@ async function authInternal(provider, { serverUrl, authorizationCode, scope, res
      // 2. PRM scopes_supported
      // 3. Client metadata scope (user-configured fallback)
      // The resolved scope is used consistently for both DCR and the authorization request.
@@ -21,6 +21,13 @@ index c2e4fa91d26f5336889f6afa416147db75fc4872..06d3da7e716ad00bbe17315835a3ce6c
 +        }
 +    }
 +    const resolvedScopes = [...new Set([...requiredScopes, ...selectedScopes])];
++    // Some providers publish the only workable permission set in discovery
++    // and omit scope from their 401 challenge. Preserve least-privilege
++    // selection when configured, but restore the SDK's advertised fallback
++    // when neither the provider challenge nor the admin selected scopes.
++    if (resolvedScopes.length === 0 && advertisedScopes) {
++        resolvedScopes.push(...new Set(advertisedScopes));
++    }
 +    if (resolvedScopes.includes('offline_access') &&
 +        !requiredScopes.includes('offline_access') &&
 +        (!advertisedScopes?.includes('offline_access') || !metadata?.grant_types_supported?.includes('refresh_token'))) {
@@ -34,7 +41,7 @@ diff --git a/dist/esm/client/auth.js b/dist/esm/client/auth.js
 index e183040fc2bba22ca1ccc784984f3310854403b7..6205a4740c7805a86510ae24cdae9e5fb9db3180 100644
 --- a/dist/esm/client/auth.js
 +++ b/dist/esm/client/auth.js
-@@ -216,12 +216,26 @@ async function authInternal(provider, { serverUrl, authorizationCode, scope, res
+@@ -216,12 +216,33 @@ async function authInternal(provider, { serverUrl, authorizationCode, scope, res
          });
      }
      const resource = await selectResourceURL(serverUrl, provider, resourceMetadata);
@@ -58,6 +65,13 @@ index e183040fc2bba22ca1ccc784984f3310854403b7..6205a4740c7805a86510ae24cdae9e5f
 +        }
 +    }
 +    const resolvedScopes = [...new Set([...requiredScopes, ...selectedScopes])];
++    // Some providers publish the only workable permission set in discovery
++    // and omit scope from their 401 challenge. Preserve least-privilege
++    // selection when configured, but restore the SDK's advertised fallback
++    // when neither the provider challenge nor the admin selected scopes.
++    if (resolvedScopes.length === 0 && advertisedScopes) {
++        resolvedScopes.push(...new Set(advertisedScopes));
++    }
 +    if (resolvedScopes.includes('offline_access') &&
 +        !requiredScopes.includes('offline_access') &&
 +        (!advertisedScopes?.includes('offline_access') || !metadata?.grant_types_supported?.includes('refresh_token'))) {

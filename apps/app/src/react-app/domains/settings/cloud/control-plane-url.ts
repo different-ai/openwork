@@ -11,10 +11,10 @@ export function isValidControlPlaneUrl(value: string) {
   return normalizeDenBaseUrl(value) !== null;
 }
 
-export function isDefaultControlPlaneUrl(value: string) {
+export function isDefaultControlPlaneUrl(value: string, defaultBaseUrl = DEFAULT_DEN_BASE_URL) {
   const normalized = normalizeDenBaseUrl(value);
   if (!normalized) return value.trim().length === 0;
-  return resolveDenBaseUrls(normalized).baseUrl === resolveDenBaseUrls(DEFAULT_DEN_BASE_URL).baseUrl;
+  return resolveDenBaseUrls(normalized).baseUrl === resolveDenBaseUrls(defaultBaseUrl).baseUrl;
 }
 
 export function displayCustomControlPlaneUrl(value: string) {

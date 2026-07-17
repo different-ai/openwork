@@ -1,6 +1,11 @@
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import {
+  OPENWORK_CLOUD_MCP_CONNECTION_ACTION_KIND,
+  OPENWORK_CLOUD_MCP_CONNECTION_ACTION_SOURCE,
+  OPENWORK_CLOUD_MCP_CONNECTION_ACTION_VERSION,
+} from "@openwork/types/den/mcp-connection-action"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
@@ -97,6 +102,7 @@ export async function resolveMcpMemberIdentity(input: {
 }
 
 function hasSharedCredential(connection: ExternalMcpConnectionRow): boolean {
+  if (connection.oauthIssuerReviewRequiredAt) return false
   if (connection.authType === "oauth") return Boolean(connection.accessToken)
   if (connection.authType === "apikey") return Boolean(connection.apiKey)
   return true
@@ -153,6 +159,9 @@ export type ExternalCapabilityMatch = CapabilityMatch & {
 }
 
 export type ExternalConnectionStatus = {
+  version: typeof OPENWORK_CLOUD_MCP_CONNECTION_ACTION_VERSION
+  kind: typeof OPENWORK_CLOUD_MCP_CONNECTION_ACTION_KIND
+  source: typeof OPENWORK_CLOUD_MCP_CONNECTION_ACTION_SOURCE
   layer: "mcp_connection" | "downstream_provider"
   connectionId: string
   connectionName: string
@@ -343,14 +352,26 @@ export function buildExternalConnectionStatus(input: {
   errorCode: ExternalConnectionStatus["errorCode"]
   message: string
   diagnostic?: ExternalMcpDiagnostic
+  actionOwner?: "member" | "organization_admin"
 }): ExternalConnectionStatus {
   const connectionName = input.connection.name
-  const diagnosticAction = input.diagnostic
+  const actionContract = {
+    version: OPENWORK_CLOUD_MCP_CONNECTION_ACTION_VERSION,
+    kind: OPENWORK_CLOUD_MCP_CONNECTION_ACTION_KIND,
+    source: OPENWORK_CLOUD_MCP_CONNECTION_ACTION_SOURCE,
+  } as const
+  // Once the failure is classified as reauthentication, credential ownership
+  // is the source of truth for who can repair it. A generic HTTP 400 during a
+  // refresh may classify the raw diagnostic as provider_admin, but routing a
+  // per-member expired token to a provider console contradicts the
+  // reauth_required state and prevents the client from offering reconnect.
+  const diagnosticAction = input.diagnostic && input.state !== "reauth_required"
     ? diagnosticConnectionAction({ connection: input.connection, state: input.state, diagnostic: input.diagnostic })
     : null
   if (input.state === "provider_error") {
     const providerAdminAction = PROVIDER_ADMIN_ACTION_PATTERN.test(input.message)
     return {
+      ...actionContract,
       layer: input.diagnostic ? "mcp_connection" : "downstream_provider",
       connectionId: input.connection.id,
       connectionName,
@@ -377,8 +398,9 @@ export function buildExternalConnectionStatus(input: {
     }
   }
 
-  const actor = input.connection.credentialMode === "per_member" ? "member" : "organization_admin"
-  const surface = input.connection.credentialMode === "per_member"
+  const actor = input.actionOwner
+    ?? (input.connection.credentialMode === "per_member" ? "member" : "organization_admin")
+  const surface = actor === "member"
     ? "openwork_your_connections"
     : "openwork_organization_connections"
   const actionType = input.state === "needs_connection"
@@ -396,6 +418,7 @@ export function buildExternalConnectionStatus(input: {
         ? "Update credentials for"
         : "Inspect"
   return {
+    ...actionContract,
     layer: input.diagnostic ? "mcp_connection" : "downstream_provider",
     connectionId: input.connection.id,
     connectionName,
@@ -536,6 +559,28 @@ async function probeExternalMcpConnection(input: {
     mergeBoundedExternalCapabilityMatches(matches, [match], input.limit)
   }
   const connection = input.connection
+  if (connection.oauthIssuerReviewRequiredAt) {
+    const nameTokens = tokenize(connection.name)
+    const score = scoreText(nameTokens, nameTokens, input.queryTokens)
+    if (score > 0) {
+      const message = `${connection.name} is blocked until an organization admin reviews its changed OAuth issuer.`
+      add(statusMatch({
+        connection,
+        score,
+        summary: `[${connection.name}] OAuth provider settings changed and require administrator review.`,
+        status: "error",
+        hint: `Ask an org admin to open OpenWork Cloud -> Connections, review the live OAuth issuer for "${connection.name}", and reconnect if requested.`,
+        connectionStatus: buildExternalConnectionStatus({
+          connection,
+          state: "reauth_required",
+          errorCode: "unauthorized",
+          message,
+          actionOwner: "organization_admin",
+        }),
+      }))
+    }
+    return matches
+  }
   if (connection.credentialMode === "per_member") {
     const account = await getConnectedAccount({
       organizationId: connection.organizationId,
@@ -749,6 +794,22 @@ export async function executeExternalCapability(input: {
     return { ok: false, error: "forbidden", message: `You have not been granted access to "${connection.name}".` }
   }
 
+  if (connection.oauthIssuerReviewRequiredAt) {
+    const message = `"${connection.name}" is blocked until an organization admin reviews its changed OAuth issuer.`
+    return {
+      ok: false,
+      error: "needs_connection",
+      message,
+      connectionStatus: buildExternalConnectionStatus({
+        connection,
+        state: "reauth_required",
+        errorCode: "unauthorized",
+        message,
+        actionOwner: "organization_admin",
+      }),
+    }
+  }
+
   if (input.toolName === "*") {
     const message = `"${connection.name}" was surfaced as a connection status entry, not a callable tool. Fix the connection first (see the search hint), then search again for its real tools.`
     return {
@@ -800,6 +861,8 @@ export async function executeExternalCapability(input: {
     })
     return { ok: true, result }
   } catch (error) {
+    const message = upstreamErrorMessage(error)
+    const authErrorCode = externalMcpAuthErrorCode(error, message)
     if (error instanceof ExternalMcpDiagnosticError) {
       console.error("external_mcp_capability_execute_failed", {
         connectionId: connection.id,
@@ -816,6 +879,30 @@ export async function executeExternalCapability(input: {
         diagnostic: error.diagnostic,
         actionOwner: error.diagnostic.actionOwner,
         operatorAction: error.diagnostic.operatorAction,
+        ...(authErrorCode
+          ? {
+              connectionStatus: buildExternalConnectionStatus({
+                connection,
+                state: "reauth_required",
+                errorCode: authErrorCode,
+                message,
+                diagnostic: error.diagnostic,
+              }),
+            }
+          : {}),
+      }
+    }
+    if (authErrorCode) {
+      return {
+        ok: false,
+        error: "connection_failed",
+        message,
+        connectionStatus: buildExternalConnectionStatus({
+          connection,
+          state: "reauth_required",
+          errorCode: authErrorCode,
+          message,
+        }),
       }
     }
     throw error

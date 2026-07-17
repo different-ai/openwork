@@ -3,7 +3,6 @@ import path from "node:path"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { denApiAppVersion } from "./version.js"
-import { parseEnterpriseMcpClientEnabled } from "./enterprise-mcp-client-flag.js"
 import { z } from "zod"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
@@ -48,7 +47,6 @@ const EnvSchema = z.object({
   LOOPS_MARKETING_ENABLED: z.string().optional(),
   OPENWORK_DEV_MODE: z.string().optional(),
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
-  DEN_ENABLE_ENTERPRISE_MCP_CLIENT: z.string().optional(),
   DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
   DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
@@ -60,6 +58,7 @@ const EnvSchema = z.object({
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   DEN_API_PUBLIC_URL: z.string().optional(),
+  DEN_API_VERSION: z.string().optional(),
   OPENWORK_INSTALLER_ARTIFACTS_DIR: z.string().optional(),
   OPENWORK_INSTALLER_RELEASE_TAG: z.string().optional(),
   OPENWORK_INSTALLER_RELEASE_REPO: z.string().optional(),
@@ -307,9 +306,10 @@ const polarFeatureGateEnabled =
 const planGatingEnabled =
   (parsed.DEN_PLAN_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
-// Hosted deployments normally enable plan gating and retain per-org rollout.
-// Self-hosted deployments default to no gating, so install links work without
-// access to the hosted platform-admin control plane. An explicit setting wins.
+// Deprecated compatibility knob for organization install links. The environment
+// variable is still parsed so existing deployment configs keep starting, but
+// organizationInstallLinksEnabled ignores this value: install links are
+// default-on unless org metadata explicitly disables them.
 const installLinksGatingEnabled =
   (parsed.DEN_INSTALL_LINKS_GATING_ENABLED ?? String(planGatingEnabled)).toLowerCase() === "true"
 
@@ -327,11 +327,10 @@ const connectLink = connectLinkMode === "signed" && connectLinkPrivateKeyPem && 
   ? { privateKeyPem: connectLinkPrivateKeyPem, kid: connectLinkKid }
   : null
 
-// Staged rollout for member-facing org MCP connections: when gating is
-// enabled (hosted deployments), GET /v1/mcp-connections?scope=usable returns
-// an empty list unless the organization opted in via the mcpConnections
-// organization capability. Off by default so local dev, evals, and self-hosted
-// deployments keep the feature working out of the box.
+// Deprecated compatibility knob for member-facing org MCP connections. The
+// environment variable is still parsed so existing deployment configs keep
+// starting, but memberFacingMcpConnectionsEnabled ignores this value: Connect is
+// default-on unless org metadata explicitly disables it.
 const mcpConnectionsGatingEnabled =
   (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
@@ -356,7 +355,6 @@ const orgMode = parseDenOrgMode(parsed.DEN_ORG_MODE)
 // (OPENWORK_DEV_MODE=1) is exempt automatically so evals against a local
 // stand-in server keep working.
 const allowPrivateMcpUrls = devMode || (parsed.DEN_ALLOW_PRIVATE_MCP_URLS ?? "0").trim() === "1"
-const enterpriseMcpClientEnabled = parseEnterpriseMcpClientEnabled(parsed.DEN_ENABLE_ENTERPRISE_MCP_CLIENT)
 const requireEmailVerification = parsed.DEN_REQUIRE_EMAIL_VERIFICATION === undefined
   ? orgMode === "multi_org" && !devMode
   : parsed.DEN_REQUIRE_EMAIL_VERIFICATION.trim().toLowerCase() !== "false"
@@ -397,7 +395,6 @@ export const env = {
   webAppHosts: splitCsv(parsed.DEN_WEB_APP_HOSTS).map((host) => host.toLowerCase()),
   devMode,
   allowPrivateMcpUrls,
-  enterpriseMcpClientEnabled,
   diagnostics: {
     origin: diagnosticsOrigin,
     bearerToken: diagnosticsBearerToken,
@@ -453,6 +450,7 @@ export const env = {
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
   corsOrigins,
   apiPublicUrl,
+  serviceVersion: parsed.DEN_API_VERSION?.trim() || "dev",
   publicUrlTrustedOrigins,
   installerArtifactsDir: optionalString(parsed.OPENWORK_INSTALLER_ARTIFACTS_DIR),
   // Standard desktop release assets: the release tag to download from,
