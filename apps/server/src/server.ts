@@ -1532,6 +1532,7 @@ function createRoutes(
     ensureWritable,
     requireClientScope,
     resolveWorkspace,
+    resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
   });
@@ -2880,7 +2881,7 @@ async function resolveWorkspaceForInspection(config: ServerConfig, id: string): 
   return { ...workspace, path: resolvedWorkspace };
 }
 
-async function resolveWorkspace(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
+async function resolveWorkspaceWithoutBootstrap(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
   const workspaceId = id.trim();
   const aliasWorkspaceId = workspaceId.startsWith("rem_") ? workspaceId.slice("rem_".length) : "";
   const configuredWorkspace =
@@ -2895,6 +2896,12 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
     throw new ApiError(403, "workspace_unauthorized", "Workspace is not authorized");
   }
   const workspace = { ...configuredWorkspace, path: resolvedWorkspace };
+  return workspace;
+}
+
+async function resolveWorkspace(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
+  const workspace = await resolveWorkspaceWithoutBootstrap(config, id);
+  const resolvedWorkspace = workspace.path;
   if (!config.readOnly) {
     const ensured = await ensureWorkspaceFiles(resolvedWorkspace, workspace.preset ?? "starter");
     const bootstrapReloadReasons = new Set<ReloadReason>(ensured.reloadReasons);

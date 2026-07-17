@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -32,9 +32,8 @@ import {
   type ExternalMcpCredentialMode,
   type ExternalMcpPreset,
   type ExternalMcpTool,
-  McpConnectionOAuthStartError,
-  type McpConnectionOAuthStartErrorCode,
   type McpConnectionResolution,
+  type McpIssuerReview,
   type McpRequirementsDiscovery,
   type McpConnectionAccessInput,
   type UpdatedMcpConnection,
@@ -50,6 +49,7 @@ import {
   useMcpConnectionTools,
   useNativeProviderClient,
   useResolveMcpConnection,
+  useReviewMcpIssuer,
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
   useTelegramConnection,
@@ -241,10 +241,13 @@ export function McpConnectionsScreen() {
   const disconnectConnection = useDisconnectMcpConnection();
   const deleteConnection = useDeleteMcpConnection();
   const saveNativeClient = useSaveNativeProviderClient();
+  const reviewIssuer = useReviewMcpIssuer();
 
   const [formOpen, setFormOpen] = useState(false);
   const [formPreset, setFormPreset] = useState<ExternalMcpPreset | null>(null);
   const [editingConnection, setEditingConnection] = useState<ExternalMcpConnection | null>(null);
+  const [issuerReviewConnection, setIssuerReviewConnection] = useState<ExternalMcpConnection | null>(null);
+  const [issuerReviewPreview, setIssuerReviewPreview] = useState<McpIssuerReview | null>(null);
   const [pluginDialogOpen, setPluginDialogOpen] = useState(false);
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
   const [microsoftDialogOpen, setMicrosoftDialogOpen] = useState(false);
@@ -254,11 +257,7 @@ export function McpConnectionsScreen() {
   const telegramConnection = useTelegramConnection(true);
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
-  const [connectionActionError, setConnectionActionError] = useState<{
-    connectionId: string;
-    code: McpConnectionOAuthStartErrorCode | null;
-    message: string;
-  } | null>(null);
+  const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
   const [connectionActionNotice, setConnectionActionNotice] = useState<string | null>(null);
   const [toolsConnectionId, setToolsConnectionId] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -307,7 +306,6 @@ export function McpConnectionsScreen() {
       authorizationWindow?.close();
       setConnectionActionError({
         connectionId,
-        code: connectError instanceof McpConnectionOAuthStartError ? connectError.code : null,
         message: connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.",
       });
     }
@@ -369,10 +367,40 @@ export function McpConnectionsScreen() {
     } catch (disconnectError) {
       setConnectionActionError({
         connectionId: connection.id,
-        code: null,
         message: disconnectError instanceof Error ? disconnectError.message : "Failed to disconnect the MCP connection.",
       });
     }
+  }
+
+  async function handleOpenIssuerReview(connection: ExternalMcpConnection) {
+    reviewIssuer.reset();
+    setIssuerReviewConnection(connection);
+    setIssuerReviewPreview(null);
+    try {
+      const preview = await reviewIssuer.mutateAsync({
+        connectionId: connection.id,
+        action: "preview",
+      });
+      setIssuerReviewPreview(preview);
+    } catch {
+      // The dialog renders the mutation error with a retry path.
+    }
+  }
+
+  async function handleConfirmIssuer(authorizationServerIssuer: string) {
+    const connection = issuerReviewConnection;
+    if (!connection?.updatedAt) return;
+    const result = await reviewIssuer.mutateAsync({
+      connectionId: connection.id,
+      action: "confirm",
+      expectedUpdatedAt: connection.updatedAt,
+      authorizationServerIssuer,
+    });
+    setIssuerReviewConnection(null);
+    setIssuerReviewPreview(null);
+    setConnectionActionNotice(result.reconnectionRequired
+      ? `${connection.name} now trusts the confirmed issuer. Its old OAuth client and credentials were cleared; reconnect it to finish recovery.`
+      : `${connection.name}'s current issuer was confirmed from live provider metadata.`);
   }
 
   return (
@@ -431,7 +459,7 @@ export function McpConnectionsScreen() {
             </span>
             <span>
               <span className="block text-[14px] font-semibold text-gray-900">MCP server</span>
-              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Paste a URL or just type a name — we&apos;ll figure out the rest.</span>
+              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Paste a server URL and we&apos;ll check it for you.</span>
             </span>
           </button>
           <button
@@ -558,11 +586,11 @@ export function McpConnectionsScreen() {
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
-              errorCode={connectionActionError?.connectionId === connection.id ? connectionActionError.code : null}
               onEdit={() => {
                 updateConnection.reset();
                 setEditingConnection(connection);
               }}
+              onReviewIssuer={() => void handleOpenIssuerReview(connection)}
               onConnect={() => void handleConnectOAuth(connection.id)}
               onDisconnect={() => void handleDisconnect(connection)}
               onRemove={() => handleRemove(connection)}
@@ -578,17 +606,11 @@ export function McpConnectionsScreen() {
       <AddConnectionDialog
         open={formOpen}
         preset={formPreset}
-        presets={presets}
-        existingConnectionUrls={connections.map((connection) => connection.url)}
         submitting={createConnection.isPending}
         error={createConnection.error}
         onClose={() => {
           setFormOpen(false);
           setFormPreset(null);
-        }}
-        onSelectPreset={(selectedPreset) => {
-          createConnection.reset();
-          setFormPreset(selectedPreset);
         }}
         onSubmit={handleCreate}
       />
@@ -602,6 +624,21 @@ export function McpConnectionsScreen() {
           setEditingConnection(null);
         }}
         onSubmit={handleUpdate}
+      />
+
+      <IssuerReviewDialog
+        connection={issuerReviewConnection}
+        preview={issuerReviewPreview}
+        loading={reviewIssuer.isPending}
+        error={reviewIssuer.error}
+        onRetry={() => issuerReviewConnection ? void handleOpenIssuerReview(issuerReviewConnection) : undefined}
+        onClose={() => {
+          if (reviewIssuer.isPending) return;
+          setIssuerReviewConnection(null);
+          setIssuerReviewPreview(null);
+          reviewIssuer.reset();
+        }}
+        onConfirm={(issuer) => void handleConfirmIssuer(issuer)}
       />
 
       <ImportPluginConnectionDialog
@@ -1187,6 +1224,119 @@ function GoogleWorkspaceDialog({
   );
 }
 
+function IssuerReviewDialog({
+  connection,
+  preview,
+  loading,
+  error,
+  onRetry,
+  onClose,
+  onConfirm,
+}: {
+  connection: ExternalMcpConnection | null;
+  preview: McpIssuerReview | null;
+  loading: boolean;
+  error: Error | null;
+  onRetry: () => void;
+  onClose: () => void;
+  onConfirm: (issuer: string) => void;
+}) {
+  const [selectedIssuer, setSelectedIssuer] = useState("");
+
+  useEffect(() => {
+    if (!preview) {
+      setSelectedIssuer("");
+      return;
+    }
+    setSelectedIssuer(
+      preview.currentIssuer && preview.advertisedIssuers.includes(preview.currentIssuer)
+        ? preview.currentIssuer
+        : preview.advertisedIssuers[0] ?? "",
+    );
+  }, [preview]);
+
+  if (!connection) return null;
+  const issuerWillChange = Boolean(preview && selectedIssuer && selectedIssuer !== preview.currentIssuer);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/35 px-4" role="presentation">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mcp-issuer-review-title"
+        className="w-full max-w-xl rounded-[28px] border border-gray-100 bg-white p-6 shadow-2xl shadow-gray-950/20"
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-amber-700">
+            <AlertTriangle className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div>
+            <h2 id="mcp-issuer-review-title" className="text-[18px] font-semibold text-gray-950">Review OAuth provider</h2>
+            <p className="mt-1 text-[13px] leading-5 text-gray-600">
+              {connection.name} now advertises OAuth metadata that differs from the issuer previously approved for this connection.
+            </p>
+          </div>
+        </div>
+
+        {loading && !preview ? (
+          <div className="mt-6 flex items-center gap-2 rounded-2xl bg-gray-50 px-4 py-4 text-[13px] text-gray-600">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Checking the provider&apos;s live OAuth metadata…
+          </div>
+        ) : error && !preview ? (
+          <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-[13px] text-red-700" role="alert">
+            <p>{error.message}</p>
+            <DenButton className="mt-3" variant="secondary" size="sm" onClick={onRetry}>Try again</DenButton>
+          </div>
+        ) : preview ? (
+          <div className="mt-6 space-y-4">
+            <div className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400">Previously approved</p>
+              <p className="mt-1 break-all font-mono text-[12px] text-gray-700">{preview.currentIssuer ?? "No issuer selected"}</p>
+            </div>
+            <fieldset>
+              <legend className="text-[13px] font-semibold text-gray-900">Issuer advertised now</legend>
+              <div className="mt-2 space-y-2">
+                {preview.advertisedIssuers.map((issuer) => (
+                  <label key={issuer} className="flex cursor-pointer items-start gap-3 rounded-2xl border border-gray-200 px-4 py-3 transition has-[:checked]:border-gray-950 has-[:checked]:bg-gray-50">
+                    <input
+                      type="radio"
+                      name="mcp-oauth-issuer"
+                      value={issuer}
+                      checked={selectedIssuer === issuer}
+                      onChange={() => setSelectedIssuer(issuer)}
+                      className="mt-0.5"
+                    />
+                    <span className="break-all font-mono text-[12px] text-gray-700">{issuer}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <div className={`rounded-2xl px-4 py-3 text-[12px] leading-5 ${issuerWillChange ? "bg-amber-50 text-amber-800" : "bg-blue-50 text-blue-800"}`}>
+              {issuerWillChange
+                ? "Confirming a different issuer clears the old OAuth client and credentials. Everyone will reconnect against the newly approved provider."
+                : "Confirming the same issuer clears the stale discovery cache without signing anyone out."}
+            </div>
+            {error ? <p className="text-[12px] text-red-600" role="alert">{error.message}</p> : null}
+          </div>
+        ) : null}
+
+        <div className="mt-6 flex justify-end gap-2">
+          <DenButton variant="secondary" size="sm" disabled={loading} onClick={onClose}>Cancel</DenButton>
+          <DenButton
+            variant="primary"
+            size="sm"
+            loading={loading && Boolean(preview)}
+            disabled={!preview || !selectedIssuer}
+            onClick={() => onConfirm(selectedIssuer)}
+          >
+            Confirm issuer
+          </DenButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function accessSummaryLabel(connection: ExternalMcpConnection): string {
   const access = connection.access;
   if (!access) return "";
@@ -1204,8 +1354,8 @@ function ConnectionRow({
   polling,
   connecting,
   errorMessage,
-  errorCode,
   onEdit,
+  onReviewIssuer,
   onConnect,
   onDisconnect,
   onRemove,
@@ -1220,8 +1370,8 @@ function ConnectionRow({
   polling: boolean;
   connecting: boolean;
   errorMessage: string | null;
-  errorCode: McpConnectionOAuthStartErrorCode | null;
   onEdit: () => void;
+  onReviewIssuer: () => void;
   onConnect: () => void;
   onDisconnect: () => void;
   onRemove: () => void;
@@ -1236,11 +1386,10 @@ function ConnectionRow({
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement>(null);
   const displayedConnected = connection.connected && !needsAdminSetup;
-  const configurationRequired = errorCode === "mcp_oauth_configuration_required"
-    || errorCode === "mcp_oauth_issuer_mismatch";
-  const canConnectOAuth = !needsAdminSetup && !configurationRequired && connection.authType === "oauth"
+  const canConnectOAuth = !needsAdminSetup && !connection.issuerReviewRequired && connection.authType === "oauth"
     && (isPerMember ? !connection.connectedForMe : !connection.connected);
-  const canInspectTools = !needsAdminSetup && (connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe);
+  const canInspectTools = !needsAdminSetup && !connection.issuerReviewRequired
+    && (connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe);
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -1276,6 +1425,11 @@ function ConnectionRow({
               {needsAdminSetup ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   Setup required
+                </span>
+              ) : connection.issuerReviewRequired ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  <AlertTriangle className="h-3 w-3" />
+                  OAuth settings need review
                 </span>
               ) : isPerMember ? (
                 <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${connection.connected ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
@@ -1322,9 +1476,9 @@ function ConnectionRow({
               Set up
             </Link>
           ) : null}
-          {configurationRequired ? (
-            <DenButton variant="primary" size="sm" onClick={onEdit}>
-              Configure
+          {connection.issuerReviewRequired ? (
+            <DenButton variant="primary" size="sm" icon={AlertTriangle} onClick={onReviewIssuer}>
+              Review OAuth
             </DenButton>
           ) : null}
           {canConnectOAuth ? (
@@ -2013,22 +2167,16 @@ function EditConnectionDialog({
 function AddConnectionDialog({
   open,
   preset,
-  presets,
-  existingConnectionUrls,
   submitting,
   error,
   onClose,
-  onSelectPreset,
   onSubmit,
 }: {
   open: boolean;
   preset: ExternalMcpPreset | null;
-  presets: ExternalMcpPreset[];
-  existingConnectionUrls: string[];
   submitting: boolean;
   error: unknown;
   onClose: () => void;
-  onSelectPreset: (preset: ExternalMcpPreset | null) => void;
   onSubmit: (
     input: CreateMcpConnectionInput,
     options: { startOAuth: boolean },
@@ -2037,10 +2185,9 @@ function AddConnectionDialog({
   const { orgContext } = useOrgDashboard();
   const discoverRequirements = useDiscoverMcpConnectionRequirements();
   const resolveConnection = useResolveMcpConnection();
-  // The picker keeps known services separate from the custom URL path.
-  // Presets land in their prefilled form; Custom MCP uses discovery first.
-  const [view, setView] = useState<"picker" | "smart" | "advanced">(preset ? "advanced" : "picker");
-  const [presetFilter, setPresetFilter] = useState("");
+  // Preset quick-add cards land in their prefilled form. The generic MCP
+  // action opens directly on URL discovery.
+  const [view, setView] = useState<"smart" | "advanced">(preset ? "advanced" : "smart");
   const [smartQuery, setSmartQuery] = useState("");
   const [smartState, setSmartState] = useState<"idle" | "waiting" | "resolving" | "done" | "error">("idle");
   const [smartError, setSmartError] = useState<unknown>(null);
@@ -2068,8 +2215,7 @@ function AddConnectionDialog({
 
   useEffect(() => {
     if (!open) return;
-    setView(preset ? "advanced" : "picker");
-    setPresetFilter("");
+    setView(preset ? "advanced" : "smart");
     setSmartQuery("");
     setSmartState("idle");
     setSmartError(null);
@@ -2102,15 +2248,6 @@ function AddConnectionDialog({
     () => (orgContext?.members ?? []).filter((member) => Boolean(member.userId)),
     [orgContext?.members],
   );
-  const filteredPresets = useMemo(() => {
-    const query = presetFilter.trim().toLowerCase();
-    if (!query) return presets;
-    return presets.filter((service) => (
-      service.displayName.toLowerCase().includes(query)
-      || service.description.toLowerCase().includes(query)
-      || service.url.toLowerCase().includes(query)
-    ));
-  }, [presetFilter, presets]);
 
   function toggle(list: string[], id: string): string[] {
     return list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id];
@@ -2321,97 +2458,11 @@ function AddConnectionDialog({
         className="max-h-[calc(100dvh-3rem)] w-full max-w-md overflow-y-auto overscroll-contain rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
-        {view === "picker" ? (
+        {view === "smart" ? (
           <>
-            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-              Add a connection
-            </h2>
-            <p className="mt-1.5 text-[13px] leading-5 text-gray-500">
-              Choose a service, or connect an MCP server by URL.
-            </p>
-
-            <button
-              type="button"
-              onClick={() => setView("smart")}
-              className="group mt-5 flex w-full items-center gap-3 rounded-2xl border border-gray-200 px-3.5 py-3 text-left transition hover:border-gray-400 hover:bg-gray-50"
-              data-testid="select-custom-mcp"
-            >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-900 text-white">
-                <Server className="h-4 w-4" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[14px] font-semibold text-gray-950">Custom MCP</span>
-                <span className="mt-0.5 block truncate text-[12px] text-gray-500">Connect with a server URL</span>
-              </span>
-              <span className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] font-semibold text-gray-800 shadow-sm transition group-hover:border-gray-300">
-                Add
-              </span>
-            </button>
-
-            <div className="mt-5">
-              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400">
-                Services
-              </label>
-              <DenInput
-                aria-label="Filter services"
-                icon={Search}
-                value={presetFilter}
-                onChange={(event) => setPresetFilter(event.target.value)}
-                placeholder="Search services"
-              />
-            </div>
-
-            <div
-              className="mt-3 max-h-[min(42vh,340px)] space-y-2 overflow-y-auto overscroll-contain pr-1"
-              data-testid="mcp-service-picker"
-            >
-              {filteredPresets.map((service) => {
-                const alreadyAdded = existingConnectionUrls.includes(service.url);
-                return (
-                  <button
-                    key={service.presetId}
-                    type="button"
-                    disabled={alreadyAdded}
-                    onClick={() => onSelectPreset(service)}
-                    className="group flex w-full items-center gap-3 rounded-2xl border border-gray-200 px-3.5 py-3 text-left transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <IntegrationIcon name={service.displayName} serviceUrl={service.url} className="h-10 w-10 rounded-xl" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[14px] font-semibold text-gray-950">{service.displayName}</span>
-                      <span className="mt-0.5 block truncate text-[12px] text-gray-500">{service.description}</span>
-                    </span>
-                    <span className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] font-semibold text-gray-800 shadow-sm transition group-hover:border-gray-300">
-                      {alreadyAdded ? "Added" : "Add"}
-                    </span>
-                  </button>
-                );
-              })}
-              {filteredPresets.length === 0 ? (
-                <p className="rounded-2xl border border-dashed border-gray-200 px-4 py-6 text-center text-[13px] text-gray-500">
-                  No services match “{presetFilter.trim()}”.
-                </p>
-              ) : null}
-            </div>
-
-            <div className="mt-5 flex justify-end">
-              <DenButton variant="secondary" onClick={onClose}>
-                Cancel
-              </DenButton>
-            </div>
-          </>
-        ) : view === "smart" ? (
-          <>
-            <button
-              type="button"
-              onClick={() => setView("picker")}
-              className="mb-2 flex items-center gap-1 text-[12px] font-medium text-gray-500 transition hover:text-gray-900"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              All connections
-            </button>
             <h2 className="flex items-center gap-2 text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
               <Server className="h-4 w-4 text-gray-400" />
-              Custom MCP
+              Add an MCP server
             </h2>
             <p className="mt-1.5 text-[13px] leading-5 text-gray-500">
               Paste the MCP server URL and we&apos;ll find and check its authentication requirements.
@@ -2541,17 +2592,16 @@ function AddConnectionDialog({
           </>
         ) : (
           <>
-        <button
-          type="button"
-          onClick={() => {
-            if (preset) onSelectPreset(null);
-            else setView("smart");
-          }}
-          className="mb-2 flex items-center gap-1 text-[12px] font-medium text-gray-500 transition hover:text-gray-900"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          {preset ? "All connections" : "Custom MCP"}
-        </button>
+        {!preset ? (
+          <button
+            type="button"
+            onClick={() => setView("smart")}
+            className="mb-2 flex items-center gap-1 text-[12px] font-medium text-gray-500 transition hover:text-gray-900"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            MCP server
+          </button>
+        ) : null}
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
           {preset ? `Add ${preset.displayName}` : "Add a custom MCP server"}
         </h2>

@@ -227,6 +227,7 @@ export type StatusBarProps = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
   developerMode: boolean;
+  showConnectionStatus?: boolean;
   settingsOpen: boolean;
   onSendFeedback: () => void;
   onOpenSettings: () => void;
@@ -368,18 +369,20 @@ export function StatusBar(props: StatusBarProps) {
     <div className="border-t border-border bg-background">
       <div className="flex h-8 items-center justify-between gap-3 px-4 md:px-6">
         <div className="flex min-w-0 items-center gap-3">
-          <StatusIndicator
-            clientConnected={props.clientConnected}
-            openworkServerStatus={props.openworkServerStatus}
-            developerMode={props.developerMode}
-            loading={props.loading}
-            initializing={initializing}
-            reloadBusy={props.reloadBusy}
-            reloadError={props.reloadError}
-          />
+          {props.showConnectionStatus !== false ? (
+            <StatusIndicator
+              clientConnected={props.clientConnected}
+              openworkServerStatus={props.openworkServerStatus}
+              developerMode={props.developerMode}
+              loading={props.loading}
+              initializing={initializing}
+              reloadBusy={props.reloadBusy}
+              reloadError={props.reloadError}
+            />
+          ) : null}
           {openWorkConnectStatus ? (
             <>
-              <span className="h-3.5 w-px shrink-0 bg-border" />
+              {props.showConnectionStatus !== false ? <span className="h-3.5 w-px shrink-0 bg-border" /> : null}
               <OpenWorkConnectIndicator
                 status={openWorkConnectStatus}
                 onRunDiagnostics={() => navigate("/settings/connect")}

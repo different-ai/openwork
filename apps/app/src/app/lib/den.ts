@@ -208,6 +208,8 @@ export type DenExternalMcpConnection = {
   /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
   connectedForMe: boolean;
   needsReconnect?: boolean;
+  issuerReviewRequired?: boolean;
+  reconnectActionOwner?: "member" | "organization_admin" | null;
   missingFeatures?: string[];
   externalAccountId?: string | null;
   grantedScopes?: string[];
@@ -1213,6 +1215,10 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
     connectedAt: typeof value.connectedAt === "string" ? value.connectedAt : null,
     connectedForMe: value.connectedForMe === true,
     ...(typeof value.needsReconnect === "boolean" ? { needsReconnect: value.needsReconnect } : {}),
+    ...(typeof value.issuerReviewRequired === "boolean" ? { issuerReviewRequired: value.issuerReviewRequired } : {}),
+    ...(value.reconnectActionOwner === "member" || value.reconnectActionOwner === "organization_admin" || value.reconnectActionOwner === null
+      ? { reconnectActionOwner: value.reconnectActionOwner }
+      : {}),
     ...(Array.isArray(value.missingFeatures) ? { missingFeatures: readStringArray(value.missingFeatures) } : {}),
     ...(typeof value.externalAccountId === "string" || value.externalAccountId === null ? { externalAccountId: value.externalAccountId } : {}),
     ...(Array.isArray(value.grantedScopes) ? { grantedScopes: readStringArray(value.grantedScopes) } : {}),

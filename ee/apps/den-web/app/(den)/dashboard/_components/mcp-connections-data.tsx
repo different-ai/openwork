@@ -48,6 +48,11 @@ export type ExternalMcpConnection = {
   updatedAt: string | null;
   connectedForMe: boolean;
   needsReconnect?: boolean;
+  credentialHealth?: "unknown" | "ready" | "reconnect_required";
+  credentialHealthReason?: "authorization_rejected" | "credential_expired" | "post_authorization_validation_failed" | null;
+  credentialHealthCheckedAt?: string | null;
+  issuerReviewRequired?: boolean;
+  reconnectActionOwner?: "member" | "organization_admin" | null;
   missingFeatures?: string[];
   externalAccountId?: string | null;
   grantedScopes?: string[];
@@ -111,6 +116,15 @@ export type McpRequirementsDiscovery = {
   };
   manualRequirements: Array<{ code: string; label: string; reason: string; required: boolean }>;
   warnings: Array<{ code: string; message: string }>;
+};
+
+export type McpIssuerReview = {
+  currentIssuer: string | null;
+  advertisedIssuers: string[];
+  reviewRequired: boolean;
+  issuerChanged?: boolean;
+  reconnectionRequired?: boolean;
+  updatedAt?: string;
 };
 
 export type ExternalMcpTool = {
@@ -398,6 +412,13 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
     updatedAt: typeof connection.updatedAt === "string" ? connection.updatedAt : null,
     ...(typeof connection.createdByName === "string" || connection.createdByName === null ? { createdByName: connection.createdByName } : {}),
     ...(typeof connection.needsReconnect === "boolean" ? { needsReconnect: connection.needsReconnect } : {}),
+    ...(connection.credentialHealth === "unknown" || connection.credentialHealth === "ready" || connection.credentialHealth === "reconnect_required"
+      ? { credentialHealth: connection.credentialHealth }
+      : {}),
+    ...(typeof connection.issuerReviewRequired === "boolean" ? { issuerReviewRequired: connection.issuerReviewRequired } : {}),
+    ...(connection.reconnectActionOwner === "member" || connection.reconnectActionOwner === "organization_admin" || connection.reconnectActionOwner === null
+      ? { reconnectActionOwner: connection.reconnectActionOwner }
+      : {}),
     ...(isStringArray(connection.missingFeatures) ? { missingFeatures: connection.missingFeatures } : {}),
     ...(typeof connection.externalAccountId === "string" || connection.externalAccountId === null
       ? { externalAccountId: connection.externalAccountId }
@@ -532,20 +553,6 @@ export type UpdatedMcpConnection = ExternalMcpConnection & {
   reconnectionRequired: boolean;
 };
 
-export type McpConnectionOAuthStartErrorCode =
-  | "mcp_oauth_configuration_required"
-  | "mcp_oauth_issuer_mismatch";
-
-export class McpConnectionOAuthStartError extends Error {
-  readonly code: McpConnectionOAuthStartErrorCode;
-
-  constructor(code: McpConnectionOAuthStartErrorCode, message: string) {
-    super(message);
-    this.name = "McpConnectionOAuthStartError";
-    this.code = code;
-  }
-}
-
 export function useCreateMcpConnection() {
   const queryClient = useQueryClient();
   const { orgId, runReauthableAction } = useOrgDashboard();
@@ -601,6 +608,50 @@ export function useUpdateMcpConnection() {
   });
 }
 
+export function useReviewMcpIssuer() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: {
+      connectionId: string;
+      action: "preview" | "confirm";
+      expectedUpdatedAt?: string;
+      authorizationServerIssuer?: string;
+    }): Promise<McpIssuerReview> => {
+      let review: McpIssuerReview | null = null;
+      const request = async () => {
+        const { connectionId, ...body } = input;
+        const { response, payload } = await requestJson(
+          `/v1/mcp-connections/${encodeURIComponent(connectionId)}/oauth/issuer-review`,
+          {
+            method: "POST",
+            headers: getOrgScopeHeaders(requireOrgId(orgId)),
+            body: JSON.stringify(body),
+          },
+          30000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to review the OAuth issuer (${response.status}).`);
+        }
+        review = payload as McpIssuerReview;
+      };
+      if (input.action === "confirm") {
+        await runReauthableAction("review-mcp-oauth-issuer", request);
+      } else {
+        await request();
+      }
+      if (!review) throw new Error("OAuth issuer review response was incomplete.");
+      return review;
+    },
+    onSuccess: (_review, input) => {
+      if (input.action === "confirm") {
+        queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
+      }
+    },
+  });
+}
+
 export function useReplaceMcpConnectionAccess() {
   const queryClient = useQueryClient();
   const { orgId, runReauthableAction } = useOrgDashboard();
@@ -639,16 +690,6 @@ export function useStartMcpConnectionOAuth() {
         20000,
       );
       if (!response.ok) {
-        if (
-          isRecord(payload)
-          && typeof payload.message === "string"
-          && (
-            payload.error === "mcp_oauth_configuration_required"
-            || payload.error === "mcp_oauth_issuer_mismatch"
-          )
-        ) {
-          throw new McpConnectionOAuthStartError(payload.error, payload.message);
-        }
         throw getRequestError(payload, response, `Failed to start OAuth (${response.status}).`);
       }
       return payload as { status: "connected" | "needs_auth"; authorizeUrl: string | null };

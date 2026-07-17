@@ -12,7 +12,6 @@ import {
   getMarketplacesRoute,
   getOrgAccessFlags,
   getPluginRoute,
-  getYourConnectionsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -33,7 +32,6 @@ import {
   findPresetForRequirement,
   pluginReadinessConnectionAction,
   pluginRequirementNeedsAdminSetup,
-  pluginSetupActionLabel,
   pluginSetupAuthLabel,
   pluginSetupCredentialMode,
   pluginSetupInitialState,
@@ -42,6 +40,7 @@ import {
   serviceNameForRequirement,
 } from "./marketplace-mcp-setup";
 import { MarketplaceLogo } from "./marketplace-logo";
+import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
 
 const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }> = {
   skill: { singular: "skill", plural: "skills" },
@@ -63,14 +62,12 @@ function componentTypeLabel(type: string, count: number) {
   return count === 1 ? label.singular : label.plural;
 }
 
-type PluginMcpSetupTarget = {
-  plugin: MarketplacePluginSummary;
+export type PluginMcpSetupTarget = {
+  plugin: Pick<MarketplacePluginSummary, "id" | "name">;
   connection: MarketplacePluginCloudReadinessConnection;
 };
 
-function yourConnectionsFocusRoute(orgSlug: string | null, connectionId: string): string {
-  return `${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(connectionId)}`;
-}
+type MarketplaceDetailTab = "plugins" | "members" | "configure";
 
 function authTypeFromSelect(value: string): ExternalMcpAuthType {
   if (value === "apikey" || value === "none") return value;
@@ -79,14 +76,28 @@ function authTypeFromSelect(value: string): ExternalMcpAuthType {
 
 export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: string }) {
   const { orgContext, orgSlug } = useOrgDashboard();
-  const { data, isLoading, error } = useMarketplace(marketplaceId);
+  const { data, isLoading, error, refetch } = useMarketplace(marketplaceId);
   const { data: presets = [] } = useMcpConnectionPresets();
   const [setupTarget, setSetupTarget] = useState<PluginMcpSetupTarget | null>(null);
+  const [activeTab, setActiveTab] = useState<MarketplaceDetailTab>("plugins");
+  const authorization = useMcpAccountAuthorization(() => {
+    void refetch();
+  });
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
     orgContext?.roles ?? [],
   );
+  const configurationTargets = useMemo(() => (
+    data?.plugins.flatMap((plugin) => (
+      plugin.cloudReadiness?.connections
+        .filter((connection) => (
+          pluginRequirementNeedsAdminSetup(connection)
+          || pluginReadinessConnectionAction(connection, access.isAdmin) !== null
+        ))
+        .map((connection) => ({ plugin, connection })) ?? []
+    )) ?? []
+  ), [access.isAdmin, data]);
 
   if (isLoading && !data) {
     return (
@@ -109,6 +120,15 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   }
 
   const { marketplace, plugins, source } = data;
+  const tabs: Array<{
+    id: MarketplaceDetailTab;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }> = [
+    { id: "plugins", label: "Plugins", icon: Puzzle },
+    { id: "members", label: "Members", icon: Users },
+    { id: "configure", label: "Configure", icon: Plug },
+  ];
 
   return (
     <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
@@ -159,74 +179,135 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         </div>
       </article>
 
-      <div className="mt-6 space-y-6">
-        {source ? (
-          <section>
-            <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Source
-            </h2>
-            <Link
-              href={getGithubIntegrationSetupRoute(orgSlug, source.connectorInstanceId)}
-              className="group flex items-center gap-4 rounded-2xl border border-gray-100 bg-white px-4 py-3 transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.08)]"
-            >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-gray-50 text-gray-600 group-hover:bg-gray-100 group-hover:text-gray-800">
-                <Github className="h-4 w-4" aria-hidden />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
-                  {source.repositoryFullName}
+      <div className="mt-6">
+        <div
+          className="grid w-full grid-cols-3 gap-1 rounded-2xl border border-gray-100 bg-gray-50/80 p-1 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:w-fit"
+          role="tablist"
+          aria-label="Marketplace sections"
+        >
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                id={`marketplace-${tab.id}-tab`}
+                aria-controls={`marketplace-${tab.id}-panel`}
+                aria-selected={active}
+                onClick={() => setActiveTab(tab.id)}
+                className={`inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-[12.5px] font-medium transition-all ${
+                  active
+                    ? "border border-gray-100 bg-white text-gray-950 shadow-[0_2px_8px_-3px_rgba(15,23,42,0.18)]"
+                    : "border border-transparent text-gray-500 hover:bg-white/70 hover:text-gray-800"
+                }`}
+              >
+                <Icon className={`h-3.5 w-3.5 ${active ? "text-gray-700" : "text-gray-400"}`} />
+                <span>{tab.label}</span>
+                {tab.id === "configure" ? (
+                  <span
+                    className={`inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                      configurationTargets.length > 0
+                        ? "bg-amber-50 text-amber-700"
+                        : active
+                          ? "bg-gray-100 text-gray-500"
+                          : "bg-white text-gray-400"
+                    }`}
+                  >
+                    {configurationTargets.length}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-6">
+        {activeTab === "plugins" ? (
+          <div id="marketplace-plugins-panel" role="tabpanel" aria-labelledby="marketplace-plugins-tab" className="space-y-6">
+            {source ? (
+              <section>
+                <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                  Source
+                </h2>
+                <Link
+                  href={getGithubIntegrationSetupRoute(orgSlug, source.connectorInstanceId)}
+                  className="group flex items-center gap-4 rounded-2xl border border-gray-100 bg-white px-4 py-3 transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.08)]"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-gray-50 text-gray-600 group-hover:bg-gray-100 group-hover:text-gray-800">
+                    <Github className="h-4 w-4" aria-hidden />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+                      {source.repositoryFullName}
+                    </p>
+                    <p className="mt-0.5 truncate text-[12.5px] text-gray-500">
+                      {source.accountLogin ? `@${source.accountLogin}` : "GitHub connector"}
+                      {source.branch ? (
+                        <>
+                          <span className="mx-1.5 text-gray-300">·</span>
+                          <GitBranch className="mr-1 inline h-3 w-3 text-gray-400" aria-hidden />
+                          {source.branch}
+                        </>
+                      ) : null}
+                    </p>
+                  </div>
+                </Link>
+              </section>
+            ) : null}
+
+            <section>
+              <div className="mb-3 flex items-baseline justify-between gap-3">
+                <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                  Plugins
+                </h2>
+                <p className="text-[11px] text-gray-400">
+                  {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
                 </p>
-                <p className="mt-0.5 truncate text-[12.5px] text-gray-500">
-                  {source.accountLogin ? `@${source.accountLogin}` : "GitHub connector"}
-                  {source.branch ? (
-                    <>
-                      <span className="mx-1.5 text-gray-300">·</span>
-                      <GitBranch className="mr-1 inline h-3 w-3 text-gray-400" aria-hidden />
-                      {source.branch}
-                    </>
-                  ) : null}
-                </p>
               </div>
-            </Link>
-          </section>
+
+              {plugins.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
+                  <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
+                    No plugins in this marketplace yet
+                  </p>
+                  <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
+                    Plugins appear here as they're imported from the source repository.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid items-start gap-3 md:grid-cols-2">
+                  {plugins.map((plugin) => (
+                    <MarketplacePluginCard key={plugin.id} orgSlug={orgSlug} plugin={plugin} />
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
         ) : null}
 
-        <MarketplaceAccessSection marketplaceId={marketplace.id} />
-
-        <section>
-          <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Plugins
-            </h2>
-            <p className="text-[11px] text-gray-400">
-              {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
-            </p>
+        {activeTab === "members" ? (
+          <div id="marketplace-members-panel" role="tabpanel" aria-labelledby="marketplace-members-tab">
+            <MarketplaceAccessSection marketplaceId={marketplace.id} />
           </div>
+        ) : null}
 
-          {plugins.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
-              <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
-                No plugins in this marketplace yet
-              </p>
-              <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
-                Plugins appear here as they're imported from the source repository.
-              </p>
-            </div>
-          ) : (
-            <div className="grid items-start gap-3 md:grid-cols-2">
-              {plugins.map((plugin) => (
-                <MarketplacePluginCard
-                  key={plugin.id}
-                  orgSlug={orgSlug}
-                  plugin={plugin}
-                  isAdmin={access.isAdmin}
-                  presets={presets}
-                  onSetup={(connection) => setSetupTarget({ plugin, connection })}
-                />
-              ))}
-            </div>
-          )}
-        </section>
+        {activeTab === "configure" ? (
+          <div id="marketplace-configure-panel" role="tabpanel" aria-labelledby="marketplace-configure-tab">
+            <MarketplaceConfigureSection
+              targets={configurationTargets}
+              presets={presets}
+              isAdmin={access.isAdmin}
+              connectingConnectionId={authorization.connectingConnectionId}
+              connectError={authorization.error}
+              pollingConnectionId={authorization.pollingConnectionId}
+              onConnect={(connectionId) => void authorization.connect(connectionId)}
+              onSetup={setSetupTarget}
+            />
+          </div>
+        ) : null}
       </div>
 
       <PluginMcpSetupDialog
@@ -570,76 +651,138 @@ function AccessAddPicker({
   );
 }
 
-function MarketplacePluginCard({
+function MarketplaceConfigureSection({
+  connectError,
+  connectingConnectionId,
   isAdmin,
-  orgSlug,
-  plugin,
+  onConnect,
+  pollingConnectionId,
+  targets,
   presets,
   onSetup,
 }: {
+  connectError: { connectionId: string; message: string } | null;
+  connectingConnectionId: string | null;
   isAdmin: boolean;
+  onConnect: (connectionId: string) => void;
+  pollingConnectionId: string | null;
+  targets: PluginMcpSetupTarget[];
+  presets: ExternalMcpPreset[];
+  onSetup: (target: PluginMcpSetupTarget) => void;
+}) {
+  if (targets.length === 0) {
+    return (
+      <div className="rounded-2xl border border-gray-100 bg-white px-5 py-10 text-center">
+        <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900">Everything is configured</p>
+        <p className="mx-auto mt-1.5 max-w-[420px] text-[13px] leading-6 text-gray-500">
+          This marketplace has no MCP configuration actions waiting.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <section>
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <div>
+          <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            Actions required
+          </h2>
+          <p className="mt-1 text-[12.5px] text-gray-500">
+            Configure services that need setup, or connect accounts that are ready.
+          </p>
+        </div>
+        <p className="shrink-0 text-[11px] font-medium text-amber-700">
+          {targets.length} needed
+        </p>
+      </div>
+
+      <div className="divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white">
+        {targets.map((target) => {
+          const preset = findPresetForRequirement(presets, target.connection);
+          const serviceName = serviceNameForRequirement(target.connection, preset);
+          const needsAdminSetup = pluginRequirementNeedsAdminSetup(target.connection);
+          const readinessAction = needsAdminSetup
+            ? null
+            : pluginReadinessConnectionAction(target.connection, isAdmin);
+
+          return (
+            <div key={`${target.plugin.id}:${target.connection.configObjectId}:${target.connection.serverName}`} className="px-4 py-3.5">
+              <div className="flex items-center gap-3">
+                <IntegrationIcon
+                  name={serviceName}
+                  serviceUrl={target.connection.url}
+                  className="h-9 w-9 rounded-[10px]"
+                  imageClassName="h-4 w-4"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13.5px] font-semibold text-gray-900">{serviceName}</p>
+                  <p className="mt-0.5 truncate text-[11.5px] text-gray-500">Required by {target.plugin.name}</p>
+                </div>
+                {needsAdminSetup ? (
+                  isAdmin ? (
+                    <DenButton
+                      variant="secondary"
+                      size="sm"
+                      icon={Plug}
+                      className="h-8 shrink-0 px-3 text-[11.5px]"
+                      onClick={() => onSetup(target)}
+                    >
+                      Configure
+                    </DenButton>
+                  ) : (
+                    <span className="shrink-0 text-[11px] font-medium text-gray-500">Admin setup needed</span>
+                  )
+                ) : readinessAction ? (
+                  <DenButton
+                    variant="secondary"
+                    size="sm"
+                    icon={Plug}
+                    className="h-8 shrink-0 px-3 text-[11.5px]"
+                    loading={connectingConnectionId === readinessAction.connectionId || pollingConnectionId === readinessAction.connectionId}
+                    onClick={() => onConnect(readinessAction.connectionId)}
+                  >
+                    Connect
+                  </DenButton>
+                ) : null}
+              </div>
+
+              {connectError && connectError.connectionId === readinessAction?.connectionId ? (
+                <p className="ml-12 mt-1.5 text-[11px] leading-4 text-red-600">{connectError.message}</p>
+              ) : null}
+
+              <details className="group/connection ml-12 mt-1.5">
+                <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[10.5px] text-gray-400 transition hover:text-gray-600 [&::-webkit-details-marker]:hidden">
+                  Details
+                  <ChevronDown className="h-2.5 w-2.5 transition-transform group-open/connection:rotate-180" aria-hidden="true" />
+                </summary>
+                <div className="mt-1.5 rounded-lg bg-gray-50 px-2.5 py-2">
+                  <p className="break-all font-mono text-[10px] leading-4 text-gray-500">
+                    Plugin-declared URL (read-only): {target.connection.url}
+                  </p>
+                  {readinessAction ? (
+                    <p className="mt-1 text-[11px] leading-4 text-gray-600">{readinessAction.note}</p>
+                  ) : null}
+                </div>
+              </details>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function MarketplacePluginCard({
+  orgSlug,
+  plugin,
+}: {
   orgSlug: string | null;
   plugin: MarketplacePluginSummary;
-  presets: ExternalMcpPreset[];
-  onSetup: (connection: MarketplacePluginCloudReadinessConnection) => void;
 }) {
   const orderedCountEntries = Object.entries(plugin.componentCounts)
     .filter(([, count]) => count > 0)
     .sort((a, b) => b[1] - a[1]);
-  const actionableConnections = plugin.cloudReadiness?.connections.filter((connection) => (
-    pluginRequirementNeedsAdminSetup(connection) || pluginReadinessConnectionAction(connection, isAdmin) !== null
-  )) ?? [];
-  const connectionRows = actionableConnections.map((connection) => {
-    const preset = findPresetForRequirement(presets, connection);
-    const serviceName = serviceNameForRequirement(connection, preset);
-    const needsAdminSetup = pluginRequirementNeedsAdminSetup(connection);
-    const readinessAction = needsAdminSetup ? null : pluginReadinessConnectionAction(connection, isAdmin);
-    return (
-      <div key={`${connection.configObjectId}:${connection.serverName}`} className="px-3 py-2.5">
-        <div className="flex items-center gap-2">
-          <IntegrationIcon name={serviceName} serviceUrl={connection.url} className="h-7 w-7 rounded-lg" imageClassName="h-3.5 w-3.5" />
-          <p className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-gray-900">{serviceName}</p>
-          {needsAdminSetup ? (
-            isAdmin ? (
-              <DenButton
-                variant="secondary"
-                size="sm"
-                icon={Plug}
-                className="h-7 shrink-0 px-2.5 text-[11px]"
-                onClick={() => onSetup(connection)}
-              >
-                Connect
-              </DenButton>
-            ) : (
-              <span className="shrink-0 text-[11px] font-medium text-gray-500">Admin setup needed</span>
-            )
-          ) : readinessAction ? (
-            <Link
-              href={yourConnectionsFocusRoute(orgSlug, readinessAction.connectionId)}
-              className={buttonVariants({ variant: "secondary", size: "sm", className: "h-7 shrink-0 px-2.5 text-[11px]" })}
-            >
-              <Plug className="h-3 w-3" aria-hidden="true" />
-              Connect
-            </Link>
-          ) : null}
-        </div>
-        <details className="group/connection ml-9 mt-1">
-          <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[10.5px] text-gray-400 transition hover:text-gray-600 [&::-webkit-details-marker]:hidden">
-            Details
-            <ChevronDown className="h-2.5 w-2.5 transition-transform group-open/connection:rotate-180" aria-hidden="true" />
-          </summary>
-          <div className="mt-1.5 rounded-lg bg-gray-50 px-2.5 py-2">
-            <p className="break-all font-mono text-[10px] leading-4 text-gray-500">
-              Plugin-declared URL (read-only): {connection.url}
-            </p>
-            {readinessAction ? (
-              <p className="mt-1 text-[11px] leading-4 text-gray-600">{readinessAction.note}</p>
-            ) : null}
-          </div>
-        </details>
-      </div>
-    );
-  });
 
   return (
     <div id={`plugin-${plugin.id}`} className="group block self-start scroll-mt-6 overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]">
@@ -688,38 +831,11 @@ function MarketplacePluginCard({
             </p>
           )}
 
-          {plugin.cloudReadiness ? (
+          {plugin.cloudReadiness && plugin.cloudReadiness.state !== "needs_admin_setup" && plugin.cloudReadiness.state !== "needs_signin" ? (
             <div className="mt-3 border-t border-gray-50 pt-3">
-              {actionableConnections.length > 0 ? (
-                actionableConnections.length > 1 ? (
-                  <details className="group/actions overflow-hidden rounded-xl border border-gray-100 bg-gray-50/70">
-                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
-                      <div className="min-w-0">
-                        <p className="text-[12px] font-semibold text-gray-900">{actionableConnections.length} MCPs require action</p>
-                        <p className="mt-0.5 text-[10.5px] text-gray-500">Connect these services to use this plugin.</p>
-                      </div>
-                      <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-gray-600">
-                        <span className="group-open/actions:hidden">Show MCPs</span>
-                        <span className="hidden group-open/actions:inline">Hide MCPs</span>
-                        <ChevronDown className="h-3 w-3 transition-transform group-open/actions:rotate-180" aria-hidden="true" />
-                      </span>
-                    </summary>
-                    <div className="divide-y divide-gray-100 border-t border-gray-100 bg-white">{connectionRows}</div>
-                  </details>
-                ) : (
-                  <div className="overflow-hidden rounded-xl border border-gray-100 bg-gray-50/70">
-                    <div className="px-3 py-2.5">
-                      <p className="text-[12px] font-semibold text-gray-900">MCP requires action</p>
-                      <p className="mt-0.5 text-[10.5px] text-gray-500">Connect this service to use this plugin.</p>
-                    </div>
-                    <div className="border-t border-gray-100 bg-white">{connectionRows}</div>
-                  </div>
-                )
-              ) : (
-                <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${plugin.cloudReadiness.state === "ready" ? "bg-emerald-50 text-emerald-700" : plugin.cloudReadiness.state === "needs_admin_setup" ? "bg-amber-50 text-amber-700" : "bg-gray-50 text-gray-600"}`}>
-                  {cloudReadinessLabel(plugin.cloudReadiness.state)}
-                </span>
-              )}
+              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${plugin.cloudReadiness.state === "ready" ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-600"}`}>
+                {cloudReadinessLabel(plugin.cloudReadiness.state)}
+              </span>
             </div>
           ) : null}
         </div>
@@ -743,7 +859,7 @@ function cloudReadinessLabel(state: MarketplacePluginCloudReadinessState) {
   }
 }
 
-function PluginMcpSetupDialog({
+export function PluginMcpSetupDialog({
   target,
   presets,
   onClose,
@@ -821,7 +937,7 @@ function PluginMcpSetupDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
       <div
-        className="max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        className="max-h-[calc(100vh-3rem)] w-full max-w-xl overflow-y-auto rounded-[24px] border border-gray-200 bg-white p-5 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)] sm:p-6"
         onClick={(event) => event.stopPropagation()}
       >
         {result ? (
@@ -830,98 +946,100 @@ function PluginMcpSetupDialog({
             <p className="mt-2 text-[13px] leading-6 text-gray-600">
               {successCopy?.body}
             </p>
-            {successCopy?.linkLabel && result.yourConnectionsUrl ? (
-              <a href={result.yourConnectionsUrl} className="mt-4 block rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3 text-[13px] font-medium text-gray-900 transition hover:border-gray-200">
-                {successCopy.linkLabel}
-              </a>
-            ) : null}
             <div className="mt-6 flex justify-end">
               <DenButton variant="primary" onClick={onClose}>Done</DenButton>
             </div>
           </>
         ) : (
           <>
-            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Set up {serviceName}</h2>
-            <p className="mt-1 text-[13px] leading-6 text-gray-600">
-              This configures the MCP server declared by {target.plugin.name}. Audience is inherited from the marketplace assignment.
-            </p>
-
-            <div className="mt-5 space-y-4">
-              <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-                <p className="text-[13px] font-semibold text-gray-900">Plugin-declared URL</p>
-                <p className="mt-1 break-all font-mono text-[12px] leading-5 text-gray-700">{target.connection.url}</p>
-                <p className="mt-1 text-[12px] leading-5 text-gray-500">Read-only. The URL comes from the plugin and is verified server-side.</p>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Configure {serviceName}</h2>
+                <p className="mt-1 text-[12.5px] leading-5 text-gray-500">
+                  Required by {target.plugin.name}. Access follows this marketplace.
+                </p>
               </div>
+              <button
+                type="button"
+                aria-label="Close"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+                onClick={onClose}
+              >
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
 
-              <div>
-                <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication method</label>
-                {authAssumed ? (
-                  <>
-                    <DenSelect
-                      value={authType}
-                      onChange={(event) => {
-                        const nextAuthType = authTypeFromSelect(event.target.value);
-                        setAuthType(nextAuthType);
-                        setCredentialMode(pluginSetupCredentialMode(nextAuthType, credentialMode));
-                      }}
-                    >
-                      <option value="oauth">OAuth</option>
-                      <option value="apikey">API key</option>
-                      <option value="none">No authentication</option>
-                    </DenSelect>
-                    <p className="mt-1.5 text-[12px] leading-5 text-gray-500">
-                      No preset matched this plugin URL, so OpenWork assumes OAuth. Change this if the MCP server uses an API key or no auth.
-                    </p>
-                  </>
-                ) : (
-                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 text-[13px] text-gray-600">
-                    {pluginSetupAuthLabel(authType)} from the matched {serviceName} preset.
+            <div className="mt-4 space-y-4">
+              <div className="divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-100 bg-gray-50">
+                <div className="flex items-center gap-3 px-3.5 py-2.5">
+                  <span className="w-[92px] shrink-0 text-[11.5px] font-medium text-gray-500">MCP server</span>
+                  <span className="min-w-0 truncate font-mono text-[11.5px] text-gray-700" title={target.connection.url}>
+                    {target.connection.url}
+                  </span>
+                </div>
+                {!authAssumed ? (
+                  <div className="flex items-center gap-3 px-3.5 py-2.5">
+                    <span className="w-[92px] shrink-0 text-[11.5px] font-medium text-gray-500">Authentication</span>
+                    <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200">
+                      {pluginSetupAuthLabel(authType)}
+                    </span>
                   </div>
-                )}
+                ) : null}
               </div>
+
+              {authAssumed ? (
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication method</label>
+                  <DenSelect
+                    value={authType}
+                    onChange={(event) => {
+                      const nextAuthType = authTypeFromSelect(event.target.value);
+                      setAuthType(nextAuthType);
+                      setCredentialMode(pluginSetupCredentialMode(nextAuthType, credentialMode));
+                    }}
+                  >
+                    <option value="oauth">OAuth</option>
+                    <option value="apikey">API key</option>
+                    <option value="none">No authentication</option>
+                  </DenSelect>
+                  <p className="mt-1.5 text-[11.5px] leading-4 text-gray-500">
+                    No matching preset. Confirm how this server authenticates.
+                  </p>
+                </div>
+              ) : null}
 
               {authType === "apikey" ? (
-                <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-                  <p className="text-[13px] font-semibold text-gray-900">{serviceName} API key</p>
-                  <p className="mt-1 text-[12px] leading-5 text-gray-500">
-                    Admin-only. Stored for the organization as a shared credential and never shown again.
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">{serviceName} API key</label>
+                  <DenInput type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="API key" autoComplete="off" />
+                  <p className="mt-1.5 text-[11.5px] leading-4 text-gray-500">
+                    Stored securely as a shared marketplace credential.
                   </p>
-                  <div className="mt-3">
-                    <label className="mb-1.5 block text-[12px] font-medium text-gray-700">API key</label>
-                    <DenInput type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="API key" autoComplete="off" />
-                  </div>
                 </div>
               ) : null}
 
               {authType === "oauth" ? (
                 <div>
-                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Who signs in?</label>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Account access</label>
                   <DenSelect value={credentialMode} onChange={(event) => setCredentialMode(event.target.value === "shared" ? "shared" : "per_member")}>
                     <option value="per_member">Each user connects their own account</option>
                     <option value="shared">Organization-shared account</option>
                   </DenSelect>
-                  <p className="mt-1.5 text-[12px] leading-5 text-gray-500">
+                  <p className="mt-1.5 text-[11.5px] leading-4 text-gray-500">
                     {credentialMode === "per_member"
-                      ? "Assigned users connect from Your Connections."
-                      : "An admin connects one organization account from Your Connections."}
+                      ? "Each assigned member connects their own account."
+                      : "An admin connects one account for the organization."}
                   </p>
                 </div>
               ) : authType === "none" ? (
-                <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 text-[13px] text-gray-600">
-                  No authentication required. This connection will be ready after setup.
+                <div className="rounded-xl border border-gray-100 bg-gray-50 px-3.5 py-2.5 text-[12px] text-gray-600">
+                  No credentials are required.
                 </div>
               ) : null}
 
-              <p className="text-[12px] leading-5 text-gray-500">
-                Access is not edited here. It follows who can access this marketplace.
-              </p>
-
               {requiresOAuthClient ? (
-                <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-                  <p className="text-[13px] font-semibold text-gray-900">{serviceName} OAuth app</p>
-                  <p className="mt-1 text-[12px] leading-5 text-gray-500">
-                    Paste the OAuth client from your {serviceName} app. OpenWork will show users this connection in Your Connections; it will not start OAuth for them.
-                  </p>
+                <div className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
+                  <p className="text-[12.5px] font-semibold text-gray-900">OAuth credentials</p>
                   <div className="mt-3 space-y-3">
                     <div>
                       <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
@@ -940,10 +1058,10 @@ function PluginMcpSetupDialog({
               <p className="mt-3 text-[13px] text-red-600">{configureConnection.error instanceof Error ? configureConnection.error.message : "Failed to configure connection."}</p>
             ) : null}
 
-            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <DenButton variant="secondary" onClick={onClose} disabled={configureConnection.isPending}>Cancel</DenButton>
               <DenButton variant="primary" loading={configureConnection.isPending} disabled={saveDisabled} onClick={() => void submit()}>
-                {pluginSetupActionLabel(preset)}
+                Configure
               </DenButton>
             </div>
           </>

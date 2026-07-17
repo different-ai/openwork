@@ -102,6 +102,7 @@ export async function resolveMcpMemberIdentity(input: {
 }
 
 function hasSharedCredential(connection: ExternalMcpConnectionRow): boolean {
+  if (connection.oauthIssuerReviewRequiredAt) return false
   if (connection.authType === "oauth") return Boolean(connection.accessToken)
   if (connection.authType === "apikey") return Boolean(connection.apiKey)
   return true
@@ -351,6 +352,7 @@ export function buildExternalConnectionStatus(input: {
   errorCode: ExternalConnectionStatus["errorCode"]
   message: string
   diagnostic?: ExternalMcpDiagnostic
+  actionOwner?: "member" | "organization_admin"
 }): ExternalConnectionStatus {
   const connectionName = input.connection.name
   const actionContract = {
@@ -396,8 +398,9 @@ export function buildExternalConnectionStatus(input: {
     }
   }
 
-  const actor = input.connection.credentialMode === "per_member" ? "member" : "organization_admin"
-  const surface = input.connection.credentialMode === "per_member"
+  const actor = input.actionOwner
+    ?? (input.connection.credentialMode === "per_member" ? "member" : "organization_admin")
+  const surface = actor === "member"
     ? "openwork_your_connections"
     : "openwork_organization_connections"
   const actionType = input.state === "needs_connection"
@@ -556,6 +559,28 @@ async function probeExternalMcpConnection(input: {
     mergeBoundedExternalCapabilityMatches(matches, [match], input.limit)
   }
   const connection = input.connection
+  if (connection.oauthIssuerReviewRequiredAt) {
+    const nameTokens = tokenize(connection.name)
+    const score = scoreText(nameTokens, nameTokens, input.queryTokens)
+    if (score > 0) {
+      const message = `${connection.name} is blocked until an organization admin reviews its changed OAuth issuer.`
+      add(statusMatch({
+        connection,
+        score,
+        summary: `[${connection.name}] OAuth provider settings changed and require administrator review.`,
+        status: "error",
+        hint: `Ask an org admin to open OpenWork Cloud -> Connections, review the live OAuth issuer for "${connection.name}", and reconnect if requested.`,
+        connectionStatus: buildExternalConnectionStatus({
+          connection,
+          state: "reauth_required",
+          errorCode: "unauthorized",
+          message,
+          actionOwner: "organization_admin",
+        }),
+      }))
+    }
+    return matches
+  }
   if (connection.credentialMode === "per_member") {
     const account = await getConnectedAccount({
       organizationId: connection.organizationId,
@@ -767,6 +792,22 @@ export async function executeExternalCapability(input: {
   })
   if (!canUse) {
     return { ok: false, error: "forbidden", message: `You have not been granted access to "${connection.name}".` }
+  }
+
+  if (connection.oauthIssuerReviewRequiredAt) {
+    const message = `"${connection.name}" is blocked until an organization admin reviews its changed OAuth issuer.`
+    return {
+      ok: false,
+      error: "needs_connection",
+      message,
+      connectionStatus: buildExternalConnectionStatus({
+        connection,
+        state: "reauth_required",
+        errorCode: "unauthorized",
+        message,
+        actionOwner: "organization_admin",
+      }),
+    }
   }
 
   if (input.toolName === "*") {

@@ -11,14 +11,17 @@ function readOrgSelectionSource() {
 }
 
 describe("org selection paper contract", () => {
-  test("uses the same paper page and frame surfaces as the join flow", () => {
+  test("uses the same light Dithering layer as the join flow", () => {
     const source = readOrgSelectionSource();
 
-    expect(source).toContain('className="den-page flex min-h-[calc(100vh-2.5rem)] w-full items-center py-6"');
-    expect(source).toContain('className="den-frame mx-auto w-full max-w-md p-6 md:p-8"');
+    expect(source).toContain('className="relative isolate min-h-dvh overflow-y-auto bg-[#f8fbff] px-4 py-8 text-slate-950 sm:py-12"');
+    expect(source).toContain('className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-[#f8fbff] opacity-[0.09]"');
+    expect(source).toContain('colorBack="#F8FBFF"');
+    expect(source).toContain('colorFront="#8FB7E8"');
+    expect(source).toContain("const shaderSpeed = reducedMotion ? 0 : 0.012;");
+    expect(source).toContain('data-shader-speed={shaderSpeed}');
     expect(source).toContain('className="den-frame-inset grid gap-2 rounded-[1.5rem] p-2"');
     expect(source).not.toContain("bg-[#0f1d31]");
-    expect(source).not.toContain("Dithering");
     expect(source).not.toContain("PaperMeshGradient");
   });
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,7 +25,10 @@ async function createWorkspaceRoot() {
   return root;
 }
 
-async function startOpenworkServer(workspaceRoot: string) {
+async function startOpenworkServer(
+  workspaceRoot: string,
+  options: { authorizedRoots?: string[]; workspace?: ServerConfig["workspaces"][number] } = {},
+) {
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -33,8 +36,10 @@ async function startOpenworkServer(workspaceRoot: string) {
     hostToken: "owt_host_token",
     approval: { mode: "auto", timeoutMs: 1000 },
     corsOrigins: ["*"],
-    workspaces: [{ id: "ws_1", name: "Workspace", path: workspaceRoot, preset: "starter", workspaceType: "local" }],
-    authorizedRoots: [workspaceRoot],
+    workspaces: [
+      options.workspace ?? { id: "ws_1", name: "Workspace", path: workspaceRoot, preset: "starter", workspaceType: "local" },
+    ],
+    authorizedRoots: options.authorizedRoots ?? [workspaceRoot],
     readOnly: false,
     startedAt: Date.now(),
     tokenSource: "cli",
@@ -134,6 +139,36 @@ describe("session group API", () => {
       "grp_first",
       "grp_second",
     ]);
+  });
+
+  test("read-only session group endpoints do not repair legacy command files", async () => {
+    const root = await createWorkspaceRoot();
+    const { base, token } = await startOpenworkServer(root);
+    const commandsDir = join(root, ".opencode", "commands");
+    const commandPath = join(commandsDir, "legacy.md");
+    const legacyCommand = "---\nname: legacy\ndescription: Legacy\nmodel: null\n---\nRun legacy command\n";
+
+    await mkdir(commandsDir, { recursive: true });
+    await writeFile(commandPath, legacyCommand, "utf8");
+
+    const stateResponse = await fetch(`${base}/workspace/ws_1/session-groups`, { headers: auth(token) });
+    expect(stateResponse.status).toBe(200);
+    const eventsResponse = await fetch(`${base}/workspace/ws_1/session-groups/events`, { headers: auth(token) });
+    expect(eventsResponse.status).toBe(200);
+    expect(await readFile(commandPath, "utf8")).toBe(legacyCommand);
+  });
+
+  test("read-only session group endpoints preserve remote workspace authorization", async () => {
+    const root = await createWorkspaceRoot();
+    const remoteRoot = await mkdtemp(join(tmpdir(), "openwork-session-groups-remote-"));
+    roots.push(remoteRoot);
+    const { base, token } = await startOpenworkServer(root, {
+      authorizedRoots: [root],
+      workspace: { id: "ws_remote", name: "Remote", path: remoteRoot, preset: "remote", workspaceType: "remote" },
+    });
+
+    const response = await fetch(`${base}/workspace/ws_remote/session-groups`, { headers: auth(token) });
+    expect(response.status).toBe(403);
   });
 
   test("moves assigned sessions when deleting a group with a destination", async () => {

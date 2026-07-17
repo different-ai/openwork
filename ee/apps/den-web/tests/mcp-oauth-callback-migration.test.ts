@@ -28,12 +28,24 @@ describe("MCP OAuth callback compatibility UI contract", () => {
   test("keeps connection rows focused on connect, disconnect, and a compact actions menu", () => {
     const screen = readFileSync(screenPath, "utf8")
 
-    expect(screen).toContain('const canConnectOAuth = !needsAdminSetup && connection.authType === "oauth"')
+    expect(screen).toContain('const canConnectOAuth = !needsAdminSetup && !connection.issuerReviewRequired && connection.authType === "oauth"')
     expect(screen).toContain('isPerMember ? !connection.connectedForMe : !connection.connected')
     expect(screen).toContain('aria-haspopup="menu"')
     expect(screen).toContain('role="menu"')
     expect(screen).toContain('More actions for ${connection.name}')
     expect(screen).toContain('{toolsOpen ? "Hide tools" : "View tools"}')
+  })
+
+  test("requires explicit administrator confirmation when live issuer metadata changes", () => {
+    const screen = readFileSync(screenPath, "utf8")
+    const data = readFileSync(dataPath, "utf8")
+
+    expect(screen).toContain("OAuth settings need review")
+    expect(screen).toContain("Review OAuth provider")
+    expect(screen).toContain("Confirm issuer")
+    expect(screen).toContain("clears the old OAuth client and credentials")
+    expect(data).toContain("/oauth/issuer-review")
+    expect(data).toContain('action: "preview" | "confirm"')
   })
 
   test("edits requested scopes without forcing an immediate reconnect", () => {

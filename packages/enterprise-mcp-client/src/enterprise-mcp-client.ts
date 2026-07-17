@@ -18,6 +18,7 @@ import type {
   EnterpriseMcpLifecycle,
   EnterpriseMcpListToolsInput,
   EnterpriseMcpOperationPhase,
+  EnterpriseMcpRequestPhase,
 } from "./contracts.js"
 import { EnterpriseMcpClientError, EnterpriseMcpToolResultError } from "./errors.js"
 import { EnterpriseMcpOAuthProvider } from "./oauth-provider.js"
@@ -158,6 +159,23 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
 
   function failureRequestPhase(observer: EnterpriseMcpRequestObserver) {
     return observer.lastFailedRequestPhase() ?? observer.lastRequestPhase()
+  }
+
+  function isMcpResourceRequest(phase: EnterpriseMcpRequestPhase): boolean {
+    return phase === "mcp-initialize"
+      || phase === "mcp-tool-discovery"
+      || phase === "mcp-tool-execution"
+      || phase === "endpoint-request"
+  }
+
+  async function invalidateTerminallyRejectedCredential(session: Session): Promise<void> {
+    if (!session.oauthProvider) return
+    const failure = session.observer.lastRequestFailure()
+    if (!failure || !isMcpResourceRequest(failure.requestPhase)) return
+    const rejected = failure.httpStatus === 401
+      || (failure.httpStatus === 403 && (failure.bearerChallenge || failure.insufficientScope))
+    if (!rejected) return
+    await session.oauthProvider.invalidateCredentials("tokens")
   }
 
   function createSession(input: {
@@ -305,32 +323,37 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       ...input,
       flow: { kind: "runtime" },
       operation: async (session) => {
-        await session.client.connect(session.transport, session.requestOptions)
-        emitDiagnostic({
-          kind: "operation",
-          connectionId: input.connection.id,
-          operationPhase: input.operationPhase,
-          requestPhase: "mcp-initialize",
-          outcome: "succeeded",
-        })
-        let operationFailed = false
         try {
-          return await input.operation(session)
-        } catch (error) {
-          operationFailed = true
-          throw error
-        } finally {
+          await session.client.connect(session.transport, session.requestOptions)
+          emitDiagnostic({
+            kind: "operation",
+            connectionId: input.connection.id,
+            operationPhase: input.operationPhase,
+            requestPhase: "mcp-initialize",
+            outcome: "succeeded",
+          })
+          let operationFailed = false
           try {
-            await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+            return await input.operation(session)
           } catch (error) {
-            if (!operationFailed) {
-              throw new EnterpriseMcpClientError({
-                operationPhase: "shutdown",
-                requestPhase: session.observer.lastRequestPhase(),
-                cause: error,
-              })
+            operationFailed = true
+            throw error
+          } finally {
+            try {
+              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+            } catch (error) {
+              if (!operationFailed) {
+                throw new EnterpriseMcpClientError({
+                  operationPhase: "shutdown",
+                  requestPhase: session.observer.lastRequestPhase(),
+                  cause: error,
+                })
+              }
             }
           }
+        } catch (error) {
+          await invalidateTerminallyRejectedCredential(session)
+          throw error
         }
       },
     })

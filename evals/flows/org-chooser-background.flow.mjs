@@ -203,6 +203,10 @@ async function waitForChooser(ctx) {
     `Boolean(document.querySelector('[data-testid="org-chooser-root"]')) && document.body.innerText.includes('Choose an organization')`,
     { timeoutMs: 60_000, label: "organization chooser" },
   );
+  await ctx.waitFor(
+    `Boolean(document.querySelector('[data-testid="org-chooser-background"] canvas'))`,
+    { timeoutMs: 30_000, label: "light Dithering canvas" },
+  );
 }
 
 async function forceChooser(ctx) {
@@ -236,10 +240,12 @@ async function openFreshChooser(ctx) {
 async function chooserVisualState(ctx) {
   return ctx.eval(`(() => {
     const root = document.querySelector('[data-testid="org-chooser-root"]');
+    const background = document.querySelector('[data-testid="org-chooser-background"]');
     const foreground = document.querySelector('[data-testid="org-chooser-foreground"]');
     const list = document.querySelector('[data-testid="org-chooser-list"]');
     const actions = document.querySelector('[data-testid="org-chooser-actions"]');
     const rootStyle = root ? getComputedStyle(root) : null;
+    const backgroundStyle = background ? getComputedStyle(background) : null;
     const foregroundStyle = foreground ? getComputedStyle(foreground) : null;
     const listStyle = list ? getComputedStyle(list) : null;
     const foregroundRect = foreground?.getBoundingClientRect();
@@ -252,6 +258,12 @@ async function chooserVisualState(ctx) {
       rootMinHeight: rootStyle?.minHeight ?? null,
       rootOverflowY: rootStyle?.overflowY ?? null,
       rootBackgroundColor: rootStyle?.backgroundColor ?? null,
+      backgroundAriaHidden: background?.getAttribute('aria-hidden') ?? null,
+      backgroundPointerEvents: backgroundStyle?.pointerEvents ?? null,
+      backgroundOpacity: backgroundStyle?.opacity ?? null,
+      backgroundMotion: background?.getAttribute('data-motion') ?? null,
+      backgroundShaderSpeed: background?.getAttribute('data-shader-speed') ?? null,
+      backgroundCanvasCount: background?.querySelectorAll('canvas').length ?? 0,
       rootCanvasCount: root?.querySelectorAll('canvas').length ?? 0,
       foregroundBackgroundColor: foregroundStyle?.backgroundColor ?? null,
       foregroundBorderRadius: foregroundStyle?.borderRadius ?? null,
@@ -310,7 +322,7 @@ async function selectTargetOrg(ctx) {
 
 export default {
   id: "org-chooser-background",
-  title: "Organization chooser uses the join flow's light-paper treatment",
+  title: "Organization chooser uses the join flow's light-paper Dithering treatment",
   kind: "user-facing",
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_MULTI_ORG"],
   steps: [
@@ -323,7 +335,7 @@ export default {
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("The real organization chooser opens on the join flow's light-paper surface", {
+        await ctx.prove("The real organization chooser opens on the join flow's light-paper Dithering surface", {
           voiceover: vo[0],
           action: async () => {
             await openFreshChooser(ctx);
@@ -331,13 +343,14 @@ export default {
           assert: async () => {
             await ctx.expectText("Choose an organization");
             const visual = await chooserVisualState(ctx);
-            ctx.assert(visual.rootCanvasCount === 0, `The chooser should not render a separate shader: ${JSON.stringify(visual)}`);
+            ctx.assert(visual.backgroundCanvasCount === 1 && visual.rootCanvasCount === 1, `Expected one light paper shader canvas: ${JSON.stringify(visual)}`);
+            ctx.assert(visual.rootBackgroundColor === "rgb(248, 251, 255)", `Unexpected light paper background: ${JSON.stringify(visual)}`);
             ctx.assert(visual.foregroundBackgroundColor.startsWith("rgba(255, 255, 255,"), `The chooser is not using the light paper frame: ${JSON.stringify(visual)}`);
             ctx.assert(visual.foregroundBorderRadius === "32px", `The chooser frame does not match the join flow radius: ${JSON.stringify(visual)}`);
           },
           screenshot: {
             name: "chooser-light-paper",
-            claim: "The organization chooser opens on the same light-paper card treatment as the join flow.",
+            claim: "The organization chooser opens on the same light-paper Dithering treatment as the join flow.",
             requireText: ["Choose an organization", state.targetOrg?.name ?? EVAL_ORG_NAME],
             rejectText: ["Something went wrong"],
           },
@@ -354,12 +367,14 @@ export default {
           },
           assert: async () => {
             const visual = await chooserVisualState(ctx);
+            ctx.assert(visual.backgroundAriaHidden === "true" && visual.backgroundPointerEvents === "none", `The paper shader should remain decorative: ${JSON.stringify(visual)}`);
+            ctx.assert(visual.backgroundOpacity === "0.09" && visual.backgroundMotion === "ambient" && visual.backgroundShaderSpeed === "0.012", `The paper shader should stay subtle and slow: ${JSON.stringify(visual)}`);
             ctx.assert(visual.foregroundOpacity === "1" && visual.listOpacity === "1", `Foreground/list opacity should stay fully legible: ${JSON.stringify(visual)}`);
             ctx.assert(visual.listBackgroundColor.startsWith("rgba(248, 250, 252,"), `Org list is not using the light inset surface: ${JSON.stringify(visual)}`);
           },
           screenshot: {
             name: "chooser-readable-list",
-            claim: "The light paper frame contains a crisp, readable inset organization list.",
+            claim: "The subtle light-paper animation sits behind a crisp, readable inset organization list.",
             requireText: ["Choose an organization", "member"],
             rejectText: ["Something went wrong"],
           },
@@ -407,7 +422,7 @@ export default {
           assert: async () => {
             const visual = await chooserVisualState(ctx);
             ctx.assert(visual.viewportWidth <= 430, `Mobile viewport was not applied: ${JSON.stringify(visual)}`);
-            ctx.assert(typeof visual.rootMinHeight === "string" && visual.rootMinHeight.endsWith("px"), `Chooser shell is not tall enough for the viewport: ${JSON.stringify(visual)}`);
+            ctx.assert(visual.rootOverflowY === "auto" && typeof visual.rootMinHeight === "string" && visual.rootMinHeight.endsWith("px"), `Chooser shell is not scroll-safe: ${JSON.stringify(visual)}`);
             ctx.assert(visual.foregroundWithinViewport && visual.listWithinViewport, `Chooser content overflowed the mobile viewport: ${JSON.stringify(visual)}`);
             ctx.assert(visual.listBackgroundColor.startsWith("rgba(248, 250, 252,"), `Mobile org list is not using the readable inset surface: ${JSON.stringify(visual)}`);
             ctx.assert(visual.actionsText.includes("Create or join") && visual.actionsText.includes("Sign out"), `Mobile actions are not visible: ${JSON.stringify(visual)}`);
