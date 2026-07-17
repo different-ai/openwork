@@ -209,10 +209,30 @@ export type OpenworkRuntimeConfigMigrationResult = {
   legacyError?: string | null;
 };
 
+export type OpenworkRuntimeDisabledProvidersResult = {
+  ok: true;
+  disabledProviders: string[];
+};
+
+export type OpenworkLegacyConfigSweepState = {
+  version: 1;
+  sweptAt: string;
+  files: Array<{
+    path: string;
+    removedKeys: string[];
+    backupPath: string | null;
+  }>;
+  error?: string;
+};
+
 export type OpenworkRuntimeConfigStatus = {
   runtime: Record<string, unknown>;
   runtimeKeys: string[];
   effectiveRuntime: Record<string, unknown>;
+  managedFilePath: string;
+  managedFileRebuiltAt: number | null;
+  managedFileContentRedacted: string | null;
+  sweep: OpenworkLegacyConfigSweepState | null;
   sources?: {
     projectOpencode: { path: string; exists: boolean; keys: string[]; config: Record<string, unknown> };
     globalOpencode: { path: string; exists: boolean; keys: string[]; config: Record<string, unknown> };
@@ -1560,6 +1580,18 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           token,
           hostToken,
           method: "POST",
+          timeoutMs: timeouts.config,
+        },
+      ),
+    setRuntimeDisabledProviders: (workspaceId: string, providers: string[]) =>
+      requestJson<OpenworkRuntimeDisabledProvidersResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/runtime-config/disabled-providers`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: { providers },
           timeoutMs: timeouts.config,
         },
       ),

@@ -132,6 +132,7 @@ import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-pr
 import {
   hasOpenWorkModelsProvider,
   hideOpenWorkModelsPromo,
+  useOpenWorkModelsPromoEligibility,
   isOpenWorkModelsPromoHidden,
   openWorkModelsPromoChangedEvent,
 } from "@/react-app/domains/cloud/openwork-models-promo";
@@ -733,11 +734,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [providerAuthSnapshot.cloudOrgProviders, providerAuthSnapshot.importedCloudProviders],
   );
   const [openWorkModelsPromoHidden, setOpenWorkModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
+  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
   const openWorkModelsConnected =
     (cloudSession.isSignedIn && hasOpenWorkCloudProvider) ||
     hasOpenWorkModelsProvider(providerConnectedIds);
-  const showOpenWorkModelsSubscribe = !openWorkModelsConnected && !openWorkModelsPromoHidden;
-  const showOpenWorkModelsConnect = !openWorkModelsConnected && openWorkModelsPromoHidden;
+  const showOpenWorkModelsSubscribe = openWorkModelsPromoEligible && !openWorkModelsConnected && !openWorkModelsPromoHidden;
+  const showOpenWorkModelsConnect = openWorkModelsPromoEligible && !openWorkModelsConnected && openWorkModelsPromoHidden;
 
   useEffect(() => {
     const handlePromoChanged = () => setOpenWorkModelsPromoHidden(isOpenWorkModelsPromoHidden());

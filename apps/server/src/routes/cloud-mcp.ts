@@ -47,6 +47,11 @@ function providerModelFromQuery(url: URL): CloudMcpProviderModelContext | undefi
   return providerModelFromValues(url.searchParams.get("provider"), url.searchParams.get("model"));
 }
 
+function probeFromQuery(url: URL): boolean {
+  const value = url.searchParams.get("probe")?.toLowerCase();
+  return value === "1" || value === "true";
+}
+
 function providerModelFromBody(body: Record<string, unknown>): CloudMcpProviderModelContext | undefined {
   const direct = providerModelFromValues(body.provider, body.model);
   if (direct) return direct;
@@ -93,6 +98,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       directory: resolveOpencodeDirectory(workspace),
       providerModel: providerModelFromQuery(ctx.url),
       serverMetadata,
+      probe: probeFromQuery(ctx.url),
       createWorkspaceOpencodeClient,
     });
     return jsonResponse(health);

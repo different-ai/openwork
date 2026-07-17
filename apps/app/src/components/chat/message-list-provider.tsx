@@ -1,6 +1,11 @@
 "use memo";
 
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
+import type {
+  ChatToolReconnectAction,
+  ChatToolReconnectProgress,
+  ChatToolReconnectResult,
+} from "@/components/tools/error-attribution"
 import * as React from "react"
 
 interface MessageListContextValue {
@@ -16,6 +21,12 @@ interface MessageListContextValue {
   onRevertToUserMessage: (messageId: string) => void
   onForkAtMessage: (messageId: string) => void
   onEditUserMessage: (messageId: string, text: string) => void
+  onMcpReconnect: (
+    action: ChatToolReconnectAction,
+    onProgress: (progress: ChatToolReconnectProgress) => void,
+  ) => Promise<ChatToolReconnectResult>
+  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
+  onMcpRetry: (action: ChatToolReconnectAction) => void | Promise<void>
 }
 
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
@@ -30,6 +41,12 @@ interface MessageListProviderProps {
   onRevertToUserMessage: (messageId: string) => void
   onForkAtMessage: (messageId: string) => void
   onEditUserMessage: (messageId: string, text: string) => void
+  onMcpReconnect: (
+    action: ChatToolReconnectAction,
+    onProgress: (progress: ChatToolReconnectProgress) => void,
+  ) => Promise<ChatToolReconnectResult>
+  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
+  onMcpRetry: (action: ChatToolReconnectAction) => void | Promise<void>
   displaySuggestions: boolean
   providerConnectedCount: number
   dispatchAction: (action: DispatchAction) => void
@@ -56,6 +73,9 @@ export function MessageListProvider({
   onRevertToUserMessage,
   onForkAtMessage,
   onEditUserMessage,
+  onMcpReconnect,
+  onMcpReopenAuthorization,
+  onMcpRetry,
 }: MessageListProviderProps) {
   const value = React.useMemo(
     () => ({
@@ -71,6 +91,9 @@ export function MessageListProvider({
       onRevertToUserMessage,
       onForkAtMessage,
       onEditUserMessage,
+      onMcpReconnect,
+      onMcpReopenAuthorization,
+      onMcpRetry,
     }),
     [
       workspaceId,
@@ -85,6 +108,9 @@ export function MessageListProvider({
       onRevertToUserMessage,
       onForkAtMessage,
       onEditUserMessage,
+      onMcpReconnect,
+      onMcpReopenAuthorization,
+      onMcpRetry,
     ],
   )
 

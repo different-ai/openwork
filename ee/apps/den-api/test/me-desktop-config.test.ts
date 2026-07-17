@@ -27,6 +27,8 @@ const organizationId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
 const capabilityOrganizationId = createDenTypeId("organization")
 const capabilityMemberId = createDenTypeId("member")
+const disabledOrganizationId = createDenTypeId("organization")
+const disabledMemberId = createDenTypeId("member")
 const onboardingOrganizationId = createDenTypeId("organization")
 const onboardingMemberId = createDenTypeId("member")
 const onboardingTeamId = createDenTypeId("team")
@@ -44,6 +46,7 @@ const flatConnectMetadata = {
   brandIconUrl: "https://den.example-corp.internal/assets/icon.png",
 }
 const capabilityMetadata = { capabilities: { mcpConnections: true } }
+const disabledMetadata = { capabilities: { mcpConnections: false } }
 const defaultOnboardingPrompts = ["Default onboarding task", "Default onboarding follow-up"]
 const highPriorityOnboardingPrompts = ["High priority task", "High priority follow-up", "High priority optional"]
 const defaultOnboardingPromptDescriptions = ["Default onboarding", "Default follow-up"]
@@ -87,6 +90,12 @@ beforeAll(async () => {
     metadata: capabilityMetadata,
   })
   await db.insert(schema.OrganizationTable).values({
+    id: disabledOrganizationId,
+    name: "Desktop Config Disabled Org",
+    slug: `desktop-config-disabled-${disabledOrganizationId}`,
+    metadata: disabledMetadata,
+  })
+  await db.insert(schema.OrganizationTable).values({
     id: onboardingOrganizationId,
     name: "Desktop Config Onboarding Org",
     slug: `desktop-config-onboarding-${onboardingOrganizationId}`,
@@ -101,6 +110,12 @@ beforeAll(async () => {
     {
       id: capabilityMemberId,
       organizationId: capabilityOrganizationId,
+      userId,
+      role: "owner",
+    },
+    {
+      id: disabledMemberId,
+      organizationId: disabledOrganizationId,
       userId,
       role: "owner",
     },
@@ -184,8 +199,8 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  const memberIds = [memberId, capabilityMemberId, onboardingMemberId]
-  const organizationIds = [organizationId, capabilityOrganizationId, onboardingOrganizationId]
+  const memberIds = [memberId, capabilityMemberId, disabledMemberId, onboardingMemberId]
+  const organizationIds = [organizationId, capabilityOrganizationId, disabledOrganizationId, onboardingOrganizationId]
   if (crudDesktopPolicyId) {
     await db.delete(schema.DesktopPolicyMemberTable).where(drizzle.eq(schema.DesktopPolicyMemberTable.desktopPolicyId, crudDesktopPolicyId))
     await db.delete(schema.DesktopPolicyTable).where(drizzle.eq(schema.DesktopPolicyTable.id, crudDesktopPolicyId))
@@ -295,6 +310,13 @@ test("GET /v1/me/desktop-config exposes the effective connectEnabled org flag", 
   expectConnectEnabled(capabilityBody, capabilityMetadata)
   expect(capabilityBody.connectEnabled).toBe(true)
   expect(capabilityBody.onboardingPrompts).toBeUndefined()
+
+  const defaultBody = await requestDesktopConfig(onboardingOrganizationId)
+  expect(defaultBody.connectEnabled).toBe(true)
+
+  const disabledBody = await requestDesktopConfig(disabledOrganizationId)
+  expectConnectEnabled(disabledBody, disabledMetadata)
+  expect(disabledBody.connectEnabled).toBe(false)
 })
 
 test("GET /v1/me/desktop-config returns the effective onboarding prompts", async () => {

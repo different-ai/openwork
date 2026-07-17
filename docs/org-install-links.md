@@ -24,9 +24,9 @@ The guided flow is scoped to Den organization install links. The public
 
 ## Upgrade checklist
 
-> **Self-host default:** Install links are active when deployment gating is
-> off. Hosted installations can set `DEN_INSTALL_LINKS_GATING_ENABLED=true` to
-> retain per-organization opt-in.
+> **Default:** Install links are active for every organization on every
+> deployment. `DEN_INSTALL_LINKS_GATING_ENABLED` is deprecated and inert;
+> platform admins can turn an org dark from `/admin` as a kill switch.
 
 ### Helm
 
@@ -36,10 +36,10 @@ The guided flow is scoped to Den organization install links. The public
    required.
 3. Restart or roll the deployment. No install-link capability toggle is
    required for a normal self-hosted installation.
-4. For hosted-style rollout only, set
-   `DEN_INSTALL_LINKS_GATING_ENABLED=true`, configure
-   `config.public.bootstrapAdminEmails`, then enable **Install links** per org
-   in `/admin`.
+4. No hosted-style rollout flag is required: install links are on by default.
+   `DEN_INSTALL_LINKS_GATING_ENABLED` is deprecated and inert; configure
+   `config.public.bootstrapAdminEmails` only if platform admins need `/admin`
+   access to turn an org dark as a kill switch.
 
 ### Docker Compose
 

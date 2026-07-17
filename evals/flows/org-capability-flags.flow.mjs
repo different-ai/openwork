@@ -30,7 +30,7 @@ const state = {
 
 export default {
   id: "org-capability-flags",
-  title: "Platform admins flip per-org capability flags from /admin; every org starts dark and reports its own state through /v1/org",
+  title: "Install links are default-on for every org, with a reversible /admin kill switch",
   kind: "user-facing",
   requiredEnv: [
     "OPENWORK_EVAL_DEN_API_URL",
@@ -46,16 +46,16 @@ export default {
       name: "Frame 1",
       run: async (ctx) => {
         await withClient(ctx, ADMIN_CDP_URL, async () => {
-          await ctx.prove("The platform admin finds Acme's Capabilities controls in /admin, everything off", {
+          await ctx.prove("Install links are on for every organization by default, no enablement needed", {
             voiceover: vo[0],
             action: async () => {
               await ensurePlatformAdmin(ctx);
               await ensureOrgAdminContext(ctx);
-              // Idempotency affordance: a previous run may have left the flag ON.
-              // Force it OFF through the admin API (as the platform admin) before
-              // asserting the dark state — the demo itself then turns it on and
-              // back off through the UI.
-              await setCapabilityViaAdminApi(ctx, { installLinks: false });
+              // Idempotency affordance: a previous run may have left an explicit
+              // override. Clear it through the admin API before asserting the
+              // default-on state — the demo itself then toggles the kill switch
+              // through the UI.
+              await setCapabilityViaAdminApi(ctx, { installLinks: null });
               await signInToDenWebWithoutOrg(ctx, PLATFORM_ADMIN_EMAIL, PLATFORM_ADMIN_PASSWORD);
               await goToDenWeb(ctx, "/admin");
               await ctx.waitForText("User backoffice", { timeoutMs: 45_000 });
@@ -76,17 +76,17 @@ export default {
               // sees "CAPABILITIES"; assert on the untransformed label.
               await ctx.expectText("Install links");
               const checked = await readAcmeInstallLinksCheckbox(ctx);
-              ctx.assert(checked === false, "Install links checkbox was already checked before the demo toggled it.");
+              ctx.assert(checked === true, "Install links checkbox was not checked with no stored override.");
 
               const admin = await fetchAdminCapabilities(ctx);
-              ctx.assert(admin.installLinks === false, "Admin API reported installLinks on before the toggle.");
+              ctx.assert(admin.installLinks === true, "Admin API did not report installLinks on by default.");
 
               const orgView = await fetchOrgCapabilities(ctx);
-              ctx.assert(orgView.installLinks === false, "/v1/org reported installLinks on while the flag is off.");
-              ctx.output("capabilities-start-dark", JSON.stringify({ admin, orgView }, null, 2));
+              ctx.assert(orgView.installLinks === true, "/v1/org did not report installLinks on by default.");
+              ctx.output("capabilities-default-on", JSON.stringify({ admin, orgView }, null, 2));
             },
             screenshot: {
-              name: "admin-acme-capabilities-off",
+              name: "admin-acme-capabilities-default-on",
               requireText: ["User backoffice", "Acme Robotics", "Install links"],
             },
           });
@@ -97,7 +97,7 @@ export default {
       name: "Frame 2",
       run: async (ctx) => {
         await withClient(ctx, ADMIN_CDP_URL, async () => {
-          await ctx.prove("One checkbox in /admin turns the capability on for Acme, and only Acme", {
+          await ctx.prove("One checkbox in /admin turns install links off for Acme, and only Acme", {
             voiceover: vo[1],
             action: async () => {
               // Filter to Acme first — a real admin narrowing to one org, and it
@@ -111,15 +111,15 @@ export default {
               await clickAcmeInstallLinksCheckbox(ctx);
               await ctx.waitFor(`(() => {
                 const checkbox = document.querySelector(${JSON.stringify(acmeInstallLinksCheckboxSelector())});
-                return Boolean(checkbox && checkbox.checked && !checkbox.disabled);
-              })()`, { timeoutMs: 20_000, label: "capability checkbox saved as checked" });
+                return Boolean(checkbox && !checkbox.checked && !checkbox.disabled);
+              })()`, { timeoutMs: 20_000, label: "capability checkbox saved as unchecked" });
             },
             assert: async () => {
               const checked = await readAcmeInstallLinksCheckbox(ctx);
-              ctx.assert(checked === true, "Capability checkbox did not stay checked.");
+              ctx.assert(checked === false, "Capability checkbox did not stay unchecked.");
 
               const admin = await fetchAdminCapabilities(ctx);
-              ctx.assert(admin.installLinks === true, "Admin API did not report the capability on after the toggle.");
+              ctx.assert(admin.installLinks === false, "Admin API did not report the capability off after the kill switch.");
 
               // "Just Acme": the toggle must not have changed any other org.
               const before = state.otherOrgsOnBeforeToggle;
@@ -129,10 +129,10 @@ export default {
                 JSON.stringify(after) === JSON.stringify(before),
                 `Other orgs changed with Acme's toggle: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`,
               );
-              ctx.output("capability-enabled-for-acme-only", JSON.stringify({ admin, otherOrgsWithCapabilityOn: after }, null, 2));
+              ctx.output("kill-switch-disabled-acme-only", JSON.stringify({ admin, otherOrgsWithCapabilityOn: after }, null, 2));
             },
             screenshot: {
-              name: "admin-acme-capabilities-on",
+              name: "admin-acme-capabilities-kill-switch-off",
               requireText: ["Acme Robotics", "Install links"],
             },
           });
@@ -143,11 +143,11 @@ export default {
       name: "Frame 3",
       run: async (ctx) => {
         await withClient(ctx, ADMIN_CDP_URL, async () => {
-          await ctx.prove("Acme's own workspace reads the capability as on through /v1/org", {
+          await ctx.prove("Acme's own workspace reads the kill-switched state through /v1/org", {
             voiceover: vo[2],
             action: async () => {
               // Clear the filter — back to the full backoffice list, now with
-              // Acme's row checked (and a visibly different capture from frame 2).
+              // Acme's row unchecked (and a visibly different capture from frame 2).
               await ctx.fill(ORG_FILTER_INPUT, "");
               await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(acmeRowSelector())}))`, {
                 timeoutMs: 20_000,
@@ -158,15 +158,15 @@ export default {
             assert: async () => {
               // The payload Acme's own admin reads — fetched with alex's session.
               const orgView = await fetchOrgCapabilities(ctx);
-              ctx.assert(orgView.installLinks === true, "/v1/org did not report the capability on to Acme's own admin.");
-              ctx.output("acme-org-payload-on", JSON.stringify({ orgAdmin: ORG_ADMIN_EMAIL, capabilities: orgView }, null, 2));
+              ctx.assert(orgView.installLinks === false, "/v1/org did not report the kill-switched state to Acme's own admin.");
+              ctx.output("acme-org-payload-kill-switched", JSON.stringify({ orgAdmin: ORG_ADMIN_EMAIL, capabilities: orgView }, null, 2));
 
               const checked = await readAcmeInstallLinksCheckbox(ctx);
-              ctx.assert(checked === true, "Admin row stopped showing the capability on.");
+              ctx.assert(checked === false, "Admin row stopped showing the kill switch off state.");
               await ctx.expectText("Acme Robotics");
             },
             screenshot: {
-              name: "acme-reports-capability-on",
+              name: "acme-reports-install-links-dark",
               requireText: ["Acme Robotics", "Install links"],
             },
           });
@@ -177,7 +177,7 @@ export default {
       name: "Frame 4",
       run: async (ctx) => {
         await withClient(ctx, ADMIN_CDP_URL, async () => {
-          await ctx.prove("Flipping the toggle back off makes Acme report dark again", {
+          await ctx.prove("Re-checking the box restores install links for Acme", {
             voiceover: vo[3],
             action: async () => {
               await ctx.fill(ORG_FILTER_INPUT, "Acme");
@@ -188,21 +188,21 @@ export default {
               await clickAcmeInstallLinksCheckbox(ctx);
               await ctx.waitFor(`(() => {
                 const checkbox = document.querySelector(${JSON.stringify(acmeInstallLinksCheckboxSelector())});
-                return Boolean(checkbox && !checkbox.checked && !checkbox.disabled);
-              })()`, { timeoutMs: 20_000, label: "capability checkbox saved as unchecked" });
+                return Boolean(checkbox && checkbox.checked && !checkbox.disabled);
+              })()`, { timeoutMs: 20_000, label: "capability checkbox saved as checked" });
             },
             assert: async () => {
               const admin = await fetchAdminCapabilities(ctx);
-              ctx.assert(admin.installLinks === false, "Admin API still reported the capability on after turning it off.");
+              ctx.assert(admin.installLinks === true, "Admin API did not report the capability on after restoring it.");
 
               const orgView = await fetchOrgCapabilities(ctx);
-              ctx.assert(orgView.installLinks === false, "/v1/org still reported the capability on after turning it off.");
-              ctx.output("acme-org-payload-dark-again", JSON.stringify({ orgAdmin: ORG_ADMIN_EMAIL, capabilities: orgView }, null, 2));
+              ctx.assert(orgView.installLinks === true, "/v1/org did not report the capability on after restoring it.");
+              ctx.output("acme-org-payload-restored", JSON.stringify({ orgAdmin: ORG_ADMIN_EMAIL, capabilities: orgView }, null, 2));
 
               await ctx.expectText("Install links");
             },
             screenshot: {
-              name: "admin-acme-capabilities-back-off",
+              name: "admin-acme-capabilities-restored",
               requireText: ["Acme Robotics", "Install links"],
             },
           });
@@ -396,9 +396,9 @@ async function fetchOrgCapabilities(ctx) {
 }
 
 /**
- * Slugs of every organization other than Acme whose installLinks capability is
- * on, read from the admin overview rows (which expose capabilities). Used to
- * prove Acme's toggle changed Acme and nothing else.
+ * Slugs of every organization other than Acme whose effective installLinks
+ * state is on, read from the admin overview rows (which expose capabilities).
+ * Used to prove Acme's toggle changed Acme and nothing else.
  */
 async function fetchOtherOrgsWithCapabilityOn(ctx) {
   const token = requireStateValue(state.platformAdminToken, "platform admin token");

@@ -1,11 +1,11 @@
-# connect-delivery-switch — Marketplace delivery moves to Connect
+# connect-delivery-switch — retired switch now proves Connect-only delivery
 
-Cast is Alex, the Acme Robotics admin, using the OpenWork desktop app against the local Den stack. The proof toggles Acme's Connect capability around one seeded marketplace plugin so the old desktop import path and the new cloud rail can be compared directly.
+Cast is Alex, the Acme Robotics admin, using the OpenWork desktop app against the local Den stack. This older switch proof is now retired into the new contract: toggling Acme's Connect capability must not bring back desktop imports for Den marketplace plugins.
 
-1. With Connect turned off, Alex opens Extensions and switches to Marketplace. The familiar My Extensions / Marketplace toggle is still present, and the seeded marketplace plugin is installable just like today's desktop import flow.
+1. With Connect turned off, Alex opens the organization Marketplace. The seeded plugin is already Active · runs in cloud, and there is no Add, Install, or Update button.
 
-2. The platform admin enables Acme's Connect capability. Back in Extensions, Marketplace is no longer a tab; Alex sees a short hint that marketplace content now lives in Connect, with a button to open it.
+2. The platform admin enables Acme's Connect capability. Back in Extensions, the Marketplace tab still exists for local/built-in affordances, but the seeded organization plugin is absent.
 
-3. Alex opens Connect. In the active Connect state, a From your marketplace section lists the same seeded plugin as Active · runs in cloud, with no install button because delivery now happens through the cloud rail.
+3. Alex opens Connect. In the active Connect state, From your organization lists the same seeded plugin as ready, with no install button because delivery happens through the cloud rail.
 
-4. The platform admin turns Connect back off. Extensions restores the Marketplace toggle and the seeded plugin is installable again, proving the rollout switch is reversible.
+4. The platform admin turns Connect back off. The organization Marketplace still shows the seeded plugin as cloud-delivered only, proving the old reversible desktop-install path is gone.

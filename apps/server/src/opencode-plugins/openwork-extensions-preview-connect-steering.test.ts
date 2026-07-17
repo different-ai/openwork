@@ -2,15 +2,19 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
   composeOpenWorkExtensionDiscoveryInstruction,
+  composeSteeringFromEngineMcpStatus,
   OPENWORK_CLOUD_CONNECTION_INSTRUCTION,
-  OPENWORK_CONNECT_DEGRADED_INSTRUCTION,
   OPENWORK_CONNECT_DISABLED_INSTRUCTION,
   OPENWORK_CONNECT_SIGN_IN_INSTRUCTION,
   OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
   resetOpenWorkExtensionDiscoveryInstructionCacheForTests,
   resolveOpenWorkExtensionDiscoveryInstruction,
+  type OpenWorkEngineMcpStatusClient,
   type OpenWorkExtensionConnectState,
 } from "./openwork-extensions-preview-steering.js";
+
+type CloudHealth = NonNullable<OpenWorkExtensionConnectState["cloudHealth"]>;
+type CloudFailure = NonNullable<CloudHealth["firstFailure"]>;
 
 const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
@@ -42,6 +46,25 @@ function health(overrides: Partial<NonNullable<OpenWorkExtensionConnectState["cl
   };
 }
 
+function failure(code: string, overrides: Partial<CloudFailure> = {}): CloudFailure {
+  return {
+    code,
+    stage: overrides.stage ?? "test",
+    recommendedAction: overrides.recommendedAction ?? "Check Settings → Connect.",
+    message: overrides.message ?? "test failure",
+  };
+}
+
+function expectNoDegradedSteering(instruction: string): void {
+  expect(instruction).not.toMatch(/not ready/i);
+  expect(instruction).not.toContain("Repair and test");
+  expect(instruction).not.toContain("Do not use OpenWork documentation tools");
+  expect(instruction).not.toContain("Do not substitute docs");
+  expect(instruction).not.toContain("as a substitute for performing an action against a connected service");
+  expect(instruction).not.toMatch(/do NOT use/i);
+  expect(instruction).not.toMatch(/Do not try/);
+}
+
 function state(cloudHealth: OpenWorkExtensionConnectState["cloudHealth"]): OpenWorkExtensionConnectState {
   return {
     connectEnabled: true,
@@ -52,6 +75,29 @@ function state(cloudHealth: OpenWorkExtensionConnectState["cloudHealth"]): OpenW
     googleWorkspace: { legacyConfigured: false },
   };
 }
+
+function engineMcpClient(result: unknown, requests: unknown[] = []): OpenWorkEngineMcpStatusClient {
+  return {
+    mcp: {
+      status: async (request) => {
+        requests.push(request);
+        return result;
+      },
+    },
+  };
+}
+
+describe("composeSteeringFromEngineMcpStatus", () => {
+  test("maps engine MCP statuses to steering instructions", () => {
+    expect(composeSteeringFromEngineMcpStatus("connected")).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus("disabled")).toBe(OPENWORK_CONNECT_DISABLED_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus("needs_auth")).toBe(OPENWORK_CONNECT_SIGN_IN_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus("needs_client_registration")).toBe(OPENWORK_CONNECT_SIGN_IN_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus("failed")).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus("starting")).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus(undefined)).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+  });
+});
 
 describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
   test("keeps the fallback instruction byte-identical when state is unavailable or generic discovery is gated", () => {
@@ -74,7 +120,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), googleWorkspace: { legacyConfigured: true } })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
   });
 
-  test("does not claim Cloud readiness when provider projection is missing", () => {
+  test("keeps neutral steering when provider projection is missing", () => {
     const instruction = composeOpenWorkExtensionDiscoveryInstruction(state(health({
       usable: true,
       usableByCurrentModel: false,
@@ -87,12 +133,11 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       },
     })));
 
-    expect(instruction).not.toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
-    expect(instruction).toContain("Settings → Connect → Repair and test");
+    expect(instruction).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
-  test("uses degraded, signed-out, and disabled branches", () => {
-    const degraded = composeOpenWorkExtensionDiscoveryInstruction({ ...state(health({
+  test("uses neutral, signed-out, and disabled branches", () => {
+    const neutral = composeOpenWorkExtensionDiscoveryInstruction({ ...state(health({
       usable: false,
       phase: "cloud_tools_missing",
       firstFailure: {
@@ -102,9 +147,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
         message: "missing",
       },
     })), connectCatalogEnabled: false });
-    expect(degraded).toContain("Do not use OpenWork documentation tools, browser tools, or OpenWork UI tools as a substitute");
-    expect(degraded).toContain("Settings → Connect → Repair and test");
-    expect(degraded).toContain("cloud_tools_missing");
+    expect(neutral).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
 
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health({
       usable: false,
@@ -130,7 +173,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     })), connectCatalogEnabled: false })).toBe(OPENWORK_CONNECT_DISABLED_INSTRUCTION);
   });
 
-  test("fails open for probe-side failures when the engine is connected", () => {
+  test("keeps neutral steering for probe-side server failures", () => {
     expect(composeOpenWorkExtensionDiscoveryInstruction(state(health({
       usable: false,
       phase: "ready",
@@ -156,7 +199,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     })))).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
-  test("keeps degraded steering for cloud_tools_missing unless the engine is connected", () => {
+  test("keeps neutral steering for cloud_tools_missing regardless of server engine health", () => {
     const withoutEngine = composeOpenWorkExtensionDiscoveryInstruction(state(health({
       usable: false,
       phase: "cloud_tools_missing",
@@ -179,22 +222,163 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       },
     })));
 
-    expect(withoutEngine).toContain("Settings → Connect → Repair and test");
-    expect(withoutEngine).toContain("cloud_tools_missing");
-    expect(failedEngine).toContain("Settings → Connect → Repair and test");
-    expect(failedEngine).toContain("cloud_tools_missing");
+    expect(withoutEngine).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(failedEngine).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
-  test("treats unknown workspace as degraded instead of borrowing another workspace", () => {
+  test("treats unknown workspace as neutral instead of borrowing another workspace", () => {
     const instruction = composeOpenWorkExtensionDiscoveryInstruction({
       ...state(null),
       workspace: { resolution: "unknown", id: null, directory: "/tmp/unknown", reason: "No workspace has this exact OpenCode directory" },
     });
-    expect(instruction).toBe(OPENWORK_CONNECT_DEGRADED_INSTRUCTION);
+    expect(instruction).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+  });
+
+  test("never emits degraded wording or no-tool-use guidance", () => {
+    const engineStatuses: Array<string | undefined> = [
+      "connected",
+      "disabled",
+      "needs_auth",
+      "needs_client_registration",
+      "failed",
+      "starting",
+      undefined,
+    ];
+    for (const status of engineStatuses) {
+      expectNoDegradedSteering(composeSteeringFromEngineMcpStatus(status));
+    }
+
+    const fallbackStates: OpenWorkExtensionConnectState[] = [
+      state(health()),
+      state(health({ usableByCurrentModel: null })),
+      state(health({
+        usableByCurrentModel: false,
+        phase: "provider_projection_missing",
+        firstFailure: failure("provider_tool_projection_missing"),
+      })),
+      state(health({
+        usable: false,
+        phase: "engine_disabled",
+        firstFailure: failure("cloud_mcp_disabled"),
+      })),
+      state(health({
+        usable: false,
+        phase: "missing_desired",
+        desired: { present: false, revision: null },
+        firstFailure: failure("cloud_desired_missing"),
+      })),
+      state(health({
+        usable: false,
+        phase: "missing_mcp",
+        firstFailure: failure("cloud_mcp_missing"),
+      })),
+      state(health({
+        usable: false,
+        phase: "probe_unreachable",
+        firstFailure: failure("probe_unreachable"),
+      })),
+      state(health({
+        usable: false,
+        phase: "cloud_tools_missing",
+        firstFailure: failure("cloud_tools_missing"),
+      })),
+      { ...state(null), workspace: { resolution: "unknown", id: null, directory: "/tmp/unknown" } },
+      { ...state(null), connectCatalogEnabled: false },
+      { ...state(null), googleWorkspace: { legacyConfigured: true } },
+      state(null),
+    ];
+    for (const fallbackState of fallbackStates) {
+      expectNoDegradedSteering(composeOpenWorkExtensionDiscoveryInstruction(fallbackState));
+    }
   });
 });
 
 describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
+  test("uses engine connected status without fetching server connect state", async () => {
+    const requests: unknown[] = [];
+    const client = engineMcpClient({ data: { "openwork-cloud": { status: "connected" } } }, requests);
+    let serverFetchCalls = 0;
+    const serverFetch = async (): Promise<Response> => {
+      serverFetchCalls += 1;
+      return Response.json({ message: "unexpected" }, { status: 500 });
+    };
+
+    const instruction = await resolveOpenWorkExtensionDiscoveryInstruction(
+      { context: { directory: "/tmp/ws_1" } },
+      serverFetch,
+      { client, directory: "/tmp/factory" },
+    );
+
+    expect(instruction).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
+    expect(requests).toEqual([{ query: { directory: "/tmp/ws_1" } }]);
+    expect(serverFetchCalls).toBe(0);
+  });
+
+  test("uses engine auth-needed status without fetching server connect state", async () => {
+    const client = engineMcpClient({ data: { "openwork-cloud": { status: "needs_auth" } } });
+    let serverFetchCalls = 0;
+    const serverFetch = async (): Promise<Response> => {
+      serverFetchCalls += 1;
+      return Response.json({ message: "unexpected" }, { status: 500 });
+    };
+
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(OPENWORK_CONNECT_SIGN_IN_INSTRUCTION);
+    expect(serverFetchCalls).toBe(0);
+  });
+
+  test("fails open without server fetch when engine status lookup errors", async () => {
+    const client: OpenWorkEngineMcpStatusClient = {
+      mcp: {
+        status: async () => {
+          throw new Error("engine unavailable");
+        },
+      },
+    };
+    let serverFetchCalls = 0;
+    const serverFetch = async (): Promise<Response> => {
+      serverFetchCalls += 1;
+      return Response.json({ message: "unexpected" }, { status: 500 });
+    };
+
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(serverFetchCalls).toBe(0);
+  });
+
+  test("fails open without server fetch when engine has an unknown openwork-cloud status", async () => {
+    const client = engineMcpClient({ data: { "openwork-cloud": { status: "starting" } } });
+    let serverFetchCalls = 0;
+    const serverFetch = async (): Promise<Response> => {
+      serverFetchCalls += 1;
+      return Response.json({ message: "unexpected" }, { status: 500 });
+    };
+
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(serverFetchCalls).toBe(0);
+  });
+
+  test("falls back to server connect state when engine has no openwork-cloud entry", async () => {
+    process.env.OPENWORK_SERVER_URL = "http://openwork.test";
+    process.env.OPENWORK_SERVER_TOKEN = "test-token";
+    const client = engineMcpClient({ data: { other: { status: "connected" } } });
+    let serverFetchCalls = 0;
+    const serverFetch = async (): Promise<Response> => {
+      serverFetchCalls += 1;
+      return Response.json({
+        ok: true,
+        schemaVersion: 1,
+        connectEnabled: true,
+        connectCatalogEnabled: true,
+        cloudMcpPresent: true,
+        cloudHealth: health(),
+        workspace: { resolution: "resolved", id: "ws_1", directory: "/tmp/ws_1" },
+        googleWorkspace: { legacyConfigured: false },
+      });
+    };
+
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({ context: { directory: "/tmp/ws_1" } }, serverFetch, { client })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
+    expect(serverFetchCalls).toBe(1);
+  });
+
   test("fetches verified health for the current directory/model without caching stale failures", async () => {
     process.env.OPENWORK_SERVER_URL = "http://openwork.test/";
     process.env.OPENWORK_SERVER_TOKEN = "test-token";
@@ -230,7 +414,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       context: { directory: "/tmp/ws_1" },
       model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
     };
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toContain("cloud_tools_missing");
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(calls).toBe(2);
     expect(urls).toEqual([

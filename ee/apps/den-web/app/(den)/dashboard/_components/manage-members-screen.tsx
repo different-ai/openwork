@@ -35,7 +35,7 @@ import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
-import { createOrganizationInstallLink } from "./install-link-data";
+import { createOrganizationInstallLink } from "../../_lib/install-link-data";
 import { OrgMemberIdentity } from "./org-member-identity";
 
 type MembersTab = "members" | "teams" | "roles";
@@ -1082,9 +1082,16 @@ export function ManageMembersScreen() {
                   className="grid grid-cols-[minmax(0,1fr)_160px_200px] items-center gap-4 border-b border-gray-100 px-6 py-3.5 transition hover:bg-gray-50/60 last:border-b-0"
                 >
                   <div>
-                    <span className="text-[13px] font-medium text-gray-900">
-                      {team.name}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[13px] font-medium text-gray-900">
+                        {team.name}
+                      </span>
+                      {team.managedByScim ? (
+                        <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-700">
+                          Managed by SCIM
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="mt-0.5 text-[12px] text-gray-400">
                       {teamMemberNames.get(team.id)?.slice(0, 3).join(", ") ||
                         "No members assigned yet"}
@@ -1095,7 +1102,9 @@ export function ManageMembersScreen() {
                   </div>
                   <span className="text-[13px] text-gray-400">{`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}</span>
                   <div className="flex items-center justify-end gap-3">
-                    {access.canManageTeams ? (
+                    {team.managedByScim ? (
+                      <span className="text-[12px] font-medium text-cyan-700">Managed by identity provider</span>
+                    ) : access.canManageTeams ? (
                       <>
                         <ActionButton
                           icon={Pencil}

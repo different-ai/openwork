@@ -293,8 +293,9 @@ describe("Connect-aware legacy extension gating", () => {
 
     const cloudGated = await callCalendarListEvents(base);
     const cloudBody = await readSchema(cloudGated, gatedCallSchema);
-    expect(cloudBody.message).toContain("agent access is not ready for this exact workspace");
-    expect(cloudBody.message).toContain("Repair and test");
+    expect(cloudBody.message).toContain("agent access needs attention for this workspace");
+    expect(cloudBody.message).not.toContain("not ready");
+    expect(cloudBody.message).not.toContain("Repair and test");
     expect(cloudBody.message).toContain("Settings > Connect");
 
     const cloudStatus = await readSchema(

@@ -111,7 +111,12 @@ import { appMentionInstruction } from "@/react-app/domains/session/surface/compo
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
+import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { useSessionProviderAuth } from "@/react-app/domains/connections/provider-auth/use-session-provider-auth";
+import {
+  disabledProvidersFromConfig,
+  updateManagedDisabledProviders,
+} from "@/react-app/domains/connections/managed-engine-config";
 import { useMcpConnectedCount } from "@/react-app/domains/connections/use-mcp-connected-count";
 import { useSessionMcpMaintenance } from "@/react-app/domains/connections/use-session-mcp-maintenance";
 import { useCloudMcpSubmitReadiness } from "@/react-app/domains/connections/use-cloud-mcp-submit-readiness";
@@ -154,7 +159,7 @@ import { useControlAction, type OpenworkControlAction } from "./control/control-
 import { useReactRenderWatchdog } from "./react-render-watchdog";
 
 import { readDenSettings } from "@/app/lib/den";
-import { denSessionUpdatedEvent } from "@/app/lib/den-session-events";
+import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
 
 import { filterProviderList } from "@/app/utils/providers";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
@@ -434,7 +439,11 @@ export function SessionRoute() {
   useEffect(() => {
     const handler = () => setDenSessionVersion((v) => v + 1);
     window.addEventListener(denSessionUpdatedEvent, handler);
-    return () => window.removeEventListener(denSessionUpdatedEvent, handler);
+    window.addEventListener(denSettingsChangedEvent, handler);
+    return () => {
+      window.removeEventListener(denSessionUpdatedEvent, handler);
+      window.removeEventListener(denSettingsChangedEvent, handler);
+    };
   }, []);
 
   // Provider IDs that were just added — used to highlight them as
@@ -617,22 +626,53 @@ export function SessionRoute() {
     baseUrl: opencodeBaseUrl,
     workspaceRoot: selectedWorkspaceRoot,
   });
+  const {
+    store: sessionProviderAuthStore,
+    snapshot: sessionProviderAuthSnapshot,
+    cloudProviderSyncReady,
+    cloudProviderList,
+  } = useSessionProviderAuth({
+    opencodeClient,
+    providers,
+    providerDefaults,
+    providerConnectedIds,
+    disabledProviderIds,
+    selectedWorkspace,
+    selectedWorkspaceEndpoint,
+    selectedWorkspaceRoot,
+    selectedWorkspaceId,
+    setProviders,
+    setProviderDefaults,
+    setProviderConnectedIds,
+    setDisabledProviderIds,
+  });
+  const selectedModelUsesCloudProvider = Boolean(
+    local.prefs.defaultModel && isCloudManagedProviderKey(local.prefs.defaultModel.providerID),
+  );
+  const selectedModelProviderList = selectedModelUsesCloudProvider
+    ? cloudProviderList
+    : providerListQuery.data;
   const selectedModelUnavailable = Boolean(
-    local.prefs.defaultModel &&
+    selectedWorkspaceId &&
+      opencodeClient &&
+      !loading &&
+      local.prefs.defaultModel &&
+      (!selectedModelUsesCloudProvider || cloudProviderSyncReady) &&
       (
         isDesktopProviderBlocked({
           providerId: local.prefs.defaultModel.providerID,
           checkRestriction: checkDesktopRestriction,
         }) ||
         (
+          selectedModelProviderList &&
           checkDesktopRestriction({ restriction: "allowCustomProviders" }) &&
-          !providerConnectedIds.some(
+          !selectedModelProviderList.connected.some(
             (providerId) => providerId.trim() === local.prefs.defaultModel?.providerID.trim(),
           )
         ) ||
         (
-          providerListQuery.data &&
-          !isModelAvailableInConnectedProviders(providerListQuery.data, local.prefs.defaultModel)
+          selectedModelProviderList &&
+          !isModelAvailableInConnectedProviders(selectedModelProviderList, local.prefs.defaultModel)
         )
       ),
   );
@@ -666,22 +706,6 @@ export function SessionRoute() {
     providerConnectedIds,
   });
 
-  const { store: sessionProviderAuthStore, snapshot: sessionProviderAuthSnapshot } =
-    useSessionProviderAuth({
-      opencodeClient,
-      providers,
-      providerDefaults,
-      providerConnectedIds,
-      disabledProviderIds,
-      selectedWorkspace,
-      selectedWorkspaceEndpoint,
-      selectedWorkspaceRoot,
-      selectedWorkspaceId,
-      setProviders,
-      setProviderDefaults,
-      setProviderConnectedIds,
-      setDisabledProviderIds,
-    });
   const {
     activePermission,
     permissionReplyBusy,
@@ -737,10 +761,8 @@ export function SessionRoute() {
           await opencodeClient.config.get({
             directory: selectedWorkspaceRoot || undefined,
           }),
-        ) as { disabled_providers?: string[] };
-        disabledProviders = Array.isArray(config.disabled_providers)
-          ? config.disabled_providers
-          : [];
+        );
+        disabledProviders = disabledProvidersFromConfig(config);
         if (!cancelled) setDisabledProviderIds(disabledProviders);
       } catch {
         // ignore config read failures and continue with provider discovery
@@ -2251,13 +2273,27 @@ export function SessionRoute() {
       onToggleProvider={async (providerId, enable) => {
         if (!opencodeClient) return;
         try {
-          const config = unwrap(await opencodeClient.config.get()) as { disabled_providers?: string[] };
-          const current = Array.isArray(config.disabled_providers) ? config.disabled_providers : [];
+          const config = unwrap(await opencodeClient.config.get());
+          const current = disabledProvidersFromConfig(config);
           const next = enable
             ? current.filter((id: string) => id !== providerId)
             : [...current, providerId];
-          await opencodeClient.config.update({ config: { ...config, disabled_providers: next } });
-          setDisabledProviderIds(next);
+          const result = await updateManagedDisabledProviders({
+            opencodeClient,
+            openworkClient: selectedWorkspaceEndpoint?.client ?? null,
+            workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
+            workspaceType: selectedWorkspace?.workspaceType ?? "local",
+            disabledProviders: next,
+            currentConfig: config,
+            markReloadRequired: () => {
+              reloadCoordinator.markReloadRequired("config", {
+                type: "config",
+                name: "runtime-opencode-config.json",
+                action: "updated",
+              });
+            },
+          });
+          setDisabledProviderIds(result.disabledProviders);
         } catch {}
       }}
       onOpenSettings={() => {

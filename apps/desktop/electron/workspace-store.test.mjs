@@ -58,7 +58,7 @@ async function withIsolatedBootstrapStore(callback) {
   }
 }
 
-test("recovers empty desktop workspace state from token store paths", async () => {
+test("recovers missing desktop workspace state from token store paths", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
   const userData = path.join(root, "userData");
   const oldWorkspace = path.join(root, "old-workspace");
@@ -66,11 +66,6 @@ test("recovers empty desktop workspace state from token store paths", async () =
   const oldWorkspaceReal = await realpath(oldWorkspace);
   await mkdir(userData, { recursive: true });
 
-  await writeFile(
-    path.join(userData, "openwork-workspaces.json"),
-    JSON.stringify({ selectedId: "ws_missing", activeId: "ws_missing", watchedId: null, workspaces: [] }),
-    "utf8",
-  );
   await writeFile(
     path.join(userData, "openwork-server-tokens.json"),
     JSON.stringify({
@@ -109,7 +104,43 @@ test("recovers empty desktop workspace state from token store paths", async () =
   }
 });
 
-test("prefers server config workspaces when desktop state is empty", async () => {
+test("keeps persisted empty desktop workspace state authoritative", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+  const userData = path.join(root, "userData");
+  const oldWorkspace = path.join(root, "old-workspace");
+  await mkdir(oldWorkspace, { recursive: true });
+  await mkdir(userData, { recursive: true });
+
+  await writeFile(
+    path.join(userData, "openwork-workspaces.json"),
+    JSON.stringify({ selectedId: "", activeId: null, watchedId: null, workspaces: [] }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(userData, "openwork-server-tokens.json"),
+    JSON.stringify({ version: 1, workspaces: { [oldWorkspace]: { updatedAt: 2 } } }),
+    "utf8",
+  );
+
+  const previous = process.env.OPENWORK_SERVER_CONFIG;
+  process.env.OPENWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  try {
+    const store = createWorkspaceStore({
+      app: { getPath: (name) => name === "userData" ? userData : root },
+      defaultDenBaseUrl: "https://example.test",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+    });
+
+    const state = await store.readWorkspaceState();
+    assert.deepEqual(state.workspaces, []);
+    assert.equal(state.selectedId, "");
+  } finally {
+    restoreEnv("OPENWORK_SERVER_CONFIG", previous);
+  }
+});
+
+test("prefers server config workspaces when desktop state is missing", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
   const userData = path.join(root, "userData");
   const oldWorkspace = path.join(root, "server-workspace");
@@ -118,11 +149,6 @@ test("prefers server config workspaces when desktop state is empty", async () =>
   await mkdir(userData, { recursive: true });
   const oldWorkspaceReal = await realpath(oldWorkspace);
 
-  await writeFile(
-    path.join(userData, "openwork-workspaces.json"),
-    JSON.stringify({ selectedId: "", activeId: null, watchedId: null, workspaces: [] }),
-    "utf8",
-  );
   await writeFile(
     serverConfig,
     JSON.stringify({ workspaces: [{ path: oldWorkspace, name: "From Server" }] }),
@@ -185,11 +211,6 @@ test("normalizes recovered remote OpenWork entries before persisting", async () 
   await mkdir(userData, { recursive: true });
 
   await writeFile(
-    path.join(userData, "openwork-workspaces.json"),
-    JSON.stringify({ selectedId: "", activeId: null, watchedId: null, workspaces: [] }),
-    "utf8",
-  );
-  await writeFile(
     serverConfig,
     JSON.stringify({
       workspaces: [
@@ -232,6 +253,58 @@ test("normalizes recovered remote OpenWork entries before persisting", async () 
     if (previous === undefined) delete process.env.OPENWORK_SERVER_CONFIG;
     else process.env.OPENWORK_SERVER_CONFIG = previous;
   }
+});
+
+test("forgetting a local workspace removes its recovery token", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+  const userData = path.join(root, "userData");
+  const forgottenWorkspace = path.join(root, "forgotten-workspace");
+  const retainedWorkspace = path.join(root, "retained-workspace");
+  await mkdir(forgottenWorkspace, { recursive: true });
+  await mkdir(retainedWorkspace, { recursive: true });
+  await mkdir(userData, { recursive: true });
+
+  await writeFile(
+    path.join(userData, "openwork-workspaces.json"),
+    JSON.stringify({
+      selectedId: "ws_forgotten",
+      activeId: "ws_forgotten",
+      watchedId: "ws_forgotten",
+      workspaces: [
+        { id: "ws_forgotten", path: forgottenWorkspace, workspaceType: "local" },
+        { id: "ws_retained", path: retainedWorkspace, workspaceType: "local" },
+      ],
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(userData, "openwork-server-tokens.json"),
+    JSON.stringify({
+      version: 1,
+      workspaces: {
+        [forgottenWorkspace]: { token: "forgotten", updatedAt: 2 },
+        [retainedWorkspace]: { token: "retained", updatedAt: 1 },
+      },
+    }),
+    "utf8",
+  );
+
+  const store = createWorkspaceStore({
+    app: { getPath: (name) => name === "userData" ? userData : root },
+    defaultDenBaseUrl: "https://example.test",
+    defaultRequireSignin: false,
+    forceRequireSignin: false,
+  });
+
+  const state = await store.forgetWorkspace("ws_forgotten");
+  assert.deepEqual(state.workspaces.map((workspace) => workspace.id), ["ws_retained"]);
+  assert.equal(state.selectedId, "");
+  assert.equal(state.activeId, null);
+  assert.equal(state.watchedId, null);
+
+  const tokens = JSON.parse(await readFile(path.join(userData, "openwork-server-tokens.json"), "utf8"));
+  assert.deepEqual(Object.keys(tokens.workspaces), [retainedWorkspace]);
+  assert.equal(tokens.workspaces[retainedWorkspace].token, "retained");
 });
 
 test("desktop bootstrap prefers a newer canonical writtenAt over stale legacy", async () => {

@@ -24,6 +24,7 @@ import type { CreateWorkspaceOptions } from "../domains/workspace/types";
 import {
   getOpenWorkModelsActionUrl,
   hideOpenWorkModelsPromo,
+  useOpenWorkModelsPromoEligibility,
   markOpenWorkModelsStartupPromoShown,
 } from "../domains/cloud/openwork-models-promo";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
@@ -133,6 +134,7 @@ export function WelcomeRoute() {
   const [organizationServerUrl, setOrganizationServerUrl] = useState(() => readDenSettings().baseUrl);
   const [organizationServerBusy, setOrganizationServerBusy] = useState(false);
   const [organizationServerError, setOrganizationServerError] = useState<string | null>(null);
+  const showOpenWorkModelsPromo = useOpenWorkModelsPromoEligibility();
 
   // If user already completed onboarding, redirect away immediately.
   useEffect(() => {
@@ -425,6 +427,7 @@ export function WelcomeRoute() {
       />
       {state.providerStep ? (
         <ProviderSelectionStep
+          showOpenWorkModels={showOpenWorkModelsPromo}
           onOpenWorkModels={() => {
             // Land on the OpenWork Models value-prop page when already
             // signed in to Den; otherwise start sign-up. Previously this

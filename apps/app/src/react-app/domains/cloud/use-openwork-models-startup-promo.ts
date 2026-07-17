@@ -12,6 +12,7 @@ import {
   getOpenWorkModelsActionUrl,
   hasOpenWorkModelsProvider,
   hideOpenWorkModelsPromo,
+  useOpenWorkModelsPromoEligibility,
   isOpenWorkModelsPromoHidden,
   markOpenWorkModelsStartupPromoShown,
   openWorkModelsPromoChangedEvent,
@@ -31,6 +32,7 @@ export function useOpenWorkModelsStartupPromo(input: UseOpenWorkModelsStartupPro
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const { config: shellConfig } = useShellConfig();
+  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
 
   const [open, setOpen] = useState(false);
   const [promoHidden, setPromoHidden] = useState(isOpenWorkModelsPromoHidden);
@@ -48,6 +50,10 @@ export function useOpenWorkModelsStartupPromo(input: UseOpenWorkModelsStartupPro
   );
 
   useEffect(() => {
+    if (!openWorkModelsPromoEligible) {
+      setOpen(false);
+      return;
+    }
     if (!shellConfig.cloudSignin || promoHidden || hasOpenWorkModels) return;
     if (denAuth.status === "checking" || !clientReady || !workspaceId) return;
     if (wasOpenWorkModelsStartupPromoShown() || scheduledRef.current) return;
@@ -58,7 +64,7 @@ export function useOpenWorkModelsStartupPromo(input: UseOpenWorkModelsStartupPro
       setOpen(true);
     }, 900);
     return () => window.clearTimeout(timeout);
-  }, [clientReady, denAuth.status, hasOpenWorkModels, promoHidden, shellConfig.cloudSignin, workspaceId]);
+  }, [clientReady, denAuth.status, hasOpenWorkModels, openWorkModelsPromoEligible, promoHidden, shellConfig.cloudSignin, workspaceId]);
 
   const subscribe = useCallback(() => {
     setOpen(false);

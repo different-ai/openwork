@@ -31,6 +31,7 @@ import { downloadTextAsFile } from "../../../../app/lib/download";
 
 import {
   writeOpenworkServerSettings,
+  type OpenworkRuntimeConfigStatus,
 } from "../../../../app/lib/openwork-server";
 import {
   clearStartupPreference,
@@ -252,6 +253,8 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [appBuild, setAppBuild] = useState<AppBuildInfo | null>(null);
   const [bootstrapPrepared, setBootstrapPrepared] = useState<DesktopBootstrapConfig["prepared"]>(null);
   const [bootstrapConfigDebug, setBootstrapConfigDebug] = useState<unknown>(null);
+  const [runtimeConfigStatus, setRuntimeConfigStatus] = useState<OpenworkRuntimeConfigStatus | null>(null);
+  const [runtimeConfigStatusError, setRuntimeConfigStatusError] = useState<string | null>(null);
   const [runtimeDebugStatus, setRuntimeDebugStatus] = useState<string | null>(null);
   const [sandboxProbeBusy, setSandboxProbeBusy] = useState(false);
   const [sandboxProbeResult, setSandboxProbeResult] = useState<SandboxDebugProbeResult | null>(null);
@@ -335,6 +338,34 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       cancelled = true;
     };
   }, [developerMode]);
+
+  useEffect(() => {
+    if (!developerMode) return;
+    const client = openworkServerSnapshot.openworkServerClient;
+    const workspaceId = runtimeWorkspaceId?.trim();
+    if (!client || !workspaceId) {
+      setRuntimeConfigStatus(null);
+      setRuntimeConfigStatusError(null);
+      return;
+    }
+    let cancelled = false;
+    void client.getRuntimeConfigStatus(workspaceId)
+      .then((status) => {
+        if (!cancelled) {
+          setRuntimeConfigStatus(status);
+          setRuntimeConfigStatusError(null);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setRuntimeConfigStatus(null);
+          setRuntimeConfigStatusError(error instanceof Error ? error.message : safeStringify(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [developerMode, openworkServerSnapshot.openworkServerClient, runtimeWorkspaceId]);
 
   useEffect(() => {
     if (!developerMode || !isDesktopRuntime()) return;
@@ -946,6 +977,8 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       runtimeSummary,
       runtimeDebugReportJson,
       bootstrapConfigDebugJson,
+      runtimeConfigStatus,
+      runtimeConfigStatusError,
       runtimeDebugStatus,
       onCopyRuntimeDebugReport,
       onExportRuntimeDebugReport,
@@ -1094,6 +1127,8 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       openworkServerSnapshot.openworkServerDiagnostics,
       openworkServerSnapshot.openworkServerStatus,
       resetModalBusy,
+      runtimeConfigStatus,
+      runtimeConfigStatusError,
       runtimeDebugReportJson,
       runtimeDebugStatus,
       runtimeSummary,

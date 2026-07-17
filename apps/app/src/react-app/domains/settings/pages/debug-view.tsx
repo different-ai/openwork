@@ -11,6 +11,7 @@ import {
 
 import type {
   OpenworkAuditEntry,
+  OpenworkRuntimeConfigStatus,
   OpenworkServerCapabilities,
   OpenworkServerDiagnostics,
 } from "../../../../app/lib/openwork-server";
@@ -76,6 +77,8 @@ export type DebugViewProps = {
   runtimeSummary: RuntimeSummary;
   runtimeDebugReportJson: string;
   bootstrapConfigDebugJson: string;
+  runtimeConfigStatus: OpenworkRuntimeConfigStatus | null;
+  runtimeConfigStatusError: string | null;
   runtimeDebugStatus: string | null;
   onCopyRuntimeDebugReport: () => void | Promise<void>;
   onExportRuntimeDebugReport: () => void | Promise<void>;
@@ -257,6 +260,81 @@ function ExecutionDetails(props: { execution: OpencodeExecutionSnapshot }) {
   );
 }
 
+function formatManagedFileTime(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? new Date(value).toLocaleString()
+    : t("settings.runtime_config_missing");
+}
+
+function RuntimeConfigOwnershipCard(props: {
+  status: OpenworkRuntimeConfigStatus | null;
+  error: string | null;
+}) {
+  return (
+    <div className={cardClass}>
+      <div className={sectionHeaderClass}>
+        <div className={sectionTitleClass}>{t("settings.runtime_config_ownership_title")}</div>
+        <div className={sectionDescClass}>{t("settings.runtime_config_one_writer_rule")}</div>
+      </div>
+
+      {props.error ? <StatusBanner tone="error" message={props.error} /> : null}
+
+      <div className="grid gap-2 text-[12px] text-dls-secondary">
+        <div>
+          {t("settings.runtime_config_managed_file_path", {
+            path: props.status?.managedFilePath ?? "—",
+          })}
+        </div>
+        <div>
+          {t("settings.runtime_config_last_rebuilt", {
+            time: formatManagedFileTime(props.status?.managedFileRebuiltAt),
+          })}
+        </div>
+      </div>
+
+      <details className="group">
+        <summary className="cursor-pointer select-none text-[11px] font-medium uppercase tracking-wider text-dls-secondary">
+          {t("settings.runtime_config_redacted_content")}
+        </summary>
+        <pre className={`${monoPreClass} mt-2`}>
+          {props.status?.managedFileContentRedacted ?? t("settings.runtime_config_content_unavailable")}
+        </pre>
+      </details>
+
+      <div className={subCardClass}>
+        <div className="text-sm font-semibold tracking-[-0.1px] text-dls-text">
+          {t("settings.runtime_config_legacy_cleanup_title")}
+        </div>
+        {!props.status?.sweep ? (
+          <div className="text-[12px] text-dls-secondary">{t("settings.runtime_config_cleanup_pending")}</div>
+        ) : props.status.sweep.error ? (
+          <StatusBanner tone="error" message={props.status.sweep.error} />
+        ) : props.status.sweep.files.length === 0 ? (
+          <div className="text-[12px] text-dls-secondary">{t("settings.runtime_config_cleanup_no_files")}</div>
+        ) : (
+          <div className="divide-y divide-dls-border/60">
+            {props.status.sweep.files.map((file) => (
+              <div key={file.path} className="space-y-1 py-2 first:pt-0 last:pb-0">
+                <div className="truncate font-mono text-[11px] text-dls-text" title={file.path}>{file.path}</div>
+                <div className="text-[11px] text-dls-secondary">
+                  {file.removedKeys.length > 0
+                    ? t("settings.runtime_config_removed_keys", { keys: file.removedKeys.join(", ") })
+                    : t("settings.runtime_config_no_removed_keys")}
+                </div>
+                <div className="truncate text-[11px] text-dls-secondary" title={file.backupPath ?? undefined}>
+                  {file.backupPath
+                    ? t("settings.runtime_config_backup_path", { path: file.backupPath })
+                    : t("settings.runtime_config_no_backup")}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 type ServiceCardProps = {
   title: string;
   description: string;
@@ -425,6 +503,11 @@ export function DebugView(props: DebugViewProps) {
           <pre className={monoPreClass}>{props.bootstrapConfigDebugJson}</pre>
         </div>
       </div>
+
+      <RuntimeConfigOwnershipCard
+        status={props.runtimeConfigStatus}
+        error={props.runtimeConfigStatusError}
+      />
 
       {/* Section: Services */}
       <div className={cardClass}>

@@ -281,22 +281,9 @@ async function ensureRenderedApp(ctx) {
   });
 }
 
-async function useMarketplaceImportMode(ctx) {
-  await ctx.waitFor(
-    `(() => {
-      const bridge = window.__openworkApplyDesktopConfig;
-      if (typeof bridge !== "function") return false;
-      bridge({ connectEnabled: false });
-      return document.body.innerText.includes("Extension Marketplace");
-    })()`,
-    { timeoutMs: 20_000, label: "marketplace import mode" },
-  );
-}
-
 async function openMarketplace(ctx) {
   await ensureRenderedApp(ctx);
   await openWorkspaceSettings(ctx, "cloud-marketplaces");
-  await useMarketplaceImportMode(ctx);
   await ctx.waitForText("Marketplace", { timeoutMs: 30_000 });
   const hasRefresh = await ctx.eval(
     "Boolean(window.__openworkControl?.listActions().find(a => a.id === 'extensions.refresh-marketplace'))",
@@ -304,7 +291,6 @@ async function openMarketplace(ctx) {
   if (hasRefresh) {
     await ctx.control("extensions.refresh-marketplace");
   }
-  await useMarketplaceImportMode(ctx);
   await ctx.waitForText(BROKEN_PLUGIN_NAME, { timeoutMs: 45_000 });
   await ctx.waitForText(VALID_PLUGIN_NAME, { timeoutMs: 45_000 });
 }
@@ -317,11 +303,26 @@ async function searchMarketplace(ctx, value) {
   );
 }
 
-async function installMarketplacePlugin(ctx, pluginName) {
+async function openMarketplacePluginDetail(ctx, pluginName) {
   await searchMarketplace(ctx, pluginName);
   await ctx.clickText(pluginName, { selector: "button", timeoutMs: 20_000 });
   await ctx.waitForText("COMPOSITION", { timeoutMs: 20_000 });
-  await ctx.clickText("Add", { selector: '[role="dialog"] button', timeoutMs: 20_000 });
+}
+
+async function readMarketplacePluginDialog(ctx) {
+  return ctx.eval(`(() => {
+    const compact = (entry) => (entry?.innerText ?? entry?.textContent ?? '').replace(/\\s+/g, ' ').trim();
+    const dialog = document.querySelector('[role="dialog"]');
+    return {
+      text: compact(dialog),
+      buttonTexts: [...(dialog?.querySelectorAll('button') ?? [])].map(compact),
+    };
+  })()`);
+}
+
+function assertNoDialogInstallButtons(ctx, state) {
+  const forbidden = state.buttonTexts.filter((text) => ["Add", "Install", "Update"].includes(text));
+  ctx.assert(forbidden.length === 0, `Removed marketplace install/update buttons rendered in dialog: ${JSON.stringify(forbidden)}`);
 }
 
 async function workspaceServerJson(ctx, path) {
@@ -344,30 +345,6 @@ async function workspaceServerJson(ctx, path) {
   })()`, { awaitPromise: true });
 }
 
-async function waitForSkill(ctx, skillName) {
-  await ctx.waitFor(
-    `window.__OPENWORK_ELECTRON__?.invokeDesktop ? true : false`,
-    { timeoutMs: 15_000, label: "Electron bridge for skill check" },
-  );
-  await ctx.waitFor(
-    `(async () => {
-      const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
-      const info = await bridge("openworkServerInfo");
-      const baseUrl = String(info?.baseUrl ?? "").replace(/\\/+$/, "");
-      const token = String(info?.ownerToken || info?.clientToken || "").trim();
-      const workspaceId = (location.hash.match(/\\/workspace\\/([^/]+)/) || [])[1] || localStorage.getItem("openwork.react.activeWorkspace") || "";
-      if (!baseUrl || !token || !workspaceId) return false;
-      const response = await fetch(baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/skills", {
-        headers: { authorization: "Bearer " + token },
-      });
-      if (!response.ok) return false;
-      const body = await response.json();
-      return Array.isArray(body.items) && body.items.some((item) => item.name === ${JSON.stringify(skillName)});
-    })()`,
-    { timeoutMs: 45_000, label: `workspace skill ${skillName}` },
-  );
-}
-
 async function readMcpState(ctx) {
   const body = await workspaceServerJson(ctx, "/mcp");
   const names = Array.isArray(body.items) ? body.items.map((item) => item.name) : [];
@@ -380,28 +357,10 @@ async function assertNoBrokenMcp(ctx) {
   ctx.log(`MCP servers after broken install: ${JSON.stringify(mcp.names)}`);
 }
 
-async function assertLinearMcpSynced(ctx) {
-  await ctx.waitFor(
-    `(async () => {
-      const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
-      if (!bridge) return false;
-      const info = await bridge("openworkServerInfo");
-      const baseUrl = String(info?.baseUrl ?? "").replace(/\\/+$/, "");
-      const token = String(info?.ownerToken || info?.clientToken || "").trim();
-      const workspaceId = (location.hash.match(/\\/workspace\\/([^/]+)/) || [])[1] || localStorage.getItem("openwork.react.activeWorkspace") || "";
-      if (!baseUrl || !token || !workspaceId) return false;
-      const response = await fetch(baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/mcp", {
-        headers: { authorization: "Bearer " + token },
-      });
-      if (!response.ok) return false;
-      const body = await response.json();
-      return Array.isArray(body.items) && body.items.some((item) => item.name === "linear") && body.engineSync?.status === "ok";
-    })()`,
-    { timeoutMs: 45_000, label: "linear MCP in server list with ok engine sync" },
-  );
-  const mcp = await readMcpState(ctx);
-  ctx.assert(mcp.engineSync?.status === "ok", `Expected engine sync ok, got ${JSON.stringify(mcp.engineSync)}`);
-  ctx.log(`MCP servers after valid install: ${JSON.stringify(mcp)}`);
+async function assertNoSkill(ctx, skillName) {
+  const body = await workspaceServerJson(ctx, "/skills");
+  const names = Array.isArray(body.items) ? body.items.map((item) => item.name) : [];
+  ctx.assert(!names.includes(skillName), `Skill ${skillName} should not have been installed locally: ${JSON.stringify(names)}`);
 }
 
 async function openMcpSettings(ctx) {
@@ -412,18 +371,9 @@ async function openMcpSettings(ctx) {
   await ctx.clickText("Refresh", { selector: "button", timeoutMs: 10_000 }).catch(() => {});
 }
 
-async function scrollConfiguredServer(ctx, text) {
-  await ctx.eval(`(() => {
-    const rows = [...document.querySelectorAll("button")];
-    const target = rows.find((button) => (button.textContent ?? "").toLowerCase().includes(${JSON.stringify(text.toLowerCase())}));
-    if (target) target.scrollIntoView({ block: "center" });
-    return Boolean(target);
-  })()`);
-}
-
 export default {
   id: FLOW_ID,
-  title: "Cloud marketplace plugins warn on malformed MCP payloads and hot-sync valid MCPs",
+  title: "Retired local import warning path: marketplace plugins are cloud-delivered only",
   kind: "user-facing",
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_WORKSPACE_PATH"],
   steps: [
@@ -441,7 +391,7 @@ export default {
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("Signed-in user sees both org marketplace plugins", {
+        await ctx.prove("Signed-in user sees both org marketplace plugins as cloud-delivered", {
           voiceover: vo[0],
           action: async () => {
             await openMarketplace(ctx);
@@ -450,10 +400,11 @@ export default {
           assert: async () => {
             await ctx.expectText(BROKEN_PLUGIN_NAME);
             await ctx.expectText(VALID_PLUGIN_NAME);
+            await ctx.expectText("Runs in cloud");
           },
           screenshot: {
             name: "marketplace-shows-bundles",
-            requireText: ["Marketplace", BROKEN_PLUGIN_NAME, VALID_PLUGIN_NAME],
+            requireText: ["Marketplace", BROKEN_PLUGIN_NAME, VALID_PLUGIN_NAME, "Runs in cloud"],
             rejectText: ["Something went wrong"],
             hashIncludes: "/settings/cloud-marketplaces",
           },
@@ -463,20 +414,22 @@ export default {
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("Broken MCP bundle imports the skill and surfaces a warning", {
+        await ctx.prove("The old broken-bundle import path is retired and exposes no Add action", {
           voiceover: vo[1],
           action: async () => {
-            await installMarketplacePlugin(ctx, BROKEN_PLUGIN_NAME);
-            await ctx.waitForText("could not be installed", { timeoutMs: 20_000 });
+            await openMarketplacePluginDetail(ctx, BROKEN_PLUGIN_NAME);
           },
           assert: async () => {
-            await ctx.expectText(VALID_WARNING, { timeoutMs: 5_000 });
-            await waitForSkill(ctx, BROKEN_SKILL_NAME);
+            const dialog = await readMarketplacePluginDialog(ctx);
+            ctx.assert(dialog.text.includes("Active · runs in cloud"), `Cloud-active status missing: ${dialog.text}`);
+            assertNoDialogInstallButtons(ctx, dialog);
+            await ctx.expectNoText(VALID_WARNING);
+            await assertNoSkill(ctx, BROKEN_SKILL_NAME);
             await assertNoBrokenMcp(ctx);
           },
           screenshot: {
-            name: "broken-install-warning-toast",
-            requireText: ["could not be installed"],
+            name: "broken-bundle-cloud-only-detail",
+            requireText: [BROKEN_PLUGIN_NAME, "Active · runs in cloud"],
             rejectText: ["Something went wrong"],
             hashIncludes: "/settings/cloud-marketplaces",
           },
@@ -486,23 +439,17 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        await ctx.prove("Persistent state shows skill installed and no broken MCP row", {
+        await ctx.prove("Persistent local state stays untouched after viewing the broken bundle", {
           voiceover: vo[2],
           action: async () => {
-            await ctx.waitFor(
-              `!document.body.innerText.includes(${JSON.stringify("could not be installed")})`,
-              { timeoutMs: 15_000, label: "warning toast dismissed" },
-            );
-            await openWorkspaceSettings(ctx, "extensions/skills");
-            await ctx.waitForText(BROKEN_PLUGIN_NAME, { timeoutMs: 30_000 });
             await openMcpSettings(ctx);
           },
           assert: async () => {
-            await waitForSkill(ctx, BROKEN_SKILL_NAME);
+            await assertNoSkill(ctx, BROKEN_SKILL_NAME);
             await assertNoBrokenMcp(ctx);
           },
           screenshot: {
-            name: "mcp-settings-no-broken-row",
+            name: "mcp-settings-still-no-broken-row",
             requireText: ["Add Custom App", "MCPs", "YOUR APPS"],
             rejectText: ["Something went wrong", BROKEN_PLUGIN_NAME, "Broken MCP"],
             hashIncludes: "/settings/extensions/mcp",
@@ -513,30 +460,25 @@ export default {
     {
       name: "Frame 4",
       run: async (ctx) => {
-        await ctx.prove("Valid remote MCP installs and appears without manual reload", {
+        await ctx.prove("The valid remote MCP bundle is also cloud-only with no local install", {
           voiceover: vo[3],
           action: async () => {
             await openMarketplace(ctx);
-            await installMarketplacePlugin(ctx, VALID_PLUGIN_NAME);
-            await ctx.waitForText(`Imported ${VALID_PLUGIN_NAME}`, { timeoutMs: 30_000 });
-            await openMcpSettings(ctx);
-            await ctx.waitForText("linear", { timeoutMs: 45_000 });
-            await scrollConfiguredServer(ctx, "linear");
+            await openMarketplacePluginDetail(ctx, VALID_PLUGIN_NAME);
           },
           assert: async () => {
-            await waitForSkill(ctx, slugify(VALID_SKILL_TITLE));
-            await assertLinearMcpSynced(ctx);
-            const visible = await ctx.eval(`(() => {
-              const text = document.body.innerText.toLowerCase();
-              return text.includes("linear") && text.includes("your apps");
-            })()`);
-            ctx.assert(visible, "Linear MCP is not visible in the MCP settings view.");
+            const dialog = await readMarketplacePluginDialog(ctx);
+            ctx.assert(dialog.text.includes("Active · runs in cloud"), `Cloud-active status missing: ${dialog.text}`);
+            assertNoDialogInstallButtons(ctx, dialog);
+            await assertNoSkill(ctx, slugify(VALID_SKILL_TITLE));
+            const mcp = await readMcpState(ctx);
+            ctx.assert(!mcp.names.includes("linear"), `Linear MCP should not have been installed locally: ${JSON.stringify(mcp.names)}`);
           },
           screenshot: {
-            name: "linear-mcp-hot-synced",
-            requireText: ["Add Custom App", "linear"],
+            name: "valid-bundle-cloud-only-detail",
+            requireText: [VALID_PLUGIN_NAME, "Active · runs in cloud"],
             rejectText: ["Something went wrong"],
-            hashIncludes: "/settings/extensions/mcp",
+            hashIncludes: "/settings/cloud-marketplaces",
           },
         });
       },

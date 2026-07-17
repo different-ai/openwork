@@ -145,6 +145,83 @@ The existing Secret must contain the keys listed under `secret.keys`, especially
 
 Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
 
+## Custom CA certificates
+
+Use `customCa` when OpenWork must trust a private certificate authority for
+strict TLS verification, such as a MySQL endpoint signed by an internal or cloud
+private CA. The chart does not accept PEM material in values and does not create
+the CA resource for you; create the Kubernetes Secret or ConfigMap in the
+release namespace before running `helm install` or `helm upgrade`.
+
+Secret example:
+
+```bash
+kubectl create secret generic openwork-custom-ca \
+  --namespace openwork \
+  --from-file=ca.crt=./corp-root-ca.pem
+```
+
+```yaml
+customCa:
+  enabled: true
+  existingSecret: openwork-custom-ca
+  existingConfigMap: ""
+  key: ca.crt
+```
+
+ConfigMap example:
+
+```bash
+kubectl create configmap openwork-custom-ca \
+  --namespace openwork \
+  --from-file=ca.crt=./corp-root-ca.pem
+```
+
+```yaml
+customCa:
+  enabled: true
+  existingSecret: ""
+  existingConfigMap: openwork-custom-ca
+  key: ca.crt
+```
+
+When enabled, set exactly one of `existingSecret` or `existingConfigMap`, and set
+`key` to the data key containing the CA bundle. The chart mounts only that key as
+`/etc/openwork/custom-ca/ca-bundle.pem` and sets `NODE_EXTRA_CA_CERTS` to that
+file for `den-api`, `den-web`, enabled `inference`, and the migration Job. Do
+not also set `denApi.env.NODE_EXTRA_CA_CERTS`, `denWeb.env.NODE_EXTRA_CA_CERTS`,
+or `inference.env.NODE_EXTRA_CA_CERTS`; Helm rejects those conflicts while
+`customCa.enabled=true`.
+
+For strict MySQL TLS verification, pair the mounted CA with a verifying
+`DATABASE_URL`, for example:
+
+```yaml
+secret:
+  values:
+    databaseUrl: "mysql://openwork:REPLACE_DB_PASSWORD@mysql.example.internal:3306/openwork_den?sslmode=verify-full"
+```
+
+`sslmode=verify-ca`, `sslmode=verify-full`, and `sslaccept=strict` enable strict
+certificate verification. `sslaccept=accept` keeps TLS enabled but does not
+verify the certificate chain, so use it only for smoke tests or while preparing
+the CA bundle.
+
+The custom CA is release-wide for Node.js processes in this chart. Treat it as a
+global trust decision for outbound TLS from those workloads, and include only CA
+roots your OpenWork deployment should trust. On CA rotation, update the existing
+Secret or ConfigMap and restart the running workloads so Node reloads the CA
+file, for example:
+
+```bash
+kubectl rollout restart deployment/openwork-ee-den-api --namespace openwork
+kubectl rollout restart deployment/openwork-ee-den-web --namespace openwork
+kubectl rollout restart deployment/openwork-ee-inference --namespace openwork
+```
+
+The next migration hook Job will mount the current CA data; rerun a failed
+upgrade after the CA resource is corrected.
+
 ## Observability
 
 The chart exposes first-class runtime observability settings for `den-api` and
@@ -522,8 +599,12 @@ take precedence, so upgrading does not require changing that configuration.
 
 ```yaml
 config:
-  denApiNodeOptions: "--use-openssl-ca --max-old-space-size=4096"
+  denApiNodeOptions: "--max-old-space-size=4096"
 ```
+
+`--use-openssl-ca` only changes how Node reads operating-system trust. It does
+not create or mount a private CA bundle into the container; use `customCa` for
+that.
 
 ## Service Exposure
 

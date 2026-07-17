@@ -404,7 +404,9 @@ export const githubPluginMcpImportSchema = githubPluginMcpImportPreviewSchema.ex
   access: githubPluginMcpImportAccessSchema.optional(),
   authType: z.enum(["oauth", "none"]).optional().default("oauth"),
   credentialMode: z.enum(["shared", "per_member"]).optional().default("per_member"),
-  marketplaceId: marketplaceIdSchema,
+  description: z.string().trim().max(65535).nullable().optional(),
+  marketplaceId: marketplaceIdSchema.optional(),
+  name: z.string().trim().min(1).max(255).optional(),
   selectedSkillKeys: z.array(z.string().trim().min(1).max(1024)).max(200).optional(),
   selectedServerKeys: z.array(z.string().trim().min(1).max(1024)).max(200).optional(),
   selectedServerNames: z.array(z.string().trim().min(1).max(255)).max(200).optional(),
@@ -572,6 +574,8 @@ const pluginCloudReadinessSchema = z.object({
   state: z.enum(["ready", "needs_signin", "needs_admin_setup", "desktop_only", "not_synced"]),
   hasInstructional: z.boolean(),
   connections: z.array(z.object({
+    authType: z.enum(["oauth", "apikey", "none"]).optional(),
+    authTypeMismatch: z.boolean().optional(),
     configObjectId: configObjectIdSchema,
     id: z.string().nullable(),
     name: z.string(),
@@ -579,6 +583,9 @@ const pluginCloudReadinessSchema = z.object({
     url: z.string(),
     credentialMode: z.enum(["shared", "per_member"]).optional(),
     connectedForMe: z.boolean().optional(),
+    oauthClientConfigured: z.boolean().optional(),
+    oauthClientRequired: z.boolean().optional(),
+    requiredAuthType: z.enum(["oauth", "apikey", "none"]).optional(),
   })),
 }).meta({ ref: "PluginArchPluginCloudReadiness" })
 
@@ -822,7 +829,7 @@ export const marketplaceResolvedResponseSchema = pluginArchMutationResponseSchem
 )
 
 const githubPluginMcpImportServerSchema = z.object({
-  authType: z.literal("oauth"),
+  authType: z.literal("oauth").nullable(),
   connectionId: z.string().nullable(),
   name: z.string(),
   pluginKey: z.string(),
@@ -885,7 +892,7 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       skillId: denTypeIdSchema("skill"),
       sourcePath: z.string(),
     })),
-    marketplaceId: marketplaceIdSchema,
+    marketplaceId: marketplaceIdSchema.nullable(),
     plugin: pluginSchema,
     skipped: z.array(z.object({
       name: z.string(),
