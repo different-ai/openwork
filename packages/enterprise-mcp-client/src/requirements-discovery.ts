@@ -12,7 +12,7 @@ import type {
   EnterpriseMcpConnectionRequirements,
   EnterpriseMcpFetch,
 } from "./contracts.js"
-import { isEquivalentOAuthResourceAlias } from "./oauth-resource-alias.js"
+import { isEquivalentOAuthDiscoveryAlias } from "./oauth-resource-alias.js"
 
 const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_AUTHORIZATION_SERVERS = 5
@@ -80,7 +80,11 @@ function metadataRequirement(
   // metadata discovery alias. Accept that alias, including the equivalent
   // trailing root slash form, while retaining the metadata issuer as the
   // canonical issuer used by the OAuth flow.
-  if (metadata.issuer !== advertisedIssuer && !isEquivalentOAuthResourceAlias(advertisedIssuer, resource)) return null
+  if (
+    metadata.issuer !== advertisedIssuer
+    && !isEquivalentOAuthDiscoveryAlias(advertisedIssuer, metadata.issuer)
+    && !isEquivalentOAuthDiscoveryAlias(advertisedIssuer, resource)
+  ) return null
   return {
     issuer: metadata.issuer,
     authorizationEndpoint: metadata.authorization_endpoint,

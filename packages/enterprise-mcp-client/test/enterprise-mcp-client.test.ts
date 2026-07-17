@@ -788,6 +788,87 @@ describe("enterprise MCP OAuth persistence contract", () => {
       && error.code === "MCP_OAUTH_ISSUER_MISMATCH")
   })
 
+  it("binds an equivalent authorization-server root alias while keeping callback issuer checks exact", async () => {
+    const canonicalIssuer = "https://api.close.example"
+    const discoveryState: OAuthDiscoveryState = {
+      authorizationServerUrl: `${canonicalIssuer}/`,
+      authorizationServerMetadata: {
+        issuer: canonicalIssuer,
+        authorization_endpoint: "https://app.close.example/oauth2/authorize/",
+        token_endpoint: `${canonicalIssuer}/oauth2/token/`,
+        response_types_supported: ["code"],
+      },
+      resourceMetadata: {
+        resource: "https://mcp.close.example/",
+        authorization_servers: [`${canonicalIssuer}/`],
+      },
+    }
+    const persistence = new MemoryOAuthPersistence()
+    const provider = new EnterpriseMcpOAuthProvider({
+      redirectUri: "https://den.example.test/v1/mcp-connections/oauth/callback",
+      connectionId: "connection-1",
+      persistence,
+      flow: { kind: "connect", authorizationId: "signed-state" },
+      clientName: "OpenWork",
+      clock: { now: () => Date.now() },
+      lifecycle: { expiresAt: Date.now() + 30_000, signal: new AbortController().signal },
+      authorizationTransactionTtlMs: 600_000,
+      expirationSkewMs: 0,
+      oauthConfiguration: {
+        applicationType: "web",
+        authorizationServerIssuer: canonicalIssuer,
+      },
+    })
+
+    await assert.doesNotReject(provider.saveDiscoveryState(discoveryState))
+    assert.doesNotThrow(() => validateMcpAuthorizationResponseIssuer({
+      expectedIssuer: canonicalIssuer,
+      discoveryState,
+      responseIssuer: canonicalIssuer,
+    }))
+    assert.throws(() => validateMcpAuthorizationResponseIssuer({
+      expectedIssuer: canonicalIssuer,
+      discoveryState,
+      responseIssuer: `${canonicalIssuer}/`,
+    }), (error: unknown) => error instanceof EnterpriseMcpOAuthContractError
+      && error.code === "MCP_OAUTH_ISSUER_MISMATCH")
+  })
+
+  it("does not normalize trailing slashes on non-root authorization-server issuers", async () => {
+    const canonicalIssuer = "https://identity.example.test/tenant"
+    const persistence = new MemoryOAuthPersistence()
+    const provider = new EnterpriseMcpOAuthProvider({
+      redirectUri: "https://den.example.test/v1/mcp-connections/oauth/callback",
+      connectionId: "connection-1",
+      persistence,
+      flow: { kind: "connect", authorizationId: "signed-state" },
+      clientName: "OpenWork",
+      clock: { now: () => Date.now() },
+      lifecycle: { expiresAt: Date.now() + 30_000, signal: new AbortController().signal },
+      authorizationTransactionTtlMs: 600_000,
+      expirationSkewMs: 0,
+      oauthConfiguration: {
+        applicationType: "web",
+        authorizationServerIssuer: canonicalIssuer,
+      },
+    })
+
+    await assert.rejects(provider.saveDiscoveryState({
+      authorizationServerUrl: `${canonicalIssuer}/`,
+      authorizationServerMetadata: {
+        issuer: canonicalIssuer,
+        authorization_endpoint: `${canonicalIssuer}/authorize`,
+        token_endpoint: `${canonicalIssuer}/token`,
+        response_types_supported: ["code"],
+      },
+      resourceMetadata: {
+        resource: "https://mcp.example.test/",
+        authorization_servers: [`${canonicalIssuer}/`],
+      },
+    }), (error: unknown) => error instanceof EnterpriseMcpOAuthContractError
+      && error.code === "MCP_OAUTH_ISSUER_MISMATCH")
+  })
+
   it("rejects a non-HTTPS client metadata document before OAuth performs network work", async () => {
     let fetchCount = 0
     const client = createEnterpriseMcpClient({

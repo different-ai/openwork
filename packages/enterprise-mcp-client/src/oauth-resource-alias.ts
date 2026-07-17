@@ -1,11 +1,12 @@
 /**
- * Protected resources may advertise their HTTP(S) origin as an OAuth discovery
- * alias with or without the otherwise equivalent trailing root slash.
+ * OAuth discovery documents may advertise the same HTTP(S) root URL with or
+ * without its trailing slash. Exact non-root identifiers remain valid, but
+ * non-root paths, query strings, and fragments are never normalized.
  *
- * This intentionally does not normalize non-root paths, query strings, or
- * fragments, and must not be used for authorization-response issuer checks.
+ * This is only for binding discovery metadata. Authorization-response issuer
+ * checks must continue comparing the canonical metadata issuer exactly.
  */
-export function isEquivalentOAuthResourceAlias(left: string | undefined, right: string | undefined): boolean {
+export function isEquivalentOAuthDiscoveryAlias(left: string | undefined, right: string | undefined): boolean {
   if (!left || !right) return false
   if (left === right) return true
 
