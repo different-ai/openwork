@@ -1645,4 +1645,53 @@ describe("enterprise MCP catalog contract", () => {
         && error.code === "MCP_CATALOG_SCHEMA_DEPTH_LIMIT",
     )
   })
+
+  it("can exclude one invalid current-routing tool without dropping healthy tools", async () => {
+    const warnings: Array<{ toolName: string; code: string }> = []
+    const tools = await collectEnterpriseMcpTools({
+      requestOptions: {},
+      routingHeaderPolicy: "exclude-tool",
+      onInvalidTool: (warning) => warnings.push(warning),
+      listPage: async () => ({
+        tools: [
+          {
+            name: "healthy",
+            inputSchema: {
+              type: "object",
+              properties: { region: { type: "string", "x-mcp-header": "Region" } },
+            },
+          },
+          {
+            name: "malformed-routing",
+            inputSchema: {
+              type: "object",
+              properties: { region: { type: "string", "x-mcp-header": "bad header" } },
+            },
+          },
+        ],
+      }),
+    })
+
+    assert.deepEqual(tools.map((tool) => tool.name), ["healthy"])
+    assert.deepEqual(warnings, [{
+      toolName: "malformed-routing",
+      code: "MCP_CATALOG_TOOL_ROUTING_HEADER_INVALID",
+    }])
+  })
+
+  it("ignores current-only routing annotations on the stable lifecycle", async () => {
+    const tools = await collectEnterpriseMcpTools({
+      requestOptions: {},
+      listPage: async () => ({
+        tools: [{
+          name: "stable-tool",
+          inputSchema: {
+            type: "object",
+            properties: { value: { type: "string", "x-mcp-header": "bad header" } },
+          },
+        }],
+      }),
+    })
+    assert.deepEqual(tools.map((tool) => tool.name), ["stable-tool"])
+  })
 })

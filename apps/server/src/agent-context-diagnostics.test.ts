@@ -228,7 +228,7 @@ function catalogFetch(
         id: body.id,
         result: {
           capabilities: {},
-          protocolVersion: "2025-06-18",
+          protocolVersion: "2025-11-25",
           serverInfo: { name: "diagnostics-test", version: "1.0.0" },
         },
       }), {
@@ -236,7 +236,7 @@ function catalogFetch(
         headers: {
           "Content-Type": "application/json",
           "Mcp-Session-Id": "diagnostics-test-session",
-          "Mcp-Protocol-Version": "2025-06-18",
+          "Mcp-Protocol-Version": "2025-11-25",
         },
       });
     }

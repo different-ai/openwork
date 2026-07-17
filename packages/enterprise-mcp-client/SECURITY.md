@@ -1,8 +1,9 @@
 # Security, validation, and expiration contract
 
 - Document status: active reference implementation
-- Last code-and-document review: 2026-07-12
-- Review by: 2026-10-12, or sooner when the MCP SDK/protocol baseline changes
+- Last code-and-document review: 2026-07-17
+- Review by: 2026-07-28, when the final MCP specification is scheduled, or
+  sooner when the SDK/protocol baseline changes
 Stable runtime protocol evidence baseline: MCP 2025-11-25. The package also
 contains SDK-independent boundary tests against the locked MCP 2026-07-28
 release candidate, but current-protocol traffic is not enabled. Provider

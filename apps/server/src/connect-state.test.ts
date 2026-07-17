@@ -45,7 +45,7 @@ function startMockOpencode() {
             jsonrpc: "2.0",
             result: {
               capabilities: { tools: {} },
-              protocolVersion: "2025-06-18",
+              protocolVersion: "2025-11-25",
               serverInfo: { name: "openwork-cloud-test", version: "1.0.0" },
             },
           });

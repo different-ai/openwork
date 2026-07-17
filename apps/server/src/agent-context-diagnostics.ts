@@ -418,6 +418,7 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       observedToolIds: probe.toolIds,
       handshakePerformed: probe.performed,
       requestPerformed: probe.toolsListPerformed,
+      protocolVersion: probe.protocolVersion,
       httpStatus: probe.httpStatus,
     },
   };

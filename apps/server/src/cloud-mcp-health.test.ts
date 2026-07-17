@@ -30,7 +30,7 @@ const roots: string[] = [];
 const runtimeDbRoots: string[] = [];
 const stops: Array<() => void> = [];
 
-type DirectProbeMode = "ok" | "missing" | "unauthorized";
+type DirectProbeMode = "ok" | "missing" | "protocol-mismatch" | "unauthorized";
 type ReadHealthOptions = {
   probe?: boolean;
   beforeRead?: (directUrl: string) => void;
@@ -88,7 +88,7 @@ function startMockOpencode(mode: DirectProbeMode) {
             jsonrpc: "2.0",
             result: {
               capabilities: { tools: {} },
-              protocolVersion: "2025-06-18",
+              protocolVersion: mode === "protocol-mismatch" ? "2025-06-18" : "2025-11-25",
               serverInfo: { name: "openwork-cloud-test", version: "1.0.0" },
             },
           });
@@ -362,5 +362,15 @@ describe("cloud MCP health foundation", () => {
     expect(health.firstFailure?.code).toBe("cloud_tools_missing");
     expect(health.tools.direct.checked).toBe(true);
     expect(health.tools.direct.missing).toEqual(["execute_capability"]);
+  });
+
+  test("fails closed when direct delivery negotiates an unqualified protocol version", async () => {
+    const { health } = await readHealthForDirectProbe("protocol-mismatch", { probe: true });
+
+    expect(health.usable).toBe(false);
+    expect(health.firstFailure?.code).toBe("cloud_protocol_mismatch");
+    expect(health.tools.direct.checked).toBe(true);
+    expect(health.tools.direct.protocolVersion).toBeNull();
+    expect(JSON.stringify(health.firstFailure)).not.toContain("2025-06-18");
   });
 });

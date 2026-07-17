@@ -3,7 +3,10 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js"
 import type { Tool } from "@modelcontextprotocol/sdk/types.js"
 import { EnterpriseMcpCatalogError, type EnterpriseMcpCatalogErrorCode } from "./errors.js"
-import { assertEnterpriseMcpSchema } from "./bounded-schema.js"
+import {
+  assertEnterpriseMcpSchema,
+  extractEnterpriseMcpHeaderParameterBindings,
+} from "./bounded-schema.js"
 
 export {
   ENTERPRISE_MCP_TOOL_SCHEMA_COMPOSITION_BRANCH_LIMIT,
@@ -38,17 +41,25 @@ function assertStringLimit(
   }
 }
 
-function assertTool(tool: Tool): void {
+function assertTool(
+  tool: Tool,
+  routingHeaderPolicy: "ignore" | "reject-catalog" | "exclude-tool",
+): void {
   assertStringLimit(tool.name, ENTERPRISE_MCP_TOOL_NAME_LIMIT_BYTES, "MCP_CATALOG_TOOL_NAME_LIMIT")
   assertStringLimit(tool.title, ENTERPRISE_MCP_TOOL_TITLE_LIMIT_BYTES, "MCP_CATALOG_TOOL_TITLE_LIMIT")
   assertStringLimit(tool.description, ENTERPRISE_MCP_TOOL_DESCRIPTION_LIMIT_BYTES, "MCP_CATALOG_TOOL_DESCRIPTION_LIMIT")
   assertEnterpriseMcpSchema(tool.inputSchema)
+  if (routingHeaderPolicy !== "ignore") {
+    extractEnterpriseMcpHeaderParameterBindings(tool.inputSchema)
+  }
   if (tool.outputSchema) assertEnterpriseMcpSchema(tool.outputSchema)
 }
 
 export async function collectEnterpriseMcpTools(input: {
   listPage: (cursor: string | undefined, options: RequestOptions) => Promise<ToolPage>
   requestOptions: RequestOptions
+  routingHeaderPolicy?: "ignore" | "reject-catalog" | "exclude-tool"
+  onInvalidTool?: (warning: { toolName: string; code: EnterpriseMcpCatalogErrorCode }) => void
 }): Promise<Tool[]> {
   const tools: Tool[] = []
   const names = new Set<string>()
@@ -63,7 +74,19 @@ export async function collectEnterpriseMcpTools(input: {
         throw new EnterpriseMcpCatalogError("MCP_CATALOG_ITEM_LIMIT")
       }
       if (names.has(tool.name)) throw new EnterpriseMcpCatalogError("MCP_CATALOG_DUPLICATE_TOOL")
-      assertTool(tool)
+      try {
+        assertTool(tool, input.routingHeaderPolicy ?? "ignore")
+      } catch (error) {
+        if (
+          input.routingHeaderPolicy === "exclude-tool"
+          && error instanceof EnterpriseMcpCatalogError
+          && error.code === "MCP_CATALOG_TOOL_ROUTING_HEADER_INVALID"
+        ) {
+          input.onInvalidTool?.({ toolName: tool.name, code: error.code })
+          continue
+        }
+        throw error
+      }
       const toolBytes = serializedBytes(tool)
       if (catalogBytes + toolBytes > ENTERPRISE_MCP_CATALOG_LIMIT_BYTES) {
         throw new EnterpriseMcpCatalogError("MCP_CATALOG_BYTE_LIMIT")

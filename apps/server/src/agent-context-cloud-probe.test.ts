@@ -10,7 +10,7 @@ import {
 const TOKEN = "Bearer ow_diagnostics_token_abcdefghijklmnopqrstuvwxyz";
 const ENDPOINT = "https://app.openworklabs.com/api/den/mcp/agent";
 const SESSION_ID = "diagnostics-session-id";
-const PROTOCOL_VERSION = "2025-06-18";
+const PROTOCOL_VERSION = "2025-11-25";
 
 function input(overrides: Partial<ProbeOpenworkCloudCatalogInput> = {}): ProbeOpenworkCloudCatalogInput {
   const { fetchImpl, ...values } = overrides;
@@ -173,6 +173,7 @@ describe("OpenWork Cloud catalog probe", () => {
       toolsListPerformed: true,
       status: "observed",
       code: "catalog_observed",
+      protocolVersion: PROTOCOL_VERSION,
       toolIds: ["search_capabilities", "execute_capability"],
       durationMs: expect.any(Number),
       httpStatus: 200,
@@ -191,6 +192,35 @@ describe("OpenWork Cloud catalog probe", () => {
     }));
     expect(observed.status).toBe("observed");
     expect(observed.toolIds).toEqual(["search_capabilities", "execute_capability"]);
+    expect(observed.protocolVersion).toBe(PROTOCOL_VERSION);
+  });
+
+  test("fails closed when initialize negotiates a different protocol version", async () => {
+    const mismatched = await probeOpenworkCloudCatalog({
+      ...input(),
+      fetchImpl: async (_url, init) => {
+        const body = requestPayload(init);
+        if (body.method === "initialize") {
+          return new Response(JSON.stringify({
+            jsonrpc: "2.0",
+            id: "openwork-agent-diagnostics-initialize",
+            result: {
+              capabilities: {},
+              protocolVersion: "2025-06-18",
+              serverInfo: { name: "test-mcp", version: "1.0.0" },
+            },
+          }), { headers: { "content-type": "application/json" } });
+        }
+        throw new Error("The probe must stop after the mismatched initialize response");
+      },
+    });
+
+    expect(mismatched).toMatchObject({
+      status: "failed",
+      code: "protocol_mismatch",
+      protocolVersion: null,
+      toolsListPerformed: false,
+    });
   });
 
   test("requires the exact catalog and never reflects an unexpected tool ID", async () => {

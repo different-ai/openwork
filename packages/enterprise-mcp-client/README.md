@@ -20,19 +20,26 @@ stable `2025-11-25` SDK lifecycle:
 - deterministic `server/discover` parsing and capability hashing;
 - fail-closed current/legacy selection with silent-downgrade protection;
 - stateless current request metadata and Streamable HTTP routing headers;
+- bounded JSON and SSE response parsing with legacy-session/version rejection;
 - Base64-sentinel encoding and body/header validation for `Mcp-Name` and
   `x-mcp-header`-derived `Mcp-Param-*` values;
+- nested/reference-aware `x-mcp-header` extraction that excludes one malformed
+  tool without discarding an otherwise healthy catalog;
 - tenant, connection, credential-owner, credential-revision, protocol, and
   capability-hash-separated ephemeral caching; and
 - bounded JSON Schema 2020-12 composition and local-reference validation.
 
-These exports are protocol primitives, not a production feature flag. OpenWork
-must not advertise or send `2026-07-28` traffic until a stable official SDK,
+These exports are protocol primitives, not a production feature flag. Den
+rejects `2026-07-28` requests with the standardized unsupported-version
+response and advertises only the stable baseline. OpenWork must not advertise
+or send current traffic until a stable official SDK,
 the current and legacy wire adapters, Den persistence, OpenCode compatibility,
 and the three-plane conformance suite are all present. Authentication, TLS,
 issuer, malformed metadata, and provider errors are never fallback signals;
-only an explicitly classified unsupported-version, method-not-found, or
-recognized legacy-lifecycle outcome is eligible for legacy negotiation.
+only a `server/discover` method-not-found response or another recognized
+legacy-lifecycle outcome is eligible for legacy negotiation. A standardized
+unsupported-version response identifies a modern server and must be handled
+through its advertised supported-version list, never as an implicit fallback.
 
 ## Reference architecture
 
@@ -105,9 +112,12 @@ then silently writing credentials afterward.
   aggregate-byte ceilings. JSON Schema 2020-12 composition branches, nodes,
   local-reference depth, unresolved references, external references, and
   reference cycles are also bounded or rejected.
-- Current-protocol routing metadata rejects mixed legacy sessions and
-  header/body mismatches. Unsafe routing values use the draft's Base64 sentinel
-  encoding, and tool annotations can produce only `Mcp-Param-*` headers.
+- Current-protocol routing metadata rejects header/body mismatches. The client
+  never emits legacy session state; a modern server ignores a stale legacy
+  request header as required by the compatibility rules and rejects a response
+  that attempts to mint or echo a legacy session. Unsafe routing values use the
+  draft's Base64 sentinel encoding, and tool annotations can produce only
+  `Mcp-Param-*` headers.
 - Ephemeral protocol caches remain tenant- and credential-owner-scoped even
   for provider-declared public results. Authorization or capability changes
   can invalidate the relevant organization/connection/member slice without
@@ -118,7 +128,9 @@ then silently writing credentials afterward.
 - Connection deletion and enterprise credential commits take the same Den row
   lock, so deletion and a late callback have one deterministic winner.
 
-See [SECURITY.md](./SECURITY.md) for the expiration/validation contract and
+See [CONFORMANCE.md](./CONFORMANCE.md) for exact source pins, qualified
+surfaces, and the promotion gate; [SECURITY.md](./SECURITY.md) for the
+expiration/validation contract; and
 [PRIOR-FINDINGS.md](./PRIOR-FINDINGS.md) for the earlier MCP findings that were
 incorporated, delegated to Den, or intentionally kept outside this server-side
 package.

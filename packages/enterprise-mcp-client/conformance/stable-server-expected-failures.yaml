@@ -1,0 +1,23 @@
+# The production /mcp/agent endpoint intentionally exposes only
+# search_capabilities and execute_capability. The official server framework's
+# tools/call scenarios require diagnostic fixture tools that must never be
+# registered on this customer-facing endpoint. These scenario-level failures
+# are expected until the framework supports an external fixture adapter.
+#
+# A passing entry is treated as stale and fails the run. Do not add auth,
+# transport, initialization, catalog, DNS-rebinding, or optional-capability
+# failures here.
+server:
+  - tools-call-simple-text
+  - tools-call-image
+  - tools-call-audio
+  - tools-call-embedded-resource
+  - tools-call-mixed-content
+  - tools-call-with-logging
+  - tools-call-error
+  - tools-call-with-progress
+  - tools-call-sampling
+  - tools-call-elicitation
+  - json-schema-2020-12
+  - elicitation-sep1034-defaults
+  - elicitation-sep1330-enums

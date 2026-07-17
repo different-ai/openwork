@@ -44,6 +44,11 @@
       "development": "./src/den/mcp-connection-action.ts",
       "default": "./src/den/mcp-connection-action.ts"
     },
+    "./mcp-protocol": {
+      "types": "./src/mcp-protocol.ts",
+      "development": "./src/mcp-protocol.ts",
+      "default": "./src/mcp-protocol.ts"
+    },
     "./workspace": {
       "types": "./src/workspace.ts",
       "development": "./src/workspace.ts",

@@ -136,7 +136,7 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
         if (rpc.method === "notifications/initialized") return new Response(null, { status: 202 });
         const id = rpc.id ?? 1;
         const result = rpc.method === "initialize"
-          ? { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "openwork-cloud-test", version: "1.0.0" } }
+          ? { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "openwork-cloud-test", version: "1.0.0" } }
           : rpc.method === "tools/list"
             ? { tools: (options.cloudToolNames ?? ["search_capabilities", "execute_capability"]).map((name) => ({ name, description: name, inputSchema: {} })) }
             : {};
@@ -148,7 +148,7 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
         }
         return Response.json(payload, {
           headers: rpc.method === "initialize"
-            ? { "mcp-session-id": "session_12345678901234567890", "mcp-protocol-version": "2025-06-18" }
+            ? { "mcp-session-id": "session_12345678901234567890", "mcp-protocol-version": "2025-11-25" }
             : {},
         });
       }

@@ -4,6 +4,7 @@ import {
   assertEnterpriseMcpSchema,
   ENTERPRISE_MCP_TOOL_SCHEMA_COMPOSITION_BRANCH_LIMIT,
   EnterpriseMcpCatalogError,
+  extractEnterpriseMcpHeaderParameterBindings,
 } from "../src/index.js"
 
 describe("bounded JSON Schema 2020-12", () => {
@@ -50,5 +51,59 @@ describe("bounded JSON Schema 2020-12", () => {
       (error: unknown) => error instanceof EnterpriseMcpCatalogError
         && error.code === "MCP_CATALOG_SCHEMA_COMPOSITION_LIMIT",
     )
+  })
+
+  it("extracts nested and referenced x-mcp-header annotations without rewriting the schema", () => {
+    const schema = {
+      type: "object",
+      $defs: {
+        routing: {
+          type: "object",
+          properties: {
+            region: { type: "string", "x-mcp-header": "Region" },
+          },
+        },
+      },
+      properties: {
+        tenant: { type: "string", "x-mcp-header": "Tenant" },
+        routing: { $ref: "#/$defs/routing" },
+      },
+    }
+    const before = JSON.stringify(schema)
+    assert.deepEqual(extractEnterpriseMcpHeaderParameterBindings(schema), [
+      { parameterPath: ["tenant"], headerName: "Tenant" },
+      { parameterPath: ["routing", "region"], headerName: "Region" },
+    ])
+    assert.equal(JSON.stringify(schema), before)
+  })
+
+  it("rejects invalid, non-primitive, floating-point, and duplicate routing headers", () => {
+    for (const schema of [
+      {
+        type: "object",
+        properties: { value: { type: "string", "x-mcp-header": "bad header" } },
+      },
+      {
+        type: "object",
+        properties: { value: { type: "number", "x-mcp-header": "Value" } },
+      },
+      {
+        type: "object",
+        properties: { value: { type: "object", "x-mcp-header": "Value" } },
+      },
+      {
+        type: "object",
+        properties: {
+          left: { type: "string", "x-mcp-header": "Region" },
+          right: { type: "string", "x-mcp-header": "REGION" },
+        },
+      },
+    ]) {
+      assert.throws(
+        () => extractEnterpriseMcpHeaderParameterBindings(schema),
+        (error: unknown) => error instanceof EnterpriseMcpCatalogError
+          && error.code === "MCP_CATALOG_TOOL_ROUTING_HEADER_INVALID",
+      )
+    }
   })
 })

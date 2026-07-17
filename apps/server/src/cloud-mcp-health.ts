@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { createOpencodeClient, McpStatus, ToolIds, ToolList } from "@opencode-ai/sdk/v2/client";
+import { OPENWORK_MCP_STABLE_PROTOCOL_VERSION } from "@openwork/types/mcp-protocol";
 import { ApiError } from "./errors.js";
 import { diagnoseMcpToolDenies, type McpToolDeny } from "./mcp.js";
 import { sanitizeDiagnosticString, sanitizeDiagnosticValue } from "./diagnostic-sanitizer.js";
@@ -83,6 +84,7 @@ export type CloudMcpFailureCode =
   | "opencode_tool_ids_unsupported"
   | "opencode_tool_ids_unavailable"
   | "probe_unreachable"
+  | "cloud_protocol_mismatch"
   | "cloud_tools_missing"
   | "provider_projection_unavailable"
   | "provider_projection_missing"
@@ -226,6 +228,7 @@ export type CloudMcpHealth = {
     direct: {
       checked: boolean;
       source: "mcp_tools_list";
+      protocolVersion: typeof OPENWORK_MCP_STABLE_PROTOCOL_VERSION | null;
       expected: string[];
       present: string[];
       missing: string[];
@@ -337,6 +340,7 @@ type ToolSnapshot = {
 type DirectCloudToolsSnapshot = {
   checked: boolean;
   source: "mcp_tools_list";
+  protocolVersion: typeof OPENWORK_MCP_STABLE_PROTOCOL_VERSION | null;
   expected: string[];
   present: string[];
   missing: string[];
@@ -1025,6 +1029,12 @@ function toolNamesFromMcpPayload(payload: unknown): { names?: string[]; error?: 
   return { names };
 }
 
+function initializedProtocolVersion(payload: unknown): string | null {
+  const record = jsonRpcRecord(payload);
+  if (!record || record.error !== undefined || !isRecord(record.result)) return null;
+  return typeof record.result.protocolVersion === "string" ? record.result.protocolVersion : null;
+}
+
 function directCloudToolsFailure(input: {
   message: string;
   retryable: boolean;
@@ -1092,6 +1102,7 @@ function directToolsFromNames(names: string[]): DirectCloudToolsSnapshot {
   return {
     checked: true,
     source: "mcp_tools_list",
+    protocolVersion: OPENWORK_MCP_STABLE_PROTOCOL_VERSION,
     expected: split.expected,
     present: split.present,
     missing: split.missing,
@@ -1103,6 +1114,7 @@ function directToolsNotChecked(): DirectCloudToolsSnapshot {
   return {
     checked: false,
     source: "mcp_tools_list",
+    protocolVersion: null,
     expected: expectedDirectToolNames(),
     present: [],
     missing: [],
@@ -1151,7 +1163,7 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
         params: {
           capabilities: {},
           clientInfo: { name: "openwork-server-cloud-mcp-health", version: "1.0.0" },
-          protocolVersion: "2025-06-18",
+          protocolVersion: OPENWORK_MCP_STABLE_PROTOCOL_VERSION,
         },
       },
     });
@@ -1165,8 +1177,31 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
       return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), error: failureResult.details, failure: failureResult };
     }
 
+    const initializedVersion = initializedProtocolVersion(initialized.payload);
     const sessionId = initialized.response.headers.get("mcp-session-id");
     const protocolVersion = initialized.response.headers.get("mcp-protocol-version");
+    if (
+      initializedVersion !== OPENWORK_MCP_STABLE_PROTOCOL_VERSION
+      || (protocolVersion !== null && protocolVersion !== OPENWORK_MCP_STABLE_PROTOCOL_VERSION)
+    ) {
+      const failureResult = failure({
+        code: "cloud_protocol_mismatch",
+        stage: "tool_registration",
+        retryable: false,
+        recommendedAction: "Update OpenWork Cloud to the qualified MCP protocol baseline",
+        message: "The OpenWork Cloud MCP endpoint did not negotiate the qualified stable protocol version.",
+        details: {
+          expectedProtocolVersion: OPENWORK_MCP_STABLE_PROTOCOL_VERSION,
+        },
+      });
+      return {
+        ...directToolsNotChecked(),
+        checked: true,
+        missing: expectedDirectToolNames(),
+        error: failureResult.details,
+        failure: failureResult,
+      };
+    }
     const sessionHeaders: Record<string, string> = {
       ...baseHeaders,
       ...(sessionId ? { "mcp-session-id": sessionId } : {}),
@@ -1904,6 +1939,7 @@ export async function readOpenworkCloudMcpHealth(input: {
       direct: {
         checked: inspection.directTools.checked,
         source: inspection.directTools.source,
+        protocolVersion: inspection.directTools.protocolVersion,
         expected: inspection.directTools.expected,
         present: inspection.directTools.present,
         missing: inspection.directTools.missing,

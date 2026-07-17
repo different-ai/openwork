@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
   createCurrentMcpRequest,
+  createMcpUnsupportedVersionError,
   McpCurrentProtocolError,
   validateCurrentMcpRouting,
 } from "../src/index.js"
@@ -24,6 +25,25 @@ function currentToolCall() {
 }
 
 describe("MCP current request routing", () => {
+  it("produces the standardized unsupported-version envelope", () => {
+    assert.deepEqual(createMcpUnsupportedVersionError({
+      id: "request-1",
+      requested: "2026-07-28",
+      supported: ["2025-11-25"],
+    }), {
+      jsonrpc: "2.0",
+      id: "request-1",
+      error: {
+        code: -32022,
+        message: "Unsupported MCP protocol version: 2026-07-28",
+        data: {
+          supported: ["2025-11-25"],
+          requested: "2026-07-28",
+        },
+      },
+    })
+  })
+
   it("builds and validates stateless metadata and routing headers", () => {
     const request = currentToolCall()
     assert.equal(request.headers.get("MCP-Protocol-Version"), "2026-07-28")
@@ -51,13 +71,11 @@ describe("MCP current request routing", () => {
     )
   })
 
-  it("rejects mixed current and legacy session state", () => {
+  it("ignores a legacy request session without minting or depending on it", () => {
     const request = currentToolCall()
     request.headers.set("Mcp-Session-Id", "legacy-session")
-    assert.throws(
+    assert.doesNotThrow(
       () => validateCurrentMcpRouting({ headers: request.headers, body: request.body }),
-      (error: unknown) => error instanceof McpCurrentProtocolError
-        && error.code === "MCP_CURRENT_MIXED_MODE",
     )
   })
 
@@ -90,6 +108,32 @@ describe("MCP current request routing", () => {
       headers: encoded.headers,
       body: encoded.body,
       parameterHeaders: [{ parameterPath: ["tenant"], headerName: "Tenant" }],
+    }))
+
+    const tabEncoded = createCurrentMcpRequest({
+      id: 2,
+      method: "tools/call",
+      params: { name: "unsafe", arguments: { tenant: "\tindented" } },
+      metadata: {
+        clientInfo: { name: "OpenWork", version: "1.0.0" },
+        clientCapabilities: {},
+      },
+      parameterHeaders: [{ parameterPath: ["tenant"], headerName: "Tenant" }],
+    })
+    assert.match(tabEncoded.headers.get("Mcp-Param-Tenant") ?? "", /^=\?base64\?.+\?=$/)
+  })
+
+  it("compares mirrored integer parameters numerically", () => {
+    const request = currentToolCall()
+    request.headers.set("Mcp-Param-Tenant", "org-1")
+    request.headers.set("Mcp-Param-Limit", "10.0")
+    assert.doesNotThrow(() => validateCurrentMcpRouting({
+      headers: request.headers,
+      body: request.body,
+      parameterHeaders: [
+        { parameterPath: ["tenant"], headerName: "Tenant" },
+        { parameterPath: ["limit"], headerName: "Limit" },
+      ],
     }))
   })
 })

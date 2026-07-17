@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import {
+  OPENWORK_MCP_CURRENT_PROTOCOL_VERSION as MCP_CURRENT_PROTOCOL_VERSION,
+  OPENWORK_MCP_STABLE_PROTOCOL_VERSION as MCP_LEGACY_PROTOCOL_VERSION,
+} from "@openwork/types/mcp-protocol"
 import { Hono } from "hono"
 import type { McpAuthResourceContext } from "../src/mcp/auth.js"
 
@@ -88,6 +92,7 @@ beforeAll(async () => {
 
   mock.module("../src/middleware/admin.js", () => ({
     isPlatformAdminUserId: () => Promise.resolve(platformAdmin),
+    requireAdminMiddleware: async (_context: unknown, next: () => Promise<void>) => next(),
   }))
 
   mcpAuth = await import("../src/mcp/auth.js")
@@ -479,6 +484,57 @@ test("authenticated /mcp/agent malformed JSON-RPC is rejected before transport",
   await expect(response.json()).resolves.toMatchObject({
     jsonrpc: "2.0",
     error: { code: -32600, message: "Invalid Request", data: { referenceId: "req_agent_preflight" } },
+  })
+})
+
+test("current /mcp/agent traffic is authenticated before the qualification gate", async () => {
+  const app = buildMcpRouteApp("req_agent_current_gate")
+  registerAgentMcpRoutes(app)
+  const body = JSON.stringify({
+    jsonrpc: "2.0",
+    id: "current-request",
+    method: "server/discover",
+    params: {},
+  })
+
+  const unauthenticated = await app.request("http://127.0.0.1:8790/mcp/agent", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "MCP-Protocol-Version": MCP_CURRENT_PROTOCOL_VERSION,
+    },
+    body,
+  })
+  expect(unauthenticated.status).toBe(401)
+  await expect(unauthenticated.json()).resolves.toMatchObject({
+    error: "missing_mcp_token",
+    referenceId: "req_agent_current_gate",
+  })
+
+  jwtPayload = validMcpJwtPayload({ resource: "http://127.0.0.1:8790/mcp/agent" })
+  selectActiveSessionAndMembership()
+  const authenticated = await app.request("http://127.0.0.1:8790/mcp/agent", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer header.payload.signature",
+      "content-type": "application/json",
+      "MCP-Protocol-Version": MCP_CURRENT_PROTOCOL_VERSION,
+    },
+    body,
+  })
+  expect(authenticated.status).toBe(400)
+  expect(authenticated.headers.get("MCP-Protocol-Version")).toBe(MCP_LEGACY_PROTOCOL_VERSION)
+  await expect(authenticated.json()).resolves.toEqual({
+    jsonrpc: "2.0",
+    id: "current-request",
+    error: {
+      code: -32022,
+      message: `Unsupported MCP protocol version: ${MCP_CURRENT_PROTOCOL_VERSION}`,
+      data: {
+        supported: [MCP_LEGACY_PROTOCOL_VERSION],
+        requested: MCP_CURRENT_PROTOCOL_VERSION,
+      },
+    },
   })
 })
 

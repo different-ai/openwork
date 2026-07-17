@@ -1,3 +1,5 @@
+import { OPENWORK_MCP_STABLE_PROTOCOL_VERSION } from "@openwork/types/mcp-protocol";
+
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_TOOL_COUNT = 100;
@@ -8,7 +10,7 @@ const MAX_SESSION_HEADER_LENGTH = 1024;
 const MAX_PROTOCOL_HEADER_LENGTH = 128;
 const MAX_ACTIVE_PROBES = 16;
 const MCP_ACCEPT = "application/json, text/event-stream";
-const MCP_PROTOCOL_VERSION = "2025-06-18";
+const MCP_PROTOCOL_VERSION = OPENWORK_MCP_STABLE_PROTOCOL_VERSION;
 const INITIALIZE_REQUEST_ID = "openwork-agent-diagnostics-initialize";
 const TOOL_ID = /^[A-Za-z][A-Za-z0-9_.:-]*$/;
 const SAFE_RESPONSE_HEADER = /^[!-~]+$/;
@@ -58,6 +60,7 @@ export type CloudCatalogProbeCode =
   | "response_too_large"
   | "invalid_content_type"
   | "invalid_response"
+  | "protocol_mismatch"
   | "jsonrpc_error"
   | "pagination_unsupported"
   | "invalid_catalog";
@@ -67,6 +70,7 @@ export type CloudCatalogProbe = {
   toolsListPerformed: boolean;
   status: CloudCatalogProbeStatus;
   code: CloudCatalogProbeCode;
+  protocolVersion: typeof OPENWORK_MCP_STABLE_PROTOCOL_VERSION | null;
   toolIds: string[];
   durationMs: number;
   httpStatus: number | null;
@@ -146,13 +150,15 @@ function elapsed(startedAt: number, clock: () => number): number {
 function result(
   startedAt: number,
   clock: () => number,
-  input: Omit<CloudCatalogProbe, "durationMs" | "toolIds" | "toolsListPerformed"> & {
+  input: Omit<CloudCatalogProbe, "durationMs" | "protocolVersion" | "toolIds" | "toolsListPerformed"> & {
+    protocolVersion?: typeof OPENWORK_MCP_STABLE_PROTOCOL_VERSION | null;
     toolIds?: string[];
     toolsListPerformed?: boolean;
   },
 ): CloudCatalogProbe {
   return {
     ...input,
+    protocolVersion: input.protocolVersion ?? null,
     toolsListPerformed: input.toolsListPerformed ?? false,
     toolIds: input.toolIds ? [...input.toolIds] : [],
     durationMs: elapsed(startedAt, clock),
@@ -473,6 +479,9 @@ function returnedSessionHeader(response: Response, name: string, maxLength: numb
 function sessionProbeHeaders(response: Response, authorization: string): Record<string, string> {
   const sessionId = returnedSessionHeader(response, "mcp-session-id", MAX_SESSION_HEADER_LENGTH);
   const protocolVersion = returnedSessionHeader(response, "mcp-protocol-version", MAX_PROTOCOL_HEADER_LENGTH);
+  if (protocolVersion !== undefined && protocolVersion !== MCP_PROTOCOL_VERSION) {
+    throw new SafeProbeFailure("protocol_mismatch");
+  }
   return {
     ...baseProbeHeaders(authorization),
     ...(sessionId ? { "mcp-session-id": sessionId } : {}),
@@ -556,7 +565,13 @@ async function performProbe(
     );
     currentHttpStatus = initialized.status;
     await requireHttpStatus(initialized, deadline, (status) => status === 200);
-    parseJsonRpcResult(await readJsonRpcPayload(initialized, deadline, budget), INITIALIZE_REQUEST_ID);
+    const initializeResult = parseJsonRpcResult(
+      await readJsonRpcPayload(initialized, deadline, budget),
+      INITIALIZE_REQUEST_ID,
+    );
+    if (initializeResult.protocolVersion !== MCP_PROTOCOL_VERSION) {
+      throw new SafeProbeFailure("protocol_mismatch");
+    }
     const sessionHeaders = sessionProbeHeaders(initialized, prepared.authorization);
 
     currentHttpStatus = null;
@@ -587,6 +602,7 @@ async function performProbe(
       performed: true,
       status: "observed",
       code: "catalog_observed",
+      protocolVersion: MCP_PROTOCOL_VERSION,
       toolsListPerformed,
       toolIds,
       httpStatus: listed.status,

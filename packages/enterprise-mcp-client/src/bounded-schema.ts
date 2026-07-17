@@ -6,6 +6,12 @@ export const ENTERPRISE_MCP_TOOL_SCHEMA_DEPTH_LIMIT = 64
 export const ENTERPRISE_MCP_TOOL_SCHEMA_NODE_LIMIT = 20_000
 export const ENTERPRISE_MCP_TOOL_SCHEMA_COMPOSITION_BRANCH_LIMIT = 256
 export const ENTERPRISE_MCP_TOOL_SCHEMA_REFERENCE_DEPTH_LIMIT = 32
+const MCP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+
+export type EnterpriseMcpHeaderParameterBinding = {
+  parameterPath: string[]
+  headerName: string
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -158,4 +164,107 @@ export function assertEnterpriseMcpSchema(schema: unknown): void {
       depth: 0,
     })
   }
+}
+
+function routingHeaderError(): never {
+  throw new EnterpriseMcpCatalogError("MCP_CATALOG_TOOL_ROUTING_HEADER_INVALID")
+}
+
+function collectMcpHeaderBindings(input: {
+  root: unknown
+  value: unknown
+  path: string[]
+  anchors: Map<string, unknown>
+  activeReferences: WeakSet<object>
+  bindings: EnterpriseMcpHeaderParameterBinding[]
+  headerNames: Set<string>
+  referenceDepth: number
+}): void {
+  if (!isRecord(input.value)) return
+
+  if (Object.hasOwn(input.value, "x-mcp-header")) {
+    const headerName = input.value["x-mcp-header"]
+    if (
+      typeof headerName !== "string"
+      || !MCP_HEADER_NAME_PATTERN.test(headerName)
+      || !["string", "integer", "boolean"].includes(String(input.value.type))
+      || input.path.length === 0
+    ) {
+      routingHeaderError()
+    }
+    const folded = headerName.toLowerCase()
+    if (input.headerNames.has(folded)) routingHeaderError()
+    input.headerNames.add(folded)
+    input.bindings.push({ parameterPath: [...input.path], headerName })
+  }
+
+  if (typeof input.value.$ref === "string") {
+    if (input.referenceDepth >= ENTERPRISE_MCP_TOOL_SCHEMA_REFERENCE_DEPTH_LIMIT) {
+      routingHeaderError()
+    }
+    const target = resolvePointer(input.root, input.value.$ref, input.anchors)
+    if (typeof target === "object" && target !== null) {
+      if (input.activeReferences.has(target)) routingHeaderError()
+      input.activeReferences.add(target)
+      collectMcpHeaderBindings({
+        ...input,
+        value: target,
+        activeReferences: input.activeReferences,
+        referenceDepth: input.referenceDepth + 1,
+      })
+      input.activeReferences.delete(target)
+    }
+  }
+
+  if (isRecord(input.value.properties)) {
+    for (const [property, schema] of Object.entries(input.value.properties)) {
+      collectMcpHeaderBindings({
+        ...input,
+        value: schema,
+        path: [...input.path, property],
+      })
+    }
+  }
+  for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+    const branches = input.value[keyword]
+    if (!Array.isArray(branches)) continue
+    for (const branch of branches) {
+      collectMcpHeaderBindings({ ...input, value: branch })
+    }
+  }
+  for (const keyword of ["if", "then", "else", "not"] as const) {
+    if (input.value[keyword] !== undefined) {
+      collectMcpHeaderBindings({ ...input, value: input.value[keyword] })
+    }
+  }
+  if (isRecord(input.value.dependentSchemas)) {
+    for (const schema of Object.values(input.value.dependentSchemas)) {
+      collectMcpHeaderBindings({ ...input, value: schema })
+    }
+  }
+}
+
+/**
+ * Returns the static property paths that the current Streamable HTTP
+ * transport must mirror into Mcp-Param-* headers. A single invalid annotation
+ * rejects this tool definition, allowing the catalog collector to omit it
+ * without discarding unrelated healthy tools.
+ */
+export function extractEnterpriseMcpHeaderParameterBindings(
+  schema: unknown,
+): EnterpriseMcpHeaderParameterBinding[] {
+  assertEnterpriseMcpSchema(schema)
+  const { anchors } = collectSchemaMeasurements(schema)
+  const bindings: EnterpriseMcpHeaderParameterBinding[] = []
+  collectMcpHeaderBindings({
+    root: schema,
+    value: schema,
+    path: [],
+    anchors,
+    activeReferences: new WeakSet<object>(),
+    bindings,
+    headerNames: new Set<string>(),
+    referenceDepth: 0,
+  })
+  return bindings
 }

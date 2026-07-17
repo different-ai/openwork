@@ -1,0 +1,100 @@
+name: MCP Protocol and Conformance
+
+on:
+  pull_request:
+    paths:
+      - "apps/server/src/agent-context-cloud-probe*"
+      - "apps/server/src/cloud-mcp-health*"
+      - "ee/apps/den-api/src/mcp/**"
+      - "ee/apps/den-api/test/mcp-*.test.ts"
+      - "packages/enterprise-mcp-client/**"
+      - "packages/types/src/mcp-protocol.ts"
+      - "scripts/mcp-conformance-auth-proxy.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/ci-mcp-conformance.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "apps/server/src/agent-context-cloud-probe*"
+      - "apps/server/src/cloud-mcp-health*"
+      - "ee/apps/den-api/src/mcp/**"
+      - "ee/apps/den-api/test/mcp-*.test.ts"
+      - "packages/enterprise-mcp-client/**"
+      - "packages/types/src/mcp-protocol.ts"
+      - "scripts/mcp-conformance-auth-proxy.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/ci-mcp-conformance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protocol-contracts:
+    name: Stable delivery and current gate
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+      - name: Install focused dependencies
+        run: >-
+          pnpm install --frozen-lockfile --ignore-scripts
+          --filter @openwork/enterprise-mcp-client...
+          --filter @openwork-ee/den-api...
+          --filter openwork-server...
+      - name: Run protocol contract gate
+        run: pnpm check:mcp-protocol
+
+  authenticated-stable-server:
+    name: Official authenticated stable server suite
+    if: github.event_name == 'workflow_dispatch'
+    needs: protocol-contracts
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    environment: mcp-conformance
+    env:
+      MCP_CONFORMANCE_TARGET_URL: ${{ vars.MCP_CONFORMANCE_TARGET_URL }}
+      MCP_CONFORMANCE_BEARER_TOKEN: ${{ secrets.MCP_CONFORMANCE_BEARER_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - name: Install pinned conformance runner
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Start credential-injecting loopback proxy
+        run: |
+          node scripts/mcp-conformance-auth-proxy.mjs > /tmp/mcp-conformance-proxy.log 2>&1 &
+          echo $! > /tmp/mcp-conformance-proxy.pid
+          for attempt in $(seq 1 30); do
+            if grep -q "proxy listening" /tmp/mcp-conformance-proxy.log; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/mcp-conformance-proxy.log
+          exit 1
+      - name: Run official stable server suite
+        run: pnpm conformance:mcp:server
+      - name: Upload conformance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-stable-server-conformance-${{ github.sha }}
+          path: artifacts/mcp-conformance
+          if-no-files-found: error
+      - name: Stop proxy
+        if: always()
+        run: kill "$(cat /tmp/mcp-conformance-proxy.pid)" 2>/dev/null || true

@@ -2,9 +2,13 @@ import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import type { Tool } from "@modelcontextprotocol/sdk/types.js"
+import {
+  OPENWORK_MCP_CURRENT_PROTOCOL_VERSION,
+  OPENWORK_MCP_STABLE_PROTOCOL_VERSION,
+} from "@openwork/types/mcp-protocol"
 
-export const MCP_CURRENT_PROTOCOL_VERSION = "2026-07-28"
-export const MCP_LEGACY_PROTOCOL_VERSION = "2025-11-25"
+export const MCP_CURRENT_PROTOCOL_VERSION = OPENWORK_MCP_CURRENT_PROTOCOL_VERSION
+export const MCP_LEGACY_PROTOCOL_VERSION = OPENWORK_MCP_STABLE_PROTOCOL_VERSION
 
 export type McpSupportedProtocolVersion =
   | typeof MCP_CURRENT_PROTOCOL_VERSION
@@ -45,10 +49,8 @@ export type McpProtocolStatus = {
 }
 
 export type McpInputRequest = {
-  type: string
-  message?: string
-  schema?: unknown
-  [key: string]: unknown
+  method: "elicitation/create" | "sampling/createMessage" | "roots/list"
+  params?: Record<string, unknown>
 }
 
 export type McpCompleteResult<T> = {
@@ -58,8 +60,8 @@ export type McpCompleteResult<T> = {
 
 export type McpInputRequiredResult = {
   resultType: "input_required"
-  requestState: unknown
-  inputRequests: Record<string, McpInputRequest>
+  requestState?: string
+  inputRequests?: Record<string, McpInputRequest>
 }
 
 export type McpNormalizedResult<T> =

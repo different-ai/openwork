@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer"
 import { z } from "zod"
 import { MCP_CURRENT_PROTOCOL_VERSION } from "./contracts.js"
+import type { EnterpriseMcpHeaderParameterBinding } from "./bounded-schema.js"
 
 const rpcIdSchema = z.union([z.string(), z.number().finite()])
 const rpcRequestSchema = z.object({
@@ -19,14 +20,12 @@ const MAX_ROUTING_HEADER_BYTES = 8 * 1024
 export type McpCurrentProtocolErrorCode =
   | "MCP_CURRENT_HEADER_MISMATCH"
   | "MCP_CURRENT_METADATA_REQUIRED"
-  | "MCP_CURRENT_MIXED_MODE"
   | "MCP_CURRENT_ROUTING_HEADER_INVALID"
   | "MCP_CURRENT_VERSION_UNSUPPORTED"
 
 const jsonRpcCodeByError: Record<McpCurrentProtocolErrorCode, number> = {
   MCP_CURRENT_HEADER_MISMATCH: -32020,
   MCP_CURRENT_METADATA_REQUIRED: -32602,
-  MCP_CURRENT_MIXED_MODE: -32020,
   MCP_CURRENT_ROUTING_HEADER_INVALID: -32020,
   MCP_CURRENT_VERSION_UNSUPPORTED: -32022,
 }
@@ -44,6 +43,38 @@ export class McpCurrentProtocolError extends Error {
   }
 }
 
+export type McpUnsupportedVersionError = {
+  jsonrpc: "2.0"
+  id: string | number | null
+  error: {
+    code: -32022
+    message: string
+    data: {
+      supported: string[]
+      requested: string
+    }
+  }
+}
+
+export function createMcpUnsupportedVersionError(input: {
+  id?: string | number | null
+  requested: string
+  supported: string[]
+}): McpUnsupportedVersionError {
+  return {
+    jsonrpc: "2.0",
+    id: input.id ?? null,
+    error: {
+      code: -32022,
+      message: `Unsupported MCP protocol version: ${input.requested}`,
+      data: {
+        supported: [...input.supported],
+        requested: input.requested,
+      },
+    },
+  }
+}
+
 export type McpCurrentClientMetadata = {
   clientInfo: {
     name: string
@@ -55,11 +86,7 @@ export type McpCurrentClientMetadata = {
   baggage?: string
 }
 
-export type McpHeaderParameterBinding = {
-  parameterPath: string[]
-  /** The x-mcp-header name portion, without the Mcp-Param- prefix. */
-  headerName: string
-}
+export type McpHeaderParameterBinding = EnterpriseMcpHeaderParameterBinding
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -118,7 +145,7 @@ function plainHeaderSafe(value: string): boolean {
   if (value.trim() !== value) return false
   for (const character of value) {
     const code = character.charCodeAt(0)
-    if (code !== 0x09 && (code < 0x20 || code > 0x7e)) return false
+    if (code < 0x20 || code > 0x7e) return false
   }
   return true
 }
@@ -277,9 +304,14 @@ function requireMetadata(params: Record<string, unknown> | undefined): void {
     )
   }
   const meta = params._meta
+  const clientInfo = meta["io.modelcontextprotocol/clientInfo"]
   if (
     meta["io.modelcontextprotocol/protocolVersion"] !== MCP_CURRENT_PROTOCOL_VERSION
-    || !isRecord(meta["io.modelcontextprotocol/clientInfo"])
+    || !isRecord(clientInfo)
+    || typeof clientInfo.name !== "string"
+    || !clientInfo.name.trim()
+    || typeof clientInfo.version !== "string"
+    || !clientInfo.version.trim()
     || !isRecord(meta["io.modelcontextprotocol/clientCapabilities"])
   ) {
     throw new McpCurrentProtocolError(
@@ -289,18 +321,21 @@ function requireMetadata(params: Record<string, unknown> | undefined): void {
   }
 }
 
+function routedValueMatches(headerValue: string, bodyValue: unknown): boolean {
+  const decoded = decodeHeaderText(headerValue)
+  if (typeof bodyValue === "number" && Number.isSafeInteger(bodyValue)) {
+    const numericHeader = Number(decoded)
+    return Number.isSafeInteger(numericHeader) && numericHeader === bodyValue
+  }
+  return decoded === routingBodyValue(bodyValue)
+}
+
 export function validateCurrentMcpRouting(input: {
   headers: HeadersInit
   body: unknown
   parameterHeaders?: McpHeaderParameterBinding[]
 }): z.infer<typeof rpcRequestSchema> {
   const headers = new Headers(input.headers)
-  if (headers.has("Mcp-Session-Id")) {
-    throw new McpCurrentProtocolError(
-      "MCP_CURRENT_MIXED_MODE",
-      "A current MCP request cannot carry a legacy MCP session identifier.",
-    )
-  }
   if (headers.get("MCP-Protocol-Version") !== MCP_CURRENT_PROTOCOL_VERSION) {
     throw new McpCurrentProtocolError(
       "MCP_CURRENT_VERSION_UNSUPPORTED",
@@ -342,7 +377,7 @@ export function validateCurrentMcpRouting(input: {
           `${headerName} is present but the routed tool argument is absent or null.`,
         )
       }
-      if (headerValue === null || decodeHeaderText(headerValue) !== routingBodyValue(argument.value)) {
+      if (headerValue === null || !routedValueMatches(headerValue, argument.value)) {
         throw new McpCurrentProtocolError(
           "MCP_CURRENT_HEADER_MISMATCH",
           `${headerName} does not match the routed tool argument.`,

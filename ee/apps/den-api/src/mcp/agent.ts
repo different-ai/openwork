@@ -15,6 +15,7 @@ import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
+import { rejectUnqualifiedCurrentMcpRequest } from "./protocol-version-gate.js"
 import { compareCapabilityMatches, SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter, type CapabilityMatch } from "./search.js"
 import { executeExternalCapability, externalMcpSearchCoverageHint, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities, type ExternalCapabilityExecuteResult } from "./external-capabilities.js"
 import { executeMarketplaceCapability, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType } from "./marketplace-capabilities.js"
@@ -270,6 +271,11 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
     )
     if (principal instanceof Response) {
       return principal
+    }
+
+    const protocolGateResponse = await rejectUnqualifiedCurrentMcpRequest(c.req.raw)
+    if (protocolGateResponse) {
+      return protocolGateResponse
     }
 
     const preflightResponse = await preflightMcpJsonRpcRequest(c.req.raw, requestId)

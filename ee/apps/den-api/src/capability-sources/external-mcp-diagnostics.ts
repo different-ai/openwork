@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import type { EnterpriseMcpCatalogErrorCode } from "@openwork/enterprise-mcp-client"
 import { PrivateUrlError } from "./url-guard.js"
 
 export const EXTERNAL_MCP_DIAGNOSTIC_PHASES = [
@@ -1470,19 +1471,7 @@ export function safeExternalMcpEndpointForLog(rawUrl: string): ExternalMcpSafeOu
 
 export function catalogDiagnosticError(input: {
   tracker: ExternalMcpDiagnosticTracker
-  code:
-    | "MCP_CATALOG_CURSOR_LOOP"
-    | "MCP_CATALOG_PAGE_LIMIT"
-    | "MCP_CATALOG_ITEM_LIMIT"
-    | "MCP_CATALOG_DUPLICATE_TOOL"
-    | "MCP_CATALOG_TOOL_NAME_LIMIT"
-    | "MCP_CATALOG_TOOL_DESCRIPTION_LIMIT"
-    | "MCP_CATALOG_TOOL_TITLE_LIMIT"
-    | "MCP_CATALOG_SCHEMA_SIZE_LIMIT"
-    | "MCP_CATALOG_SCHEMA_DEPTH_LIMIT"
-    | "MCP_CATALOG_SCHEMA_CYCLE"
-    | "MCP_CATALOG_CURSOR_SIZE_LIMIT"
-    | "MCP_CATALOG_BYTE_LIMIT"
+  code: EnterpriseMcpCatalogErrorCode
   operatorAction: string
 }): ExternalMcpDiagnosticError {
   input.tracker.failed("MCP_TOOL_DISCOVERY")

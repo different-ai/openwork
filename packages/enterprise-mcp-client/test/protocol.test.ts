@@ -71,11 +71,48 @@ describe("MCP protocol negotiation", () => {
     assert.throws(
       () => negotiateMcpProtocol({
         policy: "auto",
-        outcome: { kind: "legacy-only", reason: "unsupported-version" },
+        outcome: {
+          kind: "discovered",
+          value: {
+            ...currentDiscovery(),
+            supportedVersions: [MCP_LEGACY_PROTOCOL_VERSION],
+          },
+        },
         previousBinding: current,
       }),
       (error: unknown) => error instanceof McpProtocolNegotiationError
         && error.code === "MCP_PROTOCOL_DOWNGRADE_BLOCKED",
+    )
+  })
+
+  it("bounds discovery versions and capability metadata before hashing", () => {
+    assert.throws(
+      () => negotiateMcpProtocol({
+        policy: "auto",
+        outcome: {
+          kind: "discovered",
+          value: {
+            ...currentDiscovery(),
+            supportedVersions: Array.from({ length: 33 }, (_, index) => `version-${index}`),
+          },
+        },
+      }),
+      (error: unknown) => error instanceof McpProtocolNegotiationError
+        && error.code === "MCP_PROTOCOL_DISCOVERY_INVALID",
+    )
+
+    let nested: Record<string, unknown> = {}
+    for (let depth = 0; depth < 70; depth += 1) nested = { child: nested }
+    assert.throws(
+      () => negotiateMcpProtocol({
+        policy: "auto",
+        outcome: {
+          kind: "discovered",
+          value: { ...currentDiscovery(), capabilities: nested },
+        },
+      }),
+      (error: unknown) => error instanceof McpProtocolNegotiationError
+        && error.code === "MCP_PROTOCOL_DISCOVERY_INVALID",
     )
   })
 
@@ -136,7 +173,14 @@ describe("MCP normalized results", () => {
         resultType: "input_required",
         requestState: "opaque-state",
         inputRequests: {
-          confirm: { type: "elicitation", message: "Continue?", schema: { type: "boolean" } },
+          confirm: {
+            method: "elicitation/create",
+            params: {
+              mode: "form",
+              message: "Continue?",
+              requestedSchema: { type: "object" },
+            },
+          },
         },
       },
       parseComplete: (value) => value,
@@ -144,16 +188,42 @@ describe("MCP normalized results", () => {
       resultType: "input_required",
       requestState: "opaque-state",
       inputRequests: {
-        confirm: { type: "elicitation", message: "Continue?", schema: { type: "boolean" } },
+        confirm: {
+          method: "elicitation/create",
+          params: {
+            mode: "form",
+            message: "Continue?",
+            requestedSchema: { type: "object" },
+          },
+        },
       },
     })
   })
 
-  it("rejects a malformed current result instead of downgrading it", () => {
+  it("treats an absent resultType as complete for cross-era compatibility", () => {
+    assert.deepEqual(normalizeMcpResult({
+      protocolVersion: MCP_CURRENT_PROTOCOL_VERSION,
+      value: { content: [{ type: "text", text: "legacy-shaped" }] },
+      parseComplete: (value) => value,
+    }), {
+      resultType: "complete",
+      value: { content: [{ type: "text", text: "legacy-shaped" }] },
+    })
+  })
+
+  it("rejects unknown and malformed current result types instead of downgrading", () => {
     assert.throws(
       () => normalizeMcpResult({
         protocolVersion: MCP_CURRENT_PROTOCOL_VERSION,
-        value: { content: [] },
+        value: { resultType: "future_result", content: [] },
+        parseComplete: (value) => value,
+      }),
+      McpProtocolNegotiationError,
+    )
+    assert.throws(
+      () => normalizeMcpResult({
+        protocolVersion: MCP_CURRENT_PROTOCOL_VERSION,
+        value: { resultType: "input_required" },
         parseComplete: (value) => value,
       }),
       McpProtocolNegotiationError,
