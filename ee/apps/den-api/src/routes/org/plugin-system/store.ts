@@ -4555,13 +4555,17 @@ export async function importGithubPluginMcps(input: {
   authType: "none" | "oauth"
   context: PluginArchActorContext
   credentialMode: "per_member" | "shared"
+  description?: string | null
   githubUrl: string
-  marketplaceId: MarketplaceId
+  marketplaceId?: MarketplaceId
+  name?: string
   selectedSkillKeys?: string[]
   selectedServerKeys?: string[]
   selectedServerNames?: string[]
 }) {
-  await ensureEditableMarketplace(input.context, input.marketplaceId)
+  if (input.marketplaceId) {
+    await ensureEditableMarketplace(input.context, input.marketplaceId)
+  }
   const plan = await computeGithubPluginMcpImportPlan({ githubUrl: input.githubUrl, includeSkillText: true })
   const selectedSkillKeys = new Set(input.selectedSkillKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const selectedServerKeys = new Set(input.selectedServerKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
@@ -4586,13 +4590,14 @@ export async function importGithubPluginMcps(input: {
     teamIds: [],
   }
   if (!access.orgWide && access.memberIds.length === 0 && access.teamIds.length === 0) {
-    throw new PluginArchRouteFailure(400, "missing_import_access", "Choose who can use the imported MCP connections.")
+    throw new PluginArchRouteFailure(400, "missing_import_access", "Choose who can use the imported plugin.")
   }
-
   const plugin = await createPlugin({
     context: input.context,
-    description: `Plugin components imported from ${plan.repositoryFullName}${plan.rootPath ? `/${plan.rootPath}` : ""}.`,
-    name: importedPluginName(plan),
+    description: input.description === undefined
+      ? `Plugin components imported from ${plan.repositoryFullName}${plan.rootPath ? `/${plan.rootPath}` : ""}.`
+      : input.description,
+    name: input.name ?? importedPluginName(plan),
   })
 
   const importedOwnedConnectionIds = new Set<ExternalMcpConnectionRow["id"]>()
@@ -4709,12 +4714,14 @@ export async function importGithubPluginMcps(input: {
     importedSkills.push({ name: createdSkill.title, skillId: createdSkill.id, sourcePath: skill.sourcePath })
   }
 
-  await attachPluginToMarketplace({
-    context: input.context,
-    marketplaceId: input.marketplaceId,
-    membershipSource: "api",
-    pluginId: plugin.id,
-  })
+  if (input.marketplaceId) {
+    await attachPluginToMarketplace({
+      context: input.context,
+      marketplaceId: input.marketplaceId,
+      membershipSource: "api",
+      pluginId: plugin.id,
+    })
+  }
 
   const skipped = consideredServers.flatMap((server) =>
     server.supported || !server.skippedReason ? [] : [{ name: server.name, reason: server.skippedReason }])
@@ -4724,7 +4731,7 @@ export async function importGithubPluginMcps(input: {
   return {
     imported,
     importedSkills,
-    marketplaceId: input.marketplaceId,
+    marketplaceId: input.marketplaceId ?? null,
     plugin: await getPluginDetail(input.context, plugin.id),
     skipped,
     skippedSkills,

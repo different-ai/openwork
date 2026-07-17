@@ -519,6 +519,10 @@ export function getNewPluginRoute(orgSlug?: string | null): string {
   return `${getPluginsRoute(orgSlug)}/new`;
 }
 
+export function getImportPluginRoute(orgSlug?: string | null): string {
+  return `${getPluginsRoute(orgSlug)}/import`;
+}
+
 export function getMarketplacesRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/marketplaces`;
 }
