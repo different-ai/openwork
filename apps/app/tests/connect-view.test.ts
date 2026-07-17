@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 
 import type { OpenworkCloudMcpHealth } from "../src/app/lib/openwork-server";
@@ -13,6 +15,11 @@ import {
   resolveConnectionRowGroup,
   resolveConnectRowGroup,
 } from "../src/react-app/domains/settings/connect-cloud-readiness";
+
+const connectViewSource = readFileSync(
+  fileURLToPath(new URL("../src/react-app/domains/settings/pages/connect-view.tsx", import.meta.url)),
+  "utf8",
+);
 
 describe("resolveConnectViewState", () => {
   test("shows loading while auth is being checked", () => {
@@ -76,6 +83,13 @@ describe("Agent access card helpers", () => {
       "openwork-cloud_search_capabilities",
       "openwork-cloud_execute_capability",
     ]);
+  });
+
+  test("retries Agent access through the repair reconciler when connectivity returns", () => {
+    expect(connectViewSource).toContain('window.addEventListener("online", retryAfterReconnect)');
+    expect(connectViewSource).toContain('window.removeEventListener("online", retryAfterReconnect)');
+    expect(connectViewSource).toContain('mode: "repair"');
+    expect(connectViewSource).toContain('trigger: "desktop-connect-online-retry"');
   });
 });
 

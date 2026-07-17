@@ -316,6 +316,45 @@ function AgentAccessCard(props: {
     };
   }, [props.client, props.currentModel, props.workspaceId, signedIn]);
 
+  useEffect(() => {
+    if (!props.client || !context || !signedIn || typeof window === "undefined") return;
+    const client = props.client;
+    let cancelled = false;
+    const retryAfterReconnect = () => {
+      if (window.navigator.onLine === false) return;
+      void runOpenworkCloudMcpReconciler({
+        mode: "repair",
+        client,
+        context: { ...context, trigger: "desktop-connect-online-retry" },
+        mintToken: mintCloudControlMcpToken,
+        refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
+      })
+        .then((result) => {
+          if (cancelled || !result.health) return;
+          updateHealth(result.health);
+          if (result.health.usable) setError(null);
+        })
+        .catch((nextError) => {
+          if (!cancelled) setError(nextError instanceof Error ? nextError.message : "Could not restore agent access.");
+        });
+    };
+
+    window.addEventListener("online", retryAfterReconnect);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("online", retryAfterReconnect);
+    };
+  }, [
+    context?.denAuthToken,
+    context?.denBaseUrl,
+    context?.orgId,
+    context?.serverBaseUrl,
+    props.client,
+    props.currentModel,
+    props.workspaceId,
+    signedIn,
+  ]);
+
   const canRun = Boolean(props.client && context && signedIn);
   const readyTools = readyCloudMcpToolIds(health);
 
