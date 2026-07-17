@@ -89,14 +89,14 @@ export function pluginSetupSuccessCopy(input: {
 }): { body: string; linkLabel: string | null } {
   if (input.authType === "oauth" && input.credentialMode === "per_member") {
     return {
-      body: `${input.serviceName} is now bound to ${input.pluginName}. Assigned users connect their own account from Your Connections. No OAuth was started automatically.`,
-      linkLabel: "Open Your Connections",
+      body: `${input.serviceName} is ready for ${input.pluginName}. Use Connect to authorize an account.`,
+      linkLabel: null,
     };
   }
   if (input.authType === "oauth") {
     return {
-      body: `${input.serviceName} is now bound to ${input.pluginName}. Connect the organization account from Your Connections. No OAuth was started automatically.`,
-      linkLabel: "Connect organization account",
+      body: `${input.serviceName} is ready for ${input.pluginName}. Use Connect to authorize the organization account.`,
+      linkLabel: null,
     };
   }
   return {
@@ -119,18 +119,16 @@ export function pluginReadinessConnectionAction(
   if (connection.id && connection.credentialMode === "per_member" && connection.connectedForMe === false) {
     return {
       connectionId: connection.id,
-      label: isAdmin ? "Open Your Connections" : "Connect your account",
-      note: isAdmin
-        ? "Assigned members connect individually from Your Connections. This link only focuses the connection; it will not start OAuth."
-        : "Connect your own account from Your Connections. OAuth starts only after you click Connect there.",
+      label: "Connect",
+      note: "Authorize your account without leaving this page.",
       type: "connect_member",
     };
   }
   if (isAdmin && connection.id && connection.credentialMode === "shared" && connection.connectedForMe === false) {
     return {
       connectionId: connection.id,
-      label: "Connect organization account",
-      note: "An admin connects one organization account from Your Connections. OAuth starts only after an admin clicks Connect there.",
+      label: "Connect",
+      note: "Authorize one organization account without leaving this page.",
       type: "connect_org",
     };
   }

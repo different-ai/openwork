@@ -2,16 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { AlertTriangle, Check, Loader2, Plug, Wrench } from "lucide-react";
-import { buttonVariants, DenButton } from "../../_components/ui/button";
+import { DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getOrgAccessFlags, getPluginRoute } from "../../_lib/den-org";
+import { getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IntegrationIcon } from "./integration-icon";
+import {
+  PluginMcpSetupDialog,
+  type PluginMcpSetupTarget,
+} from "./marketplace-detail-screen";
+import type { MarketplacePluginCloudReadinessConnection } from "./marketplace-data";
 import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "./mcp-connection-display";
-import { marketplaceConnectionNeedsAdminSetup } from "./mcp-connection-setup";
-import { openMcpAuthorizationWindow, safeMcpAuthorizationUrl } from "./mcp-authorization-url";
+import { marketplaceConnectionNeedsAdminSetup, marketplaceConnectionSetupTarget } from "./mcp-connection-setup";
 import { MICROSOFT_365_DISPLAY_SCOPES } from "./microsoft-365-permissions";
 import {
   canDisconnectMyConnectionAccount,
@@ -20,12 +23,10 @@ import {
   useDisconnectMyProviderAccount,
   useMcpConnections,
   useMcpConnectionPresets,
-  useStartMcpConnectionOAuth,
 } from "./mcp-connections-data";
 import { McpToolRunner } from "./mcp-tool-runner";
-
-const OAUTH_POLL_INTERVAL_MS = 2000;
-const OAUTH_POLL_TIMEOUT_MS = 90_000;
+import { usePlugin } from "./plugin-data";
+import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
 
 /**
  * The member-facing half of MCP Connections. An admin publishes a
@@ -39,18 +40,17 @@ const OAUTH_POLL_TIMEOUT_MS = 90_000;
 export function YourConnectionsScreen() {
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections("usable");
   const { data: presets = [] } = useMcpConnectionPresets();
-  const { orgContext, orgSlug } = useOrgDashboard();
+  const { orgContext } = useOrgDashboard();
   const searchParams = useSearchParams();
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
     orgContext?.roles,
   );
-  const startOAuth = useStartMcpConnectionOAuth();
+  const authorization = useMcpAccountAuthorization();
   const disconnectProvider = useDisconnectMyProviderAccount();
-  const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
+  const [setupTarget, setSetupTarget] = useState<PluginMcpSetupTarget | null>(null);
   const [rowError, setRowError] = useState<{ connectionId: string; message: string } | null>(null);
-  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const focusedRowRef = useRef<HTMLDivElement | null>(null);
   const focusConnectionId = trustedConnectionFocusId(connections, searchParams.get("connectionId"));
   const visibleConnections = useMemo(
@@ -59,59 +59,10 @@ export function YourConnectionsScreen() {
   );
 
   useEffect(() => {
-    return () => {
-      if (pollTimer.current) clearInterval(pollTimer.current);
-    };
-  }, []);
-
-  useEffect(() => {
     if (!focusConnectionId || !focusedRowRef.current) return;
     focusedRowRef.current.scrollIntoView({ block: "center" });
     focusedRowRef.current.focus({ preventScroll: true });
   }, [focusConnectionId, visibleConnections.length]);
-
-  function stopPolling() {
-    if (pollTimer.current) {
-      clearInterval(pollTimer.current);
-      pollTimer.current = null;
-    }
-    setPollingConnectionId(null);
-  }
-
-  function pollUntilConnectedForMe(connectionId: string) {
-    setPollingConnectionId(connectionId);
-    const startedAt = Date.now();
-    pollTimer.current = setInterval(async () => {
-      const result = await refetch();
-      const connection = result.data?.find((entry) => entry.id === connectionId);
-      if ((connection?.connectedForMe && connection.needsReconnect !== true) || Date.now() - startedAt > OAUTH_POLL_TIMEOUT_MS) {
-        stopPolling();
-      }
-    }, OAUTH_POLL_INTERVAL_MS);
-  }
-
-  async function handleConnectMyAccount(connectionId: string) {
-    setRowError(null);
-    let authorizationWindow: Window | null = null;
-    try {
-      authorizationWindow = openMcpAuthorizationWindow();
-      const result = await startOAuth.mutateAsync(connectionId);
-      if (result.status === "connected") {
-        authorizationWindow.close();
-        void refetch();
-        return;
-      }
-      if (!result.authorizeUrl) throw new Error("The MCP provider did not return an authorization URL.");
-      authorizationWindow.location.href = safeMcpAuthorizationUrl(result.authorizeUrl);
-      pollUntilConnectedForMe(connectionId);
-    } catch (connectError) {
-      authorizationWindow?.close();
-      setRowError({
-        connectionId,
-        message: connectError instanceof Error ? connectError.message : "Failed to connect account.",
-      });
-    }
-  }
 
   async function handleDisconnectMyAccount(connectionId: string) {
     setRowError(null);
@@ -152,25 +103,41 @@ export function YourConnectionsScreen() {
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
           {visibleConnections.map((connection) => {
             const needsAdminSetup = marketplaceConnectionNeedsAdminSetup(connection, presets);
-            const setupPluginId = connection.identityManagedBy[0]?.pluginId;
+            const setupTarget = marketplaceConnectionSetupTarget(connection, presets, access.isAdmin);
             return <YourConnectionRow
               key={connection.id}
               connection={connection}
               isAdmin={access.isAdmin}
               needsAdminSetup={needsAdminSetup}
-              setupHref={access.isAdmin && needsAdminSetup && setupPluginId ? getPluginRoute(orgSlug, setupPluginId) : null}
+              setupTarget={setupTarget}
+              presets={presets}
+              onSetup={setSetupTarget}
               highlighted={focusConnectionId === connection.id}
               rowRef={focusConnectionId === connection.id ? focusedRowRef : undefined}
-              polling={pollingConnectionId === connection.id}
-              connecting={startOAuth.isPending && startOAuth.variables === connection.id}
+              polling={authorization.pollingConnectionId === connection.id}
+              connecting={authorization.connectingConnectionId === connection.id}
               disconnecting={disconnectProvider.isPending && disconnectProvider.variables === connection.id}
-              errorMessage={rowError?.connectionId === connection.id ? rowError.message : null}
-              onConnect={() => void handleConnectMyAccount(connection.id)}
+              errorMessage={
+                rowError?.connectionId === connection.id
+                  ? rowError.message
+                  : authorization.error?.connectionId === connection.id
+                    ? authorization.error.message
+                    : null
+              }
+              onConnect={() => void authorization.connect(connection.id)}
               onDisconnect={() => void handleDisconnectMyAccount(connection.id)}
             />;
           })}
         </div>
       )}
+      <PluginMcpSetupDialog
+        target={setupTarget}
+        presets={presets}
+        onClose={() => {
+          setSetupTarget(null);
+          void refetch();
+        }}
+      />
     </DashboardPageTemplate>
   );
 }
@@ -179,7 +146,9 @@ function YourConnectionRow({
   connection,
   isAdmin,
   needsAdminSetup,
-  setupHref,
+  setupTarget,
+  presets,
+  onSetup,
   polling,
   connecting,
   disconnecting,
@@ -192,7 +161,9 @@ function YourConnectionRow({
   connection: ExternalMcpConnection;
   isAdmin: boolean;
   needsAdminSetup: boolean;
-  setupHref: string | null;
+  setupTarget: { connectionId: string; pluginId: string } | null;
+  presets: ReturnType<typeof useMcpConnectionPresets>["data"];
+  onSetup: (target: PluginMcpSetupTarget) => void;
   highlighted: boolean;
   rowRef?: React.Ref<HTMLDivElement>;
   polling: boolean;
@@ -281,10 +252,12 @@ function YourConnectionRow({
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {setupHref ? (
-            <Link href={setupHref} className={buttonVariants({ variant: "primary", size: "sm" })}>
-              Set up
-            </Link>
+          {setupTarget ? (
+            <MarketplaceConfigureButton
+              connection={connection}
+              target={setupTarget}
+              onSetup={onSetup}
+            />
           ) : null}
           {canTestTools ? (
             <DenButton
@@ -313,5 +286,66 @@ function YourConnectionRow({
       </div>
       {toolRunnerOpen && canTestTools ? <McpToolRunner connection={connection} /> : null}
     </div>
+  );
+}
+
+function normalizeConnectionUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    const pathname = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname;
+    return `${url.protocol.toLowerCase()}//${url.host}${pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+}
+
+function MarketplaceConfigureButton({
+  connection,
+  onSetup,
+  target,
+}: {
+  connection: ExternalMcpConnection;
+  onSetup: (target: PluginMcpSetupTarget) => void;
+  target: { connectionId: string; pluginId: string };
+}) {
+  const pluginQuery = usePlugin(target.pluginId);
+
+  if (pluginQuery.isLoading) {
+    return <DenButton variant="primary" size="sm" disabled>Configure</DenButton>;
+  }
+
+  const plugin = pluginQuery.data;
+  const connectionUrl = normalizeConnectionUrl(connection.url);
+  const pluginMcp = plugin?.mcps.find((mcp) => (
+    Boolean(mcp.configObjectId)
+    && normalizeConnectionUrl(mcp.url) === connectionUrl
+  ));
+  if (!plugin || !pluginMcp?.configObjectId) return null;
+
+  return (
+    <DenButton
+      variant="primary"
+      size="sm"
+      onClick={() => onSetup({
+        plugin: { id: plugin.id, name: plugin.name },
+        connection: {
+          authType: connection.authType,
+          authTypeMismatch: connection.authTypeMismatch,
+          configObjectId: pluginMcp.configObjectId!,
+          connectedForMe: connection.connectedForMe,
+          credentialMode: connection.credentialMode,
+          id: connection.id,
+          name: connection.name,
+          oauthClientConfigured: connection.oauthClientConfigured,
+          oauthClientRequired: connection.oauthClientRequired,
+          requiredAuthType: connection.requiredAuthType ?? undefined,
+          serverName: pluginMcp.serverName ?? pluginMcp.name,
+          url: connection.url,
+        } satisfies MarketplacePluginCloudReadinessConnection,
+      })}
+    >
+      Configure
+    </DenButton>
   );
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "../app/(den)/dashboard/_components/mcp-connection-display";
-import { marketplaceConnectionNeedsAdminSetup } from "../app/(den)/dashboard/_components/mcp-connection-setup";
+import { marketplaceConnectionNeedsAdminSetup, marketplaceConnectionSetupTarget } from "../app/(den)/dashboard/_components/mcp-connection-setup";
 import type { ExternalMcpConnection, ExternalMcpPreset, ExternalMcpRequiredBy } from "../app/(den)/dashboard/_components/mcp-connections-data";
 import { parseMarketplaceResolvedPayload, type MarketplacePluginCloudReadinessConnection } from "../app/(den)/dashboard/_components/marketplace-data";
 import { pluginMcpEntries } from "../app/(den)/dashboard/_components/plugin-data";
@@ -197,10 +197,10 @@ describe("marketplace MCP readiness parsing", () => {
     const apiKey = pluginSetupSuccessCopy({ authType: "apikey", credentialMode: "shared", pluginName: "Search Ops", serviceName: "Exa" });
     const noAuth = pluginSetupSuccessCopy({ authType: "none", credentialMode: "shared", pluginName: "Docs Ops", serviceName: "Context7" });
 
-    expect(perMember.body).toContain("Assigned users connect their own account");
-    expect(perMember.linkLabel).toBe("Open Your Connections");
-    expect(shared.body).toContain("Connect the organization account");
-    expect(shared.linkLabel).toBe("Connect organization account");
+    expect(perMember.body).toContain("Use Connect to authorize an account");
+    expect(perMember.linkLabel).toBeNull();
+    expect(shared.body).toContain("Use Connect to authorize the organization account");
+    expect(shared.linkLabel).toBeNull();
     expect(apiKey.body).toContain("ready");
     expect(apiKey.linkLabel).toBeNull();
     expect(noAuth.body).toContain("No user sign-in is needed");
@@ -220,8 +220,8 @@ describe("marketplace MCP readiness parsing", () => {
 
     expect(pluginReadinessConnectionAction(requirement, true)).toEqual({
       connectionId: "emc_shared_slack",
-      label: "Connect organization account",
-      note: "An admin connects one organization account from Your Connections. OAuth starts only after an admin clicks Connect there.",
+      label: "Connect",
+      note: "Authorize one organization account without leaving this page.",
       type: "connect_org",
     });
     expect(pluginReadinessConnectionAction(requirement, false)).toBeNull();
@@ -252,7 +252,7 @@ describe("marketplace MCP readiness parsing", () => {
     })).toBe(true);
   });
 
-  test("projects existing per-member disconnected requirements as Your Connections handoffs", () => {
+  test("projects existing per-member disconnected requirements as in-place connect actions", () => {
     const requirement: MarketplacePluginCloudReadinessConnection = {
       configObjectId: "cfg_slack",
       id: "emc_member_slack",
@@ -265,14 +265,14 @@ describe("marketplace MCP readiness parsing", () => {
 
     expect(pluginReadinessConnectionAction(requirement, true)).toEqual({
       connectionId: "emc_member_slack",
-      label: "Open Your Connections",
-      note: "Assigned members connect individually from Your Connections. This link only focuses the connection; it will not start OAuth.",
+      label: "Connect",
+      note: "Authorize your account without leaving this page.",
       type: "connect_member",
     });
     expect(pluginReadinessConnectionAction(requirement, false)).toEqual({
       connectionId: "emc_member_slack",
-      label: "Connect your account",
-      note: "Connect your own account from Your Connections. OAuth starts only after you click Connect there.",
+      label: "Connect",
+      note: "Authorize your account without leaving this page.",
       type: "connect_member",
     });
   });
@@ -297,14 +297,22 @@ describe("Your Connections focus and provenance helpers", () => {
     imported.setupRequired = true;
 
     expect(marketplaceConnectionNeedsAdminSetup(imported, [slackPreset])).toBe(true);
-    expect(marketplaceConnectionNeedsAdminSetup({
+    expect(marketplaceConnectionSetupTarget(imported, [slackPreset], false)).toBeNull();
+    expect(marketplaceConnectionSetupTarget(imported, [slackPreset], true)).toEqual({
+      connectionId: "emc_slack",
+      pluginId: "plg_engineering",
+    });
+
+    const configured = {
       ...imported,
       authType: "oauth",
       connected: false,
       oauthClientConfigured: true,
       authTypeMismatch: false,
       setupRequired: false,
-    }, [slackPreset])).toBe(false);
+    } satisfies ExternalMcpConnection;
+    expect(marketplaceConnectionNeedsAdminSetup(configured, [slackPreset])).toBe(false);
+    expect(marketplaceConnectionSetupTarget(configured, [slackPreset], true)).toBeNull();
   });
 
   test("focuses only authorized returned connection ids", () => {
