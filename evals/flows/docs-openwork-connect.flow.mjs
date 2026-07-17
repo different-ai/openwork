@@ -4,6 +4,20 @@ const vo = await loadVoiceoverParagraphs("docs-openwork-connect");
 
 const MCP_SERVER_URL = "https://api.openworklabs.com/mcp/agent";
 const CLIENTS = ["Cursor", "Codex", "ChatGPT Desktop", "Claude Code", "OpenCode", "VS Code", "Any client"];
+const SUPPORT_STATUS = [
+  ["OpenCode", "Verified"],
+  ["Codex", "Setup only"],
+  ["Cursor", "Setup only"],
+  ["ChatGPT Desktop", "Setup only"],
+  ["Claude Code", "Setup only"],
+  ["VS Code", "Setup only"],
+  ["Any client", "Setup only"],
+];
+const OPENCODE_AUTH_COMMAND = "opencode mcp auth openwork";
+const OPENCODE_RECONNECT_LOGOUT = "opencode mcp logout openwork";
+const CODEX_ADD_COMMAND = `codex mcp add openwork --url ${MCP_SERVER_URL}`;
+const CODEX_LOGIN_COMMAND = "codex mcp login openwork";
+const CODEX_RECONNECT_LOGOUT = "codex mcp logout openwork";
 
 function baseUrl(name) {
   return process.env[name].replace(/\/$/, "");
@@ -71,26 +85,81 @@ export default {
             const actual = await ctx.eval(`(() => {
               const installer = document.querySelector("#connect-mcp-install");
               const text = installer ? installer.innerText : "";
+              const bodyText = document.body.innerText;
+              const rows = Array.from(document.querySelectorAll("tr"))
+                .map((row) => (row.innerText || "").replace(/\\s+/g, " ").trim());
+              const supportRows = Object.fromEntries(
+                ${JSON.stringify(CLIENTS)}.map((client) => [client, rows.find((row) => row.includes(client)) || ""]),
+              );
               return {
                 exists: Boolean(installer),
                 hasDeveloperPrompt: text.includes("Developers: point your own agent at your org"),
-                hasCursorInstall: text.includes("Add to Cursor"),
+                hasNoCursorInstall: !text.includes("Add to Cursor") && !bodyText.includes("~/.cursor/mcp.json"),
                 hasServerUrl: text.includes(${JSON.stringify(MCP_SERVER_URL)}),
+                hasVerifiedCopy: text.includes("Verified for OpenCode only"),
+                hasSetupOnlyCopy: text.includes("setup guides for Codex, Cursor, ChatGPT"),
                 tabs: Array.from(installer?.querySelectorAll("[role='tab']") || []).map((tab) => (tab.textContent || "").trim()),
+                supportRows,
+                hasInternalProxy: bodyText.includes("app.openworklabs.com/api/den") && bodyText.includes("internal same-origin desktop proxy"),
+                hasAuthServer: bodyText.includes("https://app.openworklabs.com/api/auth"),
+                hasRfc9728: bodyText.includes("RFC9728"),
+                hasExactResource: bodyText.includes("OAuth authorize and token requests must include exactly one") && bodyText.includes(${JSON.stringify(MCP_SERVER_URL)}),
+                hasDcrFallback: bodyText.includes("dynamic client registration as a fallback"),
+                hasPkceS256: bodyText.includes("PKCE") && bodyText.includes("S256"),
+                hasRedirectRules: bodyText.includes("HTTPS callbacks or HTTP loopback callbacks"),
+                hasTokenLifetime: bodyText.includes("JWTs signed and validated with EdDSA") && bodyText.includes("issuer is exactly") && bodyText.includes("audience is exactly") && bodyText.includes("15 minutes") && bodyText.includes("30-day inactivity window"),
+                hasRefreshTokenContract: bodyText.includes("Refresh tokens are opaque rotating grants"),
+                hasRefreshReplayGuidance: bodyText.includes("invalid_grant") && bodyText.includes("replayed") && bodyText.includes("used concurrently"),
+                hasRateLimitGuidance: bodyText.includes("429 rate limit") && bodyText.includes("Retry-After"),
+                hasSupportReference: bodyText.includes("X-Request-Id") && bodyText.includes("referenceId") && bodyText.includes("reference_id"),
+                hasAgentTools: bodyText.includes("search_capabilities") && bodyText.includes("execute_capability"),
+                hasScopedAccessCopy: bodyText.includes("organization membership, role, policy, and exposure allowlists"),
+                hasNoOpaqueAccessTokenClaim: !bodyText.includes("opaque bearer tokens") && !bodyText.includes("Access tokens are opaque"),
+                hasNoJwksClaim: !/\\bJWKS\\b/.test(bodyText),
+                hasCursorDesktopUnsupported: bodyText.includes("cursor://anysphere.cursor-mcp/oauth/callback") && bodyText.includes("Cursor Desktop OAuth is not currently supported"),
+                hasChatGptSettings: bodyText.includes("Settings > MCP servers"),
+                hasNoCimdClaim: !bodyText.includes("CIMD"),
               };
             })()`);
             recordAssertion(
               ctx,
-              "The docs installer shows the developer prompt, current server URL, and all supported clients",
+              "The docs installer shows the developer prompt, current server URL, verified/setup-only copy, and all covered clients",
               actual.exists === true
                 && actual.hasDeveloperPrompt === true
-                && actual.hasCursorInstall === true
+                && actual.hasNoCursorInstall === true
                 && actual.hasServerUrl === true
+                && actual.hasVerifiedCopy === true
+                && actual.hasSetupOnlyCopy === true
                 && CLIENTS.every((client) => actual.tabs.includes(client)),
               actual,
             );
+            recordAssertion(
+              ctx,
+              "The docs support table and protocol sections match the shipped OAuth and /mcp/agent behavior",
+              SUPPORT_STATUS.every(([client, status]) => typeof actual.supportRows[client] === "string" && actual.supportRows[client].includes(status))
+                && actual.hasInternalProxy === true
+                && actual.hasAuthServer === true
+                && actual.hasRfc9728 === true
+                && actual.hasExactResource === true
+                && actual.hasDcrFallback === true
+                && actual.hasPkceS256 === true
+                && actual.hasRedirectRules === true
+                && actual.hasTokenLifetime === true
+                && actual.hasRefreshTokenContract === true
+                && actual.hasRefreshReplayGuidance === true
+                && actual.hasRateLimitGuidance === true
+                && actual.hasSupportReference === true
+                && actual.hasAgentTools === true
+                && actual.hasScopedAccessCopy === true
+                && actual.hasNoOpaqueAccessTokenClaim === true
+                && actual.hasNoJwksClaim === true
+                && actual.hasCursorDesktopUnsupported === true
+                && actual.hasChatGptSettings === true
+                && actual.hasNoCimdClaim === true,
+              actual,
+            );
           },
-          screenshot: { name: "frame-1", requireText: ["Add to Cursor"] },
+          screenshot: { name: "frame-1", requireText: ["Verified for OpenCode only"] },
         });
       },
     },
@@ -113,16 +182,24 @@ export default {
                 hasEnabled: text.includes('"enabled": true'),
                 hasOauth: text.includes('"oauth": {}'),
                 hasServerUrl: text.includes(${JSON.stringify(MCP_SERVER_URL)}),
+                hasAuthCommand: text.includes(${JSON.stringify(OPENCODE_AUTH_COMMAND)}),
+                hasReconnectLogout: text.includes(${JSON.stringify(OPENCODE_RECONNECT_LOGOUT)}),
+                hasReconnectHeading: text.includes("Reconnect or switch org"),
+                hasVerifiedStatus: text.includes("Verified"),
               };
             })()`);
             recordAssertion(
               ctx,
-              "OpenCode is selected and its complete remote MCP configuration is visible",
+              "OpenCode is selected and its complete remote MCP configuration, auth command, and reconnect command are visible",
               actual.selected === "OpenCode"
                 && actual.hasType === true
                 && actual.hasEnabled === true
                 && actual.hasOauth === true
-                && actual.hasServerUrl === true,
+                && actual.hasServerUrl === true
+                && actual.hasAuthCommand === true
+                && actual.hasReconnectLogout === true
+                && actual.hasReconnectHeading === true
+                && actual.hasVerifiedStatus === true,
               actual,
             );
           },
@@ -192,24 +269,43 @@ export default {
           action: async () => {
             await navigate(ctx, `${baseUrl("OPENWORK_EVAL_LANDING_URL")}/#connect-mcp`);
             await waitForInstaller(ctx);
+            await clickTab(ctx, "Codex");
           },
           assert: async () => {
             const actual = await ctx.eval(`(() => {
               const installer = document.querySelector("#connect-mcp-install");
+              const selected = document.querySelector("#connect-mcp-install [role='tab'][aria-selected='true']");
+              const panel = document.querySelector("#connect-mcp-install [role='tabpanel']");
               const text = installer ? installer.innerText : "";
+              const panelText = panel ? panel.innerText : "";
               return {
                 hasServerUrl: text.includes(${JSON.stringify(MCP_SERVER_URL)}),
                 tabs: Array.from(installer?.querySelectorAll("[role='tab']") || []).map((tab) => (tab.textContent || "").trim()),
+                selected: (selected?.textContent || "").trim(),
+                hasCodexAdd: panelText.includes(${JSON.stringify(CODEX_ADD_COMMAND)}),
+                hasCodexLogin: panelText.includes(${JSON.stringify(CODEX_LOGIN_COMMAND)}),
+                hasCodexReconnectLogout: panelText.includes(${JSON.stringify(CODEX_RECONNECT_LOGOUT)}),
+                hasCodexReconnectHeading: panelText.includes("Reconnect or switch org"),
+                hasCodexSetupOnly: panelText.includes("Setup only"),
+                hasChatGptSetupCoverage: text.includes("ChatGPT Desktop") && text.includes("setup guides"),
               };
             })()`);
             recordAssertion(
               ctx,
-              "The landing installer uses the current server and exposes the same supported clients",
-              actual.hasServerUrl === true && CLIENTS.every((client) => actual.tabs.includes(client)),
+              "The landing installer uses the current server, exposes the same client coverage, and shows exact Codex add/login/reconnect commands",
+              actual.hasServerUrl === true
+                && CLIENTS.every((client) => actual.tabs.includes(client))
+                && actual.selected === "Codex"
+                && actual.hasCodexAdd === true
+                && actual.hasCodexLogin === true
+                && actual.hasCodexReconnectLogout === true
+                && actual.hasCodexReconnectHeading === true
+                && actual.hasCodexSetupOnly === true
+                && actual.hasChatGptSetupCoverage === true,
               actual,
             );
           },
-          screenshot: { name: "frame-5", requireText: ["Cursor", "Codex", "ChatGPT Desktop", "Claude Code", "OpenCode", "VS Code", "Any client"] },
+          screenshot: { name: "frame-5", requireText: ["Cursor", "Codex", "ChatGPT Desktop", "Claude Code", "OpenCode", "VS Code", "Any client", "Setup only"] },
         });
       },
     },

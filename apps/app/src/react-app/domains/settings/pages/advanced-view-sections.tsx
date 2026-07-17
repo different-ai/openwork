@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import { sanitizeCloudMcpHealthDiagnostic, sanitizeDiagnosticRecord } from "@/app/lib/diagnostic-sanitizer";
 import {
   DEFAULT_DEN_API_BASE_URL,
   DEFAULT_DEN_BASE_URL,
@@ -320,6 +321,139 @@ export function AdvancedRuntimeSection(props: AdvancedRuntimeSectionProps) {
   );
 }
 
+function DiagnosticRow(props: { label: string; value: string }) {
+  return (
+    <div className="grid gap-1 rounded-lg border border-gray-6 bg-gray-2/50 p-2 sm:grid-cols-[12rem_minmax(0,1fr)]">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-8">{props.label}</div>
+      <div className="min-w-0 break-all font-mono text-[11px] text-gray-12">{props.value}</div>
+    </div>
+  );
+}
+
+function joinList(values: string[]): string {
+  return values.length ? values.join(", ") : "none";
+}
+
+function formatMaybe(value: string | number | boolean | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "unknown";
+  return String(value);
+}
+
+function formatMetadataRecord(value: Record<string, string | number | boolean | null> | null | undefined): string {
+  if (!value || Object.keys(value).length === 0) return "none";
+  return Object.entries(value).map(([key, nested]) => `${key}=${formatMaybe(nested)}`).join(", ");
+}
+
+function formatSupportedFeatures(features: OpenworkCloudMcpHealth["compatibility"]["supportedFeatures"]): string {
+  return Object.entries(features).map(([key, enabled]) => `${key}:${enabled ? "yes" : "no"}`).join(", ");
+}
+
+function formatPluginHashes(hashes: OpenworkCloudMcpHealth["compatibility"]["pluginFileHashes"]): string {
+  if (hashes.length === 0) return "none";
+  return hashes.map((hash) => `${hash.name}=${hash.sha256 ? hash.sha256.slice(0, 12) : `unavailable${hash.error ? ` (${hash.error})` : ""}`}`).join(", ");
+}
+
+function formatMcpToolExposure(input: { checked: boolean; includesMcpTools: boolean | null; present: string[]; missing: string[]; limitation?: string }): string {
+  if (!input.checked) return "not checked";
+  const includes = input.includesMcpTools === null ? "unknown" : input.includesMcpTools ? "yes" : "no";
+  return `includes MCP tools: ${includes}; present ${joinList(input.present)}; missing ${joinList(input.missing)}${input.limitation ? `; limitation: ${input.limitation}` : ""}`;
+}
+
+interface AdvancedCloudMcpDiagnosticsSectionProps {
+  cloudMcpHealth: OpenworkCloudMcpHealth | null;
+  onRefresh: () => Promise<OpenworkCloudMcpHealth | null>;
+}
+
+export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagnosticsSectionProps) {
+  const [busy, setBusy] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const safeHealth = sanitizeCloudMcpHealthDiagnostic(props.cloudMcpHealth);
+  const projection = props.cloudMcpHealth?.tools.providerProjection;
+  const compatibility = props.cloudMcpHealth?.compatibility;
+
+  const refresh = async () => {
+    setBusy(true);
+    setCopyStatus(null);
+    try {
+      await props.onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = async () => {
+    const payload = JSON.stringify({ cloudMcpHealth: safeHealth }, null, 2);
+    await navigator.clipboard.writeText(payload);
+    setCopyStatus("Copied sanitized Cloud diagnostic.");
+  };
+
+  return (
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>Agent access diagnostics</LayoutSectionTitle>
+        <LayoutSectionDescription>
+          Technical details for OpenWork Cloud MCP delivery. Tokens and Authorization headers are redacted before display or copy.
+        </LayoutSectionDescription>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>OpenWork Cloud MCP health</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>
+            Use this when support needs exact runtime state. The main Connect card stays user-facing.
+          </LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
+              <RefreshCcw size={14} className={busy ? "animate-spin" : ""} />
+              Refresh
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void copy()} disabled={!props.cloudMcpHealth}>
+              Copy sanitized diagnostic
+            </Button>
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+
+        {copyStatus ? <SettingsNotice>{copyStatus}</SettingsNotice> : null}
+        {props.cloudMcpHealth ? (
+          <div className="space-y-2 rounded-xl border border-gray-6 bg-gray-1/60 p-3">
+            <div className="grid gap-2">
+              <DiagnosticRow label="Active workspace" value={`${props.cloudMcpHealth.workspace.id} (${props.cloudMcpHealth.workspace.directory ?? "no directory"})`} />
+              <DiagnosticRow label="Desired revision" value={props.cloudMcpHealth.desired.revision ?? "none"} />
+              <DiagnosticRow label="Applied revision" value={props.cloudMcpHealth.delivery.appliedRevision ?? "none"} />
+              <DiagnosticRow label="Delivery" value={`${props.cloudMcpHealth.delivery.state}${props.cloudMcpHealth.delivery.trigger ? ` / ${props.cloudMcpHealth.delivery.trigger}` : ""}`} />
+              <DiagnosticRow label="Engine status" value={props.cloudMcpHealth.engine.status} />
+              <DiagnosticRow label="Provider/model" value={projection?.checked ? `${projection.provider ?? "unknown"}/${projection.model ?? "unknown"}; source ${projection.source ?? "unknown"}; tool calling ${formatMaybe(projection.toolCalling)}; present ${joinList(projection.present)}; missing ${joinList(projection.missing)}${projection.limitation ? `; limitation: ${projection.limitation}` : ""}` : "not checked"} />
+              <DiagnosticRow label="Cloud tools" value={`derived present ${joinList(props.cloudMcpHealth.tools.present)}; missing ${joinList(props.cloudMcpHealth.tools.missing)}`} />
+              <DiagnosticRow label="Direct tools/list" value={`present ${joinList(props.cloudMcpHealth.tools.direct.present)}; missing ${joinList(props.cloudMcpHealth.tools.direct.missing)}`} />
+              <DiagnosticRow label="Plugin canaries" value={`present ${joinList(props.cloudMcpHealth.pluginCanaries.present)}; missing ${joinList(props.cloudMcpHealth.pluginCanaries.missing)}`} />
+              <DiagnosticRow label="Safe capabilities" value={`schema v${props.cloudMcpHealth.schemaVersion}; connect catalog ${props.cloudMcpHealth.connectCatalogEnabled ? "enabled" : "disabled"}`} />
+              {compatibility ? (
+                <>
+                  <DiagnosticRow label="OpenWork versions" value={`server ${formatMaybe(compatibility.openwork.serverVersion)}; app ${formatMetadataRecord(compatibility.openwork.app)}`} />
+                  <DiagnosticRow label="OpenCode compatibility" value={`expected ${formatMaybe(compatibility.opencode.expectedVersion)}; actual ${formatMaybe(compatibility.opencode.actualVersion)}; probe ${compatibility.opencode.probe}`} />
+                  <DiagnosticRow label="Feature probes" value={formatSupportedFeatures(compatibility.supportedFeatures)} />
+                  <DiagnosticRow label="Experimental tool IDs" value={formatMcpToolExposure(compatibility.experimentalToolIds)} />
+                  <DiagnosticRow label="Experimental provider tools" value={formatMcpToolExposure(compatibility.experimentalProviderTools)} />
+                  <DiagnosticRow label="Plugin hashes" value={formatPluginHashes(compatibility.pluginFileHashes)} />
+                </>
+              ) : null}
+              <DiagnosticRow label="Live verification" value={props.cloudMcpHealth.checkedAt} />
+            </div>
+            <details className="rounded-lg bg-gray-3 p-2">
+              <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show sanitized health JSON</summary>
+              <pre className="mt-2 max-h-72 overflow-auto font-mono text-[11px] text-gray-11">
+                {JSON.stringify(safeHealth, null, 2)}
+              </pre>
+            </details>
+          </div>
+        ) : (
+          <SettingsNotice>No Cloud MCP health has been loaded for this workspace yet.</SettingsNotice>
+        )}
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
+}
+
 interface AdvancedRuntimeMigrationSectionProps {
   busy: boolean;
   canMigrate: boolean;
@@ -338,6 +472,10 @@ function formatKeys(keys: string[]) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function sanitizedConfig(config: Record<string, unknown>): Record<string, unknown> {
+  return sanitizeDiagnosticRecord(config);
 }
 
 function countRecord(value: unknown) {
@@ -403,6 +541,7 @@ function RuntimeConfigSourceBlock(props: {
   keys: string[];
   config: Record<string, unknown>;
 }) {
+  const safeConfig = sanitizedConfig(props.config);
   return (
     <div className="space-y-2 rounded-xl border border-gray-6 bg-gray-1/70 p-3">
       <div>
@@ -412,11 +551,11 @@ function RuntimeConfigSourceBlock(props: {
         {props.exists !== undefined ? <div className="text-[11px] text-gray-9">{props.exists ? "Found" : "Not found"}</div> : null}
         <div className="text-[11px] text-gray-9">Keys: {formatKeys(props.keys)}</div>
       </div>
-      <RuntimeConfigSummary config={props.config} />
+      <RuntimeConfigSummary config={safeConfig} />
       <details className="rounded-lg bg-gray-3 p-2">
         <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show raw JSON</summary>
         <pre className="mt-2 max-h-56 overflow-auto font-mono text-[11px] text-gray-11">
-          {JSON.stringify(props.config, null, 2)}
+          {JSON.stringify(safeConfig, null, 2)}
         </pre>
       </details>
     </div>
@@ -424,6 +563,10 @@ function RuntimeConfigSourceBlock(props: {
 }
 
 export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationSectionProps) {
+  const effectiveRuntimeConfig = props.configStatus
+    ? sanitizedConfig(props.configStatus.effectiveRuntime ?? props.configStatus.runtime)
+    : null;
+  const runtimeConfig = props.configStatus ? sanitizedConfig(props.configStatus.runtime) : null;
   return (
     <LayoutSection>
       <LayoutSectionHeader>
@@ -467,15 +610,15 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
         {props.configStatus ? (
           <div className="space-y-3 rounded-xl border border-gray-6 bg-gray-1/60 p-3 text-xs text-gray-10">
             <div className="space-y-2 rounded-xl border border-blue-6/50 bg-blue-2/40 p-3">
-              <div className="font-medium text-gray-12">Effective injected OpenCode config</div>
+              <div className="font-medium text-gray-12">Desired OpenWork runtime config</div>
               <div className="text-[11px] text-gray-9">
-                This is the OpenWork-built config object injected through the server-managed `OPENCODE_CONFIG` file. It includes OpenWork defaults plus runtime DB values and is rewritten on every runtime config change.
+                This is the OpenWork-built config object requested for the runtime database and injected safely by the server. Sensitive headers are redacted here.
               </div>
-              <RuntimeConfigSummary config={props.configStatus.effectiveRuntime ?? props.configStatus.runtime} />
+              <RuntimeConfigSummary config={effectiveRuntimeConfig ?? {}} />
               <details className="rounded-lg bg-gray-3 p-2">
-                <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show raw injected JSON</summary>
+                <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show desired JSON</summary>
                 <pre className="mt-2 max-h-72 overflow-auto font-mono text-[11px] text-gray-11">
-                  {JSON.stringify(props.configStatus.effectiveRuntime ?? props.configStatus.runtime, null, 2)}
+                  {JSON.stringify(effectiveRuntimeConfig, null, 2)}
                 </pre>
               </details>
             </div>
@@ -539,7 +682,7 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
             <div>
               <div className="font-medium text-gray-12">Runtime DB JSON</div>
               <pre className="mt-1 max-h-48 overflow-auto rounded-lg bg-gray-3 p-2 font-mono text-[11px] text-gray-11">
-                {JSON.stringify(props.configStatus.runtime, null, 2)}
+                {JSON.stringify(runtimeConfig, null, 2)}
               </pre>
             </div>
           </div>

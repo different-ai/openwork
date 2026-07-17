@@ -1,6 +1,11 @@
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import {
+  OPENWORK_CLOUD_MCP_CONNECTION_ACTION_KIND,
+  OPENWORK_CLOUD_MCP_CONNECTION_ACTION_SOURCE,
+  OPENWORK_CLOUD_MCP_CONNECTION_ACTION_VERSION,
+} from "@openwork/types/den/mcp-connection-action"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
@@ -9,10 +14,21 @@ import {
   memberCanUseExternalMcpConnection,
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
-import { callExternalMcpTool, listExternalMcpTools } from "../capability-sources/external-mcp-client.js"
+import { callExternalMcpTool, listExternalMcpTools } from "../capability-sources/external-mcp-client-runtime.js"
+import {
+  createExternalMcpLifecycleDeadline,
+  type ExternalMcpLifecycleDeadline,
+} from "../capability-sources/external-mcp-client.js"
+import {
+  ExternalMcpDiagnosticError,
+  externalMcpDiagnosticForLog,
+  safeExternalMcpEndpointForLog,
+  type ExternalMcpDiagnostic,
+} from "../capability-sources/external-mcp-diagnostics.js"
 import { getConnectedAccount } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
 import { listTeamsForMember } from "../orgs.js"
+import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import { compareCapabilityMatches, tokenize } from "./search.js"
 import type { CapabilityMatch } from "./search.js"
 
@@ -35,6 +51,9 @@ import type { CapabilityMatch } from "./search.js"
  */
 
 const EXTERNAL_CAPABILITY_PREFIX = "mcp:"
+export const EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT = 16
+export const EXTERNAL_MCP_SEARCH_CONCURRENCY = 4
+export const EXTERNAL_MCP_SEARCH_MATCH_LIMIT = 20
 
 export function buildExternalCapabilityName(connectionId: string, toolName: string): string {
   return `${EXTERNAL_CAPABILITY_PREFIX}${connectionId}:${toolName}`
@@ -83,6 +102,7 @@ export async function resolveMcpMemberIdentity(input: {
 }
 
 function hasSharedCredential(connection: ExternalMcpConnectionRow): boolean {
+  if (connection.oauthIssuerReviewRequiredAt) return false
   if (connection.authType === "oauth") return Boolean(connection.accessToken)
   if (connection.authType === "apikey") return Boolean(connection.apiKey)
   return true
@@ -107,6 +127,28 @@ function scoreText(nameTokens: string[], summaryTokens: string[], queryTokens: s
   return score
 }
 
+/**
+ * A capability search must never turn an unbounded org connection list into
+ * unbounded remote handshakes. Prefer connections whose names match the
+ * query, keep source order as the deterministic tiebreaker, and enforce one
+ * hard fanout ceiling before any provider network request is started.
+ */
+export function selectExternalMcpSearchConnections<T extends { name: string }>(
+  connections: readonly T[],
+  queryTokens: string[],
+  limit = EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT,
+): T[] {
+  return connections
+    .map((connection, index) => ({
+      connection,
+      index,
+      score: scoreText(tokenize(connection.name), tokenize(connection.name), queryTokens),
+    }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, Math.max(0, Math.min(limit, EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT)))
+    .map(({ connection }) => connection)
+}
+
 export type ExternalCapabilityMatch = CapabilityMatch & {
   /** Distinguishes a connection-health result from a callable capability. */
   kind?: "connection_status"
@@ -117,7 +159,10 @@ export type ExternalCapabilityMatch = CapabilityMatch & {
 }
 
 export type ExternalConnectionStatus = {
-  layer: "downstream_provider"
+  version: typeof OPENWORK_CLOUD_MCP_CONNECTION_ACTION_VERSION
+  kind: typeof OPENWORK_CLOUD_MCP_CONNECTION_ACTION_KIND
+  source: typeof OPENWORK_CLOUD_MCP_CONNECTION_ACTION_SOURCE
+  layer: "mcp_connection" | "downstream_provider"
   connectionId: string
   connectionName: string
   authType: "oauth" | "apikey" | "none"
@@ -125,13 +170,15 @@ export type ExternalConnectionStatus = {
   state: "needs_connection" | "reauth_required" | "provider_error"
   errorCode: "not_connected" | "invalid_refresh_token" | "invalid_grant" | "unauthorized" | "provider_error"
   message: string
-  actor: "member" | "organization_admin" | "provider_admin"
+  actor: ExternalMcpDiagnostic["actionOwner"]
   action: {
-    type: "connect" | "reconnect" | "update_credentials" | "inspect_connection" | "fix_provider"
+    type: "connect" | "reconnect" | "update_credentials" | "inspect_connection" | "fix_provider" | "fix_network" | "contact_openwork"
     label: string
-    surface: "openwork_your_connections" | "openwork_organization_connections" | "provider_admin_console"
+    surface: "openwork_your_connections" | "openwork_organization_connections" | "provider_admin_console" | "network_infrastructure" | "openwork_support"
     retry: "search_capabilities"
+    url?: string
   }
+  diagnostic?: ExternalMcpDiagnostic
 }
 
 const ERROR_MESSAGE_LIMIT = 300
@@ -162,30 +209,59 @@ function parsedErrorMessage(value: unknown): string | null {
   return null
 }
 
-export function upstreamErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  const jsonStart = message.indexOf("{")
-  if (jsonStart >= 0) {
-    try {
-      const parsed: unknown = JSON.parse(message.slice(jsonStart))
-      const parsedMessage = parsedErrorMessage(parsed)
-      if (parsedMessage) return parsedMessage
-    } catch {
-      // Fall through to the capped raw message when the SDK wrapper contains partial or invalid JSON.
-    }
+function errorCauseChain(error: unknown): unknown[] {
+  const chain: unknown[] = []
+  let current: unknown = error
+  for (let depth = 0; depth < 6; depth += 1) {
+    chain.push(current)
+    if (!isRecord(current) || !("cause" in current) || current.cause === undefined) break
+    current = current.cause
   }
-  return cappedErrorMessage(message)
+  return chain
+}
+
+export function upstreamErrorMessage(error: unknown): string {
+  const chain = errorCauseChain(error)
+  const diagnosticError = chain.find((current) => current instanceof ExternalMcpDiagnosticError)
+  if (diagnosticError instanceof ExternalMcpDiagnosticError) return diagnosticError.diagnostic.message
+  for (const current of [...chain].reverse()) {
+    const message = current instanceof Error ? current.message : String(current)
+    const jsonStart = message.indexOf("{")
+    if (jsonStart >= 0) {
+      try {
+        const parsed: unknown = JSON.parse(message.slice(jsonStart))
+        const parsedMessage = parsedErrorMessage(parsed)
+        if (parsedMessage) return parsedMessage
+      } catch {
+        // Try the next cause when the SDK wrapper contains partial or invalid JSON.
+      }
+    }
+    if (message.trim()) return cappedErrorMessage(message)
+  }
+  return "Unknown MCP provider error."
 }
 
 export function externalMcpAuthErrorCode(
   error: unknown,
   message = upstreamErrorMessage(error),
 ): ExternalConnectionStatus["errorCode"] | null {
+  const diagnosticError = errorCauseChain(error)
+    .find((current) => current instanceof ExternalMcpDiagnosticError)
+  if (diagnosticError instanceof ExternalMcpDiagnosticError) {
+    if (diagnosticError.diagnostic.code === "MCP_OAUTH_INVALID_GRANT") return "invalid_grant"
+    if (
+      diagnosticError.diagnostic.phase === "AUTH_TOKEN_ACQUISITION"
+      || diagnosticError.diagnostic.phase === "AUTH_RESOURCE_VALIDATION"
+      || diagnosticError.diagnostic.phase === "CONTINUITY_REFRESH"
+    ) return "unauthorized"
+  }
   if (INVALID_REFRESH_TOKEN_PATTERN.test(message)) return "invalid_refresh_token"
   if (INVALID_GRANT_PATTERN.test(message)) return "invalid_grant"
   if (
-    error instanceof UnauthorizedError
-    || (error instanceof StreamableHTTPError && (error.code === 401 || error.code === 403))
+    errorCauseChain(error).some((current) => (
+      current instanceof UnauthorizedError
+      || (current instanceof StreamableHTTPError && (current.code === 401 || current.code === 403))
+    ))
     || UNAUTHORIZED_PATTERN.test(message)
   ) return "unauthorized"
   return null
@@ -201,6 +277,9 @@ export function externalConnectionErrorHint(
   message = upstreamErrorMessage(error),
   credentialMode: ExternalMcpConnectionRow["credentialMode"] = "shared",
 ): string {
+  if (error instanceof ExternalMcpDiagnosticError) {
+    return `${error.diagnostic.message} Ask the named action owner to inspect this layer. ${error.diagnostic.operatorAction} Diagnostic reference: ${error.diagnostic.referenceId}. ${LIVE_PROBE_HINT}`
+  }
   if (externalMcpAuthErrorCode(error, message)) {
     const destination = credentialMode === "per_member"
       ? "OpenWork Cloud -> Your Connections"
@@ -213,17 +292,87 @@ export function externalConnectionErrorHint(
   return `The downstream provider for "${connectionName}" returned an error: ${message}. Ask an org admin to inspect "${connectionName}" in the OpenWork Cloud dashboard -> Connections, then search again. OpenWork Cloud itself is still connected. ${LIVE_PROBE_HINT}`
 }
 
+function diagnosticConnectionAction(input: {
+  connection: Pick<ExternalMcpConnectionRow, "authType">
+  state: ExternalConnectionStatus["state"]
+  diagnostic: ExternalMcpDiagnostic
+}): Pick<ExternalConnectionStatus, "actor" | "action"> {
+  const actor = input.diagnostic.actionOwner
+  let type: ExternalConnectionStatus["action"]["type"]
+  let surface: ExternalConnectionStatus["action"]["surface"]
+  if (actor === "openwork") {
+    type = "contact_openwork"
+    surface = "openwork_support"
+  } else if (actor === "network_admin") {
+    type = "fix_network"
+    surface = "network_infrastructure"
+  } else if (actor === "provider_admin") {
+    type = "fix_provider"
+    surface = "provider_admin_console"
+  } else if (actor === "member") {
+    type = input.state === "needs_connection" ? "connect" : "reconnect"
+    surface = "openwork_your_connections"
+  } else {
+    type = input.state === "reauth_required"
+      ? input.connection.authType === "apikey" ? "update_credentials" : "reconnect"
+      : "inspect_connection"
+    surface = "openwork_organization_connections"
+  }
+  return {
+    actor,
+    action: {
+      type,
+      surface,
+      label: input.diagnostic.operatorAction,
+      retry: "search_capabilities",
+    },
+  }
+}
+
+function actionNavigationUrl(input: {
+  connectionId: string
+  surface: ExternalConnectionStatus["action"]["surface"]
+}) {
+  if (input.surface === "openwork_your_connections") return openworkYourConnectionsUrl(input.connectionId)
+  if (input.surface === "openwork_organization_connections") return openworkOrganizationConnectionsUrl()
+  return undefined
+}
+
+function addConnectionActionUrl(input: {
+  action: ExternalConnectionStatus["action"]
+  connectionId: string
+}): ExternalConnectionStatus["action"] {
+  const url = actionNavigationUrl({ connectionId: input.connectionId, surface: input.action.surface })
+  return url ? { ...input.action, url } : input.action
+}
+
 export function buildExternalConnectionStatus(input: {
   connection: Pick<ExternalMcpConnectionRow, "id" | "name" | "authType" | "credentialMode">
   state: ExternalConnectionStatus["state"]
   errorCode: ExternalConnectionStatus["errorCode"]
   message: string
+  diagnostic?: ExternalMcpDiagnostic
+  actionOwner?: "member" | "organization_admin"
 }): ExternalConnectionStatus {
   const connectionName = input.connection.name
+  const actionContract = {
+    version: OPENWORK_CLOUD_MCP_CONNECTION_ACTION_VERSION,
+    kind: OPENWORK_CLOUD_MCP_CONNECTION_ACTION_KIND,
+    source: OPENWORK_CLOUD_MCP_CONNECTION_ACTION_SOURCE,
+  } as const
+  // Once the failure is classified as reauthentication, credential ownership
+  // is the source of truth for who can repair it. A generic HTTP 400 during a
+  // refresh may classify the raw diagnostic as provider_admin, but routing a
+  // per-member expired token to a provider console contradicts the
+  // reauth_required state and prevents the client from offering reconnect.
+  const diagnosticAction = input.diagnostic && input.state !== "reauth_required"
+    ? diagnosticConnectionAction({ connection: input.connection, state: input.state, diagnostic: input.diagnostic })
+    : null
   if (input.state === "provider_error") {
     const providerAdminAction = PROVIDER_ADMIN_ACTION_PATTERN.test(input.message)
     return {
-      layer: "downstream_provider",
+      ...actionContract,
+      layer: input.diagnostic ? "mcp_connection" : "downstream_provider",
       connectionId: input.connection.id,
       connectionName,
       authType: input.connection.authType,
@@ -231,20 +380,27 @@ export function buildExternalConnectionStatus(input: {
       state: input.state,
       errorCode: input.errorCode,
       message: input.message,
-      actor: providerAdminAction ? "provider_admin" : "organization_admin",
-      action: {
-        type: providerAdminAction ? "fix_provider" : "inspect_connection",
-        label: providerAdminAction
-          ? `Fix ${connectionName} in the provider admin console`
-          : `Inspect the ${connectionName} connection`,
-        surface: providerAdminAction ? "provider_admin_console" : "openwork_organization_connections",
-        retry: "search_capabilities",
-      },
+      actor: diagnosticAction?.actor ?? (providerAdminAction ? "provider_admin" : "organization_admin"),
+      action: diagnosticAction
+        ? addConnectionActionUrl({ action: diagnosticAction.action, connectionId: input.connection.id })
+        : addConnectionActionUrl({
+          connectionId: input.connection.id,
+          action: {
+            type: providerAdminAction ? "fix_provider" : "inspect_connection",
+            label: providerAdminAction
+              ? `Fix ${connectionName} in the provider admin console`
+              : `Inspect the ${connectionName} connection`,
+            surface: providerAdminAction ? "provider_admin_console" : "openwork_organization_connections",
+            retry: "search_capabilities",
+          },
+        }),
+      ...(input.diagnostic ? { diagnostic: input.diagnostic } : {}),
     }
   }
 
-  const actor = input.connection.credentialMode === "per_member" ? "member" : "organization_admin"
-  const surface = input.connection.credentialMode === "per_member"
+  const actor = input.actionOwner
+    ?? (input.connection.credentialMode === "per_member" ? "member" : "organization_admin")
+  const surface = actor === "member"
     ? "openwork_your_connections"
     : "openwork_organization_connections"
   const actionType = input.state === "needs_connection"
@@ -262,7 +418,8 @@ export function buildExternalConnectionStatus(input: {
         ? "Update credentials for"
         : "Inspect"
   return {
-    layer: "downstream_provider",
+    ...actionContract,
+    layer: input.diagnostic ? "mcp_connection" : "downstream_provider",
     connectionId: input.connection.id,
     connectionName,
     authType: input.connection.authType,
@@ -270,13 +427,19 @@ export function buildExternalConnectionStatus(input: {
     state: input.state,
     errorCode: input.errorCode,
     message: input.message,
-    actor,
-    action: {
-      type: actionType,
-      label: `${actionVerb} ${connectionName}`,
-      surface,
-      retry: "search_capabilities",
-    },
+    actor: diagnosticAction?.actor ?? actor,
+    action: diagnosticAction
+      ? addConnectionActionUrl({ action: diagnosticAction.action, connectionId: input.connection.id })
+      : addConnectionActionUrl({
+        connectionId: input.connection.id,
+        action: {
+          type: actionType,
+          label: `${actionVerb} ${connectionName}`,
+          surface,
+          retry: "search_capabilities",
+        },
+      }),
+    ...(input.diagnostic ? { diagnostic: input.diagnostic } : {}),
   }
 }
 
@@ -304,11 +467,233 @@ function statusMatch(input: {
   }
 }
 
+export function mergeBoundedExternalCapabilityMatches(
+  retained: ExternalCapabilityMatch[],
+  candidates: readonly ExternalCapabilityMatch[],
+  limit: number,
+): ExternalCapabilityMatch[] {
+  const boundedLimit = Number.isFinite(limit)
+    ? Math.max(0, Math.min(Math.floor(limit), EXTERNAL_MCP_SEARCH_MATCH_LIMIT))
+    : 0
+  if (boundedLimit === 0) {
+    retained.splice(0)
+    return retained
+  }
+  for (const candidate of candidates) {
+    retained.push(candidate)
+    retained.sort(compareCapabilityMatches)
+    if (retained.length > boundedLimit) retained.splice(boundedLimit)
+  }
+  return retained
+}
+
+export async function collectBoundedExternalMcpSearchMatches<T>(input: {
+  connections: readonly T[]
+  deadline: ExternalMcpLifecycleDeadline
+  limit: number
+  concurrency?: number
+  probe: (connection: T, deadline: ExternalMcpLifecycleDeadline) => Promise<ExternalCapabilityMatch[]>
+}): Promise<ExternalCapabilityMatch[]> {
+  const retained: ExternalCapabilityMatch[] = []
+  const boundedLimit = Number.isFinite(input.limit)
+    ? Math.max(0, Math.min(Math.floor(input.limit), EXTERNAL_MCP_SEARCH_MATCH_LIMIT))
+    : 0
+  if (boundedLimit === 0 || input.connections.length === 0) return retained
+
+  const concurrency = Math.max(1, Math.min(
+    Math.floor(input.concurrency ?? EXTERNAL_MCP_SEARCH_CONCURRENCY),
+    EXTERNAL_MCP_SEARCH_CONCURRENCY,
+    input.connections.length,
+  ))
+  let nextIndex = 0
+  let acceptingResults = true
+  const worker = async () => {
+    while (Date.now() < input.deadline.expiresAt) {
+      const index = nextIndex
+      nextIndex += 1
+      if (index >= input.connections.length) return
+      const candidates = await input.probe(input.connections[index]!, input.deadline)
+      if (acceptingResults) mergeBoundedExternalCapabilityMatches(retained, candidates, boundedLimit)
+    }
+  }
+  const workers = Promise.all(Array.from({ length: concurrency }, () => worker()))
+  const remaining = Math.max(0, input.deadline.expiresAt - Date.now())
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined
+  const deadlineReached = new Promise<void>((resolve) => {
+    deadlineTimer = setTimeout(resolve, remaining)
+  })
+  try {
+    await Promise.race([workers, deadlineReached])
+  } finally {
+    acceptingResults = false
+    if (deadlineTimer) clearTimeout(deadlineTimer)
+    // Active MCP requests receive the same absolute deadline and abort their
+    // fetch at this point. Keep a rejection observer on the worker pool for
+    // the smaller class of non-fetch operations that cannot be cancelled.
+    void workers.catch(() => undefined)
+  }
+  return retained
+}
+
+export type ExternalMcpSearchCoverage = {
+  eligibleConnections: number
+  probedConnections: number
+  truncated: boolean
+}
+
+export function externalMcpSearchCoverageHint(coverage: ExternalMcpSearchCoverage): string | undefined {
+  if (!coverage.truncated) return undefined
+  return `External MCP search inspected ${coverage.probedConnections} of ${coverage.eligibleConnections} eligible connections. Results may be incomplete; narrow the query using a connection name and search again.`
+}
+
+async function probeExternalMcpConnection(input: {
+  connection: ExternalMcpConnectionRow
+  member: McpMemberIdentity
+  queryTokens: string[]
+  redirectUriBase: string
+  limit: number
+  deadline: ExternalMcpLifecycleDeadline
+}): Promise<ExternalCapabilityMatch[]> {
+  const matches: ExternalCapabilityMatch[] = []
+  const add = (match: ExternalCapabilityMatch) => {
+    mergeBoundedExternalCapabilityMatches(matches, [match], input.limit)
+  }
+  const connection = input.connection
+  if (connection.oauthIssuerReviewRequiredAt) {
+    const nameTokens = tokenize(connection.name)
+    const score = scoreText(nameTokens, nameTokens, input.queryTokens)
+    if (score > 0) {
+      const message = `${connection.name} is blocked until an organization admin reviews its changed OAuth issuer.`
+      add(statusMatch({
+        connection,
+        score,
+        summary: `[${connection.name}] OAuth provider settings changed and require administrator review.`,
+        status: "error",
+        hint: `Ask an org admin to open OpenWork Cloud -> Connections, review the live OAuth issuer for "${connection.name}", and reconnect if requested.`,
+        connectionStatus: buildExternalConnectionStatus({
+          connection,
+          state: "reauth_required",
+          errorCode: "unauthorized",
+          message,
+          actionOwner: "organization_admin",
+        }),
+      }))
+    }
+    return matches
+  }
+  if (connection.credentialMode === "per_member") {
+    const account = await getConnectedAccount({
+      organizationId: connection.organizationId,
+      orgMembershipId: input.member.orgMembershipId,
+      providerId: connection.id,
+    })
+    if (!account?.accessToken) {
+      // Granted but not yet connected: surface the connection itself (not
+      // its tools — we can't list them without the member's credential) so
+      // the agent can tell the human exactly what to do.
+      const nameTokens = tokenize(connection.name)
+      const score = scoreText(nameTokens, nameTokens, input.queryTokens)
+      if (score > 0) {
+        const message = `You haven't connected your ${connection.name} account yet.`
+        add(statusMatch({
+          connection,
+          score,
+          summary: `[${connection.name}] Available to you, but you haven't connected your ${connection.name} account yet.`,
+          status: "needs_connection",
+          hint: `Ask the user to open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}", then search again.`,
+          connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
+        }))
+      }
+      return matches
+    }
+  } else if (!hasSharedCredential(connection)) {
+    const nameTokens = tokenize(connection.name)
+    const score = scoreText(nameTokens, nameTokens, input.queryTokens)
+    if (score > 0) {
+      const message = `${connection.name} is not connected yet.`
+      add(statusMatch({
+        connection,
+        score,
+        summary: `[${connection.name}] Available to your organization, but an admin hasn't connected it yet.`,
+        status: "needs_connection",
+        hint: `Ask an org admin to open the OpenWork Cloud dashboard -> Connections and connect "${connection.name}", then search again.`,
+        connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
+      }))
+    }
+    return matches
+  }
+
+  const member = connection.credentialMode === "per_member"
+    ? { orgMembershipId: input.member.orgMembershipId }
+    : undefined
+  let tools: Awaited<ReturnType<typeof listExternalMcpTools>>
+  try {
+    tools = await listExternalMcpTools(
+      connection,
+      redirectUriFor(input.redirectUriBase, connection.id),
+      member,
+      undefined,
+      input.deadline,
+    )
+  } catch (error) {
+    const message = upstreamErrorMessage(error)
+    const diagnostic = error instanceof ExternalMcpDiagnosticError ? error.diagnostic : undefined
+    const nameTokens = tokenize(connection.name)
+    const score = scoreText(nameTokens, nameTokens, input.queryTokens)
+    if (score > 0) {
+      if (diagnostic) {
+        console.error("external_mcp_capability_search_probe_failed", {
+          connectionId: connection.id,
+          organizationId: connection.organizationId,
+          connectionEndpoint: safeExternalMcpEndpointForLog(connection.url),
+          ...externalMcpDiagnosticForLog(error, diagnostic.referenceId, "MCP_TOOL_DISCOVERY"),
+        })
+      }
+      const authErrorCode = externalMcpAuthErrorCode(error, message)
+      const state = authErrorCode ? "reauth_required" : "provider_error"
+      add(statusMatch({
+        connection,
+        score,
+        summary: `[${connection.name}] This connection is set up but returned an error (${message}).`,
+        status: "error",
+        hint: externalConnectionErrorHint(connection.name, error, message, connection.credentialMode),
+        connectionStatus: buildExternalConnectionStatus({
+          connection,
+          state,
+          errorCode: authErrorCode ?? "provider_error",
+          message,
+          diagnostic,
+        }),
+      }))
+    }
+    return matches
+  }
+
+  for (const tool of tools) {
+    const summary = tool.description ?? tool.title ?? tool.name
+    const nameTokens = tokenize(`${connection.name} ${tool.name}`)
+    const summaryTokens = tokenize(summary)
+    const score = scoreText(nameTokens, summaryTokens, input.queryTokens)
+    if (score <= 0) continue
+    add({
+      name: buildExternalCapabilityName(connection.id, tool.name),
+      method: "MCP",
+      path: connection.url,
+      score,
+      summary: `[${connection.name}] ${summary}`,
+      pathParams: [],
+      queryParams: [],
+      hasBody: true,
+    })
+  }
+  return matches
+}
+
 /**
- * Live-lists tools for every external MCP connection the calling member has
- * been granted, and returns the ones matching `query`, in the same
- * CapabilityMatch shape the REST catalog uses. Each connection is
- * best-effort: one unreachable external server doesn't fail the whole search.
+ * Live-lists tools for a bounded set of external MCP connections the calling
+ * member has been granted. All probes share one absolute deadline and run in
+ * a small worker pool; one unreachable server cannot serialize the latency of
+ * every other provider or let matches grow beyond the requested top-K.
  */
 export async function searchExternalCapabilities(input: {
   organizationId: string
@@ -316,117 +701,52 @@ export async function searchExternalCapabilities(input: {
   query: string
   redirectUriBase: string
   limit?: number
+  reportCoverage?: (coverage: ExternalMcpSearchCoverage) => void
 }): Promise<ExternalCapabilityMatch[]> {
   if (!input.member) return []
   const queryTokens = tokenize(input.query)
   if (queryTokens.length === 0) return []
-
+  const requestedLimit = input.limit ?? 5
+  if (!Number.isFinite(requestedLimit) || requestedLimit <= 0) return []
+  const limit = Math.min(Math.max(1, Math.trunc(requestedLimit)), EXTERNAL_MCP_SEARCH_MATCH_LIMIT)
+  const deadline = createExternalMcpLifecycleDeadline()
   const connections = await listUsableExternalMcpConnections({
     organizationId: normalizeDenTypeId("organization", input.organizationId),
     orgMembershipId: input.member.orgMembershipId,
     teamIds: input.member.teamIds,
   })
-  const matches: ExternalCapabilityMatch[] = []
-
-  for (const connection of connections) {
-    if (connection.credentialMode === "per_member") {
-      const account = await getConnectedAccount({
-        organizationId: connection.organizationId,
-        orgMembershipId: input.member.orgMembershipId,
-        providerId: connection.id,
-      })
-      if (!account?.accessToken) {
-        // Granted but not yet connected: surface the connection itself (not
-        // its tools — we can't list them without the member's credential) so
-        // the agent can tell the human exactly what to do.
-        const nameTokens = tokenize(connection.name)
-        const score = scoreText(nameTokens, nameTokens, queryTokens)
-        if (score > 0) {
-          const message = `You haven't connected your ${connection.name} account yet.`
-          matches.push(statusMatch({
-            connection,
-            score,
-            summary: `[${connection.name}] Available to you, but you haven't connected your ${connection.name} account yet.`,
-            status: "needs_connection",
-            hint: `Ask the user to open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}", then search again.`,
-            connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
-          }))
-        }
-        continue
-      }
-    } else if (!hasSharedCredential(connection)) {
-      const nameTokens = tokenize(connection.name)
-      const score = scoreText(nameTokens, nameTokens, queryTokens)
-      if (score > 0) {
-        const message = `${connection.name} is not connected yet.`
-        matches.push(statusMatch({
-          connection,
-          score,
-          summary: `[${connection.name}] Available to your organization, but an admin hasn't connected it yet.`,
-          status: "needs_connection",
-          hint: `Ask an org admin to open the OpenWork Cloud dashboard -> Connections and connect "${connection.name}", then search again.`,
-          connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
-        }))
-      }
-      continue
-    }
-
-    const member = connection.credentialMode === "per_member"
-      ? { orgMembershipId: input.member.orgMembershipId }
-      : undefined
-    let tools: Awaited<ReturnType<typeof listExternalMcpTools>>
-    try {
-      tools = await listExternalMcpTools(connection, redirectUriFor(input.redirectUriBase, connection.id), member)
-    } catch (error) {
-      const message = upstreamErrorMessage(error)
-      const nameTokens = tokenize(connection.name)
-      const score = scoreText(nameTokens, nameTokens, queryTokens)
-      if (score > 0) {
-        const authErrorCode = externalMcpAuthErrorCode(error, message)
-        const state = authErrorCode ? "reauth_required" : "provider_error"
-        matches.push(statusMatch({
-          connection,
-          score,
-          summary: `[${connection.name}] This connection is set up but returned an error (${message}).`,
-          status: "error",
-          hint: externalConnectionErrorHint(connection.name, error, message, connection.credentialMode),
-          connectionStatus: buildExternalConnectionStatus({
-            connection,
-            state,
-            errorCode: authErrorCode ?? "provider_error",
-            message,
-          }),
-        }))
-      }
-      continue
-    }
-
-    for (const tool of tools) {
-      const summary = tool.description ?? tool.title ?? tool.name
-      const nameTokens = tokenize(`${connection.name} ${tool.name}`)
-      const summaryTokens = tokenize(summary)
-      const score = scoreText(nameTokens, summaryTokens, queryTokens)
-      if (score <= 0) continue
-      matches.push({
-        name: buildExternalCapabilityName(connection.id, tool.name),
-        method: "MCP",
-        path: connection.url,
-        score,
-        summary: `[${connection.name}] ${summary}`,
-        pathParams: [],
-        queryParams: [],
-        hasBody: true,
-      })
-    }
-  }
-
-  matches.sort(compareCapabilityMatches)
-  return matches.slice(0, input.limit ?? 5)
+  const selectedConnections = selectExternalMcpSearchConnections(connections, queryTokens)
+  input.reportCoverage?.({
+    eligibleConnections: connections.length,
+    probedConnections: selectedConnections.length,
+    truncated: selectedConnections.length < connections.length,
+  })
+  return await collectBoundedExternalMcpSearchMatches({
+    connections: selectedConnections,
+    deadline,
+    limit,
+    probe: (connection, sharedDeadline) => probeExternalMcpConnection({
+      connection,
+      member: input.member!,
+      queryTokens,
+      redirectUriBase: input.redirectUriBase,
+      limit,
+      deadline: sharedDeadline,
+    }),
+  })
 }
 
 export type ExternalCapabilityExecuteResult =
   | { ok: true; result: Awaited<ReturnType<typeof callExternalMcpTool>> }
-  | { ok: false; error: "unknown_capability" | "forbidden" | "connection_not_connected" | "needs_connection"; message: string }
+  | {
+      ok: false
+      error: "unknown_capability" | "forbidden" | "connection_not_connected" | "needs_connection" | "connection_failed" | "provider_error"
+      message: string
+      diagnostic?: ExternalMcpDiagnostic
+      actionOwner?: ExternalMcpDiagnostic["actionOwner"]
+      operatorAction?: string
+      connectionStatus?: ExternalConnectionStatus
+    }
 
 /**
  * Executes a namespaced external capability, scoped to the calling
@@ -474,11 +794,29 @@ export async function executeExternalCapability(input: {
     return { ok: false, error: "forbidden", message: `You have not been granted access to "${connection.name}".` }
   }
 
-  if (input.toolName === "*") {
+  if (connection.oauthIssuerReviewRequiredAt) {
+    const message = `"${connection.name}" is blocked until an organization admin reviews its changed OAuth issuer.`
     return {
       ok: false,
       error: "needs_connection",
-      message: `"${connection.name}" was surfaced as a connection status entry, not a callable tool. Fix the connection first (see the search hint), then search again for its real tools.`,
+      message,
+      connectionStatus: buildExternalConnectionStatus({
+        connection,
+        state: "reauth_required",
+        errorCode: "unauthorized",
+        message,
+        actionOwner: "organization_admin",
+      }),
+    }
+  }
+
+  if (input.toolName === "*") {
+    const message = `"${connection.name}" was surfaced as a connection status entry, not a callable tool. Fix the connection first (see the search hint), then search again for its real tools.`
+    return {
+      ok: false,
+      error: "needs_connection",
+      message,
+      connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
     }
   }
 
@@ -494,19 +832,79 @@ export async function executeExternalCapability(input: {
         ok: false,
         error: "needs_connection",
         message: `You haven't connected your ${connection.name} account yet. Open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}".`,
+        connectionStatus: buildExternalConnectionStatus({
+          connection,
+          state: "needs_connection",
+          errorCode: "not_connected",
+          message: `You haven't connected your ${connection.name} account yet.`,
+        }),
       }
     }
     member = { orgMembershipId: input.member.orgMembershipId }
   } else if (!hasSharedCredential(connection)) {
-    return { ok: false, error: "connection_not_connected", message: `"${connection.name}" is not connected yet.` }
+    const message = `"${connection.name}" is not connected yet.`
+    return {
+      ok: false,
+      error: "connection_not_connected",
+      message,
+      connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
+    }
   }
 
-  const result = await callExternalMcpTool({
-    connection,
-    redirectUri: redirectUriFor(input.redirectUriBase, connection.id),
-    toolName: input.toolName,
-    args: input.args,
-    member,
-  })
-  return { ok: true, result }
+  try {
+    const result = await callExternalMcpTool({
+      connection,
+      redirectUri: redirectUriFor(input.redirectUriBase, connection.id),
+      toolName: input.toolName,
+      args: input.args,
+      member,
+    })
+    return { ok: true, result }
+  } catch (error) {
+    const message = upstreamErrorMessage(error)
+    const authErrorCode = externalMcpAuthErrorCode(error, message)
+    if (error instanceof ExternalMcpDiagnosticError) {
+      console.error("external_mcp_capability_execute_failed", {
+        connectionId: connection.id,
+        organizationId: connection.organizationId,
+        connectionEndpoint: safeExternalMcpEndpointForLog(connection.url),
+        ...externalMcpDiagnosticForLog(error, error.diagnostic.referenceId, "MCP_TOOL_EXECUTION"),
+      })
+      return {
+        ok: false,
+        error: error.diagnostic.phase === "PROVIDER_EXECUTION" || error.diagnostic.phase === "PROVIDER_AUTHORIZATION"
+          ? "provider_error"
+          : "connection_failed",
+        message: `${error.diagnostic.message} ${error.diagnostic.operatorAction} Diagnostic reference: ${error.diagnostic.referenceId}.`,
+        diagnostic: error.diagnostic,
+        actionOwner: error.diagnostic.actionOwner,
+        operatorAction: error.diagnostic.operatorAction,
+        ...(authErrorCode
+          ? {
+              connectionStatus: buildExternalConnectionStatus({
+                connection,
+                state: "reauth_required",
+                errorCode: authErrorCode,
+                message,
+                diagnostic: error.diagnostic,
+              }),
+            }
+          : {}),
+      }
+    }
+    if (authErrorCode) {
+      return {
+        ok: false,
+        error: "connection_failed",
+        message,
+        connectionStatus: buildExternalConnectionStatus({
+          connection,
+          state: "reauth_required",
+          errorCode: authErrorCode,
+          message,
+        }),
+      }
+    }
+    throw error
+  }
 }

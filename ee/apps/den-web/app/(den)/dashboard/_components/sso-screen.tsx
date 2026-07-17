@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
-import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
+import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
@@ -52,28 +52,42 @@ export function SsoScreen() {
     [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.roles],
   );
 
-  async function loadSsoConfig() {
+  async function loadSsoConfig(isCurrent = () => true) {
     if (!orgId || !access.canManageSso) {
-      setConnection(null);
+      if (isCurrent()) {
+        setConnection(null);
+      }
       return;
     }
 
-    setBusy(true);
-    setError(null);
+    if (isCurrent()) {
+      setBusy(true);
+      setError(null);
+    }
     try {
       const { response, payload } = await requestJson("/v1/sso", { method: "GET", headers: getOrgScopedHeaders() }, 12000);
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to load SSO settings (${response.status}).`));
+        throw getRequestError(payload, response, `Failed to load SSO settings (${response.status}).`);
       }
 
       const parsed = parseOrgSsoPayload(payload);
-      setConnection(parsed.connection);
-      syncFormFromConnection(parsed.connection);
-      setEditing(false);
+      if (isCurrent()) {
+        setConnection(parsed.connection);
+        syncFormFromConnection(parsed.connection);
+        setEditing(false);
+      }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Failed to load SSO settings.");
+      if (isReauthRequiredError(nextError)) {
+        throw nextError;
+      }
+
+      if (isCurrent()) {
+        setError(nextError instanceof Error ? nextError.message : "Failed to load SSO settings.");
+      }
     } finally {
-      setBusy(false);
+      if (isCurrent()) {
+        setBusy(false);
+      }
     }
   }
 
@@ -110,7 +124,15 @@ export function SsoScreen() {
   }
 
   useEffect(() => {
-    void loadSsoConfig();
+    let active = true;
+    void runReauthableAction("load-sso-settings", () => loadSsoConfig(() => active)).catch((nextError) => {
+      if (active) {
+        setError(nextError instanceof Error ? nextError.message : "Failed to load SSO settings.");
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, [orgId, access.canManageSso]);
 
   useEffect(() => {

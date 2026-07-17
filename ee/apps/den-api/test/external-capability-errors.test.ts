@@ -110,6 +110,37 @@ test("generic connector recovery routes members and organization admins without 
   })
 })
 
+test("reauth-required overrides generic provider ownership from a refresh diagnostic", () => {
+  const status = externalCapabilities.buildExternalConnectionStatus({
+    connection: { id: "connection-refresh", name: "Research Vault", authType: "oauth", credentialMode: "per_member" },
+    state: "reauth_required",
+    errorCode: "unauthorized",
+    message: "The authorization server rejected the token refresh exchange.",
+    diagnostic: {
+      referenceId: "req_refresh",
+      phase: "CONTINUITY_REFRESH",
+      category: "http_failure",
+      code: "MCP_HTTP_400",
+      highestPassed: "reachable",
+      retryable: false,
+      actionOwner: "provider_admin",
+      operatorAction: "Inspect provider and proxy logs.",
+      message: "The authorization server rejected the token refresh exchange.",
+      httpStatus: 400,
+    },
+  })
+
+  expect(status).toMatchObject({
+    state: "reauth_required",
+    actor: "member",
+    action: {
+      type: "reconnect",
+      label: "Reconnect Research Vault",
+      surface: "openwork_your_connections",
+    },
+  })
+})
+
 test("provider installation failures route to the provider admin console", () => {
   const status = externalCapabilities.buildExternalConnectionStatus({
     connection: { id: "connection-4", name: "Documents", authType: "oauth", credentialMode: "shared" },
@@ -121,6 +152,32 @@ test("provider installation failures route to the provider admin console", () =>
   expect(status).toMatchObject({
     actor: "provider_admin",
     action: { type: "fix_provider", surface: "provider_admin_console" },
+  })
+})
+
+test("structured diagnostics remain the single source of truth for fix ownership", async () => {
+  const { ExternalMcpDiagnosticTracker } = await import("../src/capability-sources/external-mcp-diagnostics.js")
+  const cause = Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" })
+  const diagnostic = new ExternalMcpDiagnosticTracker("req_network_owner").error(
+    new Error("fetch failed", { cause }),
+    "MCP_INITIALIZE",
+  ).diagnostic
+  const status = externalCapabilities.buildExternalConnectionStatus({
+    connection: { id: "connection-network", name: "Ticketing", authType: "none", credentialMode: "shared" },
+    state: "provider_error",
+    errorCode: "provider_error",
+    message: diagnostic.message,
+    diagnostic,
+  })
+
+  expect(diagnostic.actionOwner).toBe("network_admin")
+  expect(status).toMatchObject({
+    actor: diagnostic.actionOwner,
+    action: {
+      type: "fix_network",
+      label: diagnostic.operatorAction,
+      surface: "network_infrastructure",
+    },
   })
 })
 

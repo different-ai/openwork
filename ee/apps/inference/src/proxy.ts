@@ -3,15 +3,27 @@ import type { Context, Hono } from "hono"
 import { env } from "./env.js"
 import type { findActiveInferenceKey as findActiveInferenceKeyFn, getOpenRouterProviderKey as getOpenRouterProviderKeyFn } from "./keys.js"
 import type { ensureUsableBuckets as ensureUsableBucketsFn } from "./limits.js"
+import {
+  buildInferencePayloadLog,
+  buildUnparsedPayloadLog,
+  sanitizeIncomingHeaders,
+  sentryInferenceReporter,
+} from "./inference-reporting.js"
+import type { InferenceReporter } from "./inference-reporting.js"
 import { listModelCatalog, resolveModelAlias } from "./model-catalog.js"
 
 type JsonObject = Record<string, unknown>
 type PreparedBody = {
   body: BodyInit | null
+  incomingModel: string
   modelAlias: string
   upstreamModel: string | null
 }
-type PreparedBodyResult = PreparedBody | { error: Response }
+type PreparedBodyResult = PreparedBody | {
+  error: Response
+  incomingModel: string | null
+  upstreamModel: string | null
+}
 type ProxyRequestInit = RequestInit & { duplex: "half" }
 
 const chatCompletionsPath = "/api/v1/chat/completions"
@@ -46,6 +58,7 @@ type ProxyDependencies = {
   getOpenRouterProviderKey: typeof getOpenRouterProviderKeyFn
   ensureUsableBuckets: typeof ensureUsableBucketsFn
   fetch: typeof fetch
+  reporter?: InferenceReporter
 }
 
 function readApiKey(request: Request) {
@@ -162,8 +175,16 @@ async function logUpstreamError(input: {
   upstream: Response
   upstreamUrl: URL
   openworkRequestId: string
+  organizationId: string
+  orgMembershipId: string
+  inferenceKeyId: string
+  route: string
+  method: string
+  headers: Record<string, string>
   modelAlias: string
+  incomingModel: string
   upstreamModel: string | null
+  reporter: InferenceReporter
 }) {
   let bodySnippet: string | null = null
   try {
@@ -175,12 +196,30 @@ async function logUpstreamError(input: {
 
   logProxyError("Upstream OpenRouter request failed", {
     openworkRequestId: input.openworkRequestId,
+    organizationId: input.organizationId,
+    orgMembershipId: input.orgMembershipId,
+    inferenceKeyId: input.inferenceKeyId,
     upstreamUrl: input.upstreamUrl.toString(),
     status: input.upstream.status,
     statusText: input.upstream.statusText,
     modelAlias: input.modelAlias,
     upstreamModel: input.upstreamModel,
     bodySnippet,
+  })
+  input.reporter.handledError({
+    reason: "upstream_failure",
+    organizationId: input.organizationId,
+    orgMembershipId: input.orgMembershipId,
+    inferenceKeyId: input.inferenceKeyId,
+    openworkRequestId: input.openworkRequestId,
+    route: input.route,
+    method: input.method,
+    headers: input.headers,
+    incomingModel: input.incomingModel,
+    resolvedUpstreamModel: input.upstreamModel,
+    status: input.upstream.status,
+    statusText: input.upstream.statusText,
+    upstreamUrl: input.upstreamUrl.toString(),
   })
 }
 
@@ -222,19 +261,122 @@ async function prepareBody(request: Request, input: {
   orgMembershipId: string
   inferenceKeyId: string
   openworkRequestId: string
+  route: string
+  method: string
+  headers: Record<string, string>
+  reporter: InferenceReporter
 }): Promise<PreparedBodyResult> {
   if (!isJsonRequest(request)) {
-    return { error: openAiError(415, "unsupported_media_type", "Inference requests with a body must use a JSON Content-Type.") }
+    const payloadLog = buildUnparsedPayloadLog("unsupported_media_type", request.headers.get("content-type"))
+    input.reporter.request({
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
+      openworkRequestId: input.openworkRequestId,
+      route: input.route,
+      method: input.method,
+      headers: input.headers,
+      incomingModel: null,
+      resolvedUpstreamModel: null,
+      payloadMode: payloadLog.mode,
+      payload: payloadLog.payload,
+    })
+    input.reporter.handledError({
+      reason: "unsupported_media_type",
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
+      openworkRequestId: input.openworkRequestId,
+      route: input.route,
+      method: input.method,
+      headers: input.headers,
+      incomingModel: null,
+      resolvedUpstreamModel: null,
+      status: 415,
+    })
+    return { error: openAiError(415, "unsupported_media_type", "Inference requests with a body must use a JSON Content-Type."), incomingModel: null, upstreamModel: null }
   }
 
-  const json: unknown = await request.json()
+  let json: unknown
+  try {
+    json = await request.json()
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    const payloadLog = buildUnparsedPayloadLog("invalid_json", request.headers.get("content-type"))
+    input.reporter.request({
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
+      openworkRequestId: input.openworkRequestId,
+      route: input.route,
+      method: input.method,
+      headers: input.headers,
+      incomingModel: null,
+      resolvedUpstreamModel: null,
+      payloadMode: payloadLog.mode,
+      payload: payloadLog.payload,
+    })
+    logProxyError("Invalid JSON inference request body", {
+      openworkRequestId: input.openworkRequestId,
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
+      error: errorMessage,
+    })
+    input.reporter.handledError({
+      reason: "invalid_json",
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
+      openworkRequestId: input.openworkRequestId,
+      route: input.route,
+      method: input.method,
+      headers: input.headers,
+      incomingModel: null,
+      resolvedUpstreamModel: null,
+      status: 400,
+      error: errorMessage,
+    })
+    return { error: openAiError(400, "invalid_json", "JSON request body is invalid."), incomingModel: null, upstreamModel: null }
+  }
+  const requestedModel = isJsonObject(json) && typeof json.model === "string" ? json.model : null
+  const model = requestedModel ? resolveModelAlias(requestedModel) : null
+  const payloadLog = buildInferencePayloadLog(input.organizationId, json)
+  input.reporter.request({
+    organizationId: input.organizationId,
+    orgMembershipId: input.orgMembershipId,
+    inferenceKeyId: input.inferenceKeyId,
+    openworkRequestId: input.openworkRequestId,
+    route: input.route,
+    method: input.method,
+    headers: input.headers,
+    incomingModel: requestedModel,
+    resolvedUpstreamModel: model ? model.upstreamModel : null,
+    payloadMode: payloadLog.mode,
+    payload: payloadLog.payload,
+  })
+
   if (!isJsonObject(json)) {
     logProxyError("Missing model in JSON request body", {
       openworkRequestId: input.openworkRequestId,
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
     })
-    return { error: openAiError(400, "model_required", "JSON request body must include a string model.") }
+    input.reporter.handledError({
+      reason: "model_required",
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
+      openworkRequestId: input.openworkRequestId,
+      route: input.route,
+      method: input.method,
+      headers: input.headers,
+      incomingModel: null,
+      resolvedUpstreamModel: null,
+      status: 400,
+    })
+    return { error: openAiError(400, "model_required", "JSON request body must include a string model."), incomingModel: null, upstreamModel: null }
   }
 
   const blockedSelection = validateModelSelection(json)
@@ -245,29 +387,68 @@ async function prepareBody(request: Request, input: {
       orgMembershipId: input.orgMembershipId,
       blockedSelection,
     })
-    return { error: openAiError(400, "unsupported_model_selection", `OpenWork inference does not allow alternate model selection (${blockedSelection}).`) }
+    input.reporter.handledError({
+      reason: "unsupported_model_selection",
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
+      openworkRequestId: input.openworkRequestId,
+      route: input.route,
+      method: input.method,
+      headers: input.headers,
+      incomingModel: requestedModel,
+      resolvedUpstreamModel: model ? model.upstreamModel : null,
+      status: 400,
+    })
+    return { error: openAiError(400, "unsupported_model_selection", `OpenWork inference does not allow alternate model selection (${blockedSelection}).`), incomingModel: requestedModel, upstreamModel: model ? model.upstreamModel : null }
   }
 
-  if (typeof json.model !== "string") {
+  if (requestedModel === null) {
     logProxyError("Missing model in JSON request body", {
       openworkRequestId: input.openworkRequestId,
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
     })
-    return { error: openAiError(400, "model_required", "JSON request body must include a string model.") }
+    input.reporter.handledError({
+      reason: "model_required",
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
+      openworkRequestId: input.openworkRequestId,
+      route: input.route,
+      method: input.method,
+      headers: input.headers,
+      incomingModel: null,
+      resolvedUpstreamModel: null,
+      status: 400,
+    })
+    return { error: openAiError(400, "model_required", "JSON request body must include a string model."), incomingModel: null, upstreamModel: null }
   }
 
-  const requestedModel = json.model
   const body = json
-  const model = resolveModelAlias(requestedModel)
   if (!model) {
     logProxyError("Unknown OpenWork model alias", {
       openworkRequestId: input.openworkRequestId,
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
       requestedModel,
     })
-    return { error: openAiError(404, "model_not_found", `Unknown OpenWork model alias: ${requestedModel}`) }
+    input.reporter.handledError({
+      reason: "model_not_found",
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      inferenceKeyId: input.inferenceKeyId,
+      openworkRequestId: input.openworkRequestId,
+      route: input.route,
+      method: input.method,
+      headers: input.headers,
+      incomingModel: requestedModel,
+      resolvedUpstreamModel: null,
+      status: 404,
+    })
+    return { error: openAiError(404, "model_not_found", `Unknown OpenWork model alias: ${requestedModel}`), incomingModel: requestedModel, upstreamModel: null }
   }
 
   body.model = model.upstreamModel
@@ -284,6 +465,7 @@ async function prepareBody(request: Request, input: {
 
   return {
     body: JSON.stringify(body),
+    incomingModel: requestedModel,
     modelAlias: model.alias,
     upstreamModel: model.upstreamModel,
   }
@@ -312,6 +494,8 @@ function localRouteRejection(path: string, method: string) {
 }
 
 export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies = defaultProxyDependencies) {
+  const reporter = dependencies.reporter ?? sentryInferenceReporter
+
   async function handleApiRequest(c: Context) {
     const rawKey = readApiKey(c.req.raw)
     if (!rawKey) {
@@ -333,16 +517,49 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       return localRouteRejection(c.req.path, c.req.method)
     }
 
+    const openworkRequestId = buildRequestId()
+    const incomingHeaders = sanitizeIncomingHeaders(c.req.raw.headers)
+
     if (new URL(c.req.url).search) {
+      const payloadLog = buildUnparsedPayloadLog("unsupported_query_parameters", c.req.raw.headers.get("content-type"))
+      reporter.request({
+        organizationId: inferenceKey.organization_id,
+        orgMembershipId: inferenceKey.org_membership_id,
+        inferenceKeyId: inferenceKey.id,
+        openworkRequestId,
+        route: c.req.path,
+        method: c.req.method,
+        headers: incomingHeaders,
+        incomingModel: null,
+        resolvedUpstreamModel: null,
+        payloadMode: payloadLog.mode,
+        payload: payloadLog.payload,
+      })
+      reporter.handledError({
+        reason: "unsupported_query_parameters",
+        organizationId: inferenceKey.organization_id,
+        orgMembershipId: inferenceKey.org_membership_id,
+        inferenceKeyId: inferenceKey.id,
+        openworkRequestId,
+        route: c.req.path,
+        method: c.req.method,
+        headers: incomingHeaders,
+        incomingModel: null,
+        resolvedUpstreamModel: null,
+        status: 400,
+      })
       return openAiError(400, "unsupported_query_parameters", "OpenWork chat completions does not accept query parameters.")
     }
 
-    const openworkRequestId = buildRequestId()
     const prepared = await prepareBody(c.req.raw, {
       organizationId: inferenceKey.organization_id,
       orgMembershipId: inferenceKey.org_membership_id,
       inferenceKeyId: inferenceKey.id,
       openworkRequestId,
+      route: c.req.path,
+      method: c.req.method,
+      headers: incomingHeaders,
+      reporter,
     })
     if ("error" in prepared) {
       logProxyError("Invalid inference proxy request", {
@@ -356,12 +573,6 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
 
     const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id)
     if (!limits.ok) {
-      logProxyError("Inference usage limit exceeded", {
-        path: c.req.path,
-        organizationId: inferenceKey.organization_id,
-        orgMembershipId: inferenceKey.org_membership_id,
-        limitedBy: limits.limitedBy,
-      })
       c.header("x-openwork-limit-bucket-id", limits.limitedBy)
       c.header("x-openwork-limit-window-type", limits.windowType)
       const limitedBucket = "limitedBucket" in limits ? limits.limitedBucket : null
@@ -388,6 +599,21 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         path: c.req.path,
         organizationId: inferenceKey.organization_id,
         orgMembershipId: inferenceKey.org_membership_id,
+        inferenceKeyId: inferenceKey.id,
+        openworkRequestId,
+      })
+      reporter.handledError({
+        reason: "missing_provider_key",
+        organizationId: inferenceKey.organization_id,
+        orgMembershipId: inferenceKey.org_membership_id,
+        inferenceKeyId: inferenceKey.id,
+        openworkRequestId,
+        route: c.req.path,
+        method: c.req.method,
+        headers: incomingHeaders,
+        incomingModel: prepared.incomingModel,
+        resolvedUpstreamModel: prepared.upstreamModel,
+        status: 400,
       })
       return c.json({ error: { message: "No active OpenRouter provider key configured for organization.", type: "invalid_request_error", code: "missing_provider_key" } }, 400)
     }
@@ -406,10 +632,29 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     } catch (error) {
       logProxyError("Failed to reach OpenRouter upstream", {
         openworkRequestId,
+        organizationId: inferenceKey.organization_id,
+        orgMembershipId: inferenceKey.org_membership_id,
+        inferenceKeyId: inferenceKey.id,
         upstreamUrl: upstreamUrl.toString(),
         modelAlias: prepared.modelAlias,
         upstreamModel: prepared.upstreamModel,
         error: error instanceof Error ? error.message : String(error),
+      })
+      reporter.handledError({
+        reason: "upstream_unreachable",
+        organizationId: inferenceKey.organization_id,
+        orgMembershipId: inferenceKey.org_membership_id,
+        inferenceKeyId: inferenceKey.id,
+        openworkRequestId,
+        route: c.req.path,
+        method: c.req.method,
+        headers: incomingHeaders,
+        incomingModel: prepared.incomingModel,
+        resolvedUpstreamModel: prepared.upstreamModel,
+        status: 502,
+        upstreamUrl: upstreamUrl.toString(),
+        error: error instanceof Error ? error.message : String(error),
+        exception: error,
       })
       return c.json({ error: { message: "Failed to reach OpenRouter upstream.", type: "api_error", code: "upstream_unreachable" } }, 502)
     }
@@ -419,8 +664,16 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         upstream,
         upstreamUrl,
         openworkRequestId,
+        organizationId: inferenceKey.organization_id,
+        orgMembershipId: inferenceKey.org_membership_id,
+        inferenceKeyId: inferenceKey.id,
+        route: c.req.path,
+        method: c.req.method,
+        headers: incomingHeaders,
         modelAlias: prepared.modelAlias,
+        incomingModel: prepared.incomingModel,
         upstreamModel: prepared.upstreamModel,
+        reporter,
       })
     }
 

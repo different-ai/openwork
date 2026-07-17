@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm"
 import { index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import type { DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
+import type { ConnectLinkClaims } from "@openwork/types/connect-link"
 import { denTypeIdColumn, mediumBlobColumn } from "../columns"
 
 export const DesktopHandoffGrantTable = mysqlTable(
@@ -19,6 +20,23 @@ export const DesktopHandoffGrantTable = mysqlTable(
   ],
 )
 
+export const DesktopConnectGrantTable = mysqlTable(
+  "desktop_connect_grant",
+  {
+    codeHash: varchar("code_hash", { length: 64 }).notNull().primaryKey(),
+    installLinkId: denTypeIdColumn("installLink", "install_link_id").notNull(),
+    claims: json("claims").$type<ConnectLinkClaims>().notNull(),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    consumedAt: timestamp("consumed_at", { fsp: 3 }),
+    consumedNonce: varchar("consumed_nonce", { length: 64 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("desktop_connect_grant_install_link_id").on(table.installLinkId),
+    index("desktop_connect_grant_expires_at").on(table.expiresAt),
+  ],
+)
+
 export const OrganizationTable = mysqlTable(
   "organization",
   {
@@ -34,7 +52,7 @@ export const OrganizationTable = mysqlTable(
       .notNull()
       .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
-  (table) => [uniqueIndex("organization_slug").on(table.slug)],
+  (table) => [uniqueIndex("organization_slug").on(table.slug), index("organization_created_at_id").on(table.createdAt, table.id)],
 )
 
 export const OrganizationBrandAssetTable = mysqlTable(
@@ -104,6 +122,7 @@ export const InvitationTable = mysqlTable(
     index("invitation_email").on(table.email),
     index("invitation_status").on(table.status),
     index("invitation_team_id").on(table.teamId),
+    index("invitation_inviter_id").on(table.inviterId),
     index("invitation_org_member_id").on(table.orgMemberId),
     uniqueIndex("invitation_invite_token").on(table.inviteToken),
   ],

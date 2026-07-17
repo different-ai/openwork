@@ -28,6 +28,23 @@ helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee
 
 The chart pulls the matching GHCR images for `openwork-den-api`, `openwork-den-web`, and optional `openwork-inference`.
 
+### Configure Den API Node.js options
+
+Use `config.denApiNodeOptions` when `den-api` needs Node.js startup flags, such
+as using the OpenSSL CA store or increasing the old-space heap limit:
+
+```yaml
+config:
+  denApiNodeOptions: "--use-openssl-ca --max-old-space-size=4096"
+```
+
+The chart stores this value in its ConfigMap as `DEN_API_NODE_OPTIONS` and
+passes it to the `den-api` container as `NODE_OPTIONS` before Node starts. It
+does not change the Node.js options for Den web or the optional inference
+service. Leaving the value empty preserves the default Node.js behavior.
+Existing deployments using `denApi.env.NODE_OPTIONS` can keep that setting when
+upgrading; it takes precedence over `config.denApiNodeOptions`.
+
 If you want self-hosted repository imports and sync from GitHub, configure the [GitHub connector for Helm](/start-here/github-connector-helm) after the core Den web and Den controller hosts are reachable.
 
 To keep organization names, wordmarks, and desktop icons entirely inside your deployment, follow [Brand an on-prem deployment](/start-here/on-prem-branding).

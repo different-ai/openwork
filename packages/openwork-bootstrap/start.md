@@ -4,7 +4,8 @@ You are an agent helping a user install and set up OpenWork.
 
 Goal: install OpenWork, create a provisional workspace without requiring email
 identity first, create a first skill, prepare the desktop app with that
-workspace/skill, and verify the running app opens to the setup-complete state.
+workspace/skill, verify the running app opens to the setup-complete state, and
+offer to connect the OpenWork MCP to the agent the user is already using.
 
 > The bootstrap command is `openwork-bootstrap` (NOT `openwork`). The bare
 > `openwork` command belongs to the separate `openwork-orchestrator` package and
@@ -106,16 +107,45 @@ friendly, human message that gives momentum:
 2. Point them at ONE concrete first task they can run right now, e.g. "OpenWork
    is open — try typing: 'summarize the files in my Downloads folder' and hit
    Run."
-3. Offer the next steps as things you can do FOR them, as a short menu: invite a
-   teammate (if emails were already given, mention they'll be invited
-   automatically once the workspace is claimed; otherwise offer to collect
-   emails and re-run step 3 with --teammate-emails), claim the workspace (to
-   attach billing + a human owner), or suggest another first task idea.
-4. End with a single question like "Want me to invite someone or help with your
-   first task?" so the conversation keeps going.
+3. Mention that teammates whose emails were already provided will be invited
+   automatically once the workspace is claimed. If no emails were provided,
+   offer to collect them later.
+4. End with this single question: "Want me to connect the OpenWork MCP to this
+   agent so you can manage your organization from here?"
 
 Keep it to a few sentences. Warm, concrete, action-oriented. No JSON, no
 checklists, no internal flag names in the final message.
+
+If the user says yes:
+
+1. A provisional workspace must be claimed before its owner can authenticate
+   the OpenWork MCP. If it has not been claimed yet, explain that dependency and
+   ask whether to open the claim step now. Retrieve and open the claim link only
+   after the user confirms.
+2. After the user has claimed the workspace and signed in, configure the MCP in
+   the agent they are currently using. The server URL is:
+
+   ```text
+   https://api.openworklabs.com/mcp/agent
+   ```
+
+3. For Codex, run:
+
+   ```bash
+   codex mcp add openwork --url https://api.openworklabs.com/mcp/agent
+   codex mcp login openwork
+   ```
+
+   If an `openwork` entry already exists, do not add a duplicate. Authenticate
+   the existing entry instead. To switch organizations or recover stale auth,
+   run `codex mcp logout openwork` before `codex mcp login openwork`.
+4. For another agent, use its current instructions from
+   `https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp`; do not guess
+   unsupported client commands.
+5. Tell the user to restart or reopen the current agent after setup so the new
+   MCP tools are loaded. Do not claim the connection works until the restarted
+   client can see OpenWork's `search_capabilities` and `execute_capability`
+   tools.
 
 ## 6. Retrieving the Claim Link
 

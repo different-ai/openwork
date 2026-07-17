@@ -1,11 +1,12 @@
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { beforeAll, beforeEach, expect, mock, test } from "bun:test"
+import { generateConnectLinkKeyPair, verifyConnectLinkToken } from "@openwork/connect-link/node"
+import { afterAll, beforeAll, beforeEach, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
-import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { createStoredZip } from "../src/utils/zip-append.js"
+
+type InstallExperienceDependencies = import("../src/routes/org/install-links.js").InstallExperienceDependencies
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -18,17 +19,27 @@ function seedRequiredEnv() {
 const userId = createDenTypeId("user")
 const memberId = createDenTypeId("member")
 const organizationId = createDenTypeId("organization")
+const installLinkId = createDenTypeId("installLink")
 const insertedRows: unknown[] = []
 const revokedRows: unknown[] = []
 const officialWindowsInstallerUrl = "https://github.com/different-ai/openwork/releases/download/v9.9.9/openwork-win-x64-9.9.9.exe"
-const brandLogoUrl = "https://den.acme.test/assets/wordmark.png"
-const brandIconUrl = "https://den.acme.test/assets/icon.png"
+const connectKeyPair = generateConnectLinkKeyPair()
+const connectKeyId = "owc-route-test"
+
+function defaultOrganizationMetadata(): Record<string, unknown> {
+  return {
+    brandAppName: "Acme Work",
+    brandLogoUrl: "https://assets.blueyonder.test/wordmark.svg",
+    brandIconUrl: "https://assets.blueyonder.test/icon.png",
+  }
+}
 
 let role = "member"
 let isOwner = false
-let capabilityEnabled = true
+let installLinksCapabilityOverride: boolean | null = null
 let failInstallLinkInsert = false
 let sessionCreatedAt = new Date()
+let organizationMetadata = defaultOrganizationMetadata()
 
 mock.module("../src/db.js", () => ({
   db: {
@@ -44,18 +55,13 @@ mock.module("../src/db.js", () => ({
     select: (selection: unknown) => {
       const rows = isRecord(selection) && "installLink" in selection && "organization" in selection
         ? [{
-            installLink: { organizationId },
+            installLink: { id: installLinkId, organizationId },
             organization: {
               id: organizationId,
               name: "Acme Robotics",
               slug: "acme-robotics",
               logo: null,
-              metadata: {
-                capabilities: { installLinks: true },
-                brandAppName: "Acme Work",
-                brandLogoUrl,
-                brandIconUrl,
-              },
+              metadata: organizationMetadata,
             },
           }]
         : []
@@ -77,6 +83,9 @@ mock.module("../src/db.js", () => ({
         },
       }),
     }),
+    delete: (_table: unknown) => ({
+      where: (_condition: unknown) => Promise.resolve(),
+    }),
   },
 }))
 
@@ -88,6 +97,18 @@ function insertedInstallLinks() {
   return insertedRows.filter((row) => isRecord(row) && typeof row.tokenHash === "string")
 }
 
+function organizationContextMetadata() {
+  if (installLinksCapabilityOverride === null) {
+    return organizationMetadata
+  }
+
+  const capabilities = isRecord(organizationMetadata.capabilities) ? organizationMetadata.capabilities : {}
+  return {
+    ...organizationMetadata,
+    capabilities: { ...capabilities, installLinks: installLinksCapabilityOverride },
+  }
+}
+
 mock.module("../src/orgs.js", () => ({
   getOrganizationContextForUser: (input: { organizationId: string; userId: string }) => Promise.resolve(
     input.organizationId === organizationId && input.userId === userId
@@ -97,10 +118,7 @@ mock.module("../src/orgs.js", () => ({
             name: "Acme Robotics",
             slug: "acme-robotics",
             logo: null,
-            metadata: {
-              capabilities: { installLinks: capabilityEnabled },
-              brandIconUrl: "https://assets.blueyonder.test/icon.png",
-            },
+            metadata: organizationContextMetadata(),
           },
           currentMember: {
             id: memberId,
@@ -131,22 +149,37 @@ beforeAll(async () => {
   envModule = await import("../src/env.js")
   installLinkMintingModule = await import("../src/install-links.js")
   installLinkModule = await import("../src/routes/org/install-links.js")
+  mock.restore()
 })
 
 beforeEach(() => {
   envModule.env.installLinksGatingEnabled = true
+  envModule.env.connectLink = null
+  envModule.env.devMode = true
+  envModule.env.installerArtifactsDir = undefined
+  envModule.env.installerReleaseRepo = "different-ai/openwork"
+  envModule.env.installerReleaseTag = "v9.9.9"
   insertedRows.length = 0
   revokedRows.length = 0
   role = "member"
   isOwner = false
-  capabilityEnabled = true
+  installLinksCapabilityOverride = null
   failInstallLinkInsert = false
   sessionCreatedAt = new Date()
+  organizationMetadata = defaultOrganizationMetadata()
 })
 
-function createApp(options: { installerFallbackUrl?: string; installerArtifacts?: Record<string, Buffer> } = {}) {
+afterAll(() => {
+  mock.restore()
+})
+
+function createApp(options: {
+  installerDirectUrl?: string
+  configuredArtifact?: { filePath: string; size: number }
+  artifactFileNames?: string[]
+  grantOverrides?: Partial<Pick<InstallExperienceDependencies, "mintConnectGrant" | "previewConnectGrant" | "consumeConnectGrant">>
+} = {}) {
   const app = new Hono()
-  const installerFallbackUrl = options.installerFallbackUrl
   app.use("*", async (c, next) => {
     c.set("user", {
       id: userId,
@@ -164,15 +197,22 @@ function createApp(options: { installerFallbackUrl?: string; installerArtifacts?
     })
     await next()
   })
-  installLinkModule.registerOrgInstallLinkRoutes(
-    app,
-    installerFallbackUrl || options.installerArtifacts
+  const shouldResolveConfiguredArtifact = options.configuredArtifact !== undefined || options.artifactFileNames !== undefined
+  const overrides: Partial<InstallExperienceDependencies> = {
+    ...(shouldResolveConfiguredArtifact
       ? {
-          resolveArtifact: (fileName) => Promise.resolve(options.installerArtifacts?.[fileName] ?? null),
-          resolveFallbackUrl: () => Promise.resolve(installerFallbackUrl ?? officialWindowsInstallerUrl),
+          resolveConfiguredArtifact: (fileName: string) => {
+            options.artifactFileNames?.push(fileName)
+            return Promise.resolve(options.configuredArtifact ?? null)
+          },
         }
-      : undefined,
-  )
+      : {}),
+    ...(options.installerDirectUrl
+      ? { resolveDirectUrl: () => options.installerDirectUrl ?? officialWindowsInstallerUrl }
+      : {}),
+    ...options.grantOverrides,
+  }
+  installLinkModule.registerOrgInstallLinkRoutes(app, overrides)
   return app
 }
 
@@ -227,13 +267,23 @@ test("explicit rotation still requires a fresh privileged session", async () => 
   expect(revokedRows).toHaveLength(0)
 })
 
-test("the organization capability still gates member install links", async () => {
-  capabilityEnabled = false
+test("explicit installLinks false kill switch refuses member install links", async () => {
+  installLinksCapabilityOverride = false
   const response = await mint(createApp())
 
   expect(response.status).toBe(403)
   await expect(response.json()).resolves.toEqual({ error: "capability_disabled", capability: "installLinks" })
   expect(insertedInstallLinks()).toHaveLength(0)
+})
+
+test("deprecated deployment gate stays inert when installLinks metadata is absent", async () => {
+  envModule.env.installLinksGatingEnabled = true
+  organizationMetadata = defaultOrganizationMetadata()
+  installLinksCapabilityOverride = null
+  const response = await mint(createApp())
+
+  expect(response.status).toBe(200)
+  expect(insertedInstallLinks()).toHaveLength(1)
 })
 
 test("invitation downloads mint the same org install page without storing the raw token", async () => {
@@ -294,8 +344,8 @@ test("members cannot mint an install link for another organization", async () =>
   expect(insertedInstallLinks()).toHaveLength(0)
 })
 
-test("missing server-side artifacts redirect the browser to the official release", async () => {
-  const response = await createApp({ installerFallbackUrl: officialWindowsInstallerUrl }).request("http://den.local/v1/install/win-x64?token=opaque-token", {
+test("zero-config downloads redirect the browser to the official release", async () => {
+  const response = await createApp({ installerDirectUrl: officialWindowsInstallerUrl }).request("http://den.local/v1/install/win-x64?token=opaque-token", {
     redirect: "manual",
   })
 
@@ -304,55 +354,219 @@ test("missing server-side artifacts redirect the browser to the official release
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
-test.each([
-  ["mac-arm64", "openwork-mac-arm64-9.9.9.dmg", "openwork-installer-mac-arm64.zip"],
-  ["win-x64", "openwork-win-x64-9.9.9.exe", "openwork-installer-win-x64.exe"],
-])("organization %s downloads contain the generic installer, untouched standard app, and explicit config", async (platform, desktopFileName, genericFileName) => {
-  envModule.env.installerReleaseTag = "v9.9.9"
-  const desktopArtifact = Buffer.from(`signed-standard-${platform}-bytes`, "utf8")
-  const genericInstallerArtifact = platform.startsWith("mac-")
-    ? Buffer.from(createStoredZip([{ name: "OpenWork Installer.app/binary", content: Buffer.from("signed-generic-mac", "utf8") }]))
-    : Buffer.from("signed-generic-windows", "utf8")
+test("unordered organization allowed desktop versions select the maximum direct release URL", async () => {
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: ["0.17.26", "0.17.25", "0.17.27"],
+  }
+
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.27/openwork-win-x64-0.17.27.exe")
+  expect(response.headers.get("location")).not.toContain("v9.9.9")
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test("mounted artifact lookup uses the organization-specific allowed desktop version filename", async () => {
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: ["0.17.26", "0.17.27"],
+  }
+  const artifactFileNames: string[] = []
+  const installer = Buffer.from("signed-standard-windows-installer", "utf8")
+  const artifactPath = path.join(mkdtempSync(path.join(os.tmpdir(), "openwork-installer-route-")), "installer.exe")
+  writeFileSync(artifactPath, installer)
+
   const response = await createApp({
-    installerArtifacts: {
-      [desktopFileName]: desktopArtifact,
-      [genericFileName]: genericInstallerArtifact,
-    },
-  }).request(`http://den.local/v1/install/${platform}?token=opaque-token`)
+    artifactFileNames,
+    configuredArtifact: { filePath: artifactPath, size: installer.byteLength },
+  }).request("http://den.local/v1/install/win-x64?token=opaque-token")
 
   expect(response.status).toBe(200)
-  expect(response.headers.get("content-type")).toBe("application/zip")
-  expect(response.headers.get("content-disposition")).toContain(`OpenWork-Installer-acme-robotics-${platform}.zip`)
+  expect(artifactFileNames).toEqual(["openwork-win-x64-0.17.27.exe"])
+  expect(response.headers.get("content-disposition")).toContain("openwork-win-x64-0.17.27.exe")
+  expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
+})
 
-  const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-org-download-"))
-  try {
-    const archivePath = path.join(dir, "download.zip")
-    const outputDir = path.join(dir, "output")
-    mkdirSync(outputDir)
-    writeFileSync(archivePath, new Uint8Array(await response.arrayBuffer()))
-    const unzip = spawnSync("unzip", ["-q", archivePath, "-d", outputDir], { encoding: "utf8" })
-    if (unzip.status !== 0) {
-      throw new Error(`unzip failed: ${unzip.stderr || unzip.stdout}`)
-    }
-
-    const entries = readdirSync(outputDir)
-    expect(entries).toContain(desktopFileName)
-    expect(entries).toContain("openwork-installer.json")
-    expect(entries).toContain(platform.startsWith("mac-") ? "OpenWork Installer.app" : "OpenWork Installer.exe")
-    expect(readFileSync(path.join(outputDir, desktopFileName))).toEqual(desktopArtifact)
-
-    const config = JSON.parse(readFileSync(path.join(outputDir, "openwork-installer.json"), "utf8"))
-    expect(config).toMatchObject({
-      appName: "Acme Work",
-      appVersion: "9.9.9",
-      webUrl: process.env.BETTER_AUTH_URL,
-      requireSignin: true,
-      logoUrl: brandLogoUrl,
-      iconUrl: brandIconUrl,
-    })
-    expect(config.apiUrl).toBe("http://den.local")
-    expect(JSON.stringify(config)).not.toContain("opaque-token")
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
+test("unrestricted organizations use Den's configured installer release tag", async () => {
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: [],
   }
+
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe(officialWindowsInstallerUrl)
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test("install token organization policy applies to member and admin downloads", async () => {
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: ["0.17.26", "0.17.27"],
+  }
+  const expectedUrl = "https://github.com/different-ai/openwork/releases/download/v0.17.27/openwork-win-x64-0.17.27.exe"
+
+  for (const nextRole of ["member", "admin"]) {
+    role = nextRole
+    const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+      redirect: "manual",
+    })
+
+    expect(response.status).toBe(302)
+    expect(response.headers.get("location")).toBe(expectedUrl)
+  }
+})
+
+test.each(["mac-arm64", "win-x64", "linux-x64", "linux-arm64"])(
+  "zero-config %s downloads redirect immediately to the normal installer without forwarding the token",
+  async (platform) => {
+    const directUrl = `https://github.com/different-ai/openwork/releases/download/v9.9.9/${platform}`
+    const response = await createApp({ installerDirectUrl: directUrl }).request(
+      `http://den.local/v1/install/${platform}?token=opaque-token`,
+      { redirect: "manual" },
+    )
+
+    expect(response.status).toBe(302)
+    expect(response.headers.get("location")).toBe(directUrl)
+    expect(response.headers.get("location")).not.toContain("opaque-token")
+  },
+)
+
+test("guided semi-air-gapped downloads return a provisioned standard installer without ZIP wrapping", async () => {
+  const installer = Buffer.from("signed-standard-windows-installer", "utf8")
+  const artifactPath = path.join(mkdtempSync(path.join(os.tmpdir(), "openwork-installer-route-")), "installer.exe")
+  writeFileSync(artifactPath, installer)
+  const response = await createApp({
+    configuredArtifact: { filePath: artifactPath, size: installer.byteLength },
+  }).request(
+    "http://den.local/v1/install/win-x64?token=opaque-token",
+  )
+
+  expect(response.status).toBe(200)
+  expect(response.headers.get("content-type")).toBe("application/vnd.microsoft.portable-executable")
+  expect(response.headers.get("content-disposition")).toContain("openwork-win-x64-")
+  expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
+})
+
+test("zero-config install config mints a short-lived exchange without storing the raw code", async () => {
+  const response = await createApp().request("http://127.0.0.1:8790/v1/install-config?token=opaque-token")
+
+  expect(response.status).toBe(200)
+  const body = await response.json()
+  expect(body.connectUrl).toStartWith("openwork://connect?code=")
+  expect(body.requireSignin).toBe(true)
+  expect(Date.parse(body.connectExpiresAt)).toBeGreaterThan(Date.now())
+
+  const url = new URL(body.connectUrl)
+  const code = url.searchParams.get("code") ?? ""
+  expect(code.length).toBeGreaterThanOrEqual(24)
+  expect(url.searchParams.get("apiBaseUrl")).toBe("http://127.0.0.1:8790")
+
+  const grant = insertedRows.find((row) => isRecord(row) && typeof row.codeHash === "string")
+  expect(grant).toMatchObject({
+    installLinkId,
+    consumedAt: null,
+    consumedNonce: null,
+    claims: {
+      org: { name: "Acme Robotics" },
+      brand: {
+        appName: "Acme Work",
+        logoUrl: "https://assets.blueyonder.test/wordmark.svg",
+        iconUrl: "https://assets.blueyonder.test/icon.png",
+      },
+      requireSignin: true,
+    },
+  })
+  expect(grant).not.toHaveProperty("code")
+  expect(JSON.stringify(grant)).not.toContain(code)
+})
+
+test("keyless preview is read-only and exchange consumes the grant once", async () => {
+  const code = "abcdefghijklmnopqrstuvwxyz123456"
+  const claims = {
+    iss: "http://127.0.0.1:8790",
+    aud: "openwork-desktop-connect",
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 300,
+    jti: "grant-jti-123456",
+    v: 1,
+    org: { name: "Acme Robotics" },
+    brand: { appName: "OpenWork", logoUrl: null, iconUrl: null },
+    den: { baseUrl: "http://127.0.0.1:8790", apiBaseUrl: "http://127.0.0.1:8790" },
+    requireSignin: true,
+  }
+  let consumed = false
+  const app = createApp({
+    grantOverrides: {
+      previewConnectGrant: () => Promise.resolve(consumed
+        ? { ok: false, code: "replayed" }
+        : { ok: true, claims }),
+      consumeConnectGrant: () => {
+        if (consumed) return Promise.resolve({ ok: false, code: "replayed" })
+        consumed = true
+        return Promise.resolve({ ok: true, claims })
+      },
+    },
+  })
+  const request = (mode: "preview" | "exchange") => app.request(`http://den.local/v1/install-connect/${mode}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code }),
+  })
+
+  const firstPreview = await request("preview")
+  expect(firstPreview.status).toBe(200)
+  expect(consumed).toBe(false)
+  const exchange = await request("exchange")
+  expect(exchange.status).toBe(200)
+  expect(consumed).toBe(true)
+  const replay = await request("exchange")
+  expect(replay.status).toBe(409)
+  await expect(replay.json()).resolves.toEqual({ error: "connect_grant_replayed" })
+})
+
+test("signed handoffs use the same direct standard-installer route", async () => {
+  envModule.env.connectLink = { privateKeyPem: "unused by download route", kid: "test" }
+  const response = await createApp({ installerDirectUrl: officialWindowsInstallerUrl }).request(
+    "http://den.local/v1/install/win-x64?token=opaque-token",
+    { redirect: "manual" },
+  )
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe(officialWindowsInstallerUrl)
+})
+
+test("install config includes a fresh signed organization handoff while preserving normal sign-in", async () => {
+  envModule.env.connectLink = { privateKeyPem: connectKeyPair.privateKeyPem, kid: connectKeyId }
+  const response = await createApp().request("http://127.0.0.1:8790/v1/install-config?token=opaque-token")
+
+  expect(response.status).toBe(200)
+  const body = await response.json()
+  expect(body.connectUrl).toStartWith("openwork://connect?token=")
+  expect(body.requireSignin).toBe(true)
+
+  const token = new URL(body.connectUrl).searchParams.get("token") ?? ""
+  const verified = verifyConnectLinkToken({
+    token,
+    publicKeys: { [connectKeyId]: connectKeyPair.publicKeyPem },
+    allowInsecureLoopback: true,
+  })
+  expect(verified.ok).toBe(true)
+  if (!verified.ok) throw new Error("expected install handoff token to verify")
+  expect(verified.claims.org.name).toBe("Acme Robotics")
+  expect(verified.claims.brand).toEqual({
+    appName: "Acme Work",
+    logoUrl: "https://assets.blueyonder.test/wordmark.svg",
+    iconUrl: "https://assets.blueyonder.test/icon.png",
+  })
+  expect(verified.claims.den.baseUrl).toBe(process.env.BETTER_AUTH_URL)
+  expect(verified.claims.den.apiBaseUrl).toBe("http://127.0.0.1:8790")
+  expect(verified.claims.requireSignin).toBe(true)
 })

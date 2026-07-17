@@ -20,6 +20,7 @@ const DEN_WEB_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_WEB_URL);
 const MYSQL_CONTAINER = process.env.OPENWORK_EVAL_DEN_MYSQL_CONTAINER?.trim() ?? "";
 const DEMO_EMAIL = "alex@acme.test";
 const DEMO_PASSWORD = "OpenWorkDemo123!";
+const SECURITY_MESSAGE = "For security, confirm it's you before changing workspace settings.";
 const GOOGLE_ACCOUNT_ID = "acc_01kwx81tc6f208pn04555rws17";
 
 // AuthAccountTable.id is denTypeIdColumn("account", "id")
@@ -110,7 +111,7 @@ export default {
               return {
                 dialogOpen: Boolean(dialog),
                 nonce: dialog?.getAttribute('data-reauth-nonce') ?? '',
-                hasTitle: bodyText.includes("Confirm it's you to continue"),
+                hasTitle: bodyText.includes(${JSON.stringify(SECURITY_MESSAGE)}),
                 hasGoogle: bodyText.includes('Continue with Google'),
               };
             })()`);
@@ -123,7 +124,7 @@ export default {
           },
           screenshot: {
             name: "den-reauth-popup-google-offered",
-            requireText: ["Confirm it's you to continue", "Continue with Google"],
+            requireText: [SECURITY_MESSAGE, "Continue with Google"],
           },
         });
       },

@@ -24,6 +24,7 @@ import {
   getOpenWorkModelsActionUrl,
   hasOpenWorkModelsProvider,
   hideOpenWorkModelsPromo,
+  useOpenWorkModelsPromoEligibility,
   isOpenWorkModelsPromoHidden,
   OPENWORK_MODEL_PREVIEWS,
   OPENWORK_MODELS_PROVIDER_ID,
@@ -213,6 +214,7 @@ export function ModelSelect({
   const denAuth = useDenAuth();
   const navigate = useNavigate();
   const platform = usePlatform();
+  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
 
   React.useEffect(() => {
     const handlePromoChanged = () => setPromoHidden(isOpenWorkModelsPromoHidden());
@@ -249,8 +251,8 @@ export function ModelSelect({
   );
 
   const showOpenWorkModelsPromo = React.useMemo(
-    () => !promoHidden && !hasOpenWorkModelsProvider(modelOptions.map((option) => option.providerID)),
-    [modelOptions, promoHidden],
+    () => openWorkModelsPromoEligible && !promoHidden && !hasOpenWorkModelsProvider(modelOptions.map((option) => option.providerID)),
+    [modelOptions, openWorkModelsPromoEligible, promoHidden],
   );
 
   const groups = React.useMemo(() => {

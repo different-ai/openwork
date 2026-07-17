@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { OpenworkSessionGroupState } from "@/app/lib/openwork-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
@@ -48,6 +48,24 @@ function migrationKey(endpoint: ResolvedWorkspaceEndpoint): string {
   return `${MIGRATION_PREFIX}:${endpoint.baseUrl}:${endpoint.workspaceId}`;
 }
 
+function workspaceEndpointSyncKey(
+  workspaces: RouteWorkspace[],
+  endpointForWorkspace: UseSessionGroupSyncInput["endpointForWorkspace"],
+): string {
+  return workspaces
+    .map((workspace) => {
+      const endpoint = endpointForWorkspace(workspace);
+      return JSON.stringify([
+        workspace.id.trim(),
+        endpoint?.baseUrl.trim() ?? "",
+        endpoint?.workspaceId.trim() ?? "",
+        endpoint?.token.trim() ?? "",
+      ]);
+    })
+    .sort()
+    .join("|");
+}
+
 function readMigrationComplete(endpoint: ResolvedWorkspaceEndpoint): boolean {
   try {
     return window.localStorage.getItem(migrationKey(endpoint)) === "1";
@@ -70,6 +88,10 @@ export function useSessionGroupSync(input: UseSessionGroupSyncInput): void {
   const endpointForWorkspaceRef = useRef(endpointForWorkspace);
   const eventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
   const pollInFlightRef = useRef(false);
+  const groupSyncKey = useMemo(
+    () => workspaceEndpointSyncKey(workspaces, endpointForWorkspace),
+    [endpointForWorkspace, workspaces],
+  );
 
   useEffect(() => {
     workspacesRef.current = workspaces;
@@ -105,11 +127,19 @@ export function useSessionGroupSync(input: UseSessionGroupSyncInput): void {
         writeMigrationComplete(endpoint);
         return response.state;
       },
-      removeGroup: async (workspaceId: string, groupId: string) => {
+      renameGroup: async (workspaceId: string, groupId: string, label: string) => {
         const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
         const endpoint = endpointForWorkspaceRef.current(workspace);
         if (!endpoint) return null;
-        const response = await endpoint.client.removeSessionGroup(endpoint.workspaceId, groupId);
+        const response = await endpoint.client.renameSessionGroup(endpoint.workspaceId, groupId, label);
+        writeMigrationComplete(endpoint);
+        return response.state;
+      },
+      removeGroup: async (workspaceId, groupId, destinationGroupId) => {
+        const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
+        const endpoint = endpointForWorkspaceRef.current(workspace);
+        if (!endpoint) return null;
+        const response = await endpoint.client.removeSessionGroup(endpoint.workspaceId, groupId, destinationGroupId);
         writeMigrationComplete(endpoint);
         return response.state;
       },
@@ -121,7 +151,7 @@ export function useSessionGroupSync(input: UseSessionGroupSyncInput): void {
     let cancelled = false;
 
     const syncWorkspace = async (workspace: RouteWorkspace, migrateLocal: boolean) => {
-      const endpoint = endpointForWorkspace(workspace);
+      const endpoint = endpointForWorkspaceRef.current(workspace);
       if (!endpoint) return;
       const version = beginSessionGroupServerSync(workspace.id);
 
@@ -148,7 +178,7 @@ export function useSessionGroupSync(input: UseSessionGroupSyncInput): void {
       applySessionGroupServerState(workspace.id, nextState, version);
     };
 
-    for (const workspace of workspaces) {
+    for (const workspace of workspacesRef.current) {
       void syncWorkspace(workspace, true).catch((error) => {
         console.warn("[session-groups] initial sync failed", error);
       });
@@ -191,5 +221,5 @@ export function useSessionGroupSync(input: UseSessionGroupSyncInput): void {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [endpointForWorkspace, workspaces]);
+  }, [groupSyncKey]);
 }

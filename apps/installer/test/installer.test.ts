@@ -7,7 +7,7 @@ import { installConfigUrlFor, parseInstallerFilenameTag } from "@openwork/instal
 import { desktopBootstrapPath, legacyDesktopBootstrapPath } from "../src/bootstrap-path"
 import { parseInstallLinkInput, resolveInstallerConfig } from "../src/config"
 import { isTranslocatedPath, parseMountTableLine, readSidecarConfig, resolveTranslocatedOriginalPath } from "../src/config-sources"
-import { bundledReleaseAssetPath, runInstall, writeBootstrapConfig } from "../src/install"
+import { writeBootstrapConfig } from "../src/install"
 import { releaseAssetFor } from "../src/release-asset"
 
 describe("desktopBootstrapPath", () => {
@@ -56,18 +56,6 @@ describe("releaseAssetFor", () => {
     expect(() => releaseAssetFor("0.17.7", "win32", "arm64")).toThrow()
     expect(() => releaseAssetFor("", "darwin", "arm64")).toThrow()
   })
-
-  test("resolves only the exact standard artifact beside the explicit installer", () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-bundled-artifact-"))
-    try {
-      const fileName = "openwork-win-x64-9.9.9.exe"
-      writeFileSync(path.join(dir, fileName), "signed standard app", "utf8")
-      expect(bundledReleaseAssetPath(fileName, [dir])).toBe(path.join(dir, fileName))
-      expect(bundledReleaseAssetPath("openwork-win-x64-9.9.8.exe", [dir])).toBeNull()
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
 })
 
 describe("resolveInstallerConfig", () => {
@@ -82,12 +70,10 @@ describe("resolveInstallerConfig", () => {
     expect(source).toBe("env")
     expect(config).toEqual({
       appName: "Acme Work",
-      appVersion: null,
       clientName: "Acme Corp",
       webUrl: "https://openwork.acme.com",
       apiUrl: "https://openwork-api.acme.com",
       logoUrl: null,
-      iconUrl: null,
       requireSignin: true,
     })
   })
@@ -251,13 +237,11 @@ describe("macOS App Translocation helpers", () => {
         warn: () => undefined,
       })).toEqual({
         appName: "OpenWork",
-        appVersion: null,
         clientName: "Translocated Sidecar",
         webUrl: "https://translocated.example.com",
         apiUrl: "https://translocated-api.example.com",
         requireSignin: true,
         logoUrl: null,
-        iconUrl: null,
       })
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -317,7 +301,7 @@ describe("install link helpers", () => {
 })
 
 describe("writeBootstrapConfig", () => {
-  test("an explicitly confirmed installer switches the deployment and migrates legacy state", () => {
+  test("migrates a legacy organization config instead of replacing it with hosted defaults", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-test-"))
     const env = {
       LOCALAPPDATA: path.join(dir, "LocalAppData"),
@@ -347,8 +331,8 @@ describe("writeBootstrapConfig", () => {
       )
       expect(written).toBe(target)
       const parsed = JSON.parse(readFileSync(target, "utf8"))
-      expect(parsed.baseUrl).toBe("https://app.openworklabs.com/")
-      expect(parsed.apiBaseUrl).toBe("https://api.openworklabs.com/")
+      expect(parsed.baseUrl).toBe("https://openwork.organization.internal.example")
+      expect(parsed.apiBaseUrl).toBe("https://api.organization.internal.example")
       expect(parsed.handoff).toBeUndefined()
       expect(parsed.prepared).toEqual({ orgId: "org_example" })
       expect(parsed.claimLinks).toEqual([{ id: "claim_example" }])
@@ -359,7 +343,7 @@ describe("writeBootstrapConfig", () => {
     }
   })
 
-  test("repeated explicitly confirmed installers remain deterministic", () => {
+  test("keeps a canonical organization config across repeated hosted reinstalls", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-test-"))
     const env = {
       LOCALAPPDATA: path.join(dir, "LocalAppData"),
@@ -388,8 +372,8 @@ describe("writeBootstrapConfig", () => {
       writeBootstrapConfig(hostedConfig, env, "win32")
 
       const parsed = JSON.parse(readFileSync(target, "utf8"))
-      expect(parsed.baseUrl).toBe("https://api.openworklabs.com/v1/")
-      expect(parsed.apiBaseUrl).toBe("https://api.openworklabs.com/")
+      expect(parsed.baseUrl).toBe("https://openwork.organization.internal.example")
+      expect(parsed.apiBaseUrl).toBe("https://api.organization.internal.example")
       expect(parsed.handoff).toBeUndefined()
       expect(parsed.prepared).toEqual({ orgId: "org_example" })
       expect(parsed.claimLinks).toEqual([{ id: "claim_example" }])
@@ -422,7 +406,6 @@ describe("writeBootstrapConfig", () => {
           apiUrl: "https://api.custom.internal.example",
           requireSignin: true,
           logoUrl: "https://openwork.custom.internal.example/assets/wordmark.svg",
-          iconUrl: "https://openwork.custom.internal.example/assets/icon.png",
         },
         env,
         "win32",
@@ -434,36 +417,9 @@ describe("writeBootstrapConfig", () => {
       expect(parsed.requireSignin).toBe(true)
       expect(parsed.brandAppName).toBe("Example Org Work")
       expect(parsed.brandLogoUrl).toBe("https://openwork.custom.internal.example/assets/wordmark.svg")
-      expect(parsed.brandIconUrl).toBe("https://openwork.custom.internal.example/assets/icon.png")
       expect(parsed.prepared).toEqual({ orgId: "org_example" })
       expect(parsed.claimLinks).toEqual([{ id: "claim_example" }])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
-  test("a bundled standard artifact completes a dry run without release-host access", async () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-airgap-"))
-    const previousBootstrapPath = process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH
-    try {
-      const fileName = releaseAssetFor("9.9.9").fileName
-      writeFileSync(path.join(dir, fileName), "signed standard app", "utf8")
-      process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = path.join(dir, "state", "desktop-bootstrap.json")
-      const result = await runInstall({
-        appName: "Acme Work",
-        appVersion: "9.9.9",
-        clientName: "Acme",
-        webUrl: "https://openwork.acme.internal",
-        apiUrl: "https://api.openwork.acme.internal",
-        logoUrl: null,
-        iconUrl: null,
-        requireSignin: true,
-      }, { dryRun: true, bundleDirectories: [dir] })
-      expect(result.state).toBe("done")
-      expect(result.message).toContain("bundled")
-    } finally {
-      if (previousBootstrapPath === undefined) delete process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH
-      else process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = previousBootstrapPath
       rmSync(dir, { recursive: true, force: true })
     }
   })

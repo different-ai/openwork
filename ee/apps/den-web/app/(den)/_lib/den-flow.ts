@@ -86,6 +86,38 @@ export class ReauthRequiredError extends Error {
   }
 }
 
+function formatDeadlineDuration(timeoutMs: number): string {
+  if (timeoutMs < 1000) return `${timeoutMs} milliseconds`;
+  const seconds = timeoutMs / 1000;
+  return Number.isInteger(seconds) ? `${seconds} seconds` : `${seconds.toFixed(1)} seconds`;
+}
+
+export class DenRequestTimeoutError extends Error {
+  readonly timeoutMs: number;
+  readonly outcome: "unknown" = "unknown";
+
+  constructor(timeoutMs: number, cause?: unknown) {
+    super(
+      `OpenWork stopped waiting after ${formatDeadlineDuration(timeoutMs)}. The operation’s outcome is unknown.`,
+      cause === undefined ? undefined : { cause },
+    );
+    this.name = "DenRequestTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+export class DenRequestCanceledError extends Error {
+  readonly outcome: "unknown" = "unknown";
+
+  constructor(cause?: unknown) {
+    super(
+      "The OpenWork request was canceled before the dashboard received a result. The operation’s outcome is unknown.",
+      cause === undefined ? undefined : { cause },
+    );
+    this.name = "DenRequestCanceledError";
+  }
+}
+
 export type WorkerLaunch = {
   workerId: string;
   workerName: string;
@@ -181,6 +213,7 @@ export const PENDING_AUTH_INTENT_STORAGE_KEY = "openwork:web:pending-auth-intent
 export const WORKER_STATUS_POLL_MS = DEN_WORKER_POLL_INTERVAL_MS;
 export const DEFAULT_AUTH_NAME = "OpenWork User";
 export const DEFAULT_WORKER_NAME = "My Worker";
+export const WORKSPACE_REAUTH_SECURITY_MESSAGE = "For security, confirm it's you before changing workspace settings.";
 
 export type AuthIntent = "models";
 
@@ -462,7 +495,7 @@ export function getReauthRequiredError(payload: unknown, response: Response): Re
   }
 
   return new ReauthRequiredError(
-    getErrorMessage(payload, "Sign in again before continuing."),
+    getErrorMessage(payload, WORKSPACE_REAUTH_SECURITY_MESSAGE),
     typeof payload.reason === "string" ? payload.reason : null,
   );
 }
@@ -1057,8 +1090,10 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
 
   const shouldAttachTimeout = !init.signal && timeoutMs > 0;
   const timeoutController = shouldAttachTimeout ? new AbortController() : null;
+  let didReachDashboardDeadline = false;
   const timeoutHandle = timeoutController
     ? setTimeout(() => {
+        didReachDashboardDeadline = true;
         timeoutController.abort();
       }, timeoutMs)
     : null;
@@ -1072,6 +1107,16 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
       credentials: "include",
       signal: init.signal ?? timeoutController?.signal
     });
+  } catch (error) {
+    // Only the deadline created by this helper becomes a timeout. An abort
+    // supplied by a caller becomes a distinct cancellation error.
+    if (didReachDashboardDeadline) {
+      throw new DenRequestTimeoutError(timeoutMs, error);
+    }
+    if (init.signal?.aborted && error instanceof Error && error.name === "AbortError") {
+      throw new DenRequestCanceledError(error);
+    }
+    throw error;
   } finally {
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);

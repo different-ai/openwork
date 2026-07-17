@@ -1,4 +1,5 @@
-import { index, json, mysqlEnum, mysqlTable, text, varchar } from "drizzle-orm/mysql-core"
+import { sql } from "drizzle-orm"
+import { index, json, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, timestamps } from "../columns"
 
 export const MemoryScope = ["user", "org"] as const
@@ -8,6 +9,9 @@ export const MemoryContextOrigin = ["active_conversation", "searched_conversatio
 // (drizzle-orm#1495), so this index is created out-of-band by `ensureMemoryFulltextIndex`
 // (bootstrap path) and the memory migration (migrate path); both reference this name.
 export const MEMORY_CONTENT_FULLTEXT_INDEX = "memory_content_fulltext"
+
+const memoryCreatedAtColumn = () =>
+  timestamp("created_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3)`)
 
 export const MemoryTable = mysqlTable(
   "memory",
@@ -19,7 +23,8 @@ export const MemoryTable = mysqlTable(
     content: text("content").notNull(),
     source: varchar("source", { length: 64 }).notNull(),
     tags: json("tags"),
-    ...timestamps,
+    created_at: memoryCreatedAtColumn(),
+    updated_at: timestamps.updated_at,
   },
   (table) => [index("memory_user_id").on(table.user_id)],
 )
@@ -35,7 +40,7 @@ export const MemoryContextTable = mysqlTable(
     citation: json("citation"),
     snippet: text("snippet").notNull(),
     origin: mysqlEnum("origin", MemoryContextOrigin),
-    created_at: timestamps.created_at,
+    created_at: memoryCreatedAtColumn(),
   },
   (table) => [index("memory_context_memory_id").on(table.memory_id)],
 )

@@ -3,7 +3,7 @@
 import { Download } from "lucide-react";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { createOrganizationInstallLink } from "./install-link-data";
+import { createOrganizationInstallLink } from "../../_lib/install-link-data";
 
 export function OrganizationDownloadCard({
   organizationId,
@@ -39,7 +39,7 @@ export function OrganizationDownloadCard({
             <h2 className="text-[16px] font-semibold text-[#07192C]">Download OpenWork for {organizationName}</h2>
           </div>
           <p className="mt-2 max-w-[620px] text-[13px] leading-[1.6] text-[#5A6886]">
-            Your workspace and required sign-in are built into the installer.
+            Download the standard app, then connect it to this workspace and sign in.
           </p>
           {error ? (
             <p className="mt-3 text-[13px] text-red-600" role="alert">

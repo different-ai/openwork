@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
@@ -60,7 +61,7 @@ function parseRuntimeOpencodeConfig(configJson: string): RuntimeOpencodeConfig {
   }
 }
 
-function runtimeDbPath(config: ServerConfig): string {
+export function runtimeDbPath(config: ServerConfig): string {
   const override = process.env.OPENWORK_RUNTIME_DB?.trim();
   if (override) return resolve(override);
   const configPath = config.configPath?.trim();
@@ -187,6 +188,165 @@ export async function readRuntimeOpencodeConfig(config: ServerConfig, workspaceI
   const row = db.get(workspaceId);
   if (!row) return {};
   return parseRuntimeOpencodeConfig(row.configJson);
+}
+
+export type RuntimeOpencodeConfigInspection = {
+  status: "available" | "database-missing" | "row-missing" | "table-missing" | "unreadable" | "invalid-row" | "remote-workspace";
+  config: RuntimeOpencodeConfig;
+};
+
+export type RuntimeOpencodeConfigInspectionOptions = {
+  maxBytes?: number;
+  signal?: AbortSignal;
+};
+
+const RUNTIME_OPENCODE_CONFIG_INSPECTION_MAX_BYTES = 1024 * 1024;
+const RUNTIME_OPENCODE_CONFIG_INSPECTION_MAX_DEPTH = 32;
+const RUNTIME_OPENCODE_CONFIG_INSPECTION_MAX_NODES = 20_000;
+
+function inspectionMaxBytes(value: number | undefined): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? value
+    : RUNTIME_OPENCODE_CONFIG_INSPECTION_MAX_BYTES;
+}
+
+function hasBoundedRuntimeConfigStructure(value: unknown): boolean {
+  const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  const visited = new Set<object>();
+  let nodes = 0;
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) break;
+    nodes += 1;
+    if (nodes > RUNTIME_OPENCODE_CONFIG_INSPECTION_MAX_NODES) return false;
+    if (current.depth > RUNTIME_OPENCODE_CONFIG_INSPECTION_MAX_DEPTH) return false;
+    if (typeof current.value !== "object" || current.value === null) continue;
+    if (visited.has(current.value)) return false;
+    visited.add(current.value);
+
+    const children = Array.isArray(current.value)
+      ? current.value
+      : Object.values(current.value);
+    for (const child of children) {
+      stack.push({ value: child, depth: current.depth + 1 });
+    }
+  }
+  return true;
+}
+
+function inspectRuntimeConfigRow(
+  row: unknown,
+  maxBytes: number,
+): RuntimeOpencodeConfigInspection {
+  if (!isRecord(row)) return { status: "row-missing", config: {} };
+  if (
+    typeof row.configBytes !== "number"
+    || !Number.isSafeInteger(row.configBytes)
+    || row.configBytes < 0
+  ) {
+    return { status: "invalid-row", config: {} };
+  }
+  if (row.configBytes > maxBytes || typeof row.configJson !== "string") {
+    return { status: "invalid-row", config: {} };
+  }
+
+  try {
+    const parsed = JSON.parse(row.configJson) as unknown;
+    if (!isRecord(parsed)) return { status: "invalid-row", config: {} };
+    if (!hasBoundedRuntimeConfigStructure(parsed)) {
+      return { status: "invalid-row", config: {} };
+    }
+    if (Object.hasOwn(parsed, "mcp")) {
+      if (!isRecord(parsed.mcp) || Object.values(parsed.mcp).some((entry) => !isRecord(entry))) {
+        return { status: "invalid-row", config: {} };
+      }
+    }
+    return { status: "available", config: normalizeRuntimeOpencodeConfig(parsed) };
+  } catch {
+    return { status: "invalid-row", config: {} };
+  }
+}
+
+function classifyReadonlySqliteFailure(error: unknown): "table-missing" | "unreadable" {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return message.includes("no such table") ? "table-missing" : "unreadable";
+}
+
+/**
+ * Inspect one runtime config row without creating the state directory, SQLite
+ * file, or schema. Diagnostics use this path so a read on a fresh install is
+ * genuinely side-effect free.
+ */
+export async function inspectRuntimeOpencodeConfigState(
+  config: ServerConfig,
+  workspaceId: string,
+  options?: RuntimeOpencodeConfigInspectionOptions,
+): Promise<RuntimeOpencodeConfigInspection> {
+  options?.signal?.throwIfAborted();
+  const path = runtimeDbPath(config);
+  if (!existsSync(path)) return { status: "database-missing", config: {} };
+  const maxBytes = inspectionMaxBytes(options?.maxBytes);
+
+  if (typeof process.versions.bun === "string") {
+    const { Database } = await import("bun:sqlite");
+    options?.signal?.throwIfAborted();
+    try {
+      const sqlite = new Database(path, { readonly: true, create: false });
+      try {
+        const row = sqlite.query(`
+          SELECT
+            length(CAST(config_json AS BLOB)) AS configBytes,
+            CASE
+              WHEN length(CAST(config_json AS BLOB)) <= ? THEN config_json
+              ELSE NULL
+            END AS configJson
+          FROM runtime_opencode_configs
+          WHERE workspace_id = ?
+        `).get(maxBytes, workspaceId);
+        options?.signal?.throwIfAborted();
+        return inspectRuntimeConfigRow(row, maxBytes);
+      } finally {
+        sqlite.close();
+      }
+    } catch (error) {
+      options?.signal?.throwIfAborted();
+      return { status: classifyReadonlySqliteFailure(error), config: {} };
+    }
+  }
+
+  const { DatabaseSync } = await import("node:sqlite");
+  options?.signal?.throwIfAborted();
+  try {
+    const sqlite = new DatabaseSync(path, { readOnly: true });
+    try {
+      const row = sqlite.prepare(`
+          SELECT
+            length(CAST(config_json AS BLOB)) AS configBytes,
+            CASE
+              WHEN length(CAST(config_json AS BLOB)) <= ? THEN config_json
+              ELSE NULL
+            END AS configJson
+          FROM runtime_opencode_configs
+          WHERE workspace_id = ?
+      `).get(maxBytes, workspaceId);
+      options?.signal?.throwIfAborted();
+      return inspectRuntimeConfigRow(row, maxBytes);
+    } finally {
+      sqlite.close();
+    }
+  } catch (error) {
+    options?.signal?.throwIfAborted();
+    return { status: classifyReadonlySqliteFailure(error), config: {} };
+  }
+}
+
+export async function inspectRuntimeOpencodeConfig(
+  config: ServerConfig,
+  workspaceId: string,
+  options?: RuntimeOpencodeConfigInspectionOptions,
+): Promise<RuntimeOpencodeConfig> {
+  return (await inspectRuntimeOpencodeConfigState(config, workspaceId, options)).config;
 }
 
 export async function writeRuntimeOpencodeConfig(

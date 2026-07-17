@@ -1,0 +1,39 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 9b6a5d94a72cf1ad13235c1f76ca5f57d4380d2e..7c9d0e8bbd4e8a522f2ab4db5d7424a7dcb6bf31 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -521,11 +521,23 @@ async function createRefreshToken(ctx, opts, user, referenceId, client, scopes, p
+-	})) throw new APIError("BAD_REQUEST", {
+-		error_description: "invalid refresh token",
+-		error: "invalid_grant"
+-	});
+-	return {
+-		id: (await ctx.context.adapter.create({
+-			model: "oauthRefreshToken",
+-			data: newRow
+-		})).id,
+-		token: await encodeRefreshToken(opts, token, sessionId)
+-	};
++	})) {
++		await invalidateRefreshFamily(ctx, client.clientId, user.id);
++		throw new APIError("BAD_REQUEST", {
++			error_description: "invalid refresh token",
++			error: "invalid_grant"
++		});
++	}
++	const replacement = await ctx.context.adapter.create({
++		model: "oauthRefreshToken",
++		data: newRow
++	});
++	const originalRefreshStillPresent = await ctx.context.adapter.findOne({
++		model: "oauthRefreshToken",
++		where: [{
++			field: "id",
++			value: originalRefresh.id
++		}]
++	});
++	if (!originalRefreshStillPresent) await invalidateRefreshFamily(ctx, client.clientId, user.id);
++	return {
++		id: replacement.id,
++		token: await encodeRefreshToken(opts, token, sessionId)
++	};

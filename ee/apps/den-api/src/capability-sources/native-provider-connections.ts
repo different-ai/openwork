@@ -2,6 +2,7 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   clientSelectedFeatures,
   NATIVE_OAUTH_PROVIDERS,
+  providerScopesSatisfy,
   resolveProviderScopes,
   type NativeOAuthProviderConfig,
 } from "./provider-registry.js"
@@ -33,6 +34,7 @@ export type NativeProviderConnectionEntry = {
   externalAccountId?: string | null
   grantedScopes?: string[]
   tenantId?: string | null
+  requiredBy: []
   access: null
 }
 
@@ -41,7 +43,7 @@ type NativeProviderReconnectState = {
   missingFeatures: string[]
 }
 
-function resolveReconnectState(
+export function resolveNativeProviderReconnectState(
   provider: NativeOAuthProviderConfig,
   clientExtra: Record<string, unknown> | null,
   grantedScopes: string[] | null,
@@ -52,11 +54,10 @@ function resolveReconnectState(
 
   const selectedFeatures = clientSelectedFeatures(provider, clientExtra)
   const expectedScopes = resolveProviderScopes(provider, selectedFeatures)
-  const grantedScopeSet = new Set(grantedScopes)
-  const needsReconnect = expectedScopes.some((scope) => !grantedScopeSet.has(scope))
+  const needsReconnect = expectedScopes.some((scope) => !providerScopesSatisfy(provider, grantedScopes, scope))
   const missingFeatures = selectedFeatures.filter((feature) => {
     const featureScopes = provider.optionalFeatures?.[feature] ?? []
-    return featureScopes.some((scope) => !grantedScopeSet.has(scope))
+    return featureScopes.some((scope) => !providerScopesSatisfy(provider, grantedScopes, scope))
   })
 
   return { needsReconnect, missingFeatures }
@@ -90,6 +91,7 @@ export function buildNativeProviderEntry(
     ...(state.externalAccountId !== undefined ? { externalAccountId: state.externalAccountId } : {}),
     ...(state.grantedScopes ? { grantedScopes: state.grantedScopes } : {}),
     ...(state.tenantId !== undefined ? { tenantId: state.tenantId } : {}),
+    requiredBy: [],
     access: null,
   }
 }
@@ -116,7 +118,7 @@ export async function listNativeProviderUsableEntries(input: {
         ? { tenantId: readProviderTenantId(client.extra, provider.tenantIdExtraKey) }
         : {}),
       reconnect: account?.accessToken
-        ? resolveReconnectState(provider, client.extra, account.scopes)
+        ? resolveNativeProviderReconnectState(provider, client.extra, account.scopes)
         : { needsReconnect: false, missingFeatures: [] },
     })
     if (entry) entries.push(entry)

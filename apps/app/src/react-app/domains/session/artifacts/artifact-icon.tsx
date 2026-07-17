@@ -26,6 +26,10 @@ export function ArtifactIcon({ type, className }: ArtifactIconProps) {
     return <Presentation className={cn("size-3.5 shrink-0 text-amber-9", className)} />;
   }
 
+  if (type === "document") {
+    return <FileText className={cn("size-3.5 shrink-0 text-blue-9", className)} />;
+  }
+
   if (type === "image") {
     return <FileImage className={cn("size-3.5 shrink-0 text-violet-9", className)} />;
   }

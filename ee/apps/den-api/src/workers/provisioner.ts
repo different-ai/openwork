@@ -1,5 +1,6 @@
 import { WorkerTable } from "@openwork-ee/den-db/schema"
 import { env } from "../env.js"
+import { appLogger } from "../observability/logger.js"
 import {
   deprovisionWorkerOnDaytona,
   provisionWorkerOnDaytona,
@@ -10,6 +11,7 @@ import {
 } from "./vanity-domain.js"
 
 type WorkerId = typeof WorkerTable.$inferSelect.id
+const logger = appLogger.child({ component: "worker_provisioner" })
 
 export type ProvisionInput = {
   workerId: WorkerId
@@ -220,18 +222,13 @@ async function attachRenderCustomDomain(
     })
 
     if (!dnsReady) {
-      console.warn(
-        `[provisioner] vanity dns upsert skipped or failed for ${hostname}; using Render URL fallback`,
-      )
+      logger.warn("vanity dns upsert skipped or failed", { hostname })
       return null
     }
 
     return `https://${hostname}`
   } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown_error"
-    console.warn(
-      `[provisioner] custom domain attach failed for ${serviceId}: ${message}`,
-    )
+    logger.warn("custom domain attach failed", { service_id: serviceId, worker_id: workerId, error })
     return null
   }
 }
@@ -318,9 +315,7 @@ async function provisionWorkerOnRender(
       await waitForHealth(customUrl, env.render.customDomainReadyTimeoutMs)
       url = customUrl
     } catch {
-      console.warn(
-        `[provisioner] vanity domain not ready yet for ${input.workerId}; returning Render URL fallback`,
-      )
+      logger.warn("vanity domain not ready yet", { worker_id: input.workerId })
     }
   }
 
@@ -398,9 +393,6 @@ export async function deprovisionWorker(input: {
       body: JSON.stringify({}),
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown_error"
-    console.warn(
-      `[provisioner] failed to suspend Render service ${target.id}: ${message}`,
-    )
+    logger.warn("failed to suspend Render service", { worker_id: input.workerId, service_id: target.id, error })
   }
 }

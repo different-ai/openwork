@@ -39,4 +39,13 @@ describe("native provider connections", () => {
   test("routes reconnect-needed rows into the sign-in group", () => {
     expect(resolveConnectionRowGroup({ credentialMode: "per_member", connectedForMe: true, needsReconnect: true })).toBe("needs_signin");
   });
+
+  test("routes administrator-owned OAuth recovery away from member sign-in", () => {
+    expect(resolveConnectionRowGroup({
+      credentialMode: "per_member",
+      connectedForMe: true,
+      needsReconnect: true,
+      reconnectActionOwner: "organization_admin",
+    })).toBe("needs_admin_setup");
+  });
 });

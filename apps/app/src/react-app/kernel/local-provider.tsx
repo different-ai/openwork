@@ -58,11 +58,6 @@ export type LocalPreferences = {
    */
   hasCompletedOnboarding: boolean;
   /**
-   * One-shot provider selection shown on the user's first send when no
-   * user-added provider is connected. True once completed or skipped.
-   */
-  providerStepCompleted: boolean;
-  /**
    * Anonymous product analytics (PostHog). On by default with a visible
    * opt-out in Settings -> Preferences. Never includes message content.
    */
@@ -96,7 +91,6 @@ const INITIAL_PREFS: LocalPreferences = {
   releaseChannel: "stable",
   featureFlags: { microsandboxCreateSandbox: true, memory: false },
   hasCompletedOnboarding: false,
-  providerStepCompleted: false,
   analyticsEnabled: true,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
 };
@@ -138,17 +132,6 @@ export function LocalProvider({ children }: LocalProviderProps) {
     persisted.desktopNotifications = isDesktopNotificationPreference(persisted.desktopNotifications)
       ? persisted.desktopNotifications
       : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE;
-    // Back-fill: users who onboarded before the agent-screen-first flow have
-    // already picked a provider path. Only fires while the new key is absent
-    // from storage (first write persists it).
-    try {
-      const raw = JSON.parse(window.localStorage.getItem(LOCAL_PREFERENCES_KEY) ?? "{}") as Record<string, unknown>;
-      if (raw.hasCompletedOnboarding === true && raw.providerStepCompleted === undefined) {
-        persisted.providerStepCompleted = true;
-      }
-    } catch {
-      // ignore parse failures; defaults apply
-    }
     if (persisted.defaultModel) {
       return persisted;
     }

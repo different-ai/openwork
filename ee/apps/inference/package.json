@@ -6,15 +6,17 @@
     "models:build": "node scripts/build-models.mjs",
     "dev": "pnpm run models:build && tsx watch src/server.ts",
     "dev:local": "OPENWORK_DEV_MODE=1 pnpm run models:build && OPENWORK_DEV_MODE=1 PORT=${INFERENCE_PORT:-8791} tsx watch src/server.ts",
-    "test": "tsx --test test/proxy.test.ts",
+    "test": "NODE_OPTIONS=--conditions=development tsx --test test/*.test.ts",
     "build": "pnpm run models:build && tsc -p tsconfig.json",
-    "start": "node dist/server.js"
+    "start": "node --import ./dist/instrumentation.js dist/server.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "@openwork/types": "workspace:*",
+    "@sentry/hono": "^10.65.0",
+    "@sentry/node": "^10.65.0",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.45.1",
     "hono": "^4.7.2",

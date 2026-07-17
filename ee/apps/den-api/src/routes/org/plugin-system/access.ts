@@ -13,7 +13,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import type { MemberTeamSummary, OrganizationContext } from "../../../orgs.js"
 import { db } from "../../../db.js"
-import { hasFreshPrivilegedSession, memberHasRole } from "../shared.js"
+import { getFreshPrivilegedSessionRequiredResponse, hasFreshPrivilegedSession, memberHasRole } from "../shared.js"
 
 export type PluginArchResourceKind = "config_object" | "connector_instance" | "marketplace" | "plugin"
 export type PluginArchRole = "viewer" | "editor" | "manager"
@@ -107,7 +107,8 @@ function ensureFreshPluginArchAdmin(context: PluginArchActorContext) {
     return
   }
 
-  throw new PluginArchAuthorizationError(403, "reauth", "For security, confirm it's you before changing workspace settings.", "fresh_auth_required")
+  const response = getFreshPrivilegedSessionRequiredResponse()
+  throw new PluginArchAuthorizationError(403, response.error, response.message, response.reason)
 }
 
 function roleSatisfies(role: PluginArchRole | null, required: PluginArchRole) {

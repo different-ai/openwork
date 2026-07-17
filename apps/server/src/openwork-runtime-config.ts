@@ -20,6 +20,7 @@ import {
   openworkCapabilitiesKnowledgePluginPath,
   openworkAnthropicAdaptiveThinkingPluginPath,
   openworkAnthropicToolSchemaPluginPath,
+  openworkOfficeAttachmentsPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import {
@@ -29,6 +30,7 @@ import {
   runtimeMcpMap,
   runtimePluginList,
   runtimeStorageDir,
+  type RuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 
 const OPENWORK_AGENT_PROMPT = `You are OpenWork.
@@ -87,6 +89,12 @@ export async function buildOpenworkRuntimeConfigObject(
   workspaceId?: string,
 ): Promise<Record<string, unknown>> {
   const runtimeConfig = config && workspaceId ? await readRuntimeOpencodeConfig(config, workspaceId) : {};
+  return buildOpenworkRuntimeConfigObjectFromSnapshot(runtimeConfig);
+}
+
+export function buildOpenworkRuntimeConfigObjectFromSnapshot(
+  runtimeConfig: RuntimeOpencodeConfig,
+): Record<string, unknown> {
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
   return {
     ...runtimeConfig,
@@ -103,6 +111,7 @@ export async function buildOpenworkRuntimeConfigObject(
       "opencode-chrome-devtools",
       openworkExtensionsPreviewPluginPath(),
       openworkCapabilitiesKnowledgePluginPath(),
+      openworkOfficeAttachmentsPluginPath(),
       openworkAnthropicAdaptiveThinkingPluginPath(),
       openworkAnthropicToolSchemaPluginPath(),
       ...runtimePluginList(runtimeConfig),
@@ -112,8 +121,26 @@ export async function buildOpenworkRuntimeConfigObject(
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, stableJsonValue(value[key])]),
+  );
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(stableJsonValue(value));
+}
+
 export async function buildOpenworkRuntimeConfig(config?: ServerConfig, workspaceId?: string): Promise<string> {
-  return JSON.stringify(await buildOpenworkRuntimeConfigObject(config, workspaceId));
+  return stableStringify(await buildOpenworkRuntimeConfigObject(config, workspaceId));
 }
 
 export function openworkRuntimeConfigFilePath(config: ServerConfig): string {

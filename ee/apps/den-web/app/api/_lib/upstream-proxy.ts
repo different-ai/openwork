@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 
+import { denWebLogger } from "../../../observability/runtime-logger";
+
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -13,8 +15,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 const REQUEST_ONLY_HEADERS = new Set(["host", "content-length"]);
 const RESPONSE_ONLY_HEADERS = new Set(["content-length", "content-encoding"]);
-
-const apiBase = readBaseUrlEnv("DEN_API_BASE");
+const SPOOFABLE_FORWARDING_HEADERS = new Set(["forwarded", "x-forwarded-host", "x-forwarded-prefix", "x-forwarded-proto"]);
 
 type ProxyOptions = {
   routePrefix: string;
@@ -29,6 +30,19 @@ function normalizeBaseUrl(value: string): string {
 function readBaseUrlEnv(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? normalizeBaseUrl(value) : null;
+}
+
+function requestPublicOrigin(request: NextRequest): URL {
+  const configuredOrigin = readBaseUrlEnv("DEN_WEB_PUBLIC_ORIGIN");
+  if (configuredOrigin) {
+    try {
+      return new URL(configuredOrigin);
+    } catch {
+      return new URL(request.url);
+    }
+  }
+
+  return new URL(request.url);
 }
 
 function normalizePathPrefix(value: string): string {
@@ -66,7 +80,7 @@ function buildTargetUrl(
 
 function shouldSkipRequestHeader(name: string): boolean {
   const normalized = name.toLowerCase();
-  return HOP_BY_HOP_HEADERS.has(normalized) || REQUEST_ONLY_HEADERS.has(normalized);
+  return HOP_BY_HOP_HEADERS.has(normalized) || REQUEST_ONLY_HEADERS.has(normalized) || SPOOFABLE_FORWARDING_HEADERS.has(normalized);
 }
 
 function shouldSkipResponseHeader(name: string): boolean {
@@ -74,13 +88,34 @@ function shouldSkipResponseHeader(name: string): boolean {
   return HOP_BY_HOP_HEADERS.has(normalized) || RESPONSE_ONLY_HEADERS.has(normalized) || normalized === "set-cookie";
 }
 
-function cloneRequestHeaders(request: NextRequest): Headers {
+async function injectActiveTraceContext(headers: Headers): Promise<void> {
+  try {
+    const { context, isSpanContextValid, trace, TraceFlags } = await import("@opentelemetry/api");
+    const spanContext = trace.getSpanContext(context.active());
+    if (spanContext === undefined || !isSpanContextValid(spanContext)) return;
+
+    const flags = (spanContext.traceFlags & TraceFlags.SAMPLED) === TraceFlags.SAMPLED ? "01" : "00";
+    headers.set("traceparent", `00-${spanContext.traceId}-${spanContext.spanId}-${flags}`);
+    if (spanContext.traceState !== undefined) {
+      headers.set("tracestate", spanContext.traceState.serialize());
+    }
+  } catch {
+    return;
+  }
+}
+
+async function cloneRequestHeaders(request: NextRequest, routePrefix: string): Promise<Headers> {
   const headers = new Headers();
   request.headers.forEach((value, name) => {
     if (!shouldSkipRequestHeader(name)) {
       headers.append(name, value);
     }
   });
+  const publicOrigin = requestPublicOrigin(request);
+  headers.set("x-forwarded-host", publicOrigin.host);
+  headers.set("x-forwarded-proto", publicOrigin.protocol.replace(/:$/, ""));
+  headers.set("x-forwarded-prefix", routePrefix);
+  await injectActiveTraceContext(headers);
   return headers;
 }
 
@@ -90,9 +125,7 @@ function copySetCookieHeaders(upstreamHeaders: Headers, responseHeaders: Headers
   }
 }
 
-function rewriteLocationHeader(location: string, request: NextRequest): string {
-  if (!apiBase) return location;
-
+function rewriteLocationHeader(location: string, request: NextRequest, apiBase: string): string {
   let parsedLocation: URL;
   try {
     parsedLocation = new URL(location);
@@ -115,12 +148,12 @@ function rewriteLocationHeader(location: string, request: NextRequest): string {
   return `${requestOrigin}${parsedLocation.pathname}${parsedLocation.search}${parsedLocation.hash}`;
 }
 
-function cloneResponseHeaders(request: NextRequest, upstream: Response, options: ProxyOptions): Headers {
+function cloneResponseHeaders(request: NextRequest, upstream: Response, options: ProxyOptions, apiBase: string): Headers {
   const headers = new Headers();
   upstream.headers.forEach((value, name) => {
     if (shouldSkipResponseHeader(name)) return;
     if (name.toLowerCase() === "location" && options.rewriteAuthLocationsToRequestOrigin) {
-      headers.append(name, rewriteLocationHeader(value, request));
+      headers.append(name, rewriteLocationHeader(value, request, apiBase));
       return;
     }
     headers.append(name, value);
@@ -138,6 +171,22 @@ function buildUpstreamErrorResponse(status: number, error: string): Response {
   });
 }
 
+function elapsedMs(startMs: number): number {
+  return Date.now() - startMs;
+}
+
+function upstreamOrigin(base: string): string {
+  try {
+    return new URL(base).origin;
+  } catch {
+    return "invalid";
+  }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
 async function readRequestBody(request: NextRequest): Promise<Uint8Array | null> {
   if (request.method === "GET" || request.method === "HEAD") return null;
   return new Uint8Array(await request.arrayBuffer());
@@ -148,22 +197,53 @@ export async function proxyUpstream(
   segments: string[] = [],
   options: ProxyOptions,
 ): Promise<Response> {
+  const startedAtMs = Date.now();
+  const apiBase = readBaseUrlEnv("DEN_API_BASE");
   if (!apiBase) {
+    denWebLogger.error("den-web upstream proxy misconfigured", {
+      route_prefix: options.routePrefix,
+      method: request.method,
+      duration_ms: elapsedMs(startedAtMs),
+      missing: "DEN_API_BASE",
+    });
     return buildUpstreamErrorResponse(503, "DEN_API_BASE must be configured.");
   }
 
   const targetPath = getTargetPath(request, segments, options.routePrefix);
   const targetUrl = buildTargetUrl(apiBase, request, targetPath, options.upstreamPathPrefix);
-  const upstream = await fetch(targetUrl, {
+  let upstream: Response;
+  try {
+    upstream = await fetch(targetUrl, {
+      method: request.method,
+      headers: await cloneRequestHeaders(request, options.routePrefix),
+      body: await readRequestBody(request),
+      redirect: "manual",
+    });
+  } catch (error) {
+    denWebLogger.error("den-web upstream proxy failed", {
+      route_prefix: options.routePrefix,
+      method: request.method,
+      upstream_origin: upstreamOrigin(apiBase),
+      upstream_path: `/${[normalizePathPrefix(options.upstreamPathPrefix ?? ""), targetPath].filter(Boolean).join("/")}`,
+      duration_ms: elapsedMs(startedAtMs),
+      error_name: errorName(error),
+    });
+    throw error;
+  }
+
+  denWebLogger.log(upstream.ok ? "info" : "warn", "den-web upstream proxy completed", {
+    route_prefix: options.routePrefix,
     method: request.method,
-    headers: cloneRequestHeaders(request),
-    body: await readRequestBody(request),
-    redirect: "manual",
+    upstream_origin: upstreamOrigin(apiBase),
+    upstream_path: `/${[normalizePathPrefix(options.upstreamPathPrefix ?? ""), targetPath].filter(Boolean).join("/")}`,
+    status: upstream.status,
+    duration_ms: elapsedMs(startedAtMs),
   });
+
   const shouldDropBody = request.method === "HEAD" || NO_BODY_STATUS.has(upstream.status);
 
   return new Response(shouldDropBody ? null : upstream.body, {
     status: upstream.status,
-    headers: cloneResponseHeaders(request, upstream, options),
+    headers: cloneResponseHeaders(request, upstream, options, apiBase),
   });
 }

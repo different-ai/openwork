@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import {
+  encodeOneDrivePath,
   escapeOneDriveSearchPath,
+  extractMicrosoftCalendarEvent,
   extractMicrosoftCalendarEvents,
   extractMicrosoftDriveItems,
   extractMicrosoftMailMessage,
   extractMicrosoftMailMessages,
+  extractMicrosoftTeamsChats,
+  extractMicrosoftTeamsMessages,
   MicrosoftGraphClient,
   MicrosoftGraphRequestError,
 } from "../src/capability-sources/microsoft-graph.js"
@@ -109,6 +113,34 @@ describe("Microsoft Graph response mapping", () => {
       },
     ])
   })
+
+  test("maps created calendar events and Teams chats/messages", () => {
+    expect(extractMicrosoftCalendarEvent({
+      id: "event_created",
+      subject: "Permission parity",
+      start: { dateTime: "2026-07-13T10:00:00", timeZone: "UTC" },
+      end: { dateTime: "2026-07-13T10:30:00", timeZone: "UTC" },
+    }).id).toBe("event_created")
+    expect(extractMicrosoftTeamsChats({ value: [{ id: "chat_1", topic: "Launch", chatType: "group" }] })).toEqual([{
+      id: "chat_1",
+      topic: "Launch",
+      chatType: "group",
+      webUrl: "",
+      lastUpdatedDateTime: "",
+    }])
+    expect(extractMicrosoftTeamsMessages({ value: [{
+      id: "teams_message_1",
+      createdDateTime: "2026-07-13T10:00:00Z",
+      body: { content: "Ready" },
+      from: { user: { displayName: "Ada", id: "user_1" } },
+    }] })).toEqual([{
+      id: "teams_message_1",
+      createdDateTime: "2026-07-13T10:00:00Z",
+      content: "Ready",
+      from: { name: "Ada", address: "user_1" },
+      webUrl: "",
+    }])
+  })
 })
 
 describe("MicrosoftGraphClient", () => {
@@ -178,6 +210,64 @@ describe("MicrosoftGraphClient", () => {
     expect(contentRequests).toBe(0)
   })
 
+  test("creates drafts and events, writes OneDrive text, and reads/sends Teams chat", async () => {
+    const requests: Request[] = []
+    const fetchMock: typeof fetch = async (input, init) => {
+      const request = new Request(input, init)
+      requests.push(request)
+      const url = new URL(request.url)
+      if (url.pathname.endsWith("/me/messages") && request.method === "POST") {
+        return json({ id: "draft_1", subject: "Draft", body: { contentType: "text", content: "Body" } }, 201)
+      }
+      if (url.pathname.endsWith("/me/events") && request.method === "POST") {
+        return json({
+          id: "event_1",
+          subject: "Review",
+          start: { dateTime: "2026-07-13T10:00:00Z", timeZone: "UTC" },
+          end: { dateTime: "2026-07-13T10:30:00Z", timeZone: "UTC" },
+        }, 201)
+      }
+      if (decodeURIComponent(url.pathname).endsWith("/me/drive/root:/OpenWork/Review notes.txt:/content")) {
+        return json({ id: "file_1", name: "Review notes.txt", file: { mimeType: "text/plain" } }, 201)
+      }
+      if (url.pathname.endsWith("/me/chats")) {
+        return json({ value: [{ id: "chat_1", topic: "Launch", chatType: "group" }] })
+      }
+      if (url.pathname.endsWith("/chats/chat_1/messages") && request.method === "GET") {
+        return json({ value: [{ id: "message_1", body: { content: "Ready" } }] })
+      }
+      if (url.pathname.endsWith("/chats/chat_1/messages") && request.method === "POST") {
+        return json({ id: "message_2", body: { content: "Ship it" } }, 201)
+      }
+      return new Response("not found", { status: 404 })
+    }
+    const client = new MicrosoftGraphClient({
+      accessToken: "member-token",
+      baseUrl: "https://graph.example.test/v1.0",
+      fetch: fetchMock,
+    })
+
+    expect((await client.createMailDraft({ to: ["ada@example.test"], subject: "Draft", body: "Body" })).id).toBe("draft_1")
+    expect((await client.createCalendarEvent({
+      subject: "Review",
+      start: "2026-07-13T10:00:00Z",
+      end: "2026-07-13T10:30:00Z",
+      timeZone: "UTC",
+    })).id).toBe("event_1")
+    expect((await client.putDriveTextFile({ path: "OpenWork/Review notes.txt", content: "Notes" })).id).toBe("file_1")
+    expect((await client.listTeamsChats(10))[0]?.id).toBe("chat_1")
+    expect((await client.listTeamsMessages("chat_1", 10))[0]?.id).toBe("message_1")
+    expect((await client.sendTeamsMessage("chat_1", "Ship it")).id).toBe("message_2")
+
+    expect(requests.every((request) => request.headers.get("authorization") === "Bearer member-token")).toBe(true)
+    expect(requests.map((request) => request.method)).toEqual(["POST", "POST", "PUT", "GET", "GET", "POST"])
+    expect(await requests[0]?.clone().json()).toMatchObject({
+      subject: "Draft",
+      toRecipients: [{ emailAddress: { address: "ada@example.test" } }],
+    })
+    expect(await requests[5]?.clone().json()).toEqual({ body: { contentType: "text", content: "Ship it" } })
+  })
+
   test("bounds streamed text when Graph omits size headers", async () => {
     const fetchMock: typeof fetch = async (input, init) => {
       const request = new Request(input, init)
@@ -236,4 +326,5 @@ describe("MicrosoftGraphClient", () => {
 
 test("OneDrive path search escapes OData apostrophes", () => {
   expect(escapeOneDriveSearchPath("Q3's plan")).toBe("Q3''s plan")
+  expect(encodeOneDrivePath("OpenWork/Review notes.txt")).toBe("OpenWork/Review%20notes.txt")
 })

@@ -1,26 +1,123 @@
 ---
 title: "Roadmap"
-description: "What OpenWork supports today and what is coming next."
+description: "The roadmap for the OpenWork desktop app, portable capabilities, hosted workspaces, and every surface where work happens."
 ---
 
-Sharing the upcoming items in our roadmap:
+Most people use OpenWork through the desktop app today. It is where you create a workspace, work with files, connect services, add skills, and customize how your agent works.
 
-Last updated: 04/16/2026
+What you create there should not stay trapped there. OpenWork Connect already brings the same capabilities into compatible agents. Next come persistent hosted workspaces, Slack, mobile, and more.
 
-## Live today
+Last updated: July 2026
 
-- Desktop app on Windows, Mac, and Linux.
-- Shared agents, skills, Agents, and MCPs.
-- Sign in with OpenAI Auth or other LLM providers.
-- Use any LLM, including LiteLLM and Cloudflare Gateaway.
-- Connect to a remote workspace or a cloud worker for long running tasks.
-- Cloud: Org Hub with provisioned Skills, Agents, and MCPs.
-- Cloud: RBAC, teams within an org, and the ability to deploy cloud workers.
+<Info>
+  **Live** means available today. **Partial** means supported with limitations. **Building** means active work. **Next** is the next product horizon. **Exploring** is a direction, not a commitment.
+</Info>
 
-## Roadmap
+## The desktop app is home
 
-- Better support for Windows.
-- Claude-compatible plugin marketplace.
-- Git-based provisioning for plugins, skills, and MCPs.
-- Automatic push-based provisioning and sync.
-- Advanced enterprise controls: RBAC, audit trails, SSO/SAML, MDM provisioning...
+The desktop app is the main OpenWork experience. It is where people work with files, run agents, manage sessions, create skills, connect services, and customize a workspace.
+
+| Capability | What it does | Status |
+| --- | --- | --- |
+| Desktop app for macOS, Windows, and Linux | A complete local-first workspace for agentic work. | Live |
+| Local files and workspaces | Work directly with the files and repositories already on your computer. | Live |
+| Skills, plugins, MCPs, and connected services | Customize what your agent knows and which systems it can use. | Live |
+| Organization-managed capabilities | Share approved skills and connections without rebuilding every setup by hand. | Live |
+| Artifacts | Preview, edit, download, and reopen generated files without leaving the desktop workspace. | Live |
+| Built-in browser control | Let agents navigate, click, type, and capture pages in a browser that stays visible inside the app. | Live |
+| Isolated sandbox workspaces | Run work in a separate Docker or microsandbox environment, with some platform and setup limitations today. | Partial |
+| Better organization for long-running work | Make active, waiting, and completed work easier to understand and return to. | Building |
+
+> The desktop app is where most people configure OpenWork today. Connect is how that configuration travels.
+
+## Your setup follows you
+
+What you configure in OpenWork should not stay trapped in one interface. OpenWork Connect brings the same capabilities into the agents you already use.
+
+| Capability | Status |
+| --- | --- |
+| OpenWork Connect MCP | Live |
+| Codex, Claude Code, Cursor, and OpenCode | Live |
+| Organization marketplaces and access controls | Live |
+| Shared and per-user authentication | Live |
+| Git-based publishing and automatic sync | Building |
+
+## MCP spec compliance
+
+OpenWork implements the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization) on both sides of the wire: as an MCP client (the desktop app and OpenWork Cloud connections) and as an MCP server with its own authorization server (OpenWork Cloud). Items marked Building or Next track the 2026-07-28 MCP specification release.
+
+| Capability | What it does | Status |
+| --- | --- | --- |
+| OAuth 2.1 self-discovery | Connect to a compliant MCP server or enterprise MCP gateway with just its URL: `WWW-Authenticate` challenge, Protected Resource Metadata (RFC 9728), Authorization Server Metadata (RFC 8414), and Dynamic Client Registration (RFC 7591). | Live |
+| PKCE and resource indicators | PKCE (S256) enforced on all authorization flows, with RFC 8707 resource indicators on authorization and token requests. | Live |
+| Silent session renewal | Short-lived access tokens backed by rotating refresh grants with replay protection, so connections renew without re-prompting for login. | Live |
+| Manual client credentials fallback | Enter a client ID and secret for authorization servers that do not offer Dynamic Client Registration. | Live |
+| `application_type` declaration (SEP-837) | Declare native or web application type during Dynamic Client Registration for compatibility with OIDC-backed enterprise authorization servers. | Building |
+| Client ID Metadata Documents (SEP-991) | A single, stable HTTPS client identity for OpenWork that enterprises allowlist once, replacing per-connection registrations and wildcard redirect allowlists. | Building |
+| Issuer-bound credentials (SEP-2352) | Key stored client credentials to the issuing authorization server and re-register automatically when a server's authorization server changes. | Building |
+| Authorization hardening (SEP-2468, SEP-2207) | Validate the `iss` parameter on authorization responses (RFC 9207) and adopt clarified refresh-token scope semantics. | Next |
+| URL-based client IDs in OpenWork Cloud | Accept Client ID Metadata Document identities in the OpenWork Cloud authorization server. | Next |
+
+> Following the spec is what makes OpenWork drop-in compatible with enterprise MCP gateways: paste the gateway URL, sign in with your identity provider, and every downstream system it fronts becomes available.
+
+## Central management
+
+OpenWork Cloud is the control plane for distributing capabilities, applying desktop policies, managing identity and access, and understanding adoption across the organization.
+
+| Capability | What it does | Status |
+| --- | --- | --- |
+| Desktop policies | Control custom providers, OpenCode Zen, workspaces, settings, extensions, built-in tools, and onboarding by organization, team, or member. | Live |
+| Members, teams, and roles | Invite people, organize teams, and decide who can manage capabilities and security settings. | Live |
+| Skills and plugin marketplaces | Publish skills, commands, MCP dependencies, and extensions once, then assign them to the right people and teams. | Live |
+| Anthropic-compatible plugins | Import Claude-compatible plugin and marketplace manifests and normalize their skills, MCPs, commands, and tools into OpenWork extensions. | Live |
+| SAML SSO | Connect an identity provider and provision organization members when they first sign in. | Live |
+| Usage and adoption telemetry | See active members, sessions, and task outcomes over time using event metadata, never prompts, code, or file contents. | Live |
+| OpenTelemetry coverage | Extend OTLP traces, metrics, and logs across OpenWork services and deployment paths. | Building |
+
+> Configure policies and access once in OpenWork Cloud. The desktop app and OpenWork Connect apply them for each member and team.
+
+## A workspace that stays on
+
+Hosted workspaces give a person or team a persistent filesystem and a predictable environment in the cloud. Files, dependencies, repository state, and running work remain available after the laptop closes.
+
+| Capability | Status |
+| --- | --- |
+| Remote workspace connections | Live |
+| Persistent hosted workspaces | Building |
+| Reproducible environments | Building |
+| Long-running and background tasks | Building |
+| Scheduled workflows | Next |
+| Continue from another surface | Next |
+
+> Start with the desktop app. Leave work running in a hosted workspace. Return from the desktop, Slack, mobile, or another surface.
+
+## OpenWork on every surface
+
+The desktop app remains the richest OpenWork experience. Other surfaces provide focused ways to reach the same capabilities, permissions, workspaces, and history.
+
+| Surface | Status |
+| --- | --- |
+| OpenWork desktop | Live |
+| Existing AI agents through MCP | Live |
+| Slack | Next |
+| Mobile | Next |
+| Email and messaging | Exploring |
+| Custom organization agents | Exploring |
+
+## Systems, not just conversations
+
+Persistent environments and portable authentication make it possible to turn successful agent work into reliable systems that can run again.
+
+| Capability | Status |
+| --- | --- |
+| Search and execute | Live |
+| Authenticated multi-step execution | Building |
+| Schedules and event triggers | Next |
+| Human approvals and resumable runs | Next |
+| Retries, logs, and run history | Next |
+
+## Help shape what comes next
+
+Tell us which workflow, workspace, or surface would make the biggest difference to how you work.
+
+[Share feedback](https://openworklabs.com/feedback?source=roadmap)

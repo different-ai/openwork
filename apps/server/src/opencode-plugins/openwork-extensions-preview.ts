@@ -2,14 +2,12 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { z } from "zod";
-
-type OpenCodeContext = {
-  agent?: string;
-  sessionID?: string;
-  messageID?: string;
-  directory?: string;
-  worktree?: string;
-};
+import {
+  OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
+  resolveOpenWorkExtensionDiscoveryInstruction,
+  type OpenCodeContext,
+  type OpenWorkEngineMcpStatusClient,
+} from "./openwork-extensions-preview-steering.js";
 
 type ExtensionActionPayload = {
   extensionId: string;
@@ -112,77 +110,6 @@ const sessionMessagesEnvelopeSchema = z.object({
   items: z.array(sessionMessageSchema),
 }).passthrough();
 
-const connectStateResponseSchema = z.object({
-  ok: z.literal(true),
-  schemaVersion: z.number(),
-  connectEnabled: z.boolean(),
-  cloudMcpPresent: z.boolean(),
-  googleWorkspace: z.object({
-    legacyConfigured: z.boolean(),
-  }).passthrough(),
-}).passthrough();
-
-export type OpenWorkExtensionConnectState = {
-  connectEnabled: boolean;
-  cloudMcpPresent: boolean;
-  googleWorkspace: {
-    legacyConfigured: boolean;
-  };
-};
-
-export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_extension_list_actions to inspect available extension actions, then call the matching action with openwork_extension_call.";
-
-export const OPENWORK_CLOUD_CONNECTION_INSTRUCTION =
-  "The OpenWork Cloud connection is active. For email (Gmail), calendar, Google Drive, and org-connected services such as Notion, Linear, Slack, etc., FIRST call openwork-cloud_search_capabilities with 2-4 keyword variants, then call openwork-cloud_execute_capability with an exact returned name. Do not claim these are unavailable without searching. OpenWork extensions (openwork_extension_list_actions / openwork_extension_call) remain available for other local actions such as image generation, but do NOT use them for Google Workspace, and never direct the user to Settings > Extensions for Google Workspace; use Settings > Connect. A successful search proves OpenWork Cloud itself is authorized, so never tell the user to reconnect OpenWork Cloud because a downstream connector failed. If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly: use Your Connections for the member, the organization Connections dashboard for an org admin, or the provider admin console for a provider-side failure. After the requested human fixes that connector, search again in the same task. Do not try browser_* or openwork_ui_* workarounds or repeat the same call unchanged; results are live, not cached, so unchanged retries return the same error.";
-
-export const OPENWORK_CONNECT_GOOGLE_WORKSPACE_DISCONNECTED_INSTRUCTION =
-  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} Google Workspace is not connected on this device; if the user asks for email, calendar, or Google Drive, tell them to connect their account in Settings > Connect (never Settings > Extensions).`;
-
-const CONNECT_STATE_CACHE_MS = 15_000;
-
-type OpenWorkFetch = (url: string, init?: RequestInit) => Promise<Response>;
-type Clock = () => number;
-type CachedOpenWorkExtensionDiscoveryInstruction = {
-  at: number;
-  instruction: string;
-};
-
-let cachedOpenWorkExtensionDiscoveryInstruction: CachedOpenWorkExtensionDiscoveryInstruction | null = null;
-
-export function composeOpenWorkExtensionDiscoveryInstruction(state: OpenWorkExtensionConnectState | null): string {
-  if (!state || !state.connectEnabled || state.googleWorkspace.legacyConfigured) {
-    return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
-  }
-  return state.cloudMcpPresent
-    ? OPENWORK_CLOUD_CONNECTION_INSTRUCTION
-    : OPENWORK_CONNECT_GOOGLE_WORKSPACE_DISCONNECTED_INSTRUCTION;
-}
-
-export function resetOpenWorkExtensionDiscoveryInstructionCacheForTests(): void {
-  cachedOpenWorkExtensionDiscoveryInstruction = null;
-}
-
-export async function resolveOpenWorkExtensionDiscoveryInstruction(fetcher: OpenWorkFetch = fetch, now: Clock = Date.now): Promise<string> {
-  const currentTime = now();
-  if (
-    cachedOpenWorkExtensionDiscoveryInstruction &&
-    currentTime - cachedOpenWorkExtensionDiscoveryInstruction.at < CONNECT_STATE_CACHE_MS
-  ) {
-    return cachedOpenWorkExtensionDiscoveryInstruction.instruction;
-  }
-
-  let instruction = OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
-  try {
-    instruction = composeOpenWorkExtensionDiscoveryInstruction(await fetchOpenWorkConnectState(fetcher));
-  } catch {
-    instruction = OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
-  }
-
-  cachedOpenWorkExtensionDiscoveryInstruction = { at: currentTime, instruction };
-  return instruction;
-}
-
 const OPENWORK_UI_CONTROL_INSTRUCTION =
   `IMPORTANT: You are running inside the OpenWork desktop app. When the user asks you to open settings, navigate the app, add providers, or control the OpenWork UI in any way, ALWAYS use the openwork_ui_* tools — NOT the browser_* tools. The browser tools are for external websites only. The openwork_ui_* tools control the app directly and are instant (one tool call).
 
@@ -229,6 +156,63 @@ type SessionSearchResult = {
   messageId?: string;
   messageIndex?: number;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalStringProperty(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const property = value[key];
+  return typeof property === "string" && property.trim().length > 0 ? property : undefined;
+}
+
+type OpenWorkEngineMcpStatusFunction = OpenWorkEngineMcpStatusClient["mcp"]["status"];
+
+function isOpenWorkEngineMcpStatusFunction(value: unknown): value is OpenWorkEngineMcpStatusFunction {
+  return typeof value === "function";
+}
+
+function readEngineMcpStatusClient(value: unknown): OpenWorkEngineMcpStatusClient | undefined {
+  const client = isRecord(value) ? value.client : undefined;
+  const mcp = isRecord(client) ? client.mcp : undefined;
+  const status = isRecord(mcp) ? mcp.status : undefined;
+  if (!isOpenWorkEngineMcpStatusFunction(status)) return undefined;
+  return { mcp: { status: (request) => status.call(mcp, request) } };
+}
+
+function normalizeOpenCodeContext(value: unknown): OpenCodeContext {
+  const nested = isRecord(value) && isRecord(value.context) ? value.context : value;
+  const agent = optionalStringProperty(nested, "agent");
+  const sessionID = optionalStringProperty(nested, "sessionID");
+  const messageID = optionalStringProperty(nested, "messageID");
+  const directory = optionalStringProperty(nested, "directory");
+  const worktree = optionalStringProperty(nested, "worktree");
+  const workspaceId = optionalStringProperty(nested, "workspaceId");
+  const workspaceID = optionalStringProperty(nested, "workspaceID");
+  return {
+    ...(agent ? { agent } : {}),
+    ...(sessionID ? { sessionID } : {}),
+    ...(messageID ? { messageID } : {}),
+    ...(directory ? { directory } : {}),
+    ...(worktree ? { worktree } : {}),
+    ...(workspaceId ? { workspaceId } : {}),
+    ...(workspaceID ? { workspaceID } : {}),
+  };
+}
+
+function mergeTransformInputWithFactoryContext(input: unknown, factoryContext: OpenCodeContext): unknown {
+  if (Object.keys(factoryContext).length === 0) return input;
+  const inputRecord = isRecord(input) ? input : {};
+  const inputContext = isRecord(inputRecord.context) ? inputRecord.context : {};
+  return {
+    ...inputRecord,
+    context: {
+      ...factoryContext,
+      ...inputContext,
+    },
+  };
+}
 
 const SESSION_SEARCH_DEFAULT_LIMIT = 10;
 const SESSION_SEARCH_DEFAULT_SCAN_LIMIT = 100;
@@ -309,23 +293,6 @@ async function serverGet(path: string): Promise<unknown> {
   const payload = await parseResponse(response);
   if (!response.ok) throw new Error(errorMessage(payload, "OpenWork server request failed"));
   return payload;
-}
-
-async function fetchOpenWorkConnectState(fetcher: OpenWorkFetch): Promise<OpenWorkExtensionConnectState> {
-  const { url, token } = requireOpenWorkServer();
-  const response = await fetcher(`${url}/experimental/connect/state`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const payload = await parseResponse(response);
-  if (!response.ok) throw new Error(errorMessage(payload, "OpenWork connect state request failed"));
-  const parsed = connectStateResponseSchema.parse(payload);
-  return {
-    connectEnabled: parsed.connectEnabled,
-    cloudMcpPresent: parsed.cloudMcpPresent,
-    googleWorkspace: {
-      legacyConfigured: parsed.googleWorkspace.legacyConfigured,
-    },
-  };
 }
 
 function collapseWhitespace(value: string): string {
@@ -689,16 +656,24 @@ function contextPayload(context: OpenCodeContext) {
     agent: context.agent,
     sessionId: context.sessionID,
     messageId: context.messageID,
+    workspaceId: context.workspaceId ?? context.workspaceID,
     directory: context.directory,
     worktree: context.worktree,
   };
 }
 
-export const OpenWorkExtensionsPreview = async () => {
+export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
   const uiControlEnabled = uiControlToolsEnabled();
+  const factoryContext = normalizeOpenCodeContext(factoryInput);
+  const engineMcpStatusClient = readEngineMcpStatusClient(factoryInput);
+  const engineMcpStatusDirectory = factoryContext.directory ?? factoryContext.worktree;
   return {
-  "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
-    output.system.push(await resolveOpenWorkExtensionDiscoveryInstruction());
+  "experimental.chat.system.transform": async (input: unknown, output: { system: string[] }) => {
+    const mergedInput = mergeTransformInputWithFactoryContext(input, factoryContext);
+    output.system.push(await resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
+      client: engineMcpStatusClient,
+      directory: engineMcpStatusDirectory,
+    }));
     output.system.push(OPENWORK_SESSION_MEMORY_INSTRUCTION);
     output.system.push(OPENWORK_BROWSER_INSTRUCTION);
     if (uiControlEnabled) output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);

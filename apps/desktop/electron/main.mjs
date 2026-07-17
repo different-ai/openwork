@@ -17,7 +17,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, net as electronNet, Notification as ElectronNotification, session, shell, systemPreferences } from "electron";
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
@@ -32,7 +31,19 @@ import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
+import {
+  createConnectLinkReplayGuard,
+  extractConnectExchange,
+  resolveConnectExchangeUrl,
+  verifyConnectLinkUrl,
+} from "./connect-link.mjs";
+import {
+  applyDesktopBootstrapBrandIcon,
+  persistConnectLinkBranding,
+} from "./connect-link-branding.mjs";
+import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
+import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import {
   applyWindowsTaskbarIcon,
   windowsBrandAppUserModelId,
@@ -46,6 +57,22 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
+// Electron 35 eagerly resolves every export in a named ESM import, including
+// safeStorage. Loading through CommonJS keeps safeStorage lazy so isolated demo
+// profiles do not show macOS's native keychain dialog before our switches run.
+const {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeImage,
+  nativeTheme,
+  net: electronNet,
+  Notification: ElectronNotification,
+  session,
+  shell,
+  systemPreferences,
+} = require("electron");
 const pty = require(["node", "pty"].join("-"));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
@@ -59,6 +86,14 @@ let currentDisplayAppName = APP_NAME;
 const APP_IDENTIFIER =
   process.env.OPENWORK_ELECTRON_APP_IDENTIFIER?.trim() ||
   (isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER);
+if (process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
+  // Fresh, isolated development profiles otherwise trigger macOS's native
+  // "Login" keychain prompt as soon as Chromium persists an authenticated
+  // cookie. That modal blocks the entire Electron main loop and makes the demo
+  // appear frozen. Production never sets this flag and continues to use the
+  // system keychain normally.
+  app.commandLine.appendSwitch("use-mock-keychain");
+}
 const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
 const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
 const DOCS_PAGE_URL = "https://openworklabs.com/docs";
@@ -117,7 +152,7 @@ function killTerminalsForWebContents(webContentsId) {
 // Electron install from the real Tauri app.
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_IDENTIFIER);
-if (app.isPackaged) {
+if (app.isPackaged && process.env.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1") {
   app.setAsDefaultProtocolClient(DESKTOP_PROTOCOL_SCHEME);
 }
 const userDataOverride = process.env.OPENWORK_ELECTRON_USERDATA?.trim();
@@ -895,6 +930,52 @@ const workspaceStore = createWorkspaceStore({
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
 });
 
+const connectLinkReplayGuard = createConnectLinkReplayGuard({
+  filePath: path.join(app.getPath("userData"), "connect-link-seen.json"),
+});
+
+/**
+ * @param {string} rawUrl
+ * @returns {import("@openwork/types/connect-link").ConnectLinkVerifyResult}
+ */
+function verifyConnectLink(rawUrl) {
+  return verifyConnectLinkUrl(String(rawUrl ?? ""), {
+    publicKeys: resolveConnectLinkPublicKeys(),
+    // http is refused everywhere except loopback targets in dev runs.
+    allowInsecureLoopback: isDevMode,
+  });
+}
+
+async function previewConnectLink(rawUrl) {
+  if (extractConnectExchange(rawUrl)) {
+    return resolveConnectExchangeUrl(rawUrl, {
+      mode: "preview",
+      fetcher: electronNet.fetch,
+      allowInsecureLoopback: isDevMode,
+    });
+  }
+  return verifyConnectLink(rawUrl);
+}
+
+async function acceptConnectLink(rawUrl) {
+  if (extractConnectExchange(rawUrl)) {
+    return resolveConnectExchangeUrl(rawUrl, {
+      mode: "exchange",
+      fetcher: electronNet.fetch,
+      allowInsecureLoopback: isDevMode,
+    });
+  }
+  return verifyConnectLink(rawUrl);
+}
+
+async function persistConnectLinkClaims(claims) {
+  return persistConnectLinkBranding(claims, {
+    persistBootstrap: (config) => workspaceStore.setDesktopBootstrapConfig(config),
+    applyBrandIconUrl: (iconUrl) => applyBrandIconUrl(iconUrl).catch((error) =>
+      brandIconFailure("connect-apply-failed", error)),
+  });
+}
+
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
   if (value === "win32") return "windows";
@@ -1596,6 +1677,37 @@ const desktopCommandHandlers = {
   "setDesktopBootstrapConfig": async (event, ...args) => {
       return workspaceStore.setDesktopBootstrapConfig(args[0] ?? {});
   },
+  "connectLinkVerify": async (event, ...args) => {
+      // Read-only check — parses + verifies the deep link, writes nothing.
+      // Replay is surfaced here too so an already-used link gets its refusal
+      // before the user is ever shown a confirmation.
+      const verified = await previewConnectLink(String(args[0] ?? ""));
+      if (verified.ok === false) return verified;
+      if (verified.transport === "signed" && await connectLinkReplayGuard.has(verified.claims.jti)) {
+        return { ok: false, code: "replayed", message: "This connect link was already used on this machine." };
+      }
+      return verified;
+  },
+  "connectLinkAccept": async (event, ...args) => {
+      // The renderer passes the raw URL back after the user confirmed; claims
+      // shaped in the renderer are never trusted (desktop-ipc trust boundary).
+      const verified = await acceptConnectLink(String(args[0] ?? ""));
+      if (verified.ok === false) return verified;
+      if (verified.transport === "exchange") {
+        const config = await persistConnectLinkClaims(verified.claims);
+        return { ok: true, config };
+      }
+      if (await connectLinkReplayGuard.has(verified.claims.jti)) {
+        return { ok: false, code: "replayed", message: "This connect link was already used on this machine." };
+      }
+      // Consume before mutation. If the replay ledger cannot be persisted,
+      // fail closed and leave the existing bootstrap untouched.
+      if (!(await connectLinkReplayGuard.remember(verified.claims.jti))) {
+        return { ok: false, code: "replayed", message: "This connect link was already used on this machine." };
+      }
+      const config = await persistConnectLinkClaims(verified.claims);
+      return { ok: true, config };
+  },
   "nukeOpenworkAndOpencodeConfigAndExit": async (event, ...args) => {
       await rm(app.getPath("userData"), { recursive: true, force: true });
       app.exit(0);
@@ -1897,14 +2009,26 @@ const desktopCommandHandlers = {
       const url = String(args[0] ?? "").trim();
       const init = args[1] ?? {};
       if (!url) throw new Error("URL is required.");
-      const timeoutMs = Number(init.timeoutMs);
-      const response = await electronNet.fetch(url, {
+      /** @type {RequestInit} */
+      const requestInit = {
         method: typeof init.method === "string" ? init.method : undefined,
         headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
         body: typeof init.body === "string" ? init.body : undefined,
-        signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
         credentials: "omit",
         cache: "no-store",
+      };
+      if (init.agentContextDiagnostics && typeof init.agentContextDiagnostics === "object") {
+        return fetchAgentContextDiagnosticsResponse(
+          (input, fetchInit) => electronNet.fetch(input, fetchInit),
+          url,
+          requestInit,
+          init.agentContextDiagnostics.deadlineAtMs,
+        );
+      }
+      const timeoutMs = Number(init.timeoutMs);
+      const response = await electronNet.fetch(url, {
+        ...requestInit,
+        signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
       });
       return {
         status: response.status,
@@ -2162,7 +2286,7 @@ ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
 });
 ipcMain.handle("openwork:shell:relaunch", async () => {
   app.relaunch();
-  app.exit(0);
+  app.quit();
 });
 ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
 ipcMain.handle("openwork:system:microphoneStatus", async () => {
@@ -2261,6 +2385,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     installMediaPermissionHandlers(session, () => mainWindow);
+    await workspaceStore.importBundledDesktopBootstrapConfigIfPreferred();
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
     currentDisplayAppName = bootstrapConfig.brandAppName?.slice(0, 64) || APP_NAME;
     app.setName(currentDisplayAppName);
@@ -2268,8 +2393,8 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
-    if (process.platform === "win32" && bootstrapConfig.brandIconUrl) {
-      await applyBrandIconUrl(bootstrapConfig.brandIconUrl);
+    if (process.platform !== "linux") {
+      await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }
     applicationMenu.install();
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
@@ -2288,6 +2413,9 @@ if (!app.requestSingleInstanceLock()) {
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();
+    if (process.platform === "linux") {
+      await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
+    }
     win.webContents.on("did-finish-load", () => {
       flushPendingDeepLinks();
     });

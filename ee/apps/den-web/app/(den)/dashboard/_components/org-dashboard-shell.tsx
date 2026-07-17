@@ -308,13 +308,21 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         ],
       }
     : null;
+  // OpenWork Models are a hosted OpenWork Cloud offering; self-hosted
+  // (single-org) deployments only manage their own LLM providers. Default
+  // hidden until the runtime config confirms a hosted (multi-org) deployment.
+  const showOpenWorkModels = runtimeConfigLoaded && runtimeConfig.orgMode === "multi_org";
   const modelsGroup: DashboardNavItem | null = access.isAdmin && activeOrg
     ? {
-        href: getInferenceRoute(activeOrg.slug),
+        href: showOpenWorkModels
+          ? getInferenceRoute(activeOrg.slug)
+          : getCustomLlmProvidersRoute(activeOrg.slug),
         label: "Models",
         icon: Sparkles,
         children: [
-          { href: getInferenceRoute(activeOrg.slug), label: "OpenWork Models" },
+          ...(showOpenWorkModels
+            ? [{ href: getInferenceRoute(activeOrg.slug), label: "OpenWork Models" }]
+            : []),
           { href: getCustomLlmProvidersRoute(activeOrg.slug), label: "LLM Providers" },
         ],
       }

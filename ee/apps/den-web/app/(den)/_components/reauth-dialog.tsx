@@ -5,12 +5,8 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
 import { DenNotice } from "./ui/notice";
-import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider } from "../_lib/den-flow";
+import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../_lib/den-flow";
 import { type DenOrgContext, getRequireSsoFromMetadata } from "../_lib/den-org";
-
-function getCurrentUrl() {
-  return typeof window === "undefined" ? "/" : window.location.href;
-}
 
 function getSocialLabel(provider: SocialAuthProvider) {
   return provider === "google" ? "Google" : "GitHub";
@@ -112,6 +108,7 @@ export function ReauthDialog({
         return;
       }
       stopPopupWatcher();
+      setError("The sign-in window was closed before confirmation. Try again when you're ready.");
       setBusy(false);
     }, 500);
   }
@@ -215,7 +212,7 @@ export function ReauthDialog({
   async function submitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.email) {
-      setError("Confirm it's you to continue.");
+      setError(WORKSPACE_REAUTH_SECURITY_MESSAGE);
       return;
     }
 
@@ -243,11 +240,16 @@ export function ReauthDialog({
 
   async function continueSocial(provider: SocialAuthProvider) {
     const popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
+    if (!popup) {
+      setError("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
-      const callbackURL = popup ? getReauthCompleteUrl(nonce) : getCurrentUrl();
-      const errorCallbackURL = popup ? getReauthCompleteUrl(nonce, true) : callbackURL;
+      const callbackURL = getReauthCompleteUrl(nonce);
+      const errorCallbackURL = getReauthCompleteUrl(nonce, true);
       const { response, payload } = await requestJson("/api/auth/sign-in/social", {
         method: "POST",
         body: JSON.stringify({ provider, callbackURL, errorCallbackURL }),
@@ -267,11 +269,6 @@ export function ReauthDialog({
         return;
       }
 
-      if (!popup) {
-        window.location.assign(redirectUrl);
-        return;
-      }
-
       popup.location.href = redirectUrl;
       startPopupWatcher(popup);
     } catch (nextError) {
@@ -288,17 +285,17 @@ export function ReauthDialog({
     }
 
     const popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
+    if (!popup) {
+      setError("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
       const nextUrl = new URL(ssoUrl, window.location.origin);
-      nextUrl.searchParams.set("callbackURL", popup ? getReauthCompleteUrl(nonce) : getCurrentUrl());
+      nextUrl.searchParams.set("callbackURL", getReauthCompleteUrl(nonce));
       nextUrl.searchParams.set("loginHint", user.email);
-
-      if (!popup) {
-        window.location.assign(nextUrl.toString());
-        return;
-      }
 
       popup.location.href = nextUrl.toString();
       startPopupWatcher(popup);
@@ -339,10 +336,10 @@ export function ReauthDialog({
           <div className="grid gap-2 pr-8">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Security check</p>
             <h2 id="reauth-dialog-title" className="text-[22px] font-semibold tracking-[-0.03em] text-slate-950">
-              Confirm it's you to continue
+              {WORKSPACE_REAUTH_SECURITY_MESSAGE}
             </h2>
             <p className="text-[14px] leading-6 text-slate-600">
-              Changing workspace settings requires a recent sign-in. OpenWork retries the pending action automatically after you confirm.
+              OpenWork retries the pending action automatically after you confirm.
             </p>
           </div>
         </div>

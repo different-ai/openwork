@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { HubSkillItem } from "./types.js";
 import { ApiError } from "./errors.js";
 import { parseFrontmatter } from "./frontmatter.js";
+import { externalFetch } from "./server-fetch.js";
 import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
 import { projectSkillsDir } from "./workspace-files.js";
@@ -32,7 +33,7 @@ function hubRawBase(repo: HubRepo) {
 }
 
 async function fetchJson(url: string): Promise<any> {
-  const res = await fetch(url, {
+  const res = await externalFetch(url, {
     headers: {
       Accept: "application/vnd.github+json",
       "User-Agent": "openwork-server",
@@ -46,7 +47,7 @@ async function fetchJson(url: string): Promise<any> {
 }
 
 async function fetchText(url: string): Promise<string> {
-  const res = await fetch(url, {
+  const res = await externalFetch(url, {
     headers: {
       Accept: "text/plain",
       "User-Agent": "openwork-server",
@@ -230,7 +231,7 @@ export async function installHubSkill(
     }
 
     await mkdir(dirname(destPath), { recursive: true });
-    const res = await fetch(`${rawBase}/${file.path}`, {
+    const res = await externalFetch(`${rawBase}/${file.path}`, {
       headers: { "User-Agent": "openwork-server" },
     });
     if (!res.ok) {

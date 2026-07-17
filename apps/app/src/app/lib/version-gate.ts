@@ -4,7 +4,18 @@
 // so they're reusable from any React feature site once the updater flow
 // gets wired.
 
-import { createDenClient, readDenSettings, type DenDesktopConfig } from "./den";
+import {
+  createDenClient,
+  readDenSettings,
+  type DenAppVersionMetadata,
+  type DenDesktopConfig,
+} from "./den";
+
+declare global {
+  interface Window {
+    __openworkReadDesktopVersionMetadataEval?: () => DenAppVersionMetadata | Promise<DenAppVersionMetadata>;
+  }
+}
 
 type ParsedVersion = {
   release: number[];
@@ -67,6 +78,11 @@ function comparePrereleaseIdentifiers(left: string[], right: string[]): number {
 
 function releasePart(value: string): number[] | null {
   return parseComparableVersion(value)?.release ?? null;
+}
+
+function normalizeStableDesktopVersion(value: string): string | null {
+  const normalized = value.trim().replace(/^v/i, "");
+  return /^\d+\.\d+\.\d+$/.test(normalized) ? normalized : null;
 }
 
 /**
@@ -161,14 +177,111 @@ function isWithinOnePatchAhead(updateVersion: string, maxVersion: string): boole
 
 async function readDenLatestAppVersion(): Promise<string | null> {
   try {
-    const settings = readDenSettings();
-    const token = settings.authToken?.trim() ?? "";
-    const client = createDenClient({
-      baseUrl: settings.baseUrl,
-      ...(token ? { token } : {}),
-    });
-    const metadata = await client.getAppVersionMetadata();
+    const metadata = await readFreshDenAppVersionMetadata();
     return metadata.latestAppVersion;
+  } catch {
+    return null;
+  }
+}
+
+export async function readFreshDenAppVersionMetadata(): Promise<DenAppVersionMetadata> {
+  if (import.meta.env.DEV && typeof window !== "undefined" && window.__openworkReadDesktopVersionMetadataEval) {
+    return window.__openworkReadDesktopVersionMetadataEval();
+  }
+  const settings = readDenSettings();
+  const token = settings.authToken?.trim() ?? "";
+  return createDenClient({
+    baseUrl: settings.baseUrl,
+    ...(token ? { token } : {}),
+  }).getAppVersionMetadata();
+}
+
+export type StableDesktopUpdateSelection =
+  | { kind: "update"; targetVersion: string; latestPublishedVersion: string }
+  | { kind: "blocked"; latestPublishedVersion: string }
+  | { kind: "current"; latestPublishedVersion: string };
+
+/**
+ * Select the highest stable release that is both published and approved.
+ * The explicit Den inventory is the trust boundary: stored policy entries
+ * that do not correspond to a published updater manifest are never targeted.
+ */
+export function selectStableDesktopUpdate(input: {
+  currentVersion: string;
+  metadata: DenAppVersionMetadata;
+  desktopConfig: DenDesktopConfig | null | undefined;
+}): StableDesktopUpdateSelection | null {
+  const currentVersion = normalizeStableDesktopVersion(input.currentVersion);
+  if (!currentVersion) return null;
+
+  const publishedVersions = [...new Set(input.metadata.publishedDesktopVersions.flatMap((version) => {
+    const normalized = normalizeStableDesktopVersion(version);
+    if (!normalized) return [];
+    const atOrAboveMinimum = compareVersions(normalized, input.metadata.minAppVersion);
+    const atOrBelowLatest = compareVersions(normalized, input.metadata.latestAppVersion);
+    return atOrAboveMinimum !== null && atOrAboveMinimum >= 0 && atOrBelowLatest !== null && atOrBelowLatest <= 0
+      ? [normalized]
+      : [];
+  }))].sort((left, right) => compareVersions(left, right) ?? 0);
+  const latestPublishedVersion = publishedVersions.at(-1);
+  if (!latestPublishedVersion) return null;
+
+  const restrictedVersions = Array.isArray(input.desktopConfig?.allowedDesktopVersions)
+    ? input.desktopConfig.allowedDesktopVersions
+    : null;
+  const approvedPublishedVersions = restrictedVersions === null
+    ? publishedVersions
+    : publishedVersions.filter((publishedVersion) =>
+        restrictedVersions.some((allowedVersion) => compareVersions(publishedVersion, allowedVersion) === 0),
+      );
+  const targetVersion = approvedPublishedVersions
+    .filter((version) => compareVersions(version, currentVersion) === 1)
+    .at(-1);
+
+  if (targetVersion) {
+    return { kind: "update", targetVersion, latestPublishedVersion };
+  }
+
+  if (compareVersions(latestPublishedVersion, currentVersion) === 1 && restrictedVersions !== null) {
+    return { kind: "blocked", latestPublishedVersion };
+  }
+
+  return { kind: "current", latestPublishedVersion };
+}
+
+export async function resolveFreshStableDesktopUpdate(input: {
+  currentVersion: string;
+  refreshDesktopConfig: () => Promise<DenDesktopConfig>;
+  readMetadata?: () => Promise<DenAppVersionMetadata>;
+}): Promise<StableDesktopUpdateSelection | null> {
+  const [desktopConfig, metadata] = await Promise.all([
+    input.refreshDesktopConfig(),
+    (input.readMetadata ?? readFreshDenAppVersionMetadata)(),
+  ]);
+  return selectStableDesktopUpdate({
+    currentVersion: input.currentVersion,
+    metadata,
+    desktopConfig,
+  });
+}
+
+export async function resolveAutomaticStableDesktopUpdate(input: {
+  currentVersion: string;
+  latestVersion: string;
+  desktopConfig: DenDesktopConfig | null | undefined;
+  readMetadata?: () => Promise<DenAppVersionMetadata>;
+}): Promise<string | null> {
+  if (!Array.isArray(input.desktopConfig?.allowedDesktopVersions)) return null;
+  if (isUpdateAllowedByDesktopConfig(input.latestVersion, input.desktopConfig)) return null;
+
+  try {
+    const metadata = await (input.readMetadata ?? readFreshDenAppVersionMetadata)();
+    const selection = selectStableDesktopUpdate({
+      currentVersion: input.currentVersion,
+      metadata,
+      desktopConfig: input.desktopConfig,
+    });
+    return selection?.kind === "update" ? selection.targetVersion : null;
   } catch {
     return null;
   }

@@ -311,7 +311,7 @@ export default {
             await clickSelectorWithMouse(ctx, COPY_INSTALL_LINK_SELECTOR, "copy install link button");
             await ctx.waitFor(`(() => {
               const dialog = document.querySelector('[role="dialog"]');
-              return Boolean(dialog && dialog.textContent.includes("Confirm it's you to continue"));
+              return Boolean(dialog && dialog.textContent.includes(${JSON.stringify(RAW_REAUTH_MESSAGE)}));
             })()`, { timeoutMs: 30_000, label: "reauth dialog" });
           },
           assert: async () => {
@@ -330,7 +330,7 @@ export default {
             recordAssertion(
               ctx,
               "The reauth dialog appears for the stale privileged action",
-              actual.dialogVisible === true && actual.dialogText.includes("Confirm it's you to continue"),
+              actual.dialogVisible === true && actual.dialogText.includes(RAW_REAUTH_MESSAGE),
               actual,
             );
             recordAssertion(
@@ -342,7 +342,7 @@ export default {
           },
           screenshot: {
             name: "reauth-security-check-dialog",
-            requireText: ["Confirm it's you to continue"],
+            requireText: [RAW_REAUTH_MESSAGE],
           },
         });
       },

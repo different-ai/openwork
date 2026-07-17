@@ -15,6 +15,7 @@ type OpenApiDocument = {
 let isMcpOperationAllowed: typeof import("../src/mcp/policy.js")["isMcpOperationAllowed"]
 let isAgentApiKeyConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentApiKeyConnection"]
 let isAgentOAuthClientConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentOAuthClientConnection"]
+let isAgentPluginMcpSecretSetup: typeof import("../src/routes/org/plugin-system/routes.js")["isAgentPluginMcpSecretSetup"]
 let buildMcpCatalog: typeof import("../src/mcp/catalog.js")["buildMcpCatalog"]
 let searchCapabilities: typeof import("../src/mcp/search.js")["searchCapabilities"]
 let searchCapabilitySourceFilter: typeof import("../src/mcp/search.js")["searchCapabilitySourceFilter"]
@@ -45,6 +46,7 @@ beforeAll(async () => {
   const mcpConnections = await import("../src/routes/org/mcp-connections.js")
   isAgentApiKeyConnection = mcpConnections.isAgentApiKeyConnection
   isAgentOAuthClientConnection = mcpConnections.isAgentOAuthClientConnection
+  isAgentPluginMcpSecretSetup = (await import("../src/routes/org/plugin-system/routes.js")).isAgentPluginMcpSecretSetup
   const app = (await import("../src/app.js")).default
   const response = await app.request("http://127.0.0.1:8790/openapi.json")
   document = await response.json()
@@ -68,12 +70,24 @@ describe("agent-configurable org connections policy", () => {
   test("discovery surfaces the agent needs are readable", () => {
     expect(allowed("getV1McpConnections")).toBe(true)
     expect(allowed("getV1McpConnectionsPresets")).toBe(true)
+    expect(allowed("getV1McpConnectionsByConnectionIdTools")).toBe(true)
+  })
+
+  test("manual MCP tool execution stays outside the agent API catalog", () => {
+    const operation = document.paths["/v1/mcp-connections/{connectionId}/tools/call"]?.post
+    expect(operation).toBeDefined()
+    expect(operation ? isMcpOperationAllowed({
+      method: "post",
+      path: "/v1/mcp-connections/{connectionId}/tools/call",
+      operation,
+    }) : true).toBe(false)
   })
 
   test("agent catalog search discovers member list and admin create mcp-connection operations", () => {
     const catalog = buildMcpCatalog(document)
     const memberMatches = searchCapabilities(catalog, "list external mcp connections", 10)
     const adminMatches = searchCapabilities(catalog, "register external mcp connection", 10)
+    const toolCatalogMatches = searchCapabilities(catalog, "inspect tools exposed by an external mcp connection", 10)
 
     expect(memberMatches).toContainEqual(expect.objectContaining({
       name: "getMcpConnections",
@@ -85,6 +99,63 @@ describe("agent-configurable org connections policy", () => {
       method: "POST",
       path: "/v1/mcp-connections",
       hasBody: true,
+      bodySchema: expect.objectContaining({
+        type: "object",
+        properties: expect.objectContaining({
+          name: expect.objectContaining({ type: "string" }),
+          url: expect.objectContaining({ type: "string" }),
+        }),
+        required: expect.arrayContaining(["name", "url"]),
+      }),
+    }))
+    expect(toolCatalogMatches).toContainEqual(expect.objectContaining({
+      method: "GET",
+      path: "/v1/mcp-connections/{connectionId}/tools",
+    }))
+  })
+
+  test("plugin MCP requirements are agent-configurable without exposing secret setup", () => {
+    expect(allowed("postV1PluginsByPluginIdMcpConnections")).toBe(true)
+    expect(document.paths["/v1/plugins/{pluginId}/mcp-requirements/configure"]).toBeUndefined()
+    const catalog = buildMcpCatalog(document)
+    expect(catalog.some((operation) => operation.path === "/v1/plugins/{pluginId}/mcp-connections")).toBe(true)
+    expect(searchCapabilities(catalog, "configure plugin mcp requirement per member oauth", 20)).toContainEqual(expect.objectContaining({
+      method: "POST",
+      path: "/v1/plugins/{pluginId}/mcp-connections",
+    }))
+  })
+
+  test("chat capability search discovers the Den GitHub marketplace import workflow", () => {
+    const catalog = buildMcpCatalog(document)
+    const previewMatches = searchCapabilities(catalog, "preview github plugin marketplace import", 10)
+    const importMatches = searchCapabilities(catalog, "add github plugin to marketplace", 10)
+    const readinessMatches = searchCapabilities(catalog, "resolved marketplace plugin readiness", 10)
+
+    expect(previewMatches).toContainEqual(expect.objectContaining({
+      method: "POST",
+      path: "/v1/plugins/import-mcps-from-github-url/preview",
+      hasBody: true,
+    }))
+    expect(importMatches).toContainEqual(expect.objectContaining({
+      method: "POST",
+      path: "/v1/plugins/import-mcps-from-github-url",
+      hasBody: true,
+      bodySchema: expect.objectContaining({
+        type: "object",
+        properties: expect.objectContaining({
+          access: expect.objectContaining({ type: "object" }),
+          authType: expect.objectContaining({ type: "string" }),
+          githubUrl: expect.objectContaining({ type: "string" }),
+          marketplaceId: expect.objectContaining({ type: "string" }),
+          selectedSkillKeys: expect.objectContaining({ type: "array" }),
+          selectedServerKeys: expect.objectContaining({ type: "array" }),
+        }),
+        required: expect.arrayContaining(["githubUrl", "marketplaceId"]),
+      }),
+    }))
+    expect(readinessMatches).toContainEqual(expect.objectContaining({
+      method: "GET",
+      path: "/v1/marketplaces/{marketplaceId}/resolved",
     }))
   })
 
@@ -125,5 +196,14 @@ describe("agent-configurable org connections policy", () => {
     expect(isAgentOAuthClientConnection({ oauthClient: { clientId: "client" }, sessionId: "normal_session" })).toBe(false)
     expect(isAgentOAuthClientConnection({ sessionId: "mcp_internal" })).toBe(false)
     expect(isAgentOAuthClientConnection({ oauthClient: null, sessionId: "mcp_internal" })).toBe(false)
+  })
+
+  test("plugin MCP secret setup is blocked for the internal agent principal", () => {
+    expect(isAgentPluginMcpSecretSetup({ oauthClient: { clientId: "client" }, sessionId: "mcp_internal" })).toBe(true)
+    expect(isAgentPluginMcpSecretSetup({ apiKey: "exa-key", sessionId: "mcp_internal" })).toBe(true)
+    expect(isAgentPluginMcpSecretSetup({ apiKey: "exa-key", sessionId: "normal_session" })).toBe(false)
+    expect(isAgentPluginMcpSecretSetup({ oauthClient: { clientId: "client" }, sessionId: "normal_session" })).toBe(false)
+    expect(isAgentPluginMcpSecretSetup({ apiKey: " ", sessionId: "mcp_internal" })).toBe(false)
+    expect(isAgentPluginMcpSecretSetup({ sessionId: "mcp_internal" })).toBe(false)
   })
 })

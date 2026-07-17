@@ -3,12 +3,16 @@ import {
   addRequestedMcpClientScopes,
   DEN_MCP_DEFAULT_CLIENT_SCOPES,
   DEN_MCP_DEFAULT_TOKEN_SCOPES,
+  DEN_MCP_REQUESTED_SCOPE,
+  DEN_MCP_REQUESTED_SCOPES,
   normalizeMcpOAuthClientScope,
   resolveMcpTokenScopes,
 } from "../src/mcp/scopes.js"
 
-test("MCP OAuth client defaults include read and write access", () => {
-  expect(DEN_MCP_DEFAULT_CLIENT_SCOPES).toEqual(["openid", "profile", "email", "mcp:read", "mcp:write"])
+test("MCP OAuth requested scopes include read, write, and offline refresh access", () => {
+  expect(DEN_MCP_REQUESTED_SCOPES).toEqual(["mcp:read", "mcp:write", "offline_access"])
+  expect(DEN_MCP_REQUESTED_SCOPE).toBe("mcp:read mcp:write offline_access")
+  expect(DEN_MCP_DEFAULT_CLIENT_SCOPES).toEqual(DEN_MCP_REQUESTED_SCOPES)
 })
 
 test("first-party MCP token mint defaults to read-only", () => {

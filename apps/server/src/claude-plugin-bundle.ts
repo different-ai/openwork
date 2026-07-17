@@ -13,6 +13,7 @@
 import { ApiError } from "./errors.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import type { CloudPluginResolved } from "./cloud-plugins.js";
+import { externalFetch } from "./server-fetch.js";
 
 export type ClaudePluginSource = {
   owner: string;
@@ -97,7 +98,7 @@ export function parseClaudePluginSource(input: string): ClaudePluginSource {
 }
 
 async function fetchGithubJson(url: string): Promise<unknown> {
-  const response = await fetch(url, {
+  const response = await externalFetch(url, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": "openwork-server" },
     signal: AbortSignal.timeout(20_000),
   });
@@ -109,7 +110,7 @@ async function fetchGithubJson(url: string): Promise<unknown> {
 }
 
 async function fetchGithubText(url: string): Promise<string> {
-  const response = await fetch(url, {
+  const response = await externalFetch(url, {
     headers: { Accept: "text/plain", "User-Agent": "openwork-server" },
     signal: AbortSignal.timeout(20_000),
   });

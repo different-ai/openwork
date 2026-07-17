@@ -11,6 +11,7 @@ import {
 } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, encryptedTextColumn } from "../../columns"
 import { MemberTable, OrganizationTable } from "../org"
+import { ConfigObjectTable, PluginTable } from "./plugin-arch"
 
 /**
  * Generic credential layer for "bring your own OAuth client" integrations.
@@ -91,6 +92,7 @@ export const ConnectedAccountTable = mysqlTable(
      * tokens are saved.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
+    credentialHealth: json("credential_health").$type<ExternalMcpCredentialHealth>(),
     connectedAt: timestamp("connected_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()
@@ -112,6 +114,33 @@ export type ExternalMcpAuthType = (typeof externalMcpAuthTypeValues)[number]
 export const externalMcpCredentialModeValues = ["shared", "per_member"] as const
 export type ExternalMcpCredentialMode = (typeof externalMcpCredentialModeValues)[number]
 
+export const externalMcpOAuthCallbackModeValues = ["shared-v1", "isolated-v1", "legacy-v1"] as const
+export type ExternalMcpOAuthCallbackMode = (typeof externalMcpOAuthCallbackModeValues)[number]
+
+export type ExternalMcpOAuthConfiguration = {
+  version: 1
+  authorizationServerIssuer: string | null
+  requestedScopes: string[]
+  callbackMode: ExternalMcpOAuthCallbackMode
+  /**
+   * SDK-owned discovery state. Den validates it before reuse and never exposes
+   * it through the connection API. Keeping it with the connection allows
+   * issuer/resource discovery to be cached before a client registration exists.
+   */
+  discovery?: Record<string, unknown>
+}
+
+export type ExternalMcpCredentialHealth = {
+  version: 1
+  status: "ready" | "reconnect_required"
+  reason:
+    | "authorization_rejected"
+    | "credential_expired"
+    | "post_authorization_validation_failed"
+    | null
+  checkedAt: string
+}
+
 /**
  * "Add any MCP" — an org-level registration of a third-party MCP server.
  * This is what makes Notion (or anything else) just an example rather than a
@@ -130,6 +159,12 @@ export const ExternalMcpConnectionTable = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     url: varchar("url", { length: 2048 }).notNull(),
     authType: mysqlEnum("auth_type", externalMcpAuthTypeValues).notNull(),
+    /**
+     * Versioned OAuth policy for this MCP resource. Existing rows remain null
+     * and are classified lazily so manually registered legacy callbacks keep
+     * working until an administrator migrates them.
+     */
+    oauthConfiguration: json("oauth_configuration").$type<ExternalMcpOAuthConfiguration>(),
     /**
      * How the connection's credential relates to people:
      * - "shared": one org-level credential (this row's token columns, or
@@ -163,6 +198,13 @@ export const ExternalMcpConnectionTable = mysqlTable(
      * connect/callback. Cleared once tokens are saved.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
+    credentialHealth: json("credential_health").$type<ExternalMcpCredentialHealth>(),
+    /**
+     * Set when live discovery no longer matches the selected OAuth issuer.
+     * The mismatch remains fail-closed until an administrator explicitly
+     * confirms one of the issuers currently advertised by the resource.
+     */
+    oauthIssuerReviewRequiredAt: timestamp("oauth_issuer_review_required_at", { fsp: 3 }),
     connectedAt: timestamp("connected_at", { fsp: 3 }),
     createdByOrgMembershipId: denTypeIdColumn(
       "member",
@@ -199,6 +241,8 @@ export const ExternalMcpConnectionAccessGrantTable = mysqlTable(
       "externalMcpConnection",
       "external_mcp_connection_id",
     ).notNull(),
+    pluginMcpRequirementBindingId: denTypeIdColumn("pluginMcpRequirementBinding", "plugin_mcp_requirement_binding_id"),
+    sourceKey: varchar("source_key", { length: 64 }).notNull().default("direct"),
     orgMembershipId: denTypeIdColumn("member", "org_membership_id"),
     teamId: denTypeIdColumn("team", "team_id"),
     orgWide: boolean("org_wide").notNull().default(false),
@@ -211,16 +255,43 @@ export const ExternalMcpConnectionAccessGrantTable = mysqlTable(
   (table) => [
     index("emc_access_grant_organization_id").on(table.organizationId),
     index("emc_access_grant_connection_id").on(table.externalMcpConnectionId),
+    index("emc_access_grant_plugin_mcp_binding_id").on(table.pluginMcpRequirementBindingId),
     index("emc_access_grant_org_membership_id").on(table.orgMembershipId),
     index("emc_access_grant_team_id").on(table.teamId),
     uniqueIndex("emc_access_grant_connection_member").on(
       table.externalMcpConnectionId,
       table.orgMembershipId,
+      table.sourceKey,
     ),
     uniqueIndex("emc_access_grant_connection_team").on(
       table.externalMcpConnectionId,
       table.teamId,
+      table.sourceKey,
     ),
+  ],
+)
+
+export const PluginMcpRequirementBindingTable = mysqlTable(
+  "plugin_mcp_requirement_binding",
+  {
+    id: denTypeIdColumn("pluginMcpRequirementBinding", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    pluginId: denTypeIdColumn("plugin", "plugin_id").notNull(),
+    configObjectId: denTypeIdColumn("configObject", "config_object_id").notNull(),
+    serverName: varchar("server_name", { length: 255 }).notNull(),
+    externalMcpConnectionId: denTypeIdColumn("externalMcpConnection", "external_mcp_connection_id").notNull(),
+    requiredAuthType: mysqlEnum("required_auth_type", externalMcpAuthTypeValues),
+    connectionOwnedByPlugin: boolean("connection_owned_by_plugin").notNull().default(false),
+    createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("plugin_mcp_req_binding_organization_id").on(table.organizationId),
+    index("plugin_mcp_req_binding_plugin_id").on(table.pluginId),
+    index("plugin_mcp_req_binding_config_object_id").on(table.configObjectId),
+    index("plugin_mcp_req_binding_connection_id").on(table.externalMcpConnectionId),
+    uniqueIndex("plugin_mcp_req_binding_org_plugin_object_server").on(table.organizationId, table.pluginId, table.configObjectId, table.serverName),
   ],
 )
 
@@ -256,6 +327,7 @@ export const externalMcpConnectionRelations = relations(ExternalMcpConnectionTab
     references: [MemberTable.id],
   }),
   accessGrants: many(ExternalMcpConnectionAccessGrantTable),
+  pluginMcpRequirementBindings: many(PluginMcpRequirementBindingTable),
 }))
 
 export const externalMcpConnectionAccessGrantRelations = relations(ExternalMcpConnectionAccessGrantTable, ({ one }) => ({
@@ -273,6 +345,33 @@ export const externalMcpConnectionAccessGrantRelations = relations(ExternalMcpCo
   }),
   createdByOrgMembership: one(MemberTable, {
     fields: [ExternalMcpConnectionAccessGrantTable.createdByOrgMembershipId],
+    references: [MemberTable.id],
+  }),
+  pluginMcpRequirementBinding: one(PluginMcpRequirementBindingTable, {
+    fields: [ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId],
+    references: [PluginMcpRequirementBindingTable.id],
+  }),
+}))
+
+export const pluginMcpRequirementBindingRelations = relations(PluginMcpRequirementBindingTable, ({ one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [PluginMcpRequirementBindingTable.organizationId],
+    references: [OrganizationTable.id],
+  }),
+  plugin: one(PluginTable, {
+    fields: [PluginMcpRequirementBindingTable.pluginId],
+    references: [PluginTable.id],
+  }),
+  configObject: one(ConfigObjectTable, {
+    fields: [PluginMcpRequirementBindingTable.configObjectId],
+    references: [ConfigObjectTable.id],
+  }),
+  connection: one(ExternalMcpConnectionTable, {
+    fields: [PluginMcpRequirementBindingTable.externalMcpConnectionId],
+    references: [ExternalMcpConnectionTable.id],
+  }),
+  createdByOrgMembership: one(MemberTable, {
+    fields: [PluginMcpRequirementBindingTable.createdByOrgMembershipId],
     references: [MemberTable.id],
   }),
 }))

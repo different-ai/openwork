@@ -1,8 +1,6 @@
 export type InstallerConfig = {
   /** Organization-controlled display name. Signed app identity remains OpenWork. */
   appName: string
-  /** Exact standard desktop release bundled with this installer, when present. */
-  appVersion?: string | null
   clientName: string
   /** Den web origin — becomes `baseUrl` in desktop-bootstrap.json. */
   webUrl: string
@@ -10,8 +8,6 @@ export type InstallerConfig = {
   apiUrl: string
   /** Optional client logo (png/svg URL) shown in the installer UI. */
   logoUrl: string | null
-  /** Optional square app icon used for native desktop surfaces. */
-  iconUrl?: string | null
   requireSignin: boolean
 }
 

@@ -1,11 +1,11 @@
-# Cloud plugin MCP warnings
+# Cloud plugin MCP warning path retired
 
-This demo proves that marketplace plugins can bundle both skills and MCP servers, and that a bad MCP payload no longer disappears silently.
+This demo used to prove local marketplace import warnings. It now proves the retired path stays retired: Den marketplace plugins are shown as cloud-delivered, so malformed bundles cannot partially install local files from the desktop marketplace.
 
-1. I’m signed in to the local Acme cloud org and open the Extension Marketplace. Two fresh org plugins are visible side by side: one intentionally broken MCP bundle and one valid Linear MCP bundle.
+1. I’m signed in to the local Acme cloud org and open the Extension Marketplace. Two fresh org plugins are visible side by side: one intentionally broken MCP bundle and one valid Linear MCP bundle, both marked as running in the cloud.
 
-2. I install the broken bundle first. The skill still imports, but OpenWork now warns me that the Broken MCP component could not be installed because no server config with a url or command was found.
+2. I open the broken bundle first. The old Add action is gone, the row is Active · runs in cloud, and no local warning or partial skill import happens.
 
-3. I check the durable state after that warning. The skill is listed for this workspace, while the MCP settings page has no broken server row, so the app is honest about the partial install.
+3. I check durable local state after viewing that bundle. The broken skill was not installed and the MCP settings page has no broken server row, because viewing cloud-delivered marketplace content is non-destructive.
 
-4. I install the valid bundle next and return to MCP settings without reloading the engine. The Linear MCP appears in Your apps immediately, proving the valid remote server was installed and hot-synced.
+4. I open the valid bundle next. It also stays Active · runs in cloud with no Add action, and the Linear MCP is not written into local MCP settings from the marketplace UI.

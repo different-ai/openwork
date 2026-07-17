@@ -22,6 +22,7 @@ const PERMISSIONS_ONLY_FEATURES = ["calendarRead", "gmailDraft", "driveFile", "g
 const GOOGLE_WORKSPACE_CALLBACK_PATH = "/v1/oauth-providers/google-workspace/connect/callback";
 const CONNECTION_PREFIX = "slack-oauth-ux-";
 const CONNECTION_NAME = `${CONNECTION_PREFIX}${RUN_TAG}`;
+const SECURITY_MESSAGE = "For security, confirm it's you before changing workspace settings.";
 
 const state = {
   adminSession: null,
@@ -364,13 +365,12 @@ function reauthReadyScript() {
   return `(() => {
     const dialog = document.querySelector('[role="dialog"]');
     const text = dialog?.textContent ?? '';
-    const helperOk = text.includes('Changing workspace settings requires a recent sign-in')
-      && text.includes('OpenWork retries the pending action automatically');
+    const helperOk = text.includes('OpenWork retries the pending action automatically');
     const hasGoogle = text.includes('Continue with Google');
     const hasPassword = text.includes('Verify password');
     const hasSso = text.includes('Continue with organization SSO');
     return Boolean(dialog)
-      && text.includes("Confirm it's you to continue")
+      && text.includes(${JSON.stringify(SECURITY_MESSAGE)})
       && helperOk
       && (${JSON.stringify(expectsGoogle)} ? hasGoogle : (hasGoogle || hasPassword || hasSso));
   })()`;
@@ -476,7 +476,7 @@ async function clickCreateConnectionAndHandleReauth(ctx) {
   const stateName = await ctx.waitFor(`(() => {
     const text = document.body.innerText;
     if (text.includes('Almost done')) return 'created';
-    if (text.includes("Confirm it's you to continue")) return 'reauth';
+    if (text.includes(${JSON.stringify(SECURITY_MESSAGE)})) return 'reauth';
     return '';
   })()`, { timeoutMs: 30_000, label: "redirect handoff or reauth" });
   if (stateName === "reauth") {
@@ -548,8 +548,7 @@ export default {
           assert: async () => {
             const actual = await ctx.eval(reauthDialogStateScript());
             ctx.assert(actual.visible === true, "Reauth dialog should be visible.");
-            ctx.assert(actual.text.includes("Confirm it's you to continue"), `Reauth title missing: ${actual.text}`);
-            ctx.assert(actual.text.includes("Changing workspace settings requires a recent sign-in"), `Reauth helper missing recent sign-in copy: ${actual.text}`);
+            ctx.assert(actual.text.includes(SECURITY_MESSAGE), `Reauth guidance missing: ${actual.text}`);
             ctx.assert(actual.text.includes("OpenWork retries the pending action automatically"), `Reauth helper missing automatic retry copy: ${actual.text}`);
             if (state.authProviders.includes("google")) {
               ctx.assert(actual.hasGoogle === true, `Seeded Google auth provider should expose Continue with Google. Providers: ${JSON.stringify(state.authProviders)}. Dialog: ${actual.text}`);
@@ -561,9 +560,9 @@ export default {
             name: "google-workspace-reauth-security-check",
             claim: "The security check explains why it appeared and gives a clear way to continue before retrying the save.",
             requireText: state.authProviders.includes("google")
-              ? ["Confirm it's you to continue", "SECURITY CHECK", "OpenWork retries the pending action automatically", "Continue with Google"]
-              : ["Confirm it's you to continue", "SECURITY CHECK", "OpenWork retries the pending action automatically"],
-            rejectText: ["For security, confirm it's you before changing workspace settings."],
+              ? [SECURITY_MESSAGE, "SECURITY CHECK", "OpenWork retries the pending action automatically", "Continue with Google"]
+              : [SECURITY_MESSAGE, "SECURITY CHECK", "OpenWork retries the pending action automatically"],
+            rejectText: ["Confirm it's you to continue"],
           },
         });
 

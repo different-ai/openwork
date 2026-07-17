@@ -239,6 +239,76 @@
       "when": 1783817428501,
       "tag": "0034_wooden_nehzno",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "5",
+      "when": 1783958023511,
+      "tag": "0035_even_scarlet_spider",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "5",
+      "when": 1783966457549,
+      "tag": "0036_petite_fallen_one",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "5",
+      "when": 1783979647754,
+      "tag": "0037_futuristic_sage",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "5",
+      "when": 1784006584482,
+      "tag": "0038_clear_blob",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "5",
+      "when": 1784037786637,
+      "tag": "0039_bouncy_chamber",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "5",
+      "when": 1784076493575,
+      "tag": "0040_rapid_lady_bullseye",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "5",
+      "when": 1784115526946,
+      "tag": "0041_spicy_silk_fever",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "5",
+      "when": 1784202256830,
+      "tag": "0042_superb_swarm",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "5",
+      "when": 1784239846173,
+      "tag": "0043_talented_meteorite",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "5",
+      "when": 1784265799888,
+      "tag": "0044_daily_clea",
+      "breakpoints": true
     }
   ]
 }

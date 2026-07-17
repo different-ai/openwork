@@ -6,8 +6,10 @@ import { OPENWORK_DOWNLOAD_URL } from "./CONSTS.js"
 import { organizationInstallLinksEnabled } from "./capability-sources/install-links-rollout.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { appLogger } from "./observability/logger.js"
 
 type InstallLinkInsert = typeof InstallLinkTable.$inferInsert
+const logger = appLogger.child({ component: "install_links" })
 
 type MintOrganizationInstallLinkInput = Pick<InstallLinkInsert, "organizationId" | "createdByUserId"> & {
   metadata: Record<string, unknown> | string | null | undefined
@@ -69,8 +71,7 @@ export async function resolveInvitationDownloadUrl(input: InvitationDownloadUrlI
     })
     return installLink?.installPageUrl ?? OPENWORK_DOWNLOAD_URL
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "unknown error"
-    console.error(`[auth][invite_install_link_failed] organization=${input.organizationId} reason=${reason}`)
+    logger.error("invite install link failed", { organization_id: input.organizationId, error })
     return OPENWORK_DOWNLOAD_URL
   }
 }

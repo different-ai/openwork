@@ -5,6 +5,7 @@ import { Bot, Check, Copy, ExternalLink, ShieldCheck, Trash2 } from "lucide-reac
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
+import { DenNotice } from "../../_components/ui/notice";
 import { getWorkerStatusMeta } from "../../_lib/den-flow";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import {
@@ -188,7 +189,7 @@ export function TelegramDialog({ open, onClose }: { open: boolean; onClose: () =
           </div>
         ) : null}
 
-        {formError ? <p className="mt-3 text-[13px] text-red-600">{formError instanceof Error ? formError.message : String(formError)}</p> : null}
+        {formError ? <DenNotice message={formError instanceof Error ? formError.message : String(formError)} className="mt-3" /> : null}
 
         {connection && !editing ? (
           <div className="mt-5 border-t border-gray-100 pt-4">

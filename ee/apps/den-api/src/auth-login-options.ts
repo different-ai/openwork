@@ -25,6 +25,7 @@ function hasProvider(accounts: readonly LoginOptionAccount[], providerId: string
 export function resolveLoginOptionKind(input: {
   requireSso: boolean
   accounts: readonly LoginOptionAccount[]
+  allowNewAccount?: boolean
 }): LoginOptionKind {
   if (input.requireSso) {
     return "sso"
@@ -42,5 +43,5 @@ export function resolveLoginOptionKind(input: {
     return "github"
   }
 
-  return "new_account"
+  return input.allowNewAccount === false ? "password" : "new_account"
 }

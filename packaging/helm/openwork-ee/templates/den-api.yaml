@@ -1,3 +1,4 @@
+{{- include "openwork-ee.customCa.validate" . }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -60,7 +61,10 @@ spec:
       {{- if not (or .Values.installerArtifacts.existingClaim .Values.installerArtifacts.hostPath) }}
       {{- fail "installerArtifacts.existingClaim or installerArtifacts.hostPath is required when installerArtifacts.enabled=true" }}
       {{- end }}
+      {{- end }}
+      {{- if or .Values.installerArtifacts.enabled .Values.customCa.enabled }}
       volumes:
+        {{- if .Values.installerArtifacts.enabled }}
         - name: installer-artifacts
           {{- if .Values.installerArtifacts.existingClaim }}
           persistentVolumeClaim:
@@ -70,6 +74,10 @@ spec:
             path: {{ .Values.installerArtifacts.hostPath | quote }}
             type: Directory
           {{- end }}
+        {{- end }}
+        {{- if .Values.customCa.enabled }}
+        {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+        {{- end }}
       {{- end }}
       containers:
         - name: den-api
@@ -78,11 +86,16 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.denApi.containerPort }}
-          {{- if .Values.installerArtifacts.enabled }}
+          {{- if or .Values.installerArtifacts.enabled .Values.customCa.enabled }}
           volumeMounts:
+            {{- if .Values.installerArtifacts.enabled }}
             - name: installer-artifacts
               mountPath: {{ .Values.installerArtifacts.mountPath | quote }}
               readOnly: true
+            {{- end }}
+            {{- if .Values.customCa.enabled }}
+            {{- include "openwork-ee.customCa.volumeMount" . | nindent 12 }}
+            {{- end }}
           {{- end }}
           envFrom:
             - configMapRef:
@@ -92,10 +105,22 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.denApi.containerPort | quote }}
+            {{- if not (hasKey .Values.denApi.env "NODE_OPTIONS") }}
+            # Keep this as a direct value so upgrades from legacy denApi.env.NODE_OPTIONS
+            # do not leave both value and valueFrom in Kubernetes' strategic merge patch.
+            - name: NODE_OPTIONS
+              value: {{ .Values.config.denApiNodeOptions | quote }}
+              # Explicitly clear the valueFrom emitted by chart 0.17.24 during upgrades.
+              valueFrom: null
+            {{- end }}
             {{- if .Values.installerArtifacts.enabled }}
             - name: OPENWORK_INSTALLER_ARTIFACTS_DIR
               value: {{ .Values.installerArtifacts.mountPath | quote }}
             {{- end }}
+            {{- if .Values.customCa.enabled }}
+            {{- include "openwork-ee.customCa.env" . | nindent 12 }}
+            {{- end }}
+            {{- include "openwork-ee.observabilityEnv" (dict "root" . "serviceName" .Values.observability.serviceNames.denApi) | nindent 12 }}
             {{- range $key, $value := .Values.denApi.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

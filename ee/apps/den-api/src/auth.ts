@@ -1,7 +1,8 @@
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { env } from "./env.js";
-import { deriveDenMcpResource } from "./mcp/resource.js";
+import { appLogger } from "./observability/logger.js";
+import { deriveDenMcpAgentResource, deriveDenMcpResource, mcpEndpointResource } from "./mcp/resource.js";
 import { getDenAuthIssuer, getDenJwtOptions } from "./mcp/jwt-policy.js";
 import {
   addRequestedMcpClientScopes,
@@ -20,7 +21,6 @@ import { DEN_ACCOUNT_CONFIG } from "./account-linking-policy.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
-import { resolveInvitationDownloadUrl } from "./install-links.js";
 import {
   DEN_API_KEY_DEFAULT_PREFIX,
   DEN_API_KEY_EXPIRES_IN_DAYS,
@@ -39,6 +39,7 @@ import {
   getOrganizationSsoJitRole,
   ORGANIZATION_SSO_JIT_ROLE,
 } from "./sso-jit.js";
+import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js";
 import {
   ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
   ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
@@ -55,6 +56,7 @@ import {
   findEnterpriseAuthRequirementForEmail,
   findEnterpriseAuthRequirementForUserId,
 } from "./enterprise-auth-requirement.js";
+import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation } from "./single-org-signup-policy.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
@@ -67,6 +69,8 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { deleteSessionCookie } from "better-auth/cookies";
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle";
 import { emailOTP, jwt, organization } from "better-auth/plugins";
+
+const logger = appLogger.child({ component: "auth" });
 
 function localMcpResourceAliases(resource: string) {
   if (!env.devMode) {
@@ -101,11 +105,15 @@ function apiPublicMcpResource(apiPublicUrl: string | undefined) {
 }
 
 function mcpEndpointResourceAliases(resource: string) {
-  const base = resource.replace(/\/+$/, "");
-  return [`${base}/agent`, `${base}/admin`];
+  return [mcpEndpointResource(resource, "agent"), mcpEndpointResource(resource, "admin")];
 }
 
 export const DEN_MCP_RESOURCE = env.mcpResourceUrl ?? deriveDenMcpResource(env.betterAuthUrl, env.webAppHosts);
+export const DEN_MCP_OAUTH_RESOURCE = deriveDenMcpAgentResource({
+  apiPublicUrl: env.apiPublicUrl,
+  mcpResource: DEN_MCP_RESOURCE,
+});
+export const DEN_MCP_FIRST_PARTY_CLIENT_ID = "openwork-desktop";
 const DEN_API_PUBLIC_MCP_RESOURCES = apiPublicMcpResource(env.apiPublicUrl);
 const DEN_MCP_BASE_RESOURCES = [
   DEN_MCP_RESOURCE,
@@ -119,18 +127,32 @@ const DEN_MCP_BASE_RESOURCES = [
   ...DEN_API_PUBLIC_MCP_RESOURCES.flatMap((resource) => localMcpResourceAliases(resource)),
   ...env.mcpAdditionalResources.flatMap((resource) => localMcpResourceAliases(resource)),
 ];
-export const DEN_MCP_RESOURCES = Array.from(new Set([
+export const DEN_MCP_LEGACY_PARENT_RESOURCES = Array.from(new Set(DEN_MCP_BASE_RESOURCES));
+export const DEN_MCP_FIRST_PARTY_RESOURCES = Array.from(new Set([
   ...DEN_MCP_BASE_RESOURCES,
   // rmcp uses the configured concrete endpoint as the OAuth resource during
   // token exchange. Accept the two registered child endpoints as aliases of
   // their canonical parent resource.
   ...DEN_MCP_BASE_RESOURCES.flatMap((resource) => mcpEndpointResourceAliases(resource)),
 ]));
+export const DEN_MCP_RESOURCES = Array.from(new Set([
+  DEN_MCP_OAUTH_RESOURCE,
+  ...DEN_MCP_FIRST_PARTY_RESOURCES,
+]));
+export const DEN_MCP_OAUTH_VALID_AUDIENCES = [DEN_MCP_OAUTH_RESOURCE];
 export const DEN_MCP_TOKEN_USE_CLAIM = `${env.mcpClaimNamespace}/token_use`;
 export const DEN_MCP_ORG_ID_CLAIM = `${env.mcpClaimNamespace}/org_id`;
 export const DEN_MCP_RESOURCE_CLAIM = `${env.mcpClaimNamespace}/resource`;
 export const DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX = "ow_mcp_at_";
 export { DEN_MCP_SCOPES } from "./mcp/scopes.js";
+
+export function normalizeMcpOAuthResource(resource: string): string | null {
+  const normalized = resource.replace(/\/+$/, "");
+  if (normalized === DEN_MCP_OAUTH_RESOURCE) {
+    return DEN_MCP_OAUTH_RESOURCE;
+  }
+  return DEN_MCP_FIRST_PARTY_RESOURCES.includes(normalized) ? DEN_MCP_OAUTH_RESOURCE : null;
+}
 
 type AuthMemberHookRow = typeof schema.MemberTable.$inferSelect;
 
@@ -238,15 +260,6 @@ function throwMemberLifecycleError(message: string): never {
   throw new APIError("BAD_REQUEST", { message });
 }
 
-function getBodyEmail(body: unknown) {
-  if (!body || typeof body !== "object") {
-    return null;
-  }
-
-  const value = Object.getOwnPropertyDescriptor(body, "email")?.value;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
 function removedMemberIdentity(value: unknown): { id: string; organizationId: string } | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -328,7 +341,7 @@ export const auth = betterAuth({
             // chokepoint can merge any matching pending invitation without blocking sign-in.
             await reconcilePendingInvitationsForUser(userId);
           } catch (error) {
-            console.error("[auth][invitation_reconcile_failed]", { userId, error });
+            logger.error("invitation reconcile failed", { user_id: userId, error });
           }
 
           return {
@@ -372,7 +385,14 @@ export const auth = betterAuth({
         return;
       }
 
-      const email = getBodyEmail(ctx.body);
+      const email = getAuthBodyEmail(ctx.body);
+      if (ctx.path === "/sign-up/email") {
+        const violation = await getSingleOrgEmailSignupPolicyViolation(email);
+        if (violation) {
+          throw new APIError("FORBIDDEN", { message: violation.message });
+        }
+      }
+
       if (!email) {
         return;
       }
@@ -516,7 +536,7 @@ export const auth = betterAuth({
   },
   emailAndPassword: {
     enabled: true,
-    autoSignIn: false,
+    autoSignIn: true,
     requireEmailVerification: env.requireEmailVerification,
     revokeSessionsOnPasswordReset: true,
     async sendResetPassword({ user, url }) {
@@ -557,12 +577,6 @@ export const auth = betterAuth({
         },
       },
       async sendInvitationEmail(data) {
-        const downloadUrl = await resolveInvitationDownloadUrl({
-          organizationId: data.organization.id,
-          createdByUserId: data.inviter.user.id,
-          metadata: data.organization.metadata,
-        });
-
         await sendEmail({
           to: data.email,
           template: "organizationInvite",
@@ -572,7 +586,6 @@ export const auth = betterAuth({
             invitedByEmail: data.inviter.user.email,
             organizationName: data.organization.name,
             role: data.role,
-            downloadUrl,
           },
         });
       },
@@ -638,7 +651,7 @@ export const auth = betterAuth({
       loginPage: env.betterAuthUrl,
       consentPage: `${env.betterAuthUrl}/mcp/select-organization`,
       scopes: [...DEN_MCP_SCOPES],
-      validAudiences: DEN_MCP_RESOURCES,
+      validAudiences: DEN_MCP_OAUTH_VALID_AUDIENCES,
       allowPublicClientPrelogin: true,
       allowDynamicClientRegistration: true,
       allowUnauthenticatedClientRegistration: true,
@@ -683,9 +696,10 @@ export const auth = betterAuth({
       },
       customAccessTokenClaims: ({ referenceId, resource, scopes }) => {
         const claims: Record<string, string> = {};
-        if (hasMcpScope(scopes) || resource === DEN_MCP_RESOURCE) {
+        const mcpResource = typeof resource === "string" ? normalizeMcpOAuthResource(resource) : null;
+        if (hasMcpScope(scopes) || mcpResource) {
           claims[DEN_MCP_TOKEN_USE_CLAIM] = "mcp";
-          claims[DEN_MCP_RESOURCE_CLAIM] = resource ?? DEN_MCP_RESOURCE;
+          claims[DEN_MCP_RESOURCE_CLAIM] = mcpResource ?? DEN_MCP_OAUTH_RESOURCE;
         }
         if (referenceId) {
           claims[DEN_MCP_ORG_ID_CLAIM] = referenceId;
@@ -747,9 +761,16 @@ export const auth = betterAuth({
         const remoteId = pickRemoteIdentity(userInfo);
         const displayName = maybeString(userInfo.name) ?? maybeString(userInfo.displayName) ?? maybeString(user.name);
         const email = maybeString(userInfo.email) ?? maybeString(user.email);
+        const organizationId = normalizeDenTypeId("organization", provider.organizationId);
+        const userId = normalizeDenTypeId("user", user.id);
+        if (await isScimDeprovisionedIdentity({ organizationId, userId, email })) {
+          throw new APIError("FORBIDDEN", {
+            message: "This user was deprovisioned by SCIM. Reactivate them in the identity provider before signing in.",
+          });
+        }
         const payload = {
-          organizationId: normalizeDenTypeId("organization", provider.organizationId),
-          userId: normalizeDenTypeId("user", user.id),
+          organizationId,
+          userId,
           source: "sso",
           ssoProviderId: provider.providerId,
           remoteId,

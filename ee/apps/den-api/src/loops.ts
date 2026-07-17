@@ -1,9 +1,11 @@
 import { env } from "./env.js"
+import { appLogger } from "./observability/logger.js"
 
 const LOOPS_CONTACTS_UPDATE_URL = "https://app.loops.so/api/v1/contacts/update"
 const LOOPS_EVENTS_SEND_URL = "https://app.loops.so/api/v1/events/send"
 const DEN_SIGNUP_SOURCE = "signup"
 const SUBSCRIBED_TO_DEN_EVENT = "subscribedToDen"
+const logger = appLogger.child({ component: "loops" })
 
 function splitName(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean)
@@ -59,10 +61,9 @@ export async function syncDenSignupContact(input: {
       // Ignore non-JSON error bodies from Loops.
     }
 
-    console.warn(`[auth] failed to sync Loops contact for ${email}: ${detail}`)
+    logger.warn("failed to sync Loops contact", { reason: detail })
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error"
-    console.warn(`[auth] failed to sync Loops contact for ${email}: ${message}`)
+    logger.warn("failed to sync Loops contact", { error })
   }
 }
 
@@ -112,10 +113,9 @@ export async function sendSubscribedToDenEvent(input: {
         // Ignore non-JSON error bodies from Loops.
       }
 
-      console.warn(`[billing] failed to send Loops event ${SUBSCRIBED_TO_DEN_EVENT} for ${email}: ${detail}`)
+      logger.warn("failed to send Loops event", { event: SUBSCRIBED_TO_DEN_EVENT, reason: detail })
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error"
-    console.warn(`[billing] failed to send Loops event ${SUBSCRIBED_TO_DEN_EVENT} for ${email}: ${message}`)
+    logger.warn("failed to send Loops event", { event: SUBSCRIBED_TO_DEN_EVENT, error })
   }
 }

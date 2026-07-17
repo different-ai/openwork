@@ -290,6 +290,9 @@ export default {
               status: response.status,
               firstLines: body.split("\n").slice(0, 3).join("\n"),
               startsWithGuide: body.startsWith("# OpenWork Start"),
+              offersMcpConnection: body.includes("Want me to connect the OpenWork MCP to this agent"),
+              includesCodexMcpSetup: body.includes("codex mcp add openwork --url https://api.openworklabs.com/mcp/agent")
+                && body.includes("codex mcp login openwork"),
             };
             const agentEvents = await waitForMockEvents(ctx, POSTHOG_SERVER_EVENT, 1);
             agentEvent = agentEvents[0] || null;
@@ -311,6 +314,12 @@ export default {
               ctx,
               "Agent fetch returns HTTP 200 and the OpenWork start guide markdown",
               guideFetch?.status === 200 && guideFetch.startsWithGuide === true,
+              guideFetch,
+            );
+            recordAssertion(
+              ctx,
+              "The start guide offers to connect the OpenWork MCP and includes the Codex setup path",
+              guideFetch?.offersMcpConnection === true && guideFetch.includesCodexMcpSetup === true,
               guideFetch,
             );
 
@@ -340,7 +349,7 @@ export default {
           },
           screenshot: {
             name: "start-md-guide",
-            requireText: ["OpenWork Start"],
+            requireText: ["OpenWork Start", "Want me to connect the OpenWork MCP to this agent"],
           },
         });
       },

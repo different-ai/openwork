@@ -164,6 +164,18 @@ export function hasJsonRequestBody(operation: OpenApiOperation) {
   return typeof content === "object" && content !== null && "application/json" in content
 }
 
+export function getJsonRequestBodySchema(operation: OpenApiOperation): unknown {
+  const content = getRequestBody(operation)?.content
+  if (typeof content !== "object" || content === null || !("application/json" in content)) {
+    return undefined
+  }
+  const mediaType = content["application/json"]
+  if (typeof mediaType !== "object" || mediaType === null || !("schema" in mediaType)) {
+    return undefined
+  }
+  return mediaType.schema
+}
+
 function getRequestBody(operation: OpenApiOperation): OpenApiRequestBody | null {
   const requestBody = operation.requestBody
   return typeof requestBody === "object" && requestBody !== null ? requestBody : null

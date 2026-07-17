@@ -50,6 +50,8 @@ beforeAll(async () => {
 })
 
 test("executeCapabilityWithBudget returns a structured timeout result", async () => {
+  expect(agentModule.EXECUTE_CAPABILITY_TIMEOUT_MS).toBeGreaterThan(150_000)
+
   const result = await agentModule.executeCapabilityWithBudget({
     capability: "gmail_search",
     timeoutMs: 1,
@@ -60,7 +62,7 @@ test("executeCapabilityWithBudget returns a structured timeout result", async ()
   expect(result.content[0]?.text).toBe(JSON.stringify({
     error: "capability_timeout",
     capability: "gmail_search",
-    message: "The capability call exceeded 45s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.",
+    message: "The capability call exceeded 180s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.",
   }))
 })
 
@@ -84,7 +86,7 @@ test("executeCapabilityWithBudget swallows late rejections after timeout", async
     expect(result.content[0]?.text).toBe(JSON.stringify({
       error: "capability_timeout",
       capability: "slow_google_workspace",
-      message: "The capability call exceeded 45s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.",
+      message: "The capability call exceeded 180s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.",
     }))
 
     await new Promise((resolve) => setTimeout(resolve, 25))
@@ -104,6 +106,11 @@ test("agent MCP server exposes steering instructions during initialize", async (
 
   expect(client.getInstructions()).toBe(agentModule.AGENT_MCP_INSTRUCTIONS)
   expect(client.getInstructions()).toContain("search_capabilities and execute_capability")
+  expect(client.getInstructions()).toContain("add a public GitHub plugin to an organization marketplace")
+  expect(client.getInstructions()).toContain("Preview first")
+  expect(client.getInstructions()).toContain("Do not choose one authentication type for every server")
+  expect(client.getInstructions()).toContain("An import or plugin binding is not proof")
+  expect(client.getInstructions()).toContain("cloudReadiness")
   expect(client.getInstructions()).toContain("Gmail read/search")
   expect(client.getInstructions()).toContain("Settings > Connect")
   expect(client.getInstructions()).toContain("Never tell the user to reconnect OpenWork Cloud")
@@ -128,6 +135,74 @@ test("capability search results include structured output alongside text compati
 
   expect(result.structuredContent).toEqual({ matches })
   expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual({ matches })
+})
+
+test("capability search preserves the bounded-fanout coverage warning", () => {
+  const result = agentModule.capabilitySearchToolResult([], "External MCP search inspected 16 of 17 eligible connections. Results may be incomplete.")
+  const structured = result.structuredContent
+
+  expect(structured).toEqual({
+    matches: [],
+    hint: "No matches. Try broader or different keywords. External MCP search inspected 16 of 17 eligible connections. Results may be incomplete.",
+  })
+  expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual(structured)
+})
+
+test("external capability failures preserve the safe MCP diagnostic envelope", () => {
+  const result = agentModule.externalCapabilityErrorToolResult({
+    ok: false,
+    error: "connection_failed",
+    message: "Connection failed. Diagnostic reference: req_test.",
+    actionOwner: "network_admin",
+    operatorAction: "Repair the certificate chain.",
+    connectionStatus: {
+      version: 1,
+      kind: "connection_action",
+      source: "openwork-cloud",
+      layer: "mcp_connection",
+      connectionId: "emc_test",
+      connectionName: "Knowledge Hub",
+      authType: "oauth",
+      credentialMode: "per_member",
+      state: "reauth_required",
+      errorCode: "invalid_grant",
+      message: "Authorization expired.",
+      actor: "member",
+      action: {
+        type: "reconnect",
+        label: "Reconnect Knowledge Hub",
+        surface: "openwork_your_connections",
+        retry: "search_capabilities",
+      },
+    },
+    diagnostic: {
+      referenceId: "req_test",
+      phase: "NETWORK_TLS",
+      category: "tls_failure",
+      code: "MCP_CERT_HAS_EXPIRED",
+      highestPassed: "reachable",
+      retryable: false,
+      actionOwner: "network_admin",
+      operatorAction: "Repair the certificate chain.",
+      message: "TLS validation failed.",
+    },
+  })
+  expect(result.isError).toBe(true)
+  expect(JSON.parse(result.content[0]?.text ?? "{}")).toMatchObject({
+    error: "connection_failed",
+    actionOwner: "network_admin",
+    operatorAction: "Repair the certificate chain.",
+    diagnostic: {
+      referenceId: "req_test",
+      phase: "NETWORK_TLS",
+      actionOwner: "network_admin",
+    },
+    connectionStatus: {
+      connectionId: "emc_test",
+      state: "reauth_required",
+      action: { type: "reconnect" },
+    },
+  })
 })
 
 test("structured search output remains compatible with marketplace match kinds and statuses", () => {

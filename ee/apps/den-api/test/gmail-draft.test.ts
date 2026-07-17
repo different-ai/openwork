@@ -21,6 +21,11 @@ function decodeRaw(raw: string): string {
   return Buffer.from(raw, "base64url").toString("utf8")
 }
 
+function decodeRawBody(raw: string): string {
+  const encoded = decodeRaw(raw).match(/Content-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)/)?.[1] ?? ""
+  return Buffer.from(encoded.replace(/\r\n/g, ""), "base64").toString("utf8")
+}
+
 describe("buildGmailDraftRaw", () => {
   test("encodes a plain-ASCII draft as base64url RFC 822 with the body base64-encoded", () => {
     const raw = gmail.buildGmailDraftRaw({ to: "sam@acme.test", subject: "Follow up", body: "Hello Sam" })
@@ -42,6 +47,70 @@ describe("buildGmailDraftRaw", () => {
     expect(Buffer.from(subjectLine!.slice("Subject: =?UTF-8?B?".length, -2), "base64").toString("utf8")).toBe("Résumé — próxima reunión")
     const bodyPart = decoded.split("\r\n\r\n")[1]
     expect(Buffer.from(bodyPart, "base64").toString("utf8")).toBe("Grüße aus Zürich ✅")
+  })
+
+  test("unwraps hard-wrapped prose without changing paragraphs, short breaks, or lists", () => {
+    const body = [
+      "Thanks again for the conversation today. As promised, I have attached",
+      "a revised indicative pricing proposal for the air-gapped on-premises",
+      "deployment, covering both the minimal self-managed path and a",
+      "full-support option.",
+      "",
+      "Options:",
+      "- Self-managed deployment",
+      "- Full-support deployment",
+      "",
+      "Thanks again!",
+      "",
+      "Ben",
+    ].join("\n")
+    const decoded = decodeRaw(gmail.buildGmailDraftRaw({ to: "sam@acme.test", subject: "Follow up", body }))
+    const bodyPart = decoded.split("\r\n\r\n")[1]
+    expect(Buffer.from(bodyPart, "base64").toString("utf8")).toBe([
+      "Thanks again for the conversation today. As promised, I have attached a revised indicative pricing proposal for the air-gapped on-premises deployment, covering both the minimal self-managed path and a full-support option.",
+      "",
+      "Options:",
+      "- Self-managed deployment",
+      "- Full-support deployment",
+      "",
+      "Thanks again!",
+      "",
+      "Ben",
+    ].join("\n"))
+  })
+
+  test("strips conservative markdown from prose while preserving structure", () => {
+    const hardWrapped = [
+      "This generated sentence is intentionally long enough to look like it",
+      "was hard-wrapped before reaching Gmail and should become one line.",
+    ].join("\n")
+    const body = [
+      "# Status update",
+      "",
+      "Please **review** the __terms__ and `confirm` before launch.",
+      "",
+      "- **Keep list marker**",
+      "> **Keep quoted text**",
+      "```",
+      "# keep fenced heading",
+      "```",
+      "",
+      hardWrapped,
+    ].join("\n")
+
+    expect(decodeRawBody(gmail.buildGmailDraftRaw({ to: "sam@acme.test", subject: "Follow up", body }))).toBe([
+      "Status update",
+      "",
+      "Please review the terms and confirm before launch.",
+      "",
+      "- **Keep list marker**",
+      "> **Keep quoted text**",
+      "```",
+      "# keep fenced heading",
+      "```",
+      "",
+      "This generated sentence is intentionally long enough to look like it was hard-wrapped before reaching Gmail and should become one line.",
+    ].join("\n"))
   })
 
   test("keeps legacy draft output unchanged when optional fields are absent", () => {

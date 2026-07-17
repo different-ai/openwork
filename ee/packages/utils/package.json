@@ -15,10 +15,16 @@
       "types": "./src/typeid.ts",
       "development": "./src/typeid.ts",
       "default": "./dist/typeid.js"
+    },
+    "./observability": {
+      "types": "./src/observability.ts",
+      "development": "./src/observability.ts",
+      "default": "./dist/observability.js"
     }
   },
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "test": "bun test src/observability.test.ts"
   },
   "dependencies": {
     "luxon": "^3.6.1",

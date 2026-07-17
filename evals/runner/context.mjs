@@ -56,15 +56,18 @@ export class EvalContext {
    * Waits for a new browser tab/page target to appear (e.g. an OAuth
    * `window.open` popup) and switches ctx.eval/screenshot/etc to it. Push
    * the previous target with switchBack() once done with the new tab.
+   * Pass `trigger` when the action opens its popup synchronously so the
+   * target baseline is captured before the user action runs.
    * Requires cdpBaseUrl (set automatically by the runner); not available
    * against a raw client-only context.
    */
-  async switchToNewTab({ match, timeoutMs = DEFAULT_TIMEOUT_MS, label } = {}) {
+  async switchToNewTab({ match, timeoutMs = DEFAULT_TIMEOUT_MS, label, trigger } = {}) {
     if (!this.cdpBaseUrl) {
       throw new EvalError("switchToNewTab requires cdpBaseUrl on the context.");
     }
     const before = await listTargets(this.cdpBaseUrl);
     const beforeIds = new Set(before.map((entry) => entry.id));
+    if (trigger) await trigger();
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       const targets = await listTargets(this.cdpBaseUrl);

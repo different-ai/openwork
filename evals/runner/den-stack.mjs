@@ -3,7 +3,7 @@
  *
  * Brings up everything the cloud eval flows need, idempotently:
  *   1. MySQL (docker compose, reuses the dev:den compose project + volume)
- *   2. Schema push (only when the database is empty)
+ *   2. Schema push when the persistent database is behind the current checkout
  *   3. den-api behind a local proxy on :8790: bare /* plus den-web
  *      /api/den/* topology (only when not already healthy)
  *   4. Demo-org seed (only when the demo owner cannot sign in)
@@ -40,13 +40,19 @@ const COMPOSE_ARGS = ["compose", "-p", "openwork-den-local", "-f", "packaging/do
 const DEN_WEB_ORIGIN = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "http://localhost:3005").replace(/\/+$/, "");
 const DEN_TRUSTED_ORIGINS = `${DEN_BASE_URL},${DEN_WEB_ORIGIN},http://localhost:5173,http://127.0.0.1:5173`;
 
+// Override with OPENWORK_EVAL_DATABASE_URL to isolate a run from the shared
+// dev database (e.g. a dedicated schema on the same MySQL container).
+const DEN_DATABASE_URL = process.env.OPENWORK_EVAL_DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_den";
+const DEN_DATABASE_NAME = new URL(DEN_DATABASE_URL).pathname.replace(/^\//, "") || "openwork_den";
+
 const DEN_ENV = {
   OPENWORK_DEV_MODE: "1",
   PORT: String(DEN_API_INTERNAL_PORT),
-  DATABASE_URL: "mysql://root:password@127.0.0.1:3306/openwork_den",
+  DATABASE_URL: DEN_DATABASE_URL,
   DEN_DB_ENCRYPTION_KEY: "local-dev-db-encryption-key-please-change-1234567890",
   BETTER_AUTH_SECRET: "local-dev-secret-not-for-production-use!!",
   BETTER_AUTH_URL: DEN_BASE_URL,
+  DEN_API_PUBLIC_URL: DEN_API_URL,
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: DEN_TRUSTED_ORIGINS,
   CORS_ORIGINS: DEN_TRUSTED_ORIGINS,
   PROVISIONER_MODE: "stub",
@@ -150,22 +156,27 @@ async function ensureMysql(log) {
 async function mysqlQuery(sql) {
   const { stdout } = await run("docker", [
     "exec", MYSQL_CONTAINER,
-    "mysql", "-uroot", "-ppassword", "openwork_den", "-N", "-e", sql,
+    "mysql", "-uroot", "-ppassword", DEN_DATABASE_NAME, "-N", "-e", sql,
   ]);
   return stdout.trim();
 }
 
 async function ensureSchema(log) {
   try {
-    const tables = await mysqlQuery("SHOW TABLES LIKE 'organization';");
-    if (tables.includes("organization")) {
+    const schema = await mysqlQuery("SHOW TABLES LIKE 'organization'; SHOW TABLES LIKE 'desktop_connect_grant'; SHOW TABLES LIKE 'scim_group'; SHOW COLUMNS FROM scim_provider LIKE 'group_mapping_mode';");
+    if (
+      schema.includes("organization")
+      && schema.includes("desktop_connect_grant")
+      && schema.includes("scim_group")
+      && schema.includes("group_mapping_mode")
+    ) {
       log("Schema present");
       return;
     }
   } catch {
     // Database may not exist yet — push will create what it needs.
   }
-  log("Pushing schema (first run takes a minute)...");
+  log("Synchronizing schema with the current checkout...");
   const denDbDir = join(REPO_ROOT, "ee", "packages", "den-db");
   await run("pnpm", ["--filter", "@openwork-ee/den-db", "build"]);
   await run("node", ["--import", "tsx", "./node_modules/drizzle-kit/bin.cjs", "push", "--config", "drizzle.config.ts"], {
@@ -190,7 +201,7 @@ async function ensureDenApi(log) {
   }
 
   log(`Starting den-api on internal :${DEN_API_INTERNAL_PORT} (proxied on :${DEN_API_PORT})...`);
-  const pid = spawnDetached("npx", ["tsx", "src/server.ts"], {
+  const pid = spawnDetached("npx", ["tsx", "src/main.ts"], {
     logName: "den-api",
     cwd: join(REPO_ROOT, "ee", "apps", "den-api"),
     env: DEN_ENV,
@@ -213,6 +224,7 @@ async function ensureDenApi(log) {
     env: {
       DEN_PROXY_LISTEN_PORT: String(DEN_API_PORT),
       DEN_PROXY_UPSTREAM_PORT: String(DEN_API_INTERNAL_PORT),
+      OPENWORK_EVAL_DEN_PROXY_CONTROL: "1",
     },
   });
   await writePidState("den-proxy.pid", proxyPid);

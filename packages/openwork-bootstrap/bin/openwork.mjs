@@ -618,6 +618,15 @@ async function createDesktopHandoff(baseUrl, auth) {
 
 function writePreparedDesktop(input) {
   const bootstrapPath = resolve(input.bootstrapPath)
+  let existingBrandAppName = null
+  if (existsSync(bootstrapPath)) {
+    try {
+      const existingBootstrap = JSON.parse(readFileSync(bootstrapPath, "utf8"))
+      existingBrandAppName = typeof existingBootstrap.brandAppName === "string"
+        ? existingBootstrap.brandAppName.trim().slice(0, 64)
+        : null
+    } catch {}
+  }
   const skillName = slugifySkillName(input.skill.title)
   const skillDir = resolve(input.skillsDir, skillName)
   const skillPath = join(skillDir, "SKILL.md")
@@ -639,6 +648,7 @@ function writePreparedDesktop(input) {
     baseUrl: input.baseUrl,
     apiBaseUrl: input.apiBaseUrl,
     requireSignin: false,
+    ...(existingBrandAppName ? { brandAppName: existingBrandAppName } : {}),
     prepared,
     ...(input.claimLinks ? { claimLinks: input.claimLinks } : {}),
   }

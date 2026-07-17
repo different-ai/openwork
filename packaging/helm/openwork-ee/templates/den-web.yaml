@@ -1,3 +1,4 @@
+{{- include "openwork-ee.customCa.validate" . }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -53,6 +54,10 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.customCa.enabled }}
+      volumes:
+        {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+      {{- end }}
       containers:
         - name: den-web
           image: "{{ .Values.denWeb.image.repository }}:{{ default .Values.image.tag .Values.denWeb.image.tag }}"
@@ -60,6 +65,10 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.denWeb.containerPort }}
+          {{- if .Values.customCa.enabled }}
+          volumeMounts:
+            {{- include "openwork-ee.customCa.volumeMount" . | nindent 12 }}
+          {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "openwork-ee.configName" . }}
@@ -68,6 +77,10 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.denWeb.containerPort | quote }}
+            {{- if .Values.customCa.enabled }}
+            {{- include "openwork-ee.customCa.env" . | nindent 12 }}
+            {{- end }}
+            {{- include "openwork-ee.observabilityEnv" (dict "root" . "serviceName" .Values.observability.serviceNames.denWeb) | nindent 12 }}
             {{- range $key, $value := .Values.denWeb.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

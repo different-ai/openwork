@@ -8,6 +8,7 @@ export type ManagedOpencodeServer = {
   password: string;
   pid: number | null;
   execution: OpencodeExecutionSnapshot;
+  isAlive: () => boolean;
   close: () => Promise<void>;
 };
 
@@ -136,6 +137,9 @@ export async function createManagedOpencodeServer(options: {
       args,
       cwd: options.cwd,
       env: injectedEnv,
+    },
+    isAlive() {
+      return child.exitCode === null && child.signalCode === null && !child.killed;
     },
     close() {
       closePromise ??= (async () => {

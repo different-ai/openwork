@@ -145,6 +145,295 @@ The existing Secret must contain the keys listed under `secret.keys`, especially
 
 Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
 
+## Custom CA certificates
+
+Use `customCa` when OpenWork must trust a private certificate authority for
+strict TLS verification, such as a MySQL endpoint signed by an internal or cloud
+private CA. The chart does not accept PEM material in values and does not create
+the CA resource for you; create the Kubernetes Secret or ConfigMap in the
+release namespace before running `helm install` or `helm upgrade`.
+
+Secret example:
+
+```bash
+kubectl create secret generic openwork-custom-ca \
+  --namespace openwork \
+  --from-file=ca.crt=./corp-root-ca.pem
+```
+
+```yaml
+customCa:
+  enabled: true
+  existingSecret: openwork-custom-ca
+  existingConfigMap: ""
+  key: ca.crt
+```
+
+ConfigMap example:
+
+```bash
+kubectl create configmap openwork-custom-ca \
+  --namespace openwork \
+  --from-file=ca.crt=./corp-root-ca.pem
+```
+
+```yaml
+customCa:
+  enabled: true
+  existingSecret: ""
+  existingConfigMap: openwork-custom-ca
+  key: ca.crt
+```
+
+When enabled, set exactly one of `existingSecret` or `existingConfigMap`, and set
+`key` to the data key containing the CA bundle. The chart mounts only that key as
+`/etc/openwork/custom-ca/ca-bundle.pem` and sets `NODE_EXTRA_CA_CERTS` to that
+file for `den-api`, `den-web`, enabled `inference`, and the migration Job. Do
+not also set `denApi.env.NODE_EXTRA_CA_CERTS`, `denWeb.env.NODE_EXTRA_CA_CERTS`,
+or `inference.env.NODE_EXTRA_CA_CERTS`; Helm rejects those conflicts while
+`customCa.enabled=true`.
+
+For strict MySQL TLS verification, pair the mounted CA with a verifying
+`DATABASE_URL`, for example:
+
+```yaml
+secret:
+  values:
+    databaseUrl: "mysql://openwork:REPLACE_DB_PASSWORD@mysql.example.internal:3306/openwork_den?sslmode=verify-full"
+```
+
+`sslmode=verify-ca`, `sslmode=verify-full`, and `sslaccept=strict` enable strict
+certificate verification. `sslaccept=accept` keeps TLS enabled but does not
+verify the certificate chain, so use it only for smoke tests or while preparing
+the CA bundle.
+
+The custom CA is release-wide for Node.js processes in this chart. Treat it as a
+global trust decision for outbound TLS from those workloads, and include only CA
+roots your OpenWork deployment should trust. On CA rotation, update the existing
+Secret or ConfigMap and restart the running workloads so Node reloads the CA
+file, for example:
+
+```bash
+kubectl rollout restart deployment/openwork-ee-den-api --namespace openwork
+kubectl rollout restart deployment/openwork-ee-den-web --namespace openwork
+kubectl rollout restart deployment/openwork-ee-inference --namespace openwork
+```
+
+The next migration hook Job will mount the current CA data; rerun a failed
+upgrade after the CA resource is corrected.
+
+## Observability
+
+The chart exposes first-class runtime observability settings for `den-api` and
+`den-web` only. `observability.backend` defaults to `none`; set it to `otel` or
+`sentry` to enable the matching runtime environment. The chart injects distinct
+`OTEL_SERVICE_NAME` values directly into each Deployment, so the shared
+ConfigMap is not used for service identity or auth-like observability values.
+
+OpenTelemetry uses OTLP over `http/protobuf`, with a shared endpoint and
+optional per-signal endpoint overrides. Per-signal exporters default to `otlp`,
+and trace sampling defaults to the standard parent-based always-on sampler.
+
+### OpenTelemetry quick start
+
+Before starting, you need:
+
+- An OpenTelemetry Collector or vendor endpoint reachable from the Kubernetes
+  cluster over OTLP HTTP. Port `4318` is the usual Collector port.
+- The endpoint's authentication token or headers, if it requires
+  authentication.
+- `kubectl` and Helm configured for the target cluster.
+
+The chart configures telemetry export from OpenWork; it does not install an
+OpenTelemetry Collector. For an in-cluster Collector, use its Kubernetes DNS
+name, for example
+`http://otel-collector.observability.svc.cluster.local:4318`. Do not use
+`localhost`, because that would refer to the OpenWork container itself.
+
+First create the namespace used by this example:
+
+```bash
+kubectl create namespace openwork
+```
+
+If the Collector does not require authentication, skip the Secret and leave
+`observability.otel.headers.existingSecret` empty.
+
+If it requires a bearer token, create the header Secret in the **same
+namespace as OpenWork**:
+
+```bash
+kubectl create secret generic openwork-otel-headers \
+  --namespace openwork \
+  --from-literal=OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <token>'
+```
+
+Replace `<token>` with the real token. Keep the single quotes so your shell
+passes the complete header as one value. To update an existing Secret without
+deleting it first, use:
+
+```bash
+kubectl create secret generic openwork-otel-headers \
+  --namespace openwork \
+  --from-literal=OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <token>' \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Multiple OTLP headers use the standard comma-separated `key=value` format:
+
+```bash
+kubectl create secret generic openwork-otel-headers \
+  --namespace openwork \
+  --from-literal=OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <token>,x-scope-orgid=<tenant>'
+```
+
+Do not put tokens directly in a values file. Kubernetes Secrets are not
+encrypted by default unless your cluster enables encryption at rest, so use
+your organization's external-secret or secret-management system in production
+when available.
+
+Create `values-observability.yaml`:
+
+```yaml
+observability:
+  backend: otel
+  serviceNames:
+    denApi: openwork-den-api
+    denWeb: openwork-den-web
+  otel:
+    endpoint: "http://otel-collector.observability.svc.cluster.local:4318"
+    tracesEndpoint: ""
+    metricsEndpoint: ""
+    logsEndpoint: ""
+    exporters:
+      traces: otlp
+      metrics: otlp
+      logs: otlp
+    tracesSampler: parentbased_always_on
+    tracesSamplerArg: ""
+    headers:
+      existingSecret: openwork-otel-headers
+      key: OTEL_EXPORTER_OTLP_HEADERS
+```
+
+For a Collector without authentication, use:
+
+```yaml
+    headers:
+      existingSecret: ""
+      key: OTEL_EXPORTER_OTLP_HEADERS
+```
+
+Install or upgrade OpenWork with the values file:
+
+```bash
+helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
+  --namespace openwork \
+  --create-namespace \
+  --values values-observability.yaml
+```
+
+`observability.otel.headers.existingSecret` must name an existing Kubernetes
+Secret. Its key is exposed as `OTEL_EXPORTER_OTLP_HEADERS` only on `den-api` and
+`den-web`; it is not added to inference pods or migration Jobs.
+
+### Verify the OpenTelemetry setup
+
+The commands below assume the Helm release is named `openwork-ee`. If you use a
+different release name, run `kubectl get deployments,services --namespace
+openwork` to find the generated resource names.
+
+Confirm that the workloads are ready:
+
+```bash
+kubectl get pods --namespace openwork
+kubectl rollout status deployment/openwork-ee-den-api --namespace openwork
+kubectl rollout status deployment/openwork-ee-den-web --namespace openwork
+```
+
+Inspect the rendered environment references without printing the Secret's
+value:
+
+```bash
+kubectl describe deployment/openwork-ee-den-api --namespace openwork
+kubectl describe deployment/openwork-ee-den-web --namespace openwork
+```
+
+Look for `DEN_OBSERVABILITY_BACKEND=otel`, distinct `OTEL_SERVICE_NAME` values,
+the OTLP endpoint, and an `OTEL_EXPORTER_OTLP_HEADERS` reference to
+`openwork-otel-headers`.
+
+Generate a request that crosses both services. Keep this port-forward running:
+
+```bash
+kubectl port-forward service/openwork-ee-den-web 3005:3005 --namespace openwork
+```
+
+In another terminal:
+
+```bash
+curl --fail --silent --show-error \
+  http://127.0.0.1:3005/api/den/openapi.json >/dev/null
+```
+
+Your observability backend should show `openwork-den-web` and
+`openwork-den-api`, with one connected trace for the request. Logs from both
+services carry trace and span IDs. Den API also exports Hono request-duration
+and active-request metrics.
+
+### Endpoint and troubleshooting notes
+
+- `observability.otel.endpoint` is a base endpoint. OpenWork appends
+  `/v1/traces`, `/v1/metrics`, and `/v1/logs`.
+- Signal-specific endpoints are used exactly as written. Include the full
+  signal path, such as `https://collector.example.com/v1/traces`.
+- Only OTLP HTTP/protobuf is supported. Port `4317` is normally OTLP gRPC and
+  will not work; use the HTTP receiver, usually port `4318`.
+- The Secret must be in the OpenWork release namespace, and its key must match
+  `observability.otel.headers.key` exactly.
+- A `401` or `403` exporter error usually means the token or header syntax is
+  wrong. A connection error usually means the endpoint is not reachable from
+  the pod or a NetworkPolicy blocks it.
+- After changing an externally managed Secret, restart the deployments if your
+  secret controller does not trigger a rollout:
+
+  ```bash
+  kubectl rollout restart deployment/openwork-ee-den-api --namespace openwork
+  kubectl rollout restart deployment/openwork-ee-den-web --namespace openwork
+  ```
+- For lower production trace volume, use
+  `tracesSampler: parentbased_traceidratio` with `tracesSamplerArg: "0.1"` to
+  sample approximately ten percent of root traces.
+
+For Sentry runtime capture, configure the DSN directly or through an existing
+Secret. Helm runtime pods intentionally do not receive `SENTRY_AUTH_TOKEN`,
+`SENTRY_ORG`, `SENTRY_PROJECT`, or `SENTRY_URL`; those are build-time source-map
+upload settings, not runtime settings.
+
+```yaml
+observability:
+  backend: sentry
+  sentry:
+    dsnSecret:
+      existingSecret: openwork-sentry-runtime
+      key: SENTRY_DSN
+    tracesSampleRate: "1"
+    environment: production
+    release: "2026.07.11"
+```
+
+Sentry source-map upload is build-time behavior. Helm configures runtime pods
+after images already exist, so it cannot retroactively upload source maps for
+Vercel or CI builds. Set `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`,
+and `SENTRY_URL` in the build environment that creates the image (for example,
+Vercel project build environment variables), not in Helm values or the chart
+ConfigMap. The generic published images cannot upload source maps after they
+are built; build your own image with CI/BuildKit source-map secrets when you
+need uploaded artifacts. `packaging/docker/Dockerfile.den-web` accepts optional
+BuildKit secret IDs `sentry_auth_token`, `sentry_org`, `sentry_project`,
+`sentry_url`, `sentry_release`, and `sentry_dist`; the EE image publish workflow
+wires these IDs from GitHub Secrets when present.
+
 ## GitHub Connector
 
 The GitHub repository connector uses a GitHub App. It is separate from GitHub
@@ -300,6 +589,23 @@ By default, the chart wires internal services through Kubernetes DNS:
 
 Override `config.internal.*` only when routing through a mesh, gateway, or external service.
 
+## Den API Node Options
+
+Set `config.denApiNodeOptions` to pass Node.js runtime flags to `den-api` through
+`NODE_OPTIONS` when the container starts. The configured value is stored in the
+chart ConfigMap as `DEN_API_NODE_OPTIONS` and defaults to an empty string.
+Existing values files that set `denApi.env.NODE_OPTIONS` remain supported and
+take precedence, so upgrading does not require changing that configuration.
+
+```yaml
+config:
+  denApiNodeOptions: "--max-old-space-size=4096"
+```
+
+`--use-openssl-ca` only changes how Node reads operating-system trust. It does
+not create or mount a private CA bundle into the container; use `customCa` for
+that.
+
 ## Service Exposure
 
 Each service supports Kubernetes Service metadata and load balancer settings:
@@ -351,11 +657,13 @@ migrations:
   enabled: true
   hook: true
   hookDeletePolicy: before-hook-creation,hook-succeeded
+  command:
+    - node
   args:
-    - pnpm --dir /app/ee/packages/den-db run db:bootstrap
+    - /app/ee/packages/den-db/dist/scripts/bootstrap.js
 ```
 
-`db:bootstrap` uses `db:migrate` for normal upgrades. On a completely empty database it applies the current schema once, records the committed migrations as the baseline, then runs migrations. On an existing schema without a Drizzle ledger, it records the baseline before migrating.
+The default hook executes the precompiled Den DB bootstrap runner already built into the Den API image. On a completely empty database it applies the build-time current-schema SQL snapshot, records the committed migrations as the baseline, then runs pending migrations with Drizzle ORM. On an existing schema without a Drizzle ledger, it records the baseline before migrating.
 
 For retained-log troubleshooting, temporarily disable hook behavior and reduce
 retries:
@@ -374,7 +682,11 @@ without redacting secrets.
 
 ## Install links
 
-The migration Job creates the `install_link` table automatically when `migrations.enabled=true`. Install links are active by default for normal self-hosted deployments; hosted-style per-org gating remains available through `DEN_INSTALL_LINKS_GATING_ENABLED`. See the [operator guide](../../../docs/org-install-links.md).
+The migration Job creates the `install_link` and `desktop_connect_grant` tables
+automatically when `migrations.enabled=true`. Hosted deployments that enable
+install-link gating must opt organizations in through `/admin`; self-hosted
+deployments default to enabled. See the
+[operator guide](../../../docs/org-install-links.md).
 
 Optional installer artifact values:
 
@@ -390,7 +702,67 @@ installerArtifacts:
   mountPath: /var/lib/openwork/installer-artifacts
 ```
 
-Use either `installerArtifacts.existingClaim` or `installerArtifacts.hostPath`, not both. For zero-egress Mac/Windows downloads, the mounted directory must contain the three generic installer assets plus the three standard DMG/EXE assets matching `config.public.installerReleaseTag`. The complete filename list is in the [operator guide](../../../docs/org-install-links.md#artifact-delivery).
+Use either `installerArtifacts.existingClaim` or `installerArtifacts.hostPath`,
+not both.
+
+### Guided desktop setup
+
+The organization download page hands the normal OpenWork app its Den
+configuration in an explicit second step. The default is a short-lived,
+single-use HTTPS exchange and needs no key configuration:
+
+```yaml
+config:
+  public:
+    connectLinkMode: exchange
+```
+
+Den validates the install token and then either:
+
+- streams the standard installer already mounted at
+  `installerArtifacts.mountPath`; or
+- redirects the browser directly to the exact configured GitHub release asset.
+
+Den does not download, cache, wrap, or ZIP GitHub artifacts. The organization
+setup stays in the **Open OpenWork** deep-link step after installation.
+
+For an optional signed handoff, explicitly select signed mode and configure a
+dedicated Ed25519 key whose public key is already trusted by the desktop build:
+
+```yaml
+config:
+  public:
+    connectLinkMode: signed
+    connectLinkKeyId: "owc-2026-07"
+
+secret:
+  values:
+    connectLinkPrivateKey: |-
+      -----BEGIN PRIVATE KEY-----
+      ...
+      -----END PRIVATE KEY-----
+```
+
+For an existing Secret, put the private key under the key named by
+`secret.keys.connectLinkPrivateKey` (default `DEN_CONNECT_LINK_PRIVATE_KEY`).
+`scripts/generate-connect-link-keypair.mjs` can generate a pair, but a standard
+desktop build will reject it until the matching public key ships in that build.
+
+For a semi-air-gapped deployment, mount these normal release filenames (where
+`<version>` is `installerReleaseTag` without its leading `v`):
+
+- `openwork-mac-arm64-<version>.dmg`
+- `openwork-mac-x64-<version>.dmg`
+- `openwork-win-x64-<version>.exe`
+- `openwork-linux-x86_64-<version>.AppImage`
+- `openwork-linux-arm64-<version>.AppImage`
+
+Without mounted artifacts, client networks must permit the configured GitHub
+release URL and GitHub's redirected release-asset host. With mounted artifacts,
+the browser only talks to Den. Use a shared read-only PVC when
+`denApi.replicaCount` is greater than one. Connection grants are stored and
+consumed in MySQL, so the guided flow is safe when preview and acceptance land
+on different API replicas.
 
 ## Health Probes
 

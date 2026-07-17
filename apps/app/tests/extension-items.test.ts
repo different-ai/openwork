@@ -67,6 +67,8 @@ function orgMcpConnection(input: Partial<DenExternalMcpConnection> = {}): DenExt
     connected: input.connected ?? true,
     connectedAt: input.connectedAt ?? null,
     connectedForMe: input.connectedForMe ?? false,
+    ...(input.needsReconnect !== undefined ? { needsReconnect: input.needsReconnect } : {}),
+    ...(input.missingFeatures !== undefined ? { missingFeatures: input.missingFeatures } : {}),
   };
 }
 
@@ -120,6 +122,29 @@ describe("extension item projection", () => {
       { name: "Notion", state: "installed", active: true },
     ]);
     expect(result.items.some((item) => item.source === "org-connection" && item.installState === "installed")).toBe(true);
+  });
+
+  test("keeps a connected grant with missing features out of ready state", () => {
+    const result = buildExtensionItems({
+      quickConnect: [notionQuickConnect],
+      mcpServers: [],
+      installedSkills: [],
+      importedCloudPlugins: {},
+      cloudMarketplaces: [],
+      orgMcpConnections: [orgMcpConnection({
+        connectedForMe: true,
+        needsReconnect: false,
+        missingFeatures: ["databaseWrite"],
+      })],
+      enablementContext: {},
+      isBuiltInConnected: () => false,
+    });
+
+    expect(result.orgMcpConnectionItems.map((item) => ({
+      state: item.installState,
+      setup: item.setupState,
+      active: item.active,
+    }))).toEqual([{ state: "available", setup: "needs_setup", active: false }]);
   });
 
   test("keeps configured direct MCPs even when an org equivalent exists", () => {

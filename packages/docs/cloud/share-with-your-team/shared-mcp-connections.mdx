@@ -39,46 +39,74 @@ On `Your Connections`, an unconnected One org account connection shows
 `Waiting for an admin to connect` to members. Workspace owners and admins get a
 `Connect` button on that row so they can finish the org account sign-in there.
 
+## OAuth redirect URL
+
+An OAuth redirect URL, also called a callback URL, is the exact address where
+the provider sends the browser after a person approves access. It belongs to
+your specific Den deployment; it is not the MCP server URL or the client
+metadata URL.
+
+New MCP connections on one Den instance share this redirect URL:
+
+```text
+<DEN_API_PUBLIC_URL>/v1/mcp-connections/oauth/callback
+```
+
+For the hosted OpenWork Cloud instance, the dashboard is
+`https://app.openworklabs.com` and its public Den API origin is
+`https://api.openworklabs.com`. Register this exact redirect URL with the OAuth
+provider:
+
+```text
+https://api.openworklabs.com/v1/mcp-connections/oauth/callback
+```
+
+For a self-hosted instance whose public Den API is
+`https://api.openwork.example.com`, register:
+
+```text
+https://api.openwork.example.com/v1/mcp-connections/oauth/callback
+```
+
+Use the exact scheme, hostname, optional path prefix, and port configured in
+`DEN_API_PUBLIC_URL`. Providers compare redirect URLs exactly. Existing
+connections created with an older per-connection callback keep that registered
+URL automatically; do not change it just to reconnect.
+
 ## Slack
 
 Slack's MCP server requires a pre-registered Slack OAuth app.
 
 1. Create or open a Slack app in [Slack API apps](https://api.slack.com/apps).
-2. In OpenWork Cloud, add the Slack connection and paste the app's client ID
+2. Add this Den instance's OAuth redirect URL to the Slack app's
+   `OAuth & Permissions` redirect URLs.
+3. In OpenWork Cloud, add the Slack connection and paste the app's client ID
    and client secret.
-3. Copy the OAuth redirect URL OpenWork shows after creating the connection,
-   then add it to the Slack app's `OAuth & Permissions` redirect URLs.
 4. Members open `Your Connections` and connect their own Slack account.
 
-For the local desktop-only setup, see
-[Connect Slack MCP](/start-here/connect-your-stack/connect-slack-mcp).
+For the advanced local desktop-only setup, see
+[Connect Slack as a custom MCP](/start-here/connect-your-stack/connect-slack-mcp).
 
 ## What members see in the desktop app
 
-Granted members find the connection in `Settings -> Extensions`, in the same
-catalog as everything else the org shares:
+Granted members find the connection in `Settings` > `Connect`, grouped by what
+they need to do:
 
-- **Marketplace tab** — connections you can use but haven't connected yet,
-  with a `Connect your account` action.
-- **My Extensions tab** — connections that are ready: ones you've connected,
-  and One org account connections your admin manages.
-
-<Frame>
-  ![An org-shared connection in the Marketplace tab, ready to connect](/images/desktop-org-mcp-marketplace.png)
-</Frame>
+- **Needs your sign-in** — individual-account connections that require the
+  member to authenticate or reconnect.
+- **Needs admin setup** — connections that an organization admin still needs
+  to configure or authenticate.
+- **Ready to use** — connections ready for the agent, including accounts
+  managed by the organization.
 
 ## Connect your account
 
-1. Open `Settings -> Extensions -> Marketplace`.
-2. Click the connection card, then `Connect your account`.
+1. Sign in to OpenWork, then open `Settings` > `Connect`.
+2. Find the service under `Needs your sign-in`, then click `Connect`.
 3. Your browser opens the provider's own sign-in page. Approve access.
 4. The browser shows `Connected` — return to OpenWork.
-5. The card updates by itself, no reload needed, and moves to
-   `My Extensions`.
-
-<Frame>
-  ![The same card flipped to Connected after the browser sign-in](/images/desktop-org-mcp-connected.png)
-</Frame>
+5. The connection updates by itself, no reload needed, and moves to
+   `Ready to use`.
 
 Your sign-in is stored in OpenWork Cloud, not on this machine — connect once
 and every device you use is connected.
@@ -89,16 +117,16 @@ No restart, no resync. Ask for something the tool can do:
 
 > Find the "Q3 launch" page in Notion and summarize it.
 
-The agent discovers the org's tools through the `OpenWork Cloud Control`
-connection, and executes them with **your** account — your permissions,
-your audit trail on the provider's side.
+The agent searches the live capabilities available through OpenWork Connect,
+then executes an exact match with **your** account — your permissions, your
+audit trail on the provider's side.
 
 <Frame>
   ![The agent executing an org-shared MCP tool in chat](/images/desktop-org-mcp-chat.png)
 </Frame>
 
-If the agent finds a tool you haven't connected yet, it tells you in the
-chat with a `Connect` button — you never have to go hunting in settings.
+If a connection needs attention, the agent should tell you which account needs
+action and direct you to `Settings` > `Connect`.
 
 ## Notes for admins
 
@@ -113,7 +141,7 @@ chat with a `Connect` button — you never have to go hunting in settings.
 
 ## Relationship to local MCP servers
 
-Everything in [Add an MCP server](/start-here/connect-your-stack/add-an-mcp-server)
-still works, with or without a cloud account. Local servers (like OpenWork
-Browser and UI Control) always run on your machine. Org connections are for
-the things a team shares.
+[Add a custom MCP server](/start-here/connect-your-stack/add-an-mcp-server)
+still works without a cloud account. Use that advanced path for local tools or
+servers your organization does not provide. Use Connect for accounts and
+services managed through OpenWork Cloud.

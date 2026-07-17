@@ -16,6 +16,16 @@ const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.t
 const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
 const MEMBER_PASSWORD = "OpenWorkDemo123!";
 const DOWNLOAD_URL = "https://openworklabs.com/download";
+const REMOVED_INVITE_EMAIL_TEXT = [
+  "Download the desktop app",
+  "Download OpenWork",
+  "Edit spreadsheets",
+  "Control your browser",
+  "Organize files",
+  "Automate tasks",
+  "desktop app",
+  "Open OpenWork",
+];
 const RUN_TAG = Date.now().toString(36);
 const MAYA_EMAIL = `maya+${RUN_TAG}@acme.test`;
 const RILEY_EMAIL = `riley+${RUN_TAG}@acme.test`;
@@ -25,7 +35,6 @@ const state = {
   adminToken: null,
   mayaInviteLink: null,
   mayaInviteToken: null,
-  mayaInstallLink: null,
   rileyInviteLink: null,
   rileyInviteToken: null,
   copiedDesktopUrl: null,
@@ -82,7 +91,7 @@ export default {
       name: "Frame 2",
       run: async (ctx) => {
         await withClient(ctx, ADMIN_CDP_URL, async () => {
-        await ctx.prove("Maya's real invite email explains what the desktop app unlocks", {
+        await ctx.prove("Maya's real invite email is focused on joining Acme, not downloading the app", {
           voiceover: vo[1],
           action: async () => {
             await withClient(ctx, ADMIN_CDP_URL, async () => {
@@ -92,26 +101,37 @@ export default {
           },
           assert: async () => {
             const { entry, html } = await getLatestDevEmail(ctx, "organizationInvite", MAYA_EMAIL);
-            ctx.assert(html.includes("Edit spreadsheets"), "Invite email is missing the desktop capability copy.");
-            ctx.assert(html.includes("Automate tasks"), "Invite email is missing Automate tasks.");
-            ctx.assert(html.includes("Download the desktop app"), "Invite email is missing the desktop download CTA.");
-            ctx.assert(html.includes("Accept invite"), "Invite email is missing Accept invite.");
+            const text = htmlText(html);
+            ctx.assert(text.includes("Join Acme Robotics"), "Invite email is missing the Acme join heading.");
+            ctx.assert(text.includes("Accept invite"), "Invite email is missing Accept invite.");
+            ctx.assert(text.includes(ADMIN_EMAIL), "Invite email is missing the inviter email.");
+            ctx.assert(text.includes("invited you to join Acme Robotics"), "Invite email is missing the inviter context.");
+            const lowerHtml = html.toLowerCase();
+            for (const removedText of REMOVED_INVITE_EMAIL_TEXT) {
+              ctx.assert(!lowerHtml.includes(removedText.toLowerCase()), `Invite email still contains removed desktop/download copy: ${removedText}.`);
+            }
+            ctx.assert(!lowerHtml.includes("/install?token="), "Invite email still contains an organization install token link.");
             ctx.assert(!html.includes(DOWNLOAD_URL), `Organization invite email still points at ${DOWNLOAD_URL}.`);
-            state.mayaInstallLink = extractInstallFromHtml(html, ctx);
+            const blockedLinks = blockedDownloadOrInstallHrefs(html);
+            ctx.assert(blockedLinks.length === 0, `Invite email still contains download/install hrefs: ${JSON.stringify(blockedLinks)}.`);
             const invite = extractInviteFromHtml(html, ctx);
             state.mayaInviteToken = invite.token;
             state.mayaInviteLink = rewriteInviteLink(invite.link);
-            ctx.output("maya-invite-email", JSON.stringify({ to: entry.to, subject: entry.subject, inviteLink: state.mayaInviteLink, installLink: state.mayaInstallLink }, null, 2));
+            ctx.output("maya-invite-email", JSON.stringify({ to: entry.to, subject: entry.subject, acceptLink: redactInviteLink(state.mayaInviteLink) }, null, 2));
             await withClient(ctx, ADMIN_CDP_URL, async () => {
-              await ctx.expectText("Edit spreadsheets");
-              await ctx.expectText("Automate tasks");
-              await ctx.expectText("Download the desktop app");
+              await ctx.expectText("Join Acme Robotics");
               await ctx.expectText("Accept invite");
+              await ctx.expectText(ADMIN_EMAIL);
+              for (const removedText of REMOVED_INVITE_EMAIL_TEXT) {
+                await ctx.expectNoText(removedText);
+              }
+              await redactInviteCredentialInPage(ctx, state.mayaInviteToken);
             });
           },
           screenshot: {
             name: "maya-invite-email",
-            requireText: ["Edit spreadsheets", "Automate tasks", "Download the desktop app", "Accept invite"],
+            requireText: ["Join Acme Robotics", "Accept invite", ADMIN_EMAIL],
+            rejectText: REMOVED_INVITE_EMAIL_TEXT,
           },
         });
         });
@@ -641,6 +661,29 @@ function decodeHtmlAttribute(value) {
     .replaceAll("&#39;", "'");
 }
 
+function htmlHrefs(html) {
+  const hrefs = [];
+  for (const match of html.matchAll(/href="([^"]*)"/g)) {
+    hrefs.push(decodeHtmlAttribute(match[1] ?? ""));
+  }
+  return hrefs;
+}
+
+function htmlText(html) {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function blockedDownloadOrInstallHrefs(html) {
+  return htmlHrefs(html).filter((href) => {
+    const lowerHref = href.toLowerCase();
+    return lowerHref.includes("/install") || lowerHref.includes("openworklabs.com/download") || lowerHref.includes("download");
+  });
+}
+
 function extractInviteFromHtml(html, ctx) {
   const absoluteMatch = html.match(/https?:\/\/[^"'<>\s]+\/join-org\?invite=[^"'<>\s]+/);
   const relativeMatch = html.match(/\/join-org\?invite=[^"'<>\s]+/);
@@ -653,17 +696,45 @@ function extractInviteFromHtml(html, ctx) {
   return { link: parsed.toString(), token };
 }
 
-function extractInstallFromHtml(html, ctx) {
-  const absoluteMatch = html.match(/https?:\/\/[^"'<>\s]+\/install\?token=[^"'<>\s]+/);
-  const relativeMatch = html.match(/\/install\?token=[^"'<>\s]+/);
-  const rawLink = absoluteMatch?.[0] ?? relativeMatch?.[0] ?? "";
-  const link = decodeHtmlAttribute(rawLink);
-  ctx.assert(link.length > 0, "Invite email did not contain an /install?token= link.");
-  const parsed = new URL(link, DEN_WEB_URL);
-  const token = parsed.searchParams.get("token")?.trim() ?? "";
-  ctx.assert(token.length > 0, `Install link did not include an opaque token: ${link}`);
-  ctx.assert(parsed.pathname === "/install", `Invite desktop CTA did not target /install: ${link}`);
-  return parsed.toString();
+function redactInviteLink(inviteLink) {
+  try {
+    const parsed = new URL(inviteLink, DEN_WEB_URL);
+    if (parsed.searchParams.has("invite")) parsed.searchParams.set("invite", "[redacted]");
+    return parsed.toString();
+  } catch {
+    return "invalid invite URL";
+  }
+}
+
+async function redactInviteCredentialInPage(ctx, inviteToken) {
+  const redacted = await ctx.eval(`(() => {
+    const token = ${JSON.stringify(inviteToken ?? "")};
+    const redactedInvite = ${JSON.stringify(`${DEN_WEB_URL}/join-org?invite=%5Bredacted%5D`)};
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let redactedTextNodes = 0;
+    let node = walker.nextNode();
+    while (node) {
+      const before = node.nodeValue ?? '';
+      let after = before;
+      if (token) after = after.split(token).join('[redacted]');
+      after = after.replace(/([?&]invite=)[^&\\s<>"')]+/g, '$1[redacted]');
+      if (after !== before) {
+        node.nodeValue = after;
+        redactedTextNodes += 1;
+      }
+      node = walker.nextNode();
+    }
+    let redactedLinks = 0;
+    for (const link of document.querySelectorAll('a[href*="/join-org?invite="]')) {
+      link.href = redactedInvite;
+      link.setAttribute('href', redactedInvite);
+      redactedLinks += 1;
+    }
+    const bodyContainsToken = token ? document.body.innerText.includes(token) : false;
+    const hrefContainsToken = token ? [...document.querySelectorAll('a')].some((link) => link.href.includes(token) || (link.getAttribute('href') ?? '').includes(token)) : false;
+    return { redactedTextNodes, redactedLinks, bodyContainsToken, hrefContainsToken };
+  })()`);
+  ctx.assert(redacted.redactedLinks > 0 && !redacted.bodyContainsToken && !redacted.hrefContainsToken, `Invite email evidence still exposes the invite credential: ${JSON.stringify(redacted)}.`);
 }
 
 function rewriteInviteLink(inviteLink) {

@@ -10,6 +10,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { isScimManagedTeam } from "../../scim-groups.js"
 import {
   jsonValidator,
   orgRoleRoute,
@@ -53,7 +54,8 @@ const teamResponseSchema = z.object({
     name: z.string(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
-    memberIds: z.array(denTypeIdSchema("member")),
+      memberIds: z.array(denTypeIdSchema("member")),
+      managedByScim: z.boolean(),
   }),
 }).meta({ ref: "TeamResponse" })
 
@@ -165,6 +167,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
           createdAt: now,
           updatedAt: now,
           memberIds,
+          managedByScim: false,
         },
       }, 201)
     },
@@ -213,6 +216,9 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       const team = teamRows[0]
       if (!team) {
         return c.json({ error: "team_not_found" }, 404)
+      }
+      if (await isScimManagedTeam({ organizationId: payload.organization.id, teamId: team.id })) {
+        return c.json({ error: "scim_managed_team", message: "Manage this team through the SCIM identity provider." }, 409)
       }
 
       let memberIds: MemberId[] | undefined
@@ -268,6 +274,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
           name: nextName,
           updatedAt,
           memberIds: memberIds ?? [],
+          managedByScim: false,
         },
       })
     },
@@ -314,6 +321,9 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       const team = teamRows[0]
       if (!team) {
         return c.json({ error: "team_not_found" }, 404)
+      }
+      if (await isScimManagedTeam({ organizationId: payload.organization.id, teamId: team.id })) {
+        return c.json({ error: "scim_managed_team", message: "Disable SCIM team mapping before deleting this team." }, 409)
       }
 
       await db.transaction(async (tx) => {

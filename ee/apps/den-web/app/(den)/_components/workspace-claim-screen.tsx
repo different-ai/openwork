@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Check, Copy, ExternalLink } from "lucide-react";
+import { getDesktopGrant } from "../_lib/desktop-handoff";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import {
   PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
@@ -32,6 +34,8 @@ type AcceptedClaim = {
   organizationName: string;
   organizationSlug: string;
 };
+
+const AUTO_ACCEPT_WORKSPACE_CLAIM_STORAGE_KEY = "openwork:web:auto-accept-workspace-claim";
 
 function parseAcceptedClaim(payload: unknown): AcceptedClaim | null {
   if (typeof payload !== "object" || payload === null) {
@@ -99,9 +103,13 @@ export function WorkspaceClaimScreen({
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimedOrg, setClaimedOrg] = useState<AcceptedClaim | null>(null);
   const [handoffBusy, setHandoffBusy] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   const [handoffError, setHandoffError] = useState<string | null>(null);
   const [handoffAttempted, setHandoffAttempted] = useState(false);
   const [inviteSummary, setInviteSummary] = useState<string | null>(null);
+  const autoClaimAttempted = useRef(false);
+  const isLoopback = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 
   // Persist the token so sign-in / sign-up returns the user to this page.
   useEffect(() => {
@@ -115,6 +123,11 @@ export function WorkspaceClaimScreen({
       window.sessionStorage.removeItem(PENDING_WORKSPACE_CLAIM_STORAGE_KEY);
     }
   }, [token]);
+
+  useEffect(() => {
+    if (!sessionHydrated || user || !token || typeof window === "undefined") return;
+    window.sessionStorage.setItem(AUTO_ACCEPT_WORKSPACE_CLAIM_STORAGE_KEY, token);
+  }, [sessionHydrated, token, user]);
 
   async function handleClaim() {
     if (!token) {
@@ -176,37 +189,73 @@ export function WorkspaceClaimScreen({
     }
   }
 
+  useEffect(() => {
+    if (!sessionHydrated || !user || !token || claimBusy || claimedOrg || autoClaimAttempted.current) return;
+    if (window.sessionStorage.getItem(AUTO_ACCEPT_WORKSPACE_CLAIM_STORAGE_KEY) !== token) return;
+
+    autoClaimAttempted.current = true;
+    window.sessionStorage.removeItem(AUTO_ACCEPT_WORKSPACE_CLAIM_STORAGE_KEY);
+    void handleClaim();
+  }, [claimBusy, claimedOrg, sessionHydrated, token, user]);
+
+  async function createDesktopHandoff(): Promise<string> {
+    const { response, payload } = await requestJson(
+      "/v1/auth/desktop-handoff",
+      {
+        method: "POST",
+        body: JSON.stringify({ desktopScheme: "openwork" }),
+      },
+      12000,
+    );
+
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload, `Could not prepare a desktop sign-in link (${response.status}).`));
+    }
+
+    const openworkUrl = getOpenworkUrl(payload);
+    if (!openworkUrl) {
+      throw new Error("Desktop sign-in succeeded, but no app link was returned.");
+    }
+
+    return openworkUrl;
+  }
+
   async function handleOpenDesktop() {
     setHandoffBusy(true);
     setHandoffError(null);
     setHandoffAttempted(true);
 
     try {
-      const { response, payload } = await requestJson(
-        "/v1/auth/desktop-handoff",
-        {
-          method: "POST",
-          body: JSON.stringify({ desktopScheme: "openwork" }),
-        },
-        12000,
-      );
-
-      if (!response.ok) {
-        setHandoffError(getErrorMessage(payload, `Could not prepare a desktop sign-in link (${response.status}).`));
-        return;
-      }
-
-      const openworkUrl = getOpenworkUrl(payload);
-      if (!openworkUrl) {
-        setHandoffError("Desktop sign-in succeeded, but no app link was returned.");
-        return;
-      }
-
-      window.location.assign(openworkUrl);
+      window.location.assign(await createDesktopHandoff());
     } catch (error) {
       setHandoffError(error instanceof Error ? error.message : "Could not open OpenWork.");
     } finally {
       setHandoffBusy(false);
+    }
+  }
+
+  async function handleCopySignInCode() {
+    setCopyBusy(true);
+    setCodeCopied(false);
+    setHandoffError(null);
+
+    try {
+      if (!navigator.clipboard) {
+        throw new Error("Clipboard is not available in this browser.");
+      }
+
+      const grant = getDesktopGrant(await createDesktopHandoff());
+      if (!grant) {
+        throw new Error("Desktop sign-in succeeded, but no one-time code was returned.");
+      }
+
+      await navigator.clipboard.writeText(grant);
+      setCodeCopied(true);
+      window.setTimeout(() => setCodeCopied(false), 1800);
+    } catch (error) {
+      setHandoffError(error instanceof Error ? error.message : "Could not copy the sign-in code.");
+    } finally {
+      setCopyBusy(false);
     }
   }
 
@@ -240,44 +289,35 @@ export function WorkspaceClaimScreen({
   // Signed out: collect credentials, then resume on this page automatically.
   if (!user) {
     return (
-      <section className="den-page grid gap-6 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] lg:py-6">
-        <div className="den-frame grid gap-6 p-6 md:p-8">
-          <div className="grid gap-3">
+      <section className="den-page py-6 lg:py-10">
+        <div className="mx-auto grid w-full max-w-[32rem] gap-5">
+          <div className="grid gap-2 text-center">
             <p className="den-eyebrow">OpenWork Cloud</p>
-            <div className="grid gap-2">
-              <p className="den-copy">Claim the workspace OpenWork set up for you</p>
-              <h1 className="den-title-xl max-w-[14ch]">Take ownership</h1>
-            </div>
-          </div>
-
-          <div className="den-frame-inset grid gap-3 rounded-[1.5rem] p-5">
-            <p className="m-0 text-base font-medium text-[var(--dls-text-primary)]">
-              Sign in to become the owner.
-            </p>
+            <h1 className="den-title-lg">Claim your workspace</h1>
             <p className="den-copy">
-              Your workspace and first skill are already set up. Sign in or create an account to attach yourself as the human owner and add billing.
+              Sign in or create an account to become the owner. Your workspace is already set up.
             </p>
           </div>
-        </div>
 
-        <AuthPanel
-          eyebrow="Claim workspace"
-          // Prefill only - never locked. The claim token (not the email) is
-          // what authorizes accepting this claim, so the human can still
-          // claim with a different email if they want to.
-          prefilledEmail={prefilledEmail}
-          prefillKey={token}
-          signUpContent={{
-            title: "Claim your workspace.",
-            copy: "Create an account to take ownership.",
-            submitLabel: "Create account and claim",
-          }}
-          signInContent={{
-            title: "Claim your workspace.",
-            copy: "Sign in to take ownership.",
-            submitLabel: "Sign in to claim",
-          }}
-        />
+          <AuthPanel
+            eyebrow="Workspace owner"
+            // Prefill only - never locked. The claim token (not the email) is
+            // what authorizes accepting this claim, so the human can still
+            // claim with a different email if they want to.
+            prefilledEmail={prefilledEmail}
+            prefillKey={token}
+            signUpContent={{
+              title: "Create your account",
+              copy: "You will become the workspace owner.",
+              submitLabel: "Create account and claim",
+            }}
+            signInContent={{
+              title: "Sign in to continue",
+              copy: "You will become the workspace owner.",
+              submitLabel: "Sign in and claim",
+            }}
+          />
+        </div>
       </section>
     );
   }
@@ -286,34 +326,86 @@ export function WorkspaceClaimScreen({
   // or continue in the browser.
   if (claimedOrg) {
     return (
-      <section className="den-page py-4 lg:py-6">
-        <div className="den-frame grid max-w-[44rem] gap-6 p-6 md:p-8">
-          <div className="grid gap-2">
-            <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[16ch]">You own {claimedOrg.organizationName} now.</h1>
-            <p className="den-copy">
-              If OpenWork is already open on this machine, sign it in automatically - no password to type again.
+      <section
+        className={`flex min-h-dvh w-full items-center justify-center px-5 py-8 ${isLoopback ? "bg-[#edf6ff]" : ""}`}
+        data-demo-claim={isLoopback ? "true" : undefined}
+      >
+        <div className={`den-frame mx-auto grid w-full max-w-[38rem] gap-7 p-7 text-center md:p-10 ${isLoopback ? "border-blue-200/80 bg-white/90 shadow-[0_28px_80px_-44px_rgba(37,99,235,0.45)]" : ""}`}>
+          <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-blue-600 text-white shadow-[0_12px_28px_-14px_rgba(37,99,235,0.8)]">
+            <Check className="size-6" strokeWidth={2.5} aria-hidden />
+          </div>
+
+          <div className="grid justify-items-center gap-3">
+            <p className={`den-eyebrow ${isLoopback ? "text-blue-700" : ""}`}>{isLoopback ? "Demo workspace ready" : "Workspace ready"}</p>
+            <h1 className="den-title-lg max-w-[22ch]">{claimedOrg.organizationName} is yours.</h1>
+            <p className="den-copy max-w-[46ch]">
+              {isLoopback
+                ? "Copy the one-time code, then paste it into OpenWork to finish signing in."
+                : "Open the desktop app to finish signing in. You will not need to enter your password again."}
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              className="den-button-primary w-full sm:w-auto"
-              onClick={() => void handleOpenDesktop()}
-              disabled={handoffBusy}
-            >
-              {handoffBusy ? "Opening OpenWork..." : "Open OpenWork"}
-            </button>
-            <button
-              type="button"
-              className="den-button-secondary w-full sm:w-auto"
-              onClick={continueInBrowser}
-              disabled={handoffBusy}
-            >
-              Continue in browser instead
-            </button>
+          <div className="grid gap-3">
+            {isLoopback ? (
+              <button
+                type="button"
+                className="den-button-primary w-full bg-blue-600 shadow-[0_16px_34px_-18px_rgba(37,99,235,0.75)] hover:!bg-blue-700"
+                onClick={() => void handleCopySignInCode()}
+                disabled={handoffBusy || copyBusy}
+              >
+                <Copy className="size-4" aria-hidden />
+                {copyBusy ? "Copying..." : codeCopied ? "Code copied" : "Copy sign-in code"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="den-button-primary w-full sm:w-auto"
+                onClick={() => void handleOpenDesktop()}
+                disabled={handoffBusy || copyBusy}
+              >
+                {handoffBusy ? "Opening OpenWork..." : "Open OpenWork"}
+              </button>
+            )}
+
+            <div className="flex flex-col items-center justify-center gap-2 text-sm sm:flex-row sm:gap-5">
+              {isLoopback ? (
+                <button
+                  type="button"
+                  className="inline-flex min-h-10 items-center gap-1.5 px-2 font-medium text-[var(--dls-text-primary)] transition hover:text-blue-700 disabled:opacity-60"
+                  onClick={() => void handleOpenDesktop()}
+                  disabled={handoffBusy || copyBusy}
+                >
+                  <ExternalLink className="size-3.5" aria-hidden />
+                  {handoffBusy ? "Opening OpenWork..." : "Open OpenWork"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="inline-flex min-h-10 items-center gap-1.5 px-2 font-medium text-[var(--dls-text-secondary)] transition hover:text-[var(--dls-text-primary)] disabled:opacity-60"
+                  onClick={() => void handleCopySignInCode()}
+                  disabled={handoffBusy || copyBusy}
+                >
+                  <Copy className="size-3.5" aria-hidden />
+                  {copyBusy ? "Copying..." : codeCopied ? "Code copied" : "Copy sign-in code"}
+                </button>
+              )}
+              <span className="hidden text-[var(--dls-border)] sm:inline" aria-hidden>•</span>
+              <button
+                type="button"
+                className="min-h-10 px-2 font-medium text-[var(--dls-text-secondary)] transition hover:text-[var(--dls-text-primary)] disabled:opacity-60"
+                onClick={continueInBrowser}
+                disabled={handoffBusy || copyBusy}
+              >
+                Continue in browser instead
+              </button>
+            </div>
           </div>
+
+          {codeCopied ? (
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
+              In OpenWork, choose &quot;Paste sign-in code&quot; and paste it once.
+            </div>
+          ) : null}
 
           {handoffAttempted && !handoffError ? (
             <p className="den-copy text-sm">
@@ -328,14 +420,12 @@ export function WorkspaceClaimScreen({
 
   // Signed in: confirm ownership.
   return (
-    <section className="den-page py-4 lg:py-6">
-      <div className="den-frame grid max-w-[44rem] gap-6 p-6 md:p-8">
-        <div className="grid gap-3">
+    <section className="den-page py-6 lg:py-10">
+      <div className="den-frame mx-auto grid max-w-[34rem] gap-6 p-6 md:p-8">
+        <div className="grid gap-2">
           <p className="den-eyebrow">OpenWork Cloud</p>
-          <div className="grid gap-2">
-            <p className="den-copy">Claim the workspace OpenWork set up for you</p>
-            <h1 className="den-title-xl max-w-[14ch]">Take ownership</h1>
-          </div>
+          <h1 className="den-title-lg">Claim your workspace</h1>
+          <p className="den-copy">Confirm this account to become the owner.</p>
         </div>
 
         <div className="den-frame-inset grid gap-1 rounded-[1.5rem] px-4 py-3">
@@ -344,9 +434,6 @@ export function WorkspaceClaimScreen({
         </div>
 
         <div className="grid gap-4">
-          <p className="den-copy">
-            Claiming attaches this account as the owner of the workspace and unlocks billing and teammates.
-          </p>
           {inviteEmails.length > 0 ? (
             <div className="den-frame-inset rounded-[1.5rem] px-4 py-3">
               <p className="den-label">Will invite on claim</p>

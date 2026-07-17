@@ -12,6 +12,7 @@ import { db } from "./db.js"
 import { env } from "./env.js"
 import type { DenOrgMode } from "./env.js"
 import { setInferenceEnabled } from "./inference.js"
+import { appLogger } from "./observability/logger.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -24,6 +25,7 @@ const SEAT_SUBSCRIPTION_TYPE = "seat" as const
 export const FREE_ORG_SEAT_COUNT = 5
 const ACTIVE_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing"])
 const EXPIRED_STATUSES = new Set<OrgSubscriptionStatusValue>(["past_due", "canceled", "unpaid", "incomplete_expired", "expired"])
+const logger = appLogger.child({ component: "stripe_billing" })
 
 export type StripeCheckoutSubscriptionType = typeof INFERENCE_SUBSCRIPTION_TYPE | typeof SEAT_SUBSCRIPTION_TYPE
 
@@ -251,7 +253,7 @@ async function findStripeCustomerIdByOrgMetadata(organizationId: string) {
     })
     return customers.data[0]?.id ?? null
   } catch (error) {
-    console.warn("[stripe-billing] failed to search customers by org metadata", error)
+    logger.warn("failed to search Stripe customers by org metadata", { organization_id: organizationId, error })
     return null
   }
 }
@@ -534,7 +536,7 @@ export async function getOrgBillingSummary(input: { organizationId: OrgId; inclu
     try {
       portalUrl = (await createInferencePortalSession({ organizationId: input.organizationId, returnUrl: input.returnUrl })).url
     } catch (error) {
-      console.warn("[stripe-billing] failed to create billing portal session", error)
+      logger.warn("failed to create billing portal session", { organization_id: input.organizationId, error })
     }
   }
 

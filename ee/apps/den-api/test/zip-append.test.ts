@@ -4,7 +4,7 @@ import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { appendStoredEntriesToZipStream, appendStoredEntryToZip, createStoredZip, createStoredZipStream } from "../src/utils/zip-append.js"
+import { appendStoredEntryToZip, createStoredZip, createStoredZipStream } from "../src/utils/zip-append.js"
 
 function run(command: string, args: string[], cwd: string) {
   const result = spawnSync(command, args, { cwd, encoding: "utf8" })
@@ -40,41 +40,6 @@ describe("appendStoredEntryToZip", () => {
 
       expect(sha256(readFileSync(path.join(outputDir, "hello.txt")))).toBe(sha256(originalContent))
       expect(readFileSync(path.join(outputDir, "openwork-installer.json"), "utf8")).toBe(sidecarJson)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-})
-
-describe("appendStoredEntriesToZipStream", () => {
-  test("streams a standard artifact and explicit config into the generic Mac installer zip", async () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-zip-append-stream-"))
-    try {
-      const inputDir = path.join(dir, "input")
-      const outputDir = path.join(dir, "output")
-      const zipPath = path.join(dir, "source.zip")
-      const bundlePath = path.join(dir, "bundle.zip")
-      mkdirSync(inputDir)
-      mkdirSync(outputDir)
-      mkdirSync(path.join(inputDir, "OpenWork Installer.app"))
-      const originalContent = Buffer.from("signed generic installer bytes", "utf8")
-      writeFileSync(path.join(inputDir, "OpenWork Installer.app", "binary"), originalContent)
-      run("zip", ["-qr", zipPath, "OpenWork Installer.app"], inputDir)
-
-      const standardArtifact = Buffer.alloc(2 * 1024 * 1024 + 9, 73)
-      const sidecar = Buffer.from('{"clientName":"Acme"}\n', "utf8")
-      const bundle = appendStoredEntriesToZipStream(readFileSync(zipPath), [
-        { name: "openwork-installer.json", content: sidecar },
-        { name: "openwork-mac-arm64-9.9.9.dmg", content: standardArtifact },
-      ])
-      const bytes = Buffer.from(await new Response(bundle.body).arrayBuffer())
-      expect(bundle.byteLength).toBe(bytes.length)
-      writeFileSync(bundlePath, bytes)
-      run("unzip", ["-q", bundlePath, "-d", outputDir], dir)
-
-      expect(sha256(readFileSync(path.join(outputDir, "OpenWork Installer.app", "binary")))).toBe(sha256(originalContent))
-      expect(readFileSync(path.join(outputDir, "openwork-installer.json"), "utf8")).toBe(sidecar.toString("utf8"))
-      expect(sha256(readFileSync(path.join(outputDir, "openwork-mac-arm64-9.9.9.dmg")))).toBe(sha256(standardArtifact))
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

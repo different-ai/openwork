@@ -1,9 +1,9 @@
 /**
  * End-to-end: owner creates a skill, shares it to the org marketplace via MCP,
- * and the member discovers it via notification and installs it.
+ * and the member discovers it through the cloud-delivered marketplace surface.
  *
  * Uses control actions wherever possible; falls back to ctx.clickText for the
- * few steps that should go through the real UI (marketplace install dialog).
+ * few steps that should go through the real UI.
  *
  * Required env:
  * - OPENWORK_EVAL_DEN_API_URL    Den API base (e.g. http://localhost:8788)
@@ -12,7 +12,7 @@
  */
 export default {
   id: "admin-to-member-marketplace",
-  title: "Owner creates skill, shares via MCP, member discovers and installs from marketplace",
+  title: "Owner creates skill, shares via MCP, member discovers it from the marketplace",
   spec: "evals/react-session-flows.md",
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_WORKSPACE_PATH"],
   steps: [

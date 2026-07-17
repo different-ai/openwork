@@ -198,6 +198,11 @@ try {
     }),
     async (baseUrl) => {
       const explicitWebBaseUrlPath = join(temp, "desktop-bootstrap-explicit-web.json")
+      writeFileSync(
+        explicitWebBaseUrlPath,
+        `${JSON.stringify({ brandAppName: "OpenWork Demo A" })}\n`,
+        "utf8",
+      )
       const withExplicitWebBaseUrl = await spawnAsync(
         process.execPath,
         [
@@ -217,6 +222,7 @@ try {
       assert.equal(writtenExplicit.baseUrl, "https://app.example.test", "an explicit --web-base-url must be written as baseUrl")
       assert.equal(writtenExplicit.apiBaseUrl, baseUrl, "apiBaseUrl must stay the real API origin, independent of the web base URL")
       assert.notEqual(writtenExplicit.baseUrl, writtenExplicit.apiBaseUrl, "baseUrl and apiBaseUrl must not collapse into the same value")
+      assert.equal(writtenExplicit.brandAppName, "OpenWork Demo A", "prepared desktop setup must preserve its profile identity")
     },
   )
 

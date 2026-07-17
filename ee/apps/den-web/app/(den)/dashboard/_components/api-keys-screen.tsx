@@ -7,7 +7,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
-import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
+import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import {
     getOrgAccessFlags,
     parseOrgApiKeysPayload,
@@ -75,14 +75,18 @@ export function ApiKeysScreen() {
         [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.roles],
     );
 
-    async function loadApiKeys() {
+    async function loadApiKeys(isCurrent = () => true) {
         if (!orgId || !access.canManageApiKeys) {
-            setApiKeys([]);
+            if (isCurrent()) {
+                setApiKeys([]);
+            }
             return;
         }
 
-        setBusy(true);
-        setError(null);
+        if (isCurrent()) {
+            setBusy(true);
+            setError(null);
+        }
         try {
             const { response, payload } = await requestJson(
                 `/v1/api-keys`,
@@ -90,28 +94,45 @@ export function ApiKeysScreen() {
                 12000,
             );
             if (!response.ok) {
-                throw new Error(
-                    getErrorMessage(
-                        payload,
-                        `Failed to load API keys (${response.status}).`,
-                    ),
-                );
+                throw getRequestError(payload, response, `Failed to load API keys (${response.status}).`);
             }
 
-            setApiKeys(parseOrgApiKeysPayload(payload));
+            if (isCurrent()) {
+                setApiKeys(parseOrgApiKeysPayload(payload));
+            }
         } catch (nextError) {
-            setError(
-                nextError instanceof Error
-                    ? nextError.message
-                    : "Failed to load API keys.",
-            );
+            if (isReauthRequiredError(nextError)) {
+                throw nextError;
+            }
+
+            if (isCurrent()) {
+                setError(
+                    nextError instanceof Error
+                        ? nextError.message
+                        : "Failed to load API keys.",
+                );
+            }
         } finally {
-            setBusy(false);
+            if (isCurrent()) {
+                setBusy(false);
+            }
         }
     }
 
     useEffect(() => {
-        void loadApiKeys();
+        let active = true;
+        void runReauthableAction("load-api-keys", () => loadApiKeys(() => active)).catch((nextError) => {
+            if (active) {
+                setError(
+                    nextError instanceof Error
+                        ? nextError.message
+                        : "Failed to load API keys.",
+                );
+            }
+        });
+        return () => {
+            active = false;
+        };
     }, [orgId, access.canManageApiKeys]);
 
     useEffect(() => {

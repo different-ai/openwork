@@ -55,7 +55,7 @@ const BUILD_DEN_REQUIRE_SIGNIN =
     ? /^(1|true|yes|on)$/i.test(import.meta.env.VITE_DEN_REQUIRE_SIGNIN.trim())
     : false);
 
-const HOSTED_DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
+export const HOSTED_DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
 export const DEN_INFERENCE_PATH = "/dashboard/inference";
 
@@ -208,6 +208,8 @@ export type DenExternalMcpConnection = {
   /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
   connectedForMe: boolean;
   needsReconnect?: boolean;
+  issuerReviewRequired?: boolean;
+  reconnectActionOwner?: "member" | "organization_admin" | null;
   missingFeatures?: string[];
   externalAccountId?: string | null;
   grantedScopes?: string[];
@@ -301,6 +303,7 @@ let desktopBootstrapConfig: DenBootstrapConfig = {
 export type DenAppVersionMetadata = {
   minAppVersion: string;
   latestAppVersion: string;
+  publishedDesktopVersions: string[];
 };
 
 type RawJsonResponse<T> = {
@@ -323,6 +326,17 @@ export class DenApiError extends Error {
   }
 }
 
+/**
+ * True only for 401s that actually came from the Den API (its JSON error
+ * envelope parsed into a code). A bare/foreign 401 from a corporate proxy,
+ * captive portal, or LB while the control plane is unreachable must be
+ * treated as "unavailable", not as a revoked session — otherwise a VPN blip
+ * signs the user out and destroys the stored token.
+ */
+export function isDenSessionRevokedError(error: unknown): boolean {
+  return error instanceof DenApiError && error.status === 401 && error.code !== "request_failed";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -339,11 +353,14 @@ function getDenAppVersionMetadata(payload: unknown): DenAppVersionMetadata | nul
   const latestAppVersion =
     typeof payload.latestAppVersion === "string" ? payload.latestAppVersion.trim() : "";
   if (!latestAppVersion) return null;
+  const publishedDesktopVersions = readStringArray(payload.publishedDesktopVersions);
 
   return {
     minAppVersion:
       typeof payload.minAppVersion === "string" ? payload.minAppVersion.trim() : "",
     latestAppVersion,
+    publishedDesktopVersions:
+      publishedDesktopVersions.length > 0 ? publishedDesktopVersions : [latestAppVersion],
   };
 }
 
@@ -463,6 +480,19 @@ export function denOriginComparisonKey(input: string | null | undefined): string
   }
 }
 
+/**
+ * True when the effective Den control plane is not the hosted OpenWork Cloud
+ * (app.openworklabs.com). Self-hosted deployments point the app at their own
+ * control plane via VITE_DEN_BASE_URL or the desktop bootstrap config, so
+ * hosted-only surfaces (e.g. OpenWork Models upsells) should stay hidden.
+ */
+export function isSelfHostedControlPlane(): boolean {
+  return (
+    denOriginComparisonKey(readDenSettings().baseUrl) !==
+    denOriginComparisonKey(HOSTED_DEFAULT_DEN_BASE_URL)
+  );
+}
+
 export function getDenInferenceUrl(baseUrl?: string | null): string {
   const normalized = normalizeDenBaseUrl(baseUrl ?? readDenSettings().baseUrl) ?? DEFAULT_DEN_BASE_URL;
   return `${normalized}${DEN_INFERENCE_PATH}`;
@@ -574,6 +604,7 @@ function resolveDenBootstrapConfig(
     brandAppName?: string | null;
     brandLogoUrl?: string | null;
     brandIconUrl?: string | null;
+    claimLinks?: DenBootstrapConfig["claimLinks"];
     handoff?: DenBootstrapHandoff | null;
     prepared?: DenBootstrapPrepared | null;
   },
@@ -584,6 +615,7 @@ function resolveDenBootstrapConfig(
     ...(input.brandAppName?.trim() ? { brandAppName: input.brandAppName.trim().slice(0, 64) } : {}),
     ...(input.brandLogoUrl?.trim() ? { brandLogoUrl: input.brandLogoUrl.trim() } : {}),
     ...(input.brandIconUrl?.trim() ? { brandIconUrl: input.brandIconUrl.trim() } : {}),
+    ...(input.claimLinks ? { claimLinks: input.claimLinks } : {}),
     ...(input.handoff ? { handoff: input.handoff } : {}),
     ...(input.prepared ? { prepared: input.prepared } : {}),
   };
@@ -601,6 +633,9 @@ function getPendingBootstrapConfig(next: DenSettings): DenBootstrapConfig | null
     brandAppName: previous.brandAppName,
     brandLogoUrl: previous.brandLogoUrl,
     brandIconUrl: previous.brandIconUrl,
+    claimLinks: previous.claimLinks,
+    handoff: previous.handoff,
+    prepared: previous.prepared,
   });
 }
 
@@ -668,6 +703,25 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
   return desktopBootstrapConfig;
 }
 
+/**
+ * Re-reads desktop-bootstrap.json from the shell and applies it to the cached
+ * snapshot, notifying listeners. Used after the shell itself persisted a new
+ * config (e.g. an accepted connect link) so the renderer converges without a
+ * reload.
+ */
+export async function refreshDenBootstrapConfigFromShell(): Promise<DenBootstrapConfig> {
+  if (isDesktopRuntime()) {
+    try {
+      const bootstrap = await getDesktopBootstrapConfigFromShell() as ShellDesktopBootstrapConfig;
+      applyDesktopBootstrapConfig(resolveDenBootstrapConfig(bootstrap));
+      dispatchDenSettingsChanged({ settings: readDenSettings() });
+    } catch {
+      // Bridge hiccup — keep the current cached snapshot.
+    }
+  }
+  return readDenBootstrapConfig();
+}
+
 export async function setDenBootstrapConfig(
   next: ShellDesktopBootstrapConfig,
 ): Promise<DenBootstrapConfig> {
@@ -733,6 +787,34 @@ export function readDenSettings(): DenSettings {
     activeOrgId: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_ID) ?? "").trim() || null,
     activeOrgSlug: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_SLUG) ?? "").trim() || null,
     activeOrgName: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_NAME) ?? "").trim() || null,
+  };
+}
+
+function mergePassiveDenField(
+  current: string | null | undefined,
+  next: string | null | undefined,
+): string | null {
+  const trimmed = next?.trim() ?? "";
+  return trimmed || current || null;
+}
+
+/**
+ * Merge an in-memory den-session snapshot over the persisted settings for the
+ * PASSIVE state->storage mirror. A passive sync must never delete persisted
+ * credentials just because in-memory state has not (or could not) load them —
+ * e.g. while the control plane is unreachable the org list never loads, and
+ * mirroring `activeOrg: null` used to erase the stored org (and, after a
+ * remount race, the auth token), permanently signing the user out on a
+ * transient VPN/network outage. Explicit sign-out/change-server flows clear
+ * storage through clearDenSession()/saveControlPlaneUrl() instead.
+ */
+export function mergePassiveDenSettings(current: DenSettings, next: DenSettings): DenSettings {
+  return {
+    ...resolveDenBaseUrls(next),
+    authToken: mergePassiveDenField(current.authToken, next.authToken),
+    activeOrgId: mergePassiveDenField(current.activeOrgId, next.activeOrgId),
+    activeOrgSlug: mergePassiveDenField(current.activeOrgSlug, next.activeOrgSlug),
+    activeOrgName: mergePassiveDenField(current.activeOrgName, next.activeOrgName),
   };
 }
 
@@ -1172,6 +1254,10 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
     connectedAt: typeof value.connectedAt === "string" ? value.connectedAt : null,
     connectedForMe: value.connectedForMe === true,
     ...(typeof value.needsReconnect === "boolean" ? { needsReconnect: value.needsReconnect } : {}),
+    ...(typeof value.issuerReviewRequired === "boolean" ? { issuerReviewRequired: value.issuerReviewRequired } : {}),
+    ...(value.reconnectActionOwner === "member" || value.reconnectActionOwner === "organization_admin" || value.reconnectActionOwner === null
+      ? { reconnectActionOwner: value.reconnectActionOwner }
+      : {}),
     ...(Array.isArray(value.missingFeatures) ? { missingFeatures: readStringArray(value.missingFeatures) } : {}),
     ...(typeof value.externalAccountId === "string" || value.externalAccountId === null ? { externalAccountId: value.externalAccountId } : {}),
     ...(Array.isArray(value.grantedScopes) ? { grantedScopes: readStringArray(value.grantedScopes) } : {}),
@@ -2235,10 +2321,16 @@ export async function fetchDenOrgSkillsCatalog(
  * current desktop Den session. Returns null when signed out or no active
  * organization is selected.
  */
-export async function mintCloudControlMcpToken(): Promise<DenMcpToken | null> {
-  const settings = readDenSettings();
+export type DenMcpTokenMintContext = {
+  baseUrl: string;
+  authToken: string | null;
+  orgId: string | null;
+};
+
+export async function mintCloudControlMcpToken(context?: DenMcpTokenMintContext): Promise<DenMcpToken | null> {
+  const settings = context ?? readDenSettings();
   const token = settings.authToken?.trim() ?? "";
-  const orgId = settings.activeOrgId?.trim() ?? "";
+  const orgId = ("orgId" in settings ? settings.orgId : settings.activeOrgId)?.trim() ?? "";
   if (!token || !orgId) {
     return null;
   }
