@@ -29,8 +29,8 @@ Mechanics, all server-side:
    the entire member half is the shipped #2451/#2455 machinery.
 4. Invoke-time safety is unchanged: the agent's ceiling is the signed-in
    human's real org role (a member's agent gets a clean 403), the desktop
-   Cloud Control token is already `mcp:read mcp:write`, and the staged
-   rollout gate + ops/revert tooling apply because it is the same table.
+   Cloud Control token is already `mcp:read mcp:write`, and the org-level
+   kill switch + ops/revert tooling apply because it is the same table.
 
 ## Path B — new wave (mapped, next PR)
 
@@ -55,7 +55,7 @@ Mechanics, building on precedent that already exists:
    poll loop proven in #2451/#2455, now mounted inside a chat bubble. No new
    connect logic; the component is fed, not rebuilt.
 4. Same governance: the card renders from the member's own `scope=usable`
-   view, so grants and the rollout gate hold automatically.
+   view, so grants and the org-level kill switch hold automatically.
 
 Path B risk notes: keep the envelope out of model-visible text (structured
 result metadata, not prose) so prompts cannot forge it; the renderer must

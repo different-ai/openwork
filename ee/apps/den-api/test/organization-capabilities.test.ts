@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   normalizeOrganizationCapabilities,
   organizationHasCapability,
+  readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
 const defaultCapabilities = { installLinks: false, mcpConnections: false }
@@ -39,6 +40,30 @@ describe("normalizeOrganizationCapabilities", () => {
       capabilities: { installLinks: true, mcpConnections: true },
     }
     expect(normalizeOrganizationCapabilities(metadata)).toEqual({ installLinks: true, mcpConnections: true })
+  })
+})
+
+describe("readOrganizationCapabilityOverrides", () => {
+  test("leaves absent capability keys absent", () => {
+    expect(readOrganizationCapabilityOverrides(null)).toEqual({})
+    expect(readOrganizationCapabilityOverrides({})).toEqual({})
+    expect(readOrganizationCapabilityOverrides({ capabilities: {} })).toEqual({})
+  })
+
+  test("preserves explicit boolean false overrides", () => {
+    expect(readOrganizationCapabilityOverrides({ capabilities: { installLinks: false, mcpConnections: false } })).toEqual({ installLinks: false, mcpConnections: false })
+  })
+
+  test("ignores unrelated and non-boolean metadata", () => {
+    expect(readOrganizationCapabilityOverrides({
+      limits: { members: 10 },
+      plan: { tier: "enterprise" },
+      capabilities: { installLinks: "true", mcpConnections: 1, otherCapability: true },
+    })).toEqual({})
+  })
+
+  test("reads explicit overrides from JSON metadata", () => {
+    expect(readOrganizationCapabilityOverrides(JSON.stringify({ capabilities: { installLinks: true, mcpConnections: false } }))).toEqual({ installLinks: true, mcpConnections: false })
   })
 })
 

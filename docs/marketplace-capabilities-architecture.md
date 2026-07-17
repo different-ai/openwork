@@ -200,35 +200,43 @@ Scope note: these are `mcp:read`-class operations; nothing on this path writes; 
 
 ---
 
-## 7. Rollout gate
+## 7. Org kill switch
 
-New module: `ee/apps/den-api/src/capability-sources/marketplace-capabilities-rollout.ts`, mirroring `ee/apps/den-api/src/capability-sources/external-mcp-rollout.ts`.
+Marketplace capability search/execute uses the same effective Connect rail check
+as External MCP connections: `memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled })`
+in `ee/apps/den-api/src/capability-sources/external-mcp-rollout.ts`.
+`gatingEnabled` and `DEN_MCP_CONNECTIONS_GATING_ENABLED` are deprecated and
+inert; they stay wired only so existing deployment configs and call sites keep
+working.
 
-Function: `marketplaceCapabilitiesEnabled(metadata, { gatingEnabled })`.
-
-Environment variable: `DEN_MARKETPLACE_CAPABILITIES_GATING_ENABLED`, wired in `ee/apps/den-api/src/env.ts` like `mcpConnectionsGatingEnabled`.
-
-Org metadata opt-in key:
+Org metadata kill-switch key:
 
 ```json
-{ "marketplaceCapabilitiesEnabled": true }
+{ "capabilities": { "mcpConnections": false } }
 ```
 
-Gating is off by default, so local dev, self-hosted, and evals get the feature immediately. Hosted production deploys with gating ON, so no org sees any change until opted in.
+Connect is default-on, so local dev, self-hosted, evals, and hosted production
+get the feature immediately unless an org explicitly opts out. The backoffice
+capability value outranks legacy flat aliases (`connectEnabled` and
+`mcpConnectionsEnabled`).
 
-Check the gate in both paths: search returns an empty marketplace merge; execute returns `unknown_capability`. Gated-off is byte-identical to nonexistence.
+Check the kill switch in both paths: disabled orgs get an empty marketplace
+merge; execute returns `unknown_capability`. Opted-out is byte-identical to
+nonexistence.
 
 ### Additive invariants
 
 1. Desktop users without the cloud connection: this code is unreachable; zero change.
-2. Cloud-connected users in non-opted orgs: byte-identical search results and execute behavior.
+2. Cloud-connected users in opted-out orgs: byte-identical search results and execute behavior.
 3. Tool surface unchanged: still exactly `search_capabilities` + `execute_capability`.
 4. The desktop install flow (`apps/server/src/cloud-plugins.ts`) is untouched; installed plugins keep working identically; nothing migrates, nothing is deprecated in Phase 1.
 5. The rich `/mcp` endpoint and `/mcp/admin` are untouched. External connections also merged only into `/mcp/agent`.
 6. No schema changes, no migrations, no new tables in Phase 1; everything derives from existing plugin-arch tables in `ee/packages/den-db/src/schema/sharables/plugin-arch.ts`.
 7. No prompt changes and no tool-description changes in Phase 1; results are self-describing via `summary`, `status`, and `hint`.
 
-Kill switch uses the same two layers as connections: flip org metadata through an ops script following `ee/apps/den-api/scripts/mcp-connections-rollout.ts`, or flip the env gate at deploy time following `scripts/revert-org-mcp-connections.sh`.
+Kill switch uses the same layer as connections: flip org metadata in /admin (or
+an ops script) by setting `metadata.capabilities.mcpConnections` to `false`.
+The old deployment-level env gate is deprecated and inert.
 
 ---
 
@@ -236,12 +244,11 @@ Kill switch uses the same two layers as connections: flip org metadata through a
 
 ### Phase 1: this document's scope, Den-only, additive
 
-Build the marketplace search source, the execute branch for all classes with honest statuses, the rollout gate, tests, and eval flow. There are zero desktop changes and zero behavior changes for anyone until an org is opted in when hosted gating is enabled.
+Build the marketplace search source, the execute branch for all classes with honest statuses, the org kill switch, tests, and eval flow. There are zero desktop changes; member-facing Connect rail behavior is default-on unless an org explicitly opts out.
 
 Deliverables:
 
 - New: `ee/apps/den-api/src/mcp/marketplace-capabilities.ts`.
-- New: `ee/apps/den-api/src/capability-sources/marketplace-capabilities-rollout.ts`.
 - Touched: `ee/apps/den-api/src/mcp/agent.ts` at the two merge points.
 - Touched: `ee/apps/den-api/src/env.ts`.
 - New: `ee/apps/den-api/test/marketplace-capabilities.test.ts`.

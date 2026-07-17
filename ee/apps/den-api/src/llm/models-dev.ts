@@ -1,4 +1,4 @@
-const MODELS_DEV_API_URL = "https://models.dev/api.json"
+const MODELS_DEV_API_URL = "https://models.openworklabs.com/api.json"
 const MODELS_DEV_CACHE_TTL_MS = 1000 * 60 * 10
 
 type JsonRecord = Record<string, unknown>

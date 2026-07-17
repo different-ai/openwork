@@ -125,6 +125,40 @@ describe("agent-configurable org connections policy", () => {
     }))
   })
 
+  test("chat capability search discovers the Den GitHub marketplace import workflow", () => {
+    const catalog = buildMcpCatalog(document)
+    const previewMatches = searchCapabilities(catalog, "preview github plugin marketplace import", 10)
+    const importMatches = searchCapabilities(catalog, "add github plugin to marketplace", 10)
+    const readinessMatches = searchCapabilities(catalog, "resolved marketplace plugin readiness", 10)
+
+    expect(previewMatches).toContainEqual(expect.objectContaining({
+      method: "POST",
+      path: "/v1/plugins/import-mcps-from-github-url/preview",
+      hasBody: true,
+    }))
+    expect(importMatches).toContainEqual(expect.objectContaining({
+      method: "POST",
+      path: "/v1/plugins/import-mcps-from-github-url",
+      hasBody: true,
+      bodySchema: expect.objectContaining({
+        type: "object",
+        properties: expect.objectContaining({
+          access: expect.objectContaining({ type: "object" }),
+          authType: expect.objectContaining({ type: "string" }),
+          githubUrl: expect.objectContaining({ type: "string" }),
+          marketplaceId: expect.objectContaining({ type: "string" }),
+          selectedSkillKeys: expect.objectContaining({ type: "array" }),
+          selectedServerKeys: expect.objectContaining({ type: "array" }),
+        }),
+        required: expect.arrayContaining(["githubUrl", "marketplaceId"]),
+      }),
+    }))
+    expect(readinessMatches).toContainEqual(expect.objectContaining({
+      method: "GET",
+      path: "/v1/marketplaces/{marketplaceId}/resolved",
+    }))
+  })
+
   test("agent capability search source filter can restrict searches to skills", () => {
     expect(searchCapabilitySourceFilter()).toEqual({
       api: true,

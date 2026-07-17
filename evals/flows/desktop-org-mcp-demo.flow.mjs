@@ -4,10 +4,10 @@
  * - Admin setup creates a per-member org MCP connection in Den (the den-web
  *   admin screen is proven separately by mcp-connections-cloud-oauth).
  * - Jordan signs the desktop into the same org.
- * - The connection appears in the existing Extensions Marketplace as an org
- *   MCP item, not in a special section.
- * - Jordan clicks through the desktop UI, the OS browser completes a real OAuth
- *   round trip, and the item moves to My Extensions as Connected.
+ * - The connection appears in OpenWork Connect as an org MCP item that needs
+ *   Jordan's sign-in.
+ * - Jordan clicks through Connect, the OS browser completes a real OAuth
+ *   round trip, and the item becomes Ready in Connect.
  * - A real chat turn executes the external MCP tool through OpenWork Cloud
  *   Control; the mock server log is the external witness.
  */
@@ -289,6 +289,61 @@ async function openMcpSettings(ctx) {
   ctx.assert(false, `MCP settings never became ready: ${JSON.stringify(last)}`);
 }
 
+async function openConnectSettings(ctx) {
+  const workspaceId = await currentWorkspaceId(ctx);
+  let last = null;
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    await ctx.navigateHash(`/workspace/${workspaceId}/settings/connect`);
+    await sleep(1_000);
+    last = await ctx.eval(`(() => {
+      const text = document.body.innerText;
+      return {
+        hash: window.location.hash,
+        onOnboarding: window.location.hash.includes('/onboarding') || text.includes('Continue with organization') || text.includes('Continue to workspace'),
+        hasConnect: text.includes('Connect'),
+      };
+    })()`);
+    if (last.onOnboarding) {
+      await ensureWorkspace(ctx);
+      await sleep(500);
+      continue;
+    }
+    if (last.hash.includes('/settings/connect') && last.hasConnect) return workspaceId;
+    await sleep(1_000);
+  }
+  ctx.assert(false, `Connect settings never became ready: ${JSON.stringify(last)}`);
+}
+
+async function waitForConnectOrgRow(ctx, name) {
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    const found = await ctx.eval(`(() => {
+      return [...document.querySelectorAll('[data-testid="connect-organization-row"]')]
+        .some((row) => (row.textContent ?? '').includes(${JSON.stringify(name)}));
+    })()`);
+    if (found) return;
+    await ctx.control("extensions.refresh-marketplace").catch(() => {});
+    await sleep(2_000);
+  }
+  ctx.assert(false, `Connect org row did not render: ${name}`);
+}
+
+async function waitForConnectReadyRow(ctx, name) {
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    const found = await ctx.eval(`(() => {
+      const row = [...document.querySelectorAll('[data-testid="connect-organization-row"]')]
+        .find((entry) => (entry.textContent ?? '').includes(${JSON.stringify(name)}));
+      return Boolean(row && (row.textContent ?? '').includes('Ready') && !(row.textContent ?? '').includes('Connect your account'));
+    })()`);
+    if (found) return;
+    await ctx.control("extensions.refresh-marketplace").catch(() => {});
+    await sleep(2_000);
+  }
+  ctx.assert(false, `Connect org row did not become ready: ${name}`);
+}
+
 async function waitForMockAuthorizeRequest(ctx) {
   let authorizeRequest = null;
   const deadline = Date.now() + 30_000;
@@ -306,7 +361,7 @@ async function waitForMockAuthorizeRequest(ctx) {
 
 export default {
   id: "desktop-org-mcp-demo",
-  title: "Desktop app: org MCP connections appear in Marketplace, connect through browser OAuth, and work in chat",
+  title: "Desktop app: org MCP connections appear in Connect, connect through browser OAuth, and work in chat",
   kind: "user-facing",
   spec: "evals/desktop-org-mcp-demo.md",
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
@@ -393,32 +448,24 @@ export default {
       },
     },
     {
-      name: "Jordan discovers the org MCP connection in Marketplace",
+      name: "Jordan discovers the org MCP connection in OpenWork Connect",
       run: async (ctx) => {
-        await openMcpSettings(ctx);
-        await ctx.expectHashIncludes("/settings/extensions/mcp", { timeoutMs: 20_000 });
-        await ctx.clickText("Refresh", { timeoutMs: 15_000 }).catch(() => {});
-        await ctx.waitFor(
-          `(() => {
-            const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.trim() === 'Marketplace' && !candidate.disabled);
-            button?.click();
-            return Boolean(button);
-          })()`,
-          { timeoutMs: 30_000, label: "Marketplace tab" },
-        );
+        await openConnectSettings(ctx);
+        await ctx.expectHashIncludes("/settings/connect", { timeoutMs: 20_000 });
+        await waitForConnectOrgRow(ctx, CONNECTION_NAME);
 
-        await ctx.prove("Jordan sees the org MCP connection in the existing Marketplace tab, with a connect action", {
-          voiceover: "Jordan does not see a special org-only panel. The org-shared MCP connection is just another catalog card in Marketplace, clearly marked as something they can connect with their own account.",
+        await ctx.prove("Jordan sees the org MCP connection in OpenWork Connect, with a connect action", {
+          voiceover: "Jordan opens OpenWork Connect and sees the org-shared MCP connection under Needs your sign-in, clearly marked as something they can connect with their own account.",
           assert: async () => {
-            await ctx.expectText("Extension Marketplace", { timeoutMs: 30_000 });
             await ctx.expectText(CONNECTION_NAME, { timeoutMs: 60_000 });
+            await ctx.expectText("NEEDS YOUR SIGN-IN", { timeoutMs: 30_000 });
             await ctx.expectText("Connect your account", { timeoutMs: 30_000 });
           },
           screenshot: {
-            name: "desktop-org-mcp-marketplace",
-            claim: "The desktop Extensions Marketplace shows the org-published MCP connection with a 'Connect your account' action.",
-            requireText: ["Extension Marketplace", CONNECTION_NAME, "Connect your account"],
-            rejectText: ["From your organization", "Something went wrong"],
+            name: "desktop-org-mcp-connect",
+            claim: "OpenWork Connect shows the org-published MCP connection with a 'Connect your account' action.",
+            requireText: ["From your organization", "NEEDS YOUR SIGN-IN", CONNECTION_NAME, "Connect your account"],
+            rejectText: ["Something went wrong"],
           },
         });
       },
@@ -426,49 +473,40 @@ export default {
     {
       name: "Jordan connects through real browser OAuth",
       run: async (ctx) => {
-        await ctx.clickText(CONNECTION_NAME, { timeoutMs: 20_000 });
-        await ctx.expectText("OpenWork stores this sign-in", { timeoutMs: 15_000 });
         state.clickedAt = new Date().toISOString();
         const clicked = await ctx.eval(`(() => {
-          const dialog = document.querySelector('[role="dialog"]');
-          const button = [...(dialog?.querySelectorAll('button') ?? [])].find((el) => el.textContent.trim() === 'Connect your account' && !el.disabled);
+          const row = [...document.querySelectorAll('[data-testid="connect-organization-row"]')]
+            .find((entry) => (entry.textContent ?? '').includes(${JSON.stringify(CONNECTION_NAME)}));
+          const button = [...(row?.querySelectorAll('button') ?? [])].find((el) => el.textContent.trim() === 'Connect your account' && !el.disabled);
           button?.click();
           return Boolean(button);
         })()`);
-        ctx.assert(clicked, "Could not click the modal's Connect your account button.");
+        ctx.assert(clicked, "Could not click the Connect row's Connect your account button.");
         await waitForMockAuthorizeRequest(ctx);
       },
     },
     {
-      name: "The item moves to My Extensions as connected",
+      name: "The item becomes ready in OpenWork Connect",
       run: async (ctx) => {
-        await openMcpSettings(ctx);
-        await ctx.expectText("My Extensions", { timeoutMs: 30_000 });
-        await ctx.waitFor(
-          `(() => {
-            const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.trim() === 'My Extensions' && !candidate.disabled);
-            button?.click();
-            return Boolean(button);
-          })()`,
-          { timeoutMs: 30_000, label: "My Extensions tab" },
-        );
-        await ctx.prove("After the browser sign-in completes, the same org MCP item appears in My Extensions as connected", {
-          voiceover: "The OAuth callback completed in the browser, and the desktop did not need a manual reload. Jordan's card is now in My Extensions as a connected MCP integration.",
+        await openConnectSettings(ctx);
+        await waitForConnectReadyRow(ctx, CONNECTION_NAME);
+        await ctx.prove("After the browser sign-in completes, the same org MCP item is ready in OpenWork Connect", {
+          voiceover: "The OAuth callback completed in the browser, and the desktop did not need a manual reload. Jordan's row is now ready in OpenWork Connect as a connected MCP integration.",
           assert: async () => {
             await ctx.waitFor(
               `(() => {
-                const buttons = [...document.querySelectorAll("button")];
-                const card = buttons.find((el) => el.textContent.includes(${JSON.stringify(CONNECTION_NAME)}));
-                return Boolean(card && card.textContent.includes("Connected") && !card.textContent.includes("Connect your account"));
+                const row = [...document.querySelectorAll('[data-testid="connect-organization-row"]')]
+                  .find((entry) => (entry.textContent ?? '').includes(${JSON.stringify(CONNECTION_NAME)}));
+                return Boolean(row && (row.textContent ?? '').includes("Ready") && !(row.textContent ?? '').includes("Connect your account"));
               })()`,
-              { timeoutMs: 90_000, label: "org MCP card connected in My Extensions" },
+              { timeoutMs: 90_000, label: "org MCP row ready in Connect" },
             );
           },
           screenshot: {
             name: "desktop-org-mcp-connected",
-            claim: "The org MCP connection moved to My Extensions and is marked Connected after the browser OAuth round trip.",
-            requireText: [CONNECTION_NAME, "Connected"],
-            rejectText: ["From your organization", "Something went wrong"],
+            claim: "The org MCP connection is marked Ready in OpenWork Connect after the browser OAuth round trip.",
+            requireText: [CONNECTION_NAME, "Ready"],
+            rejectText: ["Connect your account", "Something went wrong"],
           },
         });
       },

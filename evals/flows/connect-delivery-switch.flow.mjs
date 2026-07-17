@@ -30,7 +30,7 @@ const state = {
 
 export default {
   id: FLOW_ID,
-  title: "Connect-mode delivery switch moves marketplace plugins from desktop import to the cloud rail",
+  title: "Retired delivery switch: marketplace plugins stay cloud-delivered regardless of the Connect flag",
   kind: "user-facing",
   spec: "evals/voiceovers/connect-delivery-switch.md",
   requiredEnv: [
@@ -43,27 +43,26 @@ export default {
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("With Connect off, Extensions still exposes the installable Marketplace pane", {
+        await ctx.prove("With Connect off, the organization marketplace still shows cloud delivery only", {
           voiceover: vo[0],
           action: async () => {
             await prepareSignedInDesktopWithConnectOff(ctx);
-            await openExtensionsMarketplace(ctx);
+            await navigateToSettingsTab(ctx, "cloud-marketplaces");
             await waitForMarketplacePlugin(ctx, PLUGIN_NAME);
           },
           assert: async () => {
             const proof = await readExtensionsMarketplaceState(ctx, PLUGIN_NAME);
-            ctx.assert(proof.buttonTexts.includes("My Extensions"), `My Extensions toggle missing: ${JSON.stringify(proof.buttonTexts)}`);
-            ctx.assert(proof.buttonTexts.includes("Marketplace"), `Marketplace toggle missing: ${JSON.stringify(proof.buttonTexts)}`);
             ctx.assert(proof.pageText.includes("Extension Marketplace"), "Marketplace pane did not render.");
             ctx.assert(proof.pluginCardText.includes(PLUGIN_NAME), `Seed plugin card missing: ${proof.pluginCardText}`);
-            ctx.assert(proof.pluginCardText.includes("Add"), `Seed plugin was not installable: ${proof.pluginCardText}`);
-            ctx.assert(!proof.pluginCardText.includes("Runs in cloud"), `Connect cloud label leaked with flag off: ${proof.pluginCardText}`);
+            ctx.assert(proof.pluginCardText.includes("Runs in cloud"), `Cloud delivery action missing with flag off: ${proof.pluginCardText}`);
+            ctx.assert(!proof.pluginCardText.includes("Add"), `Seed plugin exposed Add with flag off: ${proof.pluginCardText}`);
+            assertNoMarketplaceInstallButtons(ctx, proof);
           },
           screenshot: {
-            name: "connect-delivery-flag-off-marketplace-installable",
-            claim: "Flag off keeps the Extensions Marketplace toggle and an installable marketplace plugin.",
-            requireText: ["My Extensions", "Marketplace", PLUGIN_NAME, "Add"],
-            rejectText: ["Cloud-runnable marketplace apps live in Connect.", "Runs in cloud", "Something went wrong"],
+            name: "connect-delivery-flag-off-cloud-only",
+            claim: "Flag off no longer restores the desktop install action; the marketplace row runs in cloud.",
+            requireText: ["Extension Marketplace", PLUGIN_NAME, "Runs in cloud"],
+            rejectText: ["Something went wrong"],
           },
         });
       },
@@ -71,30 +70,24 @@ export default {
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("With Connect on, the Extensions Marketplace tab filters to machine-installable items and points cloud content at Connect", {
+        await ctx.prove("With Connect on, Extensions Marketplace still excludes organization plugins", {
           voiceover: vo[1],
           action: async () => {
             await setCapabilityViaAdminApi(ctx, { mcpConnections: true });
             await remountDesktop(ctx);
-            await navigateToSettingsTab(ctx, "extensions");
-            await ctx.waitForText("Cloud-runnable marketplace apps live in Connect.", { timeoutMs: 60_000 });
             await openExtensionsMarketplace(ctx);
-            await ctx.waitForText("installs on this machine", { timeoutMs: 30_000 });
           },
           assert: async () => {
             const proof = await readExtensionsMarketplaceState(ctx, PLUGIN_NAME);
-            ctx.assert(proof.pageText.includes("Cloud-runnable marketplace apps live in Connect."), "Runtime-split hint missing.");
-            ctx.assert(proof.buttonTexts.includes("Open Connect"), `Open Connect button missing: ${JSON.stringify(proof.buttonTexts)}`);
             ctx.assert(proof.buttonTexts.includes("My Extensions"), `My Extensions toggle should stay: ${JSON.stringify(proof.buttonTexts)}`);
             ctx.assert(proof.buttonTexts.includes("Marketplace"), `Marketplace toggle should stay: ${JSON.stringify(proof.buttonTexts)}`);
-            ctx.assert(proof.pageText.includes("installs on this machine"), "Filtered marketplace heading missing.");
-            ctx.assert(!proof.pluginCardText.includes(PLUGIN_NAME), `Cloud-runnable plugin leaked into the machine pane: ${proof.pluginCardText}`);
+            ctx.assert(proof.pageText.includes("Extension Marketplace"), "Extensions Marketplace heading missing.");
             ctx.assert(!proof.pageText.includes(PLUGIN_NAME), "Cloud-runnable plugin name rendered in Extensions marketplace pane.");
           },
           screenshot: {
-            name: "connect-delivery-flag-on-extensions-hint",
-            claim: "Flag on keeps the Marketplace tab but filters it to items that install on this machine.",
-            requireText: ["installs on this machine", "Open Connect"],
+            name: "connect-delivery-extensions-no-org-plugin",
+            claim: "Extensions Marketplace is local-only and excludes organization marketplace plugins.",
+            requireText: ["My Extensions", "Marketplace", "Extension Marketplace"],
             rejectText: [PLUGIN_NAME, "Something went wrong"],
           },
         });
@@ -106,8 +99,7 @@ export default {
         await ctx.prove("Connect active state lists the seeded marketplace plugin as cloud-run with no install action", {
           voiceover: vo[2],
           action: async () => {
-            await ctx.clickText("Open Connect", { selector: "button", timeoutMs: 30_000 });
-            await ctx.waitFor("window.location.hash.includes('/settings/connect')", { timeoutMs: 30_000, label: "connect settings route" });
+            await navigateToSettingsTab(ctx, "connect");
             await waitForConnectOrganizationRow(ctx, PLUGIN_NAME);
             await ctx.eval("document.querySelector('[data-testid=\"connect-organization-section\"]')?.scrollIntoView({ block: 'center' })");
           },
@@ -133,26 +125,25 @@ export default {
     {
       name: "Frame 4",
       run: async (ctx) => {
-        await ctx.prove("Turning Connect back off restores the Extensions Marketplace toggle and install action", {
+        await ctx.prove("Turning Connect back off does not restore the removed install action", {
           voiceover: vo[3],
           action: async () => {
             await setCapabilityViaAdminApi(ctx, { mcpConnections: false });
             await remountDesktop(ctx);
-            await openExtensionsMarketplace(ctx);
+            await navigateToSettingsTab(ctx, "cloud-marketplaces");
             await waitForMarketplacePlugin(ctx, PLUGIN_NAME);
           },
           assert: async () => {
             const proof = await readExtensionsMarketplaceState(ctx, PLUGIN_NAME);
-            ctx.assert(proof.buttonTexts.includes("My Extensions"), `My Extensions toggle did not return: ${JSON.stringify(proof.buttonTexts)}`);
-            ctx.assert(proof.buttonTexts.includes("Marketplace"), `Marketplace toggle did not return: ${JSON.stringify(proof.buttonTexts)}`);
-            ctx.assert(proof.pluginCardText.includes("Add"), `Seed plugin was not installable after restore: ${proof.pluginCardText}`);
-            ctx.assert(!proof.pageText.includes("Cloud-runnable marketplace apps live in Connect."), "Runtime-split hint persisted after capability off.");
+            ctx.assert(proof.pluginCardText.includes("Runs in cloud"), `Cloud delivery action missing after flag restore: ${proof.pluginCardText}`);
+            ctx.assert(!proof.pluginCardText.includes("Add"), `Seed plugin exposed Add after flag restore: ${proof.pluginCardText}`);
+            assertNoMarketplaceInstallButtons(ctx, proof);
           },
           screenshot: {
-            name: "connect-delivery-flag-off-restored",
-            claim: "Flag off restores the old Extensions Marketplace pane with the install action.",
-            requireText: ["Extension Marketplace", PLUGIN_NAME, "Add"],
-            rejectText: ["Cloud-runnable marketplace apps live in Connect.", "Runs in cloud", "Something went wrong"],
+            name: "connect-delivery-flag-off-still-cloud-only",
+            claim: "Flag off still leaves organization marketplace delivery on the cloud rail only.",
+            requireText: ["Extension Marketplace", PLUGIN_NAME, "Runs in cloud"],
+            rejectText: ["Something went wrong"],
           },
         });
       },
@@ -506,12 +497,7 @@ async function openExtensionsMarketplace(ctx) {
   await navigateToSettingsTab(ctx, "extensions");
   await ctx.waitForText("My Extensions", { timeoutMs: 30_000 });
   await ctx.clickText("Marketplace", { selector: "button", timeoutMs: 30_000 });
-  // Heading differs by mode: flag off = "Extension Marketplace", flag on =
-  // "From your marketplace — installs on this machine".
-  await ctx.waitFor(
-    "(document.body?.innerText ?? '').includes('Extension Marketplace') || (document.body?.innerText ?? '').includes('installs on this machine')",
-    { timeoutMs: 30_000, label: "marketplace pane heading" },
-  );
+  await ctx.waitForText("Extension Marketplace", { timeoutMs: 30_000 });
   await ctx.control("extensions.refresh-marketplace").catch(() => {});
 }
 
@@ -568,29 +554,7 @@ async function readExtensionsMarketplaceState(ctx, name) {
   })()`);
 }
 
-async function readExtensionsHintState(ctx) {
-  return ctx.eval(`(() => {
-    const compact = (entry) => (entry?.innerText ?? entry?.textContent ?? '').replace(/\\s+/g, ' ').trim();
-    const buttons = [...document.querySelectorAll('button')];
-    return {
-      text: document.body.innerText,
-      buttonTexts: buttons.map(compact),
-    };
-  })()`);
-}
-
-async function readConnectMarketplaceState(ctx, name) {
-  return ctx.eval(`(() => {
-    const compact = (entry) => (entry?.innerText ?? entry?.textContent ?? '').replace(/\\s+/g, ' ').trim();
-    const section = document.querySelector('[data-testid="connect-marketplace-section"]');
-    const card = [...document.querySelectorAll('[data-testid="connect-marketplace-plugin-card"]')]
-      .find((entry) => compact(entry).includes(${JSON.stringify(name)}));
-    return {
-      pageText: document.body.innerText,
-      statusText: compact(document.querySelector('[data-testid="connect-org-status-row"]')),
-      sectionText: compact(section),
-      cardText: compact(card),
-      cardButtons: [...(card?.querySelectorAll('button') ?? [])].map(compact),
-    };
-  })()`);
+function assertNoMarketplaceInstallButtons(ctx, proof) {
+  const forbidden = proof.buttonTexts.filter((text) => ["Add", "Install", "Update"].includes(text));
+  ctx.assert(forbidden.length === 0, `Removed marketplace install/update buttons rendered: ${JSON.stringify(forbidden)}`);
 }

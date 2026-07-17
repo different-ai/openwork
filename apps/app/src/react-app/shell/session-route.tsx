@@ -653,7 +653,10 @@ export function SessionRoute() {
     ? cloudProviderList
     : providerListQuery.data;
   const selectedModelUnavailable = Boolean(
-    local.prefs.defaultModel &&
+    selectedWorkspaceId &&
+      opencodeClient &&
+      !loading &&
+      local.prefs.defaultModel &&
       (!selectedModelUsesCloudProvider || cloudProviderSyncReady) &&
       (
         isDesktopProviderBlocked({

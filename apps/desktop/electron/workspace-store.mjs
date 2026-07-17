@@ -580,6 +580,25 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     });
   }
 
+  async function forgetWorkspaceToken(workspacePath) {
+    const workspaceKey = normalizeWorkspacePathKey(workspacePath);
+    if (!workspaceKey) return;
+
+    const store = await readJsonFile(openworkServerTokenStorePath(), null);
+    if (!isRecord(store) || !isRecord(store.workspaces)) return;
+
+    const workspaces = { ...store.workspaces };
+    let changed = false;
+    for (const storedPath of Object.keys(workspaces)) {
+      if (normalizeWorkspacePathKey(normalizeRecoveredWorkspacePath(storedPath)) !== workspaceKey) continue;
+      delete workspaces[storedPath];
+      changed = true;
+    }
+    if (changed) {
+      await writeJsonFileAtomic(openworkServerTokenStorePath(), { ...store, workspaces });
+    }
+  }
+
   async function recoverWorkspacesFromServerConfig() {
     const config = await readJsonFile(openworkServerConfigPath(), null);
     if (!isRecord(config) || !Array.isArray(config.workspaces)) return [];
@@ -786,6 +805,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   async function readWorkspaceState() {
+    const workspaceStateExists = existsSync(workspaceStatePath());
     const state = await readJsonFile(workspaceStatePath(), EMPTY_WORKSPACE_LIST);
     let selectedId =
       typeof state?.selectedId === "string"
@@ -804,7 +824,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     let activeId = typeof state?.activeId === "string" ? state.activeId : null;
     let workspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
     let changed = false;
-    if (workspaces.length === 0 && process.env.OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1") {
+    if (!workspaceStateExists && process.env.OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1") {
       const recoveredWorkspaces = await recoverWorkspacesFromKnownState();
       if (recoveredWorkspaces.length > 0) {
         const selectedWorkspace = recoveredWorkspaces[0];
@@ -1099,13 +1119,18 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
 
   async function forgetWorkspace(workspaceId) {
     if (!workspaceId) throw new Error("workspaceId is required");
-    return mutateWorkspaceState((state) => {
+    let workspacePath = "";
+    const nextState = await mutateWorkspaceState((state) => {
+      const workspace = state.workspaces.find((entry) => entry.id === workspaceId);
+      if (workspace?.workspaceType !== "remote") workspacePath = String(workspace?.path ?? "");
       state.workspaces = state.workspaces.filter((entry) => entry.id !== workspaceId);
       if (state.selectedId === workspaceId) state.selectedId = "";
       if (state.activeId === workspaceId) state.activeId = null;
       if (state.watchedId === workspaceId) state.watchedId = null;
       return state;
     });
+    await forgetWorkspaceToken(workspacePath);
+    return nextState;
   }
 
   async function addAuthorizedRoot(input = {}) {

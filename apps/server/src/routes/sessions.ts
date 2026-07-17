@@ -35,6 +35,7 @@ interface RegisterSessionRoutesOptions {
   ensureWritable: (config: ServerConfig) => void;
   requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
+  resolveWorkspaceWithoutBootstrap: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   unwrapOpencodeResult: UnwrapOpencodeResult;
 }
@@ -55,6 +56,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     ensureWritable,
     requireClientScope,
     resolveWorkspace,
+    resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
   } = options;
@@ -181,7 +183,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   });
 
   addRoute(routes, "GET", "/workspace/:id/session-groups", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     const result = await readSessionGroupState(config, workspace.id);
     return jsonResponse({ state: result.state, updatedAt: result.updatedAt });
   });
@@ -307,7 +309,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   });
 
   addRoute(routes, "GET", "/workspace/:id/session-groups/events", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     const sinceRaw = ctx.url.searchParams.get("since");
     const since = sinceRaw ? Number(sinceRaw) : undefined;
     const items = sessionGroupEvents.list(workspace.id, since);

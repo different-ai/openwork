@@ -1,4 +1,4 @@
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, requestJson } from "./den-flow";
 
 function getInstallPageUrl(payload: unknown) {
   if (!payload || typeof payload !== "object" || !("installPageUrl" in payload)) {

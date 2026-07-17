@@ -34,10 +34,9 @@ per-member credentials, org-wide access.
 *Assert:* connection listed in the admin screen with credential mode and
 access visible; API `scope=manageable` contains it.
 
-**2. ★ Member discovers it in Marketplace** (`desktop-org-mcp-marketplace.png`)
-Jordan's desktop, `Settings -> Extensions -> Marketplace`: the connection
-appears in the same catalog as marketplace plugins, action
-`Connect your account`, provenance "Shared by your organization".
+**2. ★ Member discovers it in OpenWork Connect** (`desktop-org-mcp-connect.png`)
+Jordan's desktop, `Settings -> Connect`: the connection appears under
+Needs your sign-in with action `Connect your account`.
 *Assert:* card text present; `My Extensions` does NOT list it yet.
 
 **3. Real click, real OAuth**
@@ -48,10 +47,10 @@ after the click, carrying a signed `state`, a dynamically-registered
 `client_id`, and a `redirect_uri` scoped to this connection. No client-side
 stubs — Electron's contextBridge freezes exposed APIs, so nothing is faked.
 
-**4. ★ Card flips, no reload** (`desktop-org-mcp-connected.png`)
-Without navigation, the same card flips to `Connected` (the app's own
-polling loop) and the item now renders under `My Extensions`.
-*Assert:* "Connect your account" gone; "Connected" present; server-side
+**4. ★ Connect row flips, no reload** (`desktop-org-mcp-connected.png`)
+Without navigation, the same Connect row flips to `Ready` (the app's own
+polling loop).
+*Assert:* "Connect your account" gone; "Ready" present; server-side
 `connectedForMe: true` for Jordan.
 
 **5. ★ The agent uses it in real chat** (`desktop-org-mcp-chat.png`)
@@ -87,9 +86,8 @@ Extensions with zero org items and zero errors.
 From `evals/org-mcp-connections-ux.md` Phase 1, on top of what #2439 already
 has:
 
-1. Rework: org connections merge into the Extensions catalog tabs as
-   `ExtensionItem` source `org-connection` (replaces the interim
-   "From your organization" section). Frames 2 and 4 depend on this.
+1. Rework: org connections render in OpenWork Connect as organization rows.
+   Frames 2 and 4 depend on this.
 2. Dedup-with-degradation-guard for static suggestions. Frame 6 asserts the
    static grid — with the mock connection there's no name collision, so the
    rule is exercised by a unit test rather than this demo.

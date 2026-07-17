@@ -34,8 +34,9 @@ function versionTwoState(callbackMode?: string) {
 }
 
 describe("version-two OAuth state validation", () => {
-  test("accepts only the two supported callback modes", () => {
+  test("accepts only the supported callback modes", () => {
     expect(verifyOAuthStateToken({ token: versionTwoState("shared-v1"), secret, now: 1_700_000_100 })).not.toBeNull()
+    expect(verifyOAuthStateToken({ token: versionTwoState("isolated-v1"), secret, now: 1_700_000_100 })).not.toBeNull()
     expect(verifyOAuthStateToken({ token: versionTwoState("legacy-v1"), secret, now: 1_700_000_100 })).not.toBeNull()
     expect(verifyOAuthStateToken({ token: versionTwoState("future-v1"), secret, now: 1_700_000_100 })).toBeNull()
     expect(verifyOAuthStateToken({ token: versionTwoState(), secret, now: 1_700_000_100 })).toBeNull()
