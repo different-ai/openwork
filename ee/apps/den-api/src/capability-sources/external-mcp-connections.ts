@@ -534,6 +534,7 @@ export async function isolateExternalMcpOAuthCallback(input: {
         scope: null,
         expiresAt: null,
         pendingCodeVerifier: null,
+        credentialHealth: null,
         connectedAt: null,
         updatedAt,
       })
@@ -924,6 +925,8 @@ export async function updateExternalMcpConnection(
           scope: null,
           expiresAt: null,
           pendingCodeVerifier: null,
+          credentialHealth: null,
+          ...(identityChanged || issuerChanged ? { oauthIssuerReviewRequiredAt: null } : {}),
           connectedAt: input.authType === "none" ? input.validatedAt ?? changedAt : null,
           updatedAt: changedAt,
         })
@@ -1013,6 +1016,108 @@ export async function updateExternalMcpConnection(
       connection: updated,
       identityChanged,
       reconnectionRequired: credentialsInvalidated && input.authType === "oauth",
+    }
+  })
+}
+
+export type ConfirmExternalMcpIssuerReviewResult =
+  | { status: "not_found" }
+  | { status: "conflict" }
+  | {
+    status: "confirmed"
+    connection: ExternalMcpConnectionRow
+    issuerChanged: boolean
+    reconnectionRequired: boolean
+  }
+
+/**
+ * Adopts an issuer only after the route has repeated live discovery and
+ * verified that the resource currently advertises it. This is intentionally
+ * separate from ordinary editing so marketplace-owned connection identity
+ * remains immutable while provider metadata can still be recovered safely.
+ */
+export async function confirmExternalMcpIssuerReview(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  expectedUpdatedAt: Date
+  authorizationServerIssuer: string
+}): Promise<ConfirmExternalMcpIssuerReviewResult> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const existing = rows[0]
+    if (!existing) return { status: "not_found" }
+    if (existing.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) {
+      return { status: "conflict" }
+    }
+    if (existing.authType !== "oauth" || !existing.oauthConfiguration) {
+      return { status: "conflict" }
+    }
+
+    const issuerChanged = existing.oauthConfiguration.authorizationServerIssuer
+      !== input.authorizationServerIssuer
+    const changedAt = new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1))
+    if (issuerChanged) {
+      await tx.delete(ConnectedAccountTable).where(and(
+        eq(ConnectedAccountTable.organizationId, input.organizationId),
+        eq(ConnectedAccountTable.providerId, input.connectionId),
+      ))
+      await tx.delete(OrgOAuthClientTable).where(and(
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, input.connectionId),
+      ))
+    }
+
+    const { discovery: _discovery, ...configuration } = existing.oauthConfiguration
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        oauthConfiguration: {
+          ...configuration,
+          authorizationServerIssuer: input.authorizationServerIssuer,
+        },
+        oauthIssuerReviewRequiredAt: null,
+        ...(issuerChanged
+          ? {
+              accessToken: null,
+              refreshToken: null,
+              tokenType: null,
+              scope: null,
+              expiresAt: null,
+              pendingCodeVerifier: null,
+              connectedAt: null,
+              credentialHealth: null,
+            }
+          : {}),
+        updatedAt: changedAt,
+      })
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+
+    const updatedRows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+    const connection = updatedRows[0]
+    if (!connection) throw new Error("External MCP connection disappeared during issuer review.")
+    return {
+      status: "confirmed",
+      connection,
+      issuerChanged,
+      reconnectionRequired: issuerChanged,
     }
   })
 }
@@ -1497,6 +1602,12 @@ export async function saveExternalMcpTokens(input: {
       ...(input.scope !== undefined ? { scope: input.scope } : {}),
       ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
       pendingCodeVerifier: null,
+      credentialHealth: {
+        version: 1,
+        status: "ready",
+        reason: null,
+        checkedAt: new Date().toISOString(),
+      },
       connectedAt: new Date(),
     })
     .where(eq(ExternalMcpConnectionTable.id, input.connectionId))
@@ -1533,6 +1644,7 @@ export async function disconnectExternalMcpConnection(input: {
         scope: null,
         expiresAt: null,
         pendingCodeVerifier: null,
+        credentialHealth: null,
         connectedAt: null,
         updatedAt: new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1)),
       })

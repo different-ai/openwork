@@ -80,4 +80,21 @@ describe("buildConnectRows", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.kind).toBe("connection");
   });
+
+  test("shows changed OAuth issuers as administrator setup instead of member sign-in", () => {
+    const rows = buildConnectRows({
+      connections: [{
+        ...notionConnection,
+        connected: true,
+        connectedForMe: true,
+        needsReconnect: true,
+        issuerReviewRequired: true,
+        reconnectActionOwner: "organization_admin",
+      }],
+      items: [],
+      role: "member",
+    });
+
+    expect(rows[0]?.group).toBe("needs_admin_setup");
+  });
 });

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -33,6 +33,7 @@ import {
   type ExternalMcpPreset,
   type ExternalMcpTool,
   type McpConnectionResolution,
+  type McpIssuerReview,
   type McpRequirementsDiscovery,
   type McpConnectionAccessInput,
   type UpdatedMcpConnection,
@@ -48,6 +49,7 @@ import {
   useMcpConnectionTools,
   useNativeProviderClient,
   useResolveMcpConnection,
+  useReviewMcpIssuer,
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
   useTelegramConnection,
@@ -239,10 +241,13 @@ export function McpConnectionsScreen() {
   const disconnectConnection = useDisconnectMcpConnection();
   const deleteConnection = useDeleteMcpConnection();
   const saveNativeClient = useSaveNativeProviderClient();
+  const reviewIssuer = useReviewMcpIssuer();
 
   const [formOpen, setFormOpen] = useState(false);
   const [formPreset, setFormPreset] = useState<ExternalMcpPreset | null>(null);
   const [editingConnection, setEditingConnection] = useState<ExternalMcpConnection | null>(null);
+  const [issuerReviewConnection, setIssuerReviewConnection] = useState<ExternalMcpConnection | null>(null);
+  const [issuerReviewPreview, setIssuerReviewPreview] = useState<McpIssuerReview | null>(null);
   const [pluginDialogOpen, setPluginDialogOpen] = useState(false);
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
   const [microsoftDialogOpen, setMicrosoftDialogOpen] = useState(false);
@@ -365,6 +370,37 @@ export function McpConnectionsScreen() {
         message: disconnectError instanceof Error ? disconnectError.message : "Failed to disconnect the MCP connection.",
       });
     }
+  }
+
+  async function handleOpenIssuerReview(connection: ExternalMcpConnection) {
+    reviewIssuer.reset();
+    setIssuerReviewConnection(connection);
+    setIssuerReviewPreview(null);
+    try {
+      const preview = await reviewIssuer.mutateAsync({
+        connectionId: connection.id,
+        action: "preview",
+      });
+      setIssuerReviewPreview(preview);
+    } catch {
+      // The dialog renders the mutation error with a retry path.
+    }
+  }
+
+  async function handleConfirmIssuer(authorizationServerIssuer: string) {
+    const connection = issuerReviewConnection;
+    if (!connection?.updatedAt) return;
+    const result = await reviewIssuer.mutateAsync({
+      connectionId: connection.id,
+      action: "confirm",
+      expectedUpdatedAt: connection.updatedAt,
+      authorizationServerIssuer,
+    });
+    setIssuerReviewConnection(null);
+    setIssuerReviewPreview(null);
+    setConnectionActionNotice(result.reconnectionRequired
+      ? `${connection.name} now trusts the confirmed issuer. Its old OAuth client and credentials were cleared; reconnect it to finish recovery.`
+      : `${connection.name}'s current issuer was confirmed from live provider metadata.`);
   }
 
   return (
@@ -554,6 +590,7 @@ export function McpConnectionsScreen() {
                 updateConnection.reset();
                 setEditingConnection(connection);
               }}
+              onReviewIssuer={() => void handleOpenIssuerReview(connection)}
               onConnect={() => void handleConnectOAuth(connection.id)}
               onDisconnect={() => void handleDisconnect(connection)}
               onRemove={() => handleRemove(connection)}
@@ -593,6 +630,21 @@ export function McpConnectionsScreen() {
           setEditingConnection(null);
         }}
         onSubmit={handleUpdate}
+      />
+
+      <IssuerReviewDialog
+        connection={issuerReviewConnection}
+        preview={issuerReviewPreview}
+        loading={reviewIssuer.isPending}
+        error={reviewIssuer.error}
+        onRetry={() => issuerReviewConnection ? void handleOpenIssuerReview(issuerReviewConnection) : undefined}
+        onClose={() => {
+          if (reviewIssuer.isPending) return;
+          setIssuerReviewConnection(null);
+          setIssuerReviewPreview(null);
+          reviewIssuer.reset();
+        }}
+        onConfirm={(issuer) => void handleConfirmIssuer(issuer)}
       />
 
       <ImportPluginConnectionDialog
@@ -1178,6 +1230,119 @@ function GoogleWorkspaceDialog({
   );
 }
 
+function IssuerReviewDialog({
+  connection,
+  preview,
+  loading,
+  error,
+  onRetry,
+  onClose,
+  onConfirm,
+}: {
+  connection: ExternalMcpConnection | null;
+  preview: McpIssuerReview | null;
+  loading: boolean;
+  error: Error | null;
+  onRetry: () => void;
+  onClose: () => void;
+  onConfirm: (issuer: string) => void;
+}) {
+  const [selectedIssuer, setSelectedIssuer] = useState("");
+
+  useEffect(() => {
+    if (!preview) {
+      setSelectedIssuer("");
+      return;
+    }
+    setSelectedIssuer(
+      preview.currentIssuer && preview.advertisedIssuers.includes(preview.currentIssuer)
+        ? preview.currentIssuer
+        : preview.advertisedIssuers[0] ?? "",
+    );
+  }, [preview]);
+
+  if (!connection) return null;
+  const issuerWillChange = Boolean(preview && selectedIssuer && selectedIssuer !== preview.currentIssuer);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/35 px-4" role="presentation">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mcp-issuer-review-title"
+        className="w-full max-w-xl rounded-[28px] border border-gray-100 bg-white p-6 shadow-2xl shadow-gray-950/20"
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-amber-700">
+            <AlertTriangle className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div>
+            <h2 id="mcp-issuer-review-title" className="text-[18px] font-semibold text-gray-950">Review OAuth provider</h2>
+            <p className="mt-1 text-[13px] leading-5 text-gray-600">
+              {connection.name} now advertises OAuth metadata that differs from the issuer previously approved for this connection.
+            </p>
+          </div>
+        </div>
+
+        {loading && !preview ? (
+          <div className="mt-6 flex items-center gap-2 rounded-2xl bg-gray-50 px-4 py-4 text-[13px] text-gray-600">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Checking the provider&apos;s live OAuth metadata…
+          </div>
+        ) : error && !preview ? (
+          <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-[13px] text-red-700" role="alert">
+            <p>{error.message}</p>
+            <DenButton className="mt-3" variant="secondary" size="sm" onClick={onRetry}>Try again</DenButton>
+          </div>
+        ) : preview ? (
+          <div className="mt-6 space-y-4">
+            <div className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400">Previously approved</p>
+              <p className="mt-1 break-all font-mono text-[12px] text-gray-700">{preview.currentIssuer ?? "No issuer selected"}</p>
+            </div>
+            <fieldset>
+              <legend className="text-[13px] font-semibold text-gray-900">Issuer advertised now</legend>
+              <div className="mt-2 space-y-2">
+                {preview.advertisedIssuers.map((issuer) => (
+                  <label key={issuer} className="flex cursor-pointer items-start gap-3 rounded-2xl border border-gray-200 px-4 py-3 transition has-[:checked]:border-gray-950 has-[:checked]:bg-gray-50">
+                    <input
+                      type="radio"
+                      name="mcp-oauth-issuer"
+                      value={issuer}
+                      checked={selectedIssuer === issuer}
+                      onChange={() => setSelectedIssuer(issuer)}
+                      className="mt-0.5"
+                    />
+                    <span className="break-all font-mono text-[12px] text-gray-700">{issuer}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <div className={`rounded-2xl px-4 py-3 text-[12px] leading-5 ${issuerWillChange ? "bg-amber-50 text-amber-800" : "bg-blue-50 text-blue-800"}`}>
+              {issuerWillChange
+                ? "Confirming a different issuer clears the old OAuth client and credentials. Everyone will reconnect against the newly approved provider."
+                : "Confirming the same issuer clears the stale discovery cache without signing anyone out."}
+            </div>
+            {error ? <p className="text-[12px] text-red-600" role="alert">{error.message}</p> : null}
+          </div>
+        ) : null}
+
+        <div className="mt-6 flex justify-end gap-2">
+          <DenButton variant="secondary" size="sm" disabled={loading} onClick={onClose}>Cancel</DenButton>
+          <DenButton
+            variant="primary"
+            size="sm"
+            loading={loading && Boolean(preview)}
+            disabled={!preview || !selectedIssuer}
+            onClick={() => onConfirm(selectedIssuer)}
+          >
+            Confirm issuer
+          </DenButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function accessSummaryLabel(connection: ExternalMcpConnection): string {
   const access = connection.access;
   if (!access) return "";
@@ -1196,6 +1361,7 @@ function ConnectionRow({
   connecting,
   errorMessage,
   onEdit,
+  onReviewIssuer,
   onConnect,
   onDisconnect,
   onRemove,
@@ -1211,6 +1377,7 @@ function ConnectionRow({
   connecting: boolean;
   errorMessage: string | null;
   onEdit: () => void;
+  onReviewIssuer: () => void;
   onConnect: () => void;
   onDisconnect: () => void;
   onRemove: () => void;
@@ -1225,9 +1392,10 @@ function ConnectionRow({
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement>(null);
   const displayedConnected = connection.connected && !needsAdminSetup;
-  const canConnectOAuth = !needsAdminSetup && connection.authType === "oauth"
+  const canConnectOAuth = !needsAdminSetup && !connection.issuerReviewRequired && connection.authType === "oauth"
     && (isPerMember ? !connection.connectedForMe : !connection.connected);
-  const canInspectTools = !needsAdminSetup && (connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe);
+  const canInspectTools = !needsAdminSetup && !connection.issuerReviewRequired
+    && (connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe);
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -1263,6 +1431,11 @@ function ConnectionRow({
               {needsAdminSetup ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   Setup required
+                </span>
+              ) : connection.issuerReviewRequired ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  <AlertTriangle className="h-3 w-3" />
+                  OAuth settings need review
                 </span>
               ) : isPerMember ? (
                 <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${connection.connected ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
@@ -1308,6 +1481,11 @@ function ConnectionRow({
             <Link href={setupHref} className={buttonVariants({ variant: "primary", size: "sm" })}>
               Set up
             </Link>
+          ) : null}
+          {connection.issuerReviewRequired ? (
+            <DenButton variant="primary" size="sm" icon={AlertTriangle} onClick={onReviewIssuer}>
+              Review OAuth
+            </DenButton>
           ) : null}
           {canConnectOAuth ? (
             <DenButton

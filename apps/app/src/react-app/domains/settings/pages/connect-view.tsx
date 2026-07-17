@@ -24,6 +24,7 @@ import {
   cloudReadinessConnectableConnectionId,
   cloudReadinessMissingConnectionNames,
   formatPluginConnectRowMeta,
+  isConnectAdminRole,
   resolveConnectRowGroup,
   resolveConnectionRowGroup,
   type ConnectRowGroup,
@@ -486,10 +487,11 @@ type ConnectOrganizationRow =
   | {
       kind: "connection";
       id: string;
-      group: Exclude<ConnectRowGroup, "needs_admin_setup" | "excluded">;
+      group: Exclude<ConnectRowGroup, "excluded">;
       name: string;
       description: string;
       meta: string;
+      canManage: boolean;
       connection: DenExternalMcpConnection;
     }
   | {
@@ -554,6 +556,7 @@ export function buildConnectRows(input: {
     name: connection.name,
     description: connection.url,
     meta: connection.credentialMode === "shared" ? t("connect.row_meta_managed_by_org") : t("connect.row_meta_your_account"),
+    canManage: isConnectAdminRole(input.role),
     connection,
   }));
 
@@ -585,7 +588,6 @@ function ConnectOrganizationRow(props: {
   const row = props.row;
   const pluginManifest = row.kind === "plugin" ? row.plugin.extension?.manifest : null;
   const needsReconnect = row.kind === "connection"
-    && row.connection.connectedForMe
     && connectionNeedsReconnect(row.connection);
   const connectableConnectionId = row.kind === "plugin"
     ? cloudReadinessConnectableConnectionId(row.plugin.cloudReadiness)
@@ -637,9 +639,15 @@ function ConnectOrganizationRow(props: {
           ) : null}
         </div>
       ) : row.group === "needs_admin_setup" ? (
-        <Button size="sm" variant="outline" onClick={() => void openDesktopUrl(denManageConnectionsUrl())} title={setupNames.join(t("connect.row_meta_list_separator"))}>
-          {t("connect.row_action_set_up_connection")}
-        </Button>
+        row.kind === "connection" && !row.canManage ? (
+          <span className="shrink-0 rounded-md bg-amber-3 px-2 py-1 text-xs font-medium text-amber-11">
+            {t("connect.group_needs_admin_setup")}
+          </span>
+        ) : (
+          <Button size="sm" variant="outline" onClick={() => void openDesktopUrl(denManageConnectionsUrl())} title={setupNames.join(t("connect.row_meta_list_separator"))}>
+            {t("connect.row_action_set_up_connection")}
+          </Button>
+        )
       ) : disconnectableConnectionId ? (
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <span className="rounded-md bg-green-3 px-2 py-1 text-xs font-medium text-green-11">

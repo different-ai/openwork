@@ -1153,6 +1153,81 @@ describe("enterprise MCP OAuth persistence contract", () => {
     }
   })
 
+  it("invalidates a credential when the MCP resource terminally rejects it", async () => {
+    const origin = "https://mcp.example.test"
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedRegistration({ client_id: "registered-client" })
+    persistence.seedCredential({ access_token: "rejected-access-token", token_type: "Bearer" })
+    const client = createEnterpriseMcpClient({
+      fetch: async (url) => {
+        const target = new URL(url)
+        if (target.pathname === "/mcp") {
+          return new Response(null, {
+            status: 401,
+            headers: {
+              "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+            },
+          })
+        }
+        if (target.pathname === "/.well-known/oauth-protected-resource/mcp") {
+          return Response.json({ resource: `${origin}/mcp`, authorization_servers: [origin] })
+        }
+        if (target.pathname === "/.well-known/oauth-authorization-server") {
+          return Response.json({
+            issuer: origin,
+            authorization_endpoint: `${origin}/authorize`,
+            token_endpoint: `${origin}/token`,
+            response_types_supported: ["code"],
+            grant_types_supported: ["authorization_code"],
+            token_endpoint_auth_methods_supported: ["none"],
+            code_challenge_methods_supported: ["S256"],
+          })
+        }
+        return new Response(null, { status: 404 })
+      },
+    })
+    const connection: EnterpriseMcpConnection = {
+      id: "runtime-rejected-token",
+      serverUrl: `${origin}/mcp`,
+      authorization: { type: "oauth", persistence },
+    }
+
+    await assert.rejects(client.listTools({
+      connection,
+      redirectUri: "https://den.example.test/oauth/callback",
+    }))
+    assert.equal(persistence.credential, undefined)
+    assert.equal(persistence.invalidationCount, 1)
+  })
+
+  it("preserves a credential when a provider returns a plain tool-policy 403", async () => {
+    const server = await startOAuthMcpServer({ rejectAuthenticatedToolsList: true })
+    try {
+      const persistence = new MemoryOAuthPersistence()
+      persistence.seedRegistration({ client_id: "enterprise-test-client" })
+      persistence.seedCredential({
+        access_token: "enterprise-access-token",
+        refresh_token: "enterprise-refresh-token",
+        token_type: "Bearer",
+      })
+      const client = createEnterpriseMcpClient({ fetch })
+      const connection: EnterpriseMcpConnection = {
+        id: "provider-acl-denial",
+        serverUrl: `${server.origin}/mcp`,
+        authorization: { type: "oauth", persistence },
+      }
+
+      await assert.rejects(client.listTools({
+        connection,
+        redirectUri: "https://den.example.test/oauth/callback",
+      }))
+      assert.equal(persistence.credential?.tokens.access_token, "enterprise-access-token")
+      assert.equal(persistence.invalidationCount, 0)
+    } finally {
+      await server.close()
+    }
+  })
+
   it("rejects a stale concurrent refresh response instead of overwriting newer credentials", async () => {
     const persistence = new MemoryOAuthPersistence()
     persistence.seedCredential({

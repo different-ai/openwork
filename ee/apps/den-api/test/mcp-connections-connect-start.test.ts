@@ -483,6 +483,153 @@ test("connect start selects an isolated callback before sending the user to a le
   }
 })
 
+test("issuer review requires an admin and only adopts the issuer advertised by live discovery", async () => {
+  let origin = ""
+  const server = Bun.serve({
+    port: 0,
+    fetch(incoming) {
+      const url = new URL(incoming.url)
+      if (url.pathname === "/.well-known/oauth-protected-resource/mcp") {
+        return Response.json({
+          resource: `${origin}/mcp`,
+          authorization_servers: [origin],
+        })
+      }
+      if (url.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer: origin,
+          authorization_endpoint: `${origin}/authorize`,
+          token_endpoint: `${origin}/token`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        })
+      }
+      if (url.pathname === "/mcp") {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+          },
+        })
+      }
+      return new Response(null, { status: 404 })
+    },
+  })
+  origin = `http://127.0.0.1:${server.port}`
+
+  try {
+    const connection = await createExternalMcpConnection({
+      organizationId,
+      name: "Issuer review route MCP",
+      url: `${origin}/mcp`,
+      authType: "oauth",
+      credentialMode: "shared",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const previousIssuer = "https://previous-issuer.example.test"
+    const updatedAt = new Date(Date.now() + 1_000)
+    await db
+      .update(schema.ExternalMcpConnectionTable)
+      .set({
+        oauthConfiguration: {
+          version: 1,
+          authorizationServerIssuer: previousIssuer,
+          requestedScopes: [],
+          callbackMode: "shared-v1",
+        },
+        oauthIssuerReviewRequiredAt: new Date(),
+        accessToken: "issuer-bound-access-token",
+        refreshToken: "issuer-bound-refresh-token",
+        connectedAt: new Date(),
+        updatedAt,
+      })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
+    await upsertOrgOAuthClient({
+      organizationId,
+      providerId: connection.id,
+      clientId: "issuer-bound-client",
+      clientSecret: "issuer-bound-secret",
+      createdByOrgMembershipId: memberId,
+    })
+
+    const memberResponse = await app.fetch(new Request(
+      `http://den-api.local/v1/mcp-connections/${connection.id}/oauth/issuer-review`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({
+            userId: regularUserId,
+            organizationId,
+          }),
+        },
+        body: JSON.stringify({ action: "preview" }),
+      },
+    ))
+    expect(memberResponse.status).toBe(403)
+
+    const previewResponse = await staleSessionRequest(
+      `/v1/mcp-connections/${connection.id}/oauth/issuer-review`,
+      "POST",
+      { action: "preview" },
+    )
+    expect(previewResponse.status).toBe(200)
+    expect(await previewResponse.json()).toEqual({
+      currentIssuer: previousIssuer,
+      advertisedIssuers: [origin],
+      reviewRequired: true,
+    })
+
+    const unadvertisedResponse = await staleSessionRequest(
+      `/v1/mcp-connections/${connection.id}/oauth/issuer-review`,
+      "POST",
+      {
+        action: "confirm",
+        expectedUpdatedAt: updatedAt.toISOString(),
+        authorizationServerIssuer: "https://unadvertised.example.test",
+      },
+    )
+    expect(unadvertisedResponse.status).toBe(409)
+
+    const confirmResponse = await staleSessionRequest(
+      `/v1/mcp-connections/${connection.id}/oauth/issuer-review`,
+      "POST",
+      {
+        action: "confirm",
+        expectedUpdatedAt: updatedAt.toISOString(),
+        authorizationServerIssuer: origin,
+      },
+    )
+    expect(confirmResponse.status).toBe(200)
+    expect(await confirmResponse.json()).toMatchObject({
+      currentIssuer: origin,
+      advertisedIssuers: [origin],
+      reviewRequired: false,
+      issuerChanged: true,
+      reconnectionRequired: true,
+    })
+
+    const [updatedConnection] = await db
+      .select()
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
+      .limit(1)
+    expect(updatedConnection).toMatchObject({
+      accessToken: null,
+      refreshToken: null,
+      connectedAt: null,
+      oauthIssuerReviewRequiredAt: null,
+    })
+    expect(updatedConnection?.oauthConfiguration?.authorizationServerIssuer).toBe(origin)
+    expect(await getOrgOAuthClient(organizationId, connection.id)).toBeNull()
+  } finally {
+    server.stop(true)
+  }
+})
+
 test("shared callback rejects missing or tampered state before routing", async () => {
   const missing = await app.fetch(new Request("http://den-api.local/v1/mcp-connections/oauth/callback?code=unused"))
   expect(missing.status).toBe(400)

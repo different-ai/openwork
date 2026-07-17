@@ -92,6 +92,7 @@ export const ConnectedAccountTable = mysqlTable(
      * tokens are saved.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
+    credentialHealth: json("credential_health").$type<ExternalMcpCredentialHealth>(),
     connectedAt: timestamp("connected_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()
@@ -127,6 +128,17 @@ export type ExternalMcpOAuthConfiguration = {
    * issuer/resource discovery to be cached before a client registration exists.
    */
   discovery?: Record<string, unknown>
+}
+
+export type ExternalMcpCredentialHealth = {
+  version: 1
+  status: "ready" | "reconnect_required"
+  reason:
+    | "authorization_rejected"
+    | "credential_expired"
+    | "post_authorization_validation_failed"
+    | null
+  checkedAt: string
 }
 
 /**
@@ -186,6 +198,13 @@ export const ExternalMcpConnectionTable = mysqlTable(
      * connect/callback. Cleared once tokens are saved.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
+    credentialHealth: json("credential_health").$type<ExternalMcpCredentialHealth>(),
+    /**
+     * Set when live discovery no longer matches the selected OAuth issuer.
+     * The mismatch remains fail-closed until an administrator explicitly
+     * confirms one of the issuers currently advertised by the resource.
+     */
+    oauthIssuerReviewRequiredAt: timestamp("oauth_issuer_review_required_at", { fsp: 3 }),
     connectedAt: timestamp("connected_at", { fsp: 3 }),
     createdByOrgMembershipId: denTypeIdColumn(
       "member",

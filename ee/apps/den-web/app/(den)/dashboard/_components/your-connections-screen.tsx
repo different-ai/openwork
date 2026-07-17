@@ -174,11 +174,17 @@ function YourConnectionRow({
   onDisconnect: () => void;
 }) {
   const isPerMember = connection.credentialMode === "per_member";
-  const needsReconnect = !needsAdminSetup && connection.connectedForMe && connection.needsReconnect === true;
-  const needsMyConnect = !needsAdminSetup && isPerMember && !connection.connectedForMe;
-  const needsAdminConnect = !needsAdminSetup && isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
+  const needsAdminRecovery = !needsAdminSetup
+    && connection.needsReconnect === true
+    && connection.reconnectActionOwner === "organization_admin";
+  const needsReconnect = !needsAdminSetup
+    && !needsAdminRecovery
+    && connection.needsReconnect === true;
+  const needsMyConnect = !needsAdminSetup && !needsAdminRecovery && isPerMember && !connection.connectedForMe;
+  const needsAdminConnect = !needsAdminSetup && !needsAdminRecovery && isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
   const canDisconnect = !needsAdminSetup && canDisconnectMyConnectionAccount(connection);
-  const canTestTools = !needsAdminSetup && isAdmin && !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
+  const canTestTools = !needsAdminSetup && !needsAdminRecovery && isAdmin
+    && !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
   const [toolRunnerOpen, setToolRunnerOpen] = useState(false);
   const microsoftScopes = connection.id === "microsoft-365"
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
@@ -201,10 +207,15 @@ function YourConnectionRow({
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   Waiting for an admin to finish setup
                 </span>
-              ) : needsReconnect ? (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+              ) : needsAdminRecovery ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   <AlertTriangle className="h-3 w-3" />
-                  Reconnect to grant new permissions
+                  Admin review required
+                </span>
+              ) : needsReconnect ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  <AlertTriangle className="h-3 w-3" />
+                  Reconnect required
                 </span>
               ) : connection.connectedForMe ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
@@ -247,6 +258,11 @@ function YourConnectionRow({
                 ))}
               </div>
             ) : null}
+            {needsAdminRecovery ? (
+              <p className="mt-1 text-[12px] text-amber-700">
+                A workspace admin must review this provider&apos;s OAuth settings before anyone reconnects.
+              </p>
+            ) : null}
             {errorMessage ? <p className="mt-1 text-[12px] text-red-600">{errorMessage}</p> : null}
           </div>
         </div>
@@ -258,6 +274,11 @@ function YourConnectionRow({
               target={setupTarget}
               onSetup={onSetup}
             />
+          ) : null}
+          {needsAdminRecovery && isAdmin ? (
+            <Link href="/dashboard/mcp-connections" className={buttonVariants({ variant: "primary", size: "sm" })}>
+              Review OAuth
+            </Link>
           ) : null}
           {canTestTools ? (
             <DenButton

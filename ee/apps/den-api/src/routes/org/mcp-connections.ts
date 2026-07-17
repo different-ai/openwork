@@ -44,6 +44,7 @@ import {
   listExternalMcpTools,
 } from "../../capability-sources/external-mcp-client-runtime.js"
 import {
+  confirmExternalMcpIssuerReview,
   createExternalMcpConnection,
   deleteExternalMcpConnection,
   disconnectExternalMcpConnection,
@@ -209,6 +210,24 @@ const requirementsDiscoveryFailedSchema = z.object({
   message: z.string(),
 }).meta({ ref: "ExternalMcpRequirementsDiscoveryFailedError" })
 
+const issuerReviewBodySchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("preview") }),
+  z.object({
+    action: z.literal("confirm"),
+    expectedUpdatedAt: z.string().datetime(),
+    authorizationServerIssuer: z.string().trim().url(),
+  }),
+]).meta({ ref: "ExternalMcpIssuerReviewInput" })
+
+const issuerReviewResponseSchema = z.object({
+  currentIssuer: z.string().nullable(),
+  advertisedIssuers: z.array(z.string()),
+  reviewRequired: z.boolean(),
+  issuerChanged: z.boolean().optional(),
+  reconnectionRequired: z.boolean().optional(),
+  updatedAt: z.string().datetime().optional(),
+}).meta({ ref: "ExternalMcpIssuerReviewResponse" })
+
 const clientMetadataResponseSchema = z.object({
   client_id: z.string(),
   client_name: z.literal("OpenWork"),
@@ -303,6 +322,15 @@ const connectionResponseSchema = z.object({
   connectedForMe: z.boolean(),
   /** Present on native provider rows when the member's saved grant is missing currently selected scopes. */
   needsReconnect: z.boolean().optional(),
+  credentialHealth: z.enum(["unknown", "ready", "reconnect_required"]).optional(),
+  credentialHealthReason: z.enum([
+    "authorization_rejected",
+    "credential_expired",
+    "post_authorization_validation_failed",
+  ]).nullable().optional(),
+  credentialHealthCheckedAt: z.string().datetime().nullable().optional(),
+  issuerReviewRequired: z.boolean().optional(),
+  reconnectActionOwner: z.enum(["member", "organization_admin"]).nullable().optional(),
   /** Native provider feature ids whose scopes are missing from the member's saved grant. */
   missingFeatures: z.array(z.string()).optional(),
   /** Native provider account label when the provider supplied one. Never a token. */
@@ -604,6 +632,12 @@ async function resolveExternalMcpToolCredential(
   connection: ExternalMcpConnectionRow,
   orgMembershipId: DenTypeId<"member">,
 ): Promise<ExternalMcpToolCredentialContext> {
+  if (connection.oauthIssuerReviewRequiredAt) {
+    return {
+      ok: false,
+      message: "A workspace admin must review this MCP connection's changed OAuth issuer before its tools can be used.",
+    }
+  }
   if (connection.credentialMode === "per_member") {
     const account = await getConnectedAccount({
       organizationId: connection.organizationId,
@@ -857,6 +891,7 @@ async function toConnectionResponse(
   let connectedAt = row.connectedAt
   let connectedForMe = connected && row.credentialMode === "shared"
   let grantedScopes = row.scope?.split(/\s+/).filter(Boolean) ?? []
+  let callerCredentialHealth = row.credentialHealth
   if (row.credentialMode === "per_member") {
     const account = await getConnectedAccount({
       organizationId: row.organizationId,
@@ -864,6 +899,7 @@ async function toConnectionResponse(
       providerId: row.id,
     })
     connectedForMe = Boolean(account?.accessToken)
+    callerCredentialHealth = account?.credentialHealth ?? null
     grantedScopes = account?.scopes ?? []
     if (options.includeAccess) {
       const accountState = await connectedAccountStateForConnection({
@@ -908,6 +944,14 @@ async function toConnectionResponse(
     || (oauthClientRequired && !oauthClientConfigured)
     || (!connected && (row.authType === "apikey" || row.authType === "none"))
   )
+  const issuerReviewRequired = row.oauthIssuerReviewRequiredAt !== null
+  const credentialReconnectRequired = callerCredentialHealth?.status === "reconnect_required"
+  const needsReconnect = issuerReviewRequired || credentialReconnectRequired
+  const reconnectActionOwner = issuerReviewRequired || (credentialReconnectRequired && row.credentialMode === "shared")
+    ? "organization_admin"
+    : credentialReconnectRequired
+      ? "member"
+      : null
 
   return {
     id: row.id,
@@ -920,6 +964,12 @@ async function toConnectionResponse(
     ...(options.includeAccess ? { createdByName: options.createdByName ?? null } : {}),
     updatedAt: row.updatedAt.toISOString(),
     connectedForMe,
+    needsReconnect,
+    credentialHealth: callerCredentialHealth?.status ?? "unknown",
+    credentialHealthReason: callerCredentialHealth?.reason ?? null,
+    credentialHealthCheckedAt: callerCredentialHealth?.checkedAt ?? null,
+    issuerReviewRequired,
+    reconnectActionOwner,
     requiredBy: options.requiredBy,
     identityManagedBy: options.identityManagedBy,
     requiredAuthType: requiredAuthTypes.length === 1 ? requiredAuthTypes[0] : null,
@@ -1223,6 +1273,106 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           message: error instanceof Error ? error.message : "MCP requirements discovery failed.",
         }, 502)
       }
+    },
+  )
+
+  app.post(
+    "/v1/mcp-connections/:connectionId/oauth/issuer-review",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "Review a changed External MCP OAuth issuer",
+      description: "Organization-admin-only. Repeats live OAuth discovery and either previews the issuers currently advertised by the MCP resource or explicitly confirms one. Confirmation never trusts an unadvertised issuer. Changing issuers invalidates issuer-bound OAuth clients and credentials so members reconnect cleanly.",
+      responses: {
+        200: jsonResponse("Issuer review result.", issuerReviewResponseSchema),
+        400: jsonResponse("Invalid issuer review request.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can review OAuth issuers.", forbiddenSchema),
+        404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
+        409: jsonResponse("The connection changed or the requested issuer is not currently advertised.", connectionConflictSchema),
+        502: jsonResponse("Live OAuth discovery failed.", requirementsDiscoveryFailedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(connectionParamsSchema),
+    jsonValidator(issuerReviewBodySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can review OAuth issuers.")
+      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+      const { connectionId } = c.req.valid("param")
+      const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
+      const connection = await getExternalMcpConnection({
+        organizationId: payload.organization.id,
+        connectionId: externalMcpConnectionId,
+      })
+      if (!connection) {
+        return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+      }
+      if (connection.authType !== "oauth") {
+        return c.json({ error: "invalid_request", message: "Issuer review is only available for OAuth MCP connections." }, 400)
+      }
+
+      let advertisedIssuers: string[]
+      try {
+        const discovery = await discoverConnectionRequirements({
+          serverUrl: connection.url,
+          fetch: externalMcpDiscoveryFetch,
+        })
+        advertisedIssuers = [...new Set(
+          discovery.authentication.authorizationServers.map((server) => server.issuer),
+        )]
+      } catch (error) {
+        return c.json({
+          error: "requirements_discovery_failed" as const,
+          message: error instanceof Error ? error.message : "MCP requirements discovery failed.",
+        }, 502)
+      }
+      if (advertisedIssuers.length === 0) {
+        return c.json({
+          error: "connection_conflict" as const,
+          message: "The MCP resource does not currently advertise an OAuth authorization server.",
+        }, 409)
+      }
+
+      const body = c.req.valid("json")
+      const currentIssuer = connection.oauthConfiguration?.authorizationServerIssuer ?? null
+      if (body.action === "preview") {
+        return c.json({
+          currentIssuer,
+          advertisedIssuers,
+          reviewRequired: connection.oauthIssuerReviewRequiredAt !== null,
+        })
+      }
+      if (!advertisedIssuers.includes(body.authorizationServerIssuer)) {
+        return c.json({
+          error: "connection_conflict" as const,
+          message: "The selected issuer is not currently advertised by this MCP resource. Refresh the review before confirming.",
+        }, 409)
+      }
+
+      const result = await confirmExternalMcpIssuerReview({
+        organizationId: payload.organization.id,
+        connectionId: externalMcpConnectionId,
+        expectedUpdatedAt: new Date(body.expectedUpdatedAt),
+        authorizationServerIssuer: body.authorizationServerIssuer,
+      })
+      if (result.status === "not_found") {
+        return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+      }
+      if (result.status === "conflict") {
+        return c.json({
+          error: "connection_conflict" as const,
+          message: "This connection changed while the issuer was being reviewed. Reload and review the current provider metadata again.",
+        }, 409)
+      }
+      return c.json({
+        currentIssuer: result.connection.oauthConfiguration?.authorizationServerIssuer ?? null,
+        advertisedIssuers,
+        reviewRequired: false,
+        issuerChanged: result.issuerChanged,
+        reconnectionRequired: result.reconnectionRequired,
+        updatedAt: result.connection.updatedAt.toISOString(),
+      })
     },
   )
 
