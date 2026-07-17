@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Sparkles, Trash2, Users, Wrench } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -55,7 +55,6 @@ import {
 } from "./mcp-connections-data";
 import {
   classifySmartAddInput,
-  filterPresetSuggestions,
   planSmartAdd,
   smartAddAuthLabel,
 } from "./mcp-connection-smart-add";
@@ -571,11 +570,16 @@ export function McpConnectionsScreen() {
         open={formOpen}
         preset={formPreset}
         presets={presets}
+        existingConnectionUrls={connections.map((connection) => connection.url)}
         submitting={createConnection.isPending}
         error={createConnection.error}
         onClose={() => {
           setFormOpen(false);
           setFormPreset(null);
+        }}
+        onSelectPreset={(selectedPreset) => {
+          createConnection.reset();
+          setFormPreset(selectedPreset);
         }}
         onSubmit={handleCreate}
       />
@@ -1992,17 +1996,21 @@ function AddConnectionDialog({
   open,
   preset,
   presets,
+  existingConnectionUrls,
   submitting,
   error,
   onClose,
+  onSelectPreset,
   onSubmit,
 }: {
   open: boolean;
   preset: ExternalMcpPreset | null;
   presets: ExternalMcpPreset[];
+  existingConnectionUrls: string[];
   submitting: boolean;
   error: unknown;
   onClose: () => void;
+  onSelectPreset: (preset: ExternalMcpPreset | null) => void;
   onSubmit: (
     input: CreateMcpConnectionInput,
     options: { startOAuth: boolean },
@@ -2011,10 +2019,9 @@ function AddConnectionDialog({
   const { orgContext } = useOrgDashboard();
   const discoverRequirements = useDiscoverMcpConnectionRequirements();
   const resolveConnection = useResolveMcpConnection();
-  // "smart": one input, we find and check the server. "advanced": the full
-  // form — reachable any time through the Advanced setup link, and the
-  // landing view for preset tiles (they arrive prefilled already).
-  const [view, setView] = useState<"smart" | "advanced">(preset ? "advanced" : "smart");
+  // The picker keeps known services separate from the custom URL path.
+  // Presets land in their prefilled form; Custom MCP uses discovery first.
+  const [view, setView] = useState<"picker" | "smart" | "advanced">(preset ? "advanced" : "picker");
   const [smartQuery, setSmartQuery] = useState("");
   const [smartState, setSmartState] = useState<"idle" | "waiting" | "resolving" | "done" | "error">("idle");
   const [smartError, setSmartError] = useState<unknown>(null);
@@ -2042,7 +2049,7 @@ function AddConnectionDialog({
 
   useEffect(() => {
     if (!open) return;
-    setView(preset ? "advanced" : "smart");
+    setView(preset ? "advanced" : "picker");
     setSmartQuery("");
     setSmartState("idle");
     setSmartError(null);
@@ -2168,7 +2175,7 @@ function AddConnectionDialog({
     setResolution(null);
     setSmartError(null);
     const kind = classifySmartAddInput(smartQuery);
-    if (kind === "empty" || kind === "invalid") {
+    if (kind !== "url" && kind !== "domain") {
       setSmartState("idle");
       return;
     }
@@ -2180,19 +2187,6 @@ function AddConnectionDialog({
     }, delay);
     return () => window.clearTimeout(timer);
   }, [open, view, smartQuery]);
-
-  // Suggestions stay visible until a concrete match card renders — after a
-  // not_found in particular, "noti" should still offer Notion.
-  const presetSuggestions = useMemo(
-    () => (view === "smart" && !(smartState === "done" && resolution?.match) ? filterPresetSuggestions(presets, smartQuery) : []),
-    [presets, smartQuery, view, smartState, resolution],
-  );
-
-  function selectPresetSuggestion(suggestion: ExternalMcpPreset) {
-    // Suggestion taps resolve immediately — the debounce exists for typing.
-    smartResolveDelayRef.current = 0;
-    setSmartQuery(suggestion.displayName);
-  }
 
   const smartMatch = smartState === "done" ? resolution?.match ?? null : null;
   const smartPlan = smartMatch
@@ -2298,14 +2292,82 @@ function AddConnectionDialog({
         className="max-h-[calc(100dvh-3rem)] w-full max-w-md overflow-y-auto overscroll-contain rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
-        {view === "smart" ? (
+        {view === "picker" ? (
           <>
-            <h2 className="flex items-center gap-2 text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-              <Sparkles className="h-4 w-4 text-gray-400" />
+            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
               Add a connection
             </h2>
             <p className="mt-1.5 text-[13px] leading-5 text-gray-500">
-              Paste a server URL — or just type a name like <span className="font-medium text-gray-700">vercel</span> — and we&apos;ll find and check it for you.
+              Choose a service, or connect an MCP server by URL.
+            </p>
+
+            <div
+              className="mt-5 max-h-[min(55vh,440px)] space-y-2 overflow-y-auto overscroll-contain pr-1"
+              data-testid="mcp-service-picker"
+            >
+              <button
+                type="button"
+                onClick={() => setView("smart")}
+                className="group flex w-full items-center gap-3 rounded-2xl border border-gray-200 px-3.5 py-3 text-left transition hover:border-gray-400 hover:bg-gray-50"
+                data-testid="select-custom-mcp"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-900 text-white">
+                  <Server className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[14px] font-semibold text-gray-950">Custom MCP</span>
+                  <span className="mt-0.5 block truncate text-[12px] text-gray-500">Connect with a server URL</span>
+                </span>
+                <span className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] font-semibold text-gray-800 shadow-sm transition group-hover:border-gray-300">
+                  Connect
+                </span>
+              </button>
+
+              {presets.map((service) => {
+                const alreadyAdded = existingConnectionUrls.includes(service.url);
+                return (
+                  <button
+                    key={service.presetId}
+                    type="button"
+                    disabled={alreadyAdded}
+                    onClick={() => onSelectPreset(service)}
+                    className="group flex w-full items-center gap-3 rounded-2xl border border-gray-200 px-3.5 py-3 text-left transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <IntegrationIcon name={service.displayName} serviceUrl={service.url} className="h-10 w-10 rounded-xl" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[14px] font-semibold text-gray-950">{service.displayName}</span>
+                      <span className="mt-0.5 block truncate text-[12px] text-gray-500">{service.description}</span>
+                    </span>
+                    <span className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] font-semibold text-gray-800 shadow-sm transition group-hover:border-gray-300">
+                      {alreadyAdded ? "Added" : "Connect"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <DenButton variant="secondary" onClick={onClose}>
+                Cancel
+              </DenButton>
+            </div>
+          </>
+        ) : view === "smart" ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setView("picker")}
+              className="mb-2 flex items-center gap-1 text-[12px] font-medium text-gray-500 transition hover:text-gray-900"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              All connections
+            </button>
+            <h2 className="flex items-center gap-2 text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+              <Server className="h-4 w-4 text-gray-400" />
+              Custom MCP
+            </h2>
+            <p className="mt-1.5 text-[13px] leading-5 text-gray-500">
+              Paste the MCP server URL and we&apos;ll find and check its authentication requirements.
             </p>
 
             <div className="mt-5">
@@ -2313,26 +2375,10 @@ function AddConnectionDialog({
                 autoFocus
                 value={smartQuery}
                 onChange={(event) => setSmartQuery(event.target.value)}
-                placeholder="vercel — or https://mcp.vercel.com/mcp"
+                placeholder="https://mcp.example.com/mcp"
                 data-testid="smart-add-query-input"
               />
             </div>
-
-            {presetSuggestions.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {presetSuggestions.map((suggestion) => (
-                  <button
-                    key={suggestion.presetId}
-                    type="button"
-                    onClick={() => selectPresetSuggestion(suggestion)}
-                    className="flex items-center gap-2 rounded-full border border-gray-200 py-1.5 pl-2 pr-3 text-[12px] font-medium text-gray-700 transition hover:border-gray-400 hover:text-gray-950"
-                  >
-                    <IntegrationIcon name={suggestion.displayName} serviceUrl={suggestion.url} className="h-5 w-5 rounded-md" imageClassName="h-3.5 w-3.5" />
-                    {suggestion.displayName}
-                  </button>
-                ))}
-              </div>
-            ) : null}
 
             {smartState === "waiting" || smartState === "resolving" ? (
               <div className="mt-4 flex items-center gap-2.5 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3.5 text-[13px] text-gray-500" role="status">
@@ -2448,16 +2494,17 @@ function AddConnectionDialog({
           </>
         ) : (
           <>
-        {!preset ? (
-          <button
-            type="button"
-            onClick={() => setView("smart")}
-            className="mb-2 flex items-center gap-1 text-[12px] font-medium text-gray-500 transition hover:text-gray-900"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Quick add
-          </button>
-        ) : null}
+        <button
+          type="button"
+          onClick={() => {
+            if (preset) onSelectPreset(null);
+            else setView("smart");
+          }}
+          className="mb-2 flex items-center gap-1 text-[12px] font-medium text-gray-500 transition hover:text-gray-900"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          {preset ? "All connections" : "Custom MCP"}
+        </button>
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
           {preset ? `Add ${preset.displayName}` : "Add a custom MCP server"}
         </h2>
