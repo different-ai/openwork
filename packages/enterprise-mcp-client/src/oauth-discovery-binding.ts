@@ -1,5 +1,5 @@
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
-import { isEquivalentOAuthResourceAlias } from "./oauth-resource-alias.js"
+import { isEquivalentOAuthDiscoveryAlias } from "./oauth-resource-alias.js"
 
 type OAuthDiscoveryBindingState = Pick<OAuthDiscoveryState, "authorizationServerUrl"> & {
   authorizationServerMetadata?: { issuer?: string }
@@ -10,8 +10,8 @@ function isResourceScopedDiscoveryAlias(state: OAuthDiscoveryBindingState, expec
   const advertisedIssuers = state.resourceMetadata?.authorization_servers
   return state.authorizationServerUrl !== expectedIssuer
     && state.authorizationServerMetadata?.issuer === expectedIssuer
-    && isEquivalentOAuthResourceAlias(state.resourceMetadata?.resource, state.authorizationServerUrl)
-    && advertisedIssuers?.some((issuer) => isEquivalentOAuthResourceAlias(issuer, state.authorizationServerUrl)) === true
+    && isEquivalentOAuthDiscoveryAlias(state.resourceMetadata?.resource, state.authorizationServerUrl)
+    && advertisedIssuers?.some((issuer) => isEquivalentOAuthDiscoveryAlias(issuer, state.authorizationServerUrl)) === true
 }
 
 /**
@@ -24,8 +24,9 @@ export function isAuthorizationServerDiscoveryBound(
   expectedIssuer: string,
 ): boolean {
   const advertisedIssuers = state.resourceMetadata?.authorization_servers
-  const directBinding = state.authorizationServerUrl === expectedIssuer
-    && (advertisedIssuers === undefined || advertisedIssuers.includes(expectedIssuer))
+  const directBinding = isEquivalentOAuthDiscoveryAlias(state.authorizationServerUrl, expectedIssuer)
+    && (advertisedIssuers === undefined
+      || advertisedIssuers.some((issuer) => isEquivalentOAuthDiscoveryAlias(issuer, expectedIssuer)))
   const discoveryBinding = directBinding || isResourceScopedDiscoveryAlias(state, expectedIssuer)
   return discoveryBinding
     && (state.authorizationServerMetadata?.issuer === undefined

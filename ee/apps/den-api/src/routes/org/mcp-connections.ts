@@ -6,6 +6,7 @@ import { z } from "zod"
 import {
   discoverConnectionRequirements,
   EnterpriseMcpOAuthContractError,
+  selectRecoverableAuthorizationServerIssuer,
   validateMcpAuthorizationResponseIssuer,
 } from "@openwork/enterprise-mcp-client"
 import { and, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
@@ -57,8 +58,10 @@ import {
   listExternalMcpConnections,
   listVisibleExternalMcpConnections,
   markExternalMcpConnectionConnected,
+  markExternalMcpOAuthIssuerReviewRequired,
   memberCanUseExternalMcpConnection,
   normalizeExternalMcpIdentityUrl,
+  repairExternalMcpOAuthIssuer,
   replaceExternalMcpConnectionAccess,
   updateExternalMcpConnection,
   type ExternalMcpConnectionRow,
@@ -2307,6 +2310,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         }
       }
 
+      let issuerRepairRequiresAdmin = false
       try {
         // Our own signed state token identifies which connection AND which
         // member this is for once the external server redirects back. It MUST
@@ -2340,7 +2344,72 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           return { result, signedState }
         }
 
-        let started = await beginAuthorization(connection)
+        let started: Awaited<ReturnType<typeof beginAuthorization>>
+        try {
+          started = await beginAuthorization(connection)
+        } catch (error) {
+          const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "AUTH_RESOURCE_DISCOVERY")
+          const configuredIssuer = connection.oauthConfiguration?.authorizationServerIssuer
+          if (diagnostic.code !== "MCP_OAUTH_ISSUER_MISMATCH" || !configuredIssuer) throw error
+
+          let requirements: Awaited<ReturnType<typeof discoverConnectionRequirements>>
+          try {
+            requirements = await discoverConnectionRequirements({
+              serverUrl: connection.url,
+              fetch: externalMcpDiscoveryFetch,
+            })
+          } catch (discoveryError) {
+            logger.warn("external_mcp_oauth_issuer_recovery_discovery_failed", {
+              connection_id: connection.id,
+              organization_id: payload.organization.id,
+              ...externalMcpDiagnosticForLog(discoveryError, c.get("requestId"), "AUTH_RESOURCE_DISCOVERY"),
+            })
+            throw error
+          }
+
+          const replacementIssuer = selectRecoverableAuthorizationServerIssuer({
+            selectedIssuer: configuredIssuer,
+            requirements,
+          })
+          if (!replacementIssuer) {
+            await markExternalMcpOAuthIssuerReviewRequired({
+              organizationId: payload.organization.id,
+              connectionId: externalMcpConnectionId,
+              expectedIdentityBinding: externalMcpIdentityBinding(connection),
+              expectedIssuer: configuredIssuer,
+            })
+            throw error
+          }
+          const repair = await repairExternalMcpOAuthIssuer({
+            organizationId: payload.organization.id,
+            connectionId: externalMcpConnectionId,
+            expectedIdentityBinding: externalMcpIdentityBinding(connection),
+            expectedIssuer: configuredIssuer,
+            replacementIssuer,
+            allowCredentialInvalidation: callerIsAdmin,
+          })
+          if (repair.status === "credentials_present") {
+            issuerRepairRequiresAdmin = true
+            throw error
+          }
+          if (repair.status === "repaired" || repair.status === "unchanged") {
+            connection = repair.connection
+          } else {
+            const refreshed = await getExternalMcpConnection({
+              organizationId: payload.organization.id,
+              connectionId: externalMcpConnectionId,
+            })
+            if (refreshed?.oauthConfiguration?.authorizationServerIssuer !== replacementIssuer) throw error
+            connection = refreshed
+          }
+          logger.info("external_mcp_oauth_issuer_recovered", {
+            connection_id: connection.id,
+            organization_id: payload.organization.id,
+            previous_authorization_server_issuer: configuredIssuer,
+            authorization_server_issuer: replacementIssuer,
+          })
+          started = await beginAuthorization(connection)
+        }
         if (started.result.status === "needs_auth" && connection.oauthConfiguration?.callbackMode === "shared-v1") {
           const discovered = await getExternalMcpConnection({
             organizationId: payload.organization.id,
@@ -2391,7 +2460,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         if (diagnostic.code === "MCP_OAUTH_ISSUER_MISMATCH") {
           return c.json({
             error: "mcp_oauth_issuer_mismatch",
-            message: "The authorization server no longer matches the issuer selected for this MCP connection. Discover requirements again before reconnecting.",
+            message: issuerRepairRequiresAdmin
+              ? "This connection's OAuth issuer changed and existing credentials must be cleared. Ask a workspace admin to reconnect it."
+              : "OpenWork could not safely verify the authorization server selected for this MCP connection. Ask a workspace admin to review its OAuth setup.",
           }, 409)
         }
         return c.json({

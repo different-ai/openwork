@@ -561,6 +561,194 @@ export async function isolateExternalMcpOAuthCallback(input: {
   })
 }
 
+export type RepairExternalMcpOAuthIssuerResult =
+  | { status: "repaired" | "unchanged"; connection: ExternalMcpConnectionRow }
+  | { status: "not_found" | "conflict" | "credentials_present" }
+
+/**
+ * Replace a stale OAuth issuer only after the caller has independently
+ * verified the replacement through fresh protected-resource discovery.
+ * Non-admin recovery may not invalidate another member's credentials.
+ */
+export async function repairExternalMcpOAuthIssuer(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  expectedIdentityBinding: string
+  expectedIssuer: string
+  replacementIssuer: string
+  allowCredentialInvalidation: boolean
+}): Promise<RepairExternalMcpOAuthIssuerResult> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = rows[0]
+    if (!connection) return { status: "not_found" }
+    if (
+      connection.authType !== "oauth"
+      || !connection.oauthConfiguration
+      || externalMcpIdentityBinding(connection) !== input.expectedIdentityBinding
+    ) return { status: "conflict" }
+
+    const currentIssuer = connection.oauthConfiguration.authorizationServerIssuer
+    if (currentIssuer === input.replacementIssuer) {
+      return { status: "unchanged", connection }
+    }
+    if (currentIssuer !== input.expectedIssuer) return { status: "conflict" }
+
+    const accounts = await tx
+      .select({ id: ConnectedAccountTable.id })
+      .from(ConnectedAccountTable)
+      .where(and(
+        eq(ConnectedAccountTable.organizationId, input.organizationId),
+        eq(ConnectedAccountTable.providerId, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const sharedCredentialPresent = Boolean(
+      connection.accessToken
+      || connection.refreshToken
+      || connection.pendingCodeVerifier
+      || connection.connectedAt,
+    )
+    if (!input.allowCredentialInvalidation && (sharedCredentialPresent || accounts.length > 0)) {
+      if (!connection.oauthIssuerReviewRequiredAt) {
+        const updatedAt = new Date(Math.max(Date.now(), connection.updatedAt.getTime() + 1))
+        await tx
+          .update(ExternalMcpConnectionTable)
+          .set({
+            oauthIssuerReviewRequiredAt: new Date(),
+            updatedAt,
+          })
+          .where(and(
+            eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+            eq(ExternalMcpConnectionTable.id, input.connectionId),
+          ))
+      }
+      return { status: "credentials_present" }
+    }
+
+    const clients = await tx
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(and(
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const client = clients[0]
+    const clientExtra = normalizeOAuthClientExtra(client?.extra)
+    if (client && isSdkRegisteredOAuthClient(clientExtra)) {
+      await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.id, client.id))
+    } else if (client) {
+      await tx
+        .update(OrgOAuthClientTable)
+        .set({
+          extra: {
+            ...(clientExtra ?? {}),
+            authorizationServerIssuer: input.replacementIssuer,
+          },
+        })
+        .where(eq(OrgOAuthClientTable.id, client.id))
+    }
+
+    await tx.delete(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.providerId, input.connectionId),
+    ))
+    const { discovery: _discovery, ...configuration } = connection.oauthConfiguration
+    const repairedConfiguration: ExternalMcpOAuthConfiguration = {
+      ...configuration,
+      authorizationServerIssuer: input.replacementIssuer,
+    }
+    const updatedAt = new Date(Math.max(Date.now(), connection.updatedAt.getTime() + 1))
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        oauthConfiguration: repairedConfiguration,
+        accessToken: null,
+        refreshToken: null,
+        tokenType: null,
+        scope: null,
+        expiresAt: null,
+        pendingCodeVerifier: null,
+        connectedAt: null,
+        credentialHealth: null,
+        oauthIssuerReviewRequiredAt: null,
+        updatedAt,
+      })
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+
+    return {
+      status: "repaired",
+      connection: {
+        ...connection,
+        oauthConfiguration: repairedConfiguration,
+        accessToken: null,
+        refreshToken: null,
+        tokenType: null,
+        scope: null,
+        expiresAt: null,
+        pendingCodeVerifier: null,
+        connectedAt: null,
+        credentialHealth: null,
+        oauthIssuerReviewRequiredAt: null,
+        updatedAt,
+      },
+    }
+  })
+}
+
+export async function markExternalMcpOAuthIssuerReviewRequired(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  expectedIdentityBinding: string
+  expectedIssuer: string
+}): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = rows[0]
+    if (
+      !connection
+      || connection.authType !== "oauth"
+      || !connection.oauthConfiguration
+      || externalMcpIdentityBinding(connection) !== input.expectedIdentityBinding
+      || connection.oauthConfiguration.authorizationServerIssuer !== input.expectedIssuer
+    ) return false
+    if (connection.oauthIssuerReviewRequiredAt) return true
+
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({
+        oauthIssuerReviewRequiredAt: new Date(),
+        updatedAt: new Date(Math.max(Date.now(), connection.updatedAt.getTime() + 1)),
+      })
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+    return true
+  })
+}
+
 export async function listExternalMcpConnectionAccess(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId

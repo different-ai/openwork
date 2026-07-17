@@ -12,13 +12,37 @@ import type {
   EnterpriseMcpConnectionRequirements,
   EnterpriseMcpFetch,
 } from "./contracts.js"
-import { isEquivalentOAuthResourceAlias } from "./oauth-resource-alias.js"
+import { isEquivalentOAuthDiscoveryAlias } from "./oauth-resource-alias.js"
 
 const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_AUTHORIZATION_SERVERS = 5
 const DEFAULT_MAX_TOOLS = 100
 const MAX_RESPONSE_BYTES = 1024 * 1024
 const MAX_TOOL_PAGES = 5
+
+/**
+ * Select a canonical issuer only when fresh requirements discovery proves
+ * that a stale configured value is either the same root issuer alias or the
+ * protected resource's own discovery alias. Ambiguous and partially invalid
+ * discovery results remain manual failures.
+ */
+export function selectRecoverableAuthorizationServerIssuer(input: {
+  selectedIssuer: string
+  requirements: Pick<EnterpriseMcpConnectionRequirements, "authentication" | "warnings">
+}): string | undefined {
+  if (
+    input.requirements.authentication.kind !== "oauth"
+    || input.requirements.authentication.authorizationServers.length !== 1
+    || input.requirements.warnings.some((warning) => warning.code === "oauth_issuer_mismatch")
+  ) return undefined
+
+  const canonicalIssuer = input.requirements.authentication.authorizationServers[0]?.issuer
+  if (!canonicalIssuer || canonicalIssuer === input.selectedIssuer) return undefined
+  if (isEquivalentOAuthDiscoveryAlias(input.selectedIssuer, canonicalIssuer)) return canonicalIssuer
+  return isEquivalentOAuthDiscoveryAlias(input.selectedIssuer, input.requirements.authentication.resource)
+    ? canonicalIssuer
+    : undefined
+}
 
 function boundedResponse(response: Response): Response {
   const advertisedLength = Number(response.headers.get("content-length"))
@@ -80,7 +104,11 @@ function metadataRequirement(
   // metadata discovery alias. Accept that alias, including the equivalent
   // trailing root slash form, while retaining the metadata issuer as the
   // canonical issuer used by the OAuth flow.
-  if (metadata.issuer !== advertisedIssuer && !isEquivalentOAuthResourceAlias(advertisedIssuer, resource)) return null
+  if (
+    metadata.issuer !== advertisedIssuer
+    && !isEquivalentOAuthDiscoveryAlias(advertisedIssuer, metadata.issuer)
+    && !isEquivalentOAuthDiscoveryAlias(advertisedIssuer, resource)
+  ) return null
   return {
     issuer: metadata.issuer,
     authorizationEndpoint: metadata.authorization_endpoint,

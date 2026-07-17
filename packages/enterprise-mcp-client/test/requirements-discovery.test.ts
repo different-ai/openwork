@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { z } from "zod"
-import { discoverConnectionRequirements, type EnterpriseMcpFetch } from "../src/index.js"
+import {
+  discoverConnectionRequirements,
+  selectRecoverableAuthorizationServerIssuer,
+  type EnterpriseMcpFetch,
+} from "../src/index.js"
 
 const rpcRequestSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
@@ -179,6 +183,10 @@ describe("enterprise MCP requirements discovery", () => {
     assert.deepEqual(result.authentication.recommendedScopes, ["mcp_api", "refresh_token"])
     assert.equal(result.authentication.recommendedRegistrationMethod, "pre_registered")
     assert.equal(result.warnings.some((warning) => warning.code === "oauth_issuer_mismatch"), false)
+    assert.equal(selectRecoverableAuthorizationServerIssuer({
+      selectedIssuer: resource,
+      requirements: result,
+    }), "https://login.salesforce.example")
   })
 
   it("accepts a root resource discovery alias with an equivalent trailing slash", async () => {
@@ -218,5 +226,58 @@ describe("enterprise MCP requirements discovery", () => {
     assert.equal(result.authentication.authorizationServers[0]?.issuer, "https://vercel.example")
     assert.equal(result.authentication.recommendedRegistrationMethod, "dynamic")
     assert.equal(result.warnings.some((warning) => warning.code === "oauth_issuer_mismatch"), false)
+    assert.equal(selectRecoverableAuthorizationServerIssuer({
+      selectedIssuer: "https://mcp.vercel.example",
+      requirements: result,
+    }), "https://vercel.example")
+    assert.equal(selectRecoverableAuthorizationServerIssuer({
+      selectedIssuer: "https://unrelated.example",
+      requirements: result,
+    }), undefined)
+  })
+
+  it("accepts an authorization-server root issuer with an equivalent trailing slash", async () => {
+    const fetch: EnterpriseMcpFetch = async (url) => {
+      const target = new URL(url)
+      if (target.origin === "https://mcp.close.example" && target.pathname === "/.well-known/oauth-protected-resource") {
+        return Response.json({
+          resource: "https://mcp.close.example/",
+          authorization_servers: ["https://api.close.example/"],
+          scopes_supported: ["mcp.read", "offline_access"],
+        })
+      }
+      if (target.origin === "https://api.close.example" && target.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer: "https://api.close.example",
+          authorization_endpoint: "https://app.close.example/oauth2/authorize/",
+          token_endpoint: "https://api.close.example/oauth2/token/",
+          registration_endpoint: "https://api.close.example/oauth2/register/",
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
+          code_challenge_methods_supported: ["S256"],
+          scopes_supported: ["mcp.read", "offline_access"],
+        })
+      }
+      return new Response(null, {
+        status: 401,
+        headers: {
+          "www-authenticate": "Bearer resource_metadata=\"https://mcp.close.example/.well-known/oauth-protected-resource\"",
+        },
+      })
+    }
+
+    const result = await discoverConnectionRequirements({
+      serverUrl: "https://mcp.close.example/mcp",
+      fetch,
+    })
+
+    assert.equal(result.authentication.authorizationServers[0]?.issuer, "https://api.close.example")
+    assert.equal(result.authentication.recommendedRegistrationMethod, "dynamic")
+    assert.equal(result.warnings.some((warning) => warning.code === "oauth_issuer_mismatch"), false)
+    assert.equal(selectRecoverableAuthorizationServerIssuer({
+      selectedIssuer: "https://api.close.example/",
+      requirements: result,
+    }), "https://api.close.example")
   })
 })

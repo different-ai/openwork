@@ -483,6 +483,158 @@ test("connect start selects an isolated callback before sending the user to a le
   }
 })
 
+test("connect start repairs a verified stale resource issuer alias before authorization", async () => {
+  let authorizationOrigin = ""
+  const registeredRedirects: string[][] = []
+  const authorizationServer = Bun.serve({
+    port: 0,
+    async fetch(incoming) {
+      const url = new URL(incoming.url)
+      if (url.pathname === "/register") {
+        const metadata: unknown = await incoming.json()
+        const redirectUris = isRecord(metadata) && isStringArray(metadata.redirect_uris)
+          ? metadata.redirect_uris
+          : []
+        registeredRedirects.push(redirectUris)
+        return Response.json({
+          client_id: "recovered-dynamic-client",
+          token_endpoint_auth_method: "none",
+          redirect_uris: redirectUris,
+        }, { status: 201 })
+      }
+      return new Response(null, { status: 404 })
+    },
+  })
+  authorizationOrigin = `http://127.0.0.1:${authorizationServer.port}`
+
+  let resourceOrigin = ""
+  const resourceServer = Bun.serve({
+    port: 0,
+    fetch(incoming) {
+      const url = new URL(incoming.url)
+      if (url.pathname === "/.well-known/oauth-protected-resource") {
+        return Response.json({
+          resource: `${resourceOrigin}/`,
+          authorization_servers: [resourceOrigin],
+        })
+      }
+      if (url.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer: authorizationOrigin,
+          authorization_endpoint: `${authorizationOrigin}/authorize`,
+          token_endpoint: `${authorizationOrigin}/token`,
+          registration_endpoint: `${authorizationOrigin}/register`,
+          authorization_response_iss_parameter_supported: true,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        })
+      }
+      if (url.pathname === "/") {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "www-authenticate": `Bearer resource_metadata="${resourceOrigin}/.well-known/oauth-protected-resource"`,
+          },
+        })
+      }
+      return new Response(null, { status: 404 })
+    },
+  })
+  resourceOrigin = `http://127.0.0.1:${resourceServer.port}`
+
+  try {
+    const connection = await createExternalMcpConnection({
+      organizationId,
+      name: "Recoverable resource alias MCP",
+      url: resourceOrigin,
+      authType: "oauth",
+      credentialMode: "per_member",
+      oauthConfiguration: {
+        version: 1,
+        authorizationServerIssuer: resourceOrigin,
+        requestedScopes: [],
+      },
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    await db
+      .update(schema.ExternalMcpConnectionTable)
+      .set({
+        oauthConfiguration: {
+          version: 1,
+          authorizationServerIssuer: resourceOrigin,
+          requestedScopes: [],
+          callbackMode: "shared-v1",
+          discovery: {
+            authorizationServerUrl: resourceOrigin,
+            authorizationServerMetadata: {
+              issuer: authorizationOrigin,
+              authorization_endpoint: `${authorizationOrigin}/authorize`,
+              token_endpoint: `${authorizationOrigin}/token`,
+              registration_endpoint: `${authorizationOrigin}/register`,
+              authorization_response_iss_parameter_supported: true,
+              code_challenge_methods_supported: ["S256"],
+            },
+            resourceMetadata: {
+              resource: `${resourceOrigin}/`,
+              authorization_servers: [resourceOrigin],
+            },
+          },
+        },
+      })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
+
+    const response = await request(`/v1/mcp-connections/${connection.id}/connect/start`)
+    expect(response.status).toBe(200)
+    const body: unknown = await response.json()
+    if (!isRecord(body) || typeof body.authorizeUrl !== "string") {
+      throw new Error("Expected a recovered OAuth authorize URL.")
+    }
+    expect(new URL(body.authorizeUrl).origin).toBe(authorizationOrigin)
+    expect(registeredRedirects).toHaveLength(1)
+
+    const [repaired] = await db
+      .select()
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
+      .limit(1)
+    expect(repaired?.oauthConfiguration?.authorizationServerIssuer).toBe(authorizationOrigin)
+    expect(repaired?.oauthIssuerReviewRequiredAt).toBeNull()
+
+    if (!repaired?.oauthConfiguration?.discovery) throw new Error("Expected repaired discovery state.")
+    await db
+      .update(schema.ExternalMcpConnectionTable)
+      .set({
+        oauthConfiguration: {
+          ...repaired.oauthConfiguration,
+          authorizationServerIssuer: resourceOrigin,
+        },
+      })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
+    const memberResponse = await principalRequest(
+      regularUserId,
+      `/v1/mcp-connections/${connection.id}/connect/start`,
+    )
+    expect(memberResponse.status).toBe(409)
+    expect(await memberResponse.json()).toMatchObject({
+      error: "mcp_oauth_issuer_mismatch",
+      message: "This connection's OAuth issuer changed and existing credentials must be cleared. Ask a workspace admin to reconnect it.",
+    })
+    const [memberBlocked] = await db
+      .select()
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
+      .limit(1)
+    expect(memberBlocked?.oauthConfiguration?.authorizationServerIssuer).toBe(resourceOrigin)
+    expect(memberBlocked?.oauthIssuerReviewRequiredAt).not.toBeNull()
+  } finally {
+    resourceServer.stop(true)
+    authorizationServer.stop(true)
+  }
+})
+
 test("issuer review requires an admin and only adopts the issuer advertised by live discovery", async () => {
   let origin = ""
   const server = Bun.serve({
