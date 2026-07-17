@@ -1,6 +1,6 @@
 # org-chooser-background — Organization chooser paper surface
 
-1. “The organization chooser opens on the same calm light-paper surface as the join flow, so moving between account steps feels seamless.”
+1. “The organization chooser opens on the same calm light-paper Dithering surface as the join flow, so moving between account steps feels seamless.”
 
 2. “The organization list sits inside a soft inset card, keeping the choices crisp, readable, and accessible.”
 
