@@ -7,6 +7,15 @@ function isLoopbackHostname(hostname: string): boolean {
     && Number(octets[0]) === 127
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
 export function safeMcpAuthorizationUrl(rawUrl: string): string {
   let url: URL
   try {
@@ -22,6 +31,15 @@ export function safeMcpAuthorizationUrl(rawUrl: string): string {
   return url.toString()
 }
 
+const authorizationDocumentStyles = `
+      :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; color: #182033; background: #f7f7f4; }
+      .card { width: min(100%, 440px); padding: 48px 40px; text-align: center; background: rgba(255, 255, 255, .9); border: 1px solid #e6e7e2; border-radius: 28px; box-shadow: 0 22px 70px rgba(24, 32, 51, .09); }
+      h1 { margin: 0; font-size: 25px; line-height: 1.2; letter-spacing: -.025em; }
+      p { max-width: 360px; margin: 14px auto 0; color: #667085; font-size: 15px; line-height: 1.6; }
+`
+
 export function mcpAuthorizationPendingDocument(): string {
   return `<!doctype html>
 <html lang="en">
@@ -31,15 +49,10 @@ export function mcpAuthorizationPendingDocument(): string {
     <meta name="color-scheme" content="light" />
     <title>Connecting — OpenWork</title>
     <style>
-      :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      * { box-sizing: border-box; }
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; color: #182033; background: #f7f7f4; }
-      .card { width: min(100%, 440px); padding: 48px 40px; text-align: center; background: rgba(255, 255, 255, .9); border: 1px solid #e6e7e2; border-radius: 28px; box-shadow: 0 22px 70px rgba(24, 32, 51, .09); }
+${authorizationDocumentStyles}
       .mark { position: relative; width: 64px; height: 64px; margin: 0 auto 28px; display: grid; place-items: center; }
       .core { width: 34px; height: 34px; border-radius: 12px; background: #182033; box-shadow: inset 0 0 0 7px #fff; }
       .orbit { position: absolute; inset: 0; border: 2px solid #dfe3da; border-top-color: #76966f; border-radius: 50%; animation: connect 1.15s cubic-bezier(.55, .15, .45, .85) infinite; }
-      h1 { margin: 0; font-size: 25px; line-height: 1.2; letter-spacing: -.025em; }
-      p { max-width: 330px; margin: 14px auto 0; color: #667085; font-size: 15px; line-height: 1.6; }
       @keyframes connect { to { transform: rotate(360deg); } }
       @media (prefers-reduced-motion: reduce) { .orbit { animation: none; border-color: #76966f; } }
     </style>
@@ -52,6 +65,54 @@ export function mcpAuthorizationPendingDocument(): string {
     </main>
   </body>
 </html>`
+}
+
+export function mcpAuthorizationErrorDocument(input: { message: string; redirectUri?: string }): string {
+  const redirectUri = input.redirectUri
+    ? `<section aria-labelledby="redirect-uri-label">
+        <h2 id="redirect-uri-label">Redirect URI used</h2>
+        <code>${escapeHtml(input.redirectUri)}</code>
+      </section>`
+    : ""
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Connection failed — OpenWork</title>
+    <style>
+${authorizationDocumentStyles}
+      .error-mark { width: 56px; height: 56px; margin: 0 auto 24px; display: grid; place-items: center; border-radius: 50%; color: #b42318; background: #fef3f2; font-size: 30px; font-weight: 700; }
+      section { margin-top: 24px; text-align: left; }
+      h2 { margin: 0 0 8px; color: #475467; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+      code { display: block; overflow-wrap: anywhere; padding: 12px; border: 1px solid #e6e7e2; border-radius: 10px; color: #344054; background: #f9fafb; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; }
+    </style>
+  </head>
+  <body>
+    <main class="card" role="alert" aria-live="assertive">
+      <div class="error-mark" aria-hidden="true">!</div>
+      <h1>Connection failed</h1>
+      <p>${escapeHtml(input.message)}</p>
+      ${redirectUri}
+    </main>
+  </body>
+</html>`
+}
+
+export function showMcpAuthorizationError(
+  popup: Window | null,
+  input: { message: string; redirectUri?: string },
+): void {
+  if (!popup || popup.closed) return
+  try {
+    popup.document.open()
+    popup.document.write(mcpAuthorizationErrorDocument(input))
+    popup.document.close()
+  } catch {
+    // If browser isolation made the document inaccessible, leave the popup
+    // open so the browser/provider error remains available for diagnosis.
+  }
 }
 
 export function openMcpAuthorizationWindow(): Window {

@@ -308,17 +308,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export class McpOAuthConfigurationRequiredError extends Error {
-  constructor(message: string) {
+  readonly callbackUrl: string | null;
+
+  constructor(message: string, callbackUrl: string | null) {
     super(message);
     this.name = "McpOAuthConfigurationRequiredError";
+    this.callbackUrl = callbackUrl;
   }
 }
 
-function oauthConfigurationRequiredMessage(payload: unknown): string | null {
+function oauthConfigurationRequiredDetails(payload: unknown): { message: string; callbackUrl: string | null } | null {
   if (!isRecord(payload) || payload.error !== "mcp_oauth_configuration_required") return null;
-  return typeof payload.message === "string" && payload.message.trim()
-    ? payload.message
-    : "This MCP server requires a pre-registered OAuth client before it can connect.";
+  return {
+    message: typeof payload.message === "string" && payload.message.trim()
+      ? payload.message
+      : "This MCP server requires a pre-registered OAuth client before it can connect.",
+    callbackUrl: typeof payload.callbackUrl === "string" && payload.callbackUrl.trim()
+      ? payload.callbackUrl
+      : null,
+  };
 }
 
 function parseInspectionHeaders(value: unknown): ExternalMcpInspectionHeader[] | null {
@@ -704,9 +712,12 @@ export function useStartMcpConnectionOAuth() {
         20000,
       );
       if (!response.ok) {
-        const configurationRequiredMessage = oauthConfigurationRequiredMessage(payload);
-        if (configurationRequiredMessage) {
-          throw new McpOAuthConfigurationRequiredError(configurationRequiredMessage);
+        const configurationRequired = oauthConfigurationRequiredDetails(payload);
+        if (configurationRequired) {
+          throw new McpOAuthConfigurationRequiredError(
+            configurationRequired.message,
+            configurationRequired.callbackUrl,
+          );
         }
         throw getRequestError(payload, response, `Failed to start OAuth (${response.status}).`);
       }

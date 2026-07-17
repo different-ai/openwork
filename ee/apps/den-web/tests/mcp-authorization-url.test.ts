@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  mcpAuthorizationErrorDocument,
   mcpAuthorizationPendingDocument,
   safeMcpAuthorizationUrl,
 } from "../app/(den)/dashboard/_components/mcp-authorization-url"
@@ -34,5 +35,32 @@ describe("mcpAuthorizationPendingDocument", () => {
     expect(document).toContain('role="status"')
     expect(document).toContain('aria-live="polite"')
     expect(document).toContain("prefers-reduced-motion: reduce")
+  })
+})
+
+describe("mcpAuthorizationErrorDocument", () => {
+  test("keeps OAuth failures visible with the exact redirect URI", () => {
+    const document = mcpAuthorizationErrorDocument({
+      message: "A pre-registered OAuth client is required.",
+      redirectUri: "https://api.openwork.example/v1/mcp-connections/oauth/callback",
+    })
+
+    expect(document).toContain("Connection failed")
+    expect(document).toContain("A pre-registered OAuth client is required.")
+    expect(document).toContain("Redirect URI used")
+    expect(document).toContain("https://api.openwork.example/v1/mcp-connections/oauth/callback")
+    expect(document).toContain('role="alert"')
+    expect(document).not.toContain("window.close")
+  })
+
+  test("escapes API error details before writing them into the popup", () => {
+    const document = mcpAuthorizationErrorDocument({
+      message: '<script>alert("message")</script>',
+      redirectUri: 'https://example.com/callback?next=<script>alert("uri")</script>',
+    })
+
+    expect(document).not.toContain("<script>alert")
+    expect(document).toContain("&lt;script&gt;alert(&quot;message&quot;)&lt;/script&gt;")
+    expect(document).toContain("next=&lt;script&gt;alert(&quot;uri&quot;)&lt;/script&gt;")
   })
 })
