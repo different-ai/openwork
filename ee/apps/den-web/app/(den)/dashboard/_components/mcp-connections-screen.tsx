@@ -64,6 +64,11 @@ import {
   planSmartAdd,
   smartAddAuthLabel,
 } from "./mcp-connection-smart-add";
+import {
+  areAllOptionalScopesSelected,
+  OPTIONAL_SCOPE_BULK_TOGGLE_THRESHOLD,
+  toggleAllOptionalScopes,
+} from "./mcp-scope-selection";
 import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
 import { TelegramDialog } from "./telegram-dialog";
 
@@ -2311,6 +2316,7 @@ function AddConnectionDialog({
     ?? authorizationServers[0]?.scopesSupported
     ?? [];
   const optionalScopes = availableScopes.filter((scope) => !requiredScopes.includes(scope));
+  const allOptionalScopesSelected = areAllOptionalScopesSelected(requestedScopes, optionalScopes);
   const access: McpConnectionAccessInput = accessMode === "everyone"
     ? { orgWide: true, memberIds: [], teamIds: [] }
     : { orgWide: false, memberIds: accessMode === "people" ? selectedMemberIds : [], teamIds: accessMode === "teams" ? selectedTeamIds : [] };
@@ -2780,7 +2786,34 @@ function AddConnectionDialog({
 
           {authType === "oauth" && requirements && (requiredScopes.length > 0 || optionalScopes.length > 0) ? (
             <div>
-              <p className="mb-1.5 text-[12px] font-medium text-gray-700">Permissions</p>
+              <div className="mb-1.5 flex items-center justify-between gap-3">
+                <p className="text-[12px] font-medium text-gray-700">Permissions</p>
+                {optionalScopes.length > OPTIONAL_SCOPE_BULK_TOGGLE_THRESHOLD ? (
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={allOptionalScopesSelected}
+                    aria-label="All optional permissions"
+                    data-testid="toggle-all-optional-permissions"
+                    onClick={() => setRequestedScopes((current) => toggleAllOptionalScopes(current, optionalScopes))}
+                    className="inline-flex shrink-0 items-center gap-2 rounded-full border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-gray-600 shadow-sm transition hover:border-gray-300 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900/10"
+                  >
+                    <span>All optional</span>
+                    <span
+                      aria-hidden="true"
+                      className={`relative h-5 w-9 rounded-full transition-colors ${
+                        allOptionalScopesSelected ? "bg-gray-900" : "bg-gray-200"
+                      }`}
+                    >
+                      <span
+                        className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                          allOptionalScopesSelected ? "translate-x-4" : "translate-x-0"
+                        }`}
+                      />
+                    </span>
+                  </button>
+                ) : null}
+              </div>
               <div className="space-y-2 rounded-2xl border border-gray-100 bg-gray-50 p-3 text-[12px]">
                 {requiredScopes.map((scope) => (
                   <label key={scope} className="flex items-center gap-2 text-gray-700">
