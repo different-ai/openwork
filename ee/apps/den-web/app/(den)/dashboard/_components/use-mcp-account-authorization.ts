@@ -2,7 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { openMcpAuthorizationWindow, safeMcpAuthorizationUrl, showMcpAuthorizationError } from "./mcp-authorization-url";
-import { McpOAuthConfigurationRequiredError, useMcpConnections, useStartMcpConnectionOAuth } from "./mcp-connections-data";
+import {
+  McpOAuthStartError,
+  useMcpConnections,
+  useStartMcpConnectionOAuth,
+} from "./mcp-connections-data";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
@@ -76,8 +80,8 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
       const message = connectError instanceof Error ? connectError.message : "Failed to connect account.";
       showMcpAuthorizationError(authorizationWindow, {
         message,
-        ...(connectError instanceof McpOAuthConfigurationRequiredError && connectError.callbackUrl
-          ? { redirectUri: connectError.callbackUrl }
+        ...(connectError instanceof McpOAuthStartError
+          ? { details: connectError.details }
           : {}),
       });
       setError({

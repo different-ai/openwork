@@ -45,7 +45,7 @@ function clickConnectionButtonScript() {
 
 export default {
   id: "mcp-oauth-popup-error-details",
-  title: "Failed MCP OAuth starts keep the popup open with the exact redirect URI",
+  title: "Failed MCP OAuth starts keep the popup open with expandable diagnostics",
   kind: "user-facing",
   preserveTheme: true,
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
@@ -116,15 +116,32 @@ export default {
             await ctx.waitForText("Connection failed", { timeoutMs: 20_000 });
           },
           assert: async () => {
-            await ctx.expectText("REDIRECT URI USED");
-            await ctx.expectText(state.callbackUrl);
+            await ctx.expectText("Technical details");
+            const expanded = await ctx.eval(`(() => {
+              const details = document.querySelector('details');
+              details?.querySelector('summary')?.click();
+              return details?.open === true;
+            })()`);
+            ctx.assert(expanded, "Technical details did not expand.");
+            const debugText = await ctx.eval("document.querySelector('.details-content')?.textContent ?? ''");
+            ctx.assert(debugText.includes("HTTP status") && debugText.includes("409"), "HTTP 409 was missing from the expanded details.");
+            ctx.assert(
+              debugText.includes("Error code") && debugText.includes("mcp_oauth_configuration_required"),
+              "The OAuth error code was missing from the expanded details.",
+            );
+            ctx.assert(debugText.includes("Response payload"), "The safe response payload was missing from the expanded details.");
+            ctx.assert(debugText.includes(state.callbackUrl), "The exact redirect URI was missing from the expanded details.");
+            await ctx.eval(`(() => {
+              document.querySelector('#response-payload-label')?.scrollIntoView({ block: 'start' });
+              return true;
+            })()`);
             const stillOpen = await ctx.eval("!window.closed");
             ctx.assert(stillOpen, "The OAuth popup closed after the start error.");
           },
           screenshot: {
             name: "oauth-error-popup-with-redirect-uri",
-            claim: "The failed OAuth popup remains visible with the exact redirect URI OpenWork sent.",
-            requireText: ["Connection failed", "REDIRECT URI USED", state.callbackUrl],
+            claim: "The failed OAuth popup remains visible with expandable, safe debugging details.",
+            requireText: ["RESPONSE PAYLOAD", "mcp_oauth_configuration_required", state.callbackUrl],
             rejectText: ["Preparing your connection"],
           },
         });

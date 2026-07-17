@@ -40,6 +40,7 @@ import {
   type McpRequirementsDiscovery,
   type McpConnectionAccessInput,
   McpOAuthConfigurationRequiredError,
+  McpOAuthStartError,
   type UpdatedMcpConnection,
   type UpdateMcpConnectionInput,
   formatMcpConnectedTimestamp,
@@ -317,8 +318,8 @@ export function McpConnectionsScreen() {
       const message = connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.";
       showMcpAuthorizationError(authorizationWindow, {
         message,
-        ...(connectError instanceof McpOAuthConfigurationRequiredError && connectError.callbackUrl
-          ? { redirectUri: connectError.callbackUrl }
+        ...(connectError instanceof McpOAuthStartError
+          ? { details: connectError.details }
           : {}),
       });
       if (connectError instanceof McpOAuthConfigurationRequiredError) {

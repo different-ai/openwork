@@ -7,6 +7,7 @@ import {
   type ExternalMcpDiagnostic,
   parseExternalMcpDiagnostic,
 } from "./mcp-tool-error-attribution";
+import type { McpAuthorizationDebugDetails } from "./mcp-authorization-url";
 
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
 
@@ -307,25 +308,62 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export class McpOAuthConfigurationRequiredError extends Error {
-  readonly callbackUrl: string | null;
+export class McpOAuthStartError extends Error {
+  readonly details: McpAuthorizationDebugDetails;
 
-  constructor(message: string, callbackUrl: string | null) {
+  constructor(message: string, details: McpAuthorizationDebugDetails) {
     super(message);
-    this.name = "McpOAuthConfigurationRequiredError";
-    this.callbackUrl = callbackUrl;
+    this.name = "McpOAuthStartError";
+    this.details = details;
   }
 }
 
-function oauthConfigurationRequiredDetails(payload: unknown): { message: string; callbackUrl: string | null } | null {
-  if (!isRecord(payload) || payload.error !== "mcp_oauth_configuration_required") return null;
+export class McpOAuthConfigurationRequiredError extends McpOAuthStartError {
+  constructor(message: string, details: McpAuthorizationDebugDetails) {
+    super(message, details);
+    this.name = "McpOAuthConfigurationRequiredError";
+  }
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function mcpOAuthStartDebugDetails(payload: unknown, httpStatus: number): McpAuthorizationDebugDetails {
+  const record = isRecord(payload) ? payload : null;
+  const errorCode = nonEmptyString(record?.error);
+  const message = nonEmptyString(record?.message);
+  const redirectUri = nonEmptyString(record?.callbackUrl);
+  const clientMetadataUrl = nonEmptyString(record?.clientMetadataUrl);
+  const manualRequirements = isStringArray(record?.manualRequirements)
+    ? record.manualRequirements
+    : undefined;
+  const diagnostic = parseExternalMcpDiagnostic(record?.diagnostic);
+  const responsePayload: Record<string, unknown> = {
+    ...(errorCode ? { error: errorCode } : {}),
+    ...(redirectUri ? { callbackUrl: redirectUri } : {}),
+    ...(clientMetadataUrl ? { clientMetadataUrl } : {}),
+    ...(message ? { message } : {}),
+    ...(manualRequirements ? { manualRequirements } : {}),
+    ...(diagnostic ? { diagnostic } : {}),
+  };
+
   return {
-    message: typeof payload.message === "string" && payload.message.trim()
-      ? payload.message
-      : "This MCP server requires a pre-registered OAuth client before it can connect.",
-    callbackUrl: typeof payload.callbackUrl === "string" && payload.callbackUrl.trim()
-      ? payload.callbackUrl
-      : null,
+    httpStatus,
+    ...(errorCode ? { errorCode } : {}),
+    ...(redirectUri ? { redirectUri } : {}),
+    ...(clientMetadataUrl ? { clientMetadataUrl } : {}),
+    ...(diagnostic?.referenceId ? { diagnosticReference: diagnostic.referenceId } : {}),
+    ...(diagnostic?.phase ? { phase: diagnostic.phase } : {}),
+    ...(diagnostic?.category ? { category: diagnostic.category } : {}),
+    ...(diagnostic?.highestPassed ? { highestPassed: diagnostic.highestPassed } : {}),
+    ...(diagnostic?.retryable !== undefined ? { retryable: diagnostic.retryable } : {}),
+    ...(diagnostic?.actionOwner ? { actionOwner: diagnostic.actionOwner } : {}),
+    ...(diagnostic?.operatorAction ? { operatorAction: diagnostic.operatorAction } : {}),
+    ...(diagnostic?.providerStatus !== undefined ? { providerStatus: diagnostic.providerStatus } : {}),
+    ...(diagnostic?.providerRequestId ? { providerRequestId: diagnostic.providerRequestId } : {}),
+    ...(diagnostic?.providerCode ? { providerCode: diagnostic.providerCode } : {}),
+    responseJson: JSON.stringify(responsePayload, null, 2),
   };
 }
 
@@ -712,14 +750,15 @@ export function useStartMcpConnectionOAuth() {
         20000,
       );
       if (!response.ok) {
-        const configurationRequired = oauthConfigurationRequiredDetails(payload);
-        if (configurationRequired) {
+        const details = mcpOAuthStartDebugDetails(payload, response.status);
+        const requestError = getRequestError(payload, response, `Failed to start OAuth (${response.status}).`);
+        if (details.errorCode === "mcp_oauth_configuration_required") {
           throw new McpOAuthConfigurationRequiredError(
-            configurationRequired.message,
-            configurationRequired.callbackUrl,
+            requestError.message,
+            details,
           );
         }
-        throw getRequestError(payload, response, `Failed to start OAuth (${response.status}).`);
+        throw new McpOAuthStartError(requestError.message, details);
       }
       return payload as { status: "connected" | "needs_auth"; authorizeUrl: string | null };
     },
