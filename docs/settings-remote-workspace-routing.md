@@ -28,7 +28,7 @@ as Session and calls `listSessions` with the owning server's workspace ID.
 
 | Workspace kind | Server | Credential | Workspace ID |
 | --- | --- | --- | --- |
-| Local | Connected local OpenWork server | Local client token | Local workspace ID |
+| Local | Connected local OpenWork server | Local client and host tokens | Local workspace ID |
 | Remote OpenWork | Saved worker URL | Saved worker token | Explicit server-side ID, or normalized `rem_` ID |
 
 ## Shared filtering behavior
@@ -48,6 +48,7 @@ both routes.
   workspace diagnostic and recovery flow.
 - A remote token is sent only to the remote endpoint selected from that
   workspace record; it is never substituted with the local server token.
-- Local workspaces continue using the local server and local token.
+- Local workspaces continue using the local server and its local client/host
+  credentials. Local host credentials are never forwarded to a remote worker.
 - No tokens are copied into a new cache, and no Den, server, IPC, database, or
   wire contract changes are introduced.

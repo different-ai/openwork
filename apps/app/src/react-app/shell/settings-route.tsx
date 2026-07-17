@@ -1212,6 +1212,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             const endpoint = resolveWorkspaceEndpoint(workspace, {
               baseUrl: normalizedBaseUrl,
               token: resolvedToken,
+              hostToken: resolvedHostToken,
             });
             if (!endpoint) {
               throw new Error(

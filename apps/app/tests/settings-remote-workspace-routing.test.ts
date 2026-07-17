@@ -13,6 +13,7 @@ const originalFetch = globalThis.fetch;
 type SessionRequest = {
   url: string;
   authorization: string | null;
+  hostAuthorization: string | null;
 };
 
 function recordSessionRequests(items: RouteSession[]) {
@@ -22,6 +23,7 @@ function recordSessionRequests(items: RouteSession[]) {
     calls.push({
       url: String(input),
       authorization: headers.get("authorization"),
+      hostAuthorization: headers.get("x-openwork-host-token"),
     });
     return new Response(JSON.stringify({ items }), {
       status: 200,
@@ -95,6 +97,7 @@ describe("Settings remote workspace routing", () => {
     const endpoint = resolveWorkspaceEndpoint(remote, {
       baseUrl: "http://127.0.0.1:8787",
       token: "local-token",
+      hostToken: "local-host-token",
     });
     if (!endpoint) throw new Error("Expected a remote workspace endpoint");
 
@@ -102,6 +105,7 @@ describe("Settings remote workspace routing", () => {
     expect(calls).toEqual([{
       url: "https://worker.example.com/workspace/workspace_remote/sessions?limit=200",
       authorization: "Bearer remote-token",
+      hostAuthorization: null,
     }]);
     expect(endpoint.baseUrl).toBe("https://worker.example.com");
     expect(endpoint.workspaceId).toBe("workspace_remote");
@@ -123,6 +127,7 @@ describe("Settings remote workspace routing", () => {
     const endpoint = resolveWorkspaceEndpoint(local, {
       baseUrl: "http://127.0.0.1:8787",
       token: "local-token",
+      hostToken: "local-host-token",
     });
     if (!endpoint) throw new Error("Expected a local workspace endpoint");
 
@@ -130,6 +135,7 @@ describe("Settings remote workspace routing", () => {
     expect(calls).toEqual([{
       url: "http://127.0.0.1:8787/workspace/workspace_local/sessions?limit=200",
       authorization: "Bearer local-token",
+      hostAuthorization: "local-host-token",
     }]);
     expect(endpoint.baseUrl).toBe("http://127.0.0.1:8787");
     expect(endpoint.workspaceId).toBe("workspace_local");
