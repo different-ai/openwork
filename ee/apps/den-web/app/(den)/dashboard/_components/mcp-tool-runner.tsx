@@ -334,7 +334,7 @@ export function McpToolRunner({ connection }: { connection: ExternalMcpConnectio
             This runs through OpenWork with your available connection credential. Arguments and results are not written to OpenWork logs.
           </p>
         </div>
-        <DenButton variant="secondary" size="sm" loading={catalog.isFetching} onClick={() => void catalog.refetch()}>
+        <DenButton className="shrink-0 whitespace-nowrap" variant="secondary" size="sm" loading={catalog.isFetching} onClick={() => void catalog.refetch()}>
           <RefreshCw className="h-3.5 w-3.5" />
           Refresh tools
         </DenButton>

@@ -265,6 +265,28 @@ export async function resolveFreshStableDesktopUpdate(input: {
   });
 }
 
+export async function resolveAutomaticStableDesktopUpdate(input: {
+  currentVersion: string;
+  latestVersion: string;
+  desktopConfig: DenDesktopConfig | null | undefined;
+  readMetadata?: () => Promise<DenAppVersionMetadata>;
+}): Promise<string | null> {
+  if (!Array.isArray(input.desktopConfig?.allowedDesktopVersions)) return null;
+  if (isUpdateAllowedByDesktopConfig(input.latestVersion, input.desktopConfig)) return null;
+
+  try {
+    const metadata = await (input.readMetadata ?? readFreshDenAppVersionMetadata)();
+    const selection = selectStableDesktopUpdate({
+      currentVersion: input.currentVersion,
+      metadata,
+      desktopConfig: input.desktopConfig,
+    });
+    return selection?.kind === "update" ? selection.targetVersion : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Ask Den for the currently-supported latest app version (dev #1476) and
  * return true only when the candidate update version is the latest

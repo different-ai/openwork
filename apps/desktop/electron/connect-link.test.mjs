@@ -14,6 +14,10 @@ import {
   verifyConnectLinkToken,
   verifyConnectLinkUrl,
 } from "./connect-link.mjs";
+import {
+  applyDesktopBootstrapBrandIcon,
+  persistConnectLinkBranding,
+} from "./connect-link-branding.mjs";
 
 const NOW = 1_783_000_000;
 const KID = "owc-test";
@@ -23,6 +27,10 @@ const { publicKey: publicKeyPem, privateKey: privateKeyPem } = generateKeyPairSy
 });
 const publicKeys = { [KID]: publicKeyPem };
 
+/**
+ * @param {Record<string, unknown>} [overrides]
+ * @returns {import("@openwork/types/connect-link").ConnectLinkClaims}
+ */
 function claims(overrides = {}) {
   return {
     iss: "https://api.openwork.acme.example.com",
@@ -129,6 +137,49 @@ test("resolves a keyless exchange through the exact HTTPS Den endpoint", async (
     brandLogoUrl: "https://assets.acme.example.com/wordmark.svg",
     brandIconUrl: "https://assets.acme.example.com/icon.png",
   });
+});
+
+test("persists accepted connect branding before applying its icon", async () => {
+  const expectedClaims = claims({
+    brand: {
+      appName: "Acme Work",
+      logoUrl: null,
+      iconUrl: "https://assets.acme.example.com/icon.png",
+    },
+  });
+  const calls = [];
+  const config = await persistConnectLinkBranding(expectedClaims, {
+    persistBootstrap: async (nextConfig) => {
+      calls.push({ type: "persist", config: nextConfig });
+      return {
+        ...nextConfig,
+        baseUrl: expectedClaims.den.baseUrl,
+        requireSignin: expectedClaims.requireSignin,
+        writtenAt: "2026-07-15T12:00:00.000Z",
+      };
+    },
+    applyBrandIconUrl: async (iconUrl) => {
+      calls.push({ type: "apply", iconUrl });
+      return { ok: true };
+    },
+  });
+
+  assert.deepEqual(calls.map((call) => call.type), ["persist", "apply"]);
+  assert.equal(calls[1].iconUrl, expectedClaims.brand.iconUrl);
+  assert.equal(config.writtenAt, "2026-07-15T12:00:00.000Z");
+});
+
+test("startup branding applies a saved icon and skips an absent one", async () => {
+  const applied = [];
+  const applyBrandIconUrl = async (iconUrl) => {
+    applied.push(iconUrl);
+    return { ok: true };
+  };
+
+  await applyDesktopBootstrapBrandIcon({ brandIconUrl: "https://assets.acme.example.com/icon.png" }, applyBrandIconUrl);
+  await applyDesktopBootstrapBrandIcon({}, applyBrandIconUrl);
+
+  assert.deepEqual(applied, ["https://assets.acme.example.com/icon.png"]);
 });
 
 test("fails closed for ambiguous, insecure, mismatched, expired, and replayed exchanges", async () => {

@@ -24,6 +24,7 @@ import {
   cloudReadinessConnectableConnectionId,
   cloudReadinessMissingConnectionNames,
   formatPluginConnectRowMeta,
+  isConnectAdminRole,
   resolveConnectRowGroup,
   resolveConnectionRowGroup,
   type ConnectRowGroup,
@@ -314,6 +315,45 @@ function AgentAccessCard(props: {
     };
   }, [props.client, props.currentModel, props.workspaceId, signedIn]);
 
+  useEffect(() => {
+    if (!props.client || !context || !signedIn || typeof window === "undefined") return;
+    const client = props.client;
+    let cancelled = false;
+    const retryAfterReconnect = () => {
+      if (window.navigator.onLine === false) return;
+      void runOpenworkCloudMcpReconciler({
+        mode: "repair",
+        client,
+        context: { ...context, trigger: "desktop-connect-online-retry" },
+        mintToken: mintCloudControlMcpToken,
+        refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
+      })
+        .then((result) => {
+          if (cancelled || !result.health) return;
+          updateHealth(result.health);
+          if (result.health.usable) setError(null);
+        })
+        .catch((nextError) => {
+          if (!cancelled) setError(nextError instanceof Error ? nextError.message : "Could not restore agent access.");
+        });
+    };
+
+    window.addEventListener("online", retryAfterReconnect);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("online", retryAfterReconnect);
+    };
+  }, [
+    context?.denAuthToken,
+    context?.denBaseUrl,
+    context?.orgId,
+    context?.serverBaseUrl,
+    props.client,
+    props.currentModel,
+    props.workspaceId,
+    signedIn,
+  ]);
+
   const canRun = Boolean(props.client && context && signedIn);
   const readyTools = readyCloudMcpToolIds(health);
 
@@ -473,10 +513,11 @@ type ConnectOrganizationRow =
   | {
       kind: "connection";
       id: string;
-      group: Exclude<ConnectRowGroup, "needs_admin_setup" | "excluded">;
+      group: Exclude<ConnectRowGroup, "excluded">;
       name: string;
       description: string;
       meta: string;
+      canManage: boolean;
       connection: DenExternalMcpConnection;
     }
   | {
@@ -486,6 +527,7 @@ type ConnectOrganizationRow =
       name: string;
       description: string;
       meta: string;
+      importedLocally: boolean;
       plugin: DenOrgPlugin;
     };
 
@@ -540,6 +582,7 @@ export function buildConnectRows(input: {
     name: connection.name,
     description: connection.url,
     meta: connection.credentialMode === "shared" ? t("connect.row_meta_managed_by_org") : t("connect.row_meta_your_account"),
+    canManage: isConnectAdminRole(input.role),
     connection,
   }));
 
@@ -553,6 +596,7 @@ export function buildConnectRows(input: {
       name: item.plugin.name,
       description: item.plugin.description ?? "",
       meta: formatPluginConnectRowMeta(item.plugin),
+      importedLocally: Boolean(item.importedPlugin),
       plugin: item.plugin,
     }];
   });
@@ -570,7 +614,6 @@ function ConnectOrganizationRow(props: {
   const row = props.row;
   const pluginManifest = row.kind === "plugin" ? row.plugin.extension?.manifest : null;
   const needsReconnect = row.kind === "connection"
-    && row.connection.connectedForMe
     && connectionNeedsReconnect(row.connection);
   const connectableConnectionId = row.kind === "plugin"
     ? cloudReadinessConnectableConnectionId(row.plugin.cloudReadiness)
@@ -595,7 +638,14 @@ function ConnectOrganizationRow(props: {
         iconSrc={pluginManifest?.icon?.src}
       />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-semibold text-dls-text">{row.name}</div>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="truncate text-sm font-semibold text-dls-text">{row.name}</span>
+          {row.kind === "plugin" && row.importedLocally ? (
+            <span className="shrink-0 rounded-md border border-amber-6/40 bg-amber-3/40 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
+              {t("connect.marketplace_local_copy_badge")}
+            </span>
+          ) : null}
+        </div>
         <div className="truncate text-xs text-dls-secondary">{row.meta}</div>
       </div>
       {row.group === "needs_signin" && connectableConnectionId ? (
@@ -606,7 +656,7 @@ function ConnectOrganizationRow(props: {
             className={needsReconnect ? "border border-amber-6 bg-amber-2 text-amber-11 hover:bg-amber-3" : undefined}
             onClick={() => props.onConnect(connectableConnectionId)}
           >
-            {connecting ? t("connect.waiting_for_browser") : needsReconnect ? t("mcp.org_connection_reconnect_action") : t("connect.row_action_connect")}
+            {connecting ? t("connect.waiting_for_browser") : needsReconnect ? t("mcp.org_connection_reconnect_action") : t("mcp.org_connection_connect_action")}
           </Button>
           {disconnectableConnectionId ? (
             <Button size="sm" variant="destructive" disabled={disconnecting} onClick={() => props.onDisconnect(disconnectableConnectionId)}>
@@ -615,9 +665,15 @@ function ConnectOrganizationRow(props: {
           ) : null}
         </div>
       ) : row.group === "needs_admin_setup" ? (
-        <Button size="sm" variant="outline" onClick={() => void openDesktopUrl(denManageConnectionsUrl())} title={setupNames.join(t("connect.row_meta_list_separator"))}>
-          {t("connect.row_action_set_up_connection")}
-        </Button>
+        row.kind === "connection" && !row.canManage ? (
+          <span className="shrink-0 rounded-md bg-amber-3 px-2 py-1 text-xs font-medium text-amber-11">
+            {t("connect.group_needs_admin_setup")}
+          </span>
+        ) : (
+          <Button size="sm" variant="outline" onClick={() => void openDesktopUrl(denManageConnectionsUrl())} title={setupNames.join(t("connect.row_meta_list_separator"))}>
+            {t("connect.row_action_set_up_connection")}
+          </Button>
+        )
       ) : disconnectableConnectionId ? (
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <span className="rounded-md bg-green-3 px-2 py-1 text-xs font-medium text-green-11">

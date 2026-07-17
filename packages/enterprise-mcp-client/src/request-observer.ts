@@ -45,6 +45,13 @@ function bodyRequestPhase(body: BodyInit | null | undefined): EnterpriseMcpReque
   return null
 }
 
+function isMcpRequestPhase(phase: EnterpriseMcpRequestPhase): boolean {
+  return phase === "endpoint-request"
+    || phase === "mcp-initialize"
+    || phase === "mcp-tool-discovery"
+    || phase === "mcp-tool-execution"
+}
+
 export function classifyEnterpriseMcpRequest(url: URL, init?: RequestInit): EnterpriseMcpRequestPhase {
   const bodyPhase = bodyRequestPhase(init?.body)
   if (bodyPhase) return bodyPhase
@@ -65,6 +72,12 @@ export type EnterpriseMcpRequestObserver = {
   fetch: EnterpriseMcpFetch
   lastRequestPhase(): EnterpriseMcpRequestPhase | null
   lastFailedRequestPhase(): EnterpriseMcpRequestPhase | null
+  lastRequestFailure(): {
+    requestPhase: EnterpriseMcpRequestPhase
+    httpStatus?: number
+    bearerChallenge: boolean
+    insufficientScope: boolean
+  } | null
 }
 
 export function createEnterpriseMcpRequestObserver(input: {
@@ -77,10 +90,12 @@ export function createEnterpriseMcpRequestObserver(input: {
 }): EnterpriseMcpRequestObserver {
   let lastRequestPhase: EnterpriseMcpRequestPhase | null = null
   let lastFailedRequestPhase: EnterpriseMcpRequestPhase | null = null
+  let lastRequestFailure: ReturnType<EnterpriseMcpRequestObserver["lastRequestFailure"]> = null
 
   return {
     lastRequestPhase: () => lastRequestPhase,
     lastFailedRequestPhase: () => lastFailedRequestPhase,
+    lastRequestFailure: () => lastRequestFailure,
     fetch: async (rawUrl, init) => {
       const url = rawUrl instanceof URL ? rawUrl : new URL(rawUrl)
       const requestPhase = classifyEnterpriseMcpRequest(url, init)
@@ -99,7 +114,21 @@ export function createEnterpriseMcpRequestObserver(input: {
           ? AbortSignal.any([init.signal, input.signal])
           : input.signal
         const response = await input.fetch(rawUrl, { ...init, signal })
-        if (!response.ok) lastFailedRequestPhase = requestPhase
+        if (!response.ok) {
+          lastFailedRequestPhase = requestPhase
+          const challenge = response.headers.get("www-authenticate")?.toLowerCase() ?? ""
+          lastRequestFailure = {
+            requestPhase,
+            httpStatus: response.status,
+            bearerChallenge: challenge.includes("bearer"),
+            insufficientScope: challenge.includes("insufficient_scope"),
+          }
+        } else if (isMcpRequestPhase(requestPhase)) {
+          // A successful retry proves that a preceding challenge was
+          // recoverable. OAuth discovery/refresh requests deliberately do not
+          // erase the resource's last rejection before that retry completes.
+          lastRequestFailure = null
+        }
         input.diagnosticSink?.({
           kind: "request",
           connectionId: input.connectionId,
@@ -112,6 +141,11 @@ export function createEnterpriseMcpRequestObserver(input: {
         return response
       } catch (error) {
         lastFailedRequestPhase = requestPhase
+        lastRequestFailure = {
+          requestPhase,
+          bearerChallenge: false,
+          insufficientScope: false,
+        }
         input.diagnosticSink?.({
           kind: "request",
           connectionId: input.connectionId,

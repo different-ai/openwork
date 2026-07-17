@@ -29,7 +29,9 @@ import { parseOrganizationPlan, type PlanTier } from "../../entitlements.js"
 import { adminRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
-import { normalizeOrganizationCapabilities } from "../../organization-capabilities.js"
+import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
+import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
+import { normalizeOrganizationCapabilities, readOrganizationCapabilityOverrides } from "../../organization-capabilities.js"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../../organization-limits.js"
 import type { AuthContextVariables } from "../../session.js"
 import { calculateOrganizationSeatBillingCounts, getOrganizationSeatBillingCounts, refreshOrgSubscriptionFromStripe, syncSeatSubscriptionQuantityAfterMemberChange } from "../../stripe-billing.js"
@@ -76,8 +78,8 @@ const updateOrganizationFreeSeatsSchema = z.object({
 
 const updateOrganizationCapabilitiesSchema = z.object({
   capabilities: z.object({
-    installLinks: z.boolean().optional(),
-    mcpConnections: z.boolean().optional(),
+    installLinks: z.boolean().nullable().optional(),
+    mcpConnections: z.boolean().nullable().optional(),
   }),
 })
 
@@ -255,6 +257,26 @@ function normalizeMetadata(input: Record<string, unknown> | string | null | unde
   }
 
   return isRecord(input) ? input : {}
+}
+
+function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unknown> | string | null | undefined): ReturnType<typeof normalizeOrganizationCapabilities> {
+  return {
+    installLinks: organizationInstallLinksEnabled(metadata, { gatingEnabled: false }),
+    mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
+  }
+}
+
+function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  const raw = isRecord(metadata.capabilities) ? metadata.capabilities : {}
+  const capabilities: Record<string, unknown> = {}
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (key !== "installLinks" && key !== "mcpConnections") {
+      capabilities[key] = value
+    }
+  }
+
+  return capabilities
 }
 
 function getManualPlanMetadata(tier: PlanTier): { tier: PlanTier; source: "manual"; grantedAt?: string } {
@@ -852,7 +874,7 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
       freeSeatCount: seatCounts.free,
       seatsFreeAdditional: seatCounts.additionalFree,
       billableSeatCount: seatCounts.chargeable,
-      capabilities: normalizeOrganizationCapabilities(metadata),
+      capabilities: readAdminVisibleOrganizationCapabilities(metadata),
     }
   })
 }
@@ -1317,7 +1339,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
       }
 
-      return c.json({ capabilities: normalizeOrganizationCapabilities(organization.metadata) })
+      return c.json({ capabilities: readAdminVisibleOrganizationCapabilities(organization.metadata) })
     },
   )
 
@@ -1346,17 +1368,31 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
       }
 
-      const capabilities = normalizeOrganizationCapabilities(organization.metadata)
-      if (body.data.capabilities.installLinks !== undefined) {
-        capabilities.installLinks = body.data.capabilities.installLinks
+      const capabilities = readOrganizationCapabilityOverrides(organization.metadata)
+      const installLinks = body.data.capabilities.installLinks
+      if (installLinks !== undefined) {
+        if (installLinks === null) {
+          delete capabilities.installLinks
+        } else {
+          capabilities.installLinks = installLinks
+        }
       }
-      if (body.data.capabilities.mcpConnections !== undefined) {
-        capabilities.mcpConnections = body.data.capabilities.mcpConnections
+      const mcpConnections = body.data.capabilities.mcpConnections
+      if (mcpConnections !== undefined) {
+        if (mcpConnections === null) {
+          delete capabilities.mcpConnections
+        } else {
+          capabilities.mcpConnections = mcpConnections
+        }
       }
 
+      const normalizedMetadata = normalizeOrganizationMetadata(organization.metadata).metadata
       const metadata = {
-        ...normalizeOrganizationMetadata(organization.metadata).metadata,
-        capabilities,
+        ...normalizedMetadata,
+        capabilities: {
+          ...readUnmanagedCapabilityMetadata(normalizedMetadata),
+          ...capabilities,
+        },
       }
 
       await db
@@ -1364,7 +1400,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         .set({ metadata })
         .where(eq(OrganizationTable.id, organizationId))
 
-      return c.json({ ok: true, organization: { id: organizationId }, capabilities })
+      return c.json({ ok: true, organization: { id: organizationId }, capabilities: readAdminVisibleOrganizationCapabilities(metadata) })
     },
   )
 

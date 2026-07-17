@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  resolveAutomaticStableDesktopUpdate,
   resolveFreshStableDesktopUpdate,
   selectStableDesktopUpdate,
 } from "../src/app/lib/version-gate";
@@ -76,5 +77,84 @@ describe("selectStableDesktopUpdate", () => {
       targetVersion: "0.17.23",
       latestPublishedVersion: "0.17.24",
     });
+  });
+});
+
+describe("resolveAutomaticStableDesktopUpdate", () => {
+  test("selects an exact approved published fallback when automatic latest is blocked", async () => {
+    const targetVersion = await resolveAutomaticStableDesktopUpdate({
+      currentVersion: "0.12.13",
+      latestVersion: "0.12.18",
+      desktopConfig: { allowedDesktopVersions: ["0.12.16"] },
+      readMetadata: async () => ({
+        minAppVersion: "0.12.13",
+        latestAppVersion: "0.12.18",
+        publishedDesktopVersions: ["0.12.13", "0.12.16", "0.12.18"],
+      }),
+    });
+
+    expect(targetVersion).toBe("0.12.16");
+  });
+
+  test("does not target configured versions missing from the published inventory", async () => {
+    const targetVersion = await resolveAutomaticStableDesktopUpdate({
+      currentVersion: "0.12.13",
+      latestVersion: "0.12.18",
+      desktopConfig: { allowedDesktopVersions: ["0.12.16"] },
+      readMetadata: async () => ({
+        minAppVersion: "0.12.13",
+        latestAppVersion: "0.12.18",
+        publishedDesktopVersions: ["0.12.13", "0.12.18"],
+      }),
+    });
+
+    expect(targetVersion).toBeNull();
+  });
+
+  test("does not target a downgrade", async () => {
+    const targetVersion = await resolveAutomaticStableDesktopUpdate({
+      currentVersion: "0.12.16",
+      latestVersion: "0.12.18",
+      desktopConfig: { allowedDesktopVersions: ["0.12.13"] },
+      readMetadata: async () => ({
+        minAppVersion: "0.12.13",
+        latestAppVersion: "0.12.18",
+        publishedDesktopVersions: ["0.12.13", "0.12.16", "0.12.18"],
+      }),
+    });
+
+    expect(targetVersion).toBeNull();
+  });
+
+  test("leaves unrestricted organizations on the normal latest check", async () => {
+    let metadataReads = 0;
+    const targetVersion = await resolveAutomaticStableDesktopUpdate({
+      currentVersion: "0.12.13",
+      latestVersion: "0.12.18",
+      desktopConfig: {},
+      readMetadata: async () => {
+        metadataReads += 1;
+        return metadata;
+      },
+    });
+
+    expect(targetVersion).toBeNull();
+    expect(metadataReads).toBe(0);
+  });
+
+  test("leaves an approved latest release on the normal latest check", async () => {
+    let metadataReads = 0;
+    const targetVersion = await resolveAutomaticStableDesktopUpdate({
+      currentVersion: "0.12.13",
+      latestVersion: "0.12.18",
+      desktopConfig: { allowedDesktopVersions: ["0.12.18"] },
+      readMetadata: async () => {
+        metadataReads += 1;
+        return metadata;
+      },
+    });
+
+    expect(targetVersion).toBeNull();
+    expect(metadataReads).toBe(0);
   });
 });

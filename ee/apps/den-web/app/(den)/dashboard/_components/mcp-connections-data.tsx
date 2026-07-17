@@ -44,25 +44,36 @@ export type ExternalMcpConnection = {
   credentialMode: ExternalMcpCredentialMode;
   connected: boolean;
   connectedAt: string | null;
+  createdByName?: string | null;
   updatedAt: string | null;
   connectedForMe: boolean;
   needsReconnect?: boolean;
+  credentialHealth?: "unknown" | "ready" | "reconnect_required";
+  credentialHealthReason?: "authorization_rejected" | "credential_expired" | "post_authorization_validation_failed" | null;
+  credentialHealthCheckedAt?: string | null;
+  issuerReviewRequired?: boolean;
+  reconnectActionOwner?: "member" | "organization_admin" | null;
   missingFeatures?: string[];
   externalAccountId?: string | null;
   grantedScopes?: string[];
   tenantId?: string | null;
   requiredBy: ExternalMcpRequiredBy[];
   identityManagedBy: ExternalMcpRequiredBy[];
+  requiredAuthType?: ExternalMcpAuthType | null;
+  authPolicyConfirmed?: boolean;
+  authTypeMismatch?: boolean;
+  oauthClientConfigured?: boolean;
+  oauthClientRequired?: boolean;
+  setupRequired?: boolean;
   access: ExternalMcpAccessSummary | null;
   oauthClientId?: string | null;
   oauthCallbackUrl?: string | null;
   oauthSharedCallbackUrl?: string | null;
   oauthClientMetadataUrl?: string | null;
-  oauthCallbackMode?: "shared-v1" | "legacy-v1" | null;
+  oauthCallbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1" | null;
   oauthRegistrationSource?: "pre-registered" | "client-metadata" | "dynamic" | null;
   authorizationServerIssuer?: string | null;
   requestedScopes?: string[];
-  oauthMigrationStatus?: "current" | "legacy_manual_client" | "unclassified" | null;
 };
 
 export type McpRequirementsDiscovery = {
@@ -105,6 +116,15 @@ export type McpRequirementsDiscovery = {
   };
   manualRequirements: Array<{ code: string; label: string; reason: string; required: boolean }>;
   warnings: Array<{ code: string; message: string }>;
+};
+
+export type McpIssuerReview = {
+  currentIssuer: string | null;
+  advertisedIssuers: string[];
+  reviewRequired: boolean;
+  issuerChanged?: boolean;
+  reconnectionRequired?: boolean;
+  updatedAt?: string;
 };
 
 export type ExternalMcpTool = {
@@ -200,8 +220,8 @@ export function isNativeProviderConnectionId(id: string): boolean {
   return id === "google-workspace" || id === "microsoft-365";
 }
 
-export function canDisconnectNativeProviderAccount(connection: Pick<ExternalMcpConnection, "id" | "connectedForMe">): boolean {
-  return connection.connectedForMe && isNativeProviderConnectionId(connection.id);
+export function canDisconnectMyConnectionAccount(connection: Pick<ExternalMcpConnection, "id" | "credentialMode" | "connectedForMe">): boolean {
+  return connection.connectedForMe && (isNativeProviderConnectionId(connection.id) || connection.credentialMode === "per_member");
 }
 
 export const mcpConnectionQueryKeys = {
@@ -285,6 +305,20 @@ export function useRunMcpConnectionTool(connectionId: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+export class McpOAuthConfigurationRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "McpOAuthConfigurationRequiredError";
+  }
+}
+
+function oauthConfigurationRequiredMessage(payload: unknown): string | null {
+  if (!isRecord(payload) || payload.error !== "mcp_oauth_configuration_required") return null;
+  return typeof payload.message === "string" && payload.message.trim()
+    ? payload.message
+    : "This MCP server requires a pre-registered OAuth client before it can connect.";
 }
 
 function parseInspectionHeaders(value: unknown): ExternalMcpInspectionHeader[] | null {
@@ -390,7 +424,15 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
     requiredBy: parseRequiredBy(connection.requiredBy),
     identityManagedBy: parseRequiredBy(connection.identityManagedBy),
     updatedAt: typeof connection.updatedAt === "string" ? connection.updatedAt : null,
+    ...(typeof connection.createdByName === "string" || connection.createdByName === null ? { createdByName: connection.createdByName } : {}),
     ...(typeof connection.needsReconnect === "boolean" ? { needsReconnect: connection.needsReconnect } : {}),
+    ...(connection.credentialHealth === "unknown" || connection.credentialHealth === "ready" || connection.credentialHealth === "reconnect_required"
+      ? { credentialHealth: connection.credentialHealth }
+      : {}),
+    ...(typeof connection.issuerReviewRequired === "boolean" ? { issuerReviewRequired: connection.issuerReviewRequired } : {}),
+    ...(connection.reconnectActionOwner === "member" || connection.reconnectActionOwner === "organization_admin" || connection.reconnectActionOwner === null
+      ? { reconnectActionOwner: connection.reconnectActionOwner }
+      : {}),
     ...(isStringArray(connection.missingFeatures) ? { missingFeatures: connection.missingFeatures } : {}),
     ...(typeof connection.externalAccountId === "string" || connection.externalAccountId === null
       ? { externalAccountId: connection.externalAccountId }
@@ -461,6 +503,44 @@ export type UpdateMcpConnectionInput = {
   access: McpConnectionAccessInput;
 };
 
+export type McpConnectionResolution = {
+  resolution: "preset" | "discovered" | "not_found";
+  attempted: string[];
+  reason?: string;
+  preset?: ExternalMcpPreset;
+  match?: {
+    url: string;
+    suggestedName: string;
+    discovery: McpRequirementsDiscovery;
+  };
+};
+
+/**
+ * Smart resolution for the add-connection flow: sends whatever the admin
+ * typed (URL, bare host, or product name) and gets back a matched preset or
+ * a probed endpoint with its requirements discovery inline.
+ */
+export function useResolveMcpConnection() {
+  const { orgId } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (query: string): Promise<McpConnectionResolution> => {
+      const { response, payload } = await requestJson(
+        "/v1/mcp-connections/resolve",
+        {
+          method: "POST",
+          headers: getOrgScopeHeaders(requireOrgId(orgId)),
+          body: JSON.stringify({ query }),
+        },
+        30000,
+      );
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to look up the MCP server (${response.status}).`);
+      }
+      return payload as McpConnectionResolution;
+    },
+  });
+}
+
 export function useDiscoverMcpConnectionRequirements() {
   const { orgId } = useOrgDashboard();
   return useMutation({
@@ -479,30 +559,6 @@ export function useDiscoverMcpConnectionRequirements() {
       }
       return payload as McpRequirementsDiscovery;
     },
-  });
-}
-
-export function useMigrateMcpConnectionCallback() {
-  const queryClient = useQueryClient();
-  const { orgId, runReauthableAction } = useOrgDashboard();
-  return useMutation({
-    mutationFn: async (connectionId: string): Promise<ExternalMcpConnection> => {
-      let migrated: ExternalMcpConnection | null = null;
-      await runReauthableAction("migrate-mcp-oauth-callback", async () => {
-        const { response, payload } = await requestJson(
-          `/v1/mcp-connections/${encodeURIComponent(connectionId)}/oauth/use-shared-callback`,
-          { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
-          20000,
-        );
-        if (!response.ok) {
-          throw getRequestError(payload, response, `Failed to update the MCP callback (${response.status}).`);
-        }
-        migrated = payload as ExternalMcpConnection;
-      });
-      if (!migrated) throw new Error("MCP callback migration response was incomplete.");
-      return migrated;
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
   });
 }
 
@@ -566,6 +622,50 @@ export function useUpdateMcpConnection() {
   });
 }
 
+export function useReviewMcpIssuer() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: {
+      connectionId: string;
+      action: "preview" | "confirm";
+      expectedUpdatedAt?: string;
+      authorizationServerIssuer?: string;
+    }): Promise<McpIssuerReview> => {
+      let review: McpIssuerReview | null = null;
+      const request = async () => {
+        const { connectionId, ...body } = input;
+        const { response, payload } = await requestJson(
+          `/v1/mcp-connections/${encodeURIComponent(connectionId)}/oauth/issuer-review`,
+          {
+            method: "POST",
+            headers: getOrgScopeHeaders(requireOrgId(orgId)),
+            body: JSON.stringify(body),
+          },
+          30000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to review the OAuth issuer (${response.status}).`);
+        }
+        review = payload as McpIssuerReview;
+      };
+      if (input.action === "confirm") {
+        await runReauthableAction("review-mcp-oauth-issuer", request);
+      } else {
+        await request();
+      }
+      if (!review) throw new Error("OAuth issuer review response was incomplete.");
+      return review;
+    },
+    onSuccess: (_review, input) => {
+      if (input.action === "confirm") {
+        queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
+      }
+    },
+  });
+}
+
 export function useReplaceMcpConnectionAccess() {
   const queryClient = useQueryClient();
   const { orgId, runReauthableAction } = useOrgDashboard();
@@ -604,6 +704,10 @@ export function useStartMcpConnectionOAuth() {
         20000,
       );
       if (!response.ok) {
+        const configurationRequiredMessage = oauthConfigurationRequiredMessage(payload);
+        if (configurationRequiredMessage) {
+          throw new McpOAuthConfigurationRequiredError(configurationRequiredMessage);
+        }
         throw getRequestError(payload, response, `Failed to start OAuth (${response.status}).`);
       }
       return payload as { status: "connected" | "needs_auth"; authorizeUrl: string | null };
@@ -617,8 +721,11 @@ export function useDisconnectMyProviderAccount() {
 
   return useMutation({
     mutationFn: async (providerId: string): Promise<string> => {
+      const path = isNativeProviderConnectionId(providerId)
+        ? `/v1/oauth-providers/${encodeURIComponent(providerId)}/disconnect`
+        : `/v1/mcp-connections/${encodeURIComponent(providerId)}/disconnect-my-account`;
       const { response, payload } = await requestJson(
-        `/v1/oauth-providers/${encodeURIComponent(providerId)}/disconnect`,
+        path,
         { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
         15000,
       );
@@ -626,6 +733,33 @@ export function useDisconnectMyProviderAccount() {
         throw getRequestError(payload, response, `Failed to disconnect account (${response.status}).`);
       }
       return providerId;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
+    },
+  });
+}
+
+export function useDisconnectMcpConnection() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (connectionId: string): Promise<string> => {
+      let result: string | null = null;
+      await runReauthableAction("disconnect-mcp-connection", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/mcp-connections/${encodeURIComponent(connectionId)}/disconnect`,
+          { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to disconnect MCP connection (${response.status}).`);
+        }
+        result = connectionId;
+      });
+      if (!result) throw new Error("Disconnect MCP connection response was incomplete.");
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });

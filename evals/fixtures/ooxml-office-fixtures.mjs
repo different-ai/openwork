@@ -6,10 +6,13 @@ const ZIP_END_OF_CENTRAL_DIRECTORY = 0x06054b50;
 
 export const DOCX_FILENAME = "QuarterlyBrief.docx";
 export const PPTX_FILENAME = "LaunchRoadmap.pptx";
+export const XLSX_FILENAME = "RevenueWorkbook.xlsx";
 export const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 export const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+export const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 export const DOCX_SENTINEL = "DOCX sentinel fact: Northstar margin lift is 17.42 percent.";
 export const PPTX_SENTINEL = "PPTX sentinel fact: Launch window opens on 2026-09-17.";
+export const XLSX_SENTINEL = "XLSX sentinel fact: Northstar revenue is 1742.42.";
 
 let crcTable = null;
 
@@ -246,13 +249,82 @@ const pptx = writeZip([
   },
 ]);
 
+const xlsx = writeZip([
+  {
+    name: "[Content_Types].xml",
+    data: xml`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`,
+  },
+  {
+    name: "_rels/.rels",
+    data: xml`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`,
+  },
+  {
+    name: "xl/workbook.xml",
+    data: xml`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Summary" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+  },
+  {
+    name: "xl/_rels/workbook.xml.rels",
+    data: xml`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+  },
+  {
+    name: "xl/sharedStrings.xml",
+    data: xml`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="3" uniqueCount="3">
+  <si><t>${XLSX_SENTINEL}</t></si>
+  <si><t>Northstar Revenue</t></si>
+  <si><r><t>EM</t></r><r><t>EA</t></r></si>
+</sst>`,
+  },
+  {
+    name: "xl/styles.xml",
+    data: xml`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <numFmts count="1"><numFmt numFmtId="164" formatCode="$#,##0.00"/></numFmts>
+  <cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164" applyNumberFormat="1"/></cellXfs>
+</styleSheet>`,
+  },
+  {
+    name: "xl/worksheets/sheet1.xml",
+    data: xml`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="A1:D3"/>
+  <sheetData>
+    <row r="1"><c r="A1" t="s"><v>0</v></c></row>
+    <row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2" t="s"><v>2</v></c><c r="C2" s="1"><v>1742.42</v></c><c r="D2" s="1"><f>SUM(C2:C3)</f><v>3484.84</v></c></row>
+    <row r="3"><c r="C3" s="1"><v>1742.42</v></c></row>
+  </sheetData>
+  <mergeCells count="1"><mergeCell ref="A1:D1"/></mergeCells>
+</worksheet>`,
+  },
+]);
+
 export const OFFICE_FIXTURES = {
   docx: fixture(DOCX_FILENAME, DOCX_MIME, [DOCX_SENTINEL], docx),
   pptx: fixture(PPTX_FILENAME, PPTX_MIME, [PPTX_SENTINEL], pptx),
 };
 
+export const XLSX_FIXTURE = fixture(XLSX_FILENAME, XLSX_MIME, [XLSX_SENTINEL, "Northstar Revenue", "1742.42", "SUM(C2:C3)", "$#,##0.00", "A1:D1"], xlsx);
+
 export function fixtureBytes(kind) {
   if (kind === "docx") return Buffer.from(OFFICE_FIXTURES.docx.dataBase64, "base64");
   if (kind === "pptx") return Buffer.from(OFFICE_FIXTURES.pptx.dataBase64, "base64");
+  if (kind === "xlsx") return Buffer.from(XLSX_FIXTURE.dataBase64, "base64");
   throw new Error(`Unknown fixture kind: ${kind}`);
 }

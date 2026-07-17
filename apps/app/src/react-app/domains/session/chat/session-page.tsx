@@ -107,6 +107,7 @@ type StatusBarOverrides = Pick<
   | "settingsOpen"
   | "reloadBusy"
   | "reloadError"
+  | "openWorkConnectState"
 >;
 
 export type SessionPageHistoryControls = {
@@ -1412,6 +1413,7 @@ export function SessionPage(props: SessionPageProps) {
               clientConnected={props.clientConnected}
               openworkServerStatus={props.openworkServerStatus}
               developerMode={props.developerMode}
+              showConnectionStatus={Boolean(props.selectedWorkspaceId)}
               settingsOpen={props.statusBar?.settingsOpen ?? false}
               onSendFeedback={props.onSendFeedback}
               onOpenSettings={props.onOpenSettings}
@@ -1421,6 +1423,7 @@ export function SessionPage(props: SessionPageProps) {
               showSettingsButton={props.statusBar?.showSettingsButton}
               reloadBusy={props.statusBar?.reloadBusy}
               reloadError={props.statusBar?.reloadError}
+              openWorkConnectState={props.statusBar?.openWorkConnectState}
             />
           ) : null}
               </main>

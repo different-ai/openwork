@@ -27,6 +27,8 @@ const organizationId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
 const capabilityOrganizationId = createDenTypeId("organization")
 const capabilityMemberId = createDenTypeId("member")
+const disabledOrganizationId = createDenTypeId("organization")
+const disabledMemberId = createDenTypeId("member")
 const onboardingOrganizationId = createDenTypeId("organization")
 const onboardingMemberId = createDenTypeId("member")
 const onboardingTeamId = createDenTypeId("team")
@@ -44,8 +46,11 @@ const flatConnectMetadata = {
   brandIconUrl: "https://den.example-corp.internal/assets/icon.png",
 }
 const capabilityMetadata = { capabilities: { mcpConnections: true } }
+const disabledMetadata = { capabilities: { mcpConnections: false } }
 const defaultOnboardingPrompts = ["Default onboarding task", "Default onboarding follow-up"]
 const highPriorityOnboardingPrompts = ["High priority task", "High priority follow-up", "High priority optional"]
+const defaultOnboardingPromptDescriptions = ["Default onboarding", "Default follow-up"]
+const highPriorityOnboardingPromptDescriptions = ["High priority onboarding", "High priority follow-up", "High priority optional"]
 let crudDesktopPolicyId: string | null = null
 
 beforeAll(async () => {
@@ -85,6 +90,12 @@ beforeAll(async () => {
     metadata: capabilityMetadata,
   })
   await db.insert(schema.OrganizationTable).values({
+    id: disabledOrganizationId,
+    name: "Desktop Config Disabled Org",
+    slug: `desktop-config-disabled-${disabledOrganizationId}`,
+    metadata: disabledMetadata,
+  })
+  await db.insert(schema.OrganizationTable).values({
     id: onboardingOrganizationId,
     name: "Desktop Config Onboarding Org",
     slug: `desktop-config-onboarding-${onboardingOrganizationId}`,
@@ -99,6 +110,12 @@ beforeAll(async () => {
     {
       id: capabilityMemberId,
       organizationId: capabilityOrganizationId,
+      userId,
+      role: "owner",
+    },
+    {
+      id: disabledMemberId,
+      organizationId: disabledOrganizationId,
       userId,
       role: "owner",
     },
@@ -126,7 +143,10 @@ beforeAll(async () => {
       policyName: "Default desktop policy",
       isDefault: true,
       isEnabled: true,
-      policy: { onboardingPrompts: defaultOnboardingPrompts },
+      policy: {
+        onboardingPrompts: defaultOnboardingPrompts,
+        onboardingPromptDescriptions: defaultOnboardingPromptDescriptions,
+      },
       createdByOrgMemberId: onboardingMemberId,
     },
     {
@@ -146,7 +166,10 @@ beforeAll(async () => {
       isDefault: null,
       isEnabled: true,
       priority: 10,
-      policy: { onboardingPrompts: highPriorityOnboardingPrompts },
+      policy: {
+        onboardingPrompts: highPriorityOnboardingPrompts,
+        onboardingPromptDescriptions: highPriorityOnboardingPromptDescriptions,
+      },
       createdByOrgMemberId: onboardingMemberId,
     },
   ])
@@ -176,8 +199,8 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  const memberIds = [memberId, capabilityMemberId, onboardingMemberId]
-  const organizationIds = [organizationId, capabilityOrganizationId, onboardingOrganizationId]
+  const memberIds = [memberId, capabilityMemberId, disabledMemberId, onboardingMemberId]
+  const organizationIds = [organizationId, capabilityOrganizationId, disabledOrganizationId, onboardingOrganizationId]
   if (crudDesktopPolicyId) {
     await db.delete(schema.DesktopPolicyMemberTable).where(drizzle.eq(schema.DesktopPolicyMemberTable.desktopPolicyId, crudDesktopPolicyId))
     await db.delete(schema.DesktopPolicyTable).where(drizzle.eq(schema.DesktopPolicyTable.id, crudDesktopPolicyId))
@@ -287,14 +310,22 @@ test("GET /v1/me/desktop-config exposes the effective connectEnabled org flag", 
   expectConnectEnabled(capabilityBody, capabilityMetadata)
   expect(capabilityBody.connectEnabled).toBe(true)
   expect(capabilityBody.onboardingPrompts).toBeUndefined()
+
+  const defaultBody = await requestDesktopConfig(onboardingOrganizationId)
+  expect(defaultBody.connectEnabled).toBe(true)
+
+  const disabledBody = await requestDesktopConfig(disabledOrganizationId)
+  expectConnectEnabled(disabledBody, disabledMetadata)
+  expect(disabledBody.connectEnabled).toBe(false)
 })
 
 test("GET /v1/me/desktop-config returns the effective onboarding prompts", async () => {
   const body = await requestDesktopConfig(onboardingOrganizationId)
   expect(body.onboardingPrompts).toEqual(highPriorityOnboardingPrompts)
+  expect(body.onboardingPromptDescriptions).toEqual(highPriorityOnboardingPromptDescriptions)
 })
 
-test("desktop policy CRUD preserves, replaces, and clears onboarding prompts", async () => {
+test("desktop policy CRUD preserves, replaces, and clears onboarding prompts and descriptions", async () => {
   const createPayload = await requestDesktopPolicyAdmin({
     method: "POST",
     path: "/v1/desktop-policies",
@@ -305,6 +336,7 @@ test("desktop policy CRUD preserves, replaces, and clears onboarding prompts", a
       policy: {
         allowZenModel: true,
         onboardingPrompts: ["CRUD prompt one", "CRUD prompt two"],
+        onboardingPromptDescriptions: ["CRUD card one", "CRUD card two"],
       },
       memberIds: [],
       teamIds: [],
@@ -315,6 +347,7 @@ test("desktop policy CRUD preserves, replaces, and clears onboarding prompts", a
   crudDesktopPolicyId = expectString(created.id, "Created desktop policy was missing id")
   expect(created.priority).toBe(3)
   expect(expectRecord(created.policy, "Created desktop policy was missing policy").onboardingPrompts).toEqual(["CRUD prompt one", "CRUD prompt two"])
+  expect(expectRecord(created.policy, "Created desktop policy was missing policy").onboardingPromptDescriptions).toEqual(["CRUD card one", "CRUD card two"])
 
   const listPayload = await requestDesktopPolicyAdmin({
     method: "GET",
@@ -325,6 +358,7 @@ test("desktop policy CRUD preserves, replaces, and clears onboarding prompts", a
   const listed = findListedDesktopPolicy(listPayload, crudDesktopPolicyId)
   expect(listed.priority).toBe(3)
   expect(expectRecord(listed.policy, "Listed desktop policy was missing policy").onboardingPrompts).toEqual(["CRUD prompt one", "CRUD prompt two"])
+  expect(expectRecord(listed.policy, "Listed desktop policy was missing policy").onboardingPromptDescriptions).toEqual(["CRUD card one", "CRUD card two"])
 
   const preservedPayload = await requestDesktopPolicyAdmin({
     method: "PATCH",
@@ -342,6 +376,29 @@ test("desktop policy CRUD preserves, replaces, and clears onboarding prompts", a
   const preserved = expectDesktopPolicy(preservedPayload)
   expect(preserved.priority).toBe(4)
   expect(expectRecord(preserved.policy, "Preserved desktop policy was missing policy").onboardingPrompts).toEqual(["CRUD prompt one", "CRUD prompt two"])
+  expect(expectRecord(preserved.policy, "Preserved desktop policy was missing policy").onboardingPromptDescriptions).toEqual(["CRUD card one", "CRUD card two"])
+
+  const replacedPayload = await requestDesktopPolicyAdmin({
+    method: "PATCH",
+    path: `/v1/desktop-policies/${encodeURIComponent(crudDesktopPolicyId)}`,
+    expectedStatus: 200,
+    body: {
+      policyName: "CRUD onboarding policy replaced",
+      priority: 5,
+      policy: {
+        allowZenModel: false,
+        onboardingPrompts: ["Replacement prompt one", "Replacement prompt two"],
+        onboardingPromptDescriptions: ["Replacement card one", "Replacement card two"],
+      },
+      memberIds: [],
+      teamIds: [],
+    },
+  })
+  if (!replacedPayload) throw new Error("Replace response was empty")
+  const replaced = expectDesktopPolicy(replacedPayload)
+  expect(replaced.priority).toBe(5)
+  expect(expectRecord(replaced.policy, "Replaced desktop policy was missing policy").onboardingPrompts).toEqual(["Replacement prompt one", "Replacement prompt two"])
+  expect(expectRecord(replaced.policy, "Replaced desktop policy was missing policy").onboardingPromptDescriptions).toEqual(["Replacement card one", "Replacement card two"])
 
   const clearedPayload = await requestDesktopPolicyAdmin({
     method: "PATCH",
@@ -349,7 +406,7 @@ test("desktop policy CRUD preserves, replaces, and clears onboarding prompts", a
     expectedStatus: 200,
     body: {
       policyName: "CRUD onboarding policy cleared",
-      priority: 5,
+      priority: 6,
       policy: { allowZenModel: false, onboardingPrompts: null },
       memberIds: [],
       teamIds: [],
@@ -357,8 +414,9 @@ test("desktop policy CRUD preserves, replaces, and clears onboarding prompts", a
   })
   if (!clearedPayload) throw new Error("Clear response was empty")
   const cleared = expectDesktopPolicy(clearedPayload)
-  expect(cleared.priority).toBe(5)
+  expect(cleared.priority).toBe(6)
   expect(expectRecord(cleared.policy, "Cleared desktop policy was missing policy").onboardingPrompts).toBeUndefined()
+  expect(expectRecord(cleared.policy, "Cleared desktop policy was missing policy").onboardingPromptDescriptions).toBeUndefined()
 
   await requestDesktopPolicyAdmin({
     method: "DELETE",

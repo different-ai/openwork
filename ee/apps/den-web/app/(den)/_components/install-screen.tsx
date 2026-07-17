@@ -143,6 +143,9 @@ export function InstallScreen() {
   const [downloadHref, setDownloadHref] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [connectRecoveryVisible, setConnectRecoveryVisible] = useState(false);
+  const [connectCopying, setConnectCopying] = useState(false);
+  const [connectCopied, setConnectCopied] = useState(false);
   const [guideStep, setGuideStep] = useState<1 | 2 | 3>(() => {
     const requestedStep = searchParams.get("step");
     return requestedStep === "3" ? 3 : requestedStep === "2" ? 2 : 1;
@@ -247,6 +250,31 @@ export function InstallScreen() {
         : "Could not create a fresh desktop connection. Try again.");
     } finally {
       setConnecting(false);
+    }
+  }
+
+  async function copyConnectionLink() {
+    setConnectCopying(true);
+    setConnectCopied(false);
+    setConnectError(null);
+    try {
+      if (!navigator.clipboard) {
+        throw new Error("Clipboard is not available in this browser.");
+      }
+      const freshConfig = await fetchInstallConfig(token);
+      if (!freshConfig.connectUrl) {
+        throw new Error("This deployment could not create a desktop connection link.");
+      }
+      setConfig(freshConfig);
+      await navigator.clipboard.writeText(freshConfig.connectUrl);
+      setConnectCopied(true);
+      window.setTimeout(() => setConnectCopied(false), 1800);
+    } catch (copyFailure) {
+      setConnectError(copyFailure instanceof Error
+        ? copyFailure.message
+        : "Could not copy a fresh desktop connection link. Try again.");
+    } finally {
+      setConnectCopying(false);
     }
   }
 
@@ -366,7 +394,7 @@ export function InstallScreen() {
                   <p className="m-0 font-semibold text-[var(--dls-text-primary)]">Open {config.appName}</p>
                   <p className="den-copy">
                     {guideStep === 1
-                      ? "After installation, come back here to connect the app to your workspace."
+                      ? `Only continue once ${config.appName} is installed and running on this computer.`
                       : `Open the app and confirm that you want to connect it to ${config.clientName}.`}
                   </p>
                 </div>
@@ -381,6 +409,30 @@ export function InstallScreen() {
                     >
                       {connecting ? "Preparing connection…" : `Open ${config.appName}`}
                     </button>
+                    <button
+                      type="button"
+                      className="w-fit text-sm text-[var(--dls-text-secondary)] underline-offset-4 hover:underline"
+                      data-testid="install-connect-recovery"
+                      onClick={() => setConnectRecoveryVisible(true)}
+                    >
+                      Didn&apos;t open?
+                    </button>
+                    {connectRecoveryVisible ? (
+                      <div className="den-frame-inset grid gap-3 rounded-[1rem] p-3">
+                        <p className="den-copy text-sm">
+                          Copy a fresh connection link and open it anywhere links work, like your browser&apos;s address bar. The same confirmation will appear.
+                        </p>
+                        <button
+                          type="button"
+                          className="den-button-secondary w-full justify-center sm:w-fit"
+                          data-testid="install-connect-copy"
+                          disabled={connectCopying}
+                          onClick={() => void copyConnectionLink()}
+                        >
+                          {connectCopying ? "Copying..." : connectCopied ? "Copied" : "Copy connection link"}
+                        </button>
+                      </div>
+                    ) : null}
                     {connectError ? (
                       <p className="m-0 text-sm text-red-600" role="alert" data-testid="install-connect-error">
                         {connectError}

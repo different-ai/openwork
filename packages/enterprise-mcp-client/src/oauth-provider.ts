@@ -17,6 +17,7 @@ import type {
   EnterpriseMcpPersistenceContext,
 } from "./contracts.js"
 import { EnterpriseMcpOAuthContractError } from "./errors.js"
+import { isAuthorizationServerDiscoveryBound } from "./oauth-discovery-binding.js"
 
 type OAuthFlowContext =
   | { kind: "connect"; authorizationId?: string }
@@ -153,13 +154,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       }
       return
     }
-    const discoveredIssuer = state.authorizationServerMetadata?.issuer
-    const advertisedIssuers = state.resourceMetadata?.authorization_servers
-    if (
-      state.authorizationServerUrl !== selectedIssuer
-      || discoveredIssuer !== selectedIssuer
-      || (advertisedIssuers !== undefined && !advertisedIssuers.includes(selectedIssuer))
-    ) {
+    if (!isAuthorizationServerDiscoveryBound(state, selectedIssuer)) {
       throw new EnterpriseMcpOAuthContractError(
         "MCP_OAUTH_ISSUER_MISMATCH",
         "The OAuth authorization server does not match the issuer selected for this MCP connection.",

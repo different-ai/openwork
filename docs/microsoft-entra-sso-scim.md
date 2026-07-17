@@ -131,7 +131,7 @@ For the OpenWork Labs test tenant, the OpenWork SAML fields are:
   auth URL, not to the `sts.windows.net` issuer.
 - **IdP Certificate**: paste the active Entra SAML signing certificate.
 
-## Configure SCIM user provisioning
+## Configure SCIM user and group provisioning
 
 1. In OpenWork, open **Dashboard** -> **SCIM**.
 2. Copy the **SCIM base URL**.
@@ -144,14 +144,16 @@ For the OpenWork Labs test tenant, the OpenWork SAML fields are:
    - **Secret Token**: the OpenWork SCIM bearer token.
 7. Select **Test Connection**.
 8. Open **Mappings**:
-   - Keep user provisioning enabled.
-   - Disable group object provisioning. OpenWork currently returns `501` for
-     SCIM `/Groups`.
-   - Use a matching attribute that OpenWork can filter by, normally
-     `userName` mapped from `userPrincipalName` or `mail`.
-9. Under **Settings**, choose the scope. For a controlled rollout, sync only
+    - Keep user provisioning enabled.
+    - Enable group object provisioning when Entra groups should manage OpenWork teams.
+    - Use a matching attribute that OpenWork can filter by, normally
+      `userName` mapped from `userPrincipalName` or `mail`.
+9. In OpenWork, enable **Create teams from SCIM groups** if provisioned groups
+   should create and manage matching teams. Leave it off to retain group metadata
+   without changing teams.
+10. Under **Settings**, choose the scope. For a controlled rollout, sync only
    assigned users and groups.
-10. Turn **Provisioning Status** on after the test connection and mappings are
+11. Turn **Provisioning Status** on after the test connection and mappings are
     correct.
 
 ## Validation checklist
@@ -166,8 +168,9 @@ For the OpenWork Labs test tenant, the OpenWork SAML fields are:
 - Entra SCIM **Test Connection** succeeds.
 - Provisioning an assigned test user creates the OpenWork user and organization
   membership.
-- Removing the assignment deprovisions organization access without deleting the
-  global OpenWork user record.
+- Provisioning a group creates a matching OpenWork team when team sync is enabled.
+- Removing the assignment retains a disconnected member record. OpenWork deletes
+  the global user only when the user has no other active organization membership.
 
 ## Troubleshooting
 

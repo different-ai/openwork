@@ -9,29 +9,57 @@ const dataPath = fileURLToPath(
   new URL("../app/(den)/dashboard/_components/mcp-connections-data.tsx", import.meta.url),
 )
 
-describe("MCP OAuth callback migration UI contract", () => {
-  test("offers only the guided one-way shared callback migration", () => {
+describe("MCP OAuth callback compatibility UI contract", () => {
+  test("keeps callback compatibility out of connection rows", () => {
     const screen = readFileSync(screenPath, "utf8")
     const data = readFileSync(dataPath, "utf8")
 
-    expect(screen).toContain("Callback update required")
-    expect(screen).toContain("Copy the new shared callback")
-    expect(screen).toContain("Add it to the external OAuth application")
-    expect(screen).toContain("Reconnect using shared callback")
-    expect(screen).toContain("onClick={automaticCallbackMigrationPending ? onMigrateCallback : onConnect}")
-    expect(screen).toContain("This migration is permanent")
-    expect(data).toContain("/oauth/use-shared-callback")
-
-    expect(screen).not.toContain("Use legacy callback")
-    expect(screen).not.toContain("Return to legacy")
-    expect(data).not.toContain("oauthCallbackMode:")
+    expect(screen).toContain("onClick={onConnect}")
+    expect(screen).not.toContain("Current callback:")
+    expect(screen).not.toContain("Client metadata:")
+    expect(screen).not.toContain("Callback update required")
+    expect(screen).not.toContain("Reconnect using shared callback")
+    expect(screen).not.toContain("Revert to previous callback")
+    expect(data).not.toContain("/oauth/use-shared-callback")
+    expect(data).not.toContain("/oauth/revert-shared-callback")
+    expect(data).not.toContain("oauthMigrationStatus")
   })
 
-  test("keeps deletion as a warned fallback instead of the primary migration path", () => {
+  test("keeps connection rows focused on connect, disconnect, and a compact actions menu", () => {
+    const screen = readFileSync(screenPath, "utf8")
+
+    expect(screen).toContain('const canConnectOAuth = !needsAdminSetup && !connection.issuerReviewRequired && connection.authType === "oauth"')
+    expect(screen).toContain('isPerMember ? !connection.connectedForMe : !connection.connected')
+    expect(screen).toContain('aria-haspopup="menu"')
+    expect(screen).toContain('role="menu"')
+    expect(screen).toContain('More actions for ${connection.name}')
+    expect(screen).toContain('{toolsOpen ? "Hide tools" : "View tools"}')
+  })
+
+  test("requires explicit administrator confirmation when live issuer metadata changes", () => {
+    const screen = readFileSync(screenPath, "utf8")
+    const data = readFileSync(dataPath, "utf8")
+
+    expect(screen).toContain("OAuth settings need review")
+    expect(screen).toContain("Review OAuth provider")
+    expect(screen).toContain("Confirm issuer")
+    expect(screen).toContain("clears the old OAuth client and credentials")
+    expect(data).toContain("/oauth/issuer-review")
+    expect(data).toContain('action: "preview" | "confirm"')
+  })
+
+  test("edits requested scopes without forcing an immediate reconnect", () => {
+    const screen = readFileSync(screenPath, "utf8")
+
+    expect(screen).toContain("Requested OAuth scopes")
+    expect(screen).toContain("requestedScopesText")
+    expect(screen).toContain("Scope changes apply on next connect — reconnect to re-authorize.")
+  })
+
+  test("warns before deleting a connection", () => {
     const screen = readFileSync(screenPath, "utf8")
 
     expect(screen).toContain("This can remove access grants, per-member authorization state, and plugin or marketplace bindings")
-    expect(screen).toContain("Reconnecting with the shared callback is the safer migration path")
     expect(screen).toContain("window.confirm")
   })
 

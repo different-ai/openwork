@@ -15,6 +15,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 const REQUEST_ONLY_HEADERS = new Set(["host", "content-length"]);
 const RESPONSE_ONLY_HEADERS = new Set(["content-length", "content-encoding"]);
+const SPOOFABLE_FORWARDING_HEADERS = new Set(["forwarded", "x-forwarded-host", "x-forwarded-prefix", "x-forwarded-proto"]);
 
 type ProxyOptions = {
   routePrefix: string;
@@ -29,6 +30,19 @@ function normalizeBaseUrl(value: string): string {
 function readBaseUrlEnv(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? normalizeBaseUrl(value) : null;
+}
+
+function requestPublicOrigin(request: NextRequest): URL {
+  const configuredOrigin = readBaseUrlEnv("DEN_WEB_PUBLIC_ORIGIN");
+  if (configuredOrigin) {
+    try {
+      return new URL(configuredOrigin);
+    } catch {
+      return new URL(request.url);
+    }
+  }
+
+  return new URL(request.url);
 }
 
 function normalizePathPrefix(value: string): string {
@@ -66,7 +80,7 @@ function buildTargetUrl(
 
 function shouldSkipRequestHeader(name: string): boolean {
   const normalized = name.toLowerCase();
-  return HOP_BY_HOP_HEADERS.has(normalized) || REQUEST_ONLY_HEADERS.has(normalized);
+  return HOP_BY_HOP_HEADERS.has(normalized) || REQUEST_ONLY_HEADERS.has(normalized) || SPOOFABLE_FORWARDING_HEADERS.has(normalized);
 }
 
 function shouldSkipResponseHeader(name: string): boolean {
@@ -90,13 +104,17 @@ async function injectActiveTraceContext(headers: Headers): Promise<void> {
   }
 }
 
-async function cloneRequestHeaders(request: NextRequest): Promise<Headers> {
+async function cloneRequestHeaders(request: NextRequest, routePrefix: string): Promise<Headers> {
   const headers = new Headers();
   request.headers.forEach((value, name) => {
     if (!shouldSkipRequestHeader(name)) {
       headers.append(name, value);
     }
   });
+  const publicOrigin = requestPublicOrigin(request);
+  headers.set("x-forwarded-host", publicOrigin.host);
+  headers.set("x-forwarded-proto", publicOrigin.protocol.replace(/:$/, ""));
+  headers.set("x-forwarded-prefix", routePrefix);
   await injectActiveTraceContext(headers);
   return headers;
 }
@@ -197,7 +215,7 @@ export async function proxyUpstream(
   try {
     upstream = await fetch(targetUrl, {
       method: request.method,
-      headers: await cloneRequestHeaders(request),
+      headers: await cloneRequestHeaders(request, options.routePrefix),
       body: await readRequestBody(request),
       redirect: "manual",
     });

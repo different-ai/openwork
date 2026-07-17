@@ -5,18 +5,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, posix } from "node:path";
 
 import {
-  DOCX_SENTINEL,
   OFFICE_FIXTURES,
-  PPTX_SENTINEL,
+  XLSX_FIXTURE,
 } from "../fixtures/ooxml-office-fixtures.mjs";
 
 const OFFICE_TOOL_CALL_ID = "call_write_office_artifacts";
 const OFFICE_TOOL_NAME = "bash";
 const MATERIALIZED_PREFIX = ".opencode/openwork/inbox/chat-attachments/";
-const ARTIFACT_PATHS = {
-  docx: "artifacts/QuarterlyBrief.docx",
-  pptx: "artifacts/LaunchRoadmap.pptx",
-};
 
 function parseArgs(argv) {
   const args = new Map();
@@ -26,6 +21,13 @@ function parseArgs(argv) {
   }
   return args;
 }
+
+const args = parseArgs(process.argv.slice(2));
+const mode = args.get("mode") === "xlsx" ? "xlsx" : "office";
+const EXPECTED_FIXTURES = mode === "xlsx" ? { xlsx: XLSX_FIXTURE } : OFFICE_FIXTURES;
+const ARTIFACT_PATHS = mode === "xlsx"
+  ? { xlsx: "artifacts/RevenueWorkbook.xlsx" }
+  : { docx: "artifacts/QuarterlyBrief.docx", pptx: "artifacts/LaunchRoadmap.pptx" };
 
 function sha256(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
@@ -160,7 +162,7 @@ function countOfficeFileMarkers(value, context = { filename: "", mime: "" }) {
 
   const nextContext = contextFromRecord(value, context);
   const type = stringField(value, ["type"]).toLowerCase();
-  const officeLike = Object.values(OFFICE_FIXTURES).some((expected) => nextContext.filename === expected.filename || nextContext.mime === expected.mime);
+  const officeLike = Object.values(EXPECTED_FIXTURES).some((expected) => nextContext.filename === expected.filename || nextContext.mime === expected.mime);
   const fileLike = type.includes("file") || "file_data" in value || "fileData" in value || "contentBase64" in value;
   let count = officeLike && fileLike ? 1 : 0;
   for (const item of Object.values(value)) count += countOfficeFileMarkers(item, nextContext);
@@ -204,13 +206,13 @@ function verifyOfficePayloads(body) {
   const promptTexts = collectPromptText(body);
   const rawBody = JSON.stringify(body);
   const officeFileMarkers = countOfficeFileMarkers(body);
-  const rawOfficeBinaryLeak = Object.values(OFFICE_FIXTURES).some((expected) => {
+  const rawOfficeBinaryLeak = Object.values(EXPECTED_FIXTURES).some((expected) => {
     return rawBody.includes(expected.dataBase64)
       || payloads.some((item) => item.sha256 === expected.sha256 || item.filename === expected.filename || item.mime === expected.mime);
   });
   const attachments = {};
 
-  for (const [kind, expected] of Object.entries(OFFICE_FIXTURES)) {
+  for (const [kind, expected] of Object.entries(EXPECTED_FIXTURES)) {
     attachments[kind] = parseNormalizedAttachment(promptTexts, expected) ?? { received: false, expected };
   }
 
@@ -257,7 +259,7 @@ function isToolResultRecord(record) {
 function hasExpectedToolOutput(record) {
   const text = collectStringValues(record).join("\n");
   return Object.values(ARTIFACT_PATHS).every((path) => text.includes(path))
-    && Object.values(OFFICE_FIXTURES).every((expected) => text.includes(expected.sha256));
+    && Object.values(EXPECTED_FIXTURES).every((expected) => text.includes(expected.sha256));
 }
 
 function hasExactIssuedToolResult(value) {
@@ -291,16 +293,16 @@ function shellQuote(value) {
 }
 
 function artifactWriteCommand(attachments) {
-  const docx = attachments.docx?.workerRelativePath;
-  const pptx = attachments.pptx?.workerRelativePath;
-  if (!docx || !pptx) throw new Error(`Missing materialized Office paths: ${JSON.stringify(attachments)}`);
+  const entries = Object.entries(ARTIFACT_PATHS).map(([kind, path]) => {
+    const source = attachments[kind]?.workerRelativePath;
+    if (!source) throw new Error(`Missing materialized Office path for ${kind}: ${JSON.stringify(attachments)}`);
+    return { source, path };
+  });
+  const paths = entries.map((entry) => shellQuote(entry.path)).join(" ");
   return `set -euo pipefail
 mkdir -p artifacts
-test -s ${shellQuote(docx)}
-test -s ${shellQuote(pptx)}
-cp ${shellQuote(docx)} ${shellQuote(ARTIFACT_PATHS.docx)}
-cp ${shellQuote(pptx)} ${shellQuote(ARTIFACT_PATHS.pptx)}
-(sha256sum ${shellQuote(ARTIFACT_PATHS.docx)} ${shellQuote(ARTIFACT_PATHS.pptx)} 2>/dev/null || shasum -a 256 ${shellQuote(ARTIFACT_PATHS.docx)} ${shellQuote(ARTIFACT_PATHS.pptx)})`;
+${entries.map((entry) => `test -s ${shellQuote(entry.source)}\ncp ${shellQuote(entry.source)} ${shellQuote(entry.path)}`).join("\n")}
+(sha256sum ${paths} 2>/dev/null || shasum -a 256 ${paths})`;
 }
 
 function toolCallStream(attachments) {
@@ -339,13 +341,11 @@ function toolCallStream(attachments) {
 
 function finalText() {
   return [
-    `Verified ${OFFICE_FIXTURES.docx.filename}: ${DOCX_SENTINEL}`,
-    `Verified ${OFFICE_FIXTURES.pptx.filename}: ${PPTX_SENTINEL}`,
-    "Created artifacts/QuarterlyBrief.docx and artifacts/LaunchRoadmap.pptx from the exact safely materialized Office bytes.",
+    ...Object.values(EXPECTED_FIXTURES).map((expected) => `Verified ${expected.filename}: ${expected.sentinels.join(" | ")}`),
+    `Created ${Object.values(ARTIFACT_PATHS).join(" and ")} from the exact safely materialized Office bytes.`,
   ].join("\n");
 }
 
-const args = parseArgs(process.argv.slice(2));
 const host = args.get("host") || "127.0.0.1";
 const port = Number(args.get("port") || 18081);
 const workspaceRoot = args.get("workspace") || process.cwd();

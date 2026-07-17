@@ -333,6 +333,7 @@ export function useSessionMcpMaintenance(input: {
   workspaceId: string | null;
   opencodeClient: Client | null;
   directory: string;
+  engineReloadBusy?: boolean;
   providerModel?: OpenworkCloudMcpProviderModelContext;
 }): SessionCloudMcpMaintenanceState {
   const [cloudMcpState, setCloudMcpState] = useState<SessionCloudMcpMaintenanceState>(
@@ -340,6 +341,12 @@ export function useSessionMcpMaintenance(input: {
   );
 
   useEffect(() => {
+    if (input.engineReloadBusy) {
+      setCloudMcpState(input.cloudSignedIn
+        ? { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "checking" }
+        : IDLE_CLOUD_MCP_MAINTENANCE_STATE);
+      return;
+    }
     const workspaceId = input.workspaceId?.trim() ?? "";
     const directory = input.directory.trim();
     const client = input.client;
@@ -453,6 +460,7 @@ export function useSessionMcpMaintenance(input: {
     input.client,
     input.cloudSignedIn,
     input.directory,
+    input.engineReloadBusy,
     input.opencodeClient,
     input.providerModel?.model,
     input.providerModel?.provider,

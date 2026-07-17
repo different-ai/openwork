@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { staleUpdaterStatePaths, targetedStableUpdaterFeed } from "./updater.mjs";
+import { registerUpdaterIpc, staleUpdaterStatePaths, targetedStableUpdaterFeed } from "./updater.mjs";
 
 const fakeApp = { getPath: (key) => (key === "home" ? "/Users/test" : `/Users/test/${key}`) };
 
@@ -52,5 +52,23 @@ describe("targetedStableUpdaterFeed", () => {
       () => targetedStableUpdaterFeed("unknown", "0.17.23"),
       /could not be validated/,
     );
+  });
+});
+
+describe("installAndRestart", () => {
+  it("refuses to invoke the installer before an update is downloaded", async () => {
+    const handlers = new Map();
+    registerUpdaterIpc({
+      app: { isPackaged: false },
+      ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+      getMainWindow: () => null,
+    });
+
+    const install = handlers.get("openwork:updater:installAndRestart");
+    assert.equal(typeof install, "function");
+    assert.deepEqual(await install(), {
+      ok: false,
+      reason: "update-not-downloaded",
+    });
   });
 });

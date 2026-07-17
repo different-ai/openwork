@@ -5,6 +5,7 @@ import { NextRequest } from "next/server";
 import { setStructuredLogSink, useJsonStdoutStructuredLogSink } from "../../../observability/runtime-logger.ts";
 
 const previousDenApiBase = process.env.DEN_API_BASE;
+const previousDenWebPublicOrigin = process.env.DEN_WEB_PUBLIC_ORIGIN;
 
 describe("Den upstream proxy", () => {
   let server;
@@ -23,6 +24,10 @@ describe("Den upstream proxy", () => {
           cookie: request.headers.get("cookie"),
           authorization: request.headers.get("authorization"),
           custom: request.headers.get("x-custom-proxy-test"),
+          forwarded: request.headers.get("forwarded"),
+          forwardedHost: request.headers.get("x-forwarded-host"),
+          forwardedPrefix: request.headers.get("x-forwarded-prefix"),
+          forwardedProto: request.headers.get("x-forwarded-proto"),
           traceparent: request.headers.get("traceparent"),
           tracestate: request.headers.get("tracestate"),
         };
@@ -70,6 +75,11 @@ describe("Den upstream proxy", () => {
     } else {
       process.env.DEN_API_BASE = previousDenApiBase;
     }
+    if (previousDenWebPublicOrigin === undefined) {
+      delete process.env.DEN_WEB_PUBLIC_ORIGIN;
+    } else {
+      process.env.DEN_WEB_PUBLIC_ORIGIN = previousDenWebPublicOrigin;
+    }
   });
 
   test("passes method, path, query, body, cookies, auth, status, and headers through", async () => {
@@ -94,6 +104,10 @@ describe("Den upstream proxy", () => {
       cookie: "ow_session=sess_test",
       authorization: "Bearer tok_test",
       custom: "kept",
+      forwarded: null,
+      forwardedHost: "app.example.com",
+      forwardedPrefix: "/api/den",
+      forwardedProto: "https",
       traceparent: null,
       tracestate: null,
     });
@@ -170,6 +184,25 @@ describe("Den upstream proxy", () => {
 
     expect(observed.traceparent).toBe(traceparent);
     expect(observed.tracestate).toBe(tracestate);
+  });
+
+  test("overwrites spoofable forwarded headers", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const request = new NextRequest("https://app.example.com/api/den/v1/me", {
+      headers: {
+        forwarded: "host=evil.example;proto=http",
+        "x-forwarded-host": "evil.example",
+        "x-forwarded-prefix": "/evil",
+        "x-forwarded-proto": "http",
+      },
+    });
+
+    await proxyUpstream(request, [], { routePrefix: "/api/den" });
+
+    expect(observed.forwardedHost).toBe("app.example.com");
+    expect(observed.forwardedPrefix).toBe("/api/den");
+    expect(observed.forwardedProto).toBe("https");
+    expect(observed.forwarded).toBeNull();
   });
 
   test("injects the active W3C trace context into upstream requests", async () => {

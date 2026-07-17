@@ -2,8 +2,9 @@ import type { Hono } from "hono"
 import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
 import { deleteOrganizationScimConnection, getOrganizationScimConnection, getOrganizationScimHealth, getScimBaseUrl, reconcileOrganizationScimDrift, rotateOrganizationScimToken } from "../../scim.js"
+import { setScimGroupMappingMode } from "../../scim-groups.js"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
-import { orgMemberRoute } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureScimManager, orgAccessFailureStatus } from "./shared.js"
 
@@ -33,6 +34,7 @@ const scimConnectionSchema = z.object({
   id: z.string(),
   providerId: z.string(),
   organizationId: z.string(),
+  groupMappingMode: z.enum(["metadata_only", "create_teams"]),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).meta({ ref: "OrganizationScimConnection" })
@@ -65,11 +67,16 @@ const scimReconciliationResponseSchema = z.object({
   failures: z.number().int().nonnegative(),
 }).meta({ ref: "OrganizationScimReconciliationResponse" })
 
+const updateScimSettingsSchema = z.object({
+  groupMappingMode: z.enum(["metadata_only", "create_teams"]),
+})
+
 function serializeConnection(connection: NonNullable<Awaited<ReturnType<typeof getOrganizationScimConnection>>>) {
   return {
     id: connection.id,
     providerId: connection.providerId,
     organizationId: connection.organizationId,
+    groupMappingMode: connection.groupMappingMode === "create_teams" ? "create_teams" : "metadata_only",
     createdAt: connection.createdAt.toISOString(),
     updatedAt: connection.updatedAt.toISOString(),
   }
@@ -92,7 +99,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     describeRoute({
       tags: ["SCIM"],
       summary: "Get organization SCIM connection",
-      description: "Returns the SCIM User provisioning base URL and current connector metadata for the selected organization. SCIM Groups are not enabled yet.",
+      description: "Returns the SCIM provisioning base URL, group-to-team mapping mode, and current connector metadata for the selected organization.",
       security: [{ bearerAuth: [] }],
       responses: {
         200: {
@@ -163,7 +170,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     describeRoute({
       tags: ["SCIM"],
       summary: "Create or rotate an organization SCIM token",
-      description: "Creates the organization SCIM User provisioning connector if needed and returns a freshly rotated bearer token. SCIM Groups are not enabled yet.",
+      description: "Creates the organization SCIM provisioning connector if needed and returns a freshly rotated bearer token.",
       hide: process.env.NODE_ENV === "production",
       security: [{ bearerAuth: [] }],
       responses: {
@@ -239,6 +246,61 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         scimToken: rotated.scimToken,
         health: serializeHealth(health),
       }, 201)
+    },
+  )
+
+  app.patch(
+    "/v1/scim",
+    describeRoute({
+      tags: ["SCIM"],
+      summary: "Update organization SCIM settings",
+      description: "Controls whether provisioned SCIM Groups remain metadata or create and manage organization teams.",
+      security: [{ bearerAuth: [] }],
+      responses: {
+        200: {
+          description: "Organization SCIM settings updated",
+          content: { "application/json": { schema: resolver(scimConnectionResponseSchema) } },
+        },
+        401: { description: "Unauthorized" },
+        403: { description: "Forbidden" },
+        404: { description: "SCIM connection not found" },
+      },
+    }),
+    orgMemberRoute(),
+    jsonValidator(updateScimSettingsSchema),
+    async (c) => {
+      const access = ensureScimManager(c)
+      if (!access.ok) {
+        return c.json(access.response, orgAccessFailureStatus(access.response))
+      }
+
+      const payload = c.get("organizationContext")
+      const connection = await getOrganizationScimConnection(payload.organization.id)
+      if (!connection) {
+        return c.json({ error: "not_found", message: "Create the SCIM connector before enabling group mapping." }, 404)
+      }
+
+      const input = c.req.valid("json")
+      await setScimGroupMappingMode({ provider: connection, mode: input.groupMappingMode })
+      await recordOrganizationAuditEvent({
+        organizationId: payload.organization.id,
+        actorUserId: payload.currentMember.userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.scimGroupMappingUpdated,
+        payload: { groupMappingMode: input.groupMappingMode },
+      })
+
+      const [updated, health] = await Promise.all([
+        getOrganizationScimConnection(payload.organization.id),
+        getOrganizationScimHealth(payload.organization.id),
+      ])
+      if (!updated) {
+        return c.json({ error: "not_found", message: "SCIM connection not found." }, 404)
+      }
+      return c.json({
+        baseUrl: getScimBaseUrl(),
+        connection: serializeConnection(updated),
+        health: serializeHealth(health),
+      })
     },
   )
 

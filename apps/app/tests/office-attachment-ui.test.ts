@@ -5,12 +5,15 @@ import { getArtifactsFromMessages } from "../src/lib/artifacts";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 describe("Office attachment UI affordances", () => {
   test("uses compact Office badges instead of exposing MIME subtypes", () => {
     expect(getMediaBadge({ filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME })).toBe("DOCX");
     expect(getMediaBadge({ filename: "LaunchRoadmap.PPTX", mediaType: PPTX_MIME })).toBe("PPTX");
     expect(getMediaBadge({ filename: "LaunchRoadmap.PPTX", mediaType: "application/octet-stream" })).toBe("PPTX");
+    expect(getMediaBadge({ filename: "RevenueWorkbook.XLSX", mediaType: XLSX_MIME })).toBe("XLSX");
+    expect(getMediaBadge({ filename: "RevenueWorkbook.XLSX", mediaType: "" })).toBe("XLSX");
   });
 
   test("only exposes download actions for browser-managed file URLs", () => {

@@ -14,8 +14,10 @@ import {
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
 const DOCX_BYTES = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x77, 0x6f, 0x72, 0x64]);
 const PPTX_BYTES = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x70, 0x70, 0x74, 0x78]);
+const XLSX_BYTES = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x78, 0x6c, 0x73, 0x78]);
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const PDF_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 0x25, 0xe2, 0xe3, 0xcf, 0xd3]);
 
 type UploadCall = {
@@ -119,6 +121,7 @@ describe("composer attachment file parts", () => {
   test("preserves canonical Office MIME, data URL headers, filenames, and exact bytes", async () => {
     const docx = new File([DOCX_BYTES], "PlanningMemo.docx", { type: DOCX_MIME });
     const pptx = new File([PPTX_BYTES], "RoadshowDeck.pptx", { type: PPTX_MIME });
+    const xlsx = new File([XLSX_BYTES], "RevenueWorkbook.xlsx", { type: XLSX_MIME });
 
     expect(resolveAttachmentFileMetadata(docx)).toMatchObject({
       filename: "PlanningMemo.docx",
@@ -132,9 +135,16 @@ describe("composer attachment file parts", () => {
       kind: "file",
       readable: true,
     });
+    expect(resolveAttachmentFileMetadata(xlsx)).toMatchObject({
+      filename: "RevenueWorkbook.xlsx",
+      mime: XLSX_MIME,
+      kind: "file",
+      readable: true,
+    });
 
     const docxPart = await composerAttachmentToFilePart(attachmentFor(docx));
     const pptxPart = await composerAttachmentToFilePart(attachmentFor(pptx));
+    const xlsxPart = await composerAttachmentToFilePart(attachmentFor(xlsx));
 
     expect(docxPart.filename).toBe("PlanningMemo.docx");
     expect(docxPart.mime).toBe(DOCX_MIME);
@@ -145,11 +155,17 @@ describe("composer attachment file parts", () => {
     expect(pptxPart.mime).toBe(PPTX_MIME);
     expect(pptxPart.url.startsWith(`data:${PPTX_MIME};base64,`)).toBe(true);
     expect(Array.from(decodedDataUrlBytes(pptxPart.url))).toEqual(Array.from(PPTX_BYTES));
+
+    expect(xlsxPart.filename).toBe("RevenueWorkbook.xlsx");
+    expect(xlsxPart.mime).toBe(XLSX_MIME);
+    expect(xlsxPart.url.startsWith(`data:${XLSX_MIME};base64,`)).toBe(true);
+    expect(Array.from(decodedDataUrlBytes(xlsxPart.url))).toEqual(Array.from(XLSX_BYTES));
   });
 
   test("resolves generic Office MIME from case-insensitive extensions without coercing bytes to text", async () => {
     const docx = new File([DOCX_BYTES], "QuarterlyReport.DOCX", { type: "application/octet-stream" });
     const pptx = new File([PPTX_BYTES], "LaunchPlan.PPTX", { type: "" });
+    const xlsx = new File([XLSX_BYTES], "BudgetModel.XLSX", { type: "application/octet-stream" });
 
     expect(resolveAttachmentFileMetadata(docx)).toMatchObject({
       filename: "QuarterlyReport.DOCX",
@@ -163,9 +179,16 @@ describe("composer attachment file parts", () => {
       kind: "file",
       readable: true,
     });
+    expect(resolveAttachmentFileMetadata(xlsx)).toMatchObject({
+      filename: "BudgetModel.XLSX",
+      mime: XLSX_MIME,
+      kind: "file",
+      readable: true,
+    });
 
     const docxPart = await composerAttachmentToFilePart(attachmentFor(docx));
     const pptxPart = await composerAttachmentToFilePart(attachmentFor(pptx));
+    const xlsxPart = await composerAttachmentToFilePart(attachmentFor(xlsx));
 
     expect(docxPart.filename).toBe("QuarterlyReport.DOCX");
     expect(docxPart.mime).toBe(DOCX_MIME);
@@ -176,14 +199,21 @@ describe("composer attachment file parts", () => {
     expect(pptxPart.mime).toBe(PPTX_MIME);
     expect(pptxPart.url.startsWith(`data:${PPTX_MIME};base64,`)).toBe(true);
     expect(Array.from(decodedDataUrlBytes(pptxPart.url))).toEqual(Array.from(PPTX_BYTES));
+
+    expect(xlsxPart.filename).toBe("BudgetModel.XLSX");
+    expect(xlsxPart.mime).toBe(XLSX_MIME);
+    expect(xlsxPart.url.startsWith(`data:${XLSX_MIME};base64,`)).toBe(true);
+    expect(Array.from(decodedDataUrlBytes(xlsxPart.url))).toEqual(Array.from(XLSX_BYTES));
   });
 
   test("normalizes Office filename extensions from canonical MIME when filenames disagree", async () => {
     const docxNamedBin = new File([DOCX_BYTES], "PlanningMemo.bin", { type: DOCX_MIME });
     const pptxWithoutExtension = new File([PPTX_BYTES], "RoadshowDeck", { type: PPTX_MIME });
+    const xlsxWithoutExtension = new File([XLSX_BYTES], "RevenueWorkbook", { type: XLSX_MIME });
 
     expect((await composerAttachmentToFilePart(attachmentFor(docxNamedBin))).filename).toBe("PlanningMemo.docx");
     expect((await composerAttachmentToFilePart(attachmentFor(pptxWithoutExtension))).filename).toBe("RoadshowDeck.pptx");
+    expect((await composerAttachmentToFilePart(attachmentFor(xlsxWithoutExtension))).filename).toBe("RevenueWorkbook.xlsx");
   });
 
   test("rejects unsupported binary attachments instead of broadly treating generic bytes as text", () => {
@@ -201,6 +231,12 @@ describe("composer attachment file parts", () => {
     });
     expect(resolveAttachmentFileMetadata(new File([PPTX_BYTES], "archive.zip", { type: "" }))).toMatchObject({
       filename: "archive.zip",
+      mime: "application/octet-stream",
+      kind: "file",
+      readable: false,
+    });
+    expect(resolveAttachmentFileMetadata(new File([XLSX_BYTES], "legacy.xls", { type: "" }))).toMatchObject({
+      filename: "legacy.xls",
       mime: "application/octet-stream",
       kind: "file",
       readable: false,

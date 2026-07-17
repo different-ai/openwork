@@ -5,6 +5,8 @@ import type { DenDesktopConfig } from "../../../../app/lib/den";
 import {
   isAlphaUpdateAllowed,
   isUpdateAllowed,
+  isUpdateAllowedByDesktopConfig,
+  resolveAutomaticStableDesktopUpdate,
   resolveFreshStableDesktopUpdate,
 } from "../../../../app/lib/version-gate";
 import type { ReleaseChannel } from "../../../../app/types";
@@ -256,10 +258,38 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         targetVersion = selection.targetVersion;
       }
 
-      const result = await bridge.check(activeReleaseChannel, targetVersion);
+      let result = await bridge.check(activeReleaseChannel, targetVersion);
       dispatchEnvState({ type: "app-version", appVersion: result.currentVersion ?? null });
       if (result.channel && result.channel !== releaseChannel) {
         onReleaseChannelChange(result.channel);
+      }
+      let checkedReleaseChannel = result.channel ?? activeReleaseChannel;
+      if (
+        !result.reason &&
+        !manual &&
+        checkedReleaseChannel === "stable" &&
+        result.available &&
+        result.latestVersion &&
+        !targetVersion &&
+        !isUpdateAllowedByDesktopConfig(result.latestVersion, freshDesktopConfig)
+      ) {
+        const currentVersion = result.currentVersion ?? appVersion;
+        const fallbackTargetVersion = currentVersion
+          ? await resolveAutomaticStableDesktopUpdate({
+              currentVersion,
+              latestVersion: result.latestVersion,
+              desktopConfig: freshDesktopConfig,
+            })
+          : null;
+        if (fallbackTargetVersion) {
+          targetVersion = fallbackTargetVersion;
+          result = await bridge.check(checkedReleaseChannel, targetVersion);
+          dispatchEnvState({ type: "app-version", appVersion: result.currentVersion ?? null });
+          if (result.channel && result.channel !== releaseChannel) {
+            onReleaseChannelChange(result.channel);
+          }
+          checkedReleaseChannel = result.channel ?? checkedReleaseChannel;
+        }
       }
       if (result.reason === "unavailable") {
         setUpdateStatus({
@@ -272,8 +302,6 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         setUpdateStatus({ state: "error", message: result.reason });
         return;
       }
-
-      const checkedReleaseChannel = result.channel ?? activeReleaseChannel;
       const availableAllowed = result.available && result.latestVersion
         ? targetVersion
           ? result.latestVersion === targetVersion

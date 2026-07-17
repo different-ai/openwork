@@ -29,6 +29,7 @@ import {
   getOpenWorkModelsActionUrl,
   hasOpenWorkModelsProvider,
   hideOpenWorkModelsPromo,
+  useOpenWorkModelsPromoEligibility,
   isOpenWorkModelsPromoHidden,
   OPENWORK_MODELS_PROVIDER_ID,
   OPENWORK_MODELS_PROVIDER_NAME,
@@ -76,6 +77,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const denAuth = useDenAuth();
   const navigate = useNavigate();
   const platform = usePlatform();
+  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
 
   const disabledSet = useMemo(
     () => new Set(props.disabledProviders ?? []),
@@ -178,8 +180,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   }, []);
 
   const showOpenWorkModelsPromo = useMemo(
-    () => !promoHidden && !hasOpenWorkModelsProvider(props.options.map((option) => option.providerID)),
-    [promoHidden, props.options],
+    () => openWorkModelsPromoEligible && !promoHidden && !hasOpenWorkModelsProvider(props.options.map((option) => option.providerID)),
+    [openWorkModelsPromoEligible, promoHidden, props.options],
   );
 
   const openOpenWorkModels = useCallback(() => {

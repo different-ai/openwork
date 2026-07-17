@@ -94,6 +94,20 @@ export function describeRouteError(error: unknown) {
   return serialized && serialized !== "{}" ? serialized : t("app.unknown_error");
 }
 
+export function classifyRouteSessionReadError(error: unknown): "not-found" | "retryable" | "error" {
+  const status = error instanceof Error && "status" in error && typeof error.status === "number"
+    ? error.status
+    : null;
+  const code = error instanceof Error && "code" in error && typeof error.code === "string"
+    ? error.code
+    : "";
+  if (code === "session_not_found") return "not-found";
+  if (status === 502 || status === 503 || status === 504 || isTransientStartupError(describeRouteError(error))) {
+    return "retryable";
+  }
+  return "error";
+}
+
 export function describeWorkspaceCreateError(error: unknown) {
   const message = describeRouteError(error);
   const lower = message.toLowerCase();

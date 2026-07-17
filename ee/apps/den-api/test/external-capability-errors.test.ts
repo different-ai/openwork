@@ -110,6 +110,37 @@ test("generic connector recovery routes members and organization admins without 
   })
 })
 
+test("reauth-required overrides generic provider ownership from a refresh diagnostic", () => {
+  const status = externalCapabilities.buildExternalConnectionStatus({
+    connection: { id: "connection-refresh", name: "Research Vault", authType: "oauth", credentialMode: "per_member" },
+    state: "reauth_required",
+    errorCode: "unauthorized",
+    message: "The authorization server rejected the token refresh exchange.",
+    diagnostic: {
+      referenceId: "req_refresh",
+      phase: "CONTINUITY_REFRESH",
+      category: "http_failure",
+      code: "MCP_HTTP_400",
+      highestPassed: "reachable",
+      retryable: false,
+      actionOwner: "provider_admin",
+      operatorAction: "Inspect provider and proxy logs.",
+      message: "The authorization server rejected the token refresh exchange.",
+      httpStatus: 400,
+    },
+  })
+
+  expect(status).toMatchObject({
+    state: "reauth_required",
+    actor: "member",
+    action: {
+      type: "reconnect",
+      label: "Reconnect Research Vault",
+      surface: "openwork_your_connections",
+    },
+  })
+})
+
 test("provider installation failures route to the provider admin console", () => {
   const status = externalCapabilities.buildExternalConnectionStatus({
     connection: { id: "connection-4", name: "Documents", authType: "oauth", credentialMode: "shared" },

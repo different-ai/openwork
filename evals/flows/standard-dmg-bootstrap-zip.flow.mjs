@@ -179,9 +179,9 @@ export default {
       },
     },
     {
-      name: "Hosted opt-in and self-host defaults remain explicit",
+      name: "Default-on and kill-switch contract remains explicit",
       run: async (ctx) => {
-        await ctx.prove("Hosted gating requires opt-in while self-hosted OpenWork enables downloads by default", {
+        await ctx.prove("Install links are default-on for every deployment, with an org kill switch", {
           voiceover: vo[5],
           assert: async () => {
             const result = spawnSync(
@@ -189,7 +189,7 @@ export default {
               ["exec", "bun", "test", "ee/apps/den-api/test/install-links-rollout.test.ts"],
               { cwd: ROOT, encoding: "utf8", env: process.env },
             );
-            witness(ctx, result.status === 0, "The deployment gating contract passes in the exact branch sandbox", result.stdout + result.stderr);
+            witness(ctx, result.status === 0, "The default-on kill-switch contract passes in the exact branch sandbox", result.stdout + result.stderr);
             ctx.output("install-links rollout contract", (result.stdout + result.stderr).trim());
             const releaseWorkflow = readFileSync(path.join(ROOT, ".github", "workflows", "release-macos-aarch64.yml"), "utf8");
             witness(ctx, !releaseWorkflow.includes("publish-generic-installer:"), "Stable releases no longer build the separate generic installer", "publish-generic-installer job absent");

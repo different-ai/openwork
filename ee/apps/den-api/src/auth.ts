@@ -39,6 +39,7 @@ import {
   getOrganizationSsoJitRole,
   ORGANIZATION_SSO_JIT_ROLE,
 } from "./sso-jit.js";
+import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js";
 import {
   ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
   ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
@@ -760,9 +761,16 @@ export const auth = betterAuth({
         const remoteId = pickRemoteIdentity(userInfo);
         const displayName = maybeString(userInfo.name) ?? maybeString(userInfo.displayName) ?? maybeString(user.name);
         const email = maybeString(userInfo.email) ?? maybeString(user.email);
+        const organizationId = normalizeDenTypeId("organization", provider.organizationId);
+        const userId = normalizeDenTypeId("user", user.id);
+        if (await isScimDeprovisionedIdentity({ organizationId, userId, email })) {
+          throw new APIError("FORBIDDEN", {
+            message: "This user was deprovisioned by SCIM. Reactivate them in the identity provider before signing in.",
+          });
+        }
         const payload = {
-          organizationId: normalizeDenTypeId("organization", provider.organizationId),
-          userId: normalizeDenTypeId("user", user.id),
+          organizationId,
+          userId,
           source: "sso",
           ssoProviderId: provider.providerId,
           remoteId,
