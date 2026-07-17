@@ -140,10 +140,18 @@ function restoredClientInformation(input: {
   extra: Record<string, unknown> | null
 }): OAuthClientInformationMixed {
   const candidate = input.extra?.clientInformation
+  const tokenEndpointAuthMethod = input.extra?.tokenEndpointAuthMethod
+  const registeredRedirectUri = input.extra?.registeredRedirectUri
   const full = OAuthClientInformationFullSchema.safeParse({
     ...(typeof candidate === "object" && candidate !== null ? candidate : {}),
     client_id: input.clientId,
     client_secret: input.clientSecret ?? undefined,
+    ...(tokenEndpointAuthMethod === "client_secret_basic" || tokenEndpointAuthMethod === "client_secret_post"
+      ? {
+          token_endpoint_auth_method: tokenEndpointAuthMethod,
+          ...(typeof registeredRedirectUri === "string" ? { redirect_uris: [registeredRedirectUri] } : {}),
+        }
+      : {}),
   })
   if (full.success) return full.data
   return OAuthClientInformationSchema.parse({

@@ -19,7 +19,7 @@ function signedState(payload: Record<string, unknown>) {
   return `${encodedPayload}.${signature}`
 }
 
-function versionTwoState(callbackMode?: string) {
+function versionTwoState(callbackMode?: string, authorizationResponseIssuerRequired: unknown = undefined) {
   return signedState({
     version: 2,
     organizationId: "org_test",
@@ -27,6 +27,7 @@ function versionTwoState(callbackMode?: string) {
     providerId: "xmcp_test",
     binding: "binding",
     ...(callbackMode ? { callbackMode } : {}),
+    ...(authorizationResponseIssuerRequired !== undefined ? { authorizationResponseIssuerRequired } : {}),
     nonce: "nonce",
     iat: 1_700_000_000,
     exp: 1_700_000_600,
@@ -35,10 +36,14 @@ function versionTwoState(callbackMode?: string) {
 
 describe("version-two OAuth state validation", () => {
   test("accepts only the supported callback modes", () => {
-    expect(verifyOAuthStateToken({ token: versionTwoState("shared-v1"), secret, now: 1_700_000_100 })).not.toBeNull()
-    expect(verifyOAuthStateToken({ token: versionTwoState("isolated-v1"), secret, now: 1_700_000_100 })).not.toBeNull()
-    expect(verifyOAuthStateToken({ token: versionTwoState("legacy-v1"), secret, now: 1_700_000_100 })).not.toBeNull()
-    expect(verifyOAuthStateToken({ token: versionTwoState("future-v1"), secret, now: 1_700_000_100 })).toBeNull()
-    expect(verifyOAuthStateToken({ token: versionTwoState(), secret, now: 1_700_000_100 })).toBeNull()
+    expect(verifyOAuthStateToken({ token: versionTwoState("shared-v1"), secret, now: 1_700_000_100_000 })).not.toBeNull()
+    expect(verifyOAuthStateToken({ token: versionTwoState("isolated-v1"), secret, now: 1_700_000_100_000 })).not.toBeNull()
+    expect(verifyOAuthStateToken({ token: versionTwoState("legacy-v1"), secret, now: 1_700_000_100_000 })).not.toBeNull()
+    expect(verifyOAuthStateToken({ token: versionTwoState("future-v1"), secret, now: 1_700_000_100_000 })).toBeNull()
+    expect(verifyOAuthStateToken({ token: versionTwoState(), secret, now: 1_700_000_100_000 })).toBeNull()
+    expect(verifyOAuthStateToken({ token: versionTwoState("shared-v1", false), secret, now: 1_700_000_100_000 }))
+      .toMatchObject({ authorizationResponseIssuerRequired: false })
+    expect(verifyOAuthStateToken({ token: versionTwoState("shared-v1", "false"), secret, now: 1_700_000_100_000 })).toBeNull()
+    expect(verifyOAuthStateToken({ token: versionTwoState("shared-v1", false), secret, now: 1_700_000_601_000 })).toBeNull()
   })
 })

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 
@@ -28,6 +29,7 @@ let createExternalMcpConnection: typeof import("../src/capability-sources/extern
 let externalMcpIdentityBinding: typeof import("../src/capability-sources/external-mcp-connections.js").externalMcpIdentityBinding
 let isolateExternalMcpOAuthCallback: typeof import("../src/capability-sources/external-mcp-connections.js").isolateExternalMcpOAuthCallback
 let createOAuthStateToken: typeof import("../src/capability-sources/generic-oauth.js").createOAuthStateToken
+let verifyOAuthStateToken: typeof import("../src/capability-sources/generic-oauth.js").verifyOAuthStateToken
 let upsertOrgOAuthClient: typeof import("../src/capability-sources/oauth-credentials.js").upsertOrgOAuthClient
 let getOrgOAuthClient: typeof import("../src/capability-sources/oauth-credentials.js").getOrgOAuthClient
 
@@ -69,6 +71,7 @@ beforeAll(async () => {
   externalMcpIdentityBinding = connectionsMod.externalMcpIdentityBinding
   isolateExternalMcpOAuthCallback = connectionsMod.isolateExternalMcpOAuthCallback
   createOAuthStateToken = genericOAuthMod.createOAuthStateToken
+  verifyOAuthStateToken = genericOAuthMod.verifyOAuthStateToken
   upsertOrgOAuthClient = oauthCredentialsMod.upsertOrgOAuthClient
   getOrgOAuthClient = oauthCredentialsMod.getOrgOAuthClient
 
@@ -351,6 +354,9 @@ test("callback isolation replaces SDK registration state and exposes the scoped 
 
 test("connect start keeps the shared callback for a pre-registered confidential client without response issuer support", async () => {
   let origin = ""
+  let expectedCodeChallenge = ""
+  let initializeRequests = 0
+  let toolsListRequests = 0
   const server = Bun.serve({
     port: 0,
     async fetch(incoming) {
@@ -359,6 +365,7 @@ test("connect start keeps the shared callback for a pre-registered confidential 
         return Response.json({
           resource: `${origin}/mcp`,
           authorization_servers: [origin],
+          scopes_supported: ["mcp_server"],
         })
       }
       if (url.pathname === "/.well-known/oauth-authorization-server") {
@@ -368,20 +375,27 @@ test("connect start keeps the shared callback for a pre-registered confidential 
           token_endpoint: `${origin}/token`,
           response_types_supported: ["code"],
           grant_types_supported: ["authorization_code"],
-          token_endpoint_auth_methods_supported: ["client_secret_basic"],
+          token_endpoint_auth_methods_supported: ["client_secret_post"],
+          scopes_supported: ["mcp_server"],
         })
       }
       if (url.pathname === "/token") {
         const form = new URLSearchParams(await incoming.text())
-        expect(incoming.headers.get("authorization")).toBe(`Basic ${btoa("confidential-client:confidential-secret")}`)
+        expect(incoming.headers.get("authorization")).toBeNull()
+        expect(form.get("client_id")).toBe("confidential-client")
+        expect(form.get("client_secret")).toBe("confidential-secret")
         expect(form.get("grant_type")).toBe("authorization_code")
         expect(form.get("code")).toBe("shared-authorization-code")
-        expect(form.get("code_verifier")?.length).toBeGreaterThanOrEqual(43)
+        expect(form.get("resource")).toBe(`${origin}/mcp`)
+        const verifier = form.get("code_verifier")
+        expect(verifier?.length).toBeGreaterThanOrEqual(43)
+        expect(createHash("sha256").update(verifier ?? "").digest("base64url")).toBe(expectedCodeChallenge)
         return Response.json({
           access_token: "shared-access-token",
           refresh_token: "shared-refresh-token",
           token_type: "Bearer",
           expires_in: 3_600,
+          scope: "mcp_server",
         })
       }
       if (url.pathname === "/mcp") {
@@ -392,8 +406,20 @@ test("connect start keeps the shared callback for a pre-registered confidential 
           if (rpc.method === "notifications/initialized") return new Response(null, { status: 202 })
           const id = typeof rpc.id === "string" || typeof rpc.id === "number" ? rpc.id : null
           if (rpc.method === "tools/list") {
-            return Response.json({ jsonrpc: "2.0", id, result: { tools: [] } })
+            toolsListRequests += 1
+            return Response.json({
+              jsonrpc: "2.0",
+              id,
+              result: {
+                tools: [{
+                  name: "list-scoped-records",
+                  description: "Lists records available to the required MCP scope.",
+                  inputSchema: { type: "object", properties: {} },
+                }],
+              },
+            })
           }
+          if (rpc.method === "initialize") initializeRequests += 1
           return Response.json({
             jsonrpc: "2.0",
             id,
@@ -407,7 +433,7 @@ test("connect start keeps the shared callback for a pre-registered confidential 
         return new Response(null, {
           status: 401,
           headers: {
-            "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+            "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="mcp_server"`,
           },
         })
       }
@@ -447,9 +473,25 @@ test("connect start keeps the shared callback for a pre-registered confidential 
     const body: unknown = await response.json()
     if (!isRecord(body) || typeof body.authorizeUrl !== "string") throw new Error("Expected an OAuth authorize URL.")
     const authorizeUrl = new URL(body.authorizeUrl)
+    const signedState = authorizeUrl.searchParams.get("state") ?? ""
     expect(authorizeUrl.searchParams.get("client_id")).toBe("confidential-client")
     expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256")
+    expectedCodeChallenge = authorizeUrl.searchParams.get("code_challenge") ?? ""
+    expect(expectedCodeChallenge.length).toBeGreaterThan(0)
     expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(sharedCallback)
+    expect(authorizeUrl.searchParams.get("scope")).toBe("mcp_server")
+    expect(authorizeUrl.searchParams.get("resource")).toBe(`${origin}/mcp`)
+    expect(verifyOAuthStateToken({
+      token: signedState,
+      secret: process.env.BETTER_AUTH_SECRET ?? "",
+    })).toMatchObject({
+      organizationId,
+      orgMembershipId: memberId,
+      providerId: connection.id,
+      callbackMode: "shared-v1",
+      authorizationServerIssuer: origin,
+      authorizationResponseIssuerRequired: false,
+    })
 
     const rows = await db
       .select()
@@ -457,10 +499,15 @@ test("connect start keeps the shared callback for a pre-registered confidential 
       .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
       .limit(1)
     expect(rows[0]?.oauthConfiguration?.callbackMode).toBe("shared-v1")
+    expect(rows[0]?.pendingCodeVerifier).not.toContain(signedState)
+    const pendingAuthorizations: unknown = JSON.parse(rows[0]?.pendingCodeVerifier ?? "{}")
+    expect(isRecord(pendingAuthorizations) && Array.isArray(pendingAuthorizations.transactions)
+      ? pendingAuthorizations.transactions
+      : []).toHaveLength(1)
 
     const callbackUrl = new URL(sharedCallback)
     callbackUrl.searchParams.set("code", "shared-authorization-code")
-    callbackUrl.searchParams.set("state", authorizeUrl.searchParams.get("state") ?? "")
+    callbackUrl.searchParams.set("state", signedState)
     const callbackResponse = await app.fetch(new Request(callbackUrl))
     expect(callbackResponse.status).toBe(200)
     expect(await callbackResponse.text()).toContain("You're connected")
@@ -472,6 +519,9 @@ test("connect start keeps the shared callback for a pre-registered confidential 
       .limit(1)
     expect(connectedRows[0]?.accessToken).toBe("shared-access-token")
     expect(connectedRows[0]?.refreshToken).toBe("shared-refresh-token")
+    expect(connectedRows[0]?.scope).toBe("mcp_server")
+    expect(initializeRequests).toBeGreaterThan(0)
+    expect(toolsListRequests).toBeGreaterThan(0)
   } finally {
     server.stop(true)
   }
