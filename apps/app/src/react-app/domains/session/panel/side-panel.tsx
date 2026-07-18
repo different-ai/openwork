@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖会话 Panel Store、OpenWork 工作区文件客户端、Artifact/Browser 渲染器与 Electron Browser 边界
+ * [OUTPUT]: 对外提供 SidePanel 组件和仅 DEV 可见的 Artifact 证明动作
+ * [POS]: session/panel 的装配层，协调标签生命周期与产物预览，不承载 Agent 业务规则
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 /** @jsxImportSource react */
 import * as React from "react";
 import {
@@ -40,6 +46,7 @@ import {
   hasNativeBrowserOccluder,
   sameBounds,
 } from "./utils";
+import { buildOutreachEvalSnapshot, isOutreachEvalStage } from "./outreach-eval-seed";
 
 type SidePanelProps = {
   sessionId: string;
@@ -512,6 +519,84 @@ export function SidePanel({
     };
   }, [client, sessionId, workspaceId]);
   useControlAction(seedPdfArtifactControlAction);
+
+  const seedAgenticOutreachControlAction = React.useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.agentic_outreach.seed",
+      label: "Seed an Agentic Outreach proof stage",
+      description: "Write the deterministic external-provider stand-in results to the real workspace and open the current Run artifact.",
+      sideEffect: "mutation",
+      disabled: !client || !workspaceId,
+      args: [
+        { name: "stage", type: "number", required: true, description: "Outreach proof stage, from 1 to 8." },
+        { name: "contactApproved", type: "boolean", description: "True only after the user explicitly approves the stage-5 contact purchase." },
+        { name: "launchApproved", type: "boolean", description: "True only after the user explicitly approves the stage-7 campaign launch." },
+      ],
+      previewArgs: { stage: 1 },
+      execute: async (args) => {
+        if (!client || !workspaceId) return { ok: false, error: "Workspace client is not ready." };
+        const stage = args && typeof args === "object" && "stage" in args ? args.stage : undefined;
+        if (!isOutreachEvalStage(stage)) return { ok: false, error: "stage must be an integer from 1 to 8." };
+        const contactApproved = Boolean(args && typeof args === "object" && "contactApproved" in args && args.contactApproved);
+        const launchApproved = Boolean(args && typeof args === "object" && "launchApproved" in args && args.launchApproved);
+        if (stage === 5 && !contactApproved) return { ok: false, error: "Stage 5 requires explicit contact purchase approval." };
+        if (stage === 7 && !launchApproved) return { ok: false, error: "Stage 7 requires explicit launch approval." };
+
+        const snapshot = buildOutreachEvalSnapshot(stage);
+        let restoredFromRun = false;
+        if (stage === 8) {
+          const existingRunFile = snapshot.files.find((file) => file.path.endsWith("/run.json"));
+          if (!existingRunFile) return { ok: false, error: "Run ledger definition is missing." };
+          const existingRun = await client.readWorkspaceFile(workspaceId, existingRunFile.path);
+          restoredFromRun = existingRun.content.includes(snapshot.runId) && existingRun.content.includes("seq_inst_01KXV_OUTREACH");
+          if (!restoredFromRun) return { ok: false, error: "Stage 8 could not restore the launched Run ledger from the workspace." };
+        }
+        for (const file of snapshot.files) {
+          if (file.path.endsWith(".ndjson")) {
+            await client.writeWorkspaceBinaryFile(workspaceId, {
+              path: file.path,
+              data: new TextEncoder().encode(file.content).buffer,
+              baseUpdatedAt: null,
+              force: true,
+            });
+          } else {
+            await client.writeWorkspaceFile(workspaceId, { path: file.path, content: file.content, baseUpdatedAt: null, force: true });
+          }
+        }
+
+        const primary = snapshot.files.find((file) => file.path === snapshot.primaryPath);
+        if (!primary) return { ok: false, error: "Primary outreach artifact is missing." };
+        const target: OpenTarget = {
+          id: `eval:agentic-outreach:${stage}:${primary.path}`,
+          kind: "file",
+          value: primary.path,
+          name: primary.path.split("/").pop() ?? primary.path,
+          preview: primary.preview,
+          confidence: 100,
+          reason: "agentic-outreach-eval",
+          exists: true,
+          size: primary.content.length,
+        };
+        const store = usePanelTabStore.getState();
+        store.syncTranscriptArtifacts(sessionId, [target]);
+        store.openTab(sessionId, { id: target.id, type: "artifact", label: target.name, preview: target.preview });
+        store.selectTab(sessionId, target.id);
+
+        return {
+          ok: true,
+          stage,
+          runId: snapshot.runId,
+          state: snapshot.state,
+          primaryPath: snapshot.primaryPath,
+          restoredFromRun,
+          writtenFiles: snapshot.files.map((file) => file.path),
+        };
+      },
+    };
+  }, [client, sessionId, workspaceId]);
+  useControlAction(seedAgenticOutreachControlAction);
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
