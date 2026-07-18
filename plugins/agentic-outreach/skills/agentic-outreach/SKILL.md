@@ -3,12 +3,12 @@ name: agentic-outreach
 description: Run evidence-first B2B prospecting and outreach through live MCP/API capabilities. Use when the user asks to find companies or buyers, research current buying signals, acquire verified contacts, draft or launch outbound sequences, monitor replies, or resume an outreach run. Qualifies before paid lookup and requires explicit approval before contact purchase and again before sending.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
   domain: b2b-outreach
 ---
 <!--
-[INPUT]: 依赖 OpenWork search_capabilities/execute_capability、工作区文件能力与用户的两阶段明确审批
-[OUTPUT]: 对外提供从 Outreach Brief 到证据、付费联系方式、Campaign、Launch、Reply Handoff 的可恢复工作流
+[INPUT]: 依赖 OpenWork search_capabilities/execute_capability、工作区文件能力、标准哈希能力与用户的两阶段明确审批
+[OUTPUT]: 对外提供从 Outreach Brief 到证据、受预算约束的付费联系方式、完整性锁定 Campaign、Launch、Reply Handoff 与控制台的可恢复工作流
 [POS]: agentic-outreach 的核心深 Module；供应商仅通过运行时 Adapter 进入，领域规则与外部执行严格分离
 [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
 -->
@@ -28,6 +28,8 @@ Convert a target market and current signal into a qualified, evidence-backed, ap
 7. Preserve suppression, dedupe, unsubscribe, and user exclusions across retries and sessions.
 8. Use stable action keys and verify ambiguous provider outcomes before retrying. Never risk a duplicate charge or send.
 9. Never expose credentials, hidden provider diagnostics, or unrelated personal data in artifacts.
+10. Treat provider-native units and billing currency as separate ledgers. Never silently convert credits into money without a timestamped quote or account-price snapshot.
+11. Bind each approval to canonical input hashes. A changed contact plan, audience, message, sender, or provider contract invalidates the relevant approval.
 
 ## Capability routing
 
@@ -57,6 +59,7 @@ For a new run, create a filesystem-safe UTC `run_id`, for example `20260718T0915
   brief.md
   lead-ledger.csv
   campaign.md
+  dashboard.md
   run.json
   events.ndjson
   handoff.md
@@ -70,7 +73,7 @@ Minimum `run.json` shape:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "run_id": "...",
   "state": "brief|researching|qualified|awaiting_contact_approval|acquiring_contacts|drafted|awaiting_launch_approval|launched|monitoring|handed_off|blocked|cancelled",
   "created_at": "ISO-8601",
@@ -78,13 +81,40 @@ Minimum `run.json` shape:
   "brief_revision": 1,
   "campaign_revision": 0,
   "counts": { "candidates": 0, "qualified": 0, "review": 0, "rejected": 0, "contacts": 0 },
-  "budget": { "currency": "USD", "cap": 0, "worst_case": 0, "actual": 0 },
+  "budget": {
+    "currency": "USD",
+    "cap": 0,
+    "worst_case": 0,
+    "reserved": 0,
+    "actual": 0,
+    "meter": { "unit": "credits", "cap": 0, "worst_case": 0, "reserved": 0, "actual": 0 },
+    "conversion_snapshot": { "captured_at": "ISO-8601", "provider": "...", "native_unit": "credits", "units_per_currency": null, "source": "provider quote or account price" }
+  },
+  "contact_plan": {
+    "revision": 0,
+    "mode": "managed_waterfall|single_provider|composed_waterfall",
+    "providers": [],
+    "stop_condition": "first_provider_verified",
+    "eligible_lead_ids_hash": null,
+    "plan_hash": null
+  },
+  "integrity": {
+    "brief_hash": "sha256:...",
+    "campaign_content_hash": null,
+    "audience_hash": null,
+    "sender_hash": null,
+    "provider_contract_hash": null
+  },
   "approvals": { "contact_purchase": null, "launch": null },
   "external_refs": []
 }
 ```
 
-Each event is one JSON object containing `at`, `action_key`, `stage`, `status`, `capability`, and, when available, `external_ref`, `cost`, and a safe `message`.
+Each event is one JSON object containing `at`, `action_key`, `stage`, `status`, `capability`, `input_hash`, and, when available, `result_hash`, `provider_contract_version`, `external_ref`, `cost`, `meter_delta`, and a safe `message`.
+
+Use SHA-256 over UTF-8 canonical JSON for integrity fields: recursively sort object keys, preserve array order unless the field explicitly represents a set, omit transient timestamps, and serialize without insignificant whitespace. Sort Lead-ID sets before hashing. Use an existing system or workspace hashing capability; do not add a custom cryptography dependency. Prefix stored values with `sha256:`. If the exact bytes cannot be reconstructed, invalidate approval instead of approximating a hash.
+
+`dashboard.md` is a derived control surface, never a second source of truth. Refresh it after every state transition from `run.json`, the Lead Ledger, and append-only events. It must show state, next action, funnel, evidence freshness, currency and native-unit spend, contact-plan mode, approval scope, Campaign integrity, external references, outcomes, and blockers.
 
 ## Stage 1 — Freeze the Outreach Brief
 
@@ -97,6 +127,7 @@ Write `brief.md` with:
 - target volume and stopping condition;
 - contact verification requirement;
 - currency, hard budget cap, and whether provider credits count as spend;
+- native provider-unit cap when the selected provider meters credits, lookups, or results;
 - sender identity and allowed channels;
 - suppression sources and prior-outreach window;
 - Contact Purchase Approval and Launch Approval policy.
@@ -144,10 +175,21 @@ Report candidate, qualified, review, rejected, freshness, and evidence-coverage 
 
 ## Stage 4 — Price and request Contact Purchase Approval
 
-Discover the current contact-acquisition capability and read its exact schema. Obtain provider pricing or the best explicit unit-cost/credit assumption available. Compute:
+Discover the current contact-acquisition capability and read its exact schema. Choose the narrowest external execution path in this order:
+
+1. a first-party managed waterfall that stops on a verified result and exposes result-based charging;
+2. a single first-party provider selected by the user or already connected;
+3. a customer-owned Activepieces flow composing providers, only when no aggregate capability fits and the user accepts its added cost and failure surface.
+
+Do not compose a waterfall inside this Skill. Do not infer or claim the aggregate provider's hidden sub-provider when its result omits that attribution; record the aggregate provider plus its external result ID.
+
+Build `contact_plan` from the live contracts. Each provider entry records `capability`, human label, contract or Skill version, maximum unit cost, native meter unit, and whether it charges on attempt, lookup, or verified result. Freeze the sorted eligible Lead IDs and hash them. Hash the entire canonical plan.
+
+Obtain both provider-native pricing and a defensible billing-currency ceiling. Capture the quote or account-price conversion source and time. Compute:
 
 ```text
 worst_case = eligible_qualified_leads × maximum_unit_cost
+meter_worst_case = eligible_qualified_leads × maximum_native_units
 approved_limit = min(user_budget_cap, explicitly_approved_amount)
 ```
 
@@ -158,33 +200,36 @@ Show:
 - provider and verification semantics;
 - eligible Lead count;
 - maximum unit cost or credit assumption;
-- worst-case total and currency;
+- worst-case total in billing currency and provider-native units;
 - remaining run budget;
 - what happens for not-found or unverifiable contacts;
+- plan mode, charging event, and first-verified stop rule;
 - the exact rows eligible for purchase.
 
 Ask for a direct approval such as:
 
 ```text
-Approve contact purchase for run <run_id>: up to <count> qualified leads via <provider>, maximum <currency> <amount> total.
+Approve contact purchase for run <run_id>: plan <plan_hash>, <eligible_hash>, up to <count> qualified leads via <provider>, maximum <native_limit> <native_unit> and <currency> <amount> total.
 ```
 
-Only a clear user response to this proposal is Contact Purchase Approval. Record the approval text, time, provider, count, currency, amount, and brief revision in `run.json` and `events.ndjson`.
+Only a clear user response to this proposal is Contact Purchase Approval. Record the approval text, time, provider, count, billing-currency amount, native-unit limit, brief revision, eligible hash, and plan hash in `run.json` and `events.ndjson`. This is an atomic gate: before that record exists, no external call may reveal, request, enrich, or reserve a paid contact channel.
 
 ## Stage 5 — Acquire contacts safely
 
 For each approved Lead:
 
-1. Build `action_key = <run_id>:contact:<lead_id>:<capability_name>`.
-2. Skip if that key already completed.
-3. Append a `planned` event before the external mutation.
-4. Call the exact provider capability within the remaining approved budget.
-5. Append `completed` or `failed` with provider reference and actual cost.
-6. Update the Lead Ledger:
+1. Recompute the eligible hash and plan hash. Stop for re-approval if either differs.
+2. Build `action_key = <run_id>:contact:<lead_id>:<plan_hash>:<capability_name>`.
+3. Skip if that key already completed.
+4. Reserve the maximum next-call currency and native units, then append a `planned` event with the canonical input hash before the external mutation.
+5. Call the exact provider capability within both remaining approved ledgers.
+6. Append `completed` or `failed` with provider reference, result hash, actual currency cost, and native-unit delta; release unused reservation.
+7. Update the Lead Ledger:
    - `verified` only when the provider explicitly says verified;
    - `unverified`, `not_found`, `failed`, or `suppressed` otherwise;
    - never infer or pattern-generate an address.
-7. Stop before the next call if actual plus maximum next-call cost could exceed approval.
+8. With a composed external waterfall, stop after the first explicitly verified result. If any attempt times out or has an ambiguous result, query that provider by external reference or action key; do not advance to the next provider until the outcome is resolved.
+9. Stop before the next call if either actual ledger plus the maximum next-call amount could exceed approval.
 
 Report actual spend, contacts returned, verified rate, failures, and cost per verified qualified contact.
 
@@ -210,21 +255,23 @@ The Campaign must include:
 - bounce, reply, and out-of-office behavior;
 - Campaign revision and projected send count.
 
-Drafting never grants Launch Approval.
+Canonicalize and hash the exact provider-ready message payload, sorted audience Lead IDs, sender identity, and selected live provider contract. Write them to `run.json.integrity`. Drafting never grants Launch Approval.
 
 ## Stage 7 — Request Launch Approval
 
-Show the final Campaign revision, sender, qualified/verified audience count, schedule, suppression count, and sequencer capability. Ask:
+Show the final Campaign revision, sender, qualified/verified audience count, schedule, suppression count, sequencer capability, content hash, audience hash, sender hash, and provider-contract hash. Ask:
 
 ```text
-Approve launch for run <run_id>, campaign revision <revision>: send <count> contacts from <sender> on <schedule> via <provider>.
+Approve launch for run <run_id>, campaign revision <revision>, content <content_hash>, audience <audience_hash>, sender <sender_hash>, contract <contract_hash>: send <count> contacts from <sender> on <schedule> via <provider>.
 ```
 
-Only an explicit user response to that exact launch proposal is Launch Approval. If the audience, sender, provider, schedule, or content materially changes afterward, increment `campaign_revision` and request approval again.
+Only an explicit user response to that exact launch proposal is Launch Approval. Persist all four hashes in the approval record. If the audience, sender, provider, schedule, content, or live contract changes afterward, increment `campaign_revision` when applicable, invalidate the approval, and request it again.
 
 ## Stage 8 — Launch idempotently
 
-Create one launch `action_key` containing the run ID, Campaign revision, sender, audience hash, and capability name. Append `planned`, call the exact sequencer capability, then append `completed` with the provider sequence/campaign ID and accepted count.
+Immediately before launch, re-read the exact capability schema and any provider-side draft/campaign object. Rebuild the provider-ready payload and recompute content, audience, sender, and contract hashes. All four must equal Launch Approval; otherwise stop with `approval_invalidated` and show the changed fields.
+
+Create one launch `action_key` containing the run ID, Campaign revision, sender hash, audience hash, content hash, contract hash, and capability name. Append `planned` with the input hash, call the exact sequencer capability, then append `completed` with the provider sequence/campaign ID, result hash, and accepted count.
 
 If the call times out or returns an ambiguous result, search/query the provider for the action key or external reference before retrying. Never create a second campaign merely because the first response was lost.
 
@@ -250,9 +297,11 @@ Lead with commercial outcomes:
 - evidence freshness and coverage;
 - verified contacts and verification rate;
 - worst-case approved spend, actual spend, and cost per verified qualified contact;
+- native units approved, reserved, consumed, and remaining;
 - Campaign revision, provider reference, and sent/accepted count;
+- Campaign integrity/preflight status;
 - positive/negative/unsubscribe/bounce counts;
 - blocked human action and next owner;
-- paths to `lead-ledger.csv`, `campaign.md`, and `handoff.md`.
+- paths to `dashboard.md`, `lead-ledger.csv`, `campaign.md`, and `handoff.md`.
 
 Never describe a draft as launched, a guessed address as verified, a plugin binding as connected, or an attempted mutation as completed.

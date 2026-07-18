@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 依赖 Agentic Outreach 八阶段 voiceover 与 Artifact 预览类型
- * [OUTPUT]: 对外提供仅供 DEV Fraimz 使用的确定性 Run 文件快照和阶段校验
+ * [INPUT]: 依赖 Agentic Outreach 八阶段 voiceover、双账本/完整性契约与 Artifact 预览类型
+ * [OUTPUT]: 对外提供仅供 DEV Fraimz 使用的确定性 Run、商业控制台文件快照和阶段校验
  * [POS]: session/panel 的证明 Fixture；模拟外部系统结果但写入真实工作区文件，不进入生产能力路径
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -24,6 +24,19 @@ export type OutreachEvalSnapshot = {
 
 export const OUTREACH_EVAL_RUN_ID = "20260718T091500Z-series-b-security";
 export const OUTREACH_EVAL_STAGES: OutreachEvalStage[] = [1, 2, 3, 4, 5, 6, 7, 8];
+
+const HASHES = {
+  brief: "sha256:6b2f289992d86a8290d17e7c4cbdf1eeb207f4956a2c967a2d533fc4b0c9eafa",
+  contactPlan: "sha256:f6968fa245229fdd9928c5f8fce0b45f2939a3bfa28a683ea86bcef68b058a82",
+  eligibleLeads: "sha256:606384592f5fcd12953ff06416ad43f7a07c8c3f9d55d3d1dcfba0daa0b063b5",
+  campaignContent: "sha256:c7fae09c13bc4cddbdc48e660b2b21ca7c338db6cb9667c229c48a3ecb1e2447",
+  audience: "sha256:35362daa03efc0e4e4999d89efd3d3b6417afcca75de8dccb988852c19bfc527",
+  sender: "sha256:bb1a65e993dbeb6c97e12a06c73c6626adb68eeeb1d24eb5c360c453fb4405ca",
+  senderContract: "sha256:e02adb624712c8372168cf2f298970d02149e3b00ef7cd96d26b3e74bf62180a",
+  contactResult: "sha256:d52ca307ea162bb10b9a7ad9fdeb48efe5ecde59ac8030961676fa474006abc4",
+  launchResult: "sha256:539395f3b88936f988f9a247e1bf9087f620c88a24d864142863e57a5e596550",
+  replyResult: "sha256:f836864ed7276afbf2ccdeef4f764025424fab090ce20b8d1d9d0c023c01681b",
+} as const;
 
 export function isOutreachEvalStage(value: unknown): value is OutreachEvalStage {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 8;
@@ -123,13 +136,82 @@ function stateFor(stage: OutreachEvalStage) {
   return "handed_off";
 }
 
+function dashboard(stage: OutreachEvalStage) {
+  const qualified = stage >= 4;
+  const purchased = stage >= 5;
+  const drafted = stage >= 6;
+  const launched = stage >= 7;
+  const replied = stage >= 8;
+  const state = stateFor(stage);
+  const nextAction = replied
+    ? "Maya owns the positive-reply handoff; all remaining touches for replied Leads stay paused."
+    : launched
+      ? "Monitor replies and delivery events; any real reply, unsubscribe, or hard bounce pauses future touches."
+      : drafted
+        ? "Review the 27-recipient Campaign and approve the exact content, audience, sender, and provider contract hashes."
+        : qualified
+          ? "Approve the frozen FullEnrich managed-waterfall plan before any contact channel is requested."
+          : "Complete live evidence research and qualification before spending contact credits.";
+
+  return [
+    "# Outreach Control Center",
+    "",
+    `Run: ${OUTREACH_EVAL_RUN_ID} · State: **${state}**`,
+    "",
+    "## Next action",
+    "",
+    nextAction,
+    "",
+    "## Funnel",
+    "",
+    `${stage >= 3 ? 50 : 0} candidates → ${qualified ? 31 : 0} qualified → ${purchased ? 27 : 0} verified → ${replied ? 3 : 0} positive`,
+    "",
+    `${qualified ? 7 : 0} review · ${qualified ? 12 : 0} rejected · ${purchased ? "87% verified / qualified" : "contact purchase locked"}`,
+    "",
+    "Evidence: live URLs + observed times · Freshness window: 30 days · Coverage: 50/50 candidates",
+    "",
+    "## Spend guard",
+    "",
+    `- Billing currency: USD ${purchased ? "21.60 actual" : "0.00 actual"} / USD 25.00 approved · worst case USD ${qualified ? "24.80" : "0.00"}`,
+    `- Native meter: ${purchased ? "27 actual" : "0 actual"} / ${qualified ? "31 approved FullEnrich credits" : "not priced"} · ${purchased ? "4 remaining" : "0 reserved"}`,
+    "- Conversion snapshot: 2026-07-18T09:24:00Z · FullEnrich account price · 1 credit = USD 0.80",
+    "",
+    "## Contact plan",
+    "",
+    `- Mode: ${qualified ? "managed_waterfall" : "not frozen"} · Provider: ${qualified ? "FullEnrich" : "pending live discovery"}`,
+    `- Billing: ${qualified ? "verified result only" : "pending"} · Stop: ${qualified ? "first provider-verified result" : "pending"}`,
+    `- Purchase gate: ${purchased ? "approved and reconciled" : qualified ? "awaiting explicit approval" : "locked until qualification"}`,
+    `- Plan: ${qualified ? HASHES.contactPlan : "not frozen"}`,
+    "",
+    "## Campaign integrity",
+    "",
+    `- Content: ${drafted ? HASHES.campaignContent : "not drafted"}`,
+    `- Audience: ${drafted ? HASHES.audience : "not drafted"}`,
+    `- Sender: ${drafted ? HASHES.sender : "not drafted"}`,
+    `- Live contract: ${drafted ? HASHES.senderContract : "not inspected"}`,
+    `- Launch gate: ${launched ? "approved" : drafted ? "awaiting explicit approval" : "locked"}`,
+    `- Preflight: ${launched ? "Passed — provider draft and live contract re-read; all four hashes match Launch Approval" : "not run"}`,
+    "",
+    "## External execution",
+    "",
+    launched
+      ? "Instantly sequence `seq_inst_01KXV_OUTREACH` · 27 accepted · one idempotent launch"
+      : "No sender mutation completed.",
+    "",
+    "## Outcomes",
+    "",
+    replied ? "3 positive · 1 negative · 2 unsubscribe · 1 bounce · 20 awaiting reply" : "No normalized replies yet.",
+    "",
+  ].join("\n");
+}
+
 function runJson(stage: OutreachEvalStage) {
   const qualified = stage >= 4;
   const purchased = stage >= 5;
   const launched = stage >= 7;
   const replied = stage >= 8;
   return `${JSON.stringify({
-    schema_version: 1,
+    schema_version: 2,
     run_id: OUTREACH_EVAL_RUN_ID,
     state: stateFor(stage),
     created_at: "2026-07-18T09:15:00Z",
@@ -144,23 +226,57 @@ function runJson(stage: OutreachEvalStage) {
       contacts: purchased ? 27 : 0,
       positive_replies: replied ? 3 : 0,
     },
-    budget: { currency: "USD", cap: 25, worst_case: qualified ? 24.8 : 0, actual: purchased ? 21.6 : 0 },
-    approvals: {
-      contact_purchase: purchased ? { approved_at: "2026-07-18T09:25:00Z", amount: 25, provider: "FullEnrich" } : null,
-      launch: launched ? { approved_at: "2026-07-18T09:38:00Z", campaign_revision: 1, count: 27 } : null,
+    budget: {
+      currency: "USD",
+      cap: 25,
+      worst_case: qualified ? 24.8 : 0,
+      reserved: 0,
+      actual: purchased ? 21.6 : 0,
+      meter: { unit: "credits", cap: qualified ? 31 : 0, worst_case: qualified ? 31 : 0, reserved: 0, actual: purchased ? 27 : 0 },
+      conversion_snapshot: qualified
+        ? { captured_at: "2026-07-18T09:24:00Z", provider: "FullEnrich", native_unit: "credits", units_per_currency: 1.25, source: "account price: 1 credit = USD 0.80" }
+        : null,
     },
-    external_refs: launched ? [{ provider: "Instantly", sequence_id: "seq_inst_01KXV_OUTREACH", accepted: 27 }] : [],
+    contact_plan: {
+      revision: qualified ? 1 : 0,
+      mode: qualified ? "managed_waterfall" : null,
+      providers: qualified
+        ? [{ capability: "fullenrich.lookup_verified_contact", label: "FullEnrich", contract_version: "mcp-2026-07-18", max_unit_cost: 0.8, max_native_units: 1, meter_unit: "credits", charges_on: "verified_result" }]
+        : [],
+      stop_condition: qualified ? "first_provider_verified" : null,
+      eligible_lead_ids_hash: qualified ? HASHES.eligibleLeads : null,
+      plan_hash: qualified ? HASHES.contactPlan : null,
+    },
+    integrity: {
+      brief_hash: HASHES.brief,
+      campaign_content_hash: stage >= 6 ? HASHES.campaignContent : null,
+      audience_hash: stage >= 6 ? HASHES.audience : null,
+      sender_hash: stage >= 6 ? HASHES.sender : null,
+      provider_contract_hash: stage >= 6 ? HASHES.senderContract : null,
+    },
+    approvals: {
+      contact_purchase: purchased
+        ? { approved_at: "2026-07-18T09:25:00Z", amount: 25, currency: "USD", native_limit: 31, native_unit: "credits", provider: "FullEnrich", count: 31, brief_revision: 1, eligible_lead_ids_hash: HASHES.eligibleLeads, plan_hash: HASHES.contactPlan }
+        : null,
+      launch: launched
+        ? { approved_at: "2026-07-18T09:38:00Z", campaign_revision: 1, count: 27, campaign_content_hash: HASHES.campaignContent, audience_hash: HASHES.audience, sender_hash: HASHES.sender, provider_contract_hash: HASHES.senderContract }
+        : null,
+    },
+    external_refs: [
+      ...(purchased ? [{ provider: "FullEnrich", result_id: "batch_fe_01KXV", verified: 27 }] : []),
+      ...(launched ? [{ provider: "Instantly", sequence_id: "seq_inst_01KXV_OUTREACH", accepted: 27 }] : []),
+    ],
   }, null, 2)}\n`;
 }
 
 function events(stage: OutreachEvalStage) {
   const lines: Record<string, unknown>[] = [
-    { at: "2026-07-18T09:15:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:brief:1`, stage: "brief", status: "completed", capability: "local-ledger" },
+    { at: "2026-07-18T09:15:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:brief:1`, stage: "brief", status: "completed", capability: "local-ledger", input_hash: HASHES.brief, result_hash: HASHES.brief },
   ];
-  if (stage >= 3) lines.push({ at: "2026-07-18T09:21:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:research:1`, stage: "research", status: "completed", capability: "live-research-adapters" });
-  if (stage >= 5) lines.push({ at: "2026-07-18T09:27:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:contact:batch-1:fullenrich`, stage: "contact", status: "completed", capability: "fullenrich", external_ref: "batch_fe_01KXV", cost: 21.6 });
-  if (stage >= 7) lines.push({ at: "2026-07-18T09:39:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:launch:r1:audience-27:instantly`, stage: "launch", status: "completed", capability: "instantly", external_ref: "seq_inst_01KXV_OUTREACH" });
-  if (stage >= 8) lines.push({ at: "2026-07-18T09:48:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:reply:evt-positive-003`, stage: "monitoring", status: "completed", capability: "instantly-replies", external_ref: "reply_inst_003" });
+  if (stage >= 3) lines.push({ at: "2026-07-18T09:21:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:research:1`, stage: "research", status: "completed", capability: "live-research-adapters", input_hash: HASHES.brief, result_hash: HASHES.eligibleLeads });
+  if (stage >= 5) lines.push({ at: "2026-07-18T09:27:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:contact:batch-1:${HASHES.contactPlan}:fullenrich`, stage: "contact", status: "completed", capability: "fullenrich.lookup_verified_contact", input_hash: HASHES.contactPlan, result_hash: HASHES.contactResult, provider_contract_version: "mcp-2026-07-18", external_ref: "batch_fe_01KXV", cost: { amount: 21.6, currency: "USD" }, meter_delta: { amount: 27, unit: "credits" } });
+  if (stage >= 7) lines.push({ at: "2026-07-18T09:39:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:launch:r1:${HASHES.sender}:${HASHES.audience}:${HASHES.campaignContent}:${HASHES.senderContract}:instantly`, stage: "launch", status: "completed", capability: "instantly.create_campaign", input_hash: HASHES.campaignContent, result_hash: HASHES.launchResult, provider_contract_version: "mcp-2026-07-18", external_ref: "seq_inst_01KXV_OUTREACH" });
+  if (stage >= 8) lines.push({ at: "2026-07-18T09:48:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:reply:evt-positive-003`, stage: "monitoring", status: "completed", capability: "instantly.list_replies", input_hash: HASHES.launchResult, result_hash: HASHES.replyResult, external_ref: "reply_inst_003" });
   return `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`;
 }
 
@@ -192,7 +308,7 @@ function primaryPath(stage: OutreachEvalStage) {
   if (stage <= 2) return "brief.md";
   if (stage <= 5) return "lead-ledger.csv";
   if (stage === 6) return "campaign.md";
-  if (stage === 7) return "run.json";
+  if (stage === 7) return "dashboard.md";
   return "handoff.md";
 }
 
@@ -202,6 +318,7 @@ export function buildOutreachEvalSnapshot(stage: OutreachEvalStage): OutreachEva
     { path: `${root}/brief.md`, content: brief(stage), preview: "markdown" },
     { path: `${root}/lead-ledger.csv`, content: ledger(stage), preview: "sheet" },
     { path: `${root}/campaign.md`, content: campaign(stage), preview: "markdown" },
+    { path: `${root}/dashboard.md`, content: dashboard(stage), preview: "markdown" },
     { path: `${root}/run.json`, content: runJson(stage), preview: "markdown" },
     { path: `${root}/events.ndjson`, content: events(stage), preview: "text" },
     { path: `${root}/handoff.md`, content: handoff(stage), preview: "markdown" },

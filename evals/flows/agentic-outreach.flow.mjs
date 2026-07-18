@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 依赖批准的 agentic-outreach voiceover、真实 OpenWork Artifact UI 与 DEV 外部系统替身动作
- * [OUTPUT]: 对外提供八帧 B2B Outreach 用户旅程，证明账本、付费审批、发送审批和跨会话恢复
+ * [INPUT]: 依赖批准的 agentic-outreach voiceover、真实 OpenWork Artifact UI 与带商业护栏的 DEV 外部系统替身动作
+ * [OUTPUT]: 对外提供八帧 B2B Outreach 用户旅程，证明双账本、哈希审批、控制台和跨会话恢复
  * [POS]: evals/flows 的用户可见端到端证明；替身只生成供应商结果，文件写入、Artifact 渲染和跨会话恢复都走真实应用路径
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -8,8 +8,8 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const vo = await loadVoiceoverParagraphs("agentic-outreach");
 const REQUEST = "找出五十家最近三十天正在招聘合规负责人的美国 Series B 安全公司，只为合格的 VP 以上联系人购买已验证邮箱，总预算不超过 25 美元；没有我的明确批准，绝不发送。";
-const CONTACT_APPROVAL = "批准联系人购买：仅限 31 个合格 Lead，使用 FullEnrich，最坏总费用不超过 USD 25.00。";
-const LAUNCH_APPROVAL = "批准启动 run 20260718T091500Z-series-b-security 的 campaign revision 1：由 maya@acme.example 通过 Instantly 发送给 27 个已验证联系人。";
+const CONTACT_APPROVAL = "批准联系人购买：绑定当前冻结的 plan 和 eligible 指纹，仅限 31 个合格 Lead，使用 FullEnrich，最多 31 credits 且不超过 USD 25.00。";
+const LAUNCH_APPROVAL = "批准启动 run 20260718T091500Z-series-b-security 的 campaign revision 1，绑定当前显示的 content、audience、sender 和 contract 四个 SHA-256 指纹；由 maya@acme.example 通过 Instantly 发送给 27 个已验证联系人。";
 
 async function ensureSession(ctx) {
   await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "OpenWork control API" });
@@ -208,6 +208,7 @@ export default {
             ctx.assert(values.includes("FullEnrich") && values.includes("verified"), "Provider or verification status is missing.");
             ctx.assert(values.filter((value) => value === "0.80").length >= 2, "Actual per-contact costs were not written back.");
             ctx.assert(ctx.outreachStageResult.state === "acquiring_contacts", "Run did not record contact acquisition state.");
+            ctx.assert(ctx.outreachStageResult.writtenFiles.some((path) => path.endsWith("/dashboard.md")), "Outreach Control Center was not refreshed.");
           },
           screenshot: {
             name: "approved-contact-purchase",
@@ -249,18 +250,19 @@ export default {
           action: async () => {
             await ctx.control("composer.set_text", { text: LAUNCH_APPROVAL });
             await seedStage(ctx, 7, { launchApproved: true });
-            await ctx.waitForText("seq_inst_01KXV_OUTREACH", { timeoutMs: 30_000 });
+            await ctx.waitForText("Outreach Control Center", { timeoutMs: 30_000 });
           },
           assert: async () => {
             const body = await ctx.eval("document.body.innerText");
-            ctx.assert(body.includes('"state": "launched"'), "Run is not marked launched.");
-            ctx.assert(body.includes('"campaign_revision": 1'), "Approved Campaign revision is missing.");
-            ctx.assert(body.includes('"accepted": 27'), "Accepted recipient count is missing.");
+            ctx.assert(body.includes("State: launched"), "Run is not marked launched in the Control Center.");
+            ctx.assert(body.includes("27 accepted"), "Accepted recipient count is missing.");
+            ctx.assert(body.includes("27 actual / 31 approved FullEnrich credits"), "Native credit reconciliation is missing.");
+            ctx.assert(body.includes("all four hashes match Launch Approval"), "Launch integrity preflight is missing.");
             ctx.assert(body.includes("seq_inst_01KXV_OUTREACH"), "Provider sequence ID is missing.");
           },
           screenshot: {
             name: "approved-launch-ledger",
-            requireText: ["run.json", "seq_inst_01KXV_OUTREACH", "launched"],
+            requireText: ["Outreach Control Center", "seq_inst_01KXV_OUTREACH", "launched", "Campaign integrity"],
             rejectText: ["Something went wrong"],
           },
         });

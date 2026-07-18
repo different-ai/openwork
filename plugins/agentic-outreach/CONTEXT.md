@@ -1,6 +1,6 @@
 <!--
 [INPUT]: 依赖 Agentic Outreach 的产品边界与 B2B 外联阶段门
-[OUTPUT]: 对外提供无实现细节的统一领域词汇
+[OUTPUT]: 对外提供覆盖证据、瀑布计划、双账本、完整性审批与交接的统一领域词汇
 [POS]: agentic-outreach 的 Ubiquitous Language，约束文档、Skill、账本和用户沟通使用同一含义
 [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
 -->
@@ -20,9 +20,15 @@
 
 **Contact Purchase Approval** — Explicit user consent covering provider, eligible Lead count, unit-price assumption, currency, and worst-case total. Silence and earlier general permission are not approval.
 
+**Contact Plan** — The frozen external acquisition route for eligible Leads: managed waterfall, single provider, or customer-owned composed waterfall. It includes charging semantics, a first-verified stop rule, contract versions, and hashes for the plan and eligible Lead set.
+
+**Native Meter** — The provider's actual billable unit, such as credits, lookups, or verified results. It is approved and reconciled separately from billing currency so exchange or plan assumptions cannot hide consumption.
+
 **Campaign** — The approved audience, evidence-bound messages, timing, sender, suppression rules, and stop conditions for a run.
 
 **Launch Approval** — Explicit user consent for a specific Campaign revision, audience count, sender, and schedule. Draft approval is not Launch Approval.
+
+**Campaign Integrity** — SHA-256 identities for provider-ready content, sorted audience, sender, and live provider contract. A mismatch after approval invalidates Launch Approval before any send.
 
 **Suppression** — A rule preventing contact or future messages because of unsubscribe, bounce, duplicate, exclusion, previous outreach, policy, or user instruction.
 
@@ -33,3 +39,5 @@
 **Reply State** — The normalized business outcome of a reply: `positive`, `negative`, `unsubscribe`, `out_of_office`, `bounce`, or `unknown`.
 
 **Handoff** — The owner, context, reply state, evidence, and next action required after the automation pauses or completes.
+
+**Control Center** — A derived, buyer-readable view of a Run's state, next action, funnel, evidence freshness, dual-ledger spend, approvals, Campaign integrity, external references, and outcomes. `run.json` remains authoritative.

@@ -1,8 +1,8 @@
 {
   "name": "agentic-outreach",
   "displayName": "Agentic Outreach",
-  "description": "Evidence-first B2B prospecting, paid contact acquisition, campaign approval, launch, and reply handoff through live external capabilities.",
-  "version": "0.1.0",
+  "description": "Evidence-first B2B prospecting with managed contact waterfalls, dual-ledger spend guards, integrity-bound approvals, launch, and reply handoff through live external capabilities.",
+  "version": "0.2.0",
   "author": {
     "name": "OpenWork"
   },
