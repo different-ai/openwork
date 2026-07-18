@@ -18,7 +18,8 @@ Turn a B2B target into an evidence-backed, approval-controlled outreach run with
 - A short, evidence-grounded sequence with suppression, dedupe, and unsubscribe controls.
 - A second approval bound to exact content, audience, sender, and live provider contract.
 - A buyer-facing Control Center showing state, funnel, spend, integrity, outcomes, and next action.
-- A resumable run ledger with provider references, actual spend, replies, and handoff state.
+- A durable external reply monitor with event dedupe, pause-before-handoff, cursor-safe resume, and optional authorized CRM writeback.
+- A resumable Run ledger with provider references, actual spend, replies, attributed outcomes, and cost per positive reply.
 
 The plugin does not ship a scraper, enrichment database, email verifier, or sequencer. It discovers the organization's current MCP/API capabilities at runtime and calls the selected provider's exact schema. Direct provider MCPs are preferred; Activepieces is the long-tail Adapter for providers that do not expose a suitable first-party MCP.
 
@@ -33,7 +34,9 @@ Two rejected designs clarify the boundary:
 
 The chosen design centralizes durable business invariants and leaves volatile provider execution outside the product. Managed waterfalls such as a connected FullEnrich- or Origami-class capability are preferred when their contract exposes verification and result-based billing. A customer-owned Activepieces flow is the fallback composition seam; OpenWork does not become the waterfall.
 
-Every paid-contact decision freezes a canonical plan and eligible-audience hash. Every launch freezes content, audience, sender, and provider-contract hashes and verifies them again immediately before sending. This closes the gap between “the user approved something” and “the provider received exactly what was approved.”
+Every paid-contact decision freezes a canonical plan and eligible-audience hash. Every launch freezes content, audience, sender, provider-contract, and monitor-plan hashes and verifies them again immediately before sending. This closes the gap between “the user approved something” and “the provider received exactly what was approved.”
+
+After a proven launch, an approved external monitor handles webhooks and scheduled fallback. OpenWork deduplicates provider events, applies sender suppression before advancing the cursor, and attributes replies, meetings, opportunities, wins, and revenue only when an external reference proves them. CRM writeback is forbidden unless the Brief names the CRM, match key, and writable fields or the user separately approves it.
 
 ## Install
 
@@ -70,8 +73,8 @@ Each run lives under `.openwork/outreach/<run-id>/`:
 - `lead-ledger.csv`: evidence, qualification, contact state, cost, and provider provenance.
 - `campaign.md`: subjects, touches, evidence bindings, suppression rules, and launch plan.
 - `dashboard.md`: derived Outreach Control Center for funnel, dual-ledger spend, approvals, integrity, outcomes, and next action.
-- `run.json`: authoritative current state, native/currency budgets, frozen plan hashes, approvals, and external references.
+- `run.json`: authoritative current state, native/currency budgets, frozen contact/Campaign/monitor hashes, approvals, event cursor, attributed outcomes, and external references.
 - `events.ndjson`: append-only intent/result journal with input/result hashes for safe resume and dedupe.
-- `handoff.md`: replies, paused leads, owner, and next action.
+- `handoff.md`: deduped reply evidence, pause/suppression proof, CRM policy, owner, unit economics, and next action.
 
 No contact purchase or external send occurs without explicit approval in the current conversation.

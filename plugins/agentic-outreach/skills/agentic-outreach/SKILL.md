@@ -3,12 +3,12 @@ name: agentic-outreach
 description: Run evidence-first B2B prospecting and outreach through live MCP/API capabilities. Use when the user asks to find companies or buyers, research current buying signals, acquire verified contacts, draft or launch outbound sequences, monitor replies, or resume an outreach run. Qualifies before paid lookup and requires explicit approval before contact purchase and again before sending.
 license: MIT
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
   domain: b2b-outreach
 ---
 <!--
 [INPUT]: 依赖 OpenWork search_capabilities/execute_capability、工作区文件能力、标准哈希能力与用户的两阶段明确审批
-[OUTPUT]: 对外提供从 Outreach Brief 到证据、受预算约束的付费联系方式、完整性锁定 Campaign、Launch、Reply Handoff 与控制台的可恢复工作流
+[OUTPUT]: 对外提供从 Outreach Brief 到证据、受预算约束的付费联系方式、完整性锁定 Campaign、Launch、durable Outcome Loop、Reply Handoff 与控制台的可恢复工作流
 [POS]: agentic-outreach 的核心深 Module；供应商仅通过运行时 Adapter 进入，领域规则与外部执行严格分离
 [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
 -->
@@ -30,6 +30,8 @@ Convert a target market and current signal into a qualified, evidence-backed, ap
 9. Never expose credentials, hidden provider diagnostics, or unrelated personal data in artifacts.
 10. Treat provider-native units and billing currency as separate ledgers. Never silently convert credits into money without a timestamped quote or account-price snapshot.
 11. Bind each approval to canonical input hashes. A changed contact plan, audience, message, sender, or provider contract invalidates the relevant approval.
+12. Treat replies and delivery events as an idempotent business stream. Never advance the cursor before suppression, outcomes, and handoff are durably applied.
+13. Never infer meetings, opportunities, wins, revenue, or CRM success. Attribute only provider/CRM states with stable external references.
 
 ## Capability routing
 
@@ -69,11 +71,13 @@ For an existing run, read `run.json`, then `events.ndjson`, then the Lead Ledger
 
 `run.json` is the current snapshot. `events.ndjson` is append-only history. Never rewrite history to hide a failure.
 
+On resume, migrate schema 1 or 2 snapshots by adding missing schema-3 fields with null/zero defaults, preserving every existing approval/reference, and appending one `schema_migrated` event. Never backfill an approval hash or attributed outcome from inference. If `schema_version` is newer than 3, stop and request a compatible Skill instead of downgrading it.
+
 Minimum `run.json` shape:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "run_id": "...",
   "state": "brief|researching|qualified|awaiting_contact_approval|acquiring_contacts|drafted|awaiting_launch_approval|launched|monitoring|handed_off|blocked|cancelled",
   "created_at": "ISO-8601",
@@ -105,6 +109,33 @@ Minimum `run.json` shape:
     "sender_hash": null,
     "provider_contract_hash": null
   },
+  "monitor_plan": {
+    "revision": 0,
+    "mode": "provider_webhook|persistent_flow|scheduled_poll|manual_poll",
+    "capability": null,
+    "contract_version": null,
+    "external_flow_ref": null,
+    "event_cursor": null,
+    "last_observed_at": null,
+    "next_check_at": null,
+    "plan_hash": null
+  },
+  "outcomes": {
+    "accepted": 0,
+    "sent": 0,
+    "delivered": 0,
+    "positive": 0,
+    "negative": 0,
+    "unsubscribe": 0,
+    "out_of_office": 0,
+    "bounce": 0,
+    "unknown": 0,
+    "meetings": 0,
+    "opportunities": 0,
+    "won": 0,
+    "revenue": { "currency": "USD", "amount": 0 },
+    "cost_per_positive_reply": null
+  },
   "approvals": { "contact_purchase": null, "launch": null },
   "external_refs": []
 }
@@ -114,7 +145,7 @@ Each event is one JSON object containing `at`, `action_key`, `stage`, `status`, 
 
 Use SHA-256 over UTF-8 canonical JSON for integrity fields: recursively sort object keys, preserve array order unless the field explicitly represents a set, omit transient timestamps, and serialize without insignificant whitespace. Sort Lead-ID sets before hashing. Use an existing system or workspace hashing capability; do not add a custom cryptography dependency. Prefix stored values with `sha256:`. If the exact bytes cannot be reconstructed, invalidate approval instead of approximating a hash.
 
-`dashboard.md` is a derived control surface, never a second source of truth. Refresh it after every state transition from `run.json`, the Lead Ledger, and append-only events. It must show state, next action, funnel, evidence freshness, currency and native-unit spend, contact-plan mode, approval scope, Campaign integrity, external references, outcomes, and blockers.
+`dashboard.md` is a derived control surface, never a second source of truth. Refresh it after every state transition from `run.json`, the Lead Ledger, and append-only events. It must show state, next action, funnel, evidence freshness, currency and native-unit spend, contact-plan mode, approval scope, Campaign integrity, monitor health, external references, attributed outcomes, unit economics, and blockers.
 
 ## Stage 1 — Freeze the Outreach Brief
 
@@ -130,7 +161,8 @@ Write `brief.md` with:
 - native provider-unit cap when the selected provider meters credits, lookups, or results;
 - sender identity and allowed channels;
 - suppression sources and prior-outreach window;
-- Contact Purchase Approval and Launch Approval policy.
+- Contact Purchase Approval and Launch Approval policy;
+- reply-monitoring mode and whether CRM writeback is forbidden, pre-authorized for named fields, or requires a separate approval;
 
 Ask at most three questions, only when missing information changes spend, audience, compliance, or the ability to qualify. Otherwise state conservative assumptions and continue. Increment `brief_revision` if the user changes the brief.
 
@@ -257,35 +289,60 @@ The Campaign must include:
 
 Canonicalize and hash the exact provider-ready message payload, sorted audience Lead IDs, sender identity, and selected live provider contract. Write them to `run.json.integrity`. Drafting never grants Launch Approval.
 
+Discover the live reply/delivery capability now, but do not enable it. Freeze and hash `monitor_plan` with mode, capability, contract version, webhook/schedule fallback, and cursor semantics. Include its user-visible behavior in the Campaign so launch approval covers both sending and the external monitor that will observe it.
+
 ## Stage 7 — Request Launch Approval
 
-Show the final Campaign revision, sender, qualified/verified audience count, schedule, suppression count, sequencer capability, content hash, audience hash, sender hash, and provider-contract hash. Ask:
+Show the final Campaign revision, sender, qualified/verified audience count, schedule, suppression count, sequencer capability, content hash, audience hash, sender hash, provider-contract hash, and monitor-plan hash. Ask:
 
 ```text
-Approve launch for run <run_id>, campaign revision <revision>, content <content_hash>, audience <audience_hash>, sender <sender_hash>, contract <contract_hash>: send <count> contacts from <sender> on <schedule> via <provider>.
+Approve launch for run <run_id>, campaign revision <revision>, content <content_hash>, audience <audience_hash>, sender <sender_hash>, contract <contract_hash>, monitor <monitor_hash>: send <count> contacts from <sender> on <schedule> via <provider>, then enable the described reply monitor.
 ```
 
-Only an explicit user response to that exact launch proposal is Launch Approval. Persist all four hashes in the approval record. If the audience, sender, provider, schedule, content, or live contract changes afterward, increment `campaign_revision` when applicable, invalidate the approval, and request it again.
+Only an explicit user response to that exact launch proposal is Launch Approval. Persist all five hashes in the approval record. If the audience, sender, provider, schedule, content, live contract, or monitor plan changes afterward, increment `campaign_revision` when applicable, invalidate the approval, and request it again.
 
 ## Stage 8 — Launch idempotently
 
-Immediately before launch, re-read the exact capability schema and any provider-side draft/campaign object. Rebuild the provider-ready payload and recompute content, audience, sender, and contract hashes. All four must equal Launch Approval; otherwise stop with `approval_invalidated` and show the changed fields.
+Immediately before launch, re-read the exact capability schemas and any provider-side draft/campaign object. Rebuild the provider-ready payload and recompute content, audience, sender, contract, and monitor hashes. All five must equal Launch Approval; otherwise stop with `approval_invalidated` and show the changed fields.
 
-Create one launch `action_key` containing the run ID, Campaign revision, sender hash, audience hash, content hash, contract hash, and capability name. Append `planned` with the input hash, call the exact sequencer capability, then append `completed` with the provider sequence/campaign ID, result hash, and accepted count.
+Create one launch `action_key` containing the run ID, Campaign revision, sender hash, audience hash, content hash, contract hash, monitor hash, and capability name. Append `planned` with the input hash, call the exact sequencer capability, then append `completed` with the provider sequence/campaign ID, result hash, and accepted count.
 
 If the call times out or returns an ambiguous result, search/query the provider for the action key or external reference before retrying. Never create a second campaign merely because the first response was lost.
 
 Update `run.json.state` to `launched` only when a provider reference proves success. Otherwise mark `blocked` with the exact human or provider action.
 
+After launch succeeds, provision or enable the approved external monitor with a stable action key. Verify ambiguous outcomes before retrying. A monitor failure does not erase a proven send: keep state `launched`, mark monitoring blocked, and report the exact repair action.
+
 ## Stage 9 — Monitor replies and hand off
 
-For scheduled checks or webhooks, prefer an Activepieces persistent flow or an existing reply-monitor capability. On each reply or delivery event:
+Use the approved `monitor_plan`. Its external execution mode should prefer, in order:
 
-- normalize to `positive`, `negative`, `unsubscribe`, `out_of_office`, `bounce`, or `unknown`;
-- immediately suppress future touches for any real reply, unsubscribe, or hard bounce;
-- never auto-send a substantive sales reply unless the user separately authorized that policy;
-- record provider event ID and observed time;
-- update `handoff.md` with Lead, evidence, reply summary, owner, urgency, and next action.
+1. a provider-native webhook into an already connected durable flow;
+2. an Activepieces persistent flow combining webhook intake with a bounded scheduled fallback;
+3. a provider-native scheduled poll;
+4. manual polling only when no durable external capability is available.
+
+OpenWork does not implement a scheduler, webhook receiver, or Provider-specific inbox. Keep the live capability, contract version, external flow reference, cadence/fallback, cursor semantics, and canonical plan hash in the Run.
+
+For each reply or delivery event:
+
+1. Prefer the provider event ID as the dedupe identity. Build `event_fingerprint = sha256(provider + account/ref + event_id)`. When no stable ID exists, hash the smallest canonical provider payload that is guaranteed stable; never include receipt time.
+2. Skip an already `applied` fingerprint. Append an `event_received` record before changing business state.
+3. Normalize to `positive`, `negative`, `unsubscribe`, `out_of_office`, `bounce`, `delivered`, or `unknown`.
+4. For any real reply, unsubscribe, or hard bounce, pause/suppress future touches through the external sender before creating Handoff. For out-of-office, pause and record the return date when provided; do not auto-resume without an explicit policy.
+5. Update Lead state, `outcomes`, and `handoff.md`, then append `event_applied` with the fingerprint and all external references.
+6. Advance `monitor_plan.event_cursor` only after the applied event is durable. On resume, finish any received-but-unapplied event before polling for new work.
+
+Never auto-send a substantive sales reply unless the user separately authorized that policy. Update `handoff.md` with Lead, original evidence, reply summary, event fingerprint, pause/suppression proof, owner, urgency, and next action.
+
+CRM writeback is a separate external mutation. Execute it only when `brief.md` explicitly authorizes the named CRM, object, match key, and writable fields, or after a separate exact approval. Prefer upsert by a stable CRM/provider ID; do not create a duplicate merely because an email match is ambiguous. Record the CRM object ID and result hash. Without authorization, create the local Handoff and report `CRM writeback: not authorized`.
+
+Update attributed outcomes only from external evidence:
+
+- reply state from the sender/inbox event;
+- meeting from a linked calendar/CRM activity ID;
+- opportunity/win/revenue from a named CRM object and stage;
+- `cost_per_positive_reply = recorded_run_spend / positive`, null when there are no positive replies.
 
 On a new session, restore state from the Run before polling. Report what changed since the last check, not the entire history.
 
@@ -301,6 +358,8 @@ Lead with commercial outcomes:
 - Campaign revision, provider reference, and sent/accepted count;
 - Campaign integrity/preflight status;
 - positive/negative/unsubscribe/bounce counts;
+- monitor mode, last event/cursor, next check, and external flow health;
+- meetings, opportunities, wins, attributed revenue, and recorded cost per positive reply;
 - blocked human action and next owner;
 - paths to `dashboard.md`, `lead-ledger.csv`, `campaign.md`, and `handoff.md`.
 

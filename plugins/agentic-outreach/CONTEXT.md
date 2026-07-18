@@ -1,6 +1,6 @@
 <!--
 [INPUT]: 依赖 Agentic Outreach 的产品边界与 B2B 外联阶段门
-[OUTPUT]: 对外提供覆盖证据、瀑布计划、双账本、完整性审批与交接的统一领域词汇
+[OUTPUT]: 对外提供覆盖证据、瀑布计划、双账本、完整性审批、durable Outcome Loop 与交接的统一领域词汇
 [POS]: agentic-outreach 的 Ubiquitous Language，约束文档、Skill、账本和用户沟通使用同一含义
 [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
 -->
@@ -30,6 +30,12 @@
 
 **Campaign Integrity** — SHA-256 identities for provider-ready content, sorted audience, sender, and live provider contract. A mismatch after approval invalidates Launch Approval before any send.
 
+**Monitor Plan** — The frozen external webhook/schedule capability, contract, cursor semantics, fallback, and plan hash approved with a Campaign. OpenWork records its state but does not become the scheduler or inbox.
+
+**Event Fingerprint** — A stable SHA-256 identity derived from provider, account/reference, and provider event ID. It prevents a retried webhook or poll from applying the same reply, suppression, CRM write, or outcome twice.
+
+**Attributed Outcome** — A reply, meeting, opportunity, win, or revenue state supported by a named external event/object reference. Model inference and sales optimism are not attribution.
+
 **Suppression** — A rule preventing contact or future messages because of unsubscribe, bounce, duplicate, exclusion, previous outreach, policy, or user instruction.
 
 **Run** — The durable business record connecting one Outreach Brief to evidence, spend, approvals, external provider references, Campaign, replies, and Handoff.
@@ -38,6 +44,6 @@
 
 **Reply State** — The normalized business outcome of a reply: `positive`, `negative`, `unsubscribe`, `out_of_office`, `bounce`, or `unknown`.
 
-**Handoff** — The owner, context, reply state, evidence, and next action required after the automation pauses or completes.
+**Handoff** — The owner, context, reply state, original evidence, event fingerprint, pause/suppression proof, unit economics, and next action required after automation pauses.
 
 **Control Center** — A derived, buyer-readable view of a Run's state, next action, funnel, evidence freshness, dual-ledger spend, approvals, Campaign integrity, external references, and outcomes. `run.json` remains authoritative.

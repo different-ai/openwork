@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 依赖批准的 agentic-outreach voiceover、真实 OpenWork Artifact UI 与带商业护栏的 DEV 外部系统替身动作
- * [OUTPUT]: 对外提供八帧 B2B Outreach 用户旅程，证明双账本、哈希审批、控制台和跨会话恢复
+ * [INPUT]: 依赖批准的 agentic-outreach voiceover、真实 OpenWork Artifact UI 与带商业护栏/Outcome Loop 的 DEV 外部系统替身动作
+ * [OUTPUT]: 对外提供八帧 B2B Outreach 用户旅程，证明双账本、哈希审批、durable reply、控制台和跨会话恢复
  * [POS]: evals/flows 的用户可见端到端证明；替身只生成供应商结果，文件写入、Artifact 渲染和跨会话恢复都走真实应用路径
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -9,7 +9,7 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const vo = await loadVoiceoverParagraphs("agentic-outreach");
 const REQUEST = "找出五十家最近三十天正在招聘合规负责人的美国 Series B 安全公司，只为合格的 VP 以上联系人购买已验证邮箱，总预算不超过 25 美元；没有我的明确批准，绝不发送。";
 const CONTACT_APPROVAL = "批准联系人购买：绑定当前冻结的 plan 和 eligible 指纹，仅限 31 个合格 Lead，使用 FullEnrich，最多 31 credits 且不超过 USD 25.00。";
-const LAUNCH_APPROVAL = "批准启动 run 20260718T091500Z-series-b-security 的 campaign revision 1，绑定当前显示的 content、audience、sender 和 contract 四个 SHA-256 指纹；由 maya@acme.example 通过 Instantly 发送给 27 个已验证联系人。";
+const LAUNCH_APPROVAL = "批准启动 run 20260718T091500Z-series-b-security 的 campaign revision 1，绑定当前显示的 content、audience、sender、contract 和 monitor 五个 SHA-256 指纹；由 maya@acme.example 通过 Instantly 发送给 27 个已验证联系人，并启用已描述的回复监控。";
 
 async function ensureSession(ctx) {
   await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "OpenWork control API" });
@@ -234,6 +234,7 @@ export default {
             ctx.assert(body.includes("Evidence bindings"), "Evidence bindings are missing.");
             ctx.assert(body.includes("Suppression") && body.includes("Stop on any real reply"), "Suppression or reply stop rule is missing.");
             ctx.assert(body.includes("Launch is blocked until explicit approval"), "Launch gate is missing from the Campaign.");
+            ctx.assert(body.includes("Activepieces persistent flow") && body.includes("CRM writeback: not authorized"), "Durable monitoring or CRM writeback policy is missing.");
           },
           screenshot: {
             name: "campaign-safety-preview",
@@ -258,12 +259,13 @@ export default {
             ctx.assert(body.includes("State: launched"), "Run is not marked launched in the Control Center.");
             ctx.assert(body.includes("27 accepted"), "Accepted recipient count is missing.");
             ctx.assert(body.includes("27 actual / 31 approved FullEnrich credits"), "Native credit reconciliation is missing.");
-            ctx.assert(body.includes("all four hashes match Launch Approval"), "Launch integrity preflight is missing.");
+            ctx.assert(body.includes("all five hashes match Launch Approval"), "Launch and monitor integrity preflight is missing.");
+            ctx.assert(body.includes("flow_ap_01KXV_REPLY"), "Durable monitor flow reference is missing.");
             ctx.assert(body.includes("seq_inst_01KXV_OUTREACH"), "Provider sequence ID is missing.");
           },
           screenshot: {
             name: "approved-launch-ledger",
-            requireText: ["Outreach Control Center", "seq_inst_01KXV_OUTREACH", "launched", "Campaign integrity"],
+            requireText: ["Outreach Control Center", "seq_inst_01KXV_OUTREACH", "flow_ap_01KXV_REPLY", "launched", "Campaign integrity"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -291,10 +293,13 @@ export default {
             ctx.assert(body.includes("VP Compliance role opened 9 days ago"), "Original qualifying evidence is missing from handoff.");
             ctx.assert(body.includes("Owner: Maya"), "Human owner is missing from handoff.");
             ctx.assert(body.includes("seq_inst_01KXV_OUTREACH"), "Original sequence context was not restored.");
+            ctx.assert(body.includes("applied exactly once"), "Reply event dedupe proof is missing.");
+            ctx.assert(body.includes("CRM writeback: not authorized"), "CRM mutation policy is missing.");
+            ctx.assert(body.includes("USD 7.20 per positive reply"), "Commercial unit economics are missing.");
           },
           screenshot: {
             name: "cross-session-reply-handoff",
-            requireText: ["Reply Handoff", "remaining touches paused immediately", "Owner: Maya", "seq_inst_01KXV_OUTREACH"],
+            requireText: ["Reply Handoff", "remaining touches paused immediately", "Owner: Maya", "seq_inst_01KXV_OUTREACH", "USD 7.20 per positive reply"],
             rejectText: ["No replies yet", "Something went wrong"],
           },
         });

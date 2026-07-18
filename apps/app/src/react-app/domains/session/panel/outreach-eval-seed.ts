@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 依赖 Agentic Outreach 八阶段 voiceover、双账本/完整性契约与 Artifact 预览类型
- * [OUTPUT]: 对外提供仅供 DEV Fraimz 使用的确定性 Run、商业控制台文件快照和阶段校验
+ * [INPUT]: 依赖 Agentic Outreach 八阶段 voiceover、双账本/完整性/Outcome Loop 契约与 Artifact 预览类型
+ * [OUTPUT]: 对外提供仅供 DEV Fraimz 使用的确定性 Run、商业控制台、durable reply/handoff 文件快照和阶段校验
  * [POS]: session/panel 的证明 Fixture；模拟外部系统结果但写入真实工作区文件，不进入生产能力路径
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -33,6 +33,9 @@ const HASHES = {
   audience: "sha256:35362daa03efc0e4e4999d89efd3d3b6417afcca75de8dccb988852c19bfc527",
   sender: "sha256:bb1a65e993dbeb6c97e12a06c73c6626adb68eeeb1d24eb5c360c453fb4405ca",
   senderContract: "sha256:e02adb624712c8372168cf2f298970d02149e3b00ef7cd96d26b3e74bf62180a",
+  monitorPlan: "sha256:5c10bb4c06f6904fb5e4d04393429e838f88bd1ea4e0f27b10d83f81eab4f7b6",
+  eventFingerprint: "sha256:6edd39165b0c33ee986d7a6d1a9f2dc5eff5a653f82f3c0e0907f9c3282100e3",
+  monitorProvision: "sha256:5743d117f145d3742184ed986631014486298a4fec6dac0f39f2335e9db3874e",
   contactResult: "sha256:d52ca307ea162bb10b9a7ad9fdeb48efe5ecde59ac8030961676fa474006abc4",
   launchResult: "sha256:539395f3b88936f988f9a247e1bf9087f620c88a24d864142863e57a5e596550",
   replyResult: "sha256:f836864ed7276afbf2ccdeef4f764025424fab090ce20b8d1d9d0c023c01681b",
@@ -120,6 +123,8 @@ function campaign(stage: OutreachEvalStage) {
     "- Suppression: unsubscribe, hard bounce, prior outreach within 90 days",
     "- Stop on any real reply",
     "- Launch is blocked until explicit approval of revision 1",
+    "- Reply monitor: Activepieces persistent flow · webhook first · 15-minute scheduled fallback",
+    "- CRM writeback: not authorized; create local Handoff only",
     "",
   ].join("\n");
 }
@@ -142,11 +147,11 @@ function dashboard(stage: OutreachEvalStage) {
   const replied = stage >= 8;
   const state = stateFor(stage);
   const nextAction = replied
-    ? "Maya owns the positive-reply handoff; all remaining touches for replied Leads stay paused."
+    ? "Maya owns the positive-reply handoff; all remaining touches for replied Leads stay paused and the durable monitor continues."
     : launched
-      ? "Monitor replies and delivery events; any real reply, unsubscribe, or hard bounce pauses future touches."
+      ? "Activepieces is monitoring replies and delivery events; any real reply, unsubscribe, or hard bounce pauses future touches."
       : drafted
-        ? "Review the 27-recipient Campaign and approve the exact content, audience, sender, and provider contract hashes."
+        ? "Review the 27-recipient Campaign and approve the exact content, audience, sender, provider contract, and monitor hashes."
         : qualified
           ? "Approve the frozen FullEnrich managed-waterfall plan before any contact channel is requested."
           : "Complete live evidence research and qualification before spending contact credits.";
@@ -188,7 +193,15 @@ function dashboard(stage: OutreachEvalStage) {
     `- Sender: ${drafted ? HASHES.sender : "not drafted"}`,
     `- Live contract: ${drafted ? HASHES.senderContract : "not inspected"}`,
     `- Launch gate: ${launched ? "approved" : drafted ? "awaiting explicit approval" : "locked"}`,
-    `- Preflight: ${launched ? "Passed — provider draft and live contract re-read; all four hashes match Launch Approval" : "not run"}`,
+    `- Monitor plan: ${drafted ? HASHES.monitorPlan : "not drafted"}`,
+    `- Preflight: ${launched ? "Passed — provider draft and live contracts re-read; all five hashes match Launch Approval" : "not run"}`,
+    "",
+    "## Monitor health",
+    "",
+    `- Mode: ${drafted ? "Activepieces persistent flow · webhook + 15-minute fallback" : "not planned"}`,
+    `- Flow: ${launched ? "flow_ap_01KXV_REPLY · healthy" : "not enabled"}`,
+    `- Cursor: ${replied ? "reply_inst_003 · applied exactly once" : "waiting for first provider event"}`,
+    `- Next fallback: ${launched ? "2026-07-18T10:00:00Z" : "not scheduled"}`,
     "",
     "## External execution",
     "",
@@ -198,7 +211,7 @@ function dashboard(stage: OutreachEvalStage) {
     "",
     "## Outcomes",
     "",
-    replied ? "3 positive · 1 negative · 2 unsubscribe · 1 bounce · 20 awaiting reply" : "No normalized replies yet.",
+    replied ? "3 positive · 1 negative · 2 unsubscribe · 1 bounce · 20 awaiting reply · USD 7.20 / positive reply" : "No normalized replies yet.",
     "",
   ].join("\n");
 }
@@ -209,7 +222,7 @@ function runJson(stage: OutreachEvalStage) {
   const launched = stage >= 7;
   const replied = stage >= 8;
   return `${JSON.stringify({
-    schema_version: 2,
+    schema_version: 3,
     run_id: OUTREACH_EVAL_RUN_ID,
     state: stateFor(stage),
     created_at: "2026-07-18T09:15:00Z",
@@ -252,17 +265,45 @@ function runJson(stage: OutreachEvalStage) {
       sender_hash: stage >= 6 ? HASHES.sender : null,
       provider_contract_hash: stage >= 6 ? HASHES.senderContract : null,
     },
+    monitor_plan: {
+      revision: stage >= 6 ? 1 : 0,
+      mode: stage >= 6 ? "persistent_flow" : null,
+      capability: stage >= 6 ? "activepieces.ap_build_flow" : null,
+      contract_version: stage >= 6 ? "mcp-2026-07-18" : null,
+      external_flow_ref: launched ? "flow_ap_01KXV_REPLY" : null,
+      event_cursor: replied ? "reply_inst_003" : null,
+      last_observed_at: replied ? "2026-07-18T09:48:00Z" : null,
+      next_check_at: launched ? "2026-07-18T10:00:00Z" : null,
+      plan_hash: stage >= 6 ? HASHES.monitorPlan : null,
+    },
+    outcomes: {
+      accepted: launched ? 27 : 0,
+      sent: replied ? 27 : 0,
+      delivered: replied ? 26 : 0,
+      positive: replied ? 3 : 0,
+      negative: replied ? 1 : 0,
+      unsubscribe: replied ? 2 : 0,
+      out_of_office: 0,
+      bounce: replied ? 1 : 0,
+      unknown: 0,
+      meetings: 0,
+      opportunities: 0,
+      won: 0,
+      revenue: { currency: "USD", amount: 0 },
+      cost_per_positive_reply: replied ? 7.2 : null,
+    },
     approvals: {
       contact_purchase: purchased
         ? { approved_at: "2026-07-18T09:25:00Z", amount: 25, currency: "USD", native_limit: 31, native_unit: "credits", provider: "FullEnrich", count: 31, brief_revision: 1, eligible_lead_ids_hash: HASHES.eligibleLeads, plan_hash: HASHES.contactPlan }
         : null,
       launch: launched
-        ? { approved_at: "2026-07-18T09:38:00Z", campaign_revision: 1, count: 27, campaign_content_hash: HASHES.campaignContent, audience_hash: HASHES.audience, sender_hash: HASHES.sender, provider_contract_hash: HASHES.senderContract }
+        ? { approved_at: "2026-07-18T09:38:00Z", campaign_revision: 1, count: 27, campaign_content_hash: HASHES.campaignContent, audience_hash: HASHES.audience, sender_hash: HASHES.sender, provider_contract_hash: HASHES.senderContract, monitor_plan_hash: HASHES.monitorPlan }
         : null,
     },
     external_refs: [
       ...(purchased ? [{ provider: "FullEnrich", result_id: "batch_fe_01KXV", verified: 27 }] : []),
       ...(launched ? [{ provider: "Instantly", sequence_id: "seq_inst_01KXV_OUTREACH", accepted: 27 }] : []),
+      ...(launched ? [{ provider: "Activepieces", flow_id: "flow_ap_01KXV_REPLY", status: "enabled" }] : []),
     ],
   }, null, 2)}\n`;
 }
@@ -273,8 +314,10 @@ function events(stage: OutreachEvalStage) {
   ];
   if (stage >= 3) lines.push({ at: "2026-07-18T09:21:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:research:1`, stage: "research", status: "completed", capability: "live-research-adapters", input_hash: HASHES.brief, result_hash: HASHES.eligibleLeads });
   if (stage >= 5) lines.push({ at: "2026-07-18T09:27:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:contact:batch-1:${HASHES.contactPlan}:fullenrich`, stage: "contact", status: "completed", capability: "fullenrich.lookup_verified_contact", input_hash: HASHES.contactPlan, result_hash: HASHES.contactResult, provider_contract_version: "mcp-2026-07-18", external_ref: "batch_fe_01KXV", cost: { amount: 21.6, currency: "USD" }, meter_delta: { amount: 27, unit: "credits" } });
-  if (stage >= 7) lines.push({ at: "2026-07-18T09:39:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:launch:r1:${HASHES.sender}:${HASHES.audience}:${HASHES.campaignContent}:${HASHES.senderContract}:instantly`, stage: "launch", status: "completed", capability: "instantly.create_campaign", input_hash: HASHES.campaignContent, result_hash: HASHES.launchResult, provider_contract_version: "mcp-2026-07-18", external_ref: "seq_inst_01KXV_OUTREACH" });
-  if (stage >= 8) lines.push({ at: "2026-07-18T09:48:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:reply:evt-positive-003`, stage: "monitoring", status: "completed", capability: "instantly.list_replies", input_hash: HASHES.launchResult, result_hash: HASHES.replyResult, external_ref: "reply_inst_003" });
+  if (stage >= 7) lines.push({ at: "2026-07-18T09:39:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:launch:r1:${HASHES.sender}:${HASHES.audience}:${HASHES.campaignContent}:${HASHES.senderContract}:${HASHES.monitorPlan}:instantly`, stage: "launch", status: "completed", capability: "instantly.create_campaign", input_hash: HASHES.campaignContent, result_hash: HASHES.launchResult, provider_contract_version: "mcp-2026-07-18", external_ref: "seq_inst_01KXV_OUTREACH" });
+  if (stage >= 7) lines.push({ at: "2026-07-18T09:40:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:monitor:${HASHES.monitorPlan}:activepieces`, stage: "monitoring", status: "completed", capability: "activepieces.ap_build_flow", input_hash: HASHES.monitorPlan, result_hash: HASHES.monitorProvision, provider_contract_version: "mcp-2026-07-18", external_ref: "flow_ap_01KXV_REPLY" });
+  if (stage >= 8) lines.push({ at: "2026-07-18T09:48:00Z", action_key: `${OUTREACH_EVAL_RUN_ID}:event-received:${HASHES.eventFingerprint}`, stage: "monitoring", status: "event_received", capability: "instantly.reply_event", input_hash: HASHES.launchResult, result_hash: HASHES.replyResult, external_ref: "reply_inst_003", event_fingerprint: HASHES.eventFingerprint });
+  if (stage >= 8) lines.push({ at: "2026-07-18T09:48:02Z", action_key: `${OUTREACH_EVAL_RUN_ID}:event-applied:${HASHES.eventFingerprint}`, stage: "monitoring", status: "event_applied", capability: "instantly.pause_lead", input_hash: HASHES.replyResult, result_hash: HASHES.replyResult, external_ref: "reply_inst_003", event_fingerprint: HASHES.eventFingerprint });
   return `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`;
 }
 
@@ -285,13 +328,19 @@ function handoff(stage: OutreachEvalStage) {
     "",
     `Run: ${OUTREACH_EVAL_RUN_ID} · Sequence: seq_inst_01KXV_OUTREACH`,
     "",
+    "Monitor: Activepieces `flow_ap_01KXV_REPLY` · webhook + 15-minute fallback",
+    "",
     "## Positive reply — Northstar Guard",
     "",
     "Maya Chen, VP Compliance, asked for the control-to-evidence template and offered Tuesday afternoon.",
     "",
+    "Commercial result: USD 7.20 per positive reply · no meeting, opportunity, or revenue attributed yet",
+    "",
     "- Evidence: VP Compliance role opened 9 days ago ([source](https://jobs.northstar.example/compliance-leader))",
     "- Reply observed: 2026-07-18T09:48:00Z via Instantly",
+    "- Event fingerprint: sha256:6edd3916…100e3 · applied exactly once",
     "- Automation: remaining touches paused immediately",
+    "- CRM writeback: not authorized; local Handoff only",
     "- Owner: Maya",
     "- Next action: send the approved template and propose Tuesday 2pm ET",
     "",

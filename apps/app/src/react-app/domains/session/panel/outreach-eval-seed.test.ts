@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 依赖 outreach-eval-seed 的八阶段确定性快照、双账本与完整性哈希
- * [OUTPUT]: 验证资格先于付费、瀑布计划、哈希审批、控制台、序列引用与回复暂停的回归测试
+ * [INPUT]: 依赖 outreach-eval-seed 的八阶段确定性快照、双账本、完整性哈希与 durable reply 事件
+ * [OUTPUT]: 验证资格先于付费、瀑布计划、哈希审批、控制台、事件幂等、cursor-safe 恢复与回复暂停的回归测试
  * [POS]: session/panel 的纯契约测试，确保 Fraimz Fixture 与产品不变量同构
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -70,11 +70,26 @@ describe("agentic outreach eval snapshots", () => {
     expect(launched).toContain('"audience_hash": "sha256:');
     expect(launched).toContain('"sender_hash": "sha256:');
     expect(launched).toContain('"provider_contract_hash": "sha256:');
+    expect(launched).toContain('"monitor_plan_hash": "sha256:');
     expect(launched).toContain('"sequence_id": "seq_inst_01KXV_OUTREACH"');
+    expect(launched).toContain('"flow_id": "flow_ap_01KXV_REPLY"');
     expect(dashboard).toContain("Outreach Control Center");
-    expect(dashboard).toContain("all four hashes match Launch Approval");
+    expect(dashboard).toContain("all five hashes match Launch Approval");
     expect(dashboard).toContain("27 actual / 31 approved FullEnrich credits");
     expect(handoff).toContain("remaining touches paused immediately");
     expect(handoff).toContain("VP Compliance role opened 9 days ago");
+    expect(handoff).toContain("applied exactly once");
+    expect(handoff).toContain("CRM writeback: not authorized");
+    expect(handoff).toContain("USD 7.20 per positive reply");
+  });
+
+  test("reply processing records receive/apply phases before advancing the durable cursor", () => {
+    const run = file(8, "/run.json");
+    const events = file(8, "/events.ndjson");
+    expect(events).toContain('"status":"event_received"');
+    expect(events).toContain('"status":"event_applied"');
+    expect(events).toContain('"event_fingerprint":"sha256:');
+    expect(run).toContain('"event_cursor": "reply_inst_003"');
+    expect(run).toContain('"cost_per_positive_reply": 7.2');
   });
 });

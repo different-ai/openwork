@@ -9,7 +9,7 @@
 - `side-panel.tsx`: Artifact/Browser 侧栏装配、标签交互和仅开发环境的证明动作注册。
 - `use-side-panel-tabs.ts`: 侧栏标签增删选排的 React Adapter。
 - `utils.ts`: Electron Browser WebContentsView 的边界、坐标与遮挡工具。
-- `outreach-eval-seed.ts`: Agentic Outreach Fraimz 的确定性外部系统替身，生成含双账本、哈希审批与商业控制台的真实工作区文件。
-- `outreach-eval-seed.test.ts`: 验证八阶段产物、外部瀑布计划、双账本、完整性发送门和跨会话状态的纯契约测试。
+- `outreach-eval-seed.ts`: Agentic Outreach Fraimz 的确定性外部系统替身，生成含双账本、哈希审批、durable Outcome Loop 与商业控制台的真实工作区文件。
+- `outreach-eval-seed.test.ts`: 验证八阶段产物、外部瀑布计划、双账本、完整性发送门、事件幂等和跨会话 cursor 的纯契约测试。
 
 [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
