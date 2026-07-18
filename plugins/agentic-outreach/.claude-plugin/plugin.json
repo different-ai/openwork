@@ -1,0 +1,19 @@
+{
+  "name": "agentic-outreach",
+  "displayName": "Agentic Outreach",
+  "description": "Evidence-first B2B prospecting, paid contact acquisition, campaign approval, launch, and reply handoff through live external capabilities.",
+  "version": "0.1.0",
+  "author": {
+    "name": "OpenWork"
+  },
+  "license": "MIT",
+  "skills": [
+    "./skills/agentic-outreach"
+  ],
+  "commands": [
+    "./commands/outreach.md"
+  ],
+  "agents": [
+    "./agents/outreach-operator.md"
+  ]
+}

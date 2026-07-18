@@ -2,6 +2,17 @@
 
 OpenWork helps users run agents, skills, and MCP. It is an open-source alternative to Claude Cowork/Codex as a desktop app.
 
+## Directory Map
+
+- `apps/`: desktop, server, and supporting product applications.
+- `packages/`: shared open-source libraries and protocol packages.
+- `ee/`: Fair Source cloud control-plane applications and packages.
+- `plugins/`: installable first-party capability bundles; each plugin composes Skills, commands, agents, and external MCPs without embedding provider logic.
+- `evals/`: voiceovers, executable flows, and Fraimz proof artifacts.
+- `docs/`: user and operator documentation.
+- `packaging/`: Docker, Helm, and release packaging.
+- `scripts/`: repository-level development and release automation.
+
 ## What OpenWork Is
 
 OpenWork is a practical control surface for agentic work:
