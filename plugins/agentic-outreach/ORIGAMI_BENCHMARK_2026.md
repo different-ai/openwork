@@ -236,24 +236,27 @@ Origami 的法律边界会直接决定 OpenWork 的接法：
 
 基于本工作树的 [README](./README.md)、[核心 Skill](./skills/agentic-outreach/SKILL.md)、[Domain Context](./CONTEXT.md)和[开源复用账本](./OPEN_SOURCE.md)：
 
-### 已有且方向正确
+### 已实现且方向正确
 
-- `search_capabilities` / `execute_capability` 是真实能力轨道，可把外部 MCP/API 融合到统一调用面，不需要把 provider SDK 塞进插件。
+- `search_capabilities` / `execute_capability` 是真实能力轨道，可把外部 MCP/API 融合到统一调用面，不需要把 provider SDK 塞进插件；广搜只返回轻量摘要，执行前再读取一个精确 schema。
+- 组织连接目录已经提供 Apollo 与 FullEnrich 官方远程 MCP 的一键 OAuth 预设；Exa 继续使用 API-key MCP，Activepieces 因实例 URL 不同而保持自定义连接。
 - Skill 强制 live evidence、`source_url + observed_at`、先资格判断后付费联系人、Contact Purchase Approval 与 Launch Approval 两次审批。
-- `.openwork/outreach/<run-id>/` 约定 brief、lead ledger、campaign、snapshot、append-only events 和 handoff；有幂等 action key、供应商 reference、预算上限和歧义重试检查。
-- 把 scraper、contact database、verifier、CRM 和 sequencer 留在外部 provider，是正确的模块边界。
+- 联系方式购买优先外部 managed waterfall；OpenWork 不实现 provider order，只冻结外部 capability、成功计费语义、first-verified stop rule、eligible Lead 集合和 plan hash。
+- `run.json` 已同时治理 billing currency 与 provider-native meter，包含 quote snapshot、worst case、reservation、actual 与 remaining；联系人批准同时绑定两套上限。
+- Campaign Launch Approval 已绑定 content、audience、sender、live provider contract 与 monitor plan 五份 SHA-256；发送前重新读取外部对象和 schema，关闭审批后被篡改的 TOCTOU 缺口。
+- reply/delivery 由外部 durable flow 执行；OpenWork 记录 `event_received` / `event_applied`、稳定 fingerprint、cursor、暂停证明、Handoff 和可验证的 outcome attribution。
+- `dashboard.md` 已成为由 Run、Ledger 与 append-only events 派生的 buyer-facing Control Center，展示 funnel、freshness、双账本、完整性、外部引用、monitor health 与 cost per positive reply。
 
-### 当前还只是协议，不是完整商品
+### 当前仍未成为完整生产商品
 
-- 插件没有绑定任何 provider，也没有 outreach-specific 的“一键连接 + capability preflight + 测试样本”。
-- Provider waterfall 只是泛化步骤，没有统一实现 provider order、fallback、success-only charging、verification taxonomy 和 coverage metrics。
-- 状态目前落在文档/CSV/NDJSON 约定，没有常驻 worker、schedule、webhook receiver、自动回调去重和失败重放产品面。
-- 没有共享 Inbox、Campaign 列表/统计、sender health、reply sync 或 CRM dedupe/writeback UI。
-- 没有托管 credits、机构/客户子账户、审批角色、统一账单与 reseller 合同。
-- `run.json.budget` 当前只建模 currency/cap/worst_case/actual，没有 provider credits、换算快照、reserved spend 或 batch/row 粒度的 credit reconciliation。
-- Campaign 只有本地 `campaign_revision`；外部 provider 若没有 ETag/expected revision，审批和 launch 之间存在 audience/content 被修改的 TOCTOU 风险。
+- Apollo/FullEnrich OAuth 入口与外部执行契约已实现，但没有客户凭据，尚未跑真实 paid-contact、sender 或 CRM production mutation；Fraimz 使用确定性 provider stand-in 证明真实应用路径，不冒充供应商 E2E。
+- 没有持续发现新购买信号的 Signal Watch、time-bounded recurring policy 与 Opportunity Inbox；当前研究仍由一次性 Outreach Run 发起。
+- 没有统一 Campaign 列表、共享 Inbox、sender-health 面板或组织级 suppression system of record；单个 Run 只持有自己的可审计状态。
+- 没有托管 credits、机构/客户子账户、审批角色、统一账单与 reseller 合同；当前正确边界仍是 BYO provider。
+- CRM writeback 只定义了授权与幂等协议；没有用户指定 CRM、对象、匹配键和字段时，系统只生成本地 Handoff。
+- Activepieces/Exa 的 schedule、webhook 与 Tables 可以组成常驻执行层，但 OpenWork 还没有把它们产品化成经过批准、可暂停、可到期、可晋升为 Outreach Run 的 Signal Watch。
 
-**推断**：OpenWork 的协议层比 Origami 的公开材料更重视 evidence provenance、双审批和 provider neutrality；但买家不会为协议文本付费，他们会为“已经接通、能安全跑完并拿到结果”付费。
+**推断**：OpenWork 的治理协议和真实 UI 证明已经超过“纸面规范”，但生产商品仍取决于真实账户 canary、持续 Signal Watch、组织级 suppression/CRM 上下文和团队治理。买家不会为协议文本付费，他们会为“持续出现新机会、花费可控、一次批准不越权、回复可归因”付费。
 
 ## 9. 按商业付费价值排序的 Gap List
 
