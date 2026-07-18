@@ -85,6 +85,9 @@ const capabilityMatchOutputSchema = z.object({
   queryParams: z.array(z.string()),
   hasBody: z.boolean(),
   bodySchema: z.unknown().optional(),
+  argumentsSchema: z.unknown().optional(),
+  schemaDigest: z.string().optional(),
+  invocation: z.object({ argumentsField: z.literal("body") }).optional(),
   kind: z.string().optional(),
   status: z.string().optional(),
   hint: z.string().optional(),
@@ -106,6 +109,8 @@ export const AGENT_MCP_INSTRUCTIONS = [
   "After importing, retrieve the resolved marketplace detail and report each plugin's cloudReadiness. An import or plugin binding is not proof that an MCP connection is usable. Relay needs_admin_setup or needs_signin as the next human action instead of claiming the connection is ready.",
   "Do not invent OAuth-client, credential, or local-extension setup. Organization connections are managed in the OpenWork Cloud dashboard / Settings > Connect. When a returned connection or marketplace readiness state requires administrator setup or member sign-in, relay that exact action.",
   "A successful search_capabilities call proves this OpenWork Cloud MCP connection is authorized. Never tell the user to reconnect OpenWork Cloud because a downstream connector failed.",
+  "External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField. Put an object matching argumentsSchema in execute_capability.body and copy schemaDigest into execute_capability.schemaDigest.",
+  "If execute_capability returns invalid_capability_arguments, correct the listed issues and retry once with changed arguments; never retry the same arguments unchanged. If it returns capability_schema_changed or unknown_capability, call search_capabilities again before retrying.",
   "When a match has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly. Distinguish the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console.",
   "Connection probes are live. After the requested human fixes that connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
 ].join("\n")
@@ -133,6 +138,11 @@ export function externalCapabilityErrorToolResult(
       ...(result.actionOwner ? { actionOwner: result.actionOwner } : {}),
       ...(result.operatorAction ? { operatorAction: result.operatorAction } : {}),
       ...(result.connectionStatus ? { connectionStatus: result.connectionStatus } : {}),
+      ...(result.capability ? { capability: result.capability } : {}),
+      ...(result.issues ? { issues: result.issues } : {}),
+      ...(result.schemaDigest ? { schemaDigest: result.schemaDigest } : {}),
+      ...(result.sameArgumentsRetryable === false ? { sameArgumentsRetryable: false } : {}),
+      ...(result.retry ? { retry: result.retry } : {}),
     })),
   }
 }
@@ -154,18 +164,6 @@ function unknownCapabilityText(name: string): string {
     error: "unknown_capability",
     message: `No capability named "${name}". Call search_capabilities to find a valid name.`,
   })
-}
-
-function normalizedExternalArgs(body: unknown): Record<string, unknown> {
-  const normalizedBody = normalizeToolBody(body)
-  if (typeof normalizedBody !== "object" || normalizedBody === null || Array.isArray(normalizedBody)) {
-    return {}
-  }
-  const args: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(normalizedBody)) {
-    args[key] = value
-  }
-  return args
 }
 
 function isTextContent(value: unknown): value is { type: "text"; text: string } {
@@ -310,7 +308,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
           "there is no list of individually-named tools to browse. Always search first.",
           "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
           "Try 2-4 keyword variants before deciding a capability is unavailable.",
-          "Each match includes pathParams, queryParams, hasBody, and the exact bodySchema for JSON mutations, describing what execute_capability needs.",
+          "Native API matches include pathParams, queryParams, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField.",
           "Skill matches use method SKILL and return stored SKILL.md content when executed.",
         ].join(" "),
         annotations: SEARCH_CAPABILITIES_ANNOTATIONS,
@@ -384,12 +382,13 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
         inputSchema: z.object({
           name: z.string().min(1).describe("The exact tool name returned by search_capabilities."),
+          schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("For an external MCP match, copy the exact schemaDigest returned by search_capabilities so schema drift is detected."),
           path: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Path parameters, only if the match's pathParams is non-empty."),
           query: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Query parameters, only if the match's queryParams is non-empty."),
-          body: z.unknown().optional().describe("JSON body, only if the match's hasBody is true."),
+          body: z.unknown().optional().describe("For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema."),
         }),
       },
-      async ({ name, path, query, body }) => {
+      async ({ name, schemaDigest, path, query, body }) => {
         return executeCapabilityWithBudget({
           capability: name,
           invoke: async (): Promise<ExecuteCapabilityToolResult> => {
@@ -414,7 +413,8 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
                 member: memberIdentity,
                 connectionId: external.connectionId,
                 toolName: external.toolName,
-                args: normalizedExternalArgs(body),
+                args: normalizeToolBody(body),
+                schemaDigest,
                 redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
               })
               if (!result.ok) {

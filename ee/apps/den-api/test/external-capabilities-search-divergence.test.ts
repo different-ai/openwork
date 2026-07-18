@@ -33,6 +33,11 @@ type FakeMcpServer = {
   stop: () => void
 }
 
+type MutableSchemaMcpServer = FakeMcpServer & {
+  toolCalls: () => number
+  useSchema: (schema: "query" | "incidentId") => void
+}
+
 type SeededOrganization = {
   organizationId: DenTypeId<"organization">
   memberId: DenTypeId<"member">
@@ -61,6 +66,7 @@ let notionServer: FakeMcpServer | undefined
 let refreshErrorServer: FakeMcpServer | undefined
 let providerErrorServer: FakeMcpServer | undefined
 let needleServer: FakeMcpServer | undefined
+let mutableSchemaServer: MutableSchemaMcpServer | undefined
 
 const slackTools: FakeTool[] = [
   { name: "slack-send-message", description: "Send a message to a Slack channel or DM." },
@@ -157,6 +163,17 @@ function startProviderErrorMcpServer(): FakeMcpServer {
         },
       }),
     )
+    server.registerTool(
+      "runtime_reject",
+      {
+        description: "Reject a schema-valid request using the standard MCP SDK validation error shape.",
+        inputSchema: z.object({ query: z.string() }),
+      },
+      async () => ({
+        isError: true,
+        content: textContent("Input validation error: Invalid arguments for tool runtime_reject: sensitive provider detail"),
+      }),
+    )
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     const response = await transport.handleRequest(c) ?? new Response(null, { status: 204 })
@@ -165,6 +182,50 @@ function startProviderErrorMcpServer(): FakeMcpServer {
   })
   const server = Bun.serve({ port: 0, fetch: app.fetch })
   return { url: `http://127.0.0.1:${server.port}/mcp`, stop: () => server.stop(true) }
+}
+
+function startMutableSchemaMcpServer(): MutableSchemaMcpServer {
+  let currentSchema: "query" | "incidentId" = "query"
+  let toolCalls = 0
+  const app = new Hono()
+  app.all("/mcp", async (c) => {
+    const payload: unknown = await c.req.raw.clone().json().catch(() => null)
+    if (typeof payload === "object" && payload !== null && "method" in payload && payload.method === "tools/call") {
+      toolCalls += 1
+    }
+    const server = new McpServer({ name: "mutable-schema", version: "1.0.0" })
+    if (currentSchema === "query") {
+      server.registerTool(
+        "lookup_incident",
+        {
+          description: "Look up an incident using a search query.",
+          inputSchema: z.object({ query: z.string() }),
+        },
+        async ({ query }) => ({ content: textContent(`Found ${query}`) }),
+      )
+    } else {
+      server.registerTool(
+        "lookup_incident",
+        {
+          description: "Look up an incident using its identifier.",
+          inputSchema: z.object({ incidentId: z.string() }),
+        },
+        async ({ incidentId }) => ({ content: textContent(`Found ${incidentId}`) }),
+      )
+    }
+    const transport = new StreamableHTTPTransport()
+    await server.connect(transport)
+    return await transport.handleRequest(c) ?? new Response(null, { status: 204 })
+  })
+  const server = Bun.serve({ port: 0, fetch: app.fetch })
+  return {
+    url: `http://127.0.0.1:${server.port}/mcp`,
+    stop: () => server.stop(true),
+    toolCalls: () => toolCalls,
+    useSchema: (schema) => {
+      currentSchema = schema
+    },
+  }
 }
 
 function standaloneConnection(
@@ -294,6 +355,7 @@ beforeAll(async () => {
     name: "needle-only-tool",
     description: "The only catalog entry matching the coverage test keyword.",
   }])
+  mutableSchemaServer = startMutableSchemaMcpServer()
 })
 
 afterAll(() => {
@@ -303,6 +365,7 @@ afterAll(() => {
   refreshErrorServer?.stop()
   providerErrorServer?.stop()
   needleServer?.stop()
+  mutableSchemaServer?.stop()
   mock.restore()
 })
 
@@ -334,6 +397,92 @@ test("control-healthy: Connections list and search_capabilities both see Slack t
   if (process.env.OPENWORK_EVAL_VERBOSE === "1") {
     console.log("E2E_HEALTHY_DISCOVERY", JSON.stringify({ connectionName: "Slack", toolCount: matches.length, status: "available" }))
   }
+})
+
+test("external capability execution validates the live schema before tools/call", async () => {
+  if (!mutableSchemaServer) throw new Error("Mutable-schema MCP server was not started")
+  const seed = await seedOrganization("deterministic-arguments")
+  const connection = await createGrantedConnection(seed, {
+    name: "Incident service",
+    authType: "none",
+    credentialMode: "shared",
+    url: mutableSchemaServer.url,
+  })
+
+  const matches = await search(seed, "lookup incident")
+  const match = matches.find((candidate) => candidate.name === `mcp:${connection.id}:lookup_incident`)
+  if (!match?.schemaDigest) throw new Error("Search did not return the external capability schema digest")
+  expect(match).toMatchObject({
+    argumentsSchema: {
+      type: "object",
+      required: ["query"],
+    },
+    invocation: { argumentsField: "body" },
+  })
+
+  const invalid = await executeExternalCapability({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId: connection.id,
+    toolName: "lookup_incident",
+    args: {},
+    schemaDigest: match.schemaDigest,
+    redirectUriBase,
+  })
+  expect(invalid).toMatchObject({
+    ok: false,
+    error: "invalid_capability_arguments",
+    sameArgumentsRetryable: false,
+    retry: { action: "correct_arguments", searchRequired: false },
+    schemaDigest: match.schemaDigest,
+  })
+  expect(mutableSchemaServer.toolCalls()).toBe(0)
+
+  const invalidShape = await executeExternalCapability({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId: connection.id,
+    toolName: "lookup_incident",
+    args: ["query"],
+    schemaDigest: match.schemaDigest,
+    redirectUriBase,
+  })
+  expect(invalidShape).toMatchObject({
+    ok: false,
+    error: "invalid_capability_arguments",
+    issues: [{ path: "/", keyword: "type" }],
+  })
+  expect(mutableSchemaServer.toolCalls()).toBe(0)
+
+  const valid = await executeExternalCapability({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId: connection.id,
+    toolName: "lookup_incident",
+    args: { query: "INC0001" },
+    schemaDigest: match.schemaDigest,
+    redirectUriBase,
+  })
+  expect(valid.ok).toBe(true)
+  expect(mutableSchemaServer.toolCalls()).toBe(1)
+
+  mutableSchemaServer.useSchema("incidentId")
+  const stale = await executeExternalCapability({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId: connection.id,
+    toolName: "lookup_incident",
+    args: { query: "INC0001" },
+    schemaDigest: match.schemaDigest,
+    redirectUriBase,
+  })
+  expect(stale).toMatchObject({
+    ok: false,
+    error: "capability_schema_changed",
+    sameArgumentsRetryable: false,
+    retry: { action: "search_capabilities", searchRequired: true },
+  })
+  expect(mutableSchemaServer.toolCalls()).toBe(1)
 })
 
 test("shared-oauth-never-connected: Connections list sees Slack and search returns needs_connection", async () => {
@@ -584,6 +733,40 @@ test("MCP tool isError is surfaced as a provider failure, not transport success"
     },
   })
   expect(result.message).not.toContain("internal detail")
+})
+
+test("standard MCP SDK invalid-argument tool errors become a corrective execution result", async () => {
+  if (!providerErrorServer) throw new Error("Provider-error MCP server was not started")
+  const seed = await seedOrganization("provider-invalid-arguments")
+  const connection = await createGrantedConnection(seed, {
+    name: "ServiceNow",
+    authType: "none",
+    credentialMode: "shared",
+    url: providerErrorServer.url,
+  })
+  const result = await executeExternalCapability({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId: connection.id,
+    toolName: "runtime_reject",
+    args: { query: "INC0001" },
+    redirectUriBase,
+  })
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: "invalid_capability_arguments",
+    sameArgumentsRetryable: false,
+    retry: { action: "correct_arguments", searchRequired: false },
+    diagnostic: {
+      phase: "MCP_TOOL_EXECUTION",
+      category: "mcp_tool_input_invalid",
+      code: "MCP_PROVIDER_INVALID_PARAMS",
+      actionOwner: "openwork",
+      retryable: false,
+    },
+  })
+  expect(JSON.stringify(result)).not.toContain("sensitive provider detail")
 })
 
 test("structured provider denial keeps connection health separate and names the provider admin", async () => {

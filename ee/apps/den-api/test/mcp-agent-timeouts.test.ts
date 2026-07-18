@@ -115,6 +115,8 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("Settings > Connect")
   expect(client.getInstructions()).toContain("Never tell the user to reconnect OpenWork Cloud")
   expect(client.getInstructions()).toContain("connectionStatus.connectionName")
+  expect(client.getInstructions()).toContain("invalid_capability_arguments")
+  expect(client.getInstructions()).toContain("never retry the same arguments unchanged")
 
   await client.close()
   await server.close()
@@ -202,6 +204,38 @@ test("external capability failures preserve the safe MCP diagnostic envelope", (
       state: "reauth_required",
       action: { type: "reconnect" },
     },
+  })
+})
+
+test("invalid capability arguments preserve corrective retry instructions", () => {
+  const result = agentModule.externalCapabilityErrorToolResult({
+    ok: false,
+    error: "invalid_capability_arguments",
+    capability: "mcp:emc_test:lookup_incident",
+    message: "The capability arguments do not match its advertised schema.",
+    issues: [{
+      path: "/query",
+      keyword: "schema_validation",
+      message: "Required property query is missing.",
+    }],
+    schemaDigest: `sha256:${"a".repeat(64)}`,
+    sameArgumentsRetryable: false,
+    retry: { action: "correct_arguments", searchRequired: false },
+  })
+
+  expect(result.isError).toBe(true)
+  expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual({
+    error: "invalid_capability_arguments",
+    message: "The capability arguments do not match its advertised schema.",
+    capability: "mcp:emc_test:lookup_incident",
+    issues: [{
+      path: "/query",
+      keyword: "schema_validation",
+      message: "Required property query is missing.",
+    }],
+    schemaDigest: `sha256:${"a".repeat(64)}`,
+    sameArgumentsRetryable: false,
+    retry: { action: "correct_arguments", searchRequired: false },
   })
 })
 
