@@ -434,6 +434,69 @@ describe("external MCP diagnostics", () => {
     expect(serialized).not.toContain("invalid request id with spaces")
   })
 
+  test("classifies remote invalid params as correctable tool input", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_invalid_params")
+    tracker.begin("MCP_TOOL_EXECUTION")
+    const invalidParams = new Error("Provider rejected private argument detail")
+    Object.defineProperty(invalidParams, "code", { value: -32602 })
+
+    const error = tracker.error(invalidParams)
+    expect(error.diagnostic).toMatchObject({
+      phase: "MCP_TOOL_EXECUTION",
+      category: "mcp_tool_input_invalid",
+      code: "MCP_INVALID_PARAMS",
+      actionOwner: "openwork",
+      retryable: false,
+      jsonRpcCode: -32602,
+    })
+    expect(error.diagnostic.operatorAction).toContain("do not retry the same arguments")
+    expect(JSON.stringify(error.diagnostic)).not.toContain("private argument detail")
+  })
+
+  test("classifies structured provider validation errors as correctable tool input", () => {
+    const { result: error } = captureConsoleError(() => {
+      const tracker = new ExternalMcpDiagnosticTracker("req_provider_invalid_params")
+      tracker.passed("MCP_INITIALIZED", "protocol_ready")
+      return tracker.providerToolError({
+        isError: true,
+        content: [{ type: "text", text: "private provider validation detail" }],
+        structuredContent: { category: "invalid_arguments" },
+      })
+    })
+
+    expect(error.diagnostic).toMatchObject({
+      phase: "MCP_TOOL_EXECUTION",
+      category: "mcp_tool_input_invalid",
+      code: "MCP_PROVIDER_INVALID_PARAMS",
+      actionOwner: "openwork",
+      retryable: false,
+    })
+    expect(JSON.stringify(error.diagnostic)).not.toContain("private provider validation detail")
+  })
+
+  test("classifies standardized MCP SDK input-validation tool errors without exposing their text", () => {
+    const { result: error } = captureConsoleError(() => {
+      const tracker = new ExternalMcpDiagnosticTracker("req_sdk_invalid_params")
+      tracker.passed("MCP_INITIALIZED", "protocol_ready")
+      return tracker.providerToolError({
+        isError: true,
+        content: [{
+          type: "text",
+          text: "Input validation error: Invalid arguments for tool lookup_incident: private provider detail",
+        }],
+      })
+    })
+
+    expect(error.diagnostic).toMatchObject({
+      phase: "MCP_TOOL_EXECUTION",
+      category: "mcp_tool_input_invalid",
+      code: "MCP_PROVIDER_INVALID_PARAMS",
+      actionOwner: "openwork",
+      retryable: false,
+    })
+    expect(JSON.stringify(error.diagnostic)).not.toContain("private provider detail")
+  })
+
   test("derives allowlisted provider evidence from ServiceNow-style text JSON", () => {
     const providerText = '{"status":403,"error":"insufficient_acl","requestId":"TXN-abc-123"}'
     const { result: error } = captureConsoleError(() => {

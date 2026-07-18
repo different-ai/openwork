@@ -31,6 +31,7 @@ const rpcRequestSchema = z.object({
 
 type MockMcpOptions = {
   toolError?: boolean
+  toolErrorText?: string
   expectedApiKey?: string
 }
 
@@ -84,7 +85,7 @@ function mockMcpFetch(options: MockMcpOptions = {}): EnterpriseMcpFetch {
         jsonrpc: "2.0",
         id: request.id,
         result: {
-          content: [{ type: "text", text: options.toolError ? "Provider rejected the operation" : "Record found" }],
+          content: [{ type: "text", text: options.toolError ? (options.toolErrorText ?? "Provider rejected the operation") : "Record found" }],
           isError: options.toolError ?? false,
         },
       })
@@ -428,6 +429,28 @@ describe("enterprise MCP client", () => {
         assert.ok(error instanceof EnterpriseMcpClientError)
         assert.equal(error.code, "MCP_TOOL_EXECUTION_FAILED")
         assert.ok(error.cause instanceof EnterpriseMcpToolResultError)
+        return true
+      },
+    )
+  })
+
+  it("retains only a safe invalid-argument signal from standardized MCP SDK tool errors", async () => {
+    const privateText = "Input validation error: Invalid arguments for tool lookup-record: private provider detail"
+    const client = createEnterpriseMcpClient({
+      fetch: mockMcpFetch({ toolError: true, toolErrorText: privateText }),
+    })
+    await assert.rejects(
+      client.callTool({
+        connection: noAuthConnection(),
+        redirectUri: "https://den.example.test/callback",
+        toolName: "lookup-record",
+        arguments: {},
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof EnterpriseMcpClientError)
+        assert.ok(error.cause instanceof EnterpriseMcpToolResultError)
+        assert.deepEqual(error.cause.providerSignal, { category: "invalid_arguments" })
+        assert.doesNotMatch(JSON.stringify(error.cause), /private provider detail/)
         return true
       },
     )

@@ -356,6 +356,12 @@ function providerToolContentEvidence(result: unknown): ProviderToolContentEviden
   }
 }
 
+function isProviderInputValidationExcerpt(value: string | undefined): boolean {
+  if (!value) return false
+  return /^Input validation error:\s*Invalid arguments for tool\b/i.test(value)
+    || /^Invalid (?:tool )?(?:arguments|params)\b/i.test(value)
+}
+
 function errorName(value: unknown): string {
   const name = value instanceof Error ? value.name : stringProperty(value, "name")
   return name && SAFE_ERROR_NAMES.has(name) ? name : "Error"
@@ -868,6 +874,16 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
       operatorAction: "Check provider latency and retry after the current MCP request can complete within its bounded timeout.",
     }
   }
+  if (numericErrorCode(error) === -32602 && fallbackPhase === "MCP_TOOL_EXECUTION") {
+    return {
+      phase: "MCP_TOOL_EXECUTION",
+      category: "mcp_tool_input_invalid",
+      code: "MCP_INVALID_PARAMS",
+      retryable: false,
+      actionOwner: "openwork",
+      operatorAction: "Correct the tool arguments using the latest advertised input schema; do not retry the same arguments unchanged.",
+    }
+  }
 
   const name = errorName(error)
   if (name === "InvalidClientError" || name === "UnauthorizedClientError" || name === "InvalidClientMetadataError") {
@@ -1136,10 +1152,24 @@ export class ExternalMcpDiagnosticTracker {
     const requestId = safeProviderRequestId(structuredContent?.requestId) ?? evidence.providerRequestId
     if (requestId) this.providerRequestId = requestId
 
+    const providerInvalidArguments = [
+      "invalid_arguments",
+      "invalid_params",
+      "validation_error",
+    ].includes(providerCategory ?? "") || isProviderInputValidationExcerpt(evidence.excerpt)
     const providerPolicyDenied = structuredProviderStatus === 403
       ? providerCategory === "provider_policy"
       : evidence.providerStatus === 403
-    const classificationBase: Classification = providerPolicyDenied
+    const classificationBase: Classification = providerInvalidArguments
+      ? {
+          phase: "MCP_TOOL_EXECUTION",
+          category: "mcp_tool_input_invalid",
+          code: "MCP_PROVIDER_INVALID_PARAMS",
+          retryable: false,
+          actionOwner: "openwork",
+          operatorAction: "Correct the tool arguments using the latest advertised input schema; do not retry the same arguments unchanged.",
+        }
+      : providerPolicyDenied
       ? {
           phase: "PROVIDER_AUTHORIZATION",
           category: "provider_policy_denied",
