@@ -45,6 +45,17 @@ plugins/agentic-outreach
 
 The OpenWork Cloud Control MCP connection must be available to the worker. Add or authorize the external providers your organization chooses; the plugin reports the exact human action when a connection is missing.
 
+## Fastest path to first value
+
+An organization admin can now find **Apollo** and **FullEnrich** directly in OpenWork Connections and complete their official browser OAuth flows—no API-key plumbing or local server. The recommended bundle is intentionally replaceable:
+
+- **Exa** or Firecrawl Skills for current public evidence;
+- **FullEnrich MCP** for managed, waterfall-verified contact acquisition, or **Apollo MCP** when the customer already runs Apollo and wants one account for search, enrichment, records, and sequences;
+- **Instantly API** through the customer's Activepieces connection for specialized email delivery and reply events, or Apollo's own sequence tools when they fit;
+- **Activepieces MCP** as the customer-owned long-tail Adapter for instance-specific APIs, schedules, and webhooks.
+
+When FullEnrich is selected, preview and import its maintained [official Skills](https://github.com/FullEnrich/fullenrich-skills) rather than copying its credit checks or tool guidance. Activepieces has a customer-instance-specific MCP URL, so it stays a custom connection instead of a misleading global preset.
+
 ## Run
 
 Use `/outreach` followed by a target and constraints, for example:

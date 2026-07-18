@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 External MCP 自由查询解析器、官方预设目录与 requirements discovery 类型
+ * [OUTPUT]: 验证查询分类、候选边界、预设命中、命名与 MCP discovery 判定
+ * [POS]: den-api/test 的 External MCP 智能添加契约测试，防止官方连接入口和安全边界漂移
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { describe, expect, test } from "bun:test"
 import type { EnterpriseMcpConnectionRequirements } from "@openwork/enterprise-mcp-client"
 import {
@@ -87,11 +93,15 @@ describe("matchPresetForQuery", () => {
     expect(matchPresetForQuery("notion", EXTERNAL_MCP_PRESETS)?.presetId).toBe("notion")
     expect(matchPresetForQuery("  Linear ", EXTERNAL_MCP_PRESETS)?.presetId).toBe("linear")
     expect(matchPresetForQuery("CONTEXT7", EXTERNAL_MCP_PRESETS)?.presetId).toBe("context7")
+    expect(matchPresetForQuery("Apollo", EXTERNAL_MCP_PRESETS)?.url).toBe("https://mcp.apollo.io/mcp")
+    expect(matchPresetForQuery("Full Enrich", EXTERNAL_MCP_PRESETS)?.url).toBe("https://mcp.fullenrich.com/mcp")
   })
 
   test("matches by preset URL host for URL and domain queries", () => {
     expect(matchPresetForQuery("https://mcp.notion.com/mcp", EXTERNAL_MCP_PRESETS)?.presetId).toBe("notion")
     expect(matchPresetForQuery("mcp.stripe.com", EXTERNAL_MCP_PRESETS)?.presetId).toBe("stripe")
+    expect(matchPresetForQuery("mcp.apollo.io", EXTERNAL_MCP_PRESETS)?.authType).toBe("oauth")
+    expect(matchPresetForQuery("https://mcp.fullenrich.com/mcp", EXTERNAL_MCP_PRESETS)?.authType).toBe("oauth")
   })
 
   test("returns null for unknown names", () => {

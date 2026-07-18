@@ -41,6 +41,12 @@ describe("agentic outreach eval snapshots", () => {
     expect(run).toContain('"contact_purchase": null');
   });
 
+  test("the live provider plan exposes organization OAuth presets without SDK wiring", () => {
+    const providerPlan = file(2, "/brief.md");
+    expect(providerPlan).toContain("Apollo · schema inspected live · organization OAuth preset ready");
+    expect(providerPlan).toContain("FullEnrich · schema inspected live · organization OAuth preset ready");
+  });
+
   test("approved contact purchase records managed-waterfall hashes and both spend ledgers", () => {
     const ledger = file(5, "/lead-ledger.csv");
     const run = file(5, "/run.json");

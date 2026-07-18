@@ -130,11 +130,12 @@ export default {
               ctx.assert(body.includes(provider), `${provider} is missing from the live capability plan.`);
             }
             ctx.assert(body.includes("schema inspected live"), "Exact live contract inspection is not visible.");
+            ctx.assert(body.includes("organization OAuth preset ready"), "Apollo and FullEnrich one-click OAuth readiness is not visible.");
             ctx.assert(body.includes("approval required"), "Mutation safety is not visible.");
           },
           screenshot: {
             name: "live-capability-plan",
-            requireText: ["Live capability plan", "Exa", "Apollo", "FullEnrich", "Instantly", "schema inspected live"],
+            requireText: ["Live capability plan", "Exa", "Apollo", "FullEnrich", "Instantly", "schema inspected live", "organization OAuth preset ready"],
             rejectText: ["Something went wrong"],
           },
         });

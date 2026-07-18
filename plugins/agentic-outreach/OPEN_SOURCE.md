@@ -6,7 +6,7 @@
 -->
 # Open-source and commercial research
 
-Checked: **2026-07-18 (Asia/Shanghai)**. Activity dates below refer to the latest default-branch commit observed through the official GitHub API on that date, not a guarantee of future maintenance.
+Checked: **2026-07-19 (Asia/Shanghai)**. Activity dates below refer to the latest default-branch commit observed through the official GitHub API on that date, not a guarantee of future maintenance.
 
 ## Executive decision
 
@@ -26,6 +26,7 @@ The first version should compose existing providers, not become another enrichme
 | [Activepieces](https://github.com/activepieces/activepieces/commit/ecc9e843ce50) | 2026-07-17; release v0.86.3 | [Core MIT; enterprise directories excluded](https://github.com/activepieces/activepieces/blob/main/LICENSE) | **Adopt** as the long-tail action and durable-flow Adapter. |
 | [Firecrawl MCP server](https://github.com/firecrawl/firecrawl-mcp-server/commit/3eb1115b1f28) | 2026-07-08 | [MIT](https://github.com/firecrawl/firecrawl-mcp-server/blob/main/LICENSE) | **Adopt externally** for live public-web evidence when connected. |
 | [Firecrawl workflows](https://github.com/firecrawl/firecrawl-workflows/commit/1a6b30273113) | 2026-06-19 | [ISC](https://github.com/firecrawl/firecrawl-workflows/blob/main/LICENSE) | **Import**, especially `firecrawl-lead-gen` and `firecrawl-lead-research`; do not rewrite them. |
+| [FullEnrich Skills](https://github.com/FullEnrich/fullenrich-skills/commit/ef4311deb215a2b2e1ffb823cc15a1e5c11003b2) | 2026-07-08; v1.0.1 manifest | [MIT](https://github.com/FullEnrich/fullenrich-skills/blob/main/LICENSE) | **Preview/import** when FullEnrich is selected; reuse its live tool guidance, confirmation and credit checks instead of copying provider workflow details. |
 | [Composio](https://github.com/ComposioHQ/composio/commit/c34401e35504) | 2026-07-16 | [SDK MIT](https://github.com/ComposioHQ/composio/blob/master/LICENSE); hosted backend/service remains external | **Optional Adapter** when an organization already uses Composio/Rube. |
 | [Hatchet](https://github.com/hatchet-dev/hatchet/commit/bd056df4b7f7) | 2026-07-17 | [MIT](https://github.com/hatchet-dev/hatchet/blob/main/LICENSE) | **Defer**. It is a credible native durable runtime, but duplicates Activepieces in v1. |
 | [OpenMeter](https://github.com/openmeterio/openmeter/commit/3885445fd4bf) | 2026-07-18 | [Apache-2.0](https://github.com/openmeterio/openmeter/blob/main/LICENSE) | **Defer** until managed credits and usage billing are implemented. |
