@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Den 能力目录、外部 MCP/市场/Skill Adapter、身份策略与统一 invoke 路径
+ * [OUTPUT]: 对外提供只含 search_capabilities 与 execute_capability 的 Agent MCP 端点及其结构化协议
+ * [POS]: mcp 模块的高杠杆 Agent 门面，以两阶段发现隔离轻量检索和单能力精确参数读取
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { ErrorCode, McpError, type ToolAnnotations } from "@modelcontextprotocol/sdk/types.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
@@ -26,6 +32,7 @@ import { executeAvailableAdminCapability, parseAdminCapabilityName, searchAvaila
 
 export const EXECUTE_CAPABILITY_TOOL_NAME = "execute_capability"
 const searchCapabilityTypeSchema = z.enum(["all", "api", "admin", "mcp", "marketplace", "skills"])
+const searchCapabilityDetailSchema = z.enum(["summary", "schema"])
 const skillMarketplaceObjectTypes: MarketplaceCapabilityObjectType[] = ["skill"]
 export const EXECUTE_CAPABILITY_TIMEOUT_MS = 180_000
 export const SEARCH_CAPABILITIES_ANNOTATIONS: ToolAnnotations = {
@@ -85,6 +92,13 @@ const capabilityMatchOutputSchema = z.object({
   queryParams: z.array(z.string()),
   hasBody: z.boolean(),
   bodySchema: z.unknown().optional(),
+  annotations: z.object({
+    title: z.string().optional(),
+    readOnlyHint: z.boolean().optional(),
+    destructiveHint: z.boolean().optional(),
+    idempotentHint: z.boolean().optional(),
+    openWorldHint: z.boolean().optional(),
+  }).passthrough().optional(),
   kind: z.string().optional(),
   status: z.string().optional(),
   hint: z.string().optional(),
@@ -101,6 +115,7 @@ export const AGENT_MCP_INSTRUCTIONS = [
   "Capabilities include native Google Workspace operations (Gmail read/search, Calendar list/create, Drive search/read, and Gmail draft creation) executed with the signed-in member's organization credentials, plus any MCP connections the organization has added.",
   "Allowlisted platform admins can also discover namespaced OpenWork Admin capabilities through this same connection; other members cannot discover or execute them.",
   "Always call search_capabilities first with 2-4 keyword variants before concluding something is unavailable. Use execute_capability only with exact names returned by search_capabilities.",
+  "Broad searches default to detail=summary. Before execution, call search_capabilities again with detail=schema and the selected exact name; schema detail returns at most one match with its exact bodySchema. Never guess body arguments.",
   "For a request to add a public GitHub plugin to an organization marketplace, search for the marketplace list, GitHub plugin import preview, GitHub plugin marketplace import, and resolved marketplace detail capabilities. Preview first; do not recreate the plugin by hand.",
   "Before importing, confirm the target marketplace, selected skill/server keys, and who can use them. Do not choose one authentication type for every server: the import route resolves known presets and plugin declarations, while the request authType is only a fallback for unknown servers.",
   "After importing, retrieve the resolved marketplace detail and report each plugin's cloudReadiness. An import or plugin binding is not proof that an MCP connection is usable. Relay needs_admin_setup or needs_signin as the next human action instead of claiming the connection is ready.",
@@ -147,6 +162,24 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
     content: textContent(JSON.stringify(result, null, 2)),
     structuredContent: result,
   }
+}
+
+export function projectCapabilitySearchMatches<T extends CapabilityMatch>(input: {
+  matches: T[]
+  detail: "summary" | "schema"
+  exactName?: string
+  limit: number
+}): CapabilityMatch[] {
+  const boundedLimit = input.detail === "schema" ? 1 : input.limit
+  return input.matches
+    .filter((match) => !input.exactName || match.name === input.exactName)
+    .slice(0, boundedLimit)
+    .map((match) => {
+      if (input.detail === "schema" || match.bodySchema === undefined) return match
+      const summary: CapabilityMatch = { ...match }
+      delete summary.bodySchema
+      return summary
+    })
 }
 
 function unknownCapabilityText(name: string): string {
@@ -310,24 +343,31 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
           "there is no list of individually-named tools to browse. Always search first.",
           "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
           "Try 2-4 keyword variants before deciding a capability is unavailable.",
-          "Each match includes pathParams, queryParams, hasBody, and the exact bodySchema for JSON mutations, describing what execute_capability needs.",
+          "Broad searches return lightweight summaries plus safety annotations. Before execution, search again with detail=schema and the selected exact name to obtain one exact bodySchema.",
           "Skill matches use method SKILL and return stored SKILL.md content when executed.",
         ].join(" "),
         annotations: SEARCH_CAPABILITIES_ANNOTATIONS,
         inputSchema: z.object({
           query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
+          name: z.string().min(1).optional().describe("Exact capability name from a prior summary search. Required for reliable detail=schema lookup."),
           limit: z.number().int().min(1).max(20).optional().describe("Max number of matches to return. Defaults to 5."),
           type: searchCapabilityTypeSchema.optional().describe("Optional source filter. all searches every available source; api searches Den API capabilities; admin searches allowlisted platform-admin tools; mcp searches connected external MCP tools; marketplace searches marketplace plugin capabilities; skills searches native skills and marketplace skill objects. Defaults to all."),
+          detail: searchCapabilityDetailSchema.default("summary").describe("summary returns lightweight candidates; schema returns at most one exact parameter contract and should be paired with name."),
         }),
         outputSchema: SEARCH_CAPABILITIES_OUTPUT_SCHEMA,
       },
-      async ({ query, limit, type }) => {
-        const boundedLimit = limit ?? 5
+      async ({ query, name, limit, type, detail }) => {
+        if (detail === "schema" && !name) {
+          throw new McpError(ErrorCode.InvalidParams, "detail=schema requires the exact capability name returned by a prior summary search.")
+        }
+        const boundedLimit = detail === "schema" ? 1 : limit ?? 5
+        const sourceLimit = name ? 20 : boundedLimit
+        const searchQuery = name ?? query
         const sourceFilter = searchCapabilitySourceFilter(type)
         const marketplaceObjectTypes = type === "skills" ? skillMarketplaceObjectTypes : undefined
-        const restMatches = sourceFilter.api ? searchCapabilities(catalog, query, boundedLimit) : []
+        const restMatches = sourceFilter.api ? searchCapabilities(catalog, searchQuery, sourceLimit) : []
         const adminMatches = sourceFilter.admin
-          ? await searchAvailableAdminCapabilities(await resolvePlatformAdmin(), query, boundedLimit)
+          ? await searchAvailableAdminCapabilities(await resolvePlatformAdmin(), searchQuery, sourceLimit)
           : []
         // Merged in from each connected External MCP Connection's live
         // tools/list (capability-sources/external-mcp-client.ts) — a
@@ -338,9 +378,11 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
           ? await searchExternalCapabilities({
             organizationId: principal.organizationId,
             member: memberIdentity,
-            query,
+            query: searchQuery,
             redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
-            limit: boundedLimit,
+            limit: sourceLimit,
+            capabilityName: name,
+            includeSchema: detail === "schema",
             reportCoverage: (coverage) => {
               externalCoverageHint = externalMcpSearchCoverageHint(coverage)
             },
@@ -351,8 +393,8 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             organizationId: principal.organizationId,
             member: memberIdentity,
             objectTypes: marketplaceObjectTypes,
-            query,
-            limit: boundedLimit,
+            query: searchQuery,
+            limit: sourceLimit,
             enabled: externalMcpConnectionsEnabled,
           })
           : []
@@ -360,13 +402,17 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
           ? await searchSkillCapabilities({
             organizationId: principal.organizationId,
             member: memberIdentity,
-            query,
-            limit: boundedLimit,
+            query: searchQuery,
+            limit: sourceLimit,
           })
           : []
-        const matches = [...restMatches, ...adminMatches, ...externalMatches, ...marketplaceMatches, ...skillMatches]
-          .sort(compareCapabilityMatches)
-          .slice(0, boundedLimit)
+        const matches = projectCapabilitySearchMatches({
+          matches: [...restMatches, ...adminMatches, ...externalMatches, ...marketplaceMatches, ...skillMatches]
+            .sort(compareCapabilityMatches),
+          detail,
+          exactName: name,
+          limit: boundedLimit,
+        })
         return capabilitySearchToolResult(matches, externalCoverageHint)
       },
     )

@@ -1,5 +1,12 @@
+/**
+ * [INPUT]: 依赖真实内存 HTTP MCP 服务、外部连接数据库与成员授权/凭据生命周期
+ * [OUTPUT]: 验证外部 MCP 的实时发现、精确 schema/注解保真、故障诊断与租户隔离
+ * [POS]: den-api 测试集中的外部能力纵向集成证明，覆盖 tools/list 到 CapabilityMatch 的完整 Seam
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
@@ -26,6 +33,7 @@ const redirectUriBase = "http://127.0.0.1:8790"
 type FakeTool = {
   name: string
   description: string
+  annotations?: ToolAnnotations
 }
 
 type FakeMcpServer = {
@@ -65,7 +73,16 @@ let needleServer: FakeMcpServer | undefined
 const slackTools: FakeTool[] = [
   { name: "slack-send-message", description: "Send a message to a Slack channel or DM." },
   { name: "slack-list-channels", description: "List Slack channels in the workspace." },
-  { name: "slack-search-messages", description: "Search Slack messages across channels." },
+  {
+    name: "slack-search-messages",
+    description: "Search Slack messages across channels.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  },
   { name: "slack-create-reminder", description: "Create a Slack reminder for a user." },
   { name: "slack-post-update", description: "Post a status update to a Slack channel." },
 ]
@@ -94,6 +111,7 @@ function startFakeMcpServer(name: string, tools: FakeTool[], requiredBearer?: st
         {
           description: tool.description,
           inputSchema: z.object({ text: z.string().optional() }),
+          annotations: tool.annotations,
         },
         async ({ text }) => ({ content: textContent(text ?? `${tool.name} ok`) }),
       )
@@ -334,6 +352,41 @@ test("control-healthy: Connections list and search_capabilities both see Slack t
   if (process.env.OPENWORK_EVAL_VERBOSE === "1") {
     console.log("E2E_HEALTHY_DISCOVERY", JSON.stringify({ connectionName: "Slack", toolCount: matches.length, status: "available" }))
   }
+})
+
+test("external MCP discovery omits bulk schemas and returns one exact annotated contract on demand", async () => {
+  if (!slackServer) throw new Error("Slack MCP server was not started")
+
+  const seed = await seedOrganization("schema-detail")
+  const connection = await createGrantedConnection(seed, {
+    name: "Slack",
+    authType: "none",
+    credentialMode: "shared",
+    url: slackServer.url,
+  })
+  const capabilityName = `mcp:${connection.id}:slack-search-messages`
+
+  const summaries = await search(seed, "slack search")
+  const selected = summaries.find((match) => match.name === capabilityName)
+  expect(selected?.bodySchema).toBeUndefined()
+  expect(selected?.annotations).toEqual(slackTools[2]?.annotations)
+
+  const details = await searchExternalCapabilities({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    query: "slack search",
+    capabilityName,
+    includeSchema: true,
+    redirectUriBase,
+    limit: 20,
+  })
+  expect(details).toHaveLength(1)
+  expect(details[0]?.name).toBe(capabilityName)
+  expect(details[0]?.annotations).toEqual(slackTools[2]?.annotations)
+  expect(details[0]?.bodySchema).toMatchObject({
+    type: "object",
+    properties: { text: { type: "string" } },
+  })
 })
 
 test("shared-oauth-never-connected: Connections list sees Slack and search returns needs_connection", async () => {

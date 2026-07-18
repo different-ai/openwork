@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Agent MCP 门面的内存 Transport、能力投影函数与超时预算
+ * [OUTPUT]: 验证两工具协议、两阶段 schema 读取、安全注解和超时错误的回归测试
+ * [POS]: den-api 测试集中的 Agent MCP 契约测试，阻止上下文膨胀或参数猜测回归
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js"
@@ -115,6 +121,8 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("Settings > Connect")
   expect(client.getInstructions()).toContain("Never tell the user to reconnect OpenWork Cloud")
   expect(client.getInstructions()).toContain("connectionStatus.connectionName")
+  expect(client.getInstructions()).toContain("detail=schema")
+  expect(client.getInstructions()).toContain("Never guess body arguments")
 
   await client.close()
   await server.close()
@@ -146,6 +154,52 @@ test("capability search preserves the bounded-fanout coverage warning", () => {
     hint: "No matches. Try broader or different keywords. External MCP search inspected 16 of 17 eligible connections. Results may be incomplete.",
   })
   expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual(structured)
+})
+
+test("capability discovery keeps summaries light and schema detail exact", () => {
+  const matches: CapabilityMatch[] = [
+    {
+      name: "mcp:connection:find_people",
+      method: "MCP",
+      path: "https://provider.test/mcp",
+      score: 12,
+      summary: "Find people",
+      pathParams: [],
+      queryParams: [],
+      hasBody: true,
+      bodySchema: { type: "object", required: ["query"] },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    },
+    {
+      name: "mcp:connection:buy_email",
+      method: "MCP",
+      path: "https://provider.test/mcp",
+      score: 10,
+      summary: "Buy a verified email",
+      pathParams: [],
+      queryParams: [],
+      hasBody: true,
+      bodySchema: { type: "object", required: ["personId"] },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+    },
+  ]
+
+  const summaries = agentModule.projectCapabilitySearchMatches({
+    matches,
+    detail: "summary",
+    limit: 20,
+  })
+  expect(summaries).toHaveLength(2)
+  expect(summaries[0]?.bodySchema).toBeUndefined()
+  expect(summaries[0]?.annotations).toEqual(matches[0]?.annotations)
+
+  const schemaDetail = agentModule.projectCapabilitySearchMatches({
+    matches,
+    detail: "schema",
+    exactName: "mcp:connection:buy_email",
+    limit: 20,
+  })
+  expect(schemaDetail).toEqual([matches[1]])
 })
 
 test("external capability failures preserve the safe MCP diagnostic envelope", () => {
@@ -218,6 +272,30 @@ test("structured search output remains compatible with marketplace match kinds a
       hasBody: false,
       kind: "skill",
       status: "needs_install",
+    }],
+  })
+
+  expect(result.success).toBe(true)
+})
+
+test("structured search output accepts provider safety annotations", () => {
+  const result = agentModule.SEARCH_CAPABILITIES_OUTPUT_SCHEMA.safeParse({
+    matches: [{
+      name: "mcp:connection:buy_email",
+      method: "MCP",
+      path: "https://provider.test/mcp",
+      score: 10,
+      summary: "Buy a verified email",
+      pathParams: [],
+      queryParams: [],
+      hasBody: true,
+      bodySchema: { type: "object" },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     }],
   })
 

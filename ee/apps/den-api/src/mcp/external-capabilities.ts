@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖外部 MCP 连接、成员授权、OAuth 凭据和受限 MCP 客户端的实时 tools/list 与 callTool
+ * [OUTPUT]: 对外提供成员级外部能力搜索、连接状态诊断、精确参数契约与通用执行 Adapter
+ * [POS]: mcp 模块的外部能力边界，把任意供应商 MCP 映射到统一 CapabilityMatch，绝不复制供应商业务逻辑
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
@@ -445,6 +451,7 @@ export function buildExternalConnectionStatus(input: {
 
 function statusMatch(input: {
   connection: ExternalMcpConnectionRow
+  name?: string
   score: number
   summary: string
   status: ExternalCapabilityMatch["status"]
@@ -452,7 +459,7 @@ function statusMatch(input: {
   connectionStatus: ExternalConnectionStatus
 }): ExternalCapabilityMatch {
   return {
-    name: buildExternalCapabilityName(input.connection.id, "*"),
+    name: input.name ?? buildExternalCapabilityName(input.connection.id, "*"),
     method: "MCP",
     path: input.connection.url,
     score: input.score,
@@ -550,6 +557,9 @@ async function probeExternalMcpConnection(input: {
   connection: ExternalMcpConnectionRow
   member: McpMemberIdentity
   queryTokens: string[]
+  capabilityName?: string
+  toolName?: string
+  includeSchema: boolean
   redirectUriBase: string
   limit: number
   deadline: ExternalMcpLifecycleDeadline
@@ -561,11 +571,12 @@ async function probeExternalMcpConnection(input: {
   const connection = input.connection
   if (connection.oauthIssuerReviewRequiredAt) {
     const nameTokens = tokenize(connection.name)
-    const score = scoreText(nameTokens, nameTokens, input.queryTokens)
+    const score = input.toolName ? 1 : scoreText(nameTokens, nameTokens, input.queryTokens)
     if (score > 0) {
       const message = `${connection.name} is blocked until an organization admin reviews its changed OAuth issuer.`
       add(statusMatch({
         connection,
+        name: input.capabilityName,
         score,
         summary: `[${connection.name}] OAuth provider settings changed and require administrator review.`,
         status: "error",
@@ -592,11 +603,12 @@ async function probeExternalMcpConnection(input: {
       // its tools — we can't list them without the member's credential) so
       // the agent can tell the human exactly what to do.
       const nameTokens = tokenize(connection.name)
-      const score = scoreText(nameTokens, nameTokens, input.queryTokens)
+      const score = input.toolName ? 1 : scoreText(nameTokens, nameTokens, input.queryTokens)
       if (score > 0) {
         const message = `You haven't connected your ${connection.name} account yet.`
         add(statusMatch({
           connection,
+          name: input.capabilityName,
           score,
           summary: `[${connection.name}] Available to you, but you haven't connected your ${connection.name} account yet.`,
           status: "needs_connection",
@@ -608,11 +620,12 @@ async function probeExternalMcpConnection(input: {
     }
   } else if (!hasSharedCredential(connection)) {
     const nameTokens = tokenize(connection.name)
-    const score = scoreText(nameTokens, nameTokens, input.queryTokens)
+    const score = input.toolName ? 1 : scoreText(nameTokens, nameTokens, input.queryTokens)
     if (score > 0) {
       const message = `${connection.name} is not connected yet.`
       add(statusMatch({
         connection,
+        name: input.capabilityName,
         score,
         summary: `[${connection.name}] Available to your organization, but an admin hasn't connected it yet.`,
         status: "needs_connection",
@@ -639,7 +652,7 @@ async function probeExternalMcpConnection(input: {
     const message = upstreamErrorMessage(error)
     const diagnostic = error instanceof ExternalMcpDiagnosticError ? error.diagnostic : undefined
     const nameTokens = tokenize(connection.name)
-    const score = scoreText(nameTokens, nameTokens, input.queryTokens)
+    const score = input.toolName ? 1 : scoreText(nameTokens, nameTokens, input.queryTokens)
     if (score > 0) {
       if (diagnostic) {
         console.error("external_mcp_capability_search_probe_failed", {
@@ -653,6 +666,7 @@ async function probeExternalMcpConnection(input: {
       const state = authErrorCode ? "reauth_required" : "provider_error"
       add(statusMatch({
         connection,
+        name: input.capabilityName,
         score,
         summary: `[${connection.name}] This connection is set up but returned an error (${message}).`,
         status: "error",
@@ -670,20 +684,23 @@ async function probeExternalMcpConnection(input: {
   }
 
   for (const tool of tools) {
+    if (input.toolName && tool.name !== input.toolName) continue
     const summary = tool.description ?? tool.title ?? tool.name
     const nameTokens = tokenize(`${connection.name} ${tool.name}`)
     const summaryTokens = tokenize(summary)
     const score = scoreText(nameTokens, summaryTokens, input.queryTokens)
-    if (score <= 0) continue
+    if (score <= 0 && !input.toolName) continue
     add({
       name: buildExternalCapabilityName(connection.id, tool.name),
       method: "MCP",
       path: connection.url,
-      score,
+      score: Math.max(1, score),
       summary: `[${connection.name}] ${summary}`,
       pathParams: [],
       queryParams: [],
       hasBody: true,
+      ...(input.includeSchema ? { bodySchema: tool.inputSchema } : {}),
+      ...(tool.annotations ? { annotations: tool.annotations } : {}),
     })
   }
   return matches
@@ -701,10 +718,16 @@ export async function searchExternalCapabilities(input: {
   query: string
   redirectUriBase: string
   limit?: number
+  capabilityName?: string
+  includeSchema?: boolean
   reportCoverage?: (coverage: ExternalMcpSearchCoverage) => void
 }): Promise<ExternalCapabilityMatch[]> {
   if (!input.member) return []
-  const queryTokens = tokenize(input.query)
+  const requestedCapability = input.capabilityName
+    ? parseExternalCapabilityName(input.capabilityName)
+    : null
+  if (input.capabilityName && !requestedCapability) return []
+  const queryTokens = tokenize(requestedCapability?.toolName ?? input.query)
   if (queryTokens.length === 0) return []
   const requestedLimit = input.limit ?? 5
   if (!Number.isFinite(requestedLimit) || requestedLimit <= 0) return []
@@ -715,12 +738,16 @@ export async function searchExternalCapabilities(input: {
     orgMembershipId: input.member.orgMembershipId,
     teamIds: input.member.teamIds,
   })
-  const selectedConnections = selectExternalMcpSearchConnections(connections, queryTokens)
-  input.reportCoverage?.({
-    eligibleConnections: connections.length,
-    probedConnections: selectedConnections.length,
-    truncated: selectedConnections.length < connections.length,
-  })
+  const selectedConnections = requestedCapability
+    ? connections.filter((connection) => connection.id === requestedCapability.connectionId).slice(0, 1)
+    : selectExternalMcpSearchConnections(connections, queryTokens)
+  if (!requestedCapability) {
+    input.reportCoverage?.({
+      eligibleConnections: connections.length,
+      probedConnections: selectedConnections.length,
+      truncated: selectedConnections.length < connections.length,
+    })
+  }
   return await collectBoundedExternalMcpSearchMatches({
     connections: selectedConnections,
     deadline,
@@ -729,6 +756,9 @@ export async function searchExternalCapabilities(input: {
       connection,
       member: input.member!,
       queryTokens,
+      capabilityName: input.capabilityName,
+      toolName: requestedCapability?.toolName,
+      includeSchema: input.includeSchema ?? false,
       redirectUriBase: input.redirectUriBase,
       limit,
       deadline: sharedDeadline,

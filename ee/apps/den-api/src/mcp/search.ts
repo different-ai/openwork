@@ -1,3 +1,10 @@
+/**
+ * [INPUT]: 依赖 catalog.ts 的 OpenAPI 操作与参数解析能力，依赖 MCP SDK 的工具安全注解契约
+ * [OUTPUT]: 对外提供统一 CapabilityMatch、跨能力源排序/分词规则与原生 API 能力搜索
+ * [POS]: mcp 模块的发现领域模型，供富 MCP 目录和 Agent 两工具门面共同消费
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js"
 import { getJsonRequestBodySchema, getParameters, hasJsonRequestBody, pathParameterNamesFromTemplate, type McpToolOperation } from "./catalog.js"
 
 /**
@@ -11,9 +18,9 @@ import { getJsonRequestBodySchema, getParameters, hasJsonRequestBody, pathParame
  *   catalog operation is also individually registered there.
  * - The minimal `/mcp/agent` endpoint (`agent.ts`), where matches are the
  *   *only* way to discover what's callable — that endpoint exposes nothing
- *   but `search_capabilities` and a generic `execute_capability`, so each
- *   match carries enough shape (`pathParams`/`queryParams`/`hasBody`) for the
- *   caller to construct a valid `execute_capability` call without guessing.
+ *   but `search_capabilities` and a generic `execute_capability`; its summary
+ *   pass selects a candidate, then its schema pass returns one exact contract
+ *   so the caller can execute without guessing.
  */
 
 export const SEARCH_CAPABILITIES_TOOL_NAME = "search_capabilities"
@@ -31,8 +38,10 @@ export type CapabilityMatch = {
   queryParams: string[]
   /** Whether calling this tool requires a JSON `body`. */
   hasBody: boolean
-  /** Exact OpenAPI JSON schema for `body`, present only for JSON mutations. */
+  /** Exact provider parameter contract; omitted from lightweight discovery results. */
   bodySchema?: unknown
+  /** Provider-declared MCP safety semantics; small enough to preserve during discovery. */
+  annotations?: ToolAnnotations
 }
 
 export function compareCapabilityMatches(a: CapabilityMatch, b: CapabilityMatch): number {
