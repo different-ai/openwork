@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Telegram 更新仓储、worker processor 与统一 logger/异常采集
+ * [OUTPUT]: 对外提供 processor 注册、限并发队列触发与周期 dispatcher
+ * [POS]: capability-sources 的 Telegram 后台分派层，把 webhook 快速确认与耗时 Agent 执行解耦
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import {
   claimNextTelegramUpdate,
   retryTelegramUpdate,

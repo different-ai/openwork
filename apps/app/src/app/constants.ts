@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖应用类型、i18n、Den MCP URL 与内置 Extension manifests
+ * [OUTPUT]: 对外提供模型偏好键、MCP Quick Connect 目录、Extension catalog 与 server-name 规范化
+ * [POS]: app 的静态产品目录真相源，把一键连接与内置扩展元数据提供给 Connections UI
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import type { ModelRef, SuggestedPlugin } from "./types";
 import { t } from "../i18n";
 import { getDenMcpUrl } from "./lib/den";

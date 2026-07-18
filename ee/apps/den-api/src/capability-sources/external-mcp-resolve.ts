@@ -1,4 +1,10 @@
 /**
+ * [INPUT]: 依赖 External MCP 预设、URL 规范化与远程 requirements discovery
+ * [OUTPUT]: 对外提供名称/主机/URL 查询分类、候选生成、预设匹配与 MCP 可用性判定
+ * [POS]: capability-sources 的智能添加解析层，把自由输入收敛成可审查的连接计划
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
+/**
  * Smart resolution for the "add a connection" flow: an admin types a free-form
  * query — a full URL, a bare host, or just a product name like "vercel" — and
  * the resolver turns it into concrete MCP endpoint candidates. Candidates are

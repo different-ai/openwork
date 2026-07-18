@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Den 公网 API origin 与 External MCP connection 标识
+ * [OUTPUT]: 对外提供共享/旧版 callback 和 OAuth client metadata URL
+ * [POS]: capability-sources 的 OAuth URL 契约，集中维持注册、回调与部署 origin 一致性
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import type { ExternalMcpOAuthCallbackMode } from "@openwork-ee/den-db/schema"
 import { env } from "../env.js"
 

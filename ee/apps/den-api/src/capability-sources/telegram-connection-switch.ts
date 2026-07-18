@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖新旧 Telegram webhook、数据库连接切换事务与补偿回调
+ * [OUTPUT]: 对外提供 webhook 副作用可补偿的连接原子切换
+ * [POS]: capability-sources 的 Telegram 一致性边界，使外部注册和数据库状态同进同退
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 export type TelegramWebhookRegistration = {
   botToken: string
   secret: string

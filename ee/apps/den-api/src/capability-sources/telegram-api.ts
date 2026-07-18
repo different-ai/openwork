@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 grammY Bot API、bot token、webhook 配置与待发送文本
+ * [OUTPUT]: 对外提供 Bot 验证、webhook 注册/删除、文本分段发送与重试判定
+ * [POS]: capability-sources 的 Telegram 网络 Adapter，把 Provider 调用与队列/路由状态分离
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { Api, GrammyError, HttpError } from "grammy"
 
 export const TELEGRAM_MESSAGE_LIMIT = 4096

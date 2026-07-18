@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Web Crypto、Provider OAuth 端点、Den 公网 origin 与 token fetch
+ * [OUTPUT]: 对外提供 PKCE/state、授权 URL、端点解析、code exchange 与有效 token 获取
+ * [POS]: capability-sources 的原生 Provider OAuth 协议内核，被 Google/Microsoft 等连接复用
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"

@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Telegram webhook header/body、共享 secret、队列 claim 与配对操作
+ * [OUTPUT]: 对外提供请求限流、常量时间校验、update 去重入队与配对消费助手
+ * [POS]: capability-sources 的 Telegram HTTP 信任边界，在确认请求前完成认证和持久去重
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { createHash, timingSafeEqual } from "node:crypto"
 import { bodyLimit } from "hono/body-limit"
 

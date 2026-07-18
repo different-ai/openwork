@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 MCP 工具调用请求、受限响应样本与诊断脱敏规则
+ * [OUTPUT]: 对外提供调用 wire inspection、错误附着与失败诊断
+ * [POS]: capability-sources 的单次工具调用审计边界，为支持人员保留最小安全证据
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { Buffer } from "node:buffer"
 import type { ExternalMcpDiagnostic } from "./external-mcp-diagnostics.js"
 

@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖安全哈希、External MCP fetch/错误链与 URL guard
+ * [OUTPUT]: 对外提供生命周期诊断类型、脱敏证据、受限 fetch 与可归责错误
+ * [POS]: capability-sources 的 MCP 可观察性边界，在不泄露凭证和响应正文的前提下定位失败层
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { createHash } from "node:crypto"
 import { PrivateUrlError } from "./url-guard.js"
 

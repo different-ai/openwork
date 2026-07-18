@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 MCP SDK、Den 外部连接仓储、URL guard、OAuth 凭证与诊断/检查模块
+ * [OUTPUT]: 对外提供旧版外部 MCP 连接、OAuth、分页工具发现和受控工具执行能力
+ * [POS]: capability-sources 的兼容 MCP client，当前 runtime 已由 enterprise Adapter 接管，仍负责旧授权事务收尾
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { randomUUID } from "node:crypto"
 import { Buffer } from "node:buffer"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"

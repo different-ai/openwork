@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Den DB OAuth client/connected account 表、加密与主动成员身份
+ * [OUTPUT]: 对外提供 OAuth client、账户、scope、刷新与断开连接的仓储接口
+ * [POS]: capability-sources 的原生 OAuth 唯一持久化边界，Provider 路由不直接访问凭证表
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,

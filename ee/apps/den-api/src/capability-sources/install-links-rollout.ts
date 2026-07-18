@@ -1,4 +1,10 @@
 /**
+ * [INPUT]: 依赖组织安装链接 rollout 配置与调用者上下文
+ * [OUTPUT]: 对外提供组织安装链接能力是否启用的策略判定
+ * [POS]: capability-sources 的安装分发发布控制点，避免路由复制 rollout 规则
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
+/**
  * Kill switch for organization install links.
  *
  * Install links are default-on for every org. Platform admins can explicitly

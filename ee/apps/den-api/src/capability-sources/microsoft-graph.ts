@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Microsoft Graph 邮件、日历、Drive、Teams JSON 与访问 token
+ * [OUTPUT]: 对外提供领域映射、路径编码和带状态的 Graph 请求错误
+ * [POS]: capability-sources 的 Microsoft 数据 Adapter，使 Agent 能力与 Graph 载荷细节解耦
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 const DEFAULT_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_MAX_DOWNLOAD_BYTES = 5_000_000

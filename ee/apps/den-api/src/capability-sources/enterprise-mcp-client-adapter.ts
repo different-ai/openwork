@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 @openwork/enterprise-mcp-client、Den OAuth 持久化、URL guard 与诊断模块
+ * [OUTPUT]: 对外提供 Den 作用域的 MCP 连接、授权、工具目录、检查与调用 Adapter
+ * [POS]: capability-sources 的共享 enterprise client 适配层，把协议实现接入 Den 租户和可观察性边界
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { randomUUID } from "node:crypto"
 import {
   createEnterpriseMcpClient,

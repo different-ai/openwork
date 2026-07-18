@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Google Workspace Gmail、Calendar、Drive API JSON 与上传/搜索参数
+ * [OUTPUT]: 对外提供领域类型、响应解析、引用文本、查询和 multipart 上传构造
+ * [POS]: capability-sources 的 Google 数据映射层，使上层能力不依赖供应商响应形状
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 export type GoogleWorkspaceAttachment = {
   attachmentId: string
   filename: string

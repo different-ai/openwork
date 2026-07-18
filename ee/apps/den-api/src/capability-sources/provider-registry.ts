@@ -1,4 +1,10 @@
 /**
+ * [INPUT]: 依赖 Google/Microsoft OAuth 官方端点、功能 scope 与环境配置
+ * [OUTPUT]: 对外提供原生 OAuth Provider 注册表、查找和 scope 满足性判定
+ * [POS]: capability-sources 的原生 Provider 配置真相源，认证协议与业务路由共同依赖
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
+/**
  * Registry of native OAuth providers — capability sources Den implements
  * itself against a classic OAuth2 authorization-code flow (as opposed to
  * external MCP connections, which are discovered dynamically at connect

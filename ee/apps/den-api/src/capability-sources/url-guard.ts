@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 DNS 解析、IP 分类与外部 fetch
+ * [OUTPUT]: 对外提供公共 URL 校验、SSRF 防护 fetch 与跨 Realm Response 规范化
+ * [POS]: capability-sources 的统一出站网络信任边界，所有可配置 MCP URL 请求都必须经过它
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { lookup } from "node:dns/promises"
 import { isIP } from "node:net"
 

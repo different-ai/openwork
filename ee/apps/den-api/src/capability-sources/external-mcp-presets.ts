@@ -1,9 +1,8 @@
 /**
- * Predefined "quick add" External MCP Connections — the same real servers
- * (and URLs) the desktop app already offers as one-click Quick Connect
- * entries (apps/app/src/app/constants.ts MCP_QUICK_CONNECT), surfaced here
- * so an org admin can add them once, org-wide, in Den, instead of every
- * device connecting to them separately.
+ * [INPUT]: 依赖供应商公开的官方 MCP URL、认证方式与 OpenWork Desktop Quick Connect 目录
+ * [OUTPUT]: 对外提供组织级 External MCP 一键连接预设和认证元数据
+ * [POS]: capability-sources 的已知远程 MCP 真相源，与 Desktop 目录同构并驱动导入认证策略
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
 export type ExternalMcpPreset = {
   presetId: string

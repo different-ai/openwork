@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖健康 Worker/Instance、访问 token、工作区会话 API 与超时配置
+ * [OUTPUT]: 对外提供 worker 访问解析、回复快照抽取与 Telegram 提示执行
+ * [POS]: capability-sources 的 Telegram-to-Agent Adapter，把聊天更新转成一个受限可恢复的 worker 会话
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { randomBytes } from "node:crypto"
 import { and, asc, desc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import {

@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Den DB 的 External MCP、插件绑定、访问授权与 OAuth 账户表
+ * [OUTPUT]: 对外提供连接 CRUD、身份绑定、访问合并、插件绑定与 OAuth 账户仓储接口
+ * [POS]: capability-sources 的 External MCP 唯一持久化边界，client 和路由不得直接访问相关表
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { createHash } from "node:crypto"
 import { isDeepStrictEqual } from "node:util"
 import { and, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"

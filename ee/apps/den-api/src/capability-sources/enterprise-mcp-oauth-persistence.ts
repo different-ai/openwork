@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 enterprise MCP OAuth 持久化接口、Den DB OAuth/连接表与 callback 契约
+ * [OUTPUT]: 对外提供 DenEnterpriseMcpOAuthPersistence，隔离组织/成员注册、授权事务与 token 健康状态
+ * [POS]: capability-sources 的 MCP OAuth 状态仓储，使共享 client 无需理解 Den 数据模型
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { createHash, randomUUID } from "node:crypto"
 import {
   EnterpriseMcpOAuthContractError,

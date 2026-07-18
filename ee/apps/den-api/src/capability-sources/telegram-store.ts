@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Den DB Telegram/Worker 表、TypeID 与 worker 访问解析
+ * [OUTPUT]: 对外提供连接、配对、update 去重、处理租约、重试和状态仓储
+ * [POS]: capability-sources 的 Telegram 唯一持久化边界，webhook 与 dispatcher 通过它协调
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { randomBytes } from "node:crypto"
 import { and, asc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import { WorkerTable } from "@openwork-ee/den-db/schema"

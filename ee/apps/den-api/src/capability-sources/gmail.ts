@@ -1,4 +1,10 @@
 /**
+ * [INPUT]: 依赖 Gmail draft 字段、正文与可选附件字节
+ * [OUTPUT]: 对外提供 MIME header/草稿编码和 Gmail draft/message ID 解析
+ * [POS]: capability-sources 的 Gmail 格式 Adapter，把领域输入转换为 API 可接受的 RFC 邮件载荷
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
+/**
  * Minimal Gmail draft construction: an RFC 822 message, base64url-encoded
  * the way the Gmail API `users.messages/drafts` endpoints expect `raw`.
  * Kept pure so the encoding is unit-testable without any HTTP.

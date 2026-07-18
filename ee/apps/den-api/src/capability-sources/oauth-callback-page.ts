@@ -1,4 +1,10 @@
 /**
+ * [INPUT]: 依赖 OAuth 完成/失败状态、产品名称与安全跳转目标
+ * [OUTPUT]: 对外提供 HTML 转义和统一连接回调页面
+ * [POS]: capability-sources 的浏览器回调呈现层，隔离路由中的 HTML 与注入防护
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
+/**
  * Shared completion page for OAuth callbacks. Used by both external MCP
  * connection callbacks and native provider callbacks.
  */

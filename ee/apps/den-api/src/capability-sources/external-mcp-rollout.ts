@@ -1,4 +1,10 @@
 /**
+ * [INPUT]: 依赖组织 rollout 配置与成员身份上下文
+ * [OUTPUT]: 对外提供成员侧 MCP Connections 是否启用的策略判定
+ * [POS]: capability-sources 的发布控制点，隔离路由和 UI 对 rollout 细节的依赖
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
+/**
  * Kill switch for member-facing org MCP connections.
  *
  * Connect is default-on for every org. Platform admins can explicitly disable

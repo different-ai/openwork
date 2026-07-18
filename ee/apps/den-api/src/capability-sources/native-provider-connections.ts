@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖原生 Provider registry、OAuth client/account 仓储与成员上下文
+ * [OUTPUT]: 对外提供可用连接目录项、重连状态与组织/成员连接聚合
+ * [POS]: capability-sources 的原生连接读模型，把配置、授权和功能 scope 折叠成统一状态
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   clientSelectedFeatures,
