@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖表格纯模型、TanStack Query/Mutation 与工作区保存回调
+ * [OUTPUT]: 对外提供 ArtifactSpreadsheetEditor，支持二维表格编辑、增行列与显式保存
+ * [POS]: session/artifacts 的表格交互 Adapter，把 CSV/Office 内容映射为可编辑网格
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";

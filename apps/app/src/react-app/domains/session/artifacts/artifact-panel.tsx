@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖工作区文件客户端、Panel Store、TanStack Query 与各类 Artifact 渲染/编辑器
+ * [OUTPUT]: 对外提供 ArtifactPanel，完成产物读取、预览、编辑、保存、下载和外部打开
+ * [POS]: session/artifacts 的装配边界；工作区文件是真相源，组件不复制 Agent 业务状态
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 /** @jsxImportSource react */
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";

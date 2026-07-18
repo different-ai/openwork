@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 lucide-react 图标与 OpenTargetPreview 分类
+ * [OUTPUT]: 对外提供 ArtifactIcon，统一表达不同 Artifact 预览类型
+ * [POS]: session/artifacts 的视觉映射叶节点，不参与文件发现或内容读取
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 /** @jsxImportSource react */
 import { File, FileCode, FileImage, FileSpreadsheet, FileText, FileType, Globe, Presentation } from "lucide-react";
 

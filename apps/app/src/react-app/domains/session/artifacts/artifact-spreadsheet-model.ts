@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 OpenTarget Data 二进制/文本联合类型与按需加载的 SheetJS
+ * [OUTPUT]: 对外提供 SpreadsheetRows、parseSpreadsheet 与 serializeSpreadsheet
+ * [POS]: session/artifacts 的纯表格模型，隔离格式解析和 UI 编辑状态
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import type { Data } from "./open-target";
 
 export type SpreadsheetRows = string[][];

@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 CodeMirror、Markdown 语言包与本模块的实时预览装饰
+ * [OUTPUT]: 对外提供 ArtifactTextEditor，编辑纯文本或可视化 Markdown 并回传内容变化
+ * [POS]: session/artifacts 的文本编辑 Adapter，由 ArtifactPanel 负责持久化
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 /** @jsxImportSource react */
 import { useEffect, useRef } from "react";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";

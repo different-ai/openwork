@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖通用样式工具、MarkdownBlock 与浏览器原生 iframe/embed/img 能力
+ * [OUTPUT]: 对外提供加载、错误、Markdown、文本、HTML、图片、PDF 和不可预览状态组件
+ * [POS]: session/artifacts 的无状态渲染层，由 ArtifactPanel 选择具体预览
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 /** @jsxImportSource react */
 import type * as React from "react";
 import { Loader2 } from "lucide-react";

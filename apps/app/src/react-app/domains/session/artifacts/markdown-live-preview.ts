@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 CodeMirror 语法树、状态范围与视图装饰 API
+ * [OUTPUT]: 对外提供 markdownLivePreview 扩展，将 Markdown 标记投影为可编辑富文本
+ * [POS]: session/artifacts 的编辑器表现层，不解析或持久化业务内容
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { type Extension, type Range, RangeSetBuilder } from "@codemirror/state";
 import {

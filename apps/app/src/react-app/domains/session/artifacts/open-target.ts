@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 AI SDK 的 UIMessage 以及会话文本、工具输入输出中的文件/URL 元数据
+ * [OUTPUT]: 对外提供 OpenTarget 领域类型、引用提取、预览分类与侧栏收集策略
+ * [POS]: session/artifacts 的发现模型，是会话事实到可打开 Artifact 的唯一分类边界
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import type { UIMessage } from "ai";
 
 type OpenTargetKind = "url" | "file";
