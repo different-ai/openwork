@@ -52,6 +52,7 @@ import { deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from ".
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { isAttachmentFileReadable, resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
+import { buildContextUsage } from "./context-usage";
 import { useSessionScrollController } from "./scroll-controller";
 import { SessionScrollOverlay } from "./scroll-overlay";
 import { SessionFindBar } from "./find-bar";
@@ -126,6 +127,7 @@ export type SessionSurfaceProps = {
   modelPickerOpen: boolean;
   modelUnavailable?: boolean;
   selectedModel: ModelRef;
+  selectedModelContextLimit: number | null;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<CloudMcpSubmissionResult>;
@@ -446,6 +448,18 @@ function mergeDrafts(drafts: ComposerDraft[]): ComposerDraft | null {
     resolvedText: resolvedTexts.join("\n\n"),
     command: undefined,
   };
+}
+
+function resolveDraftContextText(text: string, pasteParts: { label: string; text: string }[], mentions: Record<string, ComposerMentionKind>) {
+  let resolved = text;
+  for (const part of pasteParts) {
+    resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
+  }
+  resolved = resolved.replace(/\[skill ([^\]]+)\]/g, (_match, name: string) => `the \"${name}\" skill`);
+  for (const value of Object.keys(mentions)) {
+    resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
+  }
+  return resolved;
 }
 
 export function SessionSurface(props: SessionSurfaceProps) {
@@ -784,6 +798,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
       command: slashCommand ?? undefined,
     };
   }, [mentions, pasteParts]);
+
+  const contextUsage = useMemo(
+    () => buildContextUsage({
+      contextLimit: props.selectedModelContextLimit,
+      snapshot,
+      renderedMessages,
+      draftText: resolveDraftContextText(draft, pasteParts, mentions),
+    }),
+    [draft, mentions, pasteParts, props.selectedModelContextLimit, renderedMessages, snapshot],
+  );
 
   const handleComposerDraftChange = useCallback((value: string) => {
     setComposerDraft(props.sessionId, value);
@@ -1645,6 +1669,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}
         modelUnavailable={Boolean(props.modelUnavailable)}
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
+        contextUsage={contextUsage}
         modelPickerOpen={props.modelPickerOpen}
         selectedModel={props.selectedModel}
         onModelPickerOpenChange={props.onModelPickerOpenChange}

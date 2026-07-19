@@ -105,6 +105,7 @@ import { firstLineLocalFileParts, joinWorkspaceRelativePath, toFileUrl } from "@
 import { composerAttachmentsToWorkspaceFileParts } from "@/react-app/domains/session/sync/attachment-file-part";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
+import { getSelectedModelContextLimit } from "@/react-app/domains/session/surface/context-usage";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
 import { appMentionInstruction } from "@/react-app/domains/session/surface/composer/app-mentions";
@@ -652,6 +653,10 @@ export function SessionRoute() {
   const selectedModelProviderList = selectedModelUsesCloudProvider
     ? cloudProviderList
     : providerListQuery.data;
+  const selectedModelContextLimit = useMemo(
+    () => getSelectedModelContextLimit(selectedModelProviderList, local.prefs.defaultModel),
+    [local.prefs.defaultModel, selectedModelProviderList],
+  );
   const selectedModelUnavailable = Boolean(
     selectedWorkspaceId &&
       opencodeClient &&
@@ -866,6 +871,7 @@ export function SessionRoute() {
       modelPickerOpen: modelPicker.compactOpen,
       modelUnavailable: selectedModelUnavailable,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
+      selectedModelContextLimit,
       onModelPickerOpenChange: modelPicker.setCompactOpen,
       onModelChange: (model: ModelRef) => {
         local.setPrefs((previous) => ({
@@ -1060,6 +1066,7 @@ export function SessionRoute() {
     providerConnectedIds,
     selectedAgent,
     selectedSessionId,
+    selectedModelContextLimit,
     selectedModelUnavailable,
     selectedWorkspace,
     selectedWorkspaceId,

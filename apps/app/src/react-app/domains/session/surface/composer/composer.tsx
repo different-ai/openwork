@@ -20,6 +20,7 @@ import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
 import { getSlashCommandQuery } from "./slash-command";
 import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
+import type { ContextUsage } from "../context-usage";
 
 type MentionItem = {
   id: string;
@@ -60,6 +61,7 @@ type ComposerProps = {
   disabled: boolean;
   modelUnavailable?: boolean;
   statusLabel: string;
+  contextUsage: ContextUsage | null;
   modelPickerOpen: boolean;
   selectedModel: ModelRef;
   onModelPickerOpenChange: (open: boolean) => void;
@@ -115,6 +117,18 @@ const DEFAULT_AGENT_NAME = "openwork";
 
 function isNonDefaultAgent(agent: Agent) {
   return agent.name !== DEFAULT_AGENT_NAME;
+}
+
+function contextUsageTextClass(tone: ContextUsage["tone"]) {
+  if (tone === "danger") return "text-red-10";
+  if (tone === "warning") return "text-amber-10";
+  return "text-gray-10";
+}
+
+function contextUsageBarClass(tone: ContextUsage["tone"]) {
+  if (tone === "danger") return "bg-red-9";
+  if (tone === "warning") return "bg-amber-9";
+  return "bg-gray-9";
 }
 
 /**
@@ -1642,6 +1656,27 @@ export function ReactSessionComposer(props: ComposerProps) {
                   onChange={props.onModelVariantChange}
                   disabled={props.busy}
                 />
+
+                {props.contextUsage ? (
+                  <div
+                    className="flex min-w-0 items-center gap-2 text-[11px]"
+                    data-testid="composer-context-usage"
+                    aria-label={`Context usage ${props.contextUsage.label}`}
+                  >
+                    <div className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-gray-4" aria-hidden>
+                      <div
+                        className={`h-full rounded-full ${contextUsageBarClass(props.contextUsage.tone)}`}
+                        style={{ width: `${props.contextUsage.percent}%` }}
+                      />
+                    </div>
+                    <span className={`truncate font-medium ${contextUsageTextClass(props.contextUsage.tone)}`}>
+                      {props.contextUsage.label}
+                    </span>
+                    {props.contextUsage.showCompactionHint ? (
+                      <span className="hidden shrink-0 font-medium text-red-10 sm:inline">Auto-compaction soon</span>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
 
               {/*
