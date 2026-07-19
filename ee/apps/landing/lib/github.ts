@@ -1,7 +1,4 @@
-type ReleaseAsset = {
-  name?: string;
-  browser_download_url?: string;
-};
+import { isStandardDesktopAsset, isStandardDesktopAssetName, type ReleaseAsset } from "./desktop-release-assets";
 
 type Release = {
   draft?: boolean;
@@ -31,11 +28,13 @@ const formatCompact = (value: number) => {
 const selectAsset = (
   assets: ReleaseAsset[],
   extensions: string[],
-  keywords: string[] = []
+  keywords: string[] = [],
+  options: { desktopOnly?: boolean } = {},
 ) => {
   const matches = assets.filter((asset) => {
     if (!asset?.name || !asset?.browser_download_url) return false;
     const name = asset.name.toLowerCase();
+    if (options.desktopOnly && !isStandardDesktopAssetName(name)) return false;
     const extensionMatch = extensions.some((ext) => name.endsWith(ext));
     const keywordMatch =
       keywords.length === 0 || keywords.some((key) => name.includes(key));
@@ -90,24 +89,16 @@ export const getGithubData = async () => {
       : "—";
 
   const releaseList = Array.isArray(releases) ? releases : [];
-  const isElectronDesktopAsset = (name: string) =>
-    name.startsWith("openwork-mac-") ||
-    name.startsWith("openwork-win-") ||
-    name.startsWith("openwork-linux-");
-
   const hasElectronDesktopAsset = (release: Release) => {
     const assets = Array.isArray(release?.assets) ? release.assets : [];
-    return assets.some((asset) => {
-      const name = String(asset?.name || "").toLowerCase();
-      return isElectronDesktopAsset(name);
-    });
+    return assets.some(isStandardDesktopAsset);
   };
 
   const hasWindowsDesktopAsset = (release: Release) => {
     const assets = Array.isArray(release?.assets) ? release.assets : [];
     return assets.some((asset) => {
       const name = String(asset?.name || "").toLowerCase();
-      return name.startsWith("openwork-win-x64-") && name.endsWith(".exe");
+      return isStandardDesktopAssetName(name) && name.startsWith("openwork-win-x64-") && name.endsWith(".exe");
     });
   };
 
@@ -133,20 +124,20 @@ export const getGithubData = async () => {
   const releaseUrl = pick?.html_url || FALLBACK_RELEASE;
   const windowsAssets = Array.isArray(windowsPick?.assets) ? windowsPick.assets : assets;
   const windowsReleaseUrl = windowsPick?.html_url || releaseUrl;
-  const dmg = selectAsset(assets, [".dmg"], ["openwork-mac-"]);
-  const exe = selectAsset(windowsAssets, [".exe"], ["openwork-win-"]);
-  const macosApple = selectAsset(assets, [".dmg"], ["mac-arm64"]);
-  const macosIntel = selectAsset(assets, [".dmg"], ["mac-x64"]);
+  const dmg = selectAsset(assets, [".dmg"], ["openwork-mac-"], { desktopOnly: true });
+  const exe = selectAsset(windowsAssets, [".exe"], ["openwork-win-"], { desktopOnly: true });
+  const macosApple = selectAsset(assets, [".dmg"], ["mac-arm64"], { desktopOnly: true });
+  const macosIntel = selectAsset(assets, [".dmg"], ["mac-x64"], { desktopOnly: true });
   const windowsX64 =
-    selectAsset(windowsAssets, [".exe"], ["win-x64"]) || exe;
-  const windowsArm64 = selectAsset(windowsAssets, [".exe"], ["win-arm64"]);
+    selectAsset(windowsAssets, [".exe"], ["win-x64"], { desktopOnly: true }) || exe;
+  const windowsArm64 = selectAsset(windowsAssets, [".exe"], ["win-arm64"], { desktopOnly: true });
 
   const linuxAppImageX64 =
-    selectAsset(assets, [".appimage"], ["linux-x86_64"]) ||
-    selectAsset(assets, [".appimage"], ["linux-x64"]);
-  const linuxAppImageArm64 = selectAsset(assets, [".appimage"], ["linux-arm64"]);
-  const linuxTarX64 = selectAsset(assets, [".tar.gz"], ["linux-x64"]);
-  const linuxTarArm64 = selectAsset(assets, [".tar.gz"], ["linux-arm64"]);
+    selectAsset(assets, [".appimage"], ["linux-x86_64"], { desktopOnly: true }) ||
+    selectAsset(assets, [".appimage"], ["linux-x64"], { desktopOnly: true });
+  const linuxAppImageArm64 = selectAsset(assets, [".appimage"], ["linux-arm64"], { desktopOnly: true });
+  const linuxTarX64 = selectAsset(assets, [".tar.gz"], ["linux-x64"], { desktopOnly: true });
+  const linuxTarArm64 = selectAsset(assets, [".tar.gz"], ["linux-arm64"], { desktopOnly: true });
 
   return {
     stars,

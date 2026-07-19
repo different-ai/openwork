@@ -1,3 +1,5 @@
+import { isStandardDesktopAssetName } from "../../lib/desktop-release-assets";
+
 // GET /install-manifest.json
 //
 // Resolves the latest OpenWork desktop release on GitHub and returns an install
@@ -26,22 +28,8 @@ type ManifestArtifact = {
   appName?: string;
 };
 
-// Only treat OpenWork desktop-app installers as artifacts. The orchestrator
-// release ships sidecar/CLI binaries (openwork-server-*.exe,
-// openwork-bun-*) that must NOT be treated as the desktop app, so we positively
-// require the desktop app's OS-tagged naming (openwork-mac / openwork-linux /
-// openwork-win + an installer extension).
-const SIDECAR_HINTS = ["orchestrator", "server", "bun-", "sidecar", "opencode"];
-
 function isDesktopAppAsset(name: string): boolean {
-  const lower = name.toLowerCase();
-  if (!lower.startsWith("openwork")) return false;
-  // exclude update metadata / checksums
-  if (/\.(blockmap|yml|yaml|json|txt|sig|sha256)$/i.test(lower)) return false;
-  // exclude any sidecar/CLI binary that also happens to start with "openwork".
-  if (SIDECAR_HINTS.some((hint) => lower.includes(hint))) return false;
-  // require a desktop OS tag so we never pick up a stray asset.
-  return /(mac|darwin|osx|linux|win)/.test(lower);
+  return isStandardDesktopAssetName(name);
 }
 
 function artifactTypeFor(name: string): ManifestArtifact["type"] | null {
