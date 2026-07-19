@@ -516,9 +516,12 @@ export function buildConnectRows(input: {
     connection,
   }));
 
+  const pluginSeenIds = new Set<string>();
   const pluginRows: ConnectOrganizationRow[] = marketplaceItems.flatMap((item) => {
     const group = resolveConnectRowGroup(item.plugin.cloudReadiness, input.role, item.plugin.componentCounts);
     if (group === "excluded") return [];
+    if (pluginSeenIds.has(item.plugin.id)) return [];
+    pluginSeenIds.add(item.plugin.id);
     return [{
       kind: "plugin",
       id: item.plugin.id,

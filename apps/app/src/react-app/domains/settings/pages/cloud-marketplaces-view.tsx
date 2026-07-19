@@ -243,8 +243,11 @@ export function CloudMarketplacesView({
   ), [extensionItems]);
   const lastRowsRef = React.useRef<MarketplaceRow[]>([]);
   const cloudRows = React.useMemo<MarketplacePackageRow[]>(() => {
+    const seenIds = new Set<string>();
     return marketplaces.flatMap((marketplace) => marketplace.plugins.flatMap((plugin) => {
       if (!includeCloudMarketplaceRows) return [];
+      if (seenIds.has(plugin.id)) return [];
+      seenIds.add(plugin.id);
       const imported = importedPlugins[plugin.id] ?? null;
       const composition = pluginComposition(plugin);
       const counts = pluginCounts(plugin);

@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, rm, stat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -8,6 +8,17 @@ import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
 import { ApiError } from "./errors.js";
 import { projectSkillsDir } from "./workspace-files.js";
+
+async function isDir(entry: Dirent, parent: string): Promise<boolean> {
+  if (entry.isDirectory()) return true;
+  if (entry.isSymbolicLink()) {
+    try {
+      const s = await stat(join(parent, entry.name));
+      return s.isDirectory();
+    } catch { return false; }
+  }
+  return false;
+}
 
 async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   const roots: string[] = [];
@@ -86,7 +97,7 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
   const entries = await readdir(dir, { withFileTypes: true });
   const items: SkillItem[] = [];
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!(await isDir(entry, dir))) continue;
     const skillPath = join(dir, entry.name, "SKILL.md");
     if (await exists(skillPath)) {
       // Direct skill: <dir>/<name>/SKILL.md
@@ -105,7 +116,7 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
         continue;
       }
       for (const subEntry of subEntries) {
-        if (!subEntry.isDirectory()) continue;
+        if (!(await isDir(subEntry, domainDir))) continue;
         const subSkillPath = join(domainDir, subEntry.name, "SKILL.md");
         if (!(await exists(subSkillPath))) continue;
         const item = await parseSkillEntry(subSkillPath, subEntry.name, scope);

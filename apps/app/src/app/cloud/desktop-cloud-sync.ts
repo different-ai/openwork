@@ -9,7 +9,7 @@ import type {
   OpenworkServerClient,
 } from "../lib/openwork-server";
 
-export type PendingCloudPluginChange = "modified" | "removed";
+export type PendingCloudPluginChange = "new" | "modified" | "removed";
 
 type InstalledCloudPluginLike = {
   updatedAt: string | null;

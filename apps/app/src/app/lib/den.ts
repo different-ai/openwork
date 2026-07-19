@@ -581,12 +581,23 @@ export function isLegacyWebAppMcpUrl(input: string | null | undefined): boolean 
  * them verbatim. Returns null when the resource is unusable so callers
  * can keep their bootstrap-derived URL.
  */
+function isLocalhostHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
+}
+
 export function resolveCloudMcpResourceUrl(resource: string | null | undefined): string | null {
   const trimmed = resource?.trim() ?? "";
   if (!trimmed) return null;
   try {
     const url = new URL(trimmed);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (isLocalhostHostname(url.hostname)) return null;
     if (isLegacyWebAppMcpUrl(trimmed)) {
       url.pathname = "/api/den/mcp";
     }

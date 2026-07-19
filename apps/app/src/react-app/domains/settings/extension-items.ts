@@ -177,7 +177,18 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     };
   });
 
-  const cloudPluginItems = input.cloudMarketplaces.flatMap((marketplace) => marketplace.plugins.map((plugin): ExtensionItem => {
+  // Dedupe plugins that appear in multiple marketplaces — same plugin id should
+  // render once in the Connect panel. Iterate newest marketplace first so the most
+  // recently updated copy of the plugin wins when duplicated across marketplaces.
+  const seenCloudPluginIds = new Set<string>();
+  const marketplacesByRecency = [...input.cloudMarketplaces].sort((a, b) => {
+    const aUpdatedAt = a.marketplace.updatedAt ? Date.parse(a.marketplace.updatedAt) : 0;
+    const bUpdatedAt = b.marketplace.updatedAt ? Date.parse(b.marketplace.updatedAt) : 0;
+    return bUpdatedAt - aUpdatedAt;
+  });
+  const cloudPluginItems = marketplacesByRecency.flatMap((marketplace) => marketplace.plugins.flatMap((plugin): ExtensionItem[] => {
+    if (seenCloudPluginIds.has(plugin.id)) return [];
+    seenCloudPluginIds.add(plugin.id);
     const imported = input.importedCloudPlugins[plugin.id] ?? null;
     const manifest = plugin.extension?.manifest ?? undefined;
     const enablement = manifest?.enablement ? evaluateEnablement(manifest.enablement, input.enablementContext) : null;
@@ -193,7 +204,7 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
       : connectionStates.every(Boolean)
         ? "ready"
         : "needs_setup";
-    return {
+    return [{
       id: `marketplace:${marketplace.marketplace.id}:${plugin.id}`,
       source: "marketplace",
       name: plugin.extension?.name ?? plugin.name,
@@ -211,7 +222,7 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
       marketplaceName: marketplace.marketplace.name,
       plugin,
       importedPlugin: imported,
-    };
+    }];
   }));
 
   const importedPluginItems = Object.values(input.importedCloudPlugins).flatMap((plugin): ExtensionItem[] => {

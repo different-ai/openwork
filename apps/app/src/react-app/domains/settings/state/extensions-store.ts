@@ -420,6 +420,7 @@ export function createExtensionsStore(options: {
   let refreshCloudOrgMarketplacesInFlight = false;
   let refreshCloudOrgSkillsInFlightKey = "";
   let refreshCloudOrgMarketplacesInFlightKey = "";
+  let autoInstallNewPluginsInFlight = false;
   let refreshSkillsAborted = false;
   let refreshPluginsAborted = false;
   let refreshHubSkillsAborted = false;
@@ -706,8 +707,66 @@ export function createExtensionsStore(options: {
           });
         }
       }
+
+      // ponytail: auto-install new cloud plugins detected by sync.
+      // Runs silently (no busy/error UI). Once installed, the next sync
+      // no longer marks the plugin as "new", so this is self-deduping.
+      const installedMap = installedPlugins ?? snapshot.importedCloudPlugins;
+      const newPluginChanges = changes.filter(
+        (c): c is typeof c & { marketplaceId: string } =>
+          c.resourceKind === "plugin"
+          && c.kind === "new"
+          && typeof c.marketplaceId === "string"
+          && c.marketplaceId.length > 0
+          && !installedMap[c.id],
+      );
+      if (newPluginChanges.length > 0) {
+        void autoInstallNewCloudPlugins(newPluginChanges);
+      }
     } catch {
       // keep previous pending state on failure
+    }
+  };
+
+  // ponytail: silent bulk-installer for new cloud plugins detected by sync.
+  // Mirrors importCloudOrgPlugin's inner install call but skips busy/error UI.
+  const autoInstallNewCloudPlugins = async (
+    newChanges: Array<{ id: string; marketplaceId: string }>,
+  ) => {
+    if (autoInstallNewPluginsInFlight) return;
+    autoInstallNewPluginsInFlight = true;
+    try {
+      const settings = readDenSettings();
+      const token = settings.authToken?.trim() ?? "";
+      const orgId = settings.activeOrgId?.trim() ?? "";
+      if (!token || !orgId) return;
+      const target = await resolveWorkspaceServerTarget();
+      if (!target.openworkClient || !target.openworkWorkspaceId) return;
+      const denClient = createDenClient({ baseUrl: settings.baseUrl, token });
+
+      for (const change of newChanges) {
+        // Re-check installed state; a prior iteration may have just installed it.
+        if (snapshot.importedCloudPlugins[change.id]) continue;
+        const marketplaceResolved = snapshot.cloudOrgMarketplaces.find(
+          (entry) => entry.marketplace.id === change.marketplaceId,
+        );
+        const plugin = marketplaceResolved?.plugins.find((p) => p.id === change.id);
+        if (!plugin) continue;
+        try {
+          const resolved = await denClient.getOrgPluginResolved(orgId, plugin);
+          const marketplace = marketplaceResolved?.marketplace ?? null;
+          await target.openworkClient.installCloudPlugin(target.openworkWorkspaceId, {
+            marketplaceId: change.marketplaceId,
+            marketplace,
+            resolved,
+          });
+        } catch {
+          // continue with the next plugin; failure is non-fatal
+        }
+      }
+      await refreshImportedCloudPlugins();
+    } finally {
+      autoInstallNewPluginsInFlight = false;
     }
   };
 
