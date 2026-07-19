@@ -362,6 +362,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          # Cross-compilation: x64 build on ARM runner — install x64 optional deps too.
+          # Without this, @lydell/node-pty-darwin-x64 (a transitive optionalDependency)
+          # is skipped because the host arch is arm64, causing a crash on Intel Macs.
+          npm_config_supported_architectures_cpu: "x64,arm64"
 
       - name: Write Electron notary API key (macOS)
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'

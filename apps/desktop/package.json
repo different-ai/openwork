@@ -33,6 +33,10 @@
     "yaml": "^2.6.1",
     "zod": "^4.3.6"
   },
+  "optionalDependencies": {
+    "@lydell/node-pty-darwin-arm64": "1.2.0-beta.12",
+    "@lydell/node-pty-darwin-x64": "1.2.0-beta.12"
+  },
   "devDependencies": {
     "@openwork/types": "workspace:*",
     "electron": "^35.0.0",
