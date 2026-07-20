@@ -27,6 +27,10 @@ const errorToolName = (process.env.MOCK_ERROR_TOOL_NAME || "").trim();
 const errorToolTitle = (process.env.MOCK_ERROR_TOOL_TITLE || errorToolName).trim();
 const errorToolDescription = (process.env.MOCK_ERROR_TOOL_DESCRIPTION || "Returns a provider policy error from the mock OAuth MCP server.").trim();
 const errorToolStatus = Number(process.env.MOCK_ERROR_TOOL_STATUS || 403);
+const errorToolMode = (process.env.MOCK_ERROR_TOOL_MODE || "result").trim();
+const errorToolConnectUrl = (process.env.MOCK_ERROR_TOOL_CONNECT_URL || "https://connect.example.test/salesforce/start").trim();
+const errorToolProvider = (process.env.MOCK_ERROR_TOOL_PROVIDER || "salesforce").trim();
+const allowUnauthenticatedMcp = process.env.MOCK_ALLOW_UNAUTHENTICATED_MCP === "1";
 
 const clients = new Map();
 const codes = new Map();
@@ -401,6 +405,7 @@ async function issueToken(req, res, entry) {
 }
 
 function isAuthorized(req) {
+  if (allowUnauthenticatedMcp) return true;
   const header = req.headers.authorization || "";
   const match = header.match(/^Bearer\s+(.+)$/i);
   return Boolean(match && tokens.has(match[1]));
@@ -487,6 +492,31 @@ function mcpResult(message) {
   }
 }
 
+function mcpResponse(message) {
+  if (
+    errorToolMode === "authorization_required"
+    && errorToolName
+    && message.method === "tools/call"
+    && message.params?.name === errorToolName
+  ) {
+    const connectLink = `[${errorToolConnectUrl}](${errorToolConnectUrl})`;
+    return {
+      jsonrpc: "2.0",
+      id: message.id,
+      error: {
+        code: -32001,
+        message: `Authorization required — connect your ${errorToolProvider} account to use this connector. Open ${connectLink} in a browser, sign in, then retry this request.`,
+        data: {
+          connect_url: connectLink,
+          provider: errorToolProvider,
+        },
+      },
+    };
+  }
+
+  return { jsonrpc: "2.0", id: message.id, result: mcpResult(message) };
+}
+
 async function handleMcp(req, res) {
   const authorized = isAuthorized(req);
   if (!authorized) {
@@ -515,7 +545,7 @@ async function handleMcp(req, res) {
   }
   const responses = messages.flatMap((message) => {
     if (!message || typeof message !== "object" || message.id === undefined) return [];
-    return [{ jsonrpc: "2.0", id: message.id, result: mcpResult(message) }];
+    return [mcpResponse(message)];
   });
 
   if (responses.length === 0) {

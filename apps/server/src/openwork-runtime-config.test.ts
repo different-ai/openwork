@@ -92,6 +92,20 @@ describe("openwork runtime config file", () => {
     expect(prompt).toMatch(/secret|credential|API key|token|PII/i);
   });
 
+  test("openwork prompt tells the agent to relay recoverable authorization links", async () => {
+    const { config } = await setup();
+    await writeOpenworkRuntimeConfigFile(config, "ws_1");
+
+    const parsed = await readConfigFile(config);
+    const agent = parsed.agent as Record<string, { prompt?: string }>;
+    const prompt = agent.openwork?.prompt ?? "";
+
+    expect(prompt).toContain("JSON-RPC code -32001");
+    expect(prompt).toContain("data.connect_url");
+    expect(prompt).toContain("show data.connect_url as a Markdown link");
+    expect(prompt).toContain("Do not open the link yourself");
+  });
+
   test("keepOpenworkRuntimeConfigFileFresh rewrites the file on runtime-DB writes", async () => {
     const { config } = await setup();
     await writeOpenworkRuntimeConfigFile(config, "ws_1");
