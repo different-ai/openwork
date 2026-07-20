@@ -354,7 +354,7 @@ export function McpConnectionsScreen() {
       }
     } catch (createError) {
       showMcpAuthorizationError(authorizationWindow ?? null, {
-        message: createError instanceof Error ? createError.message : "Failed to create the MCP connection.",
+        message: createError instanceof Error ? createError.message : "Failed to create the MCP connector.",
       });
       throw createError;
     }
@@ -384,7 +384,7 @@ export function McpConnectionsScreen() {
 
   async function handleDisconnect(connection: ExternalMcpConnection) {
     const confirmed = window.confirm(
-      `Disconnect ${connection.name}? This signs out every associated account for this connection, but keeps the MCP server setup, access rules, and plugin or marketplace bindings so you can reconnect later.`,
+      `Disconnect ${connection.name}? This signs out every associated account for this connector, but keeps the MCP server setup, access rules, and plugin or marketplace bindings so you can reconnect later.`,
     );
     if (!confirmed) return;
     setConnectionActionError(null);
@@ -395,7 +395,7 @@ export function McpConnectionsScreen() {
     } catch (disconnectError) {
       setConnectionActionError({
         connectionId: connection.id,
-        message: disconnectError instanceof Error ? disconnectError.message : "Failed to disconnect the MCP connection.",
+        message: disconnectError instanceof Error ? disconnectError.message : "Failed to disconnect the MCP connector.",
       });
     }
   }
@@ -434,7 +434,7 @@ export function McpConnectionsScreen() {
   return (
     <DashboardPageTemplate
       icon={Plug}
-      title="Connections"
+      title="Connectors"
       badgeLabel="Alpha"
       description="Connect any MCP server — Notion, Linear, Stripe, or a custom URL — once for the whole org. search_capabilities and execute_capability pick these up automatically."
       colors={["#E2E8F0", "#020617", "#0F172A", "#94A3B8"]}
@@ -443,14 +443,14 @@ export function McpConnectionsScreen() {
         <div data-testid="mcp-connections-staging-banner" className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] leading-6 text-amber-800">
           <p className="font-semibold text-amber-900">OpenWork Connect (alpha) is staged for this org.</p>
           <p className="mt-1">
-            Connections and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (alpha) for this org. Admin management remains fully usable.
+            Connectors and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (alpha) for this org. Admin management remains fully usable.
           </p>
         </div>
       ) : null}
 
       {error ? (
         <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
-          {error instanceof Error ? error.message : "Failed to load MCP connections."}
+          {error instanceof Error ? error.message : "Failed to load MCP connectors."}
         </div>
       ) : null}
 
@@ -468,7 +468,7 @@ export function McpConnectionsScreen() {
 
       <div className="mb-6 rounded-2xl border border-gray-100 bg-white px-6 py-5">
         <div>
-          <h2 className="text-[15px] font-semibold text-gray-900">Add a connection</h2>
+          <h2 className="text-[15px] font-semibold text-gray-900">Add a connector</h2>
           <p className="mt-1 text-[13px] text-gray-500">
             Add a single MCP server, or import a plugin bundle so its MCPs and skills become available through capabilities.
           </p>
@@ -592,14 +592,14 @@ export function McpConnectionsScreen() {
         })}
       </div>
 
-      <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Your connections</h3>
+      <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Your connectors</h3>
       {isLoading ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
-          Loading MCP connections…
+          Loading MCP connectors…
         </div>
       ) : connections.length === 0 ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center text-[14px] text-gray-500">
-          No MCP connections yet.
+          No MCP connectors yet.
         </div>
       ) : (
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
@@ -864,9 +864,9 @@ function ImportPluginConnectionDialog({
         className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Add plugin connection</h2>
+        <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Add plugin connector</h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          Import a plugin from GitHub. Remote MCPs become Den-hosted org connections; imported skills are saved to Skill Hub storage and show up in capabilities.
+          Import a plugin from GitHub. Remote MCPs become Den-hosted org connectors; imported skills are saved to Skill Hub storage and show up in capabilities.
         </p>
 
         <div className="mt-5 rounded-2xl border border-gray-100 bg-gray-50 p-4">
@@ -1315,7 +1315,7 @@ function IssuerReviewDialog({
           <div>
             <h2 id="mcp-issuer-review-title" className="text-[18px] font-semibold text-gray-950">Review OAuth provider</h2>
             <p className="mt-1 text-[13px] leading-5 text-gray-600">
-              {connection.name} now advertises OAuth metadata that differs from the issuer previously approved for this connection.
+              {connection.name} now advertises OAuth metadata that differs from the issuer previously approved for this connector.
             </p>
           </div>
         </div>
@@ -1992,7 +1992,7 @@ function EditConnectionDialog({
         data-testid="edit-mcp-connection-dialog"
       >
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-          {configureOAuthClient ? "Configure MCP connection" : "Edit MCP connection"}
+          {configureOAuthClient ? "Configure MCP connector" : "Edit MCP connector"}
         </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
           {configureOAuthClient
@@ -2140,7 +2140,7 @@ function EditConnectionDialog({
               }}
             />
             {authType !== "oauth" ? (
-              <p className="mt-1.5 text-[11px] leading-5 text-gray-500">API-key and no-auth connections always use one organization connection.</p>
+              <p className="mt-1.5 text-[11px] leading-5 text-gray-500">API-key and no-auth connectors always use one organization connector.</p>
             ) : null}
           </div>
 
@@ -2196,15 +2196,15 @@ function EditConnectionDialog({
 
         {identityChanged && !marketplaceManaged ? (
           <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[12px] leading-5 text-amber-900" data-testid="mcp-identity-change-warning">
-            <p className="font-semibold">This changes the connection identity.</p>
+            <p className="font-semibold">This changes the connector identity.</p>
             <p className="mt-1">OpenWork will clear shared and individual sessions, API keys, pending OAuth state, OAuth client registration, scopes, and connected timestamps before the new server can be used.</p>
-            {authType === "oauth" ? <p className="mt-1 font-medium">The connection must be authorized again after saving.</p> : null}
+            {authType === "oauth" ? <p className="mt-1 font-medium">The connector must be authorized again after saving.</p> : null}
             {confirmingIdentityChange ? <p className="mt-2 font-semibold">Confirm that you want to invalidate the old identity.</p> : null}
           </div>
         ) : null}
 
         {error ? (
-          <p className="mt-3 text-[13px] text-red-600" role="alert">{error instanceof Error ? error.message : "Failed to update connection."}</p>
+          <p className="mt-3 text-[13px] text-red-600" role="alert">{error instanceof Error ? error.message : "Failed to update connector."}</p>
         ) : null}
 
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -2570,8 +2570,8 @@ function AddConnectionDialog({
                     <DenInput
                       value={smartName}
                       onChange={(event) => setSmartName(event.target.value)}
-                      placeholder={smartMatch.suggestedName || "Connection name"}
-                      aria-label="Connection name"
+                      placeholder={smartMatch.suggestedName || "Connector name"}
+                      aria-label="Connector name"
                     />
                     <p className="mt-1.5 truncate text-[12px] text-gray-500">{smartMatch.url}</p>
                   </div>
@@ -2589,7 +2589,7 @@ function AddConnectionDialog({
                 </div>
                 {smartOneClick && smartOneClick.input.authType === "oauth" ? (
                   <p className="mt-3 text-[12px] leading-5 text-gray-500">
-                    Everyone in the org gets this connection, and each person signs in with their own account. Fine-tune who and how under More options.
+                    Everyone in the org gets this connector, and each person signs in with their own account. Fine-tune who and how under More options.
                   </p>
                 ) : null}
                 {smartBlockers.length > 0 ? (
@@ -2628,7 +2628,7 @@ function AddConnectionDialog({
             ) : null}
 
             {error ? (
-              <p className="mt-3 text-[13px] text-red-600">{error instanceof Error ? error.message : "Failed to add connection."}</p>
+              <p className="mt-3 text-[13px] text-red-600">{error instanceof Error ? error.message : "Failed to add connector."}</p>
             ) : null}
 
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2650,7 +2650,7 @@ function AddConnectionDialog({
                   onClick={() => void submitSmart()}
                   data-testid="smart-add-submit"
                 >
-                  Add connection
+                  Add connector
                 </DenButton>
               </div>
             </div>
@@ -2903,7 +2903,7 @@ function AddConnectionDialog({
         </div>
 
         {error ? (
-          <p className="mt-3 text-[13px] text-red-600">{error instanceof Error ? error.message : "Failed to add connection."}</p>
+          <p className="mt-3 text-[13px] text-red-600">{error instanceof Error ? error.message : "Failed to add connector."}</p>
         ) : null}
 
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -2916,7 +2916,7 @@ function AddConnectionDialog({
             disabled={!name.trim() || !url.trim() || !requirements || discoveryState !== "ready" || (authType === "oauth" && authorizationServers.length > 1 && !authorizationServerIssuer) || (authType === "apikey" && !apiKey.trim()) || accessIncomplete}
             onClick={() => void submit()}
           >
-            Add connection
+            Add connector
           </DenButton>
         </div>
           </>

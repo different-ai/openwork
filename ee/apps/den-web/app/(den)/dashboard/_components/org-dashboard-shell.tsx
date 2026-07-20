@@ -214,7 +214,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Sources";
   }
   if (pathname.startsWith(getMcpConnectionsRoute(orgSlug))) {
-    return "Connections";
+    return "Connectors";
   }
   if (pathname.startsWith(getYourConnectionsRoute(orgSlug))) {
     return "Your Connections";
@@ -304,7 +304,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           { href: getIntegrationsRoute(activeOrg.slug), label: "Sources" },
           { href: getPluginsRoute(activeOrg.slug), label: "Plugins" },
           { href: getMarketplacesRoute(activeOrg.slug), label: "Marketplaces" },
-          { href: getMcpConnectionsRoute(activeOrg.slug), label: "Connections", badge: "Alpha" },
+          { href: getMcpConnectionsRoute(activeOrg.slug), label: "Connectors", badge: "Alpha" },
         ],
       }
     : null;
