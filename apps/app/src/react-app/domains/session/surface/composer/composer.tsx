@@ -1492,7 +1492,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                     <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">
+                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">
                                           {skill.origin === "openwork-connect" ? skill.name : `/${skill.name}`}
                                         </div>
                                         {isLocalCapability(skill.origin) ? (
