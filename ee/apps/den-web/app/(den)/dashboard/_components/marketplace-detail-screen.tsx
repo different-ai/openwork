@@ -1,9 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { Archive, ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, Pencil, Plug, Plus, Puzzle, ShieldCheck, Users, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, Plug, Plus, Puzzle, Users, X } from "lucide-react";
 import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -16,25 +15,18 @@ import {
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
-  type DenMarketplace,
   formatMarketplaceTimestamp,
-  isSystemMarketplace,
   type ConfiguredPluginMcpConnection,
   type MarketplacePluginCloudReadinessConnection,
   type MarketplacePluginCloudReadinessState,
   type MarketplacePluginSummary,
-  useAddPluginToMarketplace,
-  useArchiveMarketplace,
   useConfigurePluginMcpConnection,
   useGrantMarketplaceAccess,
   useMarketplace,
   useMarketplaceAccess,
-  useRemovePluginFromMarketplace,
   useRevokeMarketplaceAccess,
-  useUpdateMarketplace,
 } from "./marketplace-data";
 import { IntegrationIcon } from "./integration-icon";
-import { usePlugins } from "./plugin-data";
 import { type ExternalMcpAuthType, type ExternalMcpCredentialMode, type ExternalMcpPreset, useMcpConnectionPresets } from "./mcp-connections-data";
 import {
   findPresetForRequirement,
@@ -128,8 +120,6 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   }
 
   const { marketplace, plugins, source } = data;
-  const managedIdentity = isSystemMarketplace(marketplace);
-  const managedCatalog = managedIdentity && marketplace.name !== "Your organization";
   const tabs: Array<{
     id: MarketplaceDetailTab;
     label: string;
@@ -150,7 +140,6 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
-        <MarketplaceIdentityActions managedIdentity={managedIdentity} marketplace={marketplace} />
       </div>
 
       <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
@@ -269,12 +258,33 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
               </section>
             ) : null}
 
-            <MarketplacePluginsSection
-              managedCatalog={managedCatalog}
-              marketplaceId={marketplace.id}
-              orgSlug={orgSlug}
-              plugins={plugins}
-            />
+            <section>
+              <div className="mb-3 flex items-baseline justify-between gap-3">
+                <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                  Plugins
+                </h2>
+                <p className="text-[11px] text-gray-400">
+                  {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
+                </p>
+              </div>
+
+              {plugins.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
+                  <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
+                    No plugins in this marketplace yet
+                  </p>
+                  <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
+                    Plugins appear here as they're imported from the source repository.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid items-start gap-3 md:grid-cols-2">
+                  {plugins.map((plugin) => (
+                    <MarketplacePluginCard key={plugin.id} orgSlug={orgSlug} plugin={plugin} />
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
         ) : null}
 
@@ -306,233 +316,6 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         onClose={() => setSetupTarget(null)}
       />
     </div>
-  );
-}
-
-function MarketplaceIdentityActions({
-  managedIdentity,
-  marketplace,
-}: {
-  managedIdentity: boolean;
-  marketplace: DenMarketplace;
-}) {
-  const router = useRouter();
-  const { orgSlug } = useOrgDashboard();
-  const archiveMutation = useArchiveMarketplace();
-  const [editOpen, setEditOpen] = useState(false);
-  const [confirmArchive, setConfirmArchive] = useState(false);
-
-  if (managedIdentity) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 px-3 py-1 text-[12px] font-medium text-gray-500">
-        <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
-        Managed by OpenWork
-      </span>
-    );
-  }
-
-  async function archive() {
-    await archiveMutation.mutateAsync(marketplace.id);
-    router.push(getMarketplacesRoute(orgSlug));
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      {confirmArchive ? (
-        <>
-          <span className="text-[12.5px] text-gray-500">Archive this marketplace?</span>
-          <DenButton
-            size="sm"
-            variant="secondary"
-            disabled={archiveMutation.isPending}
-            onClick={() => setConfirmArchive(false)}
-          >
-            Keep
-          </DenButton>
-          <DenButton size="sm" loading={archiveMutation.isPending} onClick={() => void archive()}>
-            Archive
-          </DenButton>
-        </>
-      ) : (
-        <>
-          <DenButton size="sm" variant="secondary" icon={Pencil} onClick={() => setEditOpen(true)}>
-            Edit
-          </DenButton>
-          <DenButton size="sm" variant="secondary" icon={Archive} onClick={() => setConfirmArchive(true)}>
-            Archive
-          </DenButton>
-        </>
-      )}
-      {archiveMutation.error ? (
-        <span className="text-[12px] text-red-600">
-          {archiveMutation.error instanceof Error ? archiveMutation.error.message : "Failed to archive."}
-        </span>
-      ) : null}
-
-      <EditMarketplaceDialog
-        open={editOpen}
-        marketplace={marketplace}
-        onClose={() => setEditOpen(false)}
-      />
-    </div>
-  );
-}
-
-function EditMarketplaceDialog({
-  open,
-  marketplace,
-  onClose,
-}: {
-  open: boolean;
-  marketplace: DenMarketplace;
-  onClose: () => void;
-}) {
-  const updateMutation = useUpdateMarketplace();
-  const [name, setName] = useState(marketplace.name);
-  const [description, setDescription] = useState(marketplace.description ?? "");
-
-  useEffect(() => {
-    if (!open) return;
-    setName(marketplace.name);
-    setDescription(marketplace.description ?? "");
-  }, [open, marketplace.name, marketplace.description]);
-
-  if (!open) {
-    return null;
-  }
-
-  const trimmedName = name.trim();
-
-  async function submit() {
-    await updateMutation.mutateAsync({
-      marketplaceId: marketplace.id,
-      name: trimmedName,
-      description: description.trim() || null,
-    });
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
-      <div
-        className="w-full max-w-[440px] rounded-2xl border border-gray-100 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.4)]"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-gray-950">Edit marketplace</h2>
-
-        <label className="mt-4 block">
-          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Name</span>
-          <DenInput value={name} onChange={(event) => setName(event.target.value)} autoFocus />
-        </label>
-        <label className="mt-3 block">
-          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Description</span>
-          <textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            rows={2}
-            className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 text-[13px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
-          />
-        </label>
-
-        {updateMutation.error ? (
-          <p className="mt-3 text-[12.5px] text-red-600">
-            {updateMutation.error instanceof Error ? updateMutation.error.message : "Failed to update marketplace."}
-          </p>
-        ) : null}
-
-        <div className="mt-5 flex items-center justify-end gap-2">
-          <DenButton variant="secondary" onClick={onClose} disabled={updateMutation.isPending}>
-            Cancel
-          </DenButton>
-          <DenButton disabled={!trimmedName || updateMutation.isPending} onClick={() => void submit()}>
-            {updateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-            Save changes
-          </DenButton>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MarketplacePluginsSection({
-  managedCatalog,
-  marketplaceId,
-  orgSlug,
-  plugins,
-}: {
-  managedCatalog: boolean;
-  marketplaceId: string;
-  orgSlug: string | null;
-  plugins: MarketplacePluginSummary[];
-}) {
-  const pluginsQuery = usePlugins();
-  const addMutation = useAddPluginToMarketplace();
-  const removeMutation = useRemovePluginFromMarketplace();
-
-  const currentIds = useMemo(() => new Set(plugins.map((plugin) => plugin.id)), [plugins]);
-  const addable = (pluginsQuery.data ?? []).filter((plugin) => !currentIds.has(plugin.id));
-
-  return (
-    <section>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-          Plugins
-        </h2>
-        {managedCatalog ? (
-          <p className="text-[11px] text-gray-400">
-            {plugins.length} plugin{plugins.length === 1 ? "" : "s"} · curated by OpenWork
-          </p>
-        ) : (
-          <AccessAddPicker
-            label="Plugins"
-            options={addable.map((plugin) => ({
-              id: plugin.id,
-              label: plugin.name,
-              subtitle: plugin.description ?? "Plugin",
-            }))}
-            emptyLabel="Every plugin in your library is already here"
-            disabled={addMutation.isPending}
-            onAdd={(pluginId) => void addMutation.mutateAsync({ marketplaceId, pluginId })}
-          />
-        )}
-      </div>
-
-      {addMutation.error ? (
-        <p className="mb-3 text-[12px] text-red-600">
-          {addMutation.error instanceof Error ? addMutation.error.message : "Failed to add the plugin."}
-        </p>
-      ) : null}
-      {removeMutation.error ? (
-        <p className="mb-3 text-[12px] text-red-600">
-          {removeMutation.error instanceof Error ? removeMutation.error.message : "Failed to remove the plugin."}
-        </p>
-      ) : null}
-
-      {plugins.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
-          <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
-            No plugins in this marketplace yet
-          </p>
-          <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
-            Add plugins from your library with the picker above, import from GitHub, or connect a source repository.
-          </p>
-        </div>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          {plugins.map((plugin) => (
-            <MarketplacePluginCard
-              key={plugin.id}
-              orgSlug={orgSlug}
-              plugin={plugin}
-              onRemove={managedCatalog
-                ? undefined
-                : () => void removeMutation.mutateAsync({ marketplaceId, pluginId: plugin.id })}
-              removing={removeMutation.isPending}
-            />
-          ))}
-        </div>
-      )}
-    </section>
   );
 }
 
@@ -993,13 +776,9 @@ function MarketplaceConfigureSection({
 function MarketplacePluginCard({
   orgSlug,
   plugin,
-  onRemove,
-  removing,
 }: {
   orgSlug: string | null;
   plugin: MarketplacePluginSummary;
-  onRemove?: () => void;
-  removing?: boolean;
 }) {
   const orderedCountEntries = Object.entries(plugin.componentCounts)
     .filter(([, count]) => count > 0)

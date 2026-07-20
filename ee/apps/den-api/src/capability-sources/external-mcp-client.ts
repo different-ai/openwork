@@ -441,29 +441,6 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   }
 }
 
-function requestUrlForConnection(connection: ExternalMcpConnectionRow) {
-  const url = new URL(connection.url)
-  for (const configValue of connection.configValues ?? []) {
-    if (configValue.queryParam) {
-      url.searchParams.set(configValue.queryParam, configValue.value)
-    }
-  }
-  return url
-}
-
-function requestHeadersForConnection(connection: ExternalMcpConnectionRow) {
-  const headers: Record<string, string> = {}
-  if (connection.authType === "apikey" && connection.apiKey) {
-    headers.authorization = `Bearer ${connection.apiKey}`
-  }
-  for (const configValue of connection.configValues ?? []) {
-    if (configValue.headerName) {
-      headers[configValue.headerName] = configValue.value
-    }
-  }
-  return Object.keys(headers).length > 0 ? headers : undefined
-}
-
 function buildTransport(
   connection: ExternalMcpConnectionRow,
   redirectUri: string,

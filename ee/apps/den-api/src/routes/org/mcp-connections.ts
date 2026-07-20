@@ -488,22 +488,6 @@ export function isAgentOAuthClientConnection(input: { oauthClient?: unknown; ses
   return Boolean(input.oauthClient) && input.sessionId === "mcp_internal"
 }
 
-/**
- * Marketplace server-instance configuration carries the same credential
- * material as connection creation (API keys, OAuth clients, config field
- * values), so it gets the same agent boundary: the internal MCP principal
- * may configure secretless instances but never submit secrets.
- */
-export function isAgentServerInstanceSecretWrite(input: {
-  apiKey?: unknown
-  fieldValueCount?: number | null
-  oauthClient?: unknown
-  sessionId?: string | null
-}) {
-  if (input.sessionId !== "mcp_internal") return false
-  return Boolean(input.apiKey) || Boolean(input.oauthClient) || (input.fieldValueCount ?? 0) > 0
-}
-
 const listConnectionsQuerySchema = z.object({
   /** usable (default): connections the calling member has been granted. manageable: every org connection, admin-only. */
   scope: z.enum(["usable", "manageable"]).optional().default("usable"),

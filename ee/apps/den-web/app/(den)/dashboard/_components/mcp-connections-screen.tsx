@@ -717,7 +717,7 @@ export function McpConnectionsScreen() {
   );
 }
 
-export function ImportPluginConnectionDialog({
+function ImportPluginConnectionDialog({
   open,
   onClose,
   onImported,
@@ -1047,7 +1047,7 @@ export function ImportPluginConnectionDialog({
   );
 }
 
-export function GoogleWorkspaceDialog({
+function GoogleWorkspaceDialog({
   open,
   submitting,
   error,
@@ -2228,7 +2228,7 @@ function EditConnectionDialog({
   );
 }
 
-export function AddConnectionDialog({
+function AddConnectionDialog({
   open,
   preset,
   submitting,

@@ -34,6 +34,7 @@ import {
   getOrgAccessFlags,
   getIntegrationsRoute,
   getInferenceRoute,
+  getMcpConnectionsRoute,
   getManagedBrandIconUrl,
   getMembersRoute,
   getYourConnectionsRoute,
@@ -212,6 +213,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getIntegrationsRoute(orgSlug))) {
     return "Sources";
   }
+  if (pathname.startsWith(getMcpConnectionsRoute(orgSlug))) {
+    return "Connections";
+  }
   if (pathname.startsWith(getYourConnectionsRoute(orgSlug))) {
     return "Your Connections";
   }
@@ -285,10 +289,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     orgSlug: activeOrg?.slug,
   });
   const mcpConnectionsEnabled = orgContext?.capabilities.mcpConnections === true;
+
   // Top-level rows: Dashboard, optional Your Connections, Extensions, Models,
   // Members, Analytics, Settings. Everything tool-shaped groups under
   // Extensions (in pipeline order: Sources feed Plugins, share via
-  // Marketplaces); model config groups under
+  // Marketplaces, alpha Connections last); model config groups under
   // Models; set-once governance groups under Settings.
   const extensionsGroup: DashboardNavItem | null = access.isAdmin && activeOrg
     ? {
@@ -299,6 +304,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           { href: getIntegrationsRoute(activeOrg.slug), label: "Sources" },
           { href: getPluginsRoute(activeOrg.slug), label: "Plugins" },
           { href: getMarketplacesRoute(activeOrg.slug), label: "Marketplaces" },
+          { href: getMcpConnectionsRoute(activeOrg.slug), label: "Connections", badge: "Alpha" },
         ],
       }
     : null;

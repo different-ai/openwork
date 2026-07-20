@@ -50,7 +50,6 @@ export const ConfigObjectTable = mysqlTable(
     currentFileName: varchar("current_file_name", { length: 255 }),
     currentFileExtension: varchar("current_file_extension", { length: 64 }),
     currentRelativePath: varchar("current_relative_path", { length: 255 }),
-    denSkillId: denTypeIdColumn("skill", "den_skill_id"),
     status: mysqlEnum("status", configObjectStatusValues).notNull().default("active"),
     createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
     connectorInstanceId: denTypeIdColumn("connectorInstance", "connector_instance_id"),
@@ -66,7 +65,6 @@ export const ConfigObjectTable = mysqlTable(
     index("config_object_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("config_object_connector_instance_id").on(table.connectorInstanceId),
     index("config_object_current_relative_path").on(table.currentRelativePath),
-    index("config_object_den_skill_id").on(table.denSkillId),
   ],
 )
 
@@ -203,27 +201,6 @@ export const PluginConfigObjectTable = mysqlTable(
     index("plugin_config_object_config_object_id").on(table.configObjectId),
     index("plugin_config_object_connector_mapping_id").on(table.connectorMappingId),
     uniqueIndex("plugin_config_object_plugin_config_object").on(table.pluginId, table.configObjectId),
-  ],
-)
-
-export const PluginMcpServerInstanceTable = mysqlTable(
-  "plugin_mcp_server_instance",
-  {
-    id: denTypeIdColumn("pluginMcpServerInstance", "id").notNull().primaryKey(),
-    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    pluginId: denTypeIdColumn("plugin", "plugin_id").notNull(),
-    configObjectId: denTypeIdColumn("configObject", "config_object_id"),
-    serverKey: varchar("server_key", { length: 128 }).notNull(),
-    externalMcpConnectionId: denTypeIdColumn("externalMcpConnection", "external_mcp_connection_id").notNull(),
-    instanceLabel: varchar("instance_label", { length: 255 }),
-    createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
-    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
-  },
-  (table) => [
-    index("plugin_mcp_server_instance_organization_id").on(table.organizationId),
-    index("plugin_mcp_server_instance_plugin_server").on(table.pluginId, table.serverKey),
-    index("plugin_mcp_server_instance_config_object_id").on(table.configObjectId),
-    uniqueIndex("plugin_mcp_server_instance_connection").on(table.externalMcpConnectionId),
   ],
 )
 
@@ -500,28 +477,12 @@ export const configObjectRelations = relations(ConfigObjectTable, ({ many, one }
     references: [MemberTable.id],
   }),
   memberships: many(PluginConfigObjectTable),
-  mcpServerInstances: many(PluginMcpServerInstanceTable),
   organization: one(OrganizationTable, {
     fields: [ConfigObjectTable.organizationId],
     references: [OrganizationTable.id],
   }),
   sourceBindings: many(ConnectorSourceBindingTable),
   versions: many(ConfigObjectVersionTable),
-}))
-
-export const pluginMcpServerInstanceRelations = relations(PluginMcpServerInstanceTable, ({ one }) => ({
-  configObject: one(ConfigObjectTable, {
-    fields: [PluginMcpServerInstanceTable.configObjectId],
-    references: [ConfigObjectTable.id],
-  }),
-  createdByOrgMembership: one(MemberTable, {
-    fields: [PluginMcpServerInstanceTable.createdByOrgMembershipId],
-    references: [MemberTable.id],
-  }),
-  plugin: one(PluginTable, {
-    fields: [PluginMcpServerInstanceTable.pluginId],
-    references: [PluginTable.id],
-  }),
 }))
 
 export const configObjectVersionRelations = relations(ConfigObjectVersionTable, ({ one }) => ({
@@ -547,7 +508,6 @@ export const pluginRelations = relations(PluginTable, ({ many, one }) => ({
   }),
   marketplaces: many(MarketplacePluginTable),
   memberships: many(PluginConfigObjectTable),
-  mcpServerInstances: many(PluginMcpServerInstanceTable),
   organization: one(OrganizationTable, {
     fields: [PluginTable.organizationId],
     references: [OrganizationTable.id],

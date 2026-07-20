@@ -29,7 +29,7 @@ import {
   jsonResponse,
   unauthorizedSchema,
 } from "../../openapi.js"
-import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
+import { CONNECTIONS_READ_SESSION_MAX_AGE_MS, ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const PAIRING_TTL_MS = 10 * 60 * 1_000
@@ -162,8 +162,8 @@ async function tryDeleteWebhook(botToken: string): Promise<boolean> {
   }
 }
 
-function managementDenied(c: Parameters<typeof ensureOrganizationAdmin>[0]) {
-  return ensureOrganizationAdmin(c, "Only workspace owners and admins can manage Telegram.")
+function managementDenied(c: Parameters<typeof ensureOrganizationAdmin>[0], maxAgeMs?: number) {
+  return ensureOrganizationAdmin(c, "Only workspace owners and admins can manage Telegram.", maxAgeMs)
 }
 
 export function registerTelegramOrgRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -180,7 +180,7 @@ export function registerTelegramOrgRoutes<T extends { Variables: OrgRouteVariabl
     }),
     orgMemberRoute(),
     async (c) => {
-      const admin = managementDenied(c)
+      const admin = managementDenied(c, CONNECTIONS_READ_SESSION_MAX_AGE_MS)
       if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
       const organization = c.get("organizationContext").organization
       return c.json(await connectionResponse(organization.id))

@@ -33,12 +33,10 @@ export const configObjectVersionIdSchema = denTypeIdSchema("configObjectVersion"
 export const configObjectAccessGrantIdSchema = denTypeIdSchema("configObjectAccessGrant")
 export const pluginIdSchema = denTypeIdSchema("plugin")
 export const pluginConfigObjectIdSchema = denTypeIdSchema("pluginConfigObject")
-export const pluginMcpServerInstanceIdSchema = denTypeIdSchema("pluginMcpServerInstance")
 export const pluginAccessGrantIdSchema = denTypeIdSchema("pluginAccessGrant")
 export const marketplaceIdSchema = denTypeIdSchema("marketplace")
 export const marketplacePluginIdSchema = denTypeIdSchema("marketplacePlugin")
 export const marketplaceAccessGrantIdSchema = denTypeIdSchema("marketplaceAccessGrant")
-export const externalMcpConnectionIdSchema = denTypeIdSchema("externalMcpConnection")
 export const pluginMcpRequirementBindingIdSchema = denTypeIdSchema("pluginMcpRequirementBinding")
 export const connectorAccountIdSchema = denTypeIdSchema("connectorAccount")
 export const connectorInstanceIdSchema = denTypeIdSchema("connectorInstance")
@@ -148,7 +146,6 @@ export const configObjectVersionParamsSchema = configObjectParamsSchema.extend(i
 export const configObjectAccessGrantParamsSchema = configObjectParamsSchema.extend(idParamSchema("grantId", "configObjectAccessGrant").shape)
 export const pluginParamsSchema = idParamSchema("pluginId", "plugin")
 export const pluginConfigObjectParamsSchema = pluginParamsSchema.extend(idParamSchema("configObjectId", "configObject").shape)
-export const pluginServerInstanceParamsSchema = pluginParamsSchema.extend(idParamSchema("instanceId", "pluginMcpServerInstance").shape)
 export const pluginAccessGrantParamsSchema = pluginParamsSchema.extend(idParamSchema("grantId", "pluginAccessGrant").shape)
 export const marketplaceParamsSchema = idParamSchema("marketplaceId", "marketplace")
 export const marketplacePluginParamsSchema = marketplaceParamsSchema.extend(idParamSchema("pluginId", "plugin").shape)
@@ -188,10 +185,6 @@ export const configObjectCreateSchema = z.object({
 export const configObjectCreateVersionSchema = z.object({
   input: configObjectInputSchema,
   reason: z.string().trim().min(1).max(255).optional(),
-})
-
-export const configObjectStatusUpdateSchema = z.object({
-  status: z.enum(["active", "inactive"]),
 })
 
 export const configObjectPluginAttachSchema = z.object({
@@ -431,49 +424,6 @@ export const pluginMcpRequirementConfigureSchema = z.object({
   }).optional(),
 })
 
-const pluginMcpConfigFieldPlacementSchema = z.enum(["header", "query", "bearer", "oauth_client_id", "oauth_client_secret"])
-const pluginMcpConfigFieldKindSchema = z.enum(["text", "secret", "url"])
-
-export const pluginMcpConfigFieldSchema = z.object({
-  description: z.string().trim().min(1).max(1024).nullable(),
-  headerName: z.string().trim().min(1).max(255).nullable(),
-  key: z.string().trim().min(1).max(128),
-  kind: pluginMcpConfigFieldKindSchema,
-  label: z.string().trim().min(1).max(255),
-  placement: pluginMcpConfigFieldPlacementSchema,
-  queryParam: z.string().trim().min(1).max(255).nullable(),
-  required: z.boolean(),
-}).meta({ ref: "PluginArchMcpConfigField" })
-
-export const pluginMcpConfigFieldValueSchema = z.object({
-  key: z.string().trim().min(1).max(128),
-  value: z.string().trim().min(1).max(4096),
-})
-
-export const pluginServerInstanceCreateSchema = z.object({
-  access: githubPluginMcpImportAccessSchema.optional(),
-  apiKey: z.string().trim().min(1).max(4096).optional(),
-  authType: z.enum(["oauth", "apikey", "none"]).optional().default("oauth"),
-  configObjectId: configObjectIdSchema,
-  credentialMode: z.enum(["shared", "per_member"]).optional().default("per_member"),
-  fieldValues: z.array(pluginMcpConfigFieldValueSchema).max(20).optional().default([]),
-  instanceLabel: z.string().trim().min(1).max(255).nullable().optional(),
-  name: z.string().trim().min(1).max(255).nullable().optional(),
-  oauthClient: z.object({
-    clientId: z.string().trim().min(1).max(512),
-    clientSecret: z.string().trim().min(1).max(4096).optional(),
-  }).optional(),
-  serverKey: z.string().trim().min(1).max(128),
-})
-
-export const pluginServerInstanceDeleteQuerySchema = z.object({
-  deleteConnection: queryBooleanSchema.optional().default(true),
-})
-
-export const marketplaceWrapStandaloneConnectionsSchema = z.object({
-  marketplaceId: marketplaceIdSchema.optional(),
-}).optional()
-
 export const githubDiscoveryTreeQuerySchema = z.object({
   cursor: z.string().trim().min(1).max(255).optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
@@ -531,7 +481,6 @@ export const configObjectSchema = z.object({
   currentFileName: z.string().trim().min(1).max(255).nullable(),
   currentFileExtension: z.string().trim().min(1).max(32).nullable(),
   currentRelativePath: z.string().trim().min(1).max(255).nullable(),
-  denSkillId: denTypeIdSchema("skill").nullable(),
   status: configObjectStatusSchema,
   createdByOrgMembershipId: memberIdSchema,
   connectorInstanceId: connectorInstanceIdSchema.nullable(),
@@ -596,58 +545,6 @@ export const pluginSchema = z.object({
   extension: pluginExtensionSchema.nullable().optional(),
 }).meta({ ref: "PluginArchPlugin" })
 
-export const pluginMcpServerInstanceSchema = z.object({
-  id: pluginMcpServerInstanceIdSchema,
-  pluginId: pluginIdSchema,
-  configObjectId: configObjectIdSchema.nullable(),
-  serverKey: z.string().trim().min(1).max(128),
-  externalMcpConnectionId: externalMcpConnectionIdSchema,
-  instanceLabel: z.string().trim().min(1).max(255).nullable(),
-  createdByOrgMembershipId: memberIdSchema,
-  createdAt: z.string().datetime({ offset: true }),
-  connection: z.object({
-    id: externalMcpConnectionIdSchema,
-    name: z.string().trim().min(1).max(255),
-    url: z.string().trim().min(1).max(2048),
-    authType: z.enum(["oauth", "apikey", "none"]),
-    credentialMode: z.enum(["shared", "per_member"]),
-  }).nullable(),
-}).meta({ ref: "PluginArchMcpServerInstance" })
-
-export const pluginMcpServerTemplateSchema = z.object({
-  authType: z.enum(["oauth", "apikey", "none"]),
-  configObjectId: configObjectIdSchema,
-  configFields: z.array(pluginMcpConfigFieldSchema),
-  credentialModeDefault: z.enum(["shared", "per_member"]),
-  existingConnectionId: externalMcpConnectionIdSchema.nullable(),
-  name: z.string().trim().min(1).max(255),
-  serverKey: z.string().trim().min(1).max(128),
-  status: configObjectStatusSchema,
-  url: z.string().trim().min(1).max(2048),
-}).meta({ ref: "PluginArchMcpServerTemplate" })
-
-export const pluginSkillTemplateSchema = z.object({
-  configObjectId: configObjectIdSchema,
-  denSkillId: denTypeIdSchema("skill").nullable(),
-  description: nullableStringSchema,
-  status: configObjectStatusSchema,
-  title: z.string().trim().min(1).max(255),
-}).meta({ ref: "PluginArchSkillTemplate" })
-
-export const pluginServerTemplatesResponseSchema = z.object({
-  item: z.object({
-    instances: z.array(pluginMcpServerInstanceSchema),
-    mcpTemplates: z.array(pluginMcpServerTemplateSchema),
-    plugin: pluginSchema,
-    skills: z.array(pluginSkillTemplateSchema),
-  }),
-}).meta({ ref: "PluginArchServerTemplatesResponse" })
-
-export const pluginServerInstanceMutationResponseSchema = z.object({
-  ok: z.literal(true),
-  item: pluginMcpServerInstanceSchema,
-}).meta({ ref: "PluginArchMcpServerInstanceMutationResponse" })
-
 export const marketplacePluginSchema = z.object({
   id: marketplacePluginIdSchema,
   marketplaceId: marketplaceIdSchema,
@@ -672,18 +569,6 @@ export const marketplaceSchema = z.object({
   deletedAt: nullableTimestampSchema,
   pluginCount: z.number().int().nonnegative().optional(),
 }).meta({ ref: "PluginArchMarketplace" })
-
-export const marketplaceWrapStandaloneConnectionsResponseSchema = z.object({
-  ok: z.literal(true),
-  item: z.object({
-    marketplace: marketplaceSchema,
-    wrapped: z.array(z.object({
-      connectionId: externalMcpConnectionIdSchema,
-      pluginId: pluginIdSchema,
-    })),
-    wrappedCount: z.number().int().nonnegative(),
-  }),
-}).meta({ ref: "PluginArchWrapStandaloneConnectionsResponse" })
 
 const pluginCloudReadinessSchema = z.object({
   state: z.enum(["ready", "needs_signin", "needs_admin_setup", "desktop_only", "not_synced"]),
@@ -1000,8 +885,6 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
     imported: z.array(z.object({
       connectionId: z.string(),
       name: z.string(),
-      /** Set when the connection was already configured as an instance of another plugin; that plugin keeps governance of it. */
-      reusedFromPluginId: pluginIdSchema.nullable(),
       url: z.string(),
     })),
     importedSkills: z.array(z.object({

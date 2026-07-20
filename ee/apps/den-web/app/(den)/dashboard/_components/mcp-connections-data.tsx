@@ -58,9 +58,6 @@ export type ExternalMcpConnection = {
   externalAccountId?: string | null;
   grantedScopes?: string[];
   tenantId?: string | null;
-  pluginId?: string | null;
-  serverKey?: string | null;
-  instanceLabel?: string | null;
   requiredBy: ExternalMcpRequiredBy[];
   identityManagedBy: ExternalMcpRequiredBy[];
   requiredAuthType?: ExternalMcpAuthType | null;

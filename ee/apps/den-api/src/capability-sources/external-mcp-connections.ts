@@ -8,7 +8,6 @@ import {
   ConfigObjectVersionTable,
   ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
-  type ExternalMcpConfigValue,
   type ExternalMcpOAuthConfiguration,
   MarketplaceAccessGrantTable,
   MarketplacePluginTable,
@@ -426,7 +425,6 @@ export async function createExternalMcpConnection(input: {
   authType: "oauth" | "apikey" | "none"
   credentialMode: "shared" | "per_member"
   apiKey?: string | null
-  configValues?: ExternalMcpConfigValue[] | null
   oauthConfiguration?: ExternalMcpOAuthConfigurationInput | null
   createdByOrgMembershipId: OrgMembershipId
   access: ExternalMcpAccessInput
@@ -452,7 +450,6 @@ export async function createExternalMcpConnection(input: {
     authType: input.authType,
     credentialMode: input.credentialMode,
     apiKey: input.apiKey ?? null,
-    configValues: input.configValues ?? null,
     oauthConfiguration,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
   })
