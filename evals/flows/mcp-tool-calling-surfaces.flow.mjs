@@ -240,17 +240,37 @@ async function openManagedToolRunner(ctx) {
   })()`);
   ctx.assert(menuOpened, "Could not open the managed connection actions menu.");
   await ctx.waitFor(
-    `Boolean(document.querySelector('[data-testid="toggle-managed-mcp-tool-runner-${state.connectionId}"]'))`,
-    { timeoutMs: 10_000, label: "managed Run a tool action" },
+    `Boolean(
+      document.querySelector('[data-testid="toggle-managed-mcp-tool-runner-${state.connectionId}"]')
+      && document.querySelector('[data-testid="toggle-managed-mcp-tool-catalog-${state.connectionId}"]')
+    )`,
+    { timeoutMs: 10_000, label: "managed tool actions" },
   );
 
-  const runnerOpened = await ctx.eval(`(() => {
-    const button = document.querySelector('[data-testid="toggle-managed-mcp-tool-runner-${state.connectionId}"]');
+  const catalogOpened = await ctx.eval(`(() => {
+    const directRunner = document.querySelector('[data-testid="toggle-managed-mcp-tool-runner-${state.connectionId}"]');
+    const button = document.querySelector('[data-testid="toggle-managed-mcp-tool-catalog-${state.connectionId}"]');
+    if (!(directRunner instanceof HTMLButtonElement) || directRunner.disabled) return false;
     if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
     button.click();
     return true;
   })()`);
-  ctx.assert(runnerOpened, "The managed connection's Run a tool action was unavailable.");
+  ctx.assert(catalogOpened, "The managed connection's tool catalog was unavailable.");
+  await ctx.waitFor(
+    `Boolean(
+      document.querySelector('[data-mcp-tool-catalog="${state.connectionId}"]')
+      && document.querySelector('[data-testid="run-from-managed-mcp-tool-catalog-${state.connectionId}"]')
+    )`,
+    { timeoutMs: 30_000, label: "Run a tool action inside the managed tool catalog" },
+  );
+
+  const runnerOpened = await ctx.eval(`(() => {
+    const button = document.querySelector('[data-testid="run-from-managed-mcp-tool-catalog-${state.connectionId}"]');
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+  ctx.assert(runnerOpened, "The tool catalog's Run a tool action was unavailable.");
   await waitForRunner(ctx);
 }
 

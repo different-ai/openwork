@@ -1562,6 +1562,7 @@ function ConnectionRow({
                   disabled={!canInspectTools}
                   title={canInspectTools ? "Inspect the tools this MCP exposes" : "Connect this account before inspecting tools"}
                   className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  data-testid={`toggle-managed-mcp-tool-catalog-${connection.id}`}
                 >
                   {toolsOpen ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
                   {toolsOpen ? "Hide tools" : "View tools"}
@@ -1601,7 +1602,13 @@ function ConnectionRow({
           </div>
         </div>
       </div>
-      {toolsOpen && canInspectTools ? <McpToolCatalog connection={connection} /> : null}
+      {toolsOpen && canInspectTools ? (
+        <McpToolCatalog
+          connection={connection}
+          canRunTools={canRunTools}
+          onRunTool={onToggleToolRunner}
+        />
+      ) : null}
       {toolRunnerOpen && canRunTools ? <McpToolRunner connection={connection} /> : null}
     </div>
   );
@@ -1628,7 +1635,15 @@ function toolHints(tool: ExternalMcpTool): Array<{ label: string; className: str
   ].filter((hint): hint is { label: string; className: string } => hint !== null);
 }
 
-function McpToolCatalog({ connection }: { connection: ExternalMcpConnection }) {
+function McpToolCatalog({
+  connection,
+  canRunTools,
+  onRunTool,
+}: {
+  connection: ExternalMcpConnection;
+  canRunTools: boolean;
+  onRunTool: () => void;
+}) {
   const catalog = useMcpConnectionTools(connection.id, true);
   const [toolSearch, setToolSearch] = useState("");
   const [visibleToolLimit, setVisibleToolLimit] = useState(MCP_TOOL_PAGE_SIZE);
@@ -1655,10 +1670,22 @@ function McpToolCatalog({ connection }: { connection: ExternalMcpConnection }) {
             Live from {connection.name}. Inspecting this list does not run a tool. Provider annotations are hints, not guarantees.
           </p>
         </div>
-        <DenButton variant="secondary" size="sm" loading={catalog.isFetching} onClick={() => void catalog.refetch()}>
-          <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
-        </DenButton>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <DenButton
+            size="sm"
+            icon={Play}
+            disabled={!canRunTools}
+            title={canRunTools ? "Open the manual tool runner" : "Connect or regain access before running tools"}
+            onClick={onRunTool}
+            data-testid={`run-from-managed-mcp-tool-catalog-${connection.id}`}
+          >
+            Run a tool
+          </DenButton>
+          <DenButton variant="secondary" size="sm" loading={catalog.isFetching} onClick={() => void catalog.refetch()}>
+            <RefreshCw className="h-3.5 w-3.5" />
+            Refresh
+          </DenButton>
+        </div>
       </div>
 
       {catalog.data && catalog.data.length > 0 ? (
