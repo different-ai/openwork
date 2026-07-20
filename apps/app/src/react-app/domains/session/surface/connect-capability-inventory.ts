@@ -49,6 +49,11 @@ function marketplaceCapabilityName(pluginId: string, configObjectId: string) {
   return `plugin:${pluginId}:${configObjectId}`;
 }
 
+function skillTrigger(object: DenPluginConfigObject) {
+  const path = object.currentRelativePath?.replaceAll("\\", "/");
+  return path?.match(/(?:^|\/)skills?\/([^/]+)\/SKILL\.md$/i)?.[1];
+}
+
 function remoteMcpSpecs(object: DenPluginConfigObject): RemoteMcpSpec[] {
   const payload = object.latestVersion?.normalizedPayloadJson;
   if (!payload) return [{ name: object.title, url: "" }];
@@ -105,6 +110,7 @@ function toSkill(
     name: object.title,
     path: `openwork-connect://${marketplace.id}/${plugin.id}/${object.id}`,
     description: object.description ?? undefined,
+    trigger: skillTrigger(object),
     origin: "openwork-connect",
     marketplaceName: marketplace.name,
     pluginName: plugin.name,

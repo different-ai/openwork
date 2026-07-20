@@ -119,6 +119,7 @@ describe("assigned OpenWork Connect capability inventory", () => {
     expect(inventory.skills).toEqual([
       expect.objectContaining({
         name: "Escalate ticket",
+        trigger: "escalate-ticket",
         origin: "openwork-connect",
         marketplaceName: "Team tools",
         pluginName: "Support kit",

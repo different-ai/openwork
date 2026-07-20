@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import { firstLineLocalFileParts } from "../src/react-app/domains/session/sync/prompt-file-parts";
-import { getSlashCommandQuery, parseSlashCommandInvocation } from "../src/react-app/domains/session/surface/composer/slash-command";
+import {
+  connectSkillSlashCommandOptions,
+  getSlashCommandQuery,
+  parseSlashCommandInvocation,
+  skillSlashCommandName,
+} from "../src/react-app/domains/session/surface/composer/slash-command";
 
 describe("first-line local file parts", () => {
   test("detects tilde paths in the first line", () => {
@@ -68,5 +73,34 @@ describe("slash-command parsing", () => {
   test("does not parse absolute file paths as commands", () => {
     expect(parseSlashCommandInvocation("/Users/omar/code/openwork/apps/app/src/file.ts\nwhy does this fail?")).toBeNull();
     expect(getSlashCommandQuery("/Users/omar/code/file.ts")).toBeNull();
+  });
+});
+
+describe("Connect skill slash commands", () => {
+  test("uses the skill trigger and preserves the remote capability identity", () => {
+    const [option] = connectSkillSlashCommandOptions([{
+      name: "Escalate ticket",
+      trigger: "escalate-ticket",
+      description: "Prepare a support escalation.",
+      path: "openwork-connect://marketplace_1/plugin_1/skill_1",
+      origin: "openwork-connect",
+      marketplaceName: "Team tools",
+      pluginName: "Support kit",
+      connectCapabilityName: "plugin:plugin_1:skill_1",
+    }]);
+
+    expect(option).toMatchObject({
+      id: "connect-skill:plugin:plugin_1:skill_1",
+      name: "escalate-ticket",
+      description: "Prepare a support escalation. — Team tools · Support kit",
+      source: "skill",
+      skill: {
+        connectCapabilityName: "plugin:plugin_1:skill_1",
+      },
+    });
+  });
+
+  test("falls back to a slash-safe slug when a skill has no trigger", () => {
+    expect(skillSlashCommandName({ name: "Renewal Playbook" })).toBe("renewal-playbook");
   });
 });
