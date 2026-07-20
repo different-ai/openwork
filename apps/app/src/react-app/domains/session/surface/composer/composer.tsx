@@ -241,6 +241,10 @@ function mcpStatusBadgeClass(status: McpServerStatus) {
   }
 }
 
+function isLocalCapability(origin: SkillCard["origin"] | McpServerEntry["origin"]) {
+  return origin !== "openwork-connect";
+}
+
 function extensionIcon(entry: McpDirectoryInfo, size = 16) {
   const serviceUrl = typeof entry.url === "string" ? entry.url : undefined;
   const iconUrl = resolveExtensionIconUrl({ iconSrc: entry.iconSrc, iconSlug: entry.iconSlug, serviceUrl });
@@ -720,6 +724,18 @@ export function ReactSessionComposer(props: ComposerProps) {
   const toolSkillItems = commands.filter((command) => command.source === "skill");
   const toolMcpItems = commands.filter((command) => command.source === "mcp");
   void toolMcpItems;
+  const localCommandSkillNames = new Set(toolSkillItems.map((command) => command.name));
+  const skillMenuItems: SkillCard[] = [
+    ...toolSkillItems.map((command) => ({
+      name: command.name,
+      path: `command://${command.id}`,
+      description: command.description,
+      origin: "local" as const,
+    })),
+    ...skills.filter((skill) =>
+      skill.origin === "openwork-connect" || !localCommandSkillNames.has(skill.name)
+    ),
+  ];
   const pluginSections = importedPlugins
     .filter((plugin) => plugin.files.length > 0)
     .map((plugin) => ({ section: `plugin:${plugin.pluginId}` as const, plugin }));
@@ -762,7 +778,26 @@ export function ReactSessionComposer(props: ComposerProps) {
     setToolMenuOpen(false);
   };
 
-  const applySkillSelection = (name: string, options?: { replaceSkillDraft?: boolean }) => {
+  const applySkillSelection = (input: string | SkillCard, options?: { replaceSkillDraft?: boolean }) => {
+    const skill = typeof input === "string"
+      ? { name: input, path: "", origin: "local" as const }
+      : input;
+    if (skill.origin === "openwork-connect") {
+      const prompt = t("composer.connect_skill_prompt", {
+        name: skill.name,
+        marketplace: skill.marketplaceName ?? "assigned",
+      });
+      if (options?.replaceSkillDraft) {
+        props.onDraftChange(prompt);
+      } else {
+        const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
+        props.onDraftChange(`${props.draft}${separator}${prompt}`);
+      }
+      setSlashOpen(false);
+      setToolMenuOpen(false);
+      return;
+    }
+    const name = skill.name;
     if (options?.replaceSkillDraft) {
       props.onDraftChange(`[skill ${name}] `);
     } else {
@@ -1016,7 +1051,7 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   const activeMcpItems = mcpServers.map((entry) => ({
     entry,
-    status: toReactMcpStatus(entry.name, entry, mcpStatuses),
+    status: toReactMcpStatus(entry.id ?? entry.name, entry, mcpStatuses),
   }));
 
   const panelRoundedClass =
@@ -1445,19 +1480,33 @@ export function ReactSessionComposer(props: ComposerProps) {
                             )
                           ) : null}
                           {toolMenuSection === "skills" ? (
-                            (skills.length > 0 || toolSkillItems.length > 0) ? (
+                            skillMenuItems.length > 0 ? (
                               <div className="grid gap-1">
-                                {[...toolSkillItems, ...skills.filter((skill) => !toolSkillItems.some((command) => command.name === skill.name)).map((skill) => ({ id: `skill:${skill.name}`, name: skill.name, description: skill.description, source: "skill" as const }))].map((command) => (
+                                {skillMenuItems.map((skill) => (
                                   <button
-                                    key={command.id}
+                                    key={`${skill.origin ?? "local"}:${skill.path || skill.name}`}
                                     type="button"
                                     className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyCommandSelection(command)}
+                                    onClick={() => applySkillSelection(skill)}
                                   >
                                     <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0">
-                                      <div className="truncate text-xs font-semibold text-gray-11">/{command.name}</div>
-                                      {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center justify-between gap-3">
+                                        <div className="truncate text-xs font-semibold text-gray-11">
+                                          {skill.origin === "openwork-connect" ? skill.name : `/${skill.name}`}
+                                        </div>
+                                        {isLocalCapability(skill.origin) ? (
+                                          <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                                            {t("composer.source_local")}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      {skill.description ? <div className="truncate text-xs text-gray-10">{skill.description}</div> : null}
+                                      {skill.origin === "openwork-connect" ? (
+                                        <div className="truncate text-[10px] text-gray-9">
+                                          {[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
+                                        </div>
+                                      ) : null}
                                     </div>
                                   </button>
                                 ))}
@@ -1472,16 +1521,31 @@ export function ReactSessionComposer(props: ComposerProps) {
                             activeMcpItems.length > 0 ? (
                               <div className="grid gap-1">
                                 {activeMcpItems.map(({ entry, status }) => (
-                                  <div key={entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
+                                  <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
                                     <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center justify-between gap-3">
                                         <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
-                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
-                                          {formatMcpStatusLabel(status)}
-                                        </span>
+                                        <div className="flex shrink-0 items-center gap-1">
+                                          {isLocalCapability(entry.origin) ? (
+                                            <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                                              {t("composer.source_local")}
+                                            </span>
+                                          ) : null}
+                                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
+                                            {formatMcpStatusLabel(status)}
+                                          </span>
+                                        </div>
                                       </div>
-                                      <div className="truncate text-xs text-gray-10">{entry.config.type === "remote" ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP" : entry.config.command?.join(" ") ?? "Local MCP"}</div>
+                                      <div className="truncate text-xs text-gray-10">
+                                        {entry.origin === "openwork-connect"
+                                          ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
+                                            || entry.config.url
+                                            || "Remote MCP"
+                                          : entry.config.type === "remote"
+                                            ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
+                                            : entry.config.command?.join(" ") ?? "Local MCP"}
+                                      </div>
                                     </div>
                                   </div>
                                 ))}

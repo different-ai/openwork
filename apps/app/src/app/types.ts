@@ -278,11 +278,18 @@ export type WorkspaceOpenworkConfig = {
   } | null;
 };
 
+export type CapabilityOrigin = "local" | "openwork-connect";
+
 export type SkillCard = {
   name: string;
   path: string;
   description?: string;
   trigger?: string;
+  origin?: CapabilityOrigin;
+  scope?: "project" | "global";
+  marketplaceName?: string;
+  pluginName?: string;
+  connectCapabilityName?: string;
 };
 
 export type HubSkillRepo = {
@@ -345,9 +352,14 @@ export type McpServerConfig = {
 };
 
 export type McpServerEntry = {
+  id?: string;
   name: string;
   config: McpServerConfig;
   source?: McpServerSource;
+  origin?: CapabilityOrigin;
+  marketplaceName?: string;
+  pluginName?: string;
+  connectCapabilityName?: string;
 };
 
 export type McpStatus =

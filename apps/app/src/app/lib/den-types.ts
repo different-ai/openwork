@@ -74,6 +74,8 @@ export type DenPluginCloudReadinessConnection = {
   id: string | null;
   name: string;
   url: string;
+  configObjectId?: string;
+  serverName?: string;
   credentialMode?: "shared" | "per_member";
   connectedForMe?: boolean;
 };
