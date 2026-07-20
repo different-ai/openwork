@@ -45,6 +45,8 @@ import type { DebugViewProps } from "../pages/debug-view";
 import type { ReleaseChannel } from "../../../../app/types";
 import type { OpenworkServerStore, OpenworkServerStoreSnapshot } from "../../connections/openwork-server-store";
 
+type DebugViewModelProps = Omit<DebugViewProps, "agentContextDiagnostics">;
+
 const STARTUP_PREFERENCE_KEY = "openwork.startupPreference";
 const ENGINE_SOURCE_KEY = "openwork.engineSource";
 const ENGINE_CUSTOM_BIN_KEY = "openwork.engineCustomBinPath";
@@ -964,7 +966,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setWorkspaceDebugEventsStatus("Workspace debug events are not retained in the React route yet.");
   }, []);
 
-  const debugProps: DebugViewProps = useMemo(
+  const debugProps: DebugViewModelProps = useMemo(
     () => ({
       developerMode,
       busy: false,

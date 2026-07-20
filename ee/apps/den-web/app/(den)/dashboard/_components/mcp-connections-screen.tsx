@@ -13,7 +13,7 @@ import { getPluginRoute } from "../../_lib/den-org";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { IntegrationIcon } from "./integration-icon";
 import { Microsoft365Dialog } from "./microsoft-365-dialog";
-import { openMcpAuthorizationWindow, safeMcpAuthorizationUrl } from "./mcp-authorization-url";
+import { openMcpAuthorizationWindow, safeMcpAuthorizationUrl, showMcpAuthorizationError } from "./mcp-authorization-url";
 import {
   editableMcpIdentityChanged,
   marketplaceIdentityOwnerNames,
@@ -40,6 +40,7 @@ import {
   type McpRequirementsDiscovery,
   type McpConnectionAccessInput,
   McpOAuthConfigurationRequiredError,
+  McpOAuthStartError,
   type UpdatedMcpConnection,
   type UpdateMcpConnectionInput,
   formatMcpConnectedTimestamp,
@@ -314,7 +315,13 @@ export function McpConnectionsScreen() {
       authorizationWindow.location.href = safeMcpAuthorizationUrl(result.authorizeUrl);
       pollUntilConnected(connectionId);
     } catch (connectError) {
-      authorizationWindow?.close();
+      const message = connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.";
+      showMcpAuthorizationError(authorizationWindow, {
+        message,
+        ...(connectError instanceof McpOAuthStartError
+          ? { details: connectError.details }
+          : {}),
+      });
       if (connectError instanceof McpOAuthConfigurationRequiredError) {
         setOAuthClientConfigurationRequiredIds((current) => current.includes(connectionId)
           ? current
@@ -323,7 +330,7 @@ export function McpConnectionsScreen() {
       }
       setConnectionActionError({
         connectionId,
-        message: connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.",
+        message,
       });
     }
   }
@@ -346,7 +353,9 @@ export function McpConnectionsScreen() {
         await handleConnectOAuth(created.id, authorizationWindow);
       }
     } catch (createError) {
-      authorizationWindow?.close();
+      showMcpAuthorizationError(authorizationWindow ?? null, {
+        message: createError instanceof Error ? createError.message : "Failed to create the MCP connection.",
+      });
       throw createError;
     }
   }

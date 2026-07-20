@@ -83,10 +83,8 @@ import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
-import {
-  ConnectView,
-  createOpaqueDiagnosticsScopeKey,
-} from "@/react-app/domains/settings/pages/connect-view";
+import { ConnectView } from "@/react-app/domains/settings/pages/connect-view";
+import { createOpaqueDiagnosticsScopeKey } from "@/react-app/domains/settings/pages/agent-context-diagnostics-section";
 import { CloudMarketplacesView } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
 import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-providers-view";
 import { MemoryView } from "@/react-app/domains/settings/pages/memory-view";
@@ -2319,11 +2317,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             workspaceId={runtimeWorkspaceId}
             currentModel={currentCloudMcpModel}
             onCloudMcpHealthChange={setCloudMcpHealth}
-            diagnosticsAvailable={diagnosticsAvailable}
-            diagnosticsScopeKey={diagnosticsScopeKey}
-            diagnosticsUnavailableReason={diagnosticsUnavailableReason}
             orgMcpConnections={orgMcpConnections}
-            onRunAgentDiagnostics={runAgentContextDiagnostics}
           />
         );
       case "cloud-marketplaces":
@@ -2471,7 +2465,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           />
         );
       case "debug":
-        return <DebugView {...debugViewProps} />;
+        return (
+          <DebugView
+            {...debugViewProps}
+            agentContextDiagnostics={{
+              scopeKey: diagnosticsScopeKey,
+              available: diagnosticsAvailable,
+              unavailableReason: diagnosticsUnavailableReason,
+              onRun: runAgentContextDiagnostics,
+            }}
+          />
+        );
       default:
         return null;
     }

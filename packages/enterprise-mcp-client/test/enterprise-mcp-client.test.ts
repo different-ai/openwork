@@ -22,7 +22,7 @@ import { EnterpriseMcpOAuthProvider } from "../src/oauth-provider.js"
 import { createEnterpriseMcpRequestObserver } from "../src/request-observer.js"
 import { collectEnterpriseMcpTools } from "../src/tool-catalog.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
-import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
+import { selectClientAuthMethod, type OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
 
 const rpcRequestSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
@@ -623,6 +623,20 @@ function oauthProvider(input: {
 }
 
 describe("enterprise MCP OAuth persistence contract", () => {
+  it("uses discovery or an explicit registration hint to select confidential-client authentication", () => {
+    const confidentialClient = {
+      client_id: "confidential-client",
+      client_secret: "confidential-secret",
+    }
+    assert.equal(selectClientAuthMethod(confidentialClient, ["client_secret_post"]), "client_secret_post")
+    assert.equal(selectClientAuthMethod(confidentialClient, []), "client_secret_basic")
+    assert.equal(selectClientAuthMethod({
+      ...confidentialClient,
+      redirect_uris: ["https://den.example.test/v1/mcp-connections/oauth/callback"],
+      token_endpoint_auth_method: "client_secret_post",
+    }, []), "client_secret_post")
+  })
+
   it("validates authorization-response issuers exactly before token exchange", () => {
     const discoveryState = {
       authorizationServerUrl: "https://identity.example.test/tenant",
@@ -678,6 +692,31 @@ describe("enterprise MCP OAuth persistence contract", () => {
       defense: "distinct-redirect-uri",
       ignoredResponseIssuer: "stytch.com/project-live-provider-value",
     })
+  })
+
+  it("supports a pinned authorization transaction when a provider omits response issuers", () => {
+    const expectedIssuer = "https://identity.example.test/tenant"
+    const discoveryState = {
+      authorizationServerUrl: expectedIssuer,
+      authorizationServerMetadata: {
+        issuer: expectedIssuer,
+        authorization_response_iss_parameter_supported: false,
+      },
+      resourceMetadata: { authorization_servers: [expectedIssuer] },
+    }
+
+    assert.deepEqual(validateMcpAuthorizationResponseIssuer({
+      expectedIssuer,
+      discoveryState,
+      mixUpDefense: "pinned-transaction",
+    }), { defense: "pinned-transaction" })
+    assert.throws(() => validateMcpAuthorizationResponseIssuer({
+      expectedIssuer,
+      discoveryState,
+      responseIssuer: "https://attacker.example.test",
+      mixUpDefense: "pinned-transaction",
+    }), (error: unknown) => error instanceof EnterpriseMcpOAuthContractError
+      && error.code === "MCP_OAUTH_ISSUER_MISMATCH")
   })
 
   it("never lets PKCE or an isolated callback override advertised RFC 9207 support", () => {

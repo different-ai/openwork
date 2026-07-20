@@ -66,6 +66,7 @@ export type OAuthStatePayload = {
   binding?: string
   callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
   authorizationServerIssuer?: string
+  authorizationResponseIssuerRequired?: boolean
   nonce: string
   iat?: number
   exp: number
@@ -79,6 +80,7 @@ export function createOAuthStateToken(input: {
   version?: 1 | 2
   callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
   authorizationServerIssuer?: string
+  authorizationResponseIssuerRequired?: boolean
   secret: string
   ttlSeconds?: number
   now?: number
@@ -92,6 +94,9 @@ export function createOAuthStateToken(input: {
     ...(input.binding ? { binding: input.binding } : {}),
     ...(input.callbackMode ? { callbackMode: input.callbackMode } : {}),
     ...(input.authorizationServerIssuer ? { authorizationServerIssuer: input.authorizationServerIssuer } : {}),
+    ...(input.authorizationResponseIssuerRequired !== undefined
+      ? { authorizationResponseIssuerRequired: input.authorizationResponseIssuerRequired }
+      : {}),
     nonce: randomUUID(),
     iat: Math.floor(nowMs / 1000),
     exp: Math.floor(nowMs / 1000) + (input.ttlSeconds ?? 10 * 60),
@@ -124,6 +129,7 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
       || (payload.version !== undefined && payload.version !== 1 && payload.version !== 2)
       || (payload.callbackMode !== undefined && payload.callbackMode !== "shared-v1" && payload.callbackMode !== "isolated-v1" && payload.callbackMode !== "legacy-v1")
       || (payload.authorizationServerIssuer !== undefined && typeof payload.authorizationServerIssuer !== "string")
+      || (payload.authorizationResponseIssuerRequired !== undefined && typeof payload.authorizationResponseIssuerRequired !== "boolean")
       || typeof payload.nonce !== "string"
       || (payload.iat !== undefined && typeof payload.iat !== "number")
       || typeof payload.exp !== "number"
