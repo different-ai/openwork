@@ -2430,7 +2430,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             installUpdateAndRestart={electronUpdaterState.installUpdateAndRestart}
             releaseChannel={local.prefs.releaseChannel ?? "stable"}
             onReleaseChannelChange={electronUpdaterState.setReleaseChannel}
-            alphaChannelSupported={isElectronRuntime() && isMacPlatform()}
+            alphaChannelSupported={
+              isElectronRuntime() &&
+              isMacPlatform() &&
+              desktopConfig.config.allowAlphaUpdates !== false
+            }
           />
         );
       case "recovery":

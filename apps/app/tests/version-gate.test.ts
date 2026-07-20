@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isAlphaChannelAllowedByDesktopConfig,
+  isAlphaUpdateAllowed,
   resolveAutomaticStableDesktopUpdate,
+  resolveDesktopUpdateChannel,
   resolveFreshStableDesktopUpdate,
   selectStableDesktopUpdate,
 } from "../src/app/lib/version-gate";
@@ -10,6 +13,28 @@ const metadata = {
   latestAppVersion: "0.17.24",
   publishedDesktopVersions: ["0.17.22", "0.17.23", "0.17.24"],
 };
+
+describe("alpha desktop update policy", () => {
+  test("keeps alpha available when the policy is missing or enabled", () => {
+    expect(isAlphaChannelAllowedByDesktopConfig({})).toBe(true);
+    expect(isAlphaChannelAllowedByDesktopConfig({ allowAlphaUpdates: true })).toBe(true);
+    expect(resolveDesktopUpdateChannel("alpha", {})).toBe("alpha");
+  });
+
+  test("forces policy-disabled alpha selections back to stable", () => {
+    const desktopConfig = { allowAlphaUpdates: false };
+
+    expect(isAlphaChannelAllowedByDesktopConfig(desktopConfig)).toBe(false);
+    expect(resolveDesktopUpdateChannel("alpha", desktopConfig)).toBe("stable");
+    expect(resolveDesktopUpdateChannel("stable", desktopConfig)).toBe("stable");
+  });
+
+  test("blocks policy-disabled alpha builds before consulting Den", async () => {
+    await expect(
+      isAlphaUpdateAllowed("999.0.0-alpha.1", { allowAlphaUpdates: false }),
+    ).resolves.toBe(false);
+  });
+});
 
 describe("selectStableDesktopUpdate", () => {
   test("selects the highest approved published release above the installed version", () => {

@@ -80,6 +80,15 @@ describe("Den desktop config client", () => {
     }).onboardingPromptDescriptions).toBeUndefined();
   });
 
+  test("normalizes the alpha update desktop policy", () => {
+    expect(normalizeDenDesktopConfig({
+      allowAlphaUpdates: false,
+    }).allowAlphaUpdates).toBe(false);
+    expect(normalizeDenDesktopConfig({
+      allowAlphaUpdates: "false",
+    }).allowAlphaUpdates).toBeUndefined();
+  });
+
   test("selects targeted onboarding prompts by priority before default fallback", () => {
     const defaultPrompts = ["Default task one", "Default task two"];
 

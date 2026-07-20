@@ -1,7 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { registerUpdaterIpc, staleUpdaterStatePaths, targetedStableUpdaterFeed } from "./updater.mjs";
+import {
+  preventPendingUpdaterInstall,
+  registerUpdaterIpc,
+  staleUpdaterStatePaths,
+  targetedStableUpdaterFeed,
+} from "./updater.mjs";
 
 const fakeApp = { getPath: (key) => (key === "home" ? "/Users/test" : `/Users/test/${key}`) };
 
@@ -70,5 +75,14 @@ describe("installAndRestart", () => {
       ok: false,
       reason: "update-not-downloaded",
     });
+  });
+});
+
+describe("release channel changes", () => {
+  it("prevents a previously downloaded update from installing on quit", () => {
+    const updater = { autoInstallOnAppQuit: true };
+
+    preventPendingUpdaterInstall(updater);
+    assert.equal(updater.autoInstallOnAppQuit, false);
   });
 });

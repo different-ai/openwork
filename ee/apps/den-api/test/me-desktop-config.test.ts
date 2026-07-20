@@ -144,6 +144,7 @@ beforeAll(async () => {
       isDefault: true,
       isEnabled: true,
       policy: {
+        allowAlphaUpdates: false,
         onboardingPrompts: defaultOnboardingPrompts,
         onboardingPromptDescriptions: defaultOnboardingPromptDescriptions,
       },
@@ -313,6 +314,7 @@ test("GET /v1/me/desktop-config exposes the effective connectEnabled org flag", 
 
   const defaultBody = await requestDesktopConfig(onboardingOrganizationId)
   expect(defaultBody.connectEnabled).toBe(true)
+  expect(defaultBody.allowAlphaUpdates).toBe(false)
 
   const disabledBody = await requestDesktopConfig(disabledOrganizationId)
   expectConnectEnabled(disabledBody, disabledMetadata)
@@ -334,6 +336,7 @@ test("desktop policy CRUD preserves, replaces, and clears onboarding prompts and
       policyName: "CRUD onboarding policy",
       priority: 3,
       policy: {
+        allowAlphaUpdates: false,
         allowZenModel: true,
         onboardingPrompts: ["CRUD prompt one", "CRUD prompt two"],
         onboardingPromptDescriptions: ["CRUD card one", "CRUD card two"],
@@ -346,6 +349,7 @@ test("desktop policy CRUD preserves, replaces, and clears onboarding prompts and
   const created = expectDesktopPolicy(createPayload)
   crudDesktopPolicyId = expectString(created.id, "Created desktop policy was missing id")
   expect(created.priority).toBe(3)
+  expect(expectRecord(created.policy, "Created desktop policy was missing policy").allowAlphaUpdates).toBe(false)
   expect(expectRecord(created.policy, "Created desktop policy was missing policy").onboardingPrompts).toEqual(["CRUD prompt one", "CRUD prompt two"])
   expect(expectRecord(created.policy, "Created desktop policy was missing policy").onboardingPromptDescriptions).toEqual(["CRUD card one", "CRUD card two"])
 
@@ -355,6 +359,8 @@ test("desktop policy CRUD preserves, replaces, and clears onboarding prompts and
     expectedStatus: 200,
   })
   if (!listPayload) throw new Error("List response was empty")
+  const definitions = Array.isArray(listPayload.definitions) ? listPayload.definitions : []
+  expect(definitions.some((definition) => isRecord(definition) && definition.id === "allowAlphaUpdates")).toBe(true)
   const listed = findListedDesktopPolicy(listPayload, crudDesktopPolicyId)
   expect(listed.priority).toBe(3)
   expect(expectRecord(listed.policy, "Listed desktop policy was missing policy").onboardingPrompts).toEqual(["CRUD prompt one", "CRUD prompt two"])

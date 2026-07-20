@@ -75,6 +75,15 @@ export const desktopPolicyDefinitions = [
     defaultValue: true,
   },
   {
+    id: "allowAlphaUpdates",
+    name: "Alpha updates",
+    description:
+      "Allow users to opt into experimental Alpha desktop updates.",
+    userNotice:
+      "Your organization administrator has disabled Alpha desktop updates.",
+    defaultValue: true,
+  },
+  {
     id: "showWelcomePage",
     name: "Welcome Page",
     description: "Show the Getting Started page to new users.",

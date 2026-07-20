@@ -28,7 +28,11 @@ import {
   type DenOrgSummary,
 } from "@/app/lib/den";
 import { applyBrandAppName, applyBrandIcon, relaunchDesktopApp } from "@/app/lib/desktop";
-import { isAlphaUpdateAllowed, resolveFreshStableDesktopUpdate } from "@/app/lib/version-gate";
+import {
+  isAlphaChannelAllowedByDesktopConfig,
+  isAlphaUpdateAllowed,
+  resolveFreshStableDesktopUpdate,
+} from "@/app/lib/version-gate";
 import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { usePlatform } from "../../kernel/platform";
@@ -108,6 +112,13 @@ async function stageOnboardingUpdate(
   if (!updater?.getChannel || !updater.check || !updater.download) return false;
 
   const channelState = await updater.getChannel();
+  if (
+    channelState.channel === "alpha" &&
+    !isAlphaChannelAllowedByDesktopConfig(desktopConfig)
+  ) {
+    await updater.setChannel?.("stable");
+    return false;
+  }
   let targetVersion: string | undefined;
   if (channelState.channel === "stable") {
     const selection = await resolveFreshStableDesktopUpdate({

@@ -242,6 +242,10 @@ async function cleanStaleUpdaterState(app) {
 
 // electron-updater wiring. Packaged-only; dev builds skip this so the
 // updater doesn't try to probe a non-existent release channel.
+export function preventPendingUpdaterInstall(updater) {
+  if (updater) updater.autoInstallOnAppQuit = false;
+}
+
 export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
   let autoUpdaterInstance = null;
   let autoUpdaterLoaded = false;
@@ -318,6 +322,10 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     updateDownloaded = false;
     const updater = await ensureAutoUpdater();
     if (updater) {
+      // A channel change invalidates any previously downloaded update. This
+      // also prevents an Alpha build from installing automatically on quit
+      // after an organization policy moves the desktop back to Stable.
+      preventPendingUpdaterInstall(updater);
       return applyElectronUpdaterFeed(app, updater);
     }
     return updaterChannelState(app, channel);
@@ -395,6 +403,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       // Clear any stuck ShipIt state from a prior aborted install so this
       // download applies cleanly on quit.
       await cleanStaleUpdaterState(app);
+      updater.autoInstallOnAppQuit = true;
       await updater.downloadUpdate();
       updateDownloaded = true;
       return { ok: true };

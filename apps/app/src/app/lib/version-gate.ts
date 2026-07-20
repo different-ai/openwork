@@ -10,6 +10,7 @@ import {
   type DenAppVersionMetadata,
   type DenDesktopConfig,
 } from "./den";
+import type { ReleaseChannel } from "../types";
 
 declare global {
   interface Window {
@@ -123,6 +124,21 @@ export function isUpdateAllowedByDesktopConfig(
   return desktopConfig.allowedDesktopVersions.some(
     (allowedVersion) => compareVersions(updateVersion, allowedVersion) === 0,
   );
+}
+
+export function isAlphaChannelAllowedByDesktopConfig(
+  desktopConfig: DenDesktopConfig | null | undefined,
+): boolean {
+  return desktopConfig?.allowAlphaUpdates !== false;
+}
+
+export function resolveDesktopUpdateChannel(
+  channel: ReleaseChannel,
+  desktopConfig: DenDesktopConfig | null | undefined,
+): ReleaseChannel {
+  return channel === "alpha" && !isAlphaChannelAllowedByDesktopConfig(desktopConfig)
+    ? "stable"
+    : channel;
 }
 
 function maxAllowedDesktopVersion(desktopConfig: DenDesktopConfig | null | undefined): string | null {
@@ -313,6 +329,7 @@ export async function isAlphaUpdateAllowed(
   updateVersion: string,
   desktopConfig: DenDesktopConfig | null | undefined,
 ): Promise<boolean> {
+  if (!isAlphaChannelAllowedByDesktopConfig(desktopConfig)) return false;
   const latestAppVersion = await readDenLatestAppVersion();
   if (!latestAppVersion) return false;
   const effectiveMaxVersion = effectiveMaxDesktopVersion(latestAppVersion, desktopConfig);
