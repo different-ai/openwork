@@ -27,6 +27,7 @@ import {
   useRevokeMarketplaceAccess,
 } from "./marketplace-data";
 import { IntegrationIcon } from "./integration-icon";
+import { McpCredentialInput } from "./mcp-credential-input";
 import { type ExternalMcpAuthType, type ExternalMcpCredentialMode, type ExternalMcpPreset, useMcpConnectionPresets } from "./mcp-connections-data";
 import {
   findPresetForRequirement,
@@ -1011,7 +1012,13 @@ export function PluginMcpSetupDialog({
               {authType === "apikey" ? (
                 <div>
                   <label className="mb-1.5 block text-[12px] font-medium text-gray-700">{serviceName} API key</label>
-                  <DenInput type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="API key" autoComplete="off" />
+                  <McpCredentialInput
+                    kind="secret"
+                    name="marketplace-mcp-api-key"
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder="API key"
+                  />
                   <p className="mt-1.5 text-[11.5px] leading-4 text-gray-500">
                     Stored securely as a shared marketplace credential.
                   </p>
@@ -1043,11 +1050,23 @@ export function PluginMcpSetupDialog({
                   <div className="mt-3 space-y-3">
                     <div>
                       <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
-                      <DenInput value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="Client ID" />
+                      <McpCredentialInput
+                        kind="identifier"
+                        name="marketplace-mcp-oauth-client-id"
+                        value={clientId}
+                        onChange={(event) => setClientId(event.target.value)}
+                        placeholder="Client ID"
+                      />
                     </div>
                     <div>
                       <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret</label>
-                      <DenInput type="password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} placeholder="Client secret" />
+                      <McpCredentialInput
+                        kind="secret"
+                        name="marketplace-mcp-oauth-client-secret"
+                        value={clientSecret}
+                        onChange={(event) => setClientSecret(event.target.value)}
+                        placeholder="Client secret"
+                      />
                     </div>
                   </div>
                 </div>

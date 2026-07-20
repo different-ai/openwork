@@ -10,7 +10,7 @@
     "start": "next start --hostname 0.0.0.0 --port 3005",
     "lint": "next lint",
     "typecheck": "tsc --noEmit --pretty false",
-    "test": "bun test tests/observability-config.test.ts tests/desktop-version-options.test.ts tests/install-errors.test.ts tests/desktop-handoff.test.ts tests/single-org-signup-ui.test.ts tests/auth-landing-contract.test.ts tests/mcp-connection-smart-add.test.ts tests/org-selection-background.test.ts tests/join-org-invite-clean.test.ts app/api/_lib/upstream-proxy.test.mjs",
+    "test": "bun test tests/observability-config.test.ts tests/desktop-version-options.test.ts tests/install-errors.test.ts tests/desktop-handoff.test.ts tests/single-org-signup-ui.test.ts tests/auth-landing-contract.test.ts tests/mcp-connection-smart-add.test.ts tests/mcp-credential-autofill.test.ts tests/org-selection-background.test.ts tests/join-org-invite-clean.test.ts app/api/_lib/upstream-proxy.test.mjs",
     "test:observability": "bun test tests/observability-config.test.ts app/api/_lib/upstream-proxy.test.mjs"
   },
   "dependencies": {
