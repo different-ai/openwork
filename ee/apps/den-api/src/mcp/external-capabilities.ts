@@ -750,8 +750,39 @@ export async function searchExternalCapabilities(input: {
   })
 }
 
+export type ExternalMcpSchemaWarning =
+  | {
+      code: "arguments_schema_mismatch"
+      message: string
+      issues: ExternalMcpArgumentIssue[]
+      suggestedAction: string
+    }
+  | {
+      code: "arguments_schema_unavailable"
+      message: string
+      suggestedAction: string
+    }
+  | {
+      code: "capability_schema_changed"
+      message: string
+      searchedSchemaDigest: string
+      currentSchemaDigest: string
+      suggestedAction: string
+    }
+
+export type ExternalMcpSchemaGuidance = {
+  advisory: true
+  providerCallAttempted: true
+  message: string
+  warnings: ExternalMcpSchemaWarning[]
+}
+
 export type ExternalCapabilityExecuteResult =
-  | { ok: true; result: Awaited<ReturnType<typeof callExternalMcpTool>> }
+  | {
+      ok: true
+      result: Awaited<ReturnType<typeof callExternalMcpTool>>
+      schemaGuidance?: ExternalMcpSchemaGuidance
+    }
   | {
       ok: false
       error:
@@ -762,7 +793,6 @@ export type ExternalCapabilityExecuteResult =
         | "connection_failed"
         | "provider_error"
         | "invalid_capability_arguments"
-        | "capability_schema_changed"
       message: string
       diagnostic?: ExternalMcpDiagnostic
       actionOwner?: ExternalMcpDiagnostic["actionOwner"]
@@ -776,6 +806,7 @@ export type ExternalCapabilityExecuteResult =
         action: "correct_arguments" | "search_capabilities"
         searchRequired: boolean
       }
+      schemaGuidance?: ExternalMcpSchemaGuidance
     }
 
 function invalidCapabilityArguments(input: {
@@ -783,6 +814,7 @@ function invalidCapabilityArguments(input: {
   schemaDigest?: string
   issues?: ExternalMcpArgumentIssue[]
   diagnostic?: ExternalMcpDiagnostic
+  schemaGuidance?: ExternalMcpSchemaGuidance
 }): Exclude<ExternalCapabilityExecuteResult, { ok: true }> {
   return {
     ok: false,
@@ -799,6 +831,7 @@ function invalidCapabilityArguments(input: {
     ...(input.schemaDigest ? { schemaDigest: input.schemaDigest } : {}),
     sameArgumentsRetryable: false,
     retry: { action: "correct_arguments", searchRequired: false },
+    ...(input.schemaGuidance ? { schemaGuidance: input.schemaGuidance } : {}),
     ...(input.diagnostic
       ? {
           diagnostic: input.diagnostic,
@@ -806,6 +839,18 @@ function invalidCapabilityArguments(input: {
           operatorAction: input.diagnostic.operatorAction,
         }
       : {}),
+  }
+}
+
+function advisorySchemaGuidance(
+  warnings: ExternalMcpSchemaWarning[],
+): ExternalMcpSchemaGuidance | undefined {
+  if (warnings.length === 0) return undefined
+  return {
+    advisory: true,
+    providerCallAttempted: true,
+    message: "OpenWork forwarded the call to the provider. These local schema checks are guidance only; use the provider result as the source of truth.",
+    warnings,
   }
 }
 
@@ -914,6 +959,7 @@ export async function executeExternalCapability(input: {
   }
 
   let currentSchemaDigest: string | undefined
+  let schemaGuidance: ExternalMcpSchemaGuidance | undefined
   try {
     const redirectUri = redirectUriFor(input.redirectUriBase, connection.id)
     const tools = await listExternalMcpTools(connection, redirectUri, member)
@@ -931,45 +977,52 @@ export async function executeExternalCapability(input: {
 
     const schemaDigest = externalMcpToolSchemaDigest(tool.inputSchema)
     currentSchemaDigest = schemaDigest
+    const schemaWarnings: ExternalMcpSchemaWarning[] = []
     if (input.schemaDigest && input.schemaDigest !== schemaDigest) {
-      return {
-        ok: false,
-        error: "capability_schema_changed",
-        capability: buildExternalCapabilityName(connection.id, input.toolName),
-        message: "The capability schema changed after discovery. Call search_capabilities again before executing it.",
-        schemaDigest,
-        sameArgumentsRetryable: false,
-        retry: { action: "search_capabilities", searchRequired: true },
-      }
-    }
-
-    const validation = validateExternalMcpToolArguments(tool.inputSchema, input.args)
-    if (!validation.ok && validation.error === "invalid_arguments") {
-      return invalidCapabilityArguments({
-        capability: buildExternalCapabilityName(connection.id, input.toolName),
-        schemaDigest,
-        issues: validation.issues,
+      schemaWarnings.push({
+        code: "capability_schema_changed",
+        message: "The provider advertised a different capability schema after discovery, but OpenWork still forwarded the call.",
+        searchedSchemaDigest: input.schemaDigest,
+        currentSchemaDigest: schemaDigest,
+        suggestedAction: "If the provider call failed, call search_capabilities again and retry with the latest argumentsSchema. Do not retry solely because of this warning when the provider call succeeded.",
       })
     }
-    if (!validation.ok) {
-      return {
-        ok: false,
-        error: "provider_error",
-        capability: buildExternalCapabilityName(connection.id, input.toolName),
-        message: validation.message,
-        actionOwner: "provider_admin",
-        operatorAction: "Repair the remote MCP tool's advertised inputSchema before retrying.",
-      }
-    }
 
-    const result = await callExternalMcpTool({
+    // MCP tool arguments are always an object at the protocol boundary. Start
+    // the provider call before advisory validation so a provider with an
+    // inaccurate or unsupported advertised schema still gets the request.
+    const forwardedArguments = isRecord(input.args) ? input.args : {}
+    const providerCall = callExternalMcpTool({
       connection,
       redirectUri,
       toolName: input.toolName,
-      args: validation.arguments,
+      args: forwardedArguments,
       member,
     })
-    return { ok: true, result }
+
+    const validation = validateExternalMcpToolArguments(tool.inputSchema, input.args)
+    if (!validation.ok && validation.error === "invalid_arguments") {
+      schemaWarnings.push({
+        code: "arguments_schema_mismatch",
+        message: "The arguments do not match the provider's advertised argumentsSchema, but OpenWork still forwarded the call because the provider may accept them.",
+        issues: validation.issues,
+        suggestedAction: "If the provider call failed, correct the listed issues and retry with changed arguments. Do not retry solely because of this warning when the provider call succeeded.",
+      })
+    } else if (!validation.ok) {
+      schemaWarnings.push({
+        code: "arguments_schema_unavailable",
+        message: validation.message,
+        suggestedAction: "Use the provider result as the source of truth. If the call failed, the provider administrator may need to repair the advertised inputSchema.",
+      })
+    }
+
+    schemaGuidance = advisorySchemaGuidance(schemaWarnings)
+    const result = await providerCall
+    return {
+      ok: true,
+      result,
+      ...(schemaGuidance ? { schemaGuidance } : {}),
+    }
   } catch (error) {
     const message = upstreamErrorMessage(error)
     const authErrorCode = externalMcpAuthErrorCode(error, message)
@@ -985,6 +1038,7 @@ export async function executeExternalCapability(input: {
           capability: buildExternalCapabilityName(connection.id, input.toolName),
           schemaDigest: currentSchemaDigest ?? input.schemaDigest,
           diagnostic: error.diagnostic,
+          schemaGuidance,
         })
       }
       return {
@@ -996,6 +1050,7 @@ export async function executeExternalCapability(input: {
         diagnostic: error.diagnostic,
         actionOwner: error.diagnostic.actionOwner,
         operatorAction: error.diagnostic.operatorAction,
+        ...(schemaGuidance ? { schemaGuidance } : {}),
         ...(authErrorCode
           ? {
               connectionStatus: buildExternalConnectionStatus({
@@ -1014,6 +1069,7 @@ export async function executeExternalCapability(input: {
         ok: false,
         error: "connection_failed",
         message,
+        ...(schemaGuidance ? { schemaGuidance } : {}),
         connectionStatus: buildExternalConnectionStatus({
           connection,
           state: "reauth_required",

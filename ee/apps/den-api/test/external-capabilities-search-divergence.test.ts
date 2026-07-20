@@ -190,7 +190,10 @@ function startMutableSchemaMcpServer(): MutableSchemaMcpServer {
   const app = new Hono()
   app.all("/mcp", async (c) => {
     const payload: unknown = await c.req.raw.clone().json().catch(() => null)
-    if (typeof payload === "object" && payload !== null && "method" in payload && payload.method === "tools/call") {
+    const method = typeof payload === "object" && payload !== null && "method" in payload
+      ? payload.method
+      : null
+    if (method === "tools/call") {
       toolCalls += 1
     }
     const server = new McpServer({ name: "mutable-schema", version: "1.0.0" })
@@ -215,7 +218,41 @@ function startMutableSchemaMcpServer(): MutableSchemaMcpServer {
     }
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
-    return await transport.handleRequest(c) ?? new Response(null, { status: 204 })
+    const response = await transport.handleRequest(c) ?? new Response(null, { status: 204 })
+    if (method === "tools/list" && currentSchema === "query") {
+      const responseText = await response.text()
+      const dataLine = responseText.split("\n").find((line) => line.startsWith("data:"))
+      if (!dataLine) {
+        return new Response(responseText, { status: response.status, headers: response.headers })
+      }
+      const body = JSON.parse(dataLine.slice("data:".length).trim()) as {
+        result?: {
+          tools?: Array<{
+            name?: string
+            inputSchema?: {
+              properties?: Record<string, unknown>
+              required?: string[]
+            }
+          }>
+        }
+      }
+      const lookupTool = body.result?.tools?.find((tool) => tool.name === "lookup_incident")
+      if (lookupTool?.inputSchema) {
+        // Deliberately model a real-world provider bug: tools/list claims an
+        // extra required argument, while tools/call still accepts the actual
+        // implementation's simpler {query} input.
+        lookupTool.inputSchema.properties = {
+          ...lookupTool.inputSchema.properties,
+          providerExtension: { type: "string" },
+        }
+        lookupTool.inputSchema.required = ["query", "providerExtension"]
+      }
+      const headers = new Headers(response.headers)
+      headers.delete("content-length")
+      const rewritten = responseText.replace(dataLine, `data: ${JSON.stringify(body)}`)
+      return new Response(rewritten, { status: response.status, headers })
+    }
+    return response
   })
   const server = Bun.serve({ port: 0, fetch: app.fetch })
   return {
@@ -399,7 +436,7 @@ test("control-healthy: Connections list and search_capabilities both see Slack t
   }
 })
 
-test("external capability execution validates the live schema before tools/call", async () => {
+test("external capability execution reports schema guidance but always attempts tools/call", async () => {
   if (!mutableSchemaServer) throw new Error("Mutable-schema MCP server was not started")
   const seed = await seedOrganization("deterministic-arguments")
   const connection = await createGrantedConnection(seed, {
@@ -415,12 +452,33 @@ test("external capability execution validates the live schema before tools/call"
   expect(match).toMatchObject({
     argumentsSchema: {
       type: "object",
-      required: ["query"],
+      required: ["query", "providerExtension"],
     },
     invocation: { argumentsField: "body" },
   })
 
-  const invalid = await executeExternalCapability({
+  const providerAccepted = await executeExternalCapability({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId: connection.id,
+    toolName: "lookup_incident",
+    args: { query: "INC0001" },
+    schemaDigest: match.schemaDigest,
+    redirectUriBase,
+  })
+  expect(providerAccepted).toMatchObject({
+    ok: true,
+    schemaGuidance: {
+      advisory: true,
+      providerCallAttempted: true,
+      warnings: [{
+        code: "arguments_schema_mismatch",
+      }],
+    },
+  })
+  expect(mutableSchemaServer.toolCalls()).toBe(1)
+
+  const providerRejected = await executeExternalCapability({
     organizationId: seed.organizationId,
     member: { orgMembershipId: seed.memberId, teamIds: [] },
     connectionId: connection.id,
@@ -429,14 +487,18 @@ test("external capability execution validates the live schema before tools/call"
     schemaDigest: match.schemaDigest,
     redirectUriBase,
   })
-  expect(invalid).toMatchObject({
+  expect(providerRejected).toMatchObject({
     ok: false,
-    error: "invalid_capability_arguments",
-    sameArgumentsRetryable: false,
-    retry: { action: "correct_arguments", searchRequired: false },
-    schemaDigest: match.schemaDigest,
+    error: "provider_error",
+    schemaGuidance: {
+      advisory: true,
+      providerCallAttempted: true,
+      warnings: [{
+        code: "arguments_schema_mismatch",
+      }],
+    },
   })
-  expect(mutableSchemaServer.toolCalls()).toBe(0)
+  expect(mutableSchemaServer.toolCalls()).toBe(2)
 
   const invalidShape = await executeExternalCapability({
     organizationId: seed.organizationId,
@@ -449,22 +511,28 @@ test("external capability execution validates the live schema before tools/call"
   })
   expect(invalidShape).toMatchObject({
     ok: false,
-    error: "invalid_capability_arguments",
-    issues: [{ path: "/", keyword: "type" }],
+    error: "provider_error",
+    schemaGuidance: {
+      warnings: [{
+        code: "arguments_schema_mismatch",
+        issues: [{ path: "/", keyword: "type" }],
+      }],
+    },
   })
-  expect(mutableSchemaServer.toolCalls()).toBe(0)
+  expect(mutableSchemaServer.toolCalls()).toBe(3)
 
   const valid = await executeExternalCapability({
     organizationId: seed.organizationId,
     member: { orgMembershipId: seed.memberId, teamIds: [] },
     connectionId: connection.id,
     toolName: "lookup_incident",
-    args: { query: "INC0001" },
+    args: { query: "INC0001", providerExtension: "compatibility-value" },
     schemaDigest: match.schemaDigest,
     redirectUriBase,
   })
-  expect(valid.ok).toBe(true)
-  expect(mutableSchemaServer.toolCalls()).toBe(1)
+  expect(valid).toMatchObject({ ok: true })
+  if (valid.ok) expect(valid.schemaGuidance).toBeUndefined()
+  expect(mutableSchemaServer.toolCalls()).toBe(4)
 
   mutableSchemaServer.useSchema("incidentId")
   const stale = await executeExternalCapability({
@@ -472,17 +540,22 @@ test("external capability execution validates the live schema before tools/call"
     member: { orgMembershipId: seed.memberId, teamIds: [] },
     connectionId: connection.id,
     toolName: "lookup_incident",
-    args: { query: "INC0001" },
+    args: { incidentId: "INC0001" },
     schemaDigest: match.schemaDigest,
     redirectUriBase,
   })
   expect(stale).toMatchObject({
-    ok: false,
-    error: "capability_schema_changed",
-    sameArgumentsRetryable: false,
-    retry: { action: "search_capabilities", searchRequired: true },
+    ok: true,
+    schemaGuidance: {
+      advisory: true,
+      providerCallAttempted: true,
+      warnings: [{
+        code: "capability_schema_changed",
+        searchedSchemaDigest: match.schemaDigest,
+      }],
+    },
   })
-  expect(mutableSchemaServer.toolCalls()).toBe(1)
+  expect(mutableSchemaServer.toolCalls()).toBe(5)
 })
 
 test("shared-oauth-never-connected: Connections list sees Slack and search returns needs_connection", async () => {

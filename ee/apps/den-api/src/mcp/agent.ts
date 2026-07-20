@@ -109,8 +109,9 @@ export const AGENT_MCP_INSTRUCTIONS = [
   "After importing, retrieve the resolved marketplace detail and report each plugin's cloudReadiness. An import or plugin binding is not proof that an MCP connection is usable. Relay needs_admin_setup or needs_signin as the next human action instead of claiming the connection is ready.",
   "Do not invent OAuth-client, credential, or local-extension setup. Organization connections are managed in the OpenWork Cloud dashboard / Settings > Connect. When a returned connection or marketplace readiness state requires administrator setup or member sign-in, relay that exact action.",
   "A successful search_capabilities call proves this OpenWork Cloud MCP connection is authorized. Never tell the user to reconnect OpenWork Cloud because a downstream connector failed.",
-  "External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField. Put an object matching argumentsSchema in execute_capability.body and copy schemaDigest into execute_capability.schemaDigest.",
-  "If execute_capability returns invalid_capability_arguments, correct the listed issues and retry once with changed arguments; never retry the same arguments unchanged. If it returns capability_schema_changed or unknown_capability, call search_capabilities again before retrying.",
+  "External MCP matches include the provider-advertised argumentsSchema, schemaDigest, and invocation.argumentsField. Put an object matching argumentsSchema in execute_capability.body and copy schemaDigest into execute_capability.schemaDigest.",
+  "OpenWork always attempts the downstream provider call when local schema checks find a mismatch. schemaGuidance is advisory and appears alongside the provider result: if the provider succeeded, accept that result and do not retry solely because of the warning; if it failed, use the warning to correct the arguments or search again.",
+  "If the provider returns invalid_capability_arguments, correct the listed issues and retry once with changed arguments; never retry the same arguments unchanged. If it returns unknown_capability, call search_capabilities again before retrying.",
   "When a match has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly. Distinguish the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console.",
   "Connection probes are live. After the requested human fixes that connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
 ].join("\n")
@@ -143,6 +144,7 @@ export function externalCapabilityErrorToolResult(
       ...(result.schemaDigest ? { schemaDigest: result.schemaDigest } : {}),
       ...(result.sameArgumentsRetryable === false ? { sameArgumentsRetryable: false } : {}),
       ...(result.retry ? { retry: result.retry } : {}),
+      ...(result.schemaGuidance ? { schemaGuidance: result.schemaGuidance } : {}),
     })),
   }
 }
@@ -180,6 +182,19 @@ function externalToolContent(result: unknown): { type: "text"; text: string }[] 
     return result.content
   }
   return textContent(JSON.stringify(result))
+}
+
+export function externalCapabilitySuccessToolResult(
+  result: Extract<ExternalCapabilityExecuteResult, { ok: true }>,
+): ExecuteCapabilityToolResult {
+  const content = externalToolContent(result.result)
+  if (!result.schemaGuidance) return { content }
+  return {
+    content: [
+      ...content,
+      ...textContent(JSON.stringify({ schemaGuidance: result.schemaGuidance })),
+    ],
+  }
 }
 
 function capabilityTimeoutResult(capability: string): ExecuteCapabilityToolResult {
@@ -376,13 +391,14 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         description: [
           "Call a capability found via search_capabilities, by its exact name.",
           "Pass path/query/body only as described by that match's pathParams/queryParams/hasBody.",
+          "For external MCP capabilities, provider-advertised schema mismatches are returned as advisory schemaGuidance alongside the provider result; they do not block the downstream call.",
           "For skill:<id> matches, this returns that skill's stored SKILL.md content.",
           "Returns unknown_capability if name doesn't match a current capability — call search_capabilities again.",
         ].join(" "),
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
         inputSchema: z.object({
           name: z.string().min(1).describe("The exact tool name returned by search_capabilities."),
-          schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("For an external MCP match, copy the exact schemaDigest returned by search_capabilities so schema drift is detected."),
+          schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("For an external MCP match, copy the exact schemaDigest returned by search_capabilities so schema drift can be reported as advisory guidance without blocking the provider call."),
           path: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Path parameters, only if the match's pathParams is non-empty."),
           query: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Query parameters, only if the match's queryParams is non-empty."),
           body: z.unknown().optional().describe("For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema."),
@@ -423,7 +439,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
               // The SDK's callTool() can return either the standard {content:[...]}
               // shape or a legacy-compatibility {toolResult} shape; normalize to
               // what McpServer's own tool callback contract requires.
-              return { content: externalToolContent(result.result) }
+              return externalCapabilitySuccessToolResult(result)
             }
 
             const marketplace = parseMarketplaceCapabilityName(name)

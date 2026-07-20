@@ -115,6 +115,8 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("Settings > Connect")
   expect(client.getInstructions()).toContain("Never tell the user to reconnect OpenWork Cloud")
   expect(client.getInstructions()).toContain("connectionStatus.connectionName")
+  expect(client.getInstructions()).toContain("schemaGuidance is advisory")
+  expect(client.getInstructions()).toContain("always attempts the downstream provider call")
   expect(client.getInstructions()).toContain("invalid_capability_arguments")
   expect(client.getInstructions()).toContain("never retry the same arguments unchanged")
 
@@ -236,6 +238,40 @@ test("invalid capability arguments preserve corrective retry instructions", () =
     schemaDigest: `sha256:${"a".repeat(64)}`,
     sameArgumentsRetryable: false,
     retry: { action: "correct_arguments", searchRequired: false },
+  })
+})
+
+test("successful provider output preserves advisory schema guidance as additional content", () => {
+  const result = agentModule.externalCapabilitySuccessToolResult({
+    ok: true,
+    result: {
+      content: [{ type: "text", text: "Provider accepted the request." }],
+    },
+    schemaGuidance: {
+      advisory: true,
+      providerCallAttempted: true,
+      message: "OpenWork forwarded the call to the provider. Use the provider result as the source of truth.",
+      warnings: [{
+        code: "arguments_schema_mismatch",
+        message: "The arguments did not match the advertised schema.",
+        issues: [{
+          path: "/",
+          keyword: "schema_validation",
+          message: "Unexpected providerExtension property.",
+        }],
+        suggestedAction: "Do not retry because the provider succeeded.",
+      }],
+    },
+  })
+
+  expect(result.isError).toBeUndefined()
+  expect(result.content[0]).toEqual({ type: "text", text: "Provider accepted the request." })
+  expect(JSON.parse(result.content[1]?.text ?? "{}")).toMatchObject({
+    schemaGuidance: {
+      advisory: true,
+      providerCallAttempted: true,
+      warnings: [{ code: "arguments_schema_mismatch" }],
+    },
   })
 })
 
