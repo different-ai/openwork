@@ -30,6 +30,8 @@ on:
       - "packages/email/**"
       - "packages/types/**"
       - "packages/ui/**"
+      - "scripts/release/deploy-den-api-tag.mjs"
+      - "scripts/release/deploy-den-api-tag.test.mjs"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "package.json"
@@ -311,3 +313,39 @@ jobs:
 
           docker logs "$container_id" || true
           exit 1
+
+  den-api-release-deploy-tests:
+    name: Test Den API release deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Test tagged deployment flow
+        run: node --test scripts/release/deploy-den-api-tag.test.mjs
+
+  deploy-den-api-release:
+    name: Deploy Den API release
+    if: ${{ github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && github.repository == 'different-ai/openwork' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs:
+      - artifact-version
+      - helm-chart
+      - ee-images
+      - den-api-release-deploy-tests
+    concurrency:
+      group: den-api-production
+      cancel-in-progress: false
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify release tag
+        run: node scripts/release/verify-tag.mjs --tag "$GITHUB_REF_NAME"
+
+      - name: Deploy tagged commit to Render
+        run: node scripts/release/deploy-den-api-tag.mjs
