@@ -112,4 +112,51 @@ describe("Connect skill slash commands", () => {
       origin: "local",
     })).toBe("Local Playbook");
   });
+
+  test("excludes local skills and Connect skills missing a capability identity", () => {
+    expect(
+      connectSkillSlashCommandOptions([
+        {
+          name: "Local Playbook",
+          trigger: "local-playbook",
+          path: "skill://local",
+          origin: "local",
+          connectCapabilityName: "plugin:plugin_1:skill_1",
+        },
+        {
+          name: "Unresolved",
+          trigger: "unresolved",
+          path: "openwork-connect://marketplace_1/plugin_1/skill_2",
+          origin: "openwork-connect",
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  test("falls back to a slug when the trigger contains slash-unsafe characters", () => {
+    expect(skillSlashCommandName({ name: "Escalate Ticket", trigger: "escalate ticket" })).toBe("escalate-ticket");
+    expect(skillSlashCommandName({ name: "Escalate Ticket", trigger: "skills/escalate" })).toBe("escalate-ticket");
+  });
+
+  test("keeps the provenance line usable when the skill has no description", () => {
+    const [withProvenance] = connectSkillSlashCommandOptions([{
+      name: "Escalate ticket",
+      trigger: "escalate-ticket",
+      path: "openwork-connect://marketplace_1/plugin_1/skill_1",
+      origin: "openwork-connect",
+      marketplaceName: "Team tools",
+      pluginName: "Support kit",
+      connectCapabilityName: "plugin:plugin_1:skill_1",
+    }]);
+    expect(withProvenance?.description).toBe("Team tools · Support kit");
+
+    const [withoutProvenance] = connectSkillSlashCommandOptions([{
+      name: "Escalate ticket",
+      trigger: "escalate-ticket",
+      path: "openwork-connect://marketplace_1/plugin_1/skill_1",
+      origin: "openwork-connect",
+      connectCapabilityName: "plugin:plugin_1:skill_1",
+    }]);
+    expect(withoutProvenance?.description).toBe("");
+  });
 });
